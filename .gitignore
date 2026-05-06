@@ -1,0 +1,123 @@
+# =====================================
+# Dependencies
+# =====================================
+node_modules/
+.pnp/
+.pnp.js
+
+# =====================================
+# Build Outputs
+# =====================================
+dist/
+dist-electron/
+release/
+out/
+build/
+
+# =====================================
+# Electron Specific
+# =====================================
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.dmg
+*.msi
+*.deb
+*.rpm
+*.AppImage
+electron-builder-*.json
+
+# =====================================
+# IDE and Editors
+# =====================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.code-workspace
+
+# =====================================
+# Logs
+# =====================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+logs/
+
+# =====================================
+# Database
+# =====================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+.workavatar-data/
+
+# =====================================
+# Cache and Temp Files
+# =====================================
+.cache/
+.temp/
+tmp/
+*.tmp
+*.bak
+.env
+.env.local
+.env.*.local
+
+# =====================================
+# Testing
+# =====================================
+coverage/
+.nyc_output/
+*.lcov
+playwright-report/
+test-results/
+__snapshots__/
+
+# =====================================
+# TypeScript and Lint
+# =====================================
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+.eslintcache
+.prettiercache
+
+# =====================================
+# Package Manager
+# =====================================
+.npm
+.yarn/install-state.gz
+.pnp.*
+pnpm-lock.yaml
+
+# =====================================
+# Resources and Large Files
+# (Managed by Git LFS, see .gitattributes)
+# =====================================
+resources/rapidocr/
+resources/models/
+*.bin
+*.pb
+*.onnx
+*.pt
+*.pth
+
+# =====================================
+# OS Generated Files
+# =====================================
+Desktop.ini
+Directory.ps1
+ehthumbs.db
+.trae
+参考资料

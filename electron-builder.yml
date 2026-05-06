@@ -1,0 +1,64 @@
+appId: com.workavatar.desktop
+productName: WorkAvatar
+copyright: Copyright © 2024 WorkAvatar
+
+directories:
+  output: release/${version}
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+extraResources:
+  - from: resources/
+    to: resources/
+    filter:
+      - '**/*'
+  - from: node_modules/@lancedb/
+    to: node_modules/@lancedb/
+    filter:
+      - '**/*'
+
+win:
+  target:
+    - nsis
+    - portable
+  icon: resources/icons/icon.ico
+  artifactName: '${productName}-Setup-${version}.${ext}'
+  signingHashAlgorithms:
+    - sha256
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: WorkAvatar
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - dmg
+    - zip
+  icon: resources/icons/icon.icns
+  category: public.app-category.productivity
+  darkModeSupport: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: resources/icons/icon.png
+  category: Office
+  executableName: workavatar
+
+publish:
+  provider: github
+  owner: yourusername
+  repo: workavatar
+  releaseType: draft
+
+electronDownload:
+  mirror: 'https://npmmirror.com/mirrors/electron/'
