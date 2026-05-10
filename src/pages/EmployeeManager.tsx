@@ -21,6 +21,7 @@ import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
 import type { Employee } from '../types'
+import { theme } from 'antd'
 
 const { Text } = Typography
 
@@ -40,6 +41,7 @@ const statusTextMap: Record<string, string> = {
 
 const EmployeeManager: React.FC = () => {
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loadingTable, setLoadingTable] = useState(false)
 
@@ -85,7 +87,7 @@ const EmployeeManager: React.FC = () => {
                 width: 40,
                 height: 40,
                 borderRadius: 8,
-                background: '#f6ffed',
+                background: token.colorSuccessBg,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -93,9 +95,9 @@ const EmployeeManager: React.FC = () => {
               }}
             >
               {record.avatar_type === 'default' ? (
-                <RobotOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+                <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
               ) : (
-                <UserOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+                <UserOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
               )}
             </div>
             <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>

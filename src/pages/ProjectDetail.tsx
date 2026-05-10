@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Button, Tabs, message, Statistic, Row, Col, Space, Tag, Typography, Modal, Popconfirm, Tooltip } from 'antd'
+import { Card, Button, Tabs, message, Statistic, Row, Col, Space, Tag, Typography, Modal, Popconfirm, Tooltip, theme } from 'antd'
 import {
   RobotOutlined,
   EyeOutlined,
@@ -21,6 +21,7 @@ const { Text } = Typography
 const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [project, setProject] = useState<any>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [, setEmployeesLoading] = useState(false)
@@ -151,8 +152,8 @@ const ProjectDetail: React.FC = () => {
             <Statistic
               title="数字员工"
               value={employees.length}
-              prefix={<RobotOutlined style={{ color: '#1677ff' }} />}
-              styles={{ content: { color: '#1677ff' } }}
+              prefix={<RobotOutlined style={{ color: token.colorPrimary }} />}
+              styles={{ content: { color: token.colorPrimary } }}
             />
           </Card>
         </Col>
@@ -161,7 +162,7 @@ const ProjectDetail: React.FC = () => {
             <Statistic
               title="运行中"
               value={employees.filter((e) => e.status === 'active').length}
-              styles={{ content: { color: '#52c41a' } }}
+              styles={{ content: { color: token.colorSuccess } }}
             />
           </Card>
         </Col>
@@ -199,7 +200,7 @@ const ProjectDetail: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -208,7 +209,7 @@ const ProjectDetail: React.FC = () => {
                                 width: 48,
                                 height: 48,
                                 borderRadius: 8,
-                                background: '#e6f4ff',
+                                background: token.colorPrimaryBg,
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -287,7 +288,7 @@ const ProjectDetail: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -296,14 +297,14 @@ const ProjectDetail: React.FC = () => {
                                 width: 48,
                                 height: 48,
                                 borderRadius: 8,
-                                background: '#e6f4ff',
+                                background: token.colorPrimaryBg,
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 flexShrink: 0,
                               }}
                             >
-                              <UserOutlined style={{ fontSize: 24, color: '#1677ff' }} />
+                              <UserOutlined style={{ fontSize: 24, color: token.colorPrimary }} />
                             </div>
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                               <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
@@ -370,7 +371,7 @@ const ProjectDetail: React.FC = () => {
         width={600}
       >
         {allKBs.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
+          <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
             暂无知识库。请先在知识库管理中创建知识库。
             <Button type="link" onClick={() => { setKbLinkModalOpen(false); navigate('/knowledge-base') }}>
               前往知识库管理
@@ -388,7 +389,7 @@ const ProjectDetail: React.FC = () => {
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     padding: '12px 0',
-                    borderBottom: '1px solid #f0f0f0',
+                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -397,7 +398,7 @@ const ProjectDetail: React.FC = () => {
                         width: 40,
                         height: 40,
                         borderRadius: 8,
-                        background: '#e6f4ff',
+                        background: token.colorPrimaryBg,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',

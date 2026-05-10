@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Select, Space, Tag } from 'antd'
+import { Select, Space, Tag, theme } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
 import type { LLMProvider, LLMModelConfig } from '../../types'
 
@@ -22,6 +22,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   onModelChange,
   style,
 }) => {
+  const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
 
   useEffect(() => {
@@ -48,7 +49,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
         <Space size={4}>
           {isDomestic && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>国产</Tag>}
           <span>{p.name}</span>
-          <span style={{ color: '#999', fontSize: 11 }}>({p.model})</span>
+          <span style={{ color: token.colorTextSecondary, fontSize: 11 }}>({p.model})</span>
         </Space>
       ),
       searchLabel: `${p.name} ${p.model} ${p.provider_type}`,
@@ -71,7 +72,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
 
   return (
     <Space size={8} style={style}>
-      <RobotOutlined style={{ color: '#1677ff', flexShrink: 0 }} />
+      <RobotOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
       <Select
         size="small"
         placeholder="服务商"

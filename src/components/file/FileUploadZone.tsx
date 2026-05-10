@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react'
-import { Upload, Button, message, Space, Typography } from 'antd'
+import { Upload, Button, message, Space, Typography, theme } from 'antd'
 import { InboxOutlined, FileTextOutlined, UploadOutlined } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
 
@@ -32,6 +32,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
   maxSize = 200,
 }) => {
   const [uploading, setUploading] = useState(false)
+  const { token } = theme.useToken()
 
   const handleFileImport = useCallback(
     async (filePaths: string[]) => {
@@ -120,7 +121,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
           openFileDialogOnClick={false}
         >
         <p className="ant-upload-drag-icon">
-          <InboxOutlined style={{ fontSize: 48, color: '#1677ff' }} />
+          <InboxOutlined style={{ fontSize: 48, color: token.colorPrimary }} />
         </p>
         <Paragraph strong style={{ marginBottom: 4 }}>
           拖拽文件到此处上传
@@ -160,7 +161,7 @@ const FileUploadZone: React.FC<FileUploadZoneProps> = ({
       >
         {SUPPORTED_TYPES.slice(0, 8).map((type) => (
           <Space key={type} size={4}>
-            <FileTextOutlined style={{ fontSize: 12, color: '#999' }} />
+            <FileTextOutlined style={{ fontSize: 12, color: token.colorTextSecondary }} />
             <Text type="secondary" style={{ fontSize: 12 }}>
               {type}
             </Text>

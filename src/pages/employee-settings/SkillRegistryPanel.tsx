@@ -1,4 +1,4 @@
-import { Card, Button, Space, Tag, Typography, Switch } from 'antd'
+import { Card, Button, Space, Tag, Typography, Switch, theme } from 'antd'
 import { DownloadOutlined, DeleteOutlined, CloseOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -23,6 +23,8 @@ interface SkillRegistryPanelProps {
 export default function SkillRegistryPanel({
   skills, employeeSkills, onInstall, onUninstall, onToggle, onAssign, onRemove
 }: SkillRegistryPanelProps) {
+  const { token } = theme.useToken()
+
   if (skills.length === 0) {
     return (
       <Card>
@@ -50,7 +52,7 @@ export default function SkillRegistryPanel({
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '12px 0',
-              borderBottom: '1px solid #f0f0f0',
+              borderBottom: `1px solid ${token.colorBorderSecondary}`,
             }}
           >
             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>

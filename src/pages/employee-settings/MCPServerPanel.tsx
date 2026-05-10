@@ -1,4 +1,4 @@
-import { Card, Button, Space, Typography, Tag } from 'antd'
+import { Card, Button, Space, Typography, Tag, theme } from 'antd'
 import { DeleteOutlined, ApiOutlined, PlayCircleOutlined, PauseCircleOutlined } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
@@ -22,6 +22,8 @@ interface MCPServerPanelProps {
 }
 
 export default function MCPServerPanel({ servers, onDelete, onConnect, onDisconnect }: MCPServerPanelProps) {
+  const { token } = theme.useToken()
+
   if (servers.length === 0) {
     return <Card><div style={{ textAlign: 'center', padding: 40 }}>暂无 MCP 服务器</div></Card>
   }
@@ -36,7 +38,7 @@ export default function MCPServerPanel({ servers, onDelete, onConnect, onDisconn
             alignItems: 'flex-start',
             justifyContent: 'space-between',
             padding: '12px 0',
-            borderBottom: '1px solid #f0f0f0',
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
@@ -45,14 +47,14 @@ export default function MCPServerPanel({ servers, onDelete, onConnect, onDisconn
                 width: 40,
                 height: 40,
                 borderRadius: 8,
-                background: server.status === 'connected' ? '#e6f7ff' : '#f5f5f5',
+                background: server.status === 'connected' ? token.colorInfoBg : token.colorBgLayout,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
               }}
             >
-              <ApiOutlined style={{ fontSize: 20, color: server.status === 'connected' ? '#52c41a' : '#999' }} />
+              <ApiOutlined style={{ fontSize: 20, color: server.status === 'connected' ? token.colorSuccess : token.colorTextSecondary }} />
             </div>
             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
               <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>

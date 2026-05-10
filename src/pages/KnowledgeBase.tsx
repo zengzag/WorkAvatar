@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Card, Button, Typography, Space, message, Table, Tag, Modal,
   Input, Popconfirm, Empty, Statistic, Row, Col,
-  Tooltip, Spin, Tabs, Alert, Select,
+  Tooltip, Spin, Tabs, Alert, Select, theme,
 } from 'antd'
 import {
   PlusOutlined, DatabaseOutlined, FileTextOutlined, UploadOutlined,
@@ -43,6 +43,7 @@ interface KnowledgeBase {
 
 const KnowledgeBasePage: React.FC = () => {
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [kbs, setKBs] = useState<KnowledgeBase[]>([])
   const [selectedKB, setSelectedKB] = useState<KnowledgeBase | null>(null)
   const [docs, setDocs] = useState<KBDocument[]>([])
@@ -414,7 +415,7 @@ const KnowledgeBasePage: React.FC = () => {
           styles={{ body: { padding: 0, overflow: 'auto' } }}
         >
           {kbs.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>
+            <div style={{ padding: 24, textAlign: 'center', color: token.colorTextSecondary }}>
               <Empty description="暂无知识库" />
             </div>
           ) : (
@@ -422,9 +423,9 @@ const KnowledgeBasePage: React.FC = () => {
               <div key={kb.id} onClick={() => handleSelectKB(kb)}
                 style={{
                   padding: '12px 16px', cursor: 'pointer',
-                  borderLeft: selectedKB?.id === kb.id ? '3px solid #1677ff' : '3px solid transparent',
-                  background: selectedKB?.id === kb.id ? '#e6f4ff' : 'transparent',
-                  borderBottom: '1px solid #f0f0f0',
+                  borderLeft: selectedKB?.id === kb.id ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
+                  background: selectedKB?.id === kb.id ? token.colorPrimaryBg : 'transparent',
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -446,7 +447,7 @@ const KnowledgeBasePage: React.FC = () => {
         <div style={{ flex: 1, overflow: 'auto' }}>
           {!selectedKB ? (
             <Card>
-              <Empty image={<BookOutlined style={{ fontSize: 64, color: '#d9d9d9' }} />}
+              <Empty image={<BookOutlined style={{ fontSize: 64, color: token.colorTextQuaternary }} />}
                 description="选择一个知识库或新建一个开始管理文档" />
               <div style={{ textAlign: 'center' }}>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>新建知识库</Button>
@@ -470,7 +471,7 @@ const KnowledgeBasePage: React.FC = () => {
                 </div>
 
                 {linkedProjects.length > 0 && (
-                  <div style={{ marginTop: 12, padding: '8px 12px', background: '#f0f5ff', borderRadius: 8 }}>
+                  <div style={{ marginTop: 12, padding: '8px 12px', background: token.colorInfoBg, borderRadius: 8 }}>
                     <Text type="secondary">已关联项目: </Text>
                     {linkedProjects.map((p: any) => (
                       <Tag key={p.id} color="blue" closable onClose={() => handleUnlinkProject(p.id)}
@@ -487,7 +488,7 @@ const KnowledgeBasePage: React.FC = () => {
                   children: (
                     <div>
                       {(parsingAll || processingAll) && (
-                        <Card size="small" style={{ marginBottom: 16, border: '1px solid #1677ff' }}>
+                        <Card size="small" style={{ marginBottom: 16, border: `1px solid ${token.colorPrimary}` }}>
                           <Space><Spin size="small" /><Text>{parsingAll ? '批量解析中...' : '批量知识处理中...'}</Text></Space>
                           {processProgress.stage && <Text type="secondary" style={{ marginLeft: 8 }}>{processProgress.stage}: {processProgress.detail}</Text>}
                         </Card>
@@ -497,9 +498,9 @@ const KnowledgeBasePage: React.FC = () => {
                         extra={
                           <Space>
                             <Row gutter={12} style={{ marginBottom: 8 }}>
-                              <Col><Statistic title="已解析" value={completedCount} styles={{ content: { color: '#52c41a', fontSize: 16 } }} /></Col>
-                              <Col><Statistic title="待解析" value={pendingCount} styles={{ content: { color: '#faad14', fontSize: 16 } }} /></Col>
-                              <Col><Statistic title="失败" value={failedCount} styles={{ content: { color: '#ff4d4f', fontSize: 16 } }} /></Col>
+                              <Col><Statistic title="已解析" value={completedCount} styles={{ content: { color: token.colorSuccess, fontSize: 16 } }} /></Col>
+                              <Col><Statistic title="待解析" value={pendingCount} styles={{ content: { color: token.colorWarning, fontSize: 16 } }} /></Col>
+                              <Col><Statistic title="失败" value={failedCount} styles={{ content: { color: token.colorError, fontSize: 16 } }} /></Col>
                             </Row>
                             {pendingCount > 0 && (
                               <Button icon={<SyncOutlined />} onClick={handleParseAll} type="primary" size="small" loading={parsingAll}>
@@ -521,7 +522,7 @@ const KnowledgeBasePage: React.FC = () => {
                           columns={[
                             { title: '文件名', dataIndex: 'original_name', key: 'name', ellipsis: true,
                               render: (text: string, record: KBDocument) => (
-                                <Space><FileTextOutlined style={{ color: '#1677ff' }} /><span>{text}</span><Tag style={{ fontSize: 10 }}>{record.type}</Tag></Space>
+                                <Space><FileTextOutlined style={{ color: token.colorPrimary }} /><span>{text}</span><Tag style={{ fontSize: 10 }}>{record.type}</Tag></Space>
                               ),
                             },
                             { title: '大小', dataIndex: 'size', key: 'size', width: 90,
@@ -600,10 +601,10 @@ const KnowledgeBasePage: React.FC = () => {
                         {knowledgeStats && (
                           <Row gutter={16} style={{ marginBottom: 16 }}>
                             <Col span={4}><Statistic title="章节" value={knowledgeStats.chapterCount} prefix={<ReadOutlined />} /></Col>
-                            <Col span={4}><Statistic title="文档摘要" value={knowledgeStats.documentSummaryCount} prefix={<FileTextOutlined />} styles={{ content: { color: '#52c41a' } }} /></Col>
+                            <Col span={4}><Statistic title="文档摘要" value={knowledgeStats.documentSummaryCount} prefix={<FileTextOutlined />} styles={{ content: { color: token.colorSuccess } }} /></Col>
                             <Col span={4}><Statistic title="全局摘要" value={knowledgeStats.hasGlobalSummary ? 1 : 0} prefix={<ApartmentOutlined />} styles={{ content: { color: '#722ed1' } }} /></Col>
-                            <Col span={4}><Statistic title="实体" value={knowledgeStats.entityCount} prefix={<NodeIndexOutlined />} styles={{ content: { color: '#1677ff' } }} /></Col>
-                            <Col span={4}><Statistic title="关系" value={knowledgeStats.relationCount} prefix={<ApartmentOutlined />} styles={{ content: { color: '#faad14' } }} /></Col>
+                            <Col span={4}><Statistic title="实体" value={knowledgeStats.entityCount} prefix={<NodeIndexOutlined />} styles={{ content: { color: token.colorPrimary } }} /></Col>
+                            <Col span={4}><Statistic title="关系" value={knowledgeStats.relationCount} prefix={<ApartmentOutlined />} styles={{ content: { color: token.colorWarning } }} /></Col>
                           </Row>
                         )}
 
@@ -804,7 +805,7 @@ const KnowledgeBasePage: React.FC = () => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '12px 0',
-                borderBottom: '1px solid #f0f0f0',
+                borderBottom: `1px solid ${token.colorBorderSecondary}`,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -813,14 +814,14 @@ const KnowledgeBasePage: React.FC = () => {
                     width: 40,
                     height: 40,
                     borderRadius: 8,
-                    background: '#e6f4ff',
+                    background: token.colorPrimaryBg,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     flexShrink: 0,
                   }}
                 >
-                  <FolderOpenOutlined style={{ color: '#1677ff' }} />
+                  <FolderOpenOutlined style={{ color: token.colorPrimary }} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                   <Tooltip title={project.name}>

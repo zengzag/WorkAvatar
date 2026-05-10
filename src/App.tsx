@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import TaskProgressPanel from './components/common/TaskProgressPanel'
+import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 
 const { Sider, Content } = Layout
 const { Title } = Typography
@@ -17,6 +18,8 @@ const App: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(true)
+  const themeMode = useAppearanceStore((s) => s.themeMode)
+  const effectiveTheme = getEffectiveTheme(themeMode)
 
   const getSelectedKey = () => {
     const path = location.pathname
@@ -64,7 +67,7 @@ const App: React.FC = () => {
   return (
     <Layout style={{ height: '100vh' }}>
       <Sider
-        theme="light"
+        theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
@@ -79,7 +82,7 @@ const App: React.FC = () => {
             alignItems: 'center',
             justifyContent: collapsed ? 'center' : 'flex-start',
             padding: collapsed ? '0 16px' : '0 24px',
-            borderBottom: '1px solid #f0f0f0',
+            borderBottom: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0',
           }}
         >
           <RocketOutlined
@@ -97,14 +100,13 @@ const App: React.FC = () => {
           items={menuItems}
           style={{ borderRight: 'none', marginTop: 8, flex: 1 }}
         />
-        <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #f0f0f0' }}>
+        <div style={{ padding: '8px 16px 12px', borderTop: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0' }}>
           <TaskProgressPanel />
         </div>
       </Sider>
       <Layout>
         <Content
           style={{
-            background: '#f5f5f5',
             overflow: 'auto',
           }}
         >

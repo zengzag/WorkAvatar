@@ -1,4 +1,4 @@
-import { Card, Switch, Button, Typography, Tag, Space } from 'antd'
+import { Card, Switch, Button, Typography, Tag, Space, theme } from 'antd'
 
 const { Text, Paragraph } = Typography
 
@@ -20,6 +20,8 @@ interface ToolConfigPanelProps {
 }
 
 export default function ToolConfigPanel({ assignedTools, availableTools, onToggle, onRemove, onAssign }: ToolConfigPanelProps) {
+  const { token } = theme.useToken()
+
   return (
     <Card title={<Space><Text strong>已分配的工具 ({assignedTools.length})</Text></Space>}>
       {assignedTools.length === 0 ? (
@@ -39,7 +41,7 @@ export default function ToolConfigPanel({ assignedTools, availableTools, onToggl
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '12px 0',
-                borderBottom: '1px solid #f0f0f0',
+                borderBottom: `1px solid ${token.colorBorderSecondary}`,
               }}
             >
               <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
@@ -69,7 +71,7 @@ export default function ToolConfigPanel({ assignedTools, availableTools, onToggl
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '12px 0',
-                  borderBottom: '1px solid #f0f0f0',
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>

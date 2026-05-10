@@ -11,6 +11,7 @@ import {
   Collapse,
   Popconfirm,
   Tooltip,
+  theme,
 } from 'antd'
 import {
   SendOutlined,
@@ -72,15 +73,16 @@ const ConversationItem = memo(({
   onEditKeyDown: (e: React.KeyboardEvent) => void
   onDelete: (id: string, e: React.MouseEvent) => void
 }) => {
+  const { token } = theme.useToken()
   return (
     <div
       onClick={() => !isEditing && onSelect(conv.id)}
       style={{
         padding: '10px 14px',
         cursor: isEditing ? 'default' : 'pointer',
-        borderLeft: isActive ? '3px solid #1677ff' : '3px solid transparent',
-        background: isActive ? '#e6f4ff' : 'transparent',
-        borderBottom: '1px solid #f0f0f0',
+        borderLeft: isActive ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
+        background: isActive ? token.colorPrimaryBg : 'transparent',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -154,6 +156,7 @@ interface MessageWithThought extends Message {
 const EmployeeWorkbench: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [employee, setEmployee] = useState<any | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -177,12 +180,17 @@ const EmployeeWorkbench: React.FC = () => {
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
   const finishRef = useRef<(() => void) | null>(null)
+  const initializedRef = useRef(false) // 防止重复初始化
 
   useEffect(() => {
     if (id) {
       loadEmployee()
       loadConversations()
       loadProviders()
+    }
+    return () => {
+      // 组件卸载时重置初始化标志
+      initializedRef.current = false
     }
   }, [id])
 
@@ -221,6 +229,17 @@ const EmployeeWorkbench: React.FC = () => {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
       setAllConversations(result)
       setConversations(result.slice(0, displayedCount))
+      
+      if (!initializedRef.current) {
+        initializedRef.current = true
+        if (result.length > 0) {
+          // 有历史对话，自动选择最近的第一个
+          selectConversation(result[0].id)
+        } else {
+          // 没有历史对话，自动创建一个新对话
+          await startNewConversation()
+        }
+      }
     } catch (e) { 
       console.error('[Frontend] 加载对话列表失败', e) 
     }
@@ -271,22 +290,19 @@ const EmployeeWorkbench: React.FC = () => {
   const selectConversation = (convId: string) => {
     setActiveConversationId(convId)
     setSearchResults([])
-    const conv = conversations.find((c) => c.id === convId)
-    if (conv) {
-      try {
-        // 只在选中对话时才完整查询该对话的详细信息（包含消息）
-        window.electronAPI.conversation.get(convId).then(fullConv => {
-          if (fullConv) {
-            const msgs = JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[]
-            setMessages(msgs)
-          }
-        }).catch(() => {
-          setMessages([])
-        })
-      } catch (e) { 
-        console.error('[Frontend] JSON parse error:', e)
-        setMessages([]) 
-      }
+    try {
+      // 只在选中对话时才完整查询该对话的详细信息（包含消息）
+      window.electronAPI.conversation.get(convId).then(fullConv => {
+        if (fullConv) {
+          const msgs = JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[]
+          setMessages(msgs)
+        }
+      }).catch(() => {
+        setMessages([])
+      })
+    } catch (e) { 
+      console.error('[Frontend] JSON parse error:', e)
+      setMessages([]) 
     }
   }
 
@@ -497,17 +513,23 @@ const EmployeeWorkbench: React.FC = () => {
     doneCleanupFn = window.electronAPI.llm.onDone(() => {
       setMessages((prev) => {
         const assistantMsg = prev.find((m) => m.id === assistantMessageId)
-        const finalContent = assistantMsg?.content || ''
+        if (!assistantMsg) return prev
+        const savedAssistantMsg: MessageWithThought = {
+          ...assistantMsg,
+          isStreaming: false,
+          isStreamingThought: false,
+          thoughtCollapsed: true,
+        }
         window.electronAPI.conversation.update({
           id: activeConversationId,
           messages_json: JSON.stringify([
             ...updatedMessages,
-            { ...assistantMessage, content: finalContent, isStreaming: false, isStreamingThought: false, thoughtCollapsed: true },
+            savedAssistantMsg,
           ]),
           message_count: updatedMessages.length + 1,
         }).catch(() => {})
         return prev.map((m) =>
-          m.id === assistantMessageId ? { ...m, isStreaming: false, isStreamingThought: false, thoughtCollapsed: true } : m
+          m.id === assistantMessageId ? savedAssistantMsg : m
         )
       })
       setIsStreaming(false)
@@ -620,7 +642,7 @@ const EmployeeWorkbench: React.FC = () => {
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
       {/* 极简顶栏 */}
       <div style={{
         height: 48,
@@ -628,8 +650,8 @@ const EmployeeWorkbench: React.FC = () => {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 20px',
-        borderBottom: '1px solid #f0f0f0',
-        background: '#fff',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        background: token.colorBgContainer,
         flexShrink: 0,
       }}>
         <Space size={12}>
@@ -671,10 +693,10 @@ const EmployeeWorkbench: React.FC = () => {
           <div style={{
             width: 280,
             flexShrink: 0,
-            borderRight: '1px solid #f0f0f0',
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
             display: 'flex',
             flexDirection: 'column',
-            background: '#fafafa',
+            background: token.colorBgLayout,
           }}>
             <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
               <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
@@ -727,7 +749,7 @@ const EmployeeWorkbench: React.FC = () => {
               )}
               
               {conversations.length === 0 && (
-                <div style={{ textAlign: 'center', padding: 24, color: '#999', fontSize: 13 }}>暂无对话</div>
+                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary, fontSize: 13 }}>暂无对话</div>
               )}
             </div>
           </div>
@@ -750,7 +772,7 @@ const EmployeeWorkbench: React.FC = () => {
             {/* 知识检索结果迷你提示 */}
             {hasRagResults && (
               <div style={{
-                background: '#f0f5ff',
+                background: token.colorPrimaryBg,
                 borderRadius: 8,
                 padding: '8px 14px',
                 marginBottom: 8,
@@ -760,7 +782,7 @@ const EmployeeWorkbench: React.FC = () => {
                     key: 'kb-mini',
                     label: <Space><DatabaseOutlined style={{ color: '#722ed1' }} /><Text strong style={{ fontSize: 13 }}>知识库检索结果 ({searchResults.length})</Text></Space>,
                     children: searchResults.map((r, i) => (
-                      <div key={i} style={{ padding: '6px 8px', marginBottom: 6, background: '#f0f5ff', borderRadius: 6 }}>
+                      <div key={i} style={{ padding: '6px 8px', marginBottom: 6, background: token.colorPrimaryBg, borderRadius: 6 }}>
                         <Text strong style={{ fontSize: 12, cursor: 'pointer' }} onClick={() => handleSourceClick(r)}>
                           <LinkOutlined style={{ marginRight: 4, color: '#1677ff' }} />{r.source.file_name}
                         </Text>
@@ -772,22 +794,11 @@ const EmployeeWorkbench: React.FC = () => {
               </div>
             )}
 
-            {/* 空状态 */}
-            {messages.length === 0 && !activeConversationId && (
-              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-                <RobotOutlined style={{ fontSize: 56, color: '#d9d9d9', marginBottom: 20 }} />
-                <Paragraph type="secondary" style={{ fontSize: 15, marginBottom: 24 }}>
-                  创建新对话，开始与数字员工交流
-                </Paragraph>
-                <Button type="primary" size="large" icon={<PlusOutlined />} onClick={startNewConversation}>
-                  开始新对话
-                </Button>
-              </div>
-            )}
+
 
             {messages.length === 0 && activeConversationId && (
               <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-                <RobotOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
+                <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
                 <Paragraph type="secondary" style={{ fontSize: 14 }}>在下方输入消息开始对话</Paragraph>
               </div>
             )}
@@ -811,7 +822,7 @@ const EmployeeWorkbench: React.FC = () => {
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
-                  background: msg.role === 'assistant' ? '#f0f5ff' : '#e6f4ff',
+                  background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
                 }}>
                   {msg.role === 'assistant'
                     ? <RobotOutlined style={{ color: '#1677ff', fontSize: 18 }} />
@@ -832,7 +843,7 @@ const EmployeeWorkbench: React.FC = () => {
                         style={{
                           padding: '6px 12px',
                           borderRadius: 8,
-                          background: '#faf5ff',
+                          background: token.colorBgTextHover,
                           border: '1px solid #d3adf7',
                           cursor: msg.isStreamingThought ? 'default' : 'pointer',
                         }}
@@ -847,7 +858,7 @@ const EmployeeWorkbench: React.FC = () => {
                           )}
                         </Space>
                         {!msg.thoughtCollapsed && (
-                          <Paragraph style={{ fontSize: 12, margin: '6px 0 0', color: '#555', whiteSpace: 'pre-wrap' }}>
+                          <Paragraph style={{ fontSize: 12, margin: '6px 0 0', color: token.colorTextSecondary, whiteSpace: 'pre-wrap' }}>
                             {msg.thought}
                           </Paragraph>
                         )}
@@ -872,8 +883,8 @@ const EmployeeWorkbench: React.FC = () => {
                             style={{
                               borderRadius: 8,
                               border: '1px solid #d9d9d9',
-                              borderLeft: `3px solid ${isRunning ? '#1677ff' : '#52c41a'}`,
-                              background: '#fafafa',
+                              borderLeft: `3px solid ${isRunning ? token.colorPrimary : token.colorSuccess}`,
+                              background: token.colorBgLayout,
                               overflow: 'hidden',
                             }}
                           >
@@ -888,9 +899,9 @@ const EmployeeWorkbench: React.FC = () => {
                                 userSelect: 'none',
                               }}
                             >
-                              {isExpanded ? <DownOutlined style={{ fontSize: 10, color: '#999' }} /> : <RightOutlined style={{ fontSize: 10, color: '#999' }} />}
-                              <CodeOutlined style={{ fontSize: 13, color: isRunning ? '#1677ff' : '#52c41a' }} />
-                              <Text strong style={{ fontSize: 13, color: '#333' }}>{getToolDisplayName(tc.name)}</Text>
+                              {isExpanded ? <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} /> : <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />}
+                              <CodeOutlined style={{ fontSize: 13, color: isRunning ? token.colorPrimary : token.colorSuccess }} />
+                              <Text strong style={{ fontSize: 13, color: token.colorText }}>{getToolDisplayName(tc.name)}</Text>
                               <Text type="secondary" style={{ fontSize: 11 }}>({tc.name})</Text>
                               {isRunning ? (
                                 <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
@@ -903,14 +914,14 @@ const EmployeeWorkbench: React.FC = () => {
                               )}
                             </div>
                             {isExpanded && (
-                              <div style={{ borderTop: '1px solid #f0f0f0', padding: '8px 12px' }}>
+                              <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}>
                                 {argsStr && (
                                   <div style={{ marginBottom: tc.result !== undefined ? 8 : 0 }}>
                                     <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>输入参数</Text>
                                     <pre style={{
                                       margin: 0,
                                       padding: '6px 10px',
-                                      background: '#fff',
+                                      background: token.colorBgContainer,
                                       borderRadius: 6,
                                       fontSize: 12,
                                       lineHeight: 1.5,
@@ -918,7 +929,7 @@ const EmployeeWorkbench: React.FC = () => {
                                       overflow: 'auto',
                                       whiteSpace: 'pre-wrap',
                                       wordBreak: 'break-all',
-                                      border: '1px solid #f0f0f0',
+                                      border: `1px solid ${token.colorBorderSecondary}`,
                                     }}>
                                       {argsStr}
                                     </pre>
@@ -956,7 +967,7 @@ const EmployeeWorkbench: React.FC = () => {
                   <div style={{
                     padding: '10px 16px',
                     borderRadius: 12,
-                    background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
+                    background: msg.role === 'user' ? token.colorPrimary : token.colorBgLayout,
                     color: msg.role === 'user' ? '#fff' : 'inherit',
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
@@ -964,13 +975,13 @@ const EmployeeWorkbench: React.FC = () => {
                     lineHeight: 1.7,
                   }}>
                     {msg.isStreaming && !msg.content ? (
-                      <Text style={{ color: '#999', fontSize: 14 }}>正在思考...</Text>
+                      <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>正在思考...</Text>
                     ) : (
                       <Text style={{ color: msg.role === 'user' ? '#fff' : 'inherit', fontSize: 14 }}>
                         {msg.content}
                       </Text>
                     )}
-                    {msg.isStreaming && <span className="cursor-blink" style={{ color: msg.role === 'user' ? '#fff' : '#999' }}>▊</span>}
+                    {msg.isStreaming && <span className="cursor-blink" style={{ color: msg.role === 'user' ? '#fff' : token.colorTextQuaternary }}>▊</span>}
                   </div>
 
                   {/* 操作按钮 */}
@@ -1012,14 +1023,14 @@ const EmployeeWorkbench: React.FC = () => {
               display: 'flex',
               gap: 8,
               alignItems: 'flex-end',
-              background: '#f7f7f7',
+              background: token.colorBgLayout,
               borderRadius: 16,
               padding: '6px 6px 6px 16px',
               border: '2px solid transparent',
               transition: 'border-color 0.3s',
             }}
               onFocusCapture={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = '#1677ff'
+                (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary
               }}
               onBlurCapture={(e) => {
                 (e.currentTarget as HTMLElement).style.borderColor = 'transparent'
@@ -1034,7 +1045,7 @@ const EmployeeWorkbench: React.FC = () => {
                     handleSend()
                   }
                 }}
-                placeholder={activeConversationId ? '输入消息，Enter发送，Shift+Enter换行...' : '创建新对话开始交流...'}
+                placeholder='输入消息，Enter发送，Shift+Enter换行...'
                 autoSize={{ minRows: 1, maxRows: 5 }}
                 disabled={isStreaming}
                 style={{
@@ -1068,7 +1079,7 @@ const EmployeeWorkbench: React.FC = () => {
       <style>{`
         .cursor-blink { animation: blink 1s infinite; }
         @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
-        .workbench-input::placeholder { color: #bfbfbf; }
+        .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
         .workbench-input:focus { outline: none; }
         .workbench-input {
           background: transparent !important;

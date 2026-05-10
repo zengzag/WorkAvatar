@@ -23,6 +23,7 @@ import {
   Alert,
   Badge,
   Tooltip,
+  theme,
 } from 'antd'
 import {
   SaveOutlined,
@@ -104,6 +105,7 @@ const TOOL_ICON_MAP: Record<string, React.ReactNode> = {
 const EmployeeSettings: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('basic')
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
@@ -643,12 +645,12 @@ const EmployeeSettings: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                             <Avatar
-                              style={{ backgroundColor: tool.is_enabled ? '#1677ff' : '#d9d9d9', flexShrink: 0 }}
+                              style={{ backgroundColor: tool.is_enabled ? token.colorPrimary : token.colorBgContainer, flexShrink: 0 }}
                               icon={TOOL_ICON_MAP[tool.name] || <ToolOutlined />}
                             />
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
@@ -715,7 +717,7 @@ const EmployeeSettings: React.FC = () => {
                             alignItems: 'flex-start',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
@@ -771,11 +773,11 @@ const EmployeeSettings: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                            <Avatar style={{ backgroundColor: '#1677ff', flexShrink: 0 }} icon={<BookOutlined />} />
+                            <Avatar style={{ backgroundColor: token.colorPrimary, flexShrink: 0 }} icon={<BookOutlined />} />
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                               <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
@@ -819,11 +821,11 @@ const EmployeeSettings: React.FC = () => {
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                            <Avatar style={{ backgroundColor: '#52c41a', flexShrink: 0 }} icon={<BookOutlined />} />
+                            <Avatar style={{ backgroundColor: token.colorSuccess, flexShrink: 0 }} icon={<BookOutlined />} />
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                               <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
@@ -884,7 +886,7 @@ const EmployeeSettings: React.FC = () => {
                             alignItems: 'flex-start',
                             justifyContent: 'space-between',
                             padding: '12px 0',
-                            borderBottom: '1px solid #f0f0f0',
+                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
@@ -892,10 +894,10 @@ const EmployeeSettings: React.FC = () => {
                               style={{
                                 backgroundColor:
                                   server.status === 'connected'
-                                    ? '#52c41a'
+                                    ? token.colorSuccess
                                     : server.status === 'error'
-                                    ? '#ff4d4f'
-                                    : '#d9d9d9',
+                                    ? token.colorError
+                                    : token.colorBgContainer,
                                 flexShrink: 0,
                               }}
                               icon={<ApiOutlined />}
@@ -986,7 +988,7 @@ const EmployeeSettings: React.FC = () => {
                           display: 'flex',
                           alignItems: 'center',
                           padding: '12px 0',
-                          borderBottom: '1px solid #f0f0f0',
+                          borderBottom: `1px solid ${token.colorBorderSecondary}`,
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -995,7 +997,7 @@ const EmployeeSettings: React.FC = () => {
                               width: 40,
                               height: 40,
                               borderRadius: 8,
-                              background: '#e6f4ff',
+                              background: token.colorPrimaryBg,
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',

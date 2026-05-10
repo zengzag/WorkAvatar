@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import type { LLMProvider, LLMModelConfig, LLMProviderType } from '../types'
+import { useAppearanceStore, type ThemeMode, type FontSizeLevel } from '../stores/appearance.store'
 
 const { Text, Title } = Typography
 
@@ -93,6 +94,11 @@ const Settings: React.FC = () => {
   const [modelModalVisible, setModelModalVisible] = useState(false)
   const [editingModel, setEditingModel] = useState<LLMModelConfig | null>(null)
   const [modelForm] = Form.useForm()
+
+  const themeMode = useAppearanceStore((s) => s.themeMode)
+  const fontSizeLevel = useAppearanceStore((s) => s.fontSizeLevel)
+  const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
+  const setFontSizeLevel = useAppearanceStore((s) => s.setFontSizeLevel)
 
   useEffect(() => {
     loadProviders()
@@ -450,7 +456,12 @@ const Settings: React.FC = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text strong>主题模式</Text>
-          <Radio.Group defaultValue="light" optionType="button" buttonStyle="solid">
+          <Radio.Group
+            value={themeMode}
+            optionType="button"
+            buttonStyle="solid"
+            onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
+          >
             <Radio.Button value="light">亮色</Radio.Button>
             <Radio.Button value="dark">暗色</Radio.Button>
             <Radio.Button value="system">跟随系统</Radio.Button>
@@ -459,7 +470,12 @@ const Settings: React.FC = () => {
         <Divider />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text strong>字体大小</Text>
-          <Radio.Group defaultValue="medium" optionType="button" buttonStyle="solid">
+          <Radio.Group
+            value={fontSizeLevel}
+            optionType="button"
+            buttonStyle="solid"
+            onChange={(e) => setFontSizeLevel(e.target.value as FontSizeLevel)}
+          >
             <Radio.Button value="small">小</Radio.Button>
             <Radio.Button value="medium">中</Radio.Button>
             <Radio.Button value="large">大</Radio.Button>

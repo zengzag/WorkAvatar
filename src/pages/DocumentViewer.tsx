@@ -14,6 +14,7 @@ import {
   Descriptions,
   Divider,
   Alert,
+  theme,
 } from 'antd'
 import {
   FileTextOutlined,
@@ -31,6 +32,7 @@ const DocumentViewer: React.FC = () => {
   const { id, fileId } = useParams<{ id: string; fileId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { token } = theme.useToken()
   const [file, setFile] = useState<File | null>(null)
   const [projectName, setProjectName] = useState('')
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
@@ -194,7 +196,7 @@ const DocumentViewer: React.FC = () => {
                 lineHeight: 1.8,
                 fontSize: 14,
                 padding: 16,
-                background: '#fafafa',
+                background: token.colorBgLayout,
                 borderRadius: 8,
                 maxHeight: '60vh',
                 overflow: 'auto',

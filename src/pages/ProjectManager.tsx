@@ -9,6 +9,7 @@ import {
   Typography,
   Modal,
   Input,
+  theme,
 } from 'antd'
 import {
   FolderOpenOutlined,
@@ -28,6 +29,7 @@ const { Text } = Typography
 
 const ProjectManager: React.FC = () => {
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [loadingTable, setLoadingTable] = useState(false)
   const [renameModalOpen, setRenameModalOpen] = useState(false)
@@ -119,13 +121,13 @@ const ProjectManager: React.FC = () => {
                 width: 40,
                 height: 40,
                 borderRadius: 8,
-                background: '#e6f4ff',
+                background: token.colorPrimaryBg,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <FolderOpenOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+              <FolderOpenOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
             </div>
             <div>
               <Text strong>{record.name}</Text>

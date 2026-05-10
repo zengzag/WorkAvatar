@@ -1,5 +1,5 @@
 import React from 'react'
-import { Table, Button, Space, Tag, Typography, Popconfirm, message } from 'antd'
+import { Table, Button, Space, Tag, Typography, Popconfirm, message, theme } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   FileTextOutlined,
@@ -32,6 +32,7 @@ const FileList: React.FC<FileListProps> = ({
 }) => {
   const navigate = useNavigate()
   const { id: projectId } = useParams<{ id: string }>()
+  const { token } = theme.useToken()
   const getStatusConfig = (status: File['status']) => {
     switch (status) {
       case 'pending':
@@ -68,10 +69,10 @@ const FileList: React.FC<FileListProps> = ({
       ellipsis: true,
       render: (text, record) => (
         <Space>
-          <FileTextOutlined style={{ color: '#1677ff' }} />
+          <FileTextOutlined style={{ color: token.colorPrimary }} />
           <Typography.Text
             ellipsis
-            style={{ maxWidth: 300, cursor: 'pointer', color: '#1677ff' }}
+            style={{ maxWidth: 300, cursor: 'pointer', color: token.colorPrimary }}
             onClick={() => {
               if (record.status === 'completed') {
                 navigate(`/project/${projectId}/file/${record.id}`)

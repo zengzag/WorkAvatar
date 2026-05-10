@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Button, Space, Typography, Progress, Tag, Popover } from 'antd'
+import { Button, Space, Typography, Progress, Tag, Popover, theme } from 'antd'
 import {
   ClockCircleOutlined,
   SyncOutlined,
@@ -23,6 +23,7 @@ export interface BackgroundTask {
 
 const TaskProgressPanel: React.FC = () => {
   const [tasks, setTasks] = useState<BackgroundTask[]>([])
+  const { token } = theme.useToken()
 
   useEffect(() => {
     const load = async () => {
@@ -50,11 +51,11 @@ const TaskProgressPanel: React.FC = () => {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'pending': return <ClockCircleOutlined style={{ color: '#faad14' }} />
-      case 'running': return <LoadingOutlined style={{ color: '#1677ff' }} />
-      case 'completed': return <CheckCircleOutlined style={{ color: '#52c41a' }} />
-      case 'failed': return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
-      case 'cancelled': return <CloseCircleOutlined style={{ color: '#999' }} />
+      case 'pending': return <ClockCircleOutlined style={{ color: token.colorWarning }} />
+      case 'running': return <LoadingOutlined style={{ color: token.colorPrimary }} />
+      case 'completed': return <CheckCircleOutlined style={{ color: token.colorSuccess }} />
+      case 'failed': return <CloseCircleOutlined style={{ color: token.colorError }} />
+      case 'cancelled': return <CloseCircleOutlined style={{ color: token.colorTextQuaternary }} />
       default: return null
     }
   }
@@ -86,7 +87,7 @@ const TaskProgressPanel: React.FC = () => {
   const taskListContent = (
     <div style={{ maxWidth: 360, maxHeight: 400, overflow: 'auto' }}>
       {tasks.map(task => (
-        <div key={task.id} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+        <div key={task.id} style={{ padding: '8px 0', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <Space size={4}>
               {getStatusIcon(task.status)}

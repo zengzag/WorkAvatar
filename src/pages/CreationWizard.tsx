@@ -20,6 +20,7 @@ import {
   Badge,
   Progress,
   Timeline,
+  theme,
 } from 'antd'
 import {
   DatabaseOutlined,
@@ -50,6 +51,7 @@ interface EmployeeProfile {
 const CreationWizard: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { token } = theme.useToken()
   const [currentStep, setCurrentStep] = useState(0)
   const [project, setProject] = useState<any>(null)
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
@@ -332,8 +334,8 @@ const CreationWizard: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   padding: '12px 16px',
-                  background: isSelected ? '#f9f0ff' : 'transparent',
-                  borderBottom: '1px solid #f0f0f0',
+                  background: isSelected ? token.colorPrimaryBg : 'transparent',
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 }}
               >
                 <Checkbox
@@ -493,7 +495,7 @@ const CreationWizard: React.FC = () => {
         </>
       ) : (
         <div style={{ textAlign: 'center', padding: 60 }}>
-          <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff' }} />
+          <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: token.colorPrimary }} />
           <Paragraph>点击下方按钮开始分析知识库</Paragraph>
           <Button type="primary" size="large" onClick={analyzeKBs} icon={<RobotOutlined />}>
             开始智能分析

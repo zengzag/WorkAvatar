@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip } from 'antd'
+import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme } from 'antd'
 import {
   RocketOutlined,
   FolderOpenOutlined,
@@ -37,6 +37,7 @@ const statusTextMap: Record<string, string> = {
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { token } = theme.useToken()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [kbList, setKBList] = useState<any[]>([])
@@ -134,7 +135,7 @@ const Dashboard: React.FC = () => {
     <div style={{ padding: 24 }}>
       <Card style={{ marginBottom: 24 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <RocketOutlined style={{ fontSize: 48, color: '#1677ff', marginBottom: 16 }} />
+          <RocketOutlined style={{ fontSize: 48, color: token.colorPrimary, marginBottom: 16 }} />
           <Typography.Title level={3} style={{ marginBottom: 8 }}>
             欢迎使用 WorkAvatar
           </Typography.Title>
@@ -158,8 +159,8 @@ const Dashboard: React.FC = () => {
               <Statistic
                 title="项目总数"
                 value={projects.length}
-                prefix={<FolderOpenOutlined style={{ color: '#1677ff' }} />}
-                styles={{ content: { color: '#1677ff' } }}
+                prefix={<FolderOpenOutlined style={{ color: token.colorPrimary }} />}
+                styles={{ content: { color: token.colorPrimary } }}
               />
             </Card>
           </Col>
@@ -168,8 +169,8 @@ const Dashboard: React.FC = () => {
               <Statistic
                 title="数字员工"
                 value={totalEmployees}
-                prefix={<UserOutlined style={{ color: '#52c41a' }} />}
-                styles={{ content: { color: '#52c41a' } }}
+                prefix={<UserOutlined style={{ color: token.colorSuccess }} />}
+                styles={{ content: { color: token.colorSuccess } }}
               />
             </Card>
           </Col>
@@ -178,8 +179,8 @@ const Dashboard: React.FC = () => {
               <Statistic
                 title="知识库数量"
                 value={totalKBs}
-                prefix={<DatabaseOutlined style={{ color: '#faad14' }} />}
-                styles={{ content: { color: '#faad14' } }}
+                prefix={<DatabaseOutlined style={{ color: token.colorWarning }} />}
+                styles={{ content: { color: token.colorWarning } }}
               />
             </Card>
           </Col>
@@ -222,7 +223,7 @@ const Dashboard: React.FC = () => {
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       padding: '12px 0',
-                      borderBottom: '1px solid #f0f0f0',
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`,
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
@@ -231,13 +232,13 @@ const Dashboard: React.FC = () => {
                           width: 40,
                           height: 40,
                           borderRadius: 8,
-                          background: '#e6f4ff',
+                          background: token.colorPrimaryBg,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}
                       >
-                        <FolderOpenOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+                        <FolderOpenOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                         <div style={{ marginBottom: 2, overflow: 'hidden' }}>
@@ -301,7 +302,7 @@ const Dashboard: React.FC = () => {
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       padding: '8px 0',
-                      borderBottom: '1px solid #f0f0f0',
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`,
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 0, marginRight: 8, overflow: 'hidden' }}>
