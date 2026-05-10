@@ -76,38 +76,66 @@ const EmployeeManager: React.FC = () => {
       title: '员工名称',
       dataIndex: 'name',
       key: 'name',
+      width: 450,
       render: (_: string, record: Employee) => (
-        <Space>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: '#f6ffed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {record.avatar_type === 'default' ? (
-              <RobotOutlined style={{ fontSize: 20, color: '#1677ff' }} />
-            ) : (
-              <UserOutlined style={{ fontSize: 20, color: '#52c41a' }} />
-            )}
-          </div>
-          <div>
-            <Space>
-              <Text strong>{record.name}</Text>
-              <Tag color={statusColorMap[record.status]} style={{ fontSize: 11 }}>
-                {statusTextMap[record.status]}
-              </Tag>
-            </Space>
-            <div>
-              <Text type="secondary" style={{ fontSize: 13 }}>
-                {record.description || '暂无描述'}
-              </Text>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: '#f6ffed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              {record.avatar_type === 'default' ? (
+                <RobotOutlined style={{ fontSize: 20, color: '#1677ff' }} />
+              ) : (
+                <UserOutlined style={{ fontSize: 20, color: '#52c41a' }} />
+              )}
             </div>
-          </div>
+            <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
+                <Text strong ellipsis style={{ display: 'inline-block', maxWidth: 160 }}>{record.name}</Text>
+                <Tag color={statusColorMap[record.status]} style={{ fontSize: 11, flexShrink: 0 }}>
+                  {statusTextMap[record.status]}
+                </Tag>
+              </div>
+            </div>
+          </Space>
+          <Space>
+            <Button
+              type="link"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => navigate(`/employee/${record.id}`)}
+            >
+              工作台
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<SettingOutlined />}
+              onClick={() => navigate(`/employee/${record.id}/settings`)}
+            >
+              设置
+            </Button>
+            <Popconfirm
+              title="确定删除该数字员工?"
+              description="删除后相关的对话记录也将被删除，此操作不可撤销。"
+              onConfirm={() => handleDeleteEmployee(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
         </Space>
       ),
     },
@@ -115,12 +143,8 @@ const EmployeeManager: React.FC = () => {
       title: '项目',
       dataIndex: 'project_id',
       key: 'project_id',
-      width: 200,
-      render: (value: string) => (
-        <Text type="secondary" style={{ fontSize: 13 }}>
-          {value || '-'}
-        </Text>
-      ),
+      width: 180,
+      ellipsis: true,
     },
     {
       title: '任务/赞',
@@ -141,42 +165,6 @@ const EmployeeManager: React.FC = () => {
       render: (value: number) =>
         value ? dayjs(value * 1000).format('YYYY-MM-DD HH:mm') : '-',
     },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 240,
-      render: (_: any, record: Employee) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => navigate(`/employee/${record.id}`)}
-          >
-            工作台
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<SettingOutlined />}
-            onClick={() => navigate(`/employee/${record.id}/settings`)}
-          >
-            设置
-          </Button>
-          <Popconfirm
-            title="确定删除该数字员工?"
-            description="删除后相关的对话记录也将被删除，此操作不可撤销。"
-            onConfirm={() => handleDeleteEmployee(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
   ]
 
   return (
@@ -194,6 +182,7 @@ const EmployeeManager: React.FC = () => {
             rowKey="id"
             loading={loadingTable}
             pagination={{ pageSize: 10 }}
+            scroll={{ x: 'max-content' }}
           />
         ) : (
           <EmptyState

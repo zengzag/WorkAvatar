@@ -47,7 +47,7 @@ export interface AgentRunStreamCallbacks {
   onChunk?: (chunk: string) => void
   onThought?: (thought: string) => void
   onToolCall?: (toolCall: { name: string; args: any }) => void
-  onToolResult?: (toolResult: { name: string; result: any }) => void
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any }) => void
   onDone?: () => void
   onError?: (error: string) => void
 }

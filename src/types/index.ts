@@ -104,19 +104,26 @@ export interface ParseResult {
   metadata: Record<string, any>
 }
 
+export type LLMProviderType = 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
+
 export interface LLMModelConfig {
   id: string
   name: string
   model: string
   temperature: number
   max_tokens: number
+  top_p?: number
+  frequency_penalty?: number
+  presence_penalty?: number
+  enable_thinking?: boolean
+  thinking_budget?: number
   is_default: boolean
 }
 
 export interface LLMProvider {
   id: string
   name: string
-  provider_type: 'openai' | 'openai-compatible' | 'azure' | 'vertex' | 'bedrock' | 'groq' | 'mistral' | 'xai'
+  provider_type: LLMProviderType
   base_url?: string
   model: string
   embedding_model: string
@@ -124,6 +131,7 @@ export interface LLMProvider {
   max_tokens: number
   timeout_ms: number
   extra_headers_json?: string
+  extra_body_json?: string
   is_default: boolean
   models_json?: string
   created_at: number

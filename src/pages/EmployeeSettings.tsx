@@ -20,10 +20,9 @@ import {
   Col,
   Statistic,
   Modal,
-  Flex,
   Alert,
   Badge,
-  List,
+  Tooltip,
 } from 'antd'
 import {
   SaveOutlined,
@@ -50,20 +49,22 @@ import {
   BookOutlined,
   FileZipOutlined,
   FolderOpenOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
-import type { Employee, File as FileType, LLMProvider } from '../types'
+import type { Employee, LLMProvider } from '../types'
 
 const { TextArea } = Input
 const { Text } = Typography
 
 interface ToolInfo {
   id: string
-  tool_id?: string
   name: string
+  title: string
   description: string
-  source: string
-  parameters?: Record<string, any>
+  category: string
+  is_enabled: boolean
+  is_assigned: boolean
 }
 
 interface MCPServer {
@@ -100,23 +101,17 @@ const TOOL_ICON_MAP: Record<string, React.ReactNode> = {
   string_utils: <EditOutlined />,
 }
 
-const TOOL_SOURCE_COLOR: Record<string, string> = {
-  builtin: 'blue',
-  mcp: 'purple',
-}
-
 const EmployeeSettings: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('basic')
   const [employee, setEmployee] = useState<Employee | null>(null)
-  const [files, setFiles] = useState<FileType[]>([])
+  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
 
   const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
-  const [availableTools, setAvailableTools] = useState<ToolInfo[]>([])
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
   const [isMcpModalOpen, setIsMcpModalOpen] = useState(false)
   const [mcpForm] = Form.useForm()
@@ -152,7 +147,7 @@ const EmployeeSettings: React.FC = () => {
         llm_model: employee.llm_model,
       })
       setFormLlmProviderId(employee.llm_provider_id || '')
-      loadProjectFiles(employee.project_id)
+      loadLinkedKBs(employee.project_id)
     }
   }, [employee])
 
@@ -185,18 +180,17 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const loadProjectFiles = async (projectId: string) => {
+  const loadLinkedKBs = async (projectId: string) => {
     try {
-      const result = await window.electronAPI.file.list({ project_id: projectId })
-      setFiles(result.files)
+      const result = await window.electronAPI.kb.getKBsForProject(projectId)
+      setLinkedKBs(result)
     } catch {}
   }
 
   const loadTools = async () => {
     try {
       const result = await window.electronAPI.tool.getEmployeeTools({ employee_id: id! })
-      setEmployeeTools(result.assigned || [])
-      setAvailableTools(result.available || [])
+      setEmployeeTools(result || [])
     } catch {
       console.error('加载工具失败')
     }
@@ -369,30 +363,17 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleAssignTool = async (toolId: string) => {
+  const handleToggleTool = async (toolId: string, enabled: boolean) => {
     try {
       await window.electronAPI.tool.assignToEmployee({
         employee_id: id!,
         tool_id: toolId,
-        is_enabled: true,
+        is_enabled: enabled,
       })
-      message.success('工具已分配')
-      loadTools()
+      setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, is_enabled: enabled, is_assigned: true } : t))
+      message.success(enabled ? '工具已启用' : '工具已禁用')
     } catch {
-      message.error('分配失败')
-    }
-  }
-
-  const handleRemoveTool = async (toolId: string) => {
-    try {
-      await window.electronAPI.tool.removeFromEmployee({
-        employee_id: id!,
-        tool_id: toolId,
-      })
-      message.success('工具已移除')
-      loadTools()
-    } catch {
-      message.error('移除失败')
+      message.error('操作失败')
     }
   }
 
@@ -520,559 +501,574 @@ const EmployeeSettings: React.FC = () => {
         }
       />
 
-      <Tabs activeKey={activeTab} onChange={setActiveTab} style={{ marginTop: 16 }}>
-        <Tabs.TabPane tab="基本信息" key="basic">
-          <Card>
-            <Form form={form} layout="vertical" onFinish={handleSaveBasic}>
-              <Row gutter={24}>
-                <Col span={16}>
-                  <Form.Item
-                    name="name"
-                    label="数字员工名称"
-                    rules={[{ required: true, message: '请输入名称' }]}
-                  >
-                    <Input placeholder="输入数字员工名称" />
+      <Tabs 
+        activeKey={activeTab} 
+        onChange={setActiveTab} 
+        style={{ marginTop: 16 }}
+        items={[
+          {
+            key: 'basic',
+            label: '基本信息',
+            children: (
+              <Card>
+                <Form form={form} layout="vertical" onFinish={handleSaveBasic}>
+                  <Row gutter={24}>
+                    <Col span={16}>
+                      <Form.Item
+                        name="name"
+                        label="数字员工名称"
+                        rules={[{ required: true, message: '请输入名称' }]}
+                      >
+                        <Input placeholder="输入数字员工名称" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="avatar_type" label="头像样式">
+                        <Select>
+                          {AVATAR_OPTIONS.map((opt) => (
+                            <Select.Option key={opt.value} value={opt.value}>
+                              <Space>
+                                <Avatar size="small" style={{ backgroundColor: opt.color }}>
+                                  {opt.icon}
+                                </Avatar>
+                                {opt.value === 'default' && '默认'}
+                                {opt.value === 'business' && '商务'}
+                                {opt.value === 'document' && '文档'}
+                                {opt.value === 'settings' && '设置'}
+                              </Space>
+                            </Select.Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Form.Item name="description" label="描述">
+                    <TextArea rows={3} placeholder="描述这个数字员工的职责和能力..." />
                   </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="avatar_type" label="头像样式">
-                    <Select>
-                      {AVATAR_OPTIONS.map((opt) => (
-                        <Select.Option key={opt.value} value={opt.value}>
-                          <Space>
-                            <Avatar size="small" style={{ backgroundColor: opt.color }}>
-                              {opt.icon}
-                            </Avatar>
-                            {opt.value === 'default' && '默认'}
-                            {opt.value === 'business' && '商务'}
-                            {opt.value === 'document' && '文档'}
-                            {opt.value === 'settings' && '设置'}
-                          </Space>
-                        </Select.Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
 
-              <Form.Item name="description" label="描述">
-                <TextArea rows={3} placeholder="描述这个数字员工的职责和能力..." />
-              </Form.Item>
-
-              <Row gutter={24}>
-                <Col span={12}>
-                  <Form.Item name="llm_provider_id" label="LLM 提供商">
-                    <Select 
-                      placeholder="选择 LLM 提供商" 
-                      allowClear
-                      onChange={(value) => {
-                        setFormLlmProviderId(value || '')
-                        form.setFieldValue('llm_model', undefined)
-                      }}
-                    >
-                      {providers.map((p) => (
-                        <Select.Option key={p.id} value={p.id}>
-                          {p.name} ({p.model})
-                        </Select.Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="llm_model" label="模型名称">
-                    {formLlmProviderId && getProviderModels(formLlmProviderId).length > 0 ? (
-                      <Select 
-                        placeholder="选择模型" 
-                        allowClear
-                        options={getProviderModels(formLlmProviderId)}
-                      />
-                    ) : (
-                      <Input placeholder="如 gpt-4o, claude-3-sonnet 等" />
-                    )}
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item name="review_mode" valuePropName="checked" label={null}>
-                <Switch checkedChildren="开启" unCheckedChildren="关闭" />
-              </Form.Item>
-              <Text type="secondary">启用人工复核模式后，数字员工的输出需要用户确认后才能生效</Text>
-
-              <Divider />
-
-              <Form.Item>
-                <Space>
-                  <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
-                    保存基本信息
-                  </Button>
-                  <Popconfirm
-                    title="确定删除此数字员工？"
-                    description="删除后无法恢复，相关对话记录也将被清除。"
-                    onConfirm={handleDeleteEmployee}
-                    okText="删除"
-                    cancelText="取消"
-                    okButtonProps={{ danger: true }}
-                  >
-                    <Button danger icon={<DeleteOutlined />}>
-                      删除数字员工
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              </Form.Item>
-            </Form>
-          </Card>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="工具配置" key="tools">
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
-            <Alert
-              message="工具让数字员工具备调用外部功能的能力"
-              description="分配工具后，数字员工在对话时可以根据需要自动调用这些工具。例如：计算器、文件搜索、日期时间等。"
-              type="info"
-              showIcon
-            />
-
-            <Card
-              title={
-                <Space>
-                  <ToolOutlined />
-                  <span>已分配工具 ({employeeTools.length})</span>
-                </Space>
-              }
-            >
-              {employeeTools.length === 0 ? (
-                <Empty description="暂无分配的工具，请从下方可用工具中添加" />
-              ) : (
-                <List
-                  dataSource={employeeTools}
-                  renderItem={(tool) => (
-                    <List.Item
-                      actions={[
-                        <Popconfirm
-                          title="移除工具？"
-                          description="移除后该员工将无法使用此工具"
-                          onConfirm={() => handleRemoveTool(tool.tool_id || tool.id)}
+                  <Row gutter={24}>
+                    <Col span={12}>
+                      <Form.Item name="llm_provider_id" label="LLM 提供商">
+                        <Select 
+                          placeholder="选择 LLM 提供商" 
+                          allowClear
+                          onChange={(value) => {
+                            setFormLlmProviderId(value || '')
+                            form.setFieldValue('llm_model', undefined)
+                          }}
                         >
-                          <Button type="text" danger icon={<DeleteOutlined />}>
-                            移除
-                          </Button>
-                        </Popconfirm>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar
-                            style={{ backgroundColor: '#1677ff' }}
-                            icon={TOOL_ICON_MAP[tool.name] || <ToolOutlined />}
+                          {providers.map((p) => (
+                            <Select.Option key={p.id} value={p.id}>
+                              {p.name} ({p.model})
+                            </Select.Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="llm_model" label="模型名称">
+                        {formLlmProviderId && getProviderModels(formLlmProviderId).length > 0 ? (
+                          <Select 
+                            placeholder="选择模型" 
+                            allowClear
+                            options={getProviderModels(formLlmProviderId)}
                           />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{tool.name}</Text>
-                            <Tag color={TOOL_SOURCE_COLOR[tool.source] || 'default'}>
-                              {tool.source === 'builtin' ? '内置' : tool.source === 'mcp' ? 'MCP' : 'Skill'}
-                            </Tag>
-                          </Space>
-                        }
-                        description={tool.description || '无描述'}
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-
-            <Card
-              title={
-                <Space>
-                  <ThunderboltOutlined />
-                  <span>可用工具 ({availableTools.length})</span>
-                </Space>
-              }
-            >
-              {availableTools.length === 0 ? (
-                <Empty description="暂无可用的工具" />
-              ) : (
-                <List
-                  dataSource={availableTools}
-                  renderItem={(tool) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          type="primary"
-                          icon={<PlusOutlined />}
-                          onClick={() => handleAssignTool(tool.id)}
-                        >
-                          分配
-                        </Button>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar
-                            style={{ backgroundColor: '#52c41a' }}
-                            icon={TOOL_ICON_MAP[tool.name] || <ToolOutlined />}
-                          />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{tool.name}</Text>
-                            <Tag color={TOOL_SOURCE_COLOR[tool.source] || 'default'}>
-                              {tool.source === 'builtin' ? '内置' : tool.source === 'mcp' ? 'MCP' : 'Skill'}
-                            </Tag>
-                          </Space>
-                        }
-                        description={tool.description || '无描述'}
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-          </Space>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="Skills 市场" key="skills-market">
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
-            <Alert
-              message="Skills 是符合 Claude 协议的模块化能力包"
-              description="安装 Skill 后，可以直接分配给数字员工使用。Skill 包含完整的指令、参考资料和脚本，无需手动配置提示词。"
-              type="info"
-              showIcon
-            />
-
-            <Card
-              title={
-                <Space>
-                  <BookOutlined />
-                  <span>已安装 Skills ({installedSkills.length})</span>
-                </Space>
-              }
-              extra={
-                <Space>
-                  <Button icon={<FolderOpenOutlined />} onClick={handleInstallSkillFromDir} loading={installingSkill}>
-                    从目录安装
-                  </Button>
-                  <Button icon={<FileZipOutlined />} onClick={handleInstallSkillFromZip} loading={installingSkill}>
-                    从 ZIP 安装
-                  </Button>
-                </Space>
-              }
-            >
-              {installedSkills.length === 0 ? (
-                <Empty description="暂无已安装的 Skills，点击上方按钮安装" />
-              ) : (
-                <List
-                  dataSource={installedSkills}
-                  renderItem={(skill) => (
-                    <List.Item
-                      actions={[
-                        <Popconfirm
-                          title="卸载 Skill？"
-                          description="卸载后所有分配了此 Skill 的员工将无法使用"
-                          onConfirm={() => handleUninstallSkill(skill.id)}
-                        >
-                          <Button type="text" danger icon={<DeleteOutlined />}>
-                            卸载
-                          </Button>
-                        </Popconfirm>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar style={{ backgroundColor: '#722ed1' }} icon={<BookOutlined />} />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{skill.name}</Text>
-                            <Tag color="blue">v{skill.version}</Tag>
-                            <Tag color="default">{skill.author}</Tag>
-                          </Space>
-                        }
-                        description={
-                          <Space direction="vertical" size={0}>
-                            <Text type="secondary">{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
-                            <Space size={4} style={{ marginTop: 4 }}>
-                              {skill.tags.map((tag) => (
-                                <Tag key={tag}>{tag}</Tag>
-                              ))}
-                            </Space>
-                          </Space>
-                        }
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-
-            <Card
-              title={
-                <Space>
-                  <ImportOutlined />
-                  <span>已分配 Skills ({employeeSkills.length})</span>
-                </Space>
-              }
-            >
-              {employeeSkills.length === 0 ? (
-                <Empty description="暂无分配的 Skills，请从下方可用 Skills 中添加" />
-              ) : (
-                <List
-                  dataSource={employeeSkills}
-                  renderItem={(skill) => (
-                    <List.Item
-                      actions={[
-                        <Popconfirm
-                          title="移除 Skill？"
-                          description="移除后该员工将无法使用此 Skill"
-                          onConfirm={() => handleRemoveSkill(skill.id)}
-                        >
-                          <Button type="text" danger icon={<DeleteOutlined />}>
-                            移除
-                          </Button>
-                        </Popconfirm>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar style={{ backgroundColor: '#1677ff' }} icon={<BookOutlined />} />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{skill.name}</Text>
-                            <Tag color="blue">v{skill.version}</Tag>
-                          </Space>
-                        }
-                        description={skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-
-            <Card
-              title={
-                <Space>
-                  <ThunderboltOutlined />
-                  <span>可用 Skills ({availableSkills.length})</span>
-                </Space>
-              }
-            >
-              {availableSkills.length === 0 ? (
-                <Empty description="暂无可用的 Skills，请先安装" />
-              ) : (
-                <List
-                  dataSource={availableSkills}
-                  renderItem={(skill) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          type="primary"
-                          icon={<PlusOutlined />}
-                          onClick={() => handleAssignSkill(skill.id)}
-                        >
-                          分配
-                        </Button>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar style={{ backgroundColor: '#52c41a' }} icon={<BookOutlined />} />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{skill.name}</Text>
-                            <Tag color="blue">v{skill.version}</Tag>
-                          </Space>
-                        }
-                        description={skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-          </Space>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="MCP 服务" key="mcp">
-          <Space direction="vertical" style={{ width: '100%' }} size={16}>
-            <Alert
-              message="MCP (Model Context Protocol) 让数字员工连接外部服务"
-              description="配置 MCP Server 后，数字员工可以调用外部工具和服务。例如：数据库查询、文件系统操作、API 调用等。"
-              type="info"
-              showIcon
-            />
-
-            <Card
-              title={
-                <Space>
-                  <ApiOutlined />
-                  <span>MCP 服务器列表 ({mcpServers.length})</span>
-                </Space>
-              }
-              extra={
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => openMcpEditor()}>
-                  添加服务器
-                </Button>
-              }
-            >
-              {mcpServers.length === 0 ? (
-                <Empty description="暂无 MCP 服务器，点击添加按钮创建" />
-              ) : (
-                <List
-                  dataSource={mcpServers}
-                  renderItem={(server) => (
-                    <List.Item
-                      actions={[
-                        server.status === 'connected' ? (
-                          <Button
-                            type="text"
-                            icon={<DisconnectOutlined />}
-                            onClick={() => handleDisconnectMCPServer(server.id)}
-                          >
-                            断开
-                          </Button>
                         ) : (
+                          <Input placeholder="如 gpt-4o, claude-3-sonnet 等" />
+                        )}
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Form.Item name="review_mode" valuePropName="checked" label={null}>
+                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                  </Form.Item>
+                  <Text type="secondary">启用人工复核模式后，数字员工的输出需要用户确认后才能生效</Text>
+
+                  <Divider />
+
+                  <Form.Item>
+                    <Space>
+                      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
+                        保存基本信息
+                      </Button>
+                      <Popconfirm
+                        title="确定删除此数字员工？"
+                        description="删除后无法恢复，相关对话记录也将被清除。"
+                        onConfirm={handleDeleteEmployee}
+                        okText="删除"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true }}
+                      >
+                        <Button danger icon={<DeleteOutlined />}>
+                          删除数字员工
+                        </Button>
+                      </Popconfirm>
+                    </Space>
+                  </Form.Item>
+                </Form>
+              </Card>
+            )
+          },
+          {
+            key: 'tools',
+            label: '系统工具',
+            children: (
+              <Space orientation="vertical" style={{ width: '100%' }} size={16}>
+                <Alert
+                  title="系统工具让数字员工具备调用外部功能的能力"
+                  description="开启工具后，数字员工在对话时可以根据需要自动调用这些工具。关闭则该员工无法使用对应工具。"
+                  type="info"
+                  showIcon
+                />
+
+                <Card
+                  title={
+                    <Space>
+                      <ToolOutlined />
+                      <span>内置工具 ({employeeTools.length})</span>
+                    </Space>
+                  }
+                >
+                  {employeeTools.length === 0 ? (
+                    <Empty description="暂无内置工具" />
+                  ) : (
+                    <div>
+                      {employeeTools.map((tool) => (
+                        <div
+                          key={tool.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <Avatar
+                              style={{ backgroundColor: tool.is_enabled ? '#1677ff' : '#d9d9d9', flexShrink: 0 }}
+                              icon={TOOL_ICON_MAP[tool.name] || <ToolOutlined />}
+                            />
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Text strong ellipsis style={{ display: 'inline-block' }}>{tool.title || tool.name}</Text>
+                                <Tag color="blue" style={{ flexShrink: 0 }}>内置</Tag>
+                              </div>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{tool.description || '无描述'}</Text>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={tool.is_enabled}
+                            onChange={(checked) => handleToggleTool(tool.id, checked)}
+                            checkedChildren="启用"
+                            unCheckedChildren="关闭"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </Space>
+            )
+          },
+          {
+            key: 'skills-market',
+            label: 'Skills 市场',
+            children: (
+              <Space orientation="vertical" style={{ width: '100%' }} size={16}>
+                <Alert
+                  title="Skills 是符合 Claude 协议的模块化能力包"
+                  description="安装 Skill 后，可以直接分配给数字员工使用。Skill 包含完整的指令、参考资料和脚本，无需手动配置提示词。"
+                  type="info"
+                  showIcon
+                />
+
+                <Card
+                  title={
+                    <Space>
+                      <BookOutlined />
+                      <span>已安装 Skills ({installedSkills.length})</span>
+                    </Space>
+                  }
+                  extra={
+                    <Space>
+                      <Button icon={<FolderOpenOutlined />} onClick={handleInstallSkillFromDir} loading={installingSkill}>
+                        从目录安装
+                      </Button>
+                      <Button icon={<FileZipOutlined />} onClick={handleInstallSkillFromZip} loading={installingSkill}>
+                        从 ZIP 安装
+                      </Button>
+                    </Space>
+                  }
+                >
+                  {installedSkills.length === 0 ? (
+                    <Empty description="暂无已安装的 Skills，点击上方按钮安装" />
+                  ) : (
+                    <div>
+                      {installedSkills.map((skill) => (
+                        <div
+                          key={skill.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
+                            <Avatar style={{ backgroundColor: '#722ed1', flexShrink: 0 }} icon={<BookOutlined />} />
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
+                                <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
+                                <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
+                              </div>
+                              <Space orientation="vertical" size={0} style={{ width: '100%' }}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                                <Space size={4} style={{ marginTop: 4 }} wrap>
+                                  {skill.tags.map((tag) => (
+                                    <Tag key={tag}>{tag}</Tag>
+                                  ))}
+                                </Space>
+                              </Space>
+                            </div>
+                          </div>
+                          <Popconfirm
+                            title="卸载 Skill？"
+                            description="卸载后所有分配了此 Skill 的员工将无法使用"
+                            onConfirm={() => handleUninstallSkill(skill.id)}
+                          >
+                            <Button type="text" danger icon={<DeleteOutlined />}>
+                              卸载
+                            </Button>
+                          </Popconfirm>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card
+                  title={
+                    <Space>
+                      <ImportOutlined />
+                      <span>已分配 Skills ({employeeSkills.length})</span>
+                    </Space>
+                  }
+                >
+                  {employeeSkills.length === 0 ? (
+                    <Empty description="暂无分配的 Skills，请从下方可用 Skills 中添加" />
+                  ) : (
+                    <div>
+                      {employeeSkills.map((skill) => (
+                        <div
+                          key={skill.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <Avatar style={{ backgroundColor: '#1677ff', flexShrink: 0 }} icon={<BookOutlined />} />
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
+                                <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
+                              </div>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                            </div>
+                          </div>
+                          <Popconfirm
+                            title="移除 Skill？"
+                            description="移除后该员工将无法使用此 Skill"
+                            onConfirm={() => handleRemoveSkill(skill.id)}
+                          >
+                            <Button type="text" danger icon={<DeleteOutlined />}>
+                              移除
+                            </Button>
+                          </Popconfirm>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card
+                  title={
+                    <Space>
+                      <ThunderboltOutlined />
+                      <span>可用 Skills ({availableSkills.length})</span>
+                    </Space>
+                  }
+                >
+                  {availableSkills.length === 0 ? (
+                    <Empty description="暂无可用的 Skills，请先安装" />
+                  ) : (
+                    <div>
+                      {availableSkills.map((skill) => (
+                        <div
+                          key={skill.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <Avatar style={{ backgroundColor: '#52c41a', flexShrink: 0 }} icon={<BookOutlined />} />
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
+                                <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
+                              </div>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                            </div>
+                          </div>
                           <Button
                             type="primary"
-                            icon={<LinkOutlined />}
-                            loading={connectingMcp === server.id}
-                            onClick={() => handleConnectMCPServer(server.id)}
+                            icon={<PlusOutlined />}
+                            onClick={() => handleAssignSkill(skill.id)}
                           >
-                            连接
+                            分配
                           </Button>
-                        ),
-                        <Button type="text" icon={<EditOutlined />} onClick={() => openMcpEditor(server)}>
-                          编辑
-                        </Button>,
-                        <Popconfirm
-                          title="删除 MCP 服务器？"
-                          onConfirm={() => handleDeleteMCPServer(server.id)}
-                        >
-                          <Button type="text" danger icon={<DeleteOutlined />}>
-                            删除
-                          </Button>
-                        </Popconfirm>,
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <Avatar
-                            style={{
-                              backgroundColor:
-                                server.status === 'connected'
-                                  ? '#52c41a'
-                                  : server.status === 'error'
-                                  ? '#ff4d4f'
-                                  : '#d9d9d9',
-                            }}
-                            icon={<ApiOutlined />}
-                          />
-                        }
-                        title={
-                          <Space>
-                            <Text strong>{server.name}</Text>
-                            <Badge
-                              status={
-                                server.status === 'connected'
-                                  ? 'success'
-                                  : server.status === 'error'
-                                  ? 'error'
-                                  : 'default'
-                              }
-                              text={
-                                server.status === 'connected'
-                                  ? '已连接'
-                                  : server.status === 'error'
-                                  ? '错误'
-                                  : '未连接'
-                              }
-                            />
-                          </Space>
-                        }
-                        description={
-                          <Space direction="vertical" size={0}>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
-                              命令: {server.command}
-                            </Text>
-                            {server.last_error && (
-                              <Text type="danger" style={{ fontSize: 12 }}>
-                                错误: {server.last_error}
-                              </Text>
-                            )}
-                          </Space>
-                        }
-                      />
-                    </List.Item>
+                        </div>
+                      ))}
+                    </div>
                   )}
+                </Card>
+              </Space>
+            )
+          },
+          {
+            key: 'mcp',
+            label: 'MCP 服务',
+            children: (
+              <Space orientation="vertical" style={{ width: '100%' }} size={16}>
+                <Alert
+                  title="MCP (Model Context Protocol) 让数字员工连接外部服务"
+                  description="配置 MCP Server 后，数字员工可以调用外部工具和服务。例如：数据库查询、文件系统操作、API 调用等。"
+                  type="info"
+                  showIcon
                 />
-              )}
-            </Card>
-          </Space>
-        </Tabs.TabPane>
 
-        <Tabs.TabPane tab="知识库" key="knowledge">
-          <Card title="关联文件">
-            {files.length > 0 ? (
-              <Flex vertical gap="small">
-                {files.map((file) => (
-                  <Card key={file.id} size="small" bodyStyle={{ padding: '12px 16px' }}>
-                    <Flex justify="space-between" align="center">
-                      <Space direction="vertical" size="small">
-                        <Text strong>{file.original_name}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          规则: {file.rule_count} | 问答: {file.qa_count}
-                        </Text>
-                      </Space>
-                      <Tag color={file.status === 'completed' ? 'green' : file.status === 'parsing' ? 'blue' : 'default'}>
-                        {file.status === 'completed' ? '已解析' : file.status === 'parsing' ? '解析中' : file.status === 'failed' ? '失败' : '待解析'}
-                      </Tag>
-                    </Flex>
-                  </Card>
-                ))}
-              </Flex>
-            ) : (
-              <Empty description="暂无关联文件" />
-            )}
-          </Card>
-        </Tabs.TabPane>
-
-        <Tabs.TabPane tab="监控统计" key="stats">
-          <Row gutter={16}>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="总处理任务"
-                  value={employee.total_tasks}
-                  prefix={<BarChartOutlined />}
-                />
+                <Card
+                  title={
+                    <Space>
+                      <ApiOutlined />
+                      <span>MCP 服务器列表 ({mcpServers.length})</span>
+                    </Space>
+                  }
+                  extra={
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => openMcpEditor()}>
+                      添加服务器
+                    </Button>
+                  }
+                >
+                  {mcpServers.length === 0 ? (
+                    <Empty description="暂无 MCP 服务器，点击添加按钮创建" />
+                  ) : (
+                    <div>
+                      {mcpServers.map((server) => (
+                        <div
+                          key={server.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
+                            <Avatar
+                              style={{
+                                backgroundColor:
+                                  server.status === 'connected'
+                                    ? '#52c41a'
+                                    : server.status === 'error'
+                                    ? '#ff4d4f'
+                                    : '#d9d9d9',
+                                flexShrink: 0,
+                              }}
+                              icon={<ApiOutlined />}
+                            />
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Text strong ellipsis style={{ display: 'inline-block' }}>{server.name}</Text>
+                                <Badge
+                                  status={
+                                    server.status === 'connected'
+                                      ? 'success'
+                                      : server.status === 'error'
+                                      ? 'error'
+                                      : 'default'
+                                  }
+                                  text={
+                                    server.status === 'connected'
+                                      ? '已连接'
+                                      : server.status === 'error'
+                                      ? '错误'
+                                      : '未连接'
+                                  }
+                                  style={{ flexShrink: 0 }}
+                                />
+                              </div>
+                              <Space orientation="vertical" size={0} style={{ width: '100%' }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  命令: {server.command}
+                                </Text>
+                                {server.last_error && (
+                                  <Text type="danger" style={{ fontSize: 12 }}>
+                                    错误: {server.last_error}
+                                  </Text>
+                                )}
+                              </Space>
+                            </div>
+                          </div>
+                          <Space>
+                            {server.status === 'connected' ? (
+                              <Button
+                                type="text"
+                                icon={<DisconnectOutlined />}
+                                onClick={() => handleDisconnectMCPServer(server.id)}
+                              >
+                                断开
+                              </Button>
+                            ) : (
+                              <Button
+                                type="primary"
+                                icon={<LinkOutlined />}
+                                loading={connectingMcp === server.id}
+                                onClick={() => handleConnectMCPServer(server.id)}
+                              >
+                                连接
+                              </Button>
+                            )}
+                            <Button type="text" icon={<EditOutlined />} onClick={() => openMcpEditor(server)}>
+                              编辑
+                            </Button>
+                            <Popconfirm
+                              title="删除 MCP 服务器？"
+                              onConfirm={() => handleDeleteMCPServer(server.id)}
+                            >
+                              <Button type="text" danger icon={<DeleteOutlined />}>
+                                删除
+                              </Button>
+                            </Popconfirm>
+                          </Space>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </Space>
+            )
+          },
+          {
+            key: 'knowledge',
+            label: '知识库',
+            children: (
+              <Card title="项目关联的知识库" extra={<Button type="link" icon={<LinkOutlined />} onClick={() => navigate(`/project/${employee?.project_id}`)}>管理关联</Button>}>
+                {linkedKBs.length > 0 ? (
+                  <div>
+                    {linkedKBs.map((kb: any) => (
+                      <div
+                        key={kb.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '12px 0',
+                          borderBottom: '1px solid #f0f0f0',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                          <div
+                            style={{
+                              width: 40,
+                              height: 40,
+                              borderRadius: 8,
+                              background: '#e6f4ff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                            }}
+                          >
+                            <DatabaseOutlined style={{ fontSize: 20, color: '#722ed1' }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                            <Tooltip title={kb.name}>
+                              <Text strong ellipsis style={{ display: 'block' }}>{kb.name}</Text>
+                            </Tooltip>
+                            <div style={{ overflow: 'hidden' }}>
+                              <Tooltip title={kb.description || '暂无描述'}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                              </Tooltip>
+                              <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty description="暂无关联的知识库">
+                    <Button type="primary" onClick={() => navigate(`/project/${employee?.project_id}`)}>
+                      前往关联知识库
+                    </Button>
+                  </Empty>
+                )}
               </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="用户赞"
-                  value={employee.total_approvals}
-                  prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic title="知识文件" value={files.length} prefix={<FileTextOutlined />} />
-              </Card>
-            </Col>
-          </Row>
-          <Card title="版本信息" style={{ marginTop: 16 }}>
-            <p>当前版本: v{employee.arch_version}</p>
-            <p>创建时间: {new Date(employee.created_at * 1000).toLocaleString()}</p>
-            <p>更新时间: {new Date(employee.updated_at * 1000).toLocaleString()}</p>
-          </Card>
-        </Tabs.TabPane>
-
-      </Tabs>
+            )
+          },
+          {
+            key: 'stats',
+            label: '监控统计',
+            children: (
+              <>
+                <Row gutter={16}>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="总处理任务"
+                        value={employee.total_tasks}
+                        prefix={<BarChartOutlined />}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="用户赞"
+                        value={employee.total_approvals}
+                        prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic title="关联知识库" value={linkedKBs.length} prefix={<DatabaseOutlined />} />
+                    </Card>
+                  </Col>
+                </Row>
+                <Card title="版本信息" style={{ marginTop: 16 }}>
+                  <p>当前版本: v{employee.arch_version}</p>
+                  <p>创建时间: {new Date(employee.created_at * 1000).toLocaleString()}</p>
+                  <p>更新时间: {new Date(employee.updated_at * 1000).toLocaleString()}</p>
+                </Card>
+              </>
+            )
+          }
+        ]}
+      />
 
       <Modal
         title={editingMcpServer ? '编辑 MCP 服务器' : '添加 MCP 服务器'}

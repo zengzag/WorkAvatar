@@ -31,15 +31,22 @@ export interface SuggestedSkill {
   enabled: boolean
 }
 
-interface FileContent {
-  fileId: string
-  fileName: string
-  type: string
-  content: string
-  sections: Array<{
+interface KBContent {
+  kbId: string
+  kbName: string
+  kbDescription: string
+  globalSummary: string
+  keyTopics: string[]
+  keyEntities: Array<{ name: string; type: string; description: string }>
+  documentSummaries: Array<{
+    docName: string
+    summary: string
+    mainTopics: string[]
+  }>
+  chapterSamples: Array<{
+    docName: string
     title: string
     content: string
-    level: number
   }>
 }
 
@@ -62,57 +69,91 @@ class EmployeeProfilingService {
 
   async analyzeProjectForEmployee(
     _projectId: string,
-    selectedFileIds: string[],
+    kbIds: string[],
     providerId?: string,
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string }> {
-    const files = this.loadFileContents(selectedFileIds)
-    if (files.length === 0) {
+    const kbContents = this.loadKBContents(kbIds)
+    if (kbContents.length === 0) {
       return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
     }
 
     const defaultProvider = providerId || this.getDefaultProviderId()
     if (!defaultProvider) {
-      return { profile: this.getHeuristicProfile(files), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
+      return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
     }
 
     try {
-      onProgress?.({ stage: 'preparing', detail: `准备分析 ${files.length} 个文件...` })
-      const profile = await this.analyzeWithLLM(files, defaultProvider, modelId, additionalContext, onProgress)
+      onProgress?.({ stage: 'preparing', detail: `准备分析 ${kbContents.length} 个知识库...` })
+      const profile = await this.analyzeWithLLM(kbContents, defaultProvider, modelId, additionalContext, onProgress)
       onProgress?.({ stage: 'done', detail: '分析完成' })
       return { profile, analysisMethod: 'llm' }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
       console.error('LLM profiling failed, falling back to heuristic:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
-      return { profile: this.getHeuristicProfile(files), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
+      return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
     }
   }
 
-  private loadFileContents(fileIds: string[]): FileContent[] {
-    const files: FileContent[] = []
+  private loadKBContents(kbIds: string[]): KBContent[] {
+    const results: KBContent[] = []
 
-    for (const fileId of fileIds) {
-      const file = this.db.getDb().prepare('SELECT * FROM files WHERE id = ?').get(fileId) as any
-      if (!file || !file.parsed_json) continue
+    for (const kbId of kbIds) {
+      const kb = this.db.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
+      if (!kb) continue
 
-      try {
-        const parsed = JSON.parse(file.parsed_json)
-        files.push({
-          fileId: file.id,
-          fileName: file.original_name,
-          type: file.type,
-          content: parsed.fullText || '',
-          sections: parsed.sections || [],
-        })
-      } catch {
-        // Skip malformed parsed_json
+      const content: KBContent = {
+        kbId: kb.id,
+        kbName: kb.name,
+        kbDescription: kb.description || '',
+        globalSummary: '',
+        keyTopics: [],
+        keyEntities: [],
+        documentSummaries: [],
+        chapterSamples: [],
       }
+
+      const globalSummary = this.db.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
+      if (globalSummary) {
+        content.globalSummary = globalSummary.summary || ''
+        try { content.keyTopics = JSON.parse(globalSummary.key_topics_json || '[]') } catch {}
+        try {
+          const entities = JSON.parse(globalSummary.key_entities_json || '[]')
+          content.keyEntities = entities.slice(0, 20).map((e: any) => ({
+            name: e.name || e,
+            type: e.type || 'other',
+            description: e.description || '',
+          }))
+        } catch {}
+      }
+
+      const docSummaries = this.db.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
+      for (const ds of docSummaries) {
+        const docSummary: KBContent['documentSummaries'][0] = {
+          docName: ds.original_name,
+          summary: ds.summary || '',
+          mainTopics: [],
+        }
+        try { docSummary.mainTopics = JSON.parse(ds.main_topics_json || '[]') } catch {}
+        content.documentSummaries.push(docSummary)
+      }
+
+      const chapters = this.db.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
+      for (const ch of chapters) {
+        content.chapterSamples.push({
+          docName: ch.original_name,
+          title: ch.title,
+          content: (ch.content || '').substring(0, 500),
+        })
+      }
+
+      results.push(content)
     }
 
-    return files
+    return results
   }
 
   private getDefaultProviderId(): string | null {
@@ -129,13 +170,13 @@ class EmployeeProfilingService {
   }
 
   private async analyzeWithLLM(
-    files: FileContent[],
+    kbContents: KBContent[],
     providerId: string,
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<EmployeeProfile> {
-    const combinedText = this.buildCombinedDocument(files)
+    const combinedText = this.buildCombinedKBDocument(kbContents)
     const maxLength = 12000
     const truncatedText = combinedText.length > maxLength
       ? combinedText.substring(0, maxLength) + '\n...[内容已截断，共' + combinedText.length + '字符]'
@@ -145,20 +186,20 @@ class EmployeeProfilingService {
       ? `\n\n## 用户补充说明\n${additionalContext}\n\n请在设计数字员工角色时，优先考虑以上用户的补充说明和期望。`
       : ''
 
-    const prompt = `你是一位资深的人力资源专家和业务架构师。请仔细分析以下文档资料，理解其业务场景，然后设计一个合适的"数字员工"角色。
+    const prompt = `你是一位资深的人力资源专家和业务架构师。请仔细分析以下知识库内容，理解其业务场景，然后设计一个合适的"数字员工"角色。
 
-## 文档资料
+## 知识库资料
 ${truncatedText}${userGuidance}
 
 ## 分析要求
 
 请从以下维度进行深入分析：
 
-1. **业务场景理解**：这些文档描述的是什么业务领域？涉及哪些工作流程？
-2. **角色定位**：基于文档内容，应该创建一个什么角色的数字员工？（如"合同审核专员"、"客服顾问"、"数据分析师"等）
+1. **业务场景理解**：这些知识库描述的是什么业务领域？涉及哪些工作流程？
+2. **角色定位**：基于知识库内容，应该创建一个什么角色的数字员工？（如"合同审核专员"、"客服顾问"、"数据分析师"等）
 3. **职责识别**：这个员工应该承担哪些具体职责？
 4. **工作风格**：这个员工应该以什么风格与用户交互？（严谨型、亲和型、高效型等）
-5. **工具需求**：这个员工可能需要使用什么工具？（如计算器、文件搜索、数据查询等）
+5. **工具需求**：这个员工可能需要使用什么工具？（如计算器、文件搜索、数据查询、知识库检索等）
 
 ## 输出格式
 
@@ -169,7 +210,6 @@ ${truncatedText}${userGuidance}
     onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 进行智能分析...' })
 
     let fullResponse = ''
-    let thinkContent = ''
     let streamDone = false
     let streamError: Error | null = null
 
@@ -178,7 +218,7 @@ ${truncatedText}${userGuidance}
       [
         {
           role: 'system',
-          content: '你是一位资深的人力资源专家和业务架构师，擅长根据业务文档设计数字员工角色和能力体系。'
+          content: '你是一位资深的人力资源专家和业务架构师，擅长根据知识库内容设计数字员工角色和能力体系。'
         },
         { role: 'user', content: prompt },
       ],
@@ -195,7 +235,6 @@ ${truncatedText}${userGuidance}
       { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}) },
       undefined,
       (thoughtChunk: string) => {
-        thinkContent += thoughtChunk
         onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
       }
     )
@@ -218,9 +257,9 @@ ${truncatedText}${userGuidance}
 
     return {
       roleName: result.roleName || '数字员工',
-      roleDescription: result.roleDescription || '基于文档资料自动创建的数字员工',
+      roleDescription: result.roleDescription || '基于知识库自动创建的数字员工',
       responsibilities: Array.isArray(result.responsibilities) ? result.responsibilities : [],
-      suggestedSkills: this.normalizeSkills(result.suggestedSkills, files),
+      suggestedSkills: this.normalizeSkills(result.suggestedSkills, kbContents),
       personalityTraits: Array.isArray(result.personalityTraits) ? result.personalityTraits : ['专业', '高效'],
       workingStyle: result.workingStyle || '专业严谨',
       suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : [],
@@ -239,30 +278,55 @@ ${truncatedText}${userGuidance}
     return null
   }
 
-  private buildCombinedDocument(files: FileContent[]): string {
+  private buildCombinedKBDocument(kbContents: KBContent[]): string {
     const parts: string[] = []
 
-    for (const file of files) {
-      parts.push(`\n=== 文件: ${file.fileName} (类型: ${file.type}) ===`)
+    for (const kb of kbContents) {
+      parts.push(`\n=== 知识库: ${kb.kbName} ===`)
+      if (kb.kbDescription) {
+        parts.push(`描述: ${kb.kbDescription}`)
+      }
 
-      if (file.sections.length > 0) {
-        for (const section of file.sections) {
-          const indent = '  '.repeat(Math.max(0, section.level - 1))
-          parts.push(`${indent}[${section.title}]`)
-          parts.push(`${indent}${section.content.substring(0, 800)}`)
+      if (kb.globalSummary) {
+        parts.push(`\n[全局摘要]\n${kb.globalSummary}`)
+      }
+
+      if (kb.keyTopics.length > 0) {
+        parts.push(`\n[核心主题] ${kb.keyTopics.join(', ')}`)
+      }
+
+      if (kb.keyEntities.length > 0) {
+        parts.push('\n[关键实体]')
+        for (const entity of kb.keyEntities) {
+          parts.push(`- ${entity.name} (${entity.type})${entity.description ? ': ' + entity.description : ''}`)
         }
-      } else {
-        parts.push(file.content.substring(0, 2000))
+      }
+
+      if (kb.documentSummaries.length > 0) {
+        parts.push('\n[文档摘要]')
+        for (const doc of kb.documentSummaries) {
+          parts.push(`\n--- 文档: ${doc.docName} ---`)
+          if (doc.summary) parts.push(doc.summary)
+          if (doc.mainTopics.length > 0) parts.push(`主题: ${doc.mainTopics.join(', ')}`)
+        }
+      }
+
+      if (kb.chapterSamples.length > 0) {
+        parts.push('\n[章节内容示例]')
+        for (const ch of kb.chapterSamples.slice(0, 10)) {
+          parts.push(`\n--- ${ch.docName} / ${ch.title} ---`)
+          parts.push(ch.content)
+        }
       }
     }
 
     return parts.join('\n')
   }
 
-  private normalizeSkills(rawSkills: any[], files: FileContent[]): SuggestedSkill[] {
+  private normalizeSkills(rawSkills: any[], kbContents: KBContent[]): SuggestedSkill[] {
     if (!Array.isArray(rawSkills)) return []
 
-    const fileNames = files.map((f) => f.fileName)
+    const kbNames = kbContents.map((kb) => kb.kbName)
 
     return rawSkills.map((skill, index) => ({
       type: this.normalizeSkillType(skill.type),
@@ -275,7 +339,7 @@ ${truncatedText}${userGuidance}
       outputSchema: skill.outputSchema || undefined,
       sourceFiles: Array.isArray(skill.sourceFiles) && skill.sourceFiles.length > 0
         ? skill.sourceFiles
-        : fileNames,
+        : kbNames,
       enabled: skill.enabled !== false,
     }))
   }
@@ -324,9 +388,9 @@ ${description || '根据用户需求提供专业服务'}
 请根据具体任务类型，提供结构化、专业的输出。`
   }
 
-  private getHeuristicProfile(files: FileContent[]): EmployeeProfile {
-    const fileNames = files.map((f) => f.fileName)
-    const allText = files.map((f) => f.content).join(' ').toLowerCase()
+  private getHeuristicProfile(kbContents: KBContent[]): EmployeeProfile {
+    const kbNames = kbContents.map((kb) => kb.kbName)
+    const allText = kbContents.map((kb) => [kb.globalSummary, ...kb.documentSummaries.map(d => d.summary)].join(' ')).join(' ').toLowerCase()
 
     const skills: SuggestedSkill[] = []
 
@@ -357,7 +421,7 @@ ${description || '根据用户需求提供专业服务'}
         testCases: [
           { input: '请审核这份采购合同', expectedOutput: '包含风险点列表和评估意见的审核报告' },
         ],
-        sourceFiles: fileNames,
+        sourceFiles: kbNames,
         enabled: true,
       })
     }
@@ -381,7 +445,7 @@ ${description || '根据用户需求提供专业服务'}
         testCases: [
           { input: '这个产品的保修期是多久？', expectedOutput: '基于知识库给出准确答案并引用来源' },
         ],
-        sourceFiles: fileNames,
+        sourceFiles: kbNames,
         enabled: true,
       })
     }
@@ -409,7 +473,7 @@ ${description || '根据用户需求提供专业服务'}
         testCases: [
           { input: '统计上个月的销售额', expectedOutput: '包含具体数字的分析报告' },
         ],
-        sourceFiles: fileNames,
+        sourceFiles: kbNames,
         enabled: true,
       })
     }
@@ -418,30 +482,30 @@ ${description || '根据用户需求提供专业服务'}
       skills.push({
         type: 'qa',
         name: '通用问答',
-        description: '基于上传的资料回答各类问题',
-        promptTemplate: `你是专业的数字员工助手。请基于提供的资料回答用户问题。
+        description: '基于知识库回答各类问题',
+        promptTemplate: `你是专业的数字员工助手。请基于知识库内容回答用户问题。
 
 ## 回答原则
-1. 基于资料内容回答
+1. 基于知识库内容回答
 2. 保持专业、准确
 3. 引用来源信息
 4. 不确定时明确说明`,
         rules: [],
         testCases: [
-          { input: '请介绍一下相关内容', expectedOutput: '基于资料的概括性回答' },
+          { input: '请介绍一下相关内容', expectedOutput: '基于知识库的概括性回答' },
         ],
-        sourceFiles: fileNames,
+        sourceFiles: kbNames,
         enabled: true,
       })
     }
 
     return {
       roleName: '数字员工',
-      roleDescription: '基于项目资料自动创建的数字员工，提供专业知识服务',
+      roleDescription: '基于知识库自动创建的数字员工，提供专业知识服务',
       responsibilities: ['回答用户咨询', '处理业务请求', '提供专业建议'],
       suggestedSkills: skills,
       personalityTraits: ['专业', '耐心', '准确'],
-      workingStyle: '严谨细致，基于资料提供专业回答',
+      workingStyle: '严谨细致，基于知识库提供专业回答',
       suggestedTools: [],
     }
   }

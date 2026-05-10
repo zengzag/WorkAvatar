@@ -267,8 +267,9 @@ class ProjectManagerService {
   }
 
   getConversationList(employeeId: string): Conversation[] {
+    // 只查询必要字段，避免加载大的 messages_json
     return this.db.getDb().prepare(
-      'SELECT * FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
+      'SELECT id, employee_id, skill_id, title, message_count, status, created_at, updated_at FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
     ).all(employeeId) as Conversation[]
   }
 
@@ -317,6 +318,11 @@ class ProjectManagerService {
   deleteConversation(id: string): boolean {
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  deleteAllConversations(employeeId: string): number {
+    const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
+    return result.changes
   }
 }
 

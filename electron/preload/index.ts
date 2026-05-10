@@ -31,11 +31,10 @@ import type {
   ToolAssignParams,
   MCPServerCreateParams,
   MCPServerUpdateParams,
-  WikiCompileParams,
-  WikiSearchParams,
-  WikiChatParams,
-  WikiIngestParams,
-  WikiQueryParams,
+  KBCreateParams,
+  KBUpdateParams,
+  KBDocParseParams,
+  KBLinkProjectParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -86,6 +85,7 @@ const electronAPI = {
     update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
+    deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
     sendMessage: (params: { conversation_id: string; role: 'user' | 'assistant'; content: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEND_MESSAGE, params),
   },
@@ -100,6 +100,7 @@ const electronAPI = {
     chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
     chatStreamWithRAG: (params: LLMChatStreamWithRAGParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM_WITH_RAG, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
+    abortChat: () => ipcRenderer.invoke('llm:abort-chat'),
     onChunk: (callback: (chunk: string) => void) => {
       const handler = (_event: any, chunk: string) => callback(chunk)
       ipcRenderer.on('llm:chat-chunk', handler)
@@ -199,65 +200,94 @@ const electronAPI = {
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
   },
 
-  wiki: {
-    initialize: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_INITIALIZE, params),
-    compile: (params: WikiCompileParams) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_COMPILE, params),
-    search: (params: WikiSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_SEARCH, params),
-    getStatus: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_GET_STATUS, params),
-    getPages: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_GET_PAGES, params),
-    getPage: (params: { project_id: string; page_path: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_GET_PAGE, params),
-    getRawFiles: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_GET_RAW_FILES, params),
-    ingestSource: (params: WikiIngestParams) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_INGEST_SOURCE, params),
-    query: (params: WikiQueryParams) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_QUERY, params),
-    lint: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_LINT, params),
-    audit: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_AUDIT, params),
-    chatWithWiki: (params: WikiChatParams) => ipcRenderer.invoke(IPC_CHANNELS.WIKI_CHAT_WITH_WIKI, params),
-    onWikiResults: (callback: (results: any[]) => void) => {
-      const handler = (_event: any, results: any[]) => callback(results)
-      ipcRenderer.on('llm:wiki-results', handler)
-      return () => ipcRenderer.removeListener('llm:wiki-results', handler)
+  kb: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.KB_LIST),
+    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET, id),
+    create: (params: KBCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_CREATE, params),
+    update: (params: KBUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE, params),
+    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DELETE, id),
+    uploadDocuments: (params: { kb_id: string; paths: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_UPLOAD, params),
+    parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
+    deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
+    getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
+    linkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_LINK_PROJECT, params),
+    unlinkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UNLINK_PROJECT, params),
+    getLinkedProjects: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROJECTS, kbId),
+    parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
+    getFileByHash: (params: { hash: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_FILE_BY_HASH, params),
+    importDocsToProject: (params: { project_id: string; doc_ids: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_DOCS_TO_PROJECT, params),
+    onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
+      const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
+      ipcRenderer.on('kb:upload-progress', handler)
+      return () => ipcRenderer.removeListener('kb:upload-progress', handler)
     },
-    onIngestProgress: (callback: (progress: { stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('wiki:ingest-progress', handler)
-      return () => ipcRenderer.removeListener('wiki:ingest-progress', handler)
+    onParseProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on('kb:parse-progress', handler)
+      return () => ipcRenderer.removeListener('kb:parse-progress', handler)
     },
-    onIngestLLMChunk: (callback: (chunk: string) => void) => {
-      const handler = (_event: any, chunk: string) => callback(chunk)
-      ipcRenderer.on('wiki:ingest-llm-chunk', handler)
-      return () => ipcRenderer.removeListener('wiki:ingest-llm-chunk', handler)
+    onParseAllProgress: (callback: (progress: { current: number; total: number; docName: string }) => void) => {
+      const handler = (_event: any, progress: { current: number; total: number; docName: string }) => callback(progress)
+      ipcRenderer.on('kb:parse-all-progress', handler)
+      return () => ipcRenderer.removeListener('kb:parse-all-progress', handler)
     },
-    onIngestThought: (callback: (thought: string) => void) => {
-      const handler = (_event: any, thought: string) => callback(thought)
-      ipcRenderer.on('wiki:ingest-thought', handler)
-      return () => ipcRenderer.removeListener('wiki:ingest-thought', handler)
+    processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
+    processAll: (params: { kb_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
+    buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
+    getStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_STATS, kbId),
+    getChapters: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_CHAPTERS, docId),
+    getDocSummary: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_SUMMARY, docId),
+    getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
+    getEntities: (params: { kb_id: string; type?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITIES, params),
+    getEntity: (params: { kb_id: string; name: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY, params),
+    getEntityRelations: (params: { entity_id: string; depth?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_RELATIONS, params),
+    getEntityMentions: (entityId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_MENTIONS, entityId),
+    searchChapters: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_CHAPTERS, params),
+    searchDocSummaries: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, params),
+    generateTimeline: (params: { kb_id: string; topic?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GENERATE_TIMELINE, params),
+    getProcessingJobs: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, params),
+    getKBsForProject: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_KBS_FOR_PROJECT, projectId),
+    getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
+    onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on('kb:process-progress', handler)
+      return () => ipcRenderer.removeListener('kb:process-progress', handler)
     },
-    onCompileProgress: (callback: (progress: { stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('wiki:compile-progress', handler)
-      return () => ipcRenderer.removeListener('wiki:compile-progress', handler)
+    onProcessAllProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on('kb:process-all-progress', handler)
+      return () => ipcRenderer.removeListener('kb:process-all-progress', handler)
     },
-    onCompileLLMChunk: (callback: (chunk: string) => void) => {
-      const handler = (_event: any, chunk: string) => callback(chunk)
-      ipcRenderer.on('wiki:compile-llm-chunk', handler)
-      return () => ipcRenderer.removeListener('wiki:compile-llm-chunk', handler)
-    },
-    onCompileThought: (callback: (thought: string) => void) => {
-      const handler = (_event: any, thought: string) => callback(thought)
-      ipcRenderer.on('wiki:compile-thought', handler)
-      return () => ipcRenderer.removeListener('wiki:compile-thought', handler)
-    },
-    onQueryProgress: (callback: (progress: { stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('wiki:query-progress', handler)
-      return () => ipcRenderer.removeListener('wiki:query-progress', handler)
+    onBuildGlobalProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on('kb:build-global-progress', handler)
+      return () => ipcRenderer.removeListener('kb:build-global-progress', handler)
     },
   },
 }
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+contextBridge.exposeInMainWorld('electronAPI', {
+  ...electronAPI,
+  tasks: {
+    getAll: () => ipcRenderer.invoke('tasks:get-all'),
+    clearCompleted: () => ipcRenderer.invoke('tasks:clear-completed'),
+    cancel: (taskId: string) => ipcRenderer.invoke('tasks:cancel', taskId),
+    onTasksUpdated: (callback: (tasks: any[]) => void) => {
+      const handler = (_event: any, tasks: any[]) => callback(tasks)
+      ipcRenderer.on('tasks:updated', handler)
+      return () => ipcRenderer.removeListener('tasks:updated', handler)
+    },
+  },
+})
 
-export type ElectronAPI = typeof electronAPI
+export type ElectronAPI = typeof electronAPI & {
+  tasks: {
+    getAll: () => Promise<any[]>
+    clearCompleted: () => Promise<boolean>
+    cancel: (taskId: string) => Promise<boolean>
+    onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
+  }
+}
 
 declare global {
   interface Window {

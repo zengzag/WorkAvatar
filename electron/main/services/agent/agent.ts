@@ -162,7 +162,7 @@ export class LightAgent {
     }
   }
 
-  async runStream(options: AgentRunOptions, callbacks: AgentRunStreamCallbacks): Promise<void> {
+  async runStream(options: AgentRunOptions, callbacks: AgentRunStreamCallbacks, signal?: AbortSignal): Promise<void> {
     const {
       query,
       tools: runtimeTools,
@@ -177,8 +177,12 @@ export class LightAgent {
     try {
       const messages = this.buildMessages(query, history, useSkills)
       const activeTools = await this.resolveActiveTools(runtimeTools)
-      await this.coreRunLogicStream(messages, activeTools, maxRetry, callbacks)
+      await this.coreRunLogicStream(messages, activeTools, maxRetry, callbacks, signal)
     } catch (error: any) {
+      if (signal?.aborted) {
+        callbacks.onDone?.()
+        return
+      }
       this.log('error', 'run_stream_failed', { error: error.message })
       callbacks.onError?.(error.message)
     }
@@ -197,7 +201,7 @@ export class LightAgent {
 
     systemPrompt.push(
       '请一步一步思考来完成用户的要求。尽可能完成用户的回答，如果有补充信息，请参考补充信息来调用工具，直到获取所有满足用户的提问所需的答案。',
-      '你可以使用 query_wiki 工具查询Wiki知识库获取结构化知识，使用 query_rag 工具进行向量检索获取原始文档片段。当用户问题涉及专业知识、业务规则、概念定义时，优先使用 query_wiki；当需要查找具体文档段落、细节信息时，使用 query_rag。',
+      '你可以使用知识库工具查询知识，包括 kb_overview、query_global_summary、query_knowledge_graph、query_chapters、query_fulltext、get_document_content、generate_timeline 等。当不确定知识库有哪些内容时，优先使用 kb_overview 获取文件列表和摘要；当用户问题涉及专业知识、业务规则、概念定义时，优先使用 query_chapters；当需要查找具体文档段落、细节信息时，使用 query_fulltext；当涉及人物/组织关系时，使用 query_knowledge_graph；当需要查看某个文件的完整内容时，使用 get_document_content。',
       `今日的日期：${now.toISOString().split('T')[0]}`,
       `当前时间：${now.toTimeString().split(' ')[0]}`
     )
@@ -316,12 +320,17 @@ export class LightAgent {
     messages: Message[],
     tools: OpenAIToolDefinition[],
     maxRetry: number,
-    callbacks: AgentRunStreamCallbacks
+    callbacks: AgentRunStreamCallbacks,
+    signal?: AbortSignal
   ): Promise<void> {
     let currentMessages = [...messages]
     const usedToolCalls: Array<{ name: string; args: any; result: any }> = []
 
     for (let attempt = 0; attempt < maxRetry; attempt++) {
+      if (signal?.aborted) {
+        callbacks.onDone?.()
+        return
+      }
       try {
         let assistantContent = ''
         let assistantReasoning = ''
@@ -342,7 +351,8 @@ export class LightAgent {
             onToolCall: (toolCalls: any[]) => {
               assistantToolCalls = toolCalls
             },
-          }
+          },
+          signal
         )
 
         currentMessages.push({
@@ -526,7 +536,8 @@ export class LightAgent {
       onChunk: (chunk: string) => void
       onThought: (thought: string) => void
       onToolCall: (toolCalls: any[]) => void
-    }
+    },
+    signal?: AbortSignal
   ): Promise<void> {
     const url = `${this.config.baseUrl}/chat/completions`
     const headers: Record<string, string> = {
@@ -558,7 +569,8 @@ export class LightAgent {
     const response = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     })
 
     if (!response.ok) {

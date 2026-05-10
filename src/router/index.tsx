@@ -9,7 +9,7 @@ import EmployeeManager from '../pages/EmployeeManager'
 import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
-import WikiManager from '../pages/WikiManager'
+import KnowledgeBasePage from '../pages/KnowledgeBase'
 
 const router = createBrowserRouter([
   {
@@ -41,10 +41,6 @@ const router = createBrowserRouter([
         element: <DocumentViewer />,
       },
       {
-        path: 'project/:projectId/wiki',
-        element: <WikiManager />,
-      },
-      {
         path: 'employees',
         element: <EmployeeManager />,
       },
@@ -59,6 +55,10 @@ const router = createBrowserRouter([
       {
         path: 'settings',
         element: <Settings />,
+      },
+      {
+        path: 'knowledge-base',
+        element: <KnowledgeBasePage />,
       },
     ],
   },

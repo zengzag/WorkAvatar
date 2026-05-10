@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import { safeStorage } from 'electron'
+import type { LLMModelConfig } from '../../shared/types'
 
 interface LLMProviderConfig {
   id: string
@@ -13,6 +14,8 @@ interface LLMProviderConfig {
   max_tokens: number
   timeout_ms: number
   extra_headers_json?: string
+  extra_body_json?: string
+  models_json?: string
 }
 
 interface ChatMessage {
@@ -25,12 +28,33 @@ interface ChatCompletionRequest {
   messages: ChatMessage[]
   temperature?: number
   max_tokens?: number
+  top_p?: number
+  frequency_penalty?: number
+  presence_penalty?: number
   stream?: boolean
+  [key: string]: any
 }
 
 interface ProcessThinkChunkResult {
   thought?: string
   content?: string
+}
+
+const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string; defaultEmbeddingModel: string }> = {
+  openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  'openai-compatible': { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', defaultEmbeddingModel: 'text-embedding-3-small' },
+  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', defaultEmbeddingModel: 'text-embedding-v3' },
+  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', defaultEmbeddingModel: 'embedding-3' },
+  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k', defaultEmbeddingModel: 'text-embedding-v3' },
+  moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k', defaultEmbeddingModel: 'text-embedding-3-small' },
+  yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning', defaultEmbeddingModel: 'text-embedding-3-small' },
+  groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', defaultEmbeddingModel: 'text-embedding-3-small' },
+  mistral: { baseURL: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', defaultEmbeddingModel: 'mistral-embed' },
+  azure: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  vertex: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
 }
 
 let thinkTagState: 'normal' | 'thinking' = 'normal'
@@ -42,7 +66,7 @@ function resetThinkState(): void {
 }
 
 function stripThinkTags(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  return text.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
 }
 
 function processThinkChunk(rawChunk: string): ProcessThinkChunkResult {
@@ -52,7 +76,7 @@ function processThinkChunk(rawChunk: string): ProcessThinkChunkResult {
 
   while (thinkContentBuffer.length > 0) {
     if (thinkTagState === 'normal') {
-      const openIdx = thinkContentBuffer.toLowerCase().indexOf('<think>')
+      const openIdx = thinkContentBuffer.toLowerCase().indexOf('<think')
       if (openIdx === -1) {
         const partials = ['<', '<t', '<th', '<thi', '<thin']
         let hasPartial = false
@@ -66,11 +90,18 @@ function processThinkChunk(rawChunk: string): ProcessThinkChunkResult {
         break
       } else {
         content += thinkContentBuffer.substring(0, openIdx)
-        thinkContentBuffer = thinkContentBuffer.substring(openIdx + 7)
+        const afterOpen = thinkContentBuffer.substring(openIdx)
+        const closeBracketIdx = afterOpen.indexOf('>')
+        if (closeBracketIdx === -1) {
+          thinkContentBuffer = ''
+          thinkTagState = 'thinking'
+          break
+        }
+        thinkContentBuffer = afterOpen.substring(closeBracketIdx + 1)
         thinkTagState = 'thinking'
       }
     } else if (thinkTagState === 'thinking') {
-      const closeIdx = thinkContentBuffer.toLowerCase().indexOf('</think>')
+      const closeIdx = thinkContentBuffer.toLowerCase().indexOf('</think')
       if (closeIdx === -1) {
         const partials = ['<', '</', '</t', '</th', '</thi', '</thin', '</think']
         let hasPartial = false
@@ -84,7 +115,14 @@ function processThinkChunk(rawChunk: string): ProcessThinkChunkResult {
         break
       } else {
         thought += thinkContentBuffer.substring(0, closeIdx)
-        thinkContentBuffer = thinkContentBuffer.substring(closeIdx + 8)
+        const afterClose = thinkContentBuffer.substring(closeIdx)
+        const closeBracketIdx = afterClose.indexOf('>')
+        if (closeBracketIdx === -1) {
+          thinkContentBuffer = ''
+          thinkTagState = 'normal'
+          break
+        }
+        thinkContentBuffer = afterClose.substring(closeBracketIdx + 1)
         thinkTagState = 'normal'
       }
     }
@@ -118,6 +156,66 @@ function finalizeThinkState(): ProcessThinkChunkResult {
     thought: thought || undefined,
     content: content || undefined,
   }
+}
+
+function getModelConfig(provider: LLMProviderConfig, modelName: string): LLMModelConfig | null {
+  if (!provider.models_json) return null
+  try {
+    const models: LLMModelConfig[] = JSON.parse(provider.models_json)
+    return models.find(m => m.model === modelName) || null
+  } catch {
+    return null
+  }
+}
+
+function buildRequestBody(
+  config: LLMProviderConfig,
+  modelName: string,
+  messages: ChatMessage[],
+  stream: boolean,
+  overrides?: { temperature?: number; max_tokens?: number }
+): ChatCompletionRequest {
+  const modelConfig = getModelConfig(config, modelName)
+  const body: ChatCompletionRequest = {
+    model: modelName,
+    messages,
+    temperature: overrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
+    max_tokens: overrides?.max_tokens ?? modelConfig?.max_tokens ?? config.max_tokens,
+    stream,
+  }
+
+  if (modelConfig?.top_p != null) {
+    body.top_p = modelConfig.top_p
+  }
+  if (modelConfig?.frequency_penalty != null) {
+    body.frequency_penalty = modelConfig.frequency_penalty
+  }
+  if (modelConfig?.presence_penalty != null) {
+    body.presence_penalty = modelConfig.presence_penalty
+  }
+
+  if (modelConfig?.enable_thinking) {
+    if (config.provider_type === 'deepseek') {
+      // DeepSeek reasoner models use reasoning_content natively
+      // For deepseek-chat with thinking, no extra param needed - it uses <think/> tags
+    } else if (config.provider_type === 'qwen') {
+      body.enable_thinking = true
+      if (modelConfig.thinking_budget) {
+        body.thinking_budget = modelConfig.thinking_budget
+      }
+    } else if (config.provider_type === 'zhipu') {
+      // Zhipu GLM models with thinking
+    }
+  }
+
+  if (config.extra_body_json) {
+    try {
+      const extra = JSON.parse(config.extra_body_json)
+      Object.assign(body, extra)
+    } catch {}
+  }
+
+  return body
 }
 
 class SecureKeyStorage {
@@ -203,6 +301,8 @@ class LLMClientService {
       max_tokens: row.max_tokens ?? 4096,
       timeout_ms: row.timeout_ms ?? 60000,
       extra_headers_json: row.extra_headers_json,
+      extra_body_json: row.extra_body_json,
+      models_json: row.models_json,
     }
   }
 
@@ -210,17 +310,15 @@ class LLMClientService {
     if (config.base_url) {
       return config.base_url.replace(/\/+$/, '')
     }
-    switch (config.provider_type) {
-      case 'openai':
-      case 'openai-compatible':
-        return 'https://api.openai.com/v1'
-      case 'groq':
-        return 'https://api.groq.com/openai/v1'
-      case 'mistral':
-        return 'https://api.mistral.ai/v1'
-      default:
-        return config.base_url || 'https://api.openai.com/v1'
+    const defaults = PROVIDER_DEFAULTS[config.provider_type]
+    if (defaults?.baseURL) {
+      return defaults.baseURL
     }
+    return 'https://api.openai.com/v1'
+  }
+
+  getProviderDefaults(providerType: string) {
+    return PROVIDER_DEFAULTS[providerType] || null
   }
 
   async testConnection(providerId: string): Promise<{ success: boolean; error?: string; latency?: number }> {
@@ -302,13 +400,8 @@ class LLMClientService {
       } catch {}
     }
 
-    const body: ChatCompletionRequest = {
-      model: options?.model || config.model,
-      messages,
-      temperature: options?.temperature ?? config.temperature,
-      max_tokens: options?.max_tokens ?? config.max_tokens,
-      stream: false,
-    }
+    const modelName = options?.model || config.model
+    const body = buildRequestBody(config, modelName, messages, false, options)
 
     const response = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
@@ -358,13 +451,8 @@ class LLMClientService {
       } catch {}
     }
 
-    const body: ChatCompletionRequest = {
-      model: options?.model || config.model,
-      messages,
-      temperature: options?.temperature ?? config.temperature,
-      max_tokens: options?.max_tokens ?? config.max_tokens,
-      stream: true,
-    }
+    const modelName = options?.model || config.model
+    const body = buildRequestBody(config, modelName, messages, true, options)
 
     try {
       resetThinkState()
@@ -467,6 +555,8 @@ class LLMClientService {
     timeout_ms?: number
     is_default?: boolean
     extra_headers_json?: string
+    extra_body_json?: string
+    models_json?: string
   }) {
     const id = require('crypto').randomUUID()
     const now = Math.floor(Date.now() / 1000)
@@ -477,8 +567,8 @@ class LLMClientService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO llm_providers (id, name, provider_type, base_url, model, embedding_model, temperature, max_tokens, timeout_ms, extra_headers_json, is_default, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO llm_providers (id, name, provider_type, base_url, model, embedding_model, temperature, max_tokens, timeout_ms, extra_headers_json, extra_body_json, is_default, models_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       params.name,
@@ -490,7 +580,9 @@ class LLMClientService {
       params.max_tokens ?? 4096,
       params.timeout_ms ?? 60000,
       params.extra_headers_json || null,
+      params.extra_body_json || null,
       params.is_default ? 1 : 0,
+      params.models_json || '[]',
       now,
     )
 
@@ -552,3 +644,4 @@ class LLMClientService {
 }
 
 export default LLMClientService
+export { PROVIDER_DEFAULTS }

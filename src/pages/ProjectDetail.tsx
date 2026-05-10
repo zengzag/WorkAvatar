@@ -1,22 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Card, Button, Tabs, message, Statistic, Row, Col, Space, Tag, Typography } from 'antd'
+import { Card, Button, Tabs, message, Statistic, Row, Col, Space, Tag, Typography, Modal, Popconfirm, Tooltip } from 'antd'
 import {
-  UploadOutlined,
-  SyncOutlined,
-  FileTextOutlined,
   RobotOutlined,
   EyeOutlined,
   PlusOutlined,
   UserOutlined,
   RocketOutlined,
-  BookOutlined,
+  DatabaseOutlined,
+  LinkOutlined,
+  DisconnectOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
-import FileUploadZone from '../components/file/FileUploadZone'
-import FileList from '../components/file/FileList'
 import EmptyState from '../components/common/EmptyState'
-import type { File, Employee } from '../types'
+import type { Employee } from '../types'
 import type { TabsProps } from 'antd'
 
 const { Text } = Typography
@@ -25,16 +22,17 @@ const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [project, setProject] = useState<any>(null)
-  const [files, setFiles] = useState<File[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
-  const [loading, setLoading] = useState(false)
   const [, setEmployeesLoading] = useState(false)
+  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
+  const [kbLinkModalOpen, setKbLinkModalOpen] = useState(false)
+  const [allKBs, setAllKBs] = useState<any[]>([])
 
   useEffect(() => {
     if (id) {
       loadProject()
-      loadFiles()
       loadEmployees()
+      loadLinkedKBs()
     }
   }, [id])
 
@@ -45,19 +43,6 @@ const ProjectDetail: React.FC = () => {
     } catch (error) {
       console.error('加载项目失败:', error)
       message.error('加载项目失败')
-    }
-  }
-
-  const loadFiles = async () => {
-    setLoading(true)
-    try {
-      const result = await window.electronAPI.file.list({ project_id: id! })
-      setFiles(result.files)
-    } catch (error) {
-      console.error('加载文件失败:', error)
-      message.error('加载文件失败')
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -73,99 +58,43 @@ const ProjectDetail: React.FC = () => {
     }
   }
 
-  const handleUploadSuccess = () => {
-    loadFiles()
-  }
-
-  const handleSelectFiles = async () => {
+  const loadLinkedKBs = async () => {
     try {
-      const result = await window.electronAPI.app.showOpenDialog({
-        title: '选择文件',
-        properties: ['openFile', 'multiSelections'],
-        filters: [
-          {
-            name: '支持的文档类型',
-            extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'md', 'html', 'htm', 'eml'],
-          },
-        ],
-      })
-
-      if (!result.canceled && result.filePaths.length > 0) {
-        const importResult = await window.electronAPI.file.import({
-          project_id: id!,
-          paths: result.filePaths,
-        })
-
-        if (importResult.imported.length > 0) {
-          message.success(`成功导入 ${importResult.imported.length} 个文件`)
-          loadFiles()
-        }
-
-        if (importResult.errors && importResult.errors.length > 0) {
-          message.warning(`${importResult.errors.length} 个文件导入失败`)
-        }
-      }
-    } catch (error) {
-      console.error('File select error:', error)
-      message.error('选择文件失败')
-    }
-  }
-
-  const handleParseFile = async (fileId: string) => {
-    try {
-      const result = await window.electronAPI.file.parse({ file_id: fileId })
-      if (result.success) {
-        message.success('解析成功')
-        loadFiles()
-      } else {
-        message.error(result.error || '解析失败')
-      }
-    } catch (error) {
-      console.error('解析文件失败:', error)
-      message.error('解析文件失败')
-    }
-  }
-
-  const handleDeleteFile = async (fileId: string) => {
-    try {
-      await window.electronAPI.file.delete(fileId)
-      message.success('删除成功')
-      loadFiles()
-    } catch (error) {
-      console.error('删除文件失败:', error)
-      message.error('删除文件失败')
-    }
-  }
-
-  const handleBatchParse = async () => {
-    const pendingFiles = files.filter((f) => f.status === 'pending' || f.status === 'failed')
-    if (pendingFiles.length === 0) {
-      message.info('没有待解析的文件')
-      return
-    }
-
-    message.info(`开始解析 ${pendingFiles.length} 个文件`)
-    for (const file of pendingFiles) {
-      await handleParseFile(file.id)
-    }
+      const result = await window.electronAPI.kb.getKBsForProject(id!)
+      setLinkedKBs(result)
+    } catch {}
   }
 
   const handleCreateEmployee = () => {
     navigate(`/project/${id}/wizard`)
   }
 
-  const handleNavigateToWiki = () => {
-    navigate(`/project/${id}/wiki`)
-  }
-
   const handleNavigateToEmployee = (employeeId: string) => {
     navigate(`/employee/${employeeId}`)
   }
 
-  const handleViewFile = (file: any) => {
-    if (id) {
-      navigate(`/project/${id}/file/${file.id}`)
-    }
+  const handleOpenKBLinkModal = async () => {
+    try {
+      const result = await window.electronAPI.kb.list()
+      setAllKBs(result)
+      setKbLinkModalOpen(true)
+    } catch { message.error('加载知识库列表失败') }
+  }
+
+  const handleLinkKB = async (kbId: string) => {
+    try {
+      await window.electronAPI.kb.linkProject({ kb_id: kbId, project_id: id! })
+      message.success('关联知识库成功')
+      loadLinkedKBs()
+    } catch { message.error('关联失败') }
+  }
+
+  const handleUnlinkKB = async (kbId: string) => {
+    try {
+      await window.electronAPI.kb.unlinkProject({ kb_id: kbId, project_id: id! })
+      message.success('取消关联成功')
+      loadLinkedKBs()
+    } catch { message.error('取消关联失败') }
   }
 
   if (!project) {
@@ -175,11 +104,6 @@ const ProjectDetail: React.FC = () => {
       </div>
     )
   }
-
-  const pendingCount = files.filter((f) => f.status === 'pending').length
-  const completedCount = files.filter((f) => f.status === 'completed').length
-  const failedCount = files.filter((f) => f.status === 'failed').length
-  void failedCount
 
   const statusColorMap: Record<string, string> = {
     draft: 'default',
@@ -196,7 +120,7 @@ const ProjectDetail: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PageHeader
         title={project.name}
         subTitle={project.description}
@@ -204,9 +128,6 @@ const ProjectDetail: React.FC = () => {
         breadcrumb={[{ title: '仪表盘' }, { title: '项目详情' }]}
         extra={
           <Space>
-            <Button icon={<BookOutlined />} onClick={handleNavigateToWiki}>
-              知识库管理
-            </Button>
             <Button icon={<RobotOutlined />} type="primary" onClick={handleCreateEmployee}>
               创建数字员工
             </Button>
@@ -214,199 +135,300 @@ const ProjectDetail: React.FC = () => {
         }
       />
 
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
+      <Row gutter={16} style={{ marginBottom: 24, flexShrink: 0 }}>
+        <Col span={8}>
           <Card>
             <Statistic
-              title="文件总数"
-              value={files.length}
-              prefix={<FileTextOutlined style={{ color: '#1677ff' }} />}
+              title="关联知识库"
+              value={linkedKBs.length}
+              prefix={<DatabaseOutlined style={{ color: '#722ed1' }} />}
+              styles={{ content: { color: '#722ed1' } }}
             />
           </Card>
         </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="已完成"
-              value={completedCount}
-              styles={{ content: { color: '#52c41a' } }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="待解析"
-              value={pendingCount}
-              styles={{ content: { color: '#faad14' } }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
+        <Col span={8}>
           <Card>
             <Statistic
               title="数字员工"
               value={employees.length}
-              prefix={<RobotOutlined style={{ color: '#722ed1' }} />}
-              styles={{ content: { color: '#722ed1' } }}
+              prefix={<RobotOutlined style={{ color: '#1677ff' }} />}
+              styles={{ content: { color: '#1677ff' } }}
+            />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card>
+            <Statistic
+              title="运行中"
+              value={employees.filter((e) => e.status === 'active').length}
+              styles={{ content: { color: '#52c41a' } }}
             />
           </Card>
         </Col>
       </Row>
 
-      <Tabs
-        defaultActiveKey="files"
-        items={[
-          {
-            key: 'files',
-            label: (
-              <Space>
-                <FileTextOutlined />
-                文件管理
-                <Tag color="blue">{files.length}</Tag>
-              </Space>
-            ),
-            children: (
-              <>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <Tabs
+          defaultActiveKey="knowledge"
+          items={[
+            {
+              key: 'knowledge',
+              label: (
+                <Space>
+                  <DatabaseOutlined />
+                  知识库
+                  <Tag color="purple">{linkedKBs.length}</Tag>
+                </Space>
+              ),
+              children: (
                 <Card
-                  title="上传文件"
+                  title="关联的知识库"
                   extra={
-                    <Space>
-                      {pendingCount > 0 && (
-                        <Button icon={<SyncOutlined />} onClick={handleBatchParse}>
-                          批量解析 ({pendingCount})
-                        </Button>
-                      )}
-                      <Button type="primary" icon={<UploadOutlined />} onClick={handleSelectFiles}>
-                        选择文件
-                      </Button>
-                    </Space>
+                    <Button type="primary" icon={<LinkOutlined />} onClick={handleOpenKBLinkModal}>
+                      关联知识库
+                    </Button>
                   }
-                  style={{ marginBottom: 24 }}
                 >
-                  <FileUploadZone projectId={id!} onUploadSuccess={handleUploadSuccess} />
-                </Card>
-
-                <Card title="文件列表">
-                  {files.length > 0 ? (
-                    <FileList
-                      files={files}
-                      loading={loading}
-                      onParseFile={handleParseFile}
-                      onDeleteFile={handleDeleteFile}
-                      onViewFile={handleViewFile}
-                    />
+                  {linkedKBs.length > 0 ? (
+                    <div>
+                      {linkedKBs.map((kb: any) => (
+                        <div
+                          key={kb.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 48,
+                                height: 48,
+                                borderRadius: 8,
+                                background: '#e6f4ff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <DatabaseOutlined style={{ fontSize: 24, color: '#722ed1' }} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <Tooltip title={kb.name}>
+                                <Text strong ellipsis style={{ display: 'block' }}>{kb.name}</Text>
+                              </Tooltip>
+                              <Tooltip title={kb.description || '暂无描述'}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                              </Tooltip>
+                              <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                            </div>
+                          </div>
+                          <Space>
+                            <Button
+                              type="link"
+                              icon={<EyeOutlined />}
+                              onClick={() => navigate('/knowledge-base')}
+                            >
+                              查看
+                            </Button>
+                            <Popconfirm
+                              title="确认取消关联？"
+                              description="取消关联后，本项目的数字员工将无法查询该知识库"
+                              onConfirm={() => handleUnlinkKB(kb.id)}
+                            >
+                              <Button type="link" danger icon={<DisconnectOutlined />}>
+                                取消关联
+                              </Button>
+                            </Popconfirm>
+                          </Space>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <EmptyState
-                      title="暂无文件"
-                      description="上传文件开始构建您的数字员工知识库"
-                      actionText="上传文件"
-                      onAction={() => {}}
+                      title="尚未关联知识库"
+                      description="关联全局知识库后，本项目的数字员工可以查询知识库中的内容"
+                      actionText="关联知识库"
+                      onAction={handleOpenKBLinkModal}
                     />
                   )}
                 </Card>
-              </>
-            ),
-          },
-          {
-            key: 'employees',
-            label: (
-              <Space>
-                <RobotOutlined />
-                数字员工
-                <Tag color="purple">{employees.length}</Tag>
-              </Space>
-            ),
-            children: (
-              <Card
-                title="项目数字员工"
-                extra={
-                  <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateEmployee}>
-                    新建数字员工
-                  </Button>
-                }
-              >
-                {employees.length > 0 ? (
-                  <div>
-                    {employees.map((emp) => (
-                      <div
-                        key={emp.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '12px 0',
-                          borderBottom: '1px solid #f0f0f0',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-                          <div
-                            style={{
-                              width: 48,
-                              height: 48,
-                              borderRadius: 8,
-                              background: '#e6f4ff',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              flexShrink: 0,
-                            }}
-                          >
-                            <UserOutlined style={{ fontSize: 24, color: '#1677ff' }} />
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ marginBottom: 4 }}>
-                              <Space>
-                                <Text strong>{emp.name}</Text>
-                                <Tag color={statusColorMap[emp.status]}>
+              ),
+            },
+            {
+              key: 'employees',
+              label: (
+                <Space>
+                  <RobotOutlined />
+                  数字员工
+                  <Tag color="purple">{employees.length}</Tag>
+                </Space>
+              ),
+              children: (
+                <Card
+                  title="项目数字员工"
+                  extra={
+                    <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateEmployee}>
+                      新建数字员工
+                    </Button>
+                  }
+                >
+                  {employees.length > 0 ? (
+                    <div>
+                      {employees.map((emp) => (
+                        <div
+                          key={emp.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '12px 0',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                            <div
+                              style={{
+                                width: 48,
+                                height: 48,
+                                borderRadius: 8,
+                                background: '#e6f4ff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <UserOutlined style={{ fontSize: 24, color: '#1677ff' }} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                                <Tooltip title={emp.name}>
+                                  <Text strong ellipsis style={{ display: 'inline-block', maxWidth: 200 }}>{emp.name}</Text>
+                                </Tooltip>
+                                <Tag color={statusColorMap[emp.status]} style={{ flexShrink: 0 }}>
                                   {statusTextMap[emp.status]}
                                 </Tag>
-                              </Space>
-                            </div>
-                            <Text type="secondary">{emp.description || '暂无描述'}</Text>
-                            <div style={{ marginTop: 2 }}>
-                              <Text type="secondary" style={{ fontSize: 12 }}>
-                                <RocketOutlined /> 处理任务: {emp.total_tasks || 0} · 
-                                赞: {emp.total_approvals || 0} · 
-                                版本: v{emp.arch_version || 1}
-                              </Text>
+                              </div>
+                              <Tooltip title={emp.description || '暂无描述'}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{emp.description || '暂无描述'}</Text>
+                              </Tooltip>
+                              <div style={{ marginTop: 2 }}>
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  <RocketOutlined /> 处理任务: {emp.total_tasks || 0} ·
+                                  赞: {emp.total_approvals || 0} ·
+                                  版本: v{emp.arch_version || 1}
+                                </Text>
+                              </div>
                             </div>
                           </div>
+                          <Button
+                            type="primary"
+                            icon={<EyeOutlined />}
+                            onClick={() => handleNavigateToEmployee(emp.id)}
+                          >
+                            进入工作台
+                          </Button>
                         </div>
-                        <Button
-                          type="primary"
-                          icon={<EyeOutlined />}
-                          onClick={() => handleNavigateToEmployee(emp.id)}
-                        >
-                          进入工作台
-                        </Button>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      title="暂无数字员工"
+                      description="基于知识库创建专属数字员工"
+                      actionText="创建第一个数字员工"
+                      onAction={handleCreateEmployee}
+                    />
+                  )}
+                </Card>
+              ),
+            },
+            {
+              key: 'settings',
+              label: '项目设置',
+              children: (
+                <Card>
+                  <p>项目ID: {project.id}</p>
+                  <p>项目路径: {project.root_path}</p>
+                  <p>创建时间: {new Date(project.created_at * 1000).toLocaleString()}</p>
+                </Card>
+              ),
+            },
+          ] as TabsProps['items']}
+        />
+      </div>
+
+      <Modal
+        title="关联知识库"
+        open={kbLinkModalOpen}
+        onCancel={() => setKbLinkModalOpen(false)}
+        footer={null}
+        width={600}
+      >
+        {allKBs.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
+            暂无知识库。请先在知识库管理中创建知识库。
+            <Button type="link" onClick={() => { setKbLinkModalOpen(false); navigate('/knowledge-base') }}>
+              前往知识库管理
+            </Button>
+          </div>
+        ) : (
+          <div>
+            {allKBs.map((kb: any) => {
+              const isLinked = linkedKBs.some((lkb: any) => lkb.id === kb.id)
+              return (
+                <div
+                  key={kb.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '12px 0',
+                    borderBottom: '1px solid #f0f0f0',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 8,
+                        background: '#e6f4ff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <DatabaseOutlined style={{ fontSize: 20, color: '#722ed1' }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                      <Tooltip title={kb.name}>
+                        <Text ellipsis style={{ display: 'block' }}>{kb.name}</Text>
+                      </Tooltip>
+                      <Tooltip title={kb.description || '暂无描述'}>
+                        <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                      </Tooltip>
+                      <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                    </div>
                   </div>
-                ) : (
-                  <EmptyState
-                    title="暂无数字员工"
-                    description="基于已上传的文件创建专属数字员工"
-                    actionText="创建第一个数字员工"
-                    onAction={handleCreateEmployee}
-                  />
-                )}
-              </Card>
-            ),
-          },
-          {
-            key: 'settings',
-            label: '项目设置',
-            children: (
-              <Card>
-                <p>项目ID: {project.id}</p>
-                <p>项目路径: {project.root_path}</p>
-                <p>创建时间: {new Date(project.created_at * 1000).toLocaleString()}</p>
-              </Card>
-            ),
-          },
-        ] as TabsProps['items']}
-      />
+                  {isLinked ? (
+                    <Tag color="green">已关联</Tag>
+                  ) : (
+                    <Button type="primary" size="small" icon={<LinkOutlined />} onClick={() => handleLinkKB(kb.id)}>
+                      关联
+                    </Button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -22,7 +22,7 @@ import {
   Timeline,
 } from 'antd'
 import {
-  FileTextOutlined,
+  DatabaseOutlined,
   RobotOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
@@ -33,7 +33,7 @@ import {
   ToolOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
-import type { File, LLMProvider, LLMModelConfig } from '../types'
+import type { LLMProvider, LLMModelConfig } from '../types'
 
 const { Text, Title, Paragraph } = Typography
 const { TextArea } = Input
@@ -52,8 +52,8 @@ const CreationWizard: React.FC = () => {
   const navigate = useNavigate()
   const [currentStep, setCurrentStep] = useState(0)
   const [project, setProject] = useState<any>(null)
-  const [files, setFiles] = useState<File[]>([])
-  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
+  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
+  const [selectedKBIds, setSelectedKBIds] = useState<string[]>([])
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
@@ -75,7 +75,7 @@ const CreationWizard: React.FC = () => {
   useEffect(() => {
     if (id) {
       loadProject()
-      loadFiles()
+      loadLinkedKBs()
       loadProviders()
     }
   }, [id])
@@ -89,14 +89,13 @@ const CreationWizard: React.FC = () => {
     }
   }
 
-  const loadFiles = async () => {
+  const loadLinkedKBs = async () => {
     try {
-      const result = await window.electronAPI.file.list({ project_id: id! })
-      setFiles(result.files)
-      const completed = result.files.filter((f: File) => f.status === 'completed')
-      setSelectedFileIds(completed.map((f: File) => f.id))
+      const result = await window.electronAPI.kb.getKBsForProject(id!)
+      setLinkedKBs(result)
+      setSelectedKBIds(result.map((kb: any) => kb.id))
     } catch {
-      message.error('加载文件失败')
+      message.error('加载知识库失败')
     }
   }
 
@@ -125,7 +124,7 @@ const CreationWizard: React.FC = () => {
     return getProviderModels(providerId).map((m) => ({ value: m.model, label: m.name }))
   }
 
-  const analyzeFiles = async () => {
+  const analyzeKBs = async () => {
     setLoading(true)
     setAnalyzeStage('')
     setAnalyzeDetail('')
@@ -166,7 +165,7 @@ const CreationWizard: React.FC = () => {
 
       const result = await window.electronAPI.employee.analyzeProfile({
         project_id: id!,
-        file_ids: selectedFileIds,
+        kb_ids: selectedKBIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: enhancedDescription || undefined,
@@ -194,7 +193,7 @@ const CreationWizard: React.FC = () => {
         message.error(result.error || '分析失败')
       }
     } catch {
-      message.error('分析文件失败')
+      message.error('分析知识库失败')
     } finally {
       setLoading(false)
       if (progressCleanupRef.current) {
@@ -247,7 +246,6 @@ const CreationWizard: React.FC = () => {
               })
             }
           } catch {
-            // Skip tool assignment errors
           }
         }
       }
@@ -262,19 +260,17 @@ const CreationWizard: React.FC = () => {
   }
 
   const steps = [
-    { title: '选择资料', icon: <FileTextOutlined /> },
+    { title: '选择知识库', icon: <DatabaseOutlined /> },
     { title: '业务描述', icon: <BulbOutlined /> },
     { title: '智能分析', icon: <RobotOutlined /> },
     { title: '完成创建', icon: <CheckOutlined /> },
   ]
 
-  const completedFiles = files.filter((f) => f.status === 'completed')
-
   const renderStep1 = () => (
     <div>
       {providers.length === 0 && (
         <Alert
-          message="未配置 LLM 提供商"
+          title="未配置 LLM 提供商"
           description="系统将使用启发式规则进行分析，质量可能较低。建议在设置中配置 LLM 提供商以获得更好的分析效果。"
           type="warning"
           showIcon
@@ -282,15 +278,15 @@ const CreationWizard: React.FC = () => {
         />
       )}
       <Alert
-        message="选择用于创建数字员工的资料文件"
-        description="系统将调用 LLM 深度分析选中的文件，自动理解业务场景、识别职责。只有解析完成的文件可以被选中。"
+        title="选择用于创建数字员工的知识库"
+        description="系统将调用 LLM 深度分析选中的知识库内容，自动理解业务场景、识别职责。只有项目已关联的知识库可供选择。"
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
       />
 
       <Card
-        title={`项目文件 (${files.length})`}
+        title={`项目关联的知识库 (${linkedKBs.length})`}
         extra={
           <Space>
             <Select
@@ -316,40 +312,37 @@ const CreationWizard: React.FC = () => {
             )}
             <Button
               size="small"
-              onClick={() => setSelectedFileIds(completedFiles.map((f) => f.id))}
+              onClick={() => setSelectedKBIds(linkedKBs.map((kb: any) => kb.id))}
             >
-              全选已完成
+              全选
             </Button>
-            <Button size="small" onClick={() => setSelectedFileIds([])}>
+            <Button size="small" onClick={() => setSelectedKBIds([])}>
               清空
             </Button>
           </Space>
         }
       >
         <div>
-          {files.map((file) => {
-            const isCompleted = file.status === 'completed'
-            const isSelected = selectedFileIds.includes(file.id)
+          {linkedKBs.map((kb: any) => {
+            const isSelected = selectedKBIds.includes(kb.id)
             return (
               <div
-                key={file.id}
+                key={kb.id}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   padding: '12px 16px',
-                  opacity: isCompleted ? 1 : 0.5,
-                  background: isSelected ? '#e6f4ff' : 'transparent',
+                  background: isSelected ? '#f9f0ff' : 'transparent',
                   borderBottom: '1px solid #f0f0f0',
                 }}
               >
                 <Checkbox
                   checked={isSelected}
-                  disabled={!isCompleted}
                   onChange={(e) => {
                     if (e.target.checked) {
-                      setSelectedFileIds((prev) => [...prev, file.id])
+                      setSelectedKBIds((prev) => [...prev, kb.id])
                     } else {
-                      setSelectedFileIds((prev) => prev.filter((i) => i !== file.id))
+                      setSelectedKBIds((prev) => prev.filter((i) => i !== kb.id))
                     }
                   }}
                   style={{ marginRight: 12 }}
@@ -357,23 +350,25 @@ const CreationWizard: React.FC = () => {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ marginBottom: 2 }}>
                     <Space>
-                      <Text strong>{file.original_name}</Text>
-                      <Tag>{file.type}</Tag>
-                      <Tag color={file.status === 'completed' ? 'green' : file.status === 'failed' ? 'red' : 'orange'}>
-                        {file.status === 'completed' ? '已完成' : file.status === 'failed' ? '失败' : file.status === 'parsing' ? '解析中' : '待解析'}
-                      </Tag>
+                      <DatabaseOutlined style={{ color: '#722ed1' }} />
+                      <Text strong>{kb.name}</Text>
+                      <Tag>{kb.doc_count || 0} 文档</Tag>
                     </Space>
                   </div>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {(file.size / 1024).toFixed(1)} KB · {file.rule_count || 0} 条规则 · {file.qa_count || 0} 个问答对
+                    {kb.description || '暂无描述'}
                   </Text>
                 </div>
               </div>
             )
           })}
         </div>
-        {files.length === 0 && (
-          <Empty description="暂无文件，请先上传并解析文件" />
+        {linkedKBs.length === 0 && (
+          <Empty description="暂无关联的知识库，请先在项目中关联知识库">
+            <Button type="primary" onClick={() => navigate(`/project/${id}`)}>
+              前往关联知识库
+            </Button>
+          </Empty>
         )}
       </Card>
     </div>
@@ -382,7 +377,7 @@ const CreationWizard: React.FC = () => {
   const renderStep2 = () => (
     <div>
       <Alert
-        message="描述您的业务场景"
+        title="描述您的业务场景"
         description="提供更多信息可以让 LLM 更准确地理解您的需求，生成更贴合实际的数字员工角色。"
         type="info"
         showIcon
@@ -418,7 +413,7 @@ const CreationWizard: React.FC = () => {
             <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
             <Timeline
               items={[
-                { color: analyzeProgress >= 10 ? 'green' : 'gray', children: '准备分析文件' },
+                { color: analyzeProgress >= 10 ? 'green' : 'gray', children: '准备分析知识库' },
                 { color: analyzeProgress >= 30 ? 'green' : 'gray', children: '调用 LLM 进行智能分析' },
                 { color: analyzeProgress >= 45 ? 'green' : 'gray', children: 'LLM 思考中' },
                 { color: analyzeProgress >= 60 ? 'green' : 'gray', children: '接收 LLM 流式响应' },
@@ -426,7 +421,7 @@ const CreationWizard: React.FC = () => {
               ]}
             />
             {analyzeDetail && (
-              <Alert message={analyzeDetail} type="info" showIcon style={{ marginTop: 12 }} />
+              <Alert title={analyzeDetail} type="info" showIcon style={{ marginTop: 12 }} />
             )}
           </Card>
           {analyzeThinkChunks.length > 0 && (
@@ -447,12 +442,12 @@ const CreationWizard: React.FC = () => {
       ) : profile ? (
         <>
           <Alert
-            message={`分析完成：识别出 "${profile.roleName}" 角色`}
+            title={`分析完成：识别出 "${profile.roleName}" 角色`}
             type="success"
             showIcon
             style={{ marginBottom: 16 }}
             action={
-              <Button size="small" onClick={analyzeFiles} icon={<EditOutlined />}>
+              <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
                 重新分析
               </Button>
             }
@@ -471,7 +466,7 @@ const CreationWizard: React.FC = () => {
                 <Badge status="processing" text={profile.workingStyle} />
               </Descriptions.Item>
               <Descriptions.Item label="职责">
-                <Space direction="vertical" size={4}>
+                <Space orientation="vertical" size={4}>
                   {profile.responsibilities.map((r, i) => (
                     <Text key={i}>· {r}</Text>
                   ))}
@@ -499,8 +494,8 @@ const CreationWizard: React.FC = () => {
       ) : (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff' }} />
-          <Paragraph>点击下方按钮开始分析文档</Paragraph>
-          <Button type="primary" size="large" onClick={analyzeFiles} icon={<RobotOutlined />}>
+          <Paragraph>点击下方按钮开始分析知识库</Paragraph>
+          <Button type="primary" size="large" onClick={analyzeKBs} icon={<RobotOutlined />}>
             开始智能分析
           </Button>
         </div>
@@ -571,10 +566,10 @@ const CreationWizard: React.FC = () => {
         <Divider />
 
         <Title level={5}>创建摘要</Title>
-        <Space direction="vertical" style={{ width: '100%' }}>
+        <Space orientation="vertical" style={{ width: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Text type="secondary">选中文件</Text>
-            <Text>{selectedFileIds.length} 个</Text>
+            <Text type="secondary">选中知识库</Text>
+            <Text>{selectedKBIds.length} 个</Text>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <Text type="secondary">识别角色</Text>
@@ -593,8 +588,8 @@ const CreationWizard: React.FC = () => {
 
   const handleNext = async () => {
     if (currentStep === 0) {
-      if (selectedFileIds.length === 0) {
-        message.warning('请至少选择一个文件')
+      if (selectedKBIds.length === 0) {
+        message.warning('请至少选择一个知识库')
         return
       }
     }
@@ -663,4 +658,3 @@ const CreationWizard: React.FC = () => {
 }
 
 export default CreationWizard
-

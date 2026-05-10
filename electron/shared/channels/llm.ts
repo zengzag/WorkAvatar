@@ -1,0 +1,88 @@
+import type { LLMProvider } from '../types'
+
+export const LLM_CHANNELS = {
+  LLM_PROVIDER_LIST: 'llm:provider-list',
+  LLM_PROVIDER_GET: 'llm:provider-get',
+  LLM_PROVIDER_CREATE: 'llm:provider-create',
+  LLM_PROVIDER_UPDATE: 'llm:provider-update',
+  LLM_PROVIDER_DELETE: 'llm:provider-delete',
+  LLM_TEST_CONNECTION: 'llm:test-connection',
+  LLM_CHAT_STREAM: 'llm:chat-stream',
+  LLM_CHAT_STREAM_WITH_RAG: 'llm:chat-stream-with-rag',
+  EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
+} as const
+
+export interface LLMProviderCreateParams {
+  name: string
+  provider_type: LLMProvider['provider_type']
+  base_url?: string
+  model: string
+  api_key?: string
+  temperature?: number
+  max_tokens?: number
+  timeout_ms?: number
+  is_default?: boolean
+}
+
+export interface LLMProviderUpdateParams {
+  id: string
+  name?: string
+  provider_type?: LLMProvider['provider_type']
+  base_url?: string
+  model?: string
+  api_key?: string
+  temperature?: number
+  max_tokens?: number
+  timeout_ms?: number
+  is_default?: boolean
+}
+
+export interface LLMTestConnectionParams {
+  provider_id: string
+}
+
+export interface LLMTestConnectionResult {
+  success: boolean
+  error?: string
+  latency?: number
+}
+
+export interface LLMChatStreamParams {
+  provider_id: string
+  model_id?: string
+  messages: Array<{ role: string; content: string }>
+  options?: {
+    temperature?: number
+    max_tokens?: number
+    stream?: boolean
+  }
+}
+
+export interface LLMChatStreamWithRAGParams {
+  provider_id: string
+  model_id?: string
+  project_id: string
+  messages: Array<{ role: string; content: string }>
+  options?: {
+    temperature?: number
+    max_tokens?: number
+    stream?: boolean
+  }
+  rag_options?: {
+    top_k?: number
+    min_score?: number
+  }
+}
+
+export interface EmployeeChatStreamParams {
+  employee_id: string
+  provider_id: string
+  model_id?: string
+  messages: Array<{ role: string; content: string }>
+  options?: {
+    temperature?: number
+    max_tokens?: number
+  }
+  use_skills?: boolean
+  use_rag?: boolean
+}

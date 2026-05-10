@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Card,
   Input,
   Button,
   Space,
@@ -10,7 +9,6 @@ import {
   message,
   Spin,
   Collapse,
-  Badge,
   Popconfirm,
   Tooltip,
 } from 'antd'
@@ -23,22 +21,110 @@ import {
   DislikeOutlined,
   LikeOutlined,
   SettingOutlined,
-  BookOutlined,
   LinkOutlined,
   DeleteOutlined,
+  EditOutlined,
   BulbOutlined,
-  ReloadOutlined,
   DatabaseOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  HistoryOutlined,
+  PlusOutlined,
+  ArrowLeftOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  ClearOutlined,
+  DownOutlined,
+  RightOutlined,
+  CodeOutlined,
+  LoadingOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons'
-import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
 import dayjs from 'dayjs'
-import type { Employee, Conversation, Message } from '../types'
+import type { Conversation, Message } from '../types'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
+
+// 优化对话列表项组件，使用 memo 避免不必要的重渲染
+const ConversationItem = memo(({
+  conv,
+  isActive,
+  isEditing,
+  editingTitle,
+  onSelect,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onEditTitleChange,
+  onEditKeyDown,
+  onDelete,
+}: {
+  conv: Conversation
+  isActive: boolean
+  isEditing: boolean
+  editingTitle: string
+  onSelect: (id: string) => void
+  onStartEdit: (conv: Conversation, e: React.MouseEvent) => void
+  onSaveEdit: () => void
+  onCancelEdit: () => void
+  onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onEditKeyDown: (e: React.KeyboardEvent) => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+}) => {
+  return (
+    <div
+      onClick={() => !isEditing && onSelect(conv.id)}
+      style={{
+        padding: '10px 14px',
+        cursor: isEditing ? 'default' : 'pointer',
+        borderLeft: isActive ? '3px solid #1677ff' : '3px solid transparent',
+        background: isActive ? '#e6f4ff' : 'transparent',
+        borderBottom: '1px solid #f0f0f0',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        {isEditing ? (
+          <Input
+            value={editingTitle}
+            onChange={onEditTitleChange}
+            onKeyDown={onEditKeyDown}
+            autoFocus
+            style={{ fontSize: 13, flex: 1, marginRight: 8 }}
+            size="small"
+          />
+        ) : (
+          <Text style={{ fontSize: 13, maxWidth: 150 }} ellipsis>
+            {conv.title || `对话 ${dayjs(conv.created_at * 1000).format('MM/DD HH:mm')}`}
+          </Text>
+        )}
+        <Space size={2}>
+          {isEditing ? (
+            <>
+              <Button type="text" size="small" icon={<CheckOutlined />}
+                onClick={onSaveEdit} style={{ color: '#52c41a' }} />
+              <Button type="text" size="small" icon={<CloseOutlined />}
+                onClick={onCancelEdit} />
+            </>
+          ) : (
+            <>
+              <Button type="text" size="small" icon={<EditOutlined />}
+                onClick={(e) => onStartEdit(conv, e)} />
+              <Popconfirm title="确认删除" onConfirm={(e) => onDelete(conv.id, e!)}
+                okText="确定" cancelText="取消">
+                <Button type="text" size="small" danger icon={<DeleteOutlined />}
+                  onClick={(ev) => ev.stopPropagation()} />
+              </Popconfirm>
+            </>
+          )}
+        </Space>
+      </div>
+      <Text type="secondary" style={{ fontSize: 11 }}>
+        {conv.message_count || 0} 条 · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
+      </Text>
+    </div>
+  )
+})
 
 interface SearchResult {
   text: string
@@ -50,33 +136,25 @@ interface SearchResult {
   }
 }
 
-interface WikiSearchResult {
-  page: {
-    id: string
-    title: string
-    type: 'concept' | 'entity' | 'summary'
-    entity_type?: string
-    content: string
-    tags: string[]
-    sources: string[]
-    created_at: number
-    updated_at: number
-    path: string
-  }
-  relevance: number
-  matched_sections: string[]
+interface ToolCallInfo {
+  id: string
+  name: string
+  args: any
+  result?: any
+  isComplete?: boolean
 }
 
 interface MessageWithThought extends Message {
   thought?: string
   isStreamingThought?: boolean
   thoughtCollapsed?: boolean
+  toolCalls?: ToolCallInfo[]
 }
 
 const EmployeeWorkbench: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [employee, setEmployee] = useState<Employee | null>(null)
+  const [employee, setEmployee] = useState<any | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -85,14 +163,20 @@ const EmployeeWorkbench: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
-  const [wikiResults, setWikiResults] = useState<WikiSearchResult[]>([])
-  const [showRAGPanel, setShowRAGPanel] = useState(true)
-  const [showHistoryPanel, setShowHistoryPanel] = useState(true)
+  const [showSidePanel, setShowSidePanel] = useState(false)
   const [useRAG, setUseRAG] = useState(true)
-  const [useWiki, setUseWiki] = useState(true)
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>('')
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('')
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [expandedToolCalls, setExpandedToolCalls] = useState<Set<string>>(new Set())
+  const [displayedCount, setDisplayedCount] = useState(10) // 初始显示10条
+  const [allConversations, setAllConversations] = useState<Conversation[]>([]) // 保存所有对话
+  const conversationListRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
+  const isUserAtBottomRef = useRef(true)
+  const finishRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -103,10 +187,20 @@ const EmployeeWorkbench: React.FC = () => {
   }, [id])
 
   useEffect(() => {
-    scrollToBottom()
+    if (isUserAtBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    }
   }, [messages])
 
-  const scrollToBottom = () => {
+  const handleScroll = useCallback(() => {
+    const el = chatContainerRef.current
+    if (!el) return
+    const threshold = 50
+    isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  }, [])
+
+  const forceScrollToBottom = () => {
+    isUserAtBottomRef.current = true
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
@@ -115,12 +209,8 @@ const EmployeeWorkbench: React.FC = () => {
       const result = await window.electronAPI.employee.get(id!)
       setEmployee(result)
       setProjectId(result.project_id)
-      if (result.llm_provider_id) {
-        setSelectedLlmProviderId(result.llm_provider_id)
-      }
-      if (result.llm_model) {
-        setSelectedLlmModelId(result.llm_model)
-      }
+      if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
+      if (result.llm_model) setSelectedLlmModelId(result.llm_model)
     } catch {
       message.error('加载员工信息失败')
     }
@@ -129,9 +219,28 @@ const EmployeeWorkbench: React.FC = () => {
   const loadConversations = async () => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
-      setConversations(result)
-    } catch {
-      console.error('加载对话列表失败')
+      setAllConversations(result)
+      setConversations(result.slice(0, displayedCount))
+    } catch (e) { 
+      console.error('[Frontend] 加载对话列表失败', e) 
+    }
+  }
+
+  // 加载更多对话
+  const loadMoreConversations = () => {
+    const nextCount = displayedCount + 10
+    setDisplayedCount(nextCount)
+    setConversations(allConversations.slice(0, nextCount))
+  }
+
+  // 检测滚动到底部
+  const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement
+    if (target.scrollHeight - target.scrollTop <= target.clientHeight + 10) {
+      // 距离底部10px时触发加载更多
+      if (conversations.length < allConversations.length) {
+        loadMoreConversations()
+      }
     }
   }
 
@@ -148,26 +257,35 @@ const EmployeeWorkbench: React.FC = () => {
         employee_id: id!,
         title: `对话 ${dayjs().format('MM/DD HH:mm')}`,
       })
-      setConversations((prev) => [result as Conversation, ...prev])
+      // 同步更新两个状态，新对话在最前面
+      setAllConversations((prev) => [(result as Conversation), ...prev])
+      setConversations((prev) => [(result as Conversation), ...prev])
       setActiveConversationId((result as Conversation).id)
       setMessages([])
       setSearchResults([])
-    } catch {
-      message.error('创建对话失败')
-    }
+      setShowSidePanel(false)
+      forceScrollToBottom()
+    } catch { message.error('创建对话失败') }
   }
 
   const selectConversation = (convId: string) => {
     setActiveConversationId(convId)
     setSearchResults([])
-    setWikiResults([])
     const conv = conversations.find((c) => c.id === convId)
     if (conv) {
       try {
-        const msgs = JSON.parse(conv.messages_json || '[]') as MessageWithThought[]
-        setMessages(msgs)
-      } catch {
-        setMessages([])
+        // 只在选中对话时才完整查询该对话的详细信息（包含消息）
+        window.electronAPI.conversation.get(convId).then(fullConv => {
+          if (fullConv) {
+            const msgs = JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[]
+            setMessages(msgs)
+          }
+        }).catch(() => {
+          setMessages([])
+        })
+      } catch (e) { 
+        console.error('[Frontend] JSON parse error:', e)
+        setMessages([]) 
       }
     }
   }
@@ -176,6 +294,8 @@ const EmployeeWorkbench: React.FC = () => {
     e.stopPropagation()
     try {
       await window.electronAPI.conversation.delete(convId)
+      // 同步更新两个状态
+      setAllConversations((prev) => prev.filter((c) => c.id !== convId))
       setConversations((prev) => prev.filter((c) => c.id !== convId))
       if (activeConversationId === convId) {
         setActiveConversationId(null)
@@ -187,11 +307,74 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }
 
+  const deleteAllConversations = async () => {
+    if (!id) return
+    try {
+      await window.electronAPI.conversation.deleteAll(id)
+      setAllConversations([])
+      setConversations([])
+      setActiveConversationId(null)
+      setMessages([])
+      message.success('已清空所有对话')
+    } catch {
+      message.error('清空失败')
+    }
+  }
+
+  const startEditTitle = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingConversationId(conv.id)
+    setEditingTitle(conv.title || `对话 ${dayjs(conv.created_at * 1000).format('MM/DD HH:mm')}`)
+  }
+
+  const saveEditTitle = async () => {
+    if (!editingConversationId || !editingTitle.trim()) {
+      setEditingConversationId(null)
+      return
+    }
+    try {
+      await window.electronAPI.conversation.update({
+        id: editingConversationId,
+        title: editingTitle.trim()
+      })
+      // 同步更新两个状态
+      setAllConversations((prev) =>
+        prev.map((c) =>
+          c.id === editingConversationId
+            ? { ...c, title: editingTitle.trim() }
+            : c
+        )
+      )
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === editingConversationId
+            ? { ...c, title: editingTitle.trim() }
+            : c
+        )
+      )
+      message.success('重命名成功')
+    } catch {
+      message.error('重命名失败')
+    } finally {
+      setEditingConversationId(null)
+    }
+  }
+
+  const cancelEditTitle = () => {
+    setEditingConversationId(null)
+  }
+
+  const handleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveEditTitle()
+    } else if (e.key === 'Escape') {
+      cancelEditTitle()
+    }
+  }
+
   const handleSourceClick = (result: SearchResult) => {
     if (!projectId) return
-    const fileId = result.source.file_id
-    const chunkIndex = result.source.chunk_index
-    navigate(`/project/${projectId}/file/${fileId}?chunk=${chunkIndex}&text=${encodeURIComponent(result.text.substring(0, 100))}`)
+    navigate(`/project/${projectId}/file/${result.source.file_id}?chunk=${result.source.chunk_index}&text=${encodeURIComponent(result.text.substring(0, 100))}`)
   }
 
   const handleSend = async () => {
@@ -206,6 +389,8 @@ const EmployeeWorkbench: React.FC = () => {
 
     if (!activeConversationId) {
       await startNewConversation()
+      setInputValue(content)
+      setTimeout(() => handleSend(), 100)
       return
     }
 
@@ -235,13 +420,11 @@ const EmployeeWorkbench: React.FC = () => {
 
     setIsStreaming(true)
     setSearchResults([])
-    setWikiResults([])
 
     let chunkCleanup: () => void
     let doneCleanupFn: () => void
     let errorCleanupFn: () => void
     let ragCleanupFn: () => void
-    let wikiCleanupFn: () => void
     let thoughtCleanupFn: () => void
     let toolCallCleanupFn: () => void
     let toolResultCleanupFn: () => void
@@ -270,31 +453,32 @@ const EmployeeWorkbench: React.FC = () => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMessageId
-            ? { ...m, thought: (m.thought || '') + `\n[调用工具: ${toolCall.name}]`, isStreamingThought: true }
+            ? {
+                ...m,
+                toolCalls: [...(m.toolCalls || []), { id: `tc_${Date.now()}`, name: toolCall.name, args: toolCall.args, isComplete: false }],
+              }
             : m
         )
       )
     })
 
     toolResultCleanupFn = window.electronAPI.llm.onToolResult((toolResult: { name: string; result: any }) => {
-      const resultPreview = typeof toolResult.result === 'string'
-        ? toolResult.result.slice(0, 200)
-        : JSON.stringify(toolResult.result).slice(0, 200)
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? { ...m, thought: (m.thought || '') + `\n[工具结果: ${resultPreview}]`, isStreamingThought: true }
-            : m
-        )
+        prev.map((m) => {
+          if (m.id !== assistantMessageId) return m
+          const toolCalls = m.toolCalls || []
+          const lastIncompleteIndex = [...toolCalls].reverse().findIndex(tc => tc.name === toolResult.name && !tc.isComplete)
+          if (lastIncompleteIndex === -1) return m
+          const actualIndex = toolCalls.length - 1 - lastIncompleteIndex
+          const updatedToolCalls = [...toolCalls]
+          updatedToolCalls[actualIndex] = { ...updatedToolCalls[actualIndex], result: toolResult.result, isComplete: true }
+          return { ...m, toolCalls: updatedToolCalls }
+        })
       )
     })
 
     ragCleanupFn = window.electronAPI.llm.onRAGResults((results: SearchResult[]) => {
       setSearchResults(results)
-    })
-
-    wikiCleanupFn = window.electronAPI.wiki.onWikiResults((results: WikiSearchResult[]) => {
-      setWikiResults(results)
     })
 
     const finish = () => {
@@ -303,10 +487,12 @@ const EmployeeWorkbench: React.FC = () => {
       if (doneCleanupFn) doneCleanupFn()
       if (errorCleanupFn) errorCleanupFn()
       if (ragCleanupFn) ragCleanupFn()
-      if (wikiCleanupFn) wikiCleanupFn()
       if (toolCallCleanupFn) toolCallCleanupFn()
       if (toolResultCleanupFn) toolResultCleanupFn()
+      finishRef.current = null
     }
+
+    finishRef.current = finish
 
     doneCleanupFn = window.electronAPI.llm.onDone(() => {
       setMessages((prev) => {
@@ -351,7 +537,6 @@ const EmployeeWorkbench: React.FC = () => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        use_wiki: useWiki,
         use_rag: useRAG,
       })
     } catch {
@@ -364,12 +549,10 @@ const EmployeeWorkbench: React.FC = () => {
     try {
       await navigator.clipboard.writeText(content)
       message.success('已复制')
-    } catch {
-      message.error('复制失败')
-    }
+    } catch { message.error('复制失败') }
   }
 
-  const handleStop = () => {
+  const handleStop = async () => {
     setIsStreaming(false)
     setMessages((prev) =>
       prev.map((m) =>
@@ -378,267 +561,293 @@ const EmployeeWorkbench: React.FC = () => {
           : m
       )
     )
-  }
-
-  const handleRefreshConversation = (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    const conv = conversations.find((c) => c.id === convId)
-    if (conv && activeConversationId === convId) {
-      try {
-        const msgs = JSON.parse(conv.messages_json || '[]') as MessageWithThought[]
-        setMessages(msgs)
-        message.success('已刷新')
-      } catch {
-        setMessages([])
-      }
+    if (finishRef.current) {
+      finishRef.current()
     }
+    try {
+      await window.electronAPI.llm.abortChat()
+    } catch {}
   }
 
-  const statusColorMap: Record<string, string> = {
-    draft: 'default',
-    active: 'green',
-    paused: 'orange',
-    error: 'red',
+  const toggleToolCallExpand = (id: string) => {
+    setExpandedToolCalls(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
   }
+
+  const TOOL_DISPLAY_NAMES: Record<string, string> = {
+    calculator: '计算器',
+    date_time: '日期时间',
+    string_utils: '字符串处理',
+    shell_exec: '执行命令',
+    read_file: '读取文件',
+    write_file: '写入文件',
+    list_dir: '列出目录',
+    system_info: '系统信息',
+    web_search: '网络搜索',
+    web_fetch: '获取网页',
+    json_utils: 'JSON处理',
+    random_utils: '随机工具',
+    env_vars: '环境变量',
+    kb_overview: '知识库概览',
+    query_global_summary: '全局摘要查询',
+    query_knowledge_graph: '知识图谱查询',
+    query_chapters: '章节检索',
+    query_fulltext: '全文检索',
+    get_document_content: '获取文档内容',
+    generate_timeline: '生成时间线',
+    query_rag: 'RAG检索',
+    activate_skill: '激活技能',
+    read_reference: '读取参考',
+  }
+
+  const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
+
+  const hasRagResults = searchResults.length > 0
 
   if (!employee) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Spin size="large" />
       </div>
     )
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '16px 24px 0' }}>
-        <PageHeader
-          title={employee.name}
-          subTitle={employee.description || '数字员工工作台'}
-          onBack={() => navigate('/dashboard')}
-          breadcrumb={[{ title: '仪表盘' }, { title: employee.name }]}
-          extra={
-            <Space>
-              <LLMSelector
-                providerId={selectedLlmProviderId}
-                modelId={selectedLlmModelId}
-                onProviderChange={setSelectedLlmProviderId}
-                onModelChange={setSelectedLlmModelId}
-              />
-              <Tag color={statusColorMap[employee.status]}>
-                {employee.status === 'active'
-                  ? '运行中'
-                  : employee.status === 'draft'
-                  ? '草稿'
-                  : employee.status === 'paused'
-                  ? '已暂停'
-                  : '错误'}
-              </Tag>
-              <Button
-                icon={<SettingOutlined />}
-                onClick={() => navigate(`/employee/${id}/settings`)}
-              >
-                配置
-              </Button>
-            </Space>
-          }
-        />
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+      {/* 极简顶栏 */}
+      <div style={{
+        height: 48,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        borderBottom: '1px solid #f0f0f0',
+        background: '#fff',
+        flexShrink: 0,
+      }}>
+        <Space size={12}>
+          <Tooltip title="返回仪表盘">
+            <Button type="text" icon={<ArrowLeftOutlined />}
+              onClick={() => navigate('/dashboard')} style={{ fontSize: 16 }} />
+          </Tooltip>
+          <Text strong style={{ fontSize: 15 }}>{employee.name}</Text>
+          <Tag color={employee.status === 'active' ? 'green' : employee.status === 'draft' ? 'default' : employee.status === 'paused' ? 'orange' : 'red'}
+            style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
+            {employee.status === 'active' ? '运行中' : employee.status === 'draft' ? '草稿' : employee.status === 'paused' ? '已暂停' : '错误'}
+          </Tag>
+        </Space>
+        <Space size={4}>
+          <LLMSelector
+            providerId={selectedLlmProviderId}
+            modelId={selectedLlmModelId}
+            onProviderChange={setSelectedLlmProviderId}
+            onModelChange={setSelectedLlmModelId}
+          />
+          <Tooltip title="员工配置">
+            <Button type="text" icon={<SettingOutlined />}
+              onClick={() => navigate(`/employee/${id}/settings`)} />
+          </Tooltip>
+          <Tooltip title={showSidePanel ? '关闭面板' : '历史对话'}>
+            <Button type="text"
+              icon={showSidePanel ? <MenuFoldOutlined /> : <HistoryOutlined />}
+              onClick={() => setShowSidePanel(!showSidePanel)}
+              style={{ color: conversations.length > 0 ? '#1677ff' : undefined }}
+            />
+          </Tooltip>
+        </Space>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', padding: '0 24px 24px', gap: 16, minHeight: 0 }}>
-        {showHistoryPanel && (
-        <Card
-          size="small"
-          title="对话列表"
-          style={{ width: 260, flexShrink: 0 }}
-          styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column', height: '100%' } }}
-          extra={
-            <Button
-              type="text"
-              size="small"
-              icon={<MenuFoldOutlined />}
-              onClick={() => setShowHistoryPanel(false)}
-              title="隐藏对话列表"
-            />
-          }
-        >
-          <div style={{ padding: '0 12px 8px' }}>
-            <Button block type="primary" onClick={startNewConversation} style={{ marginBottom: 8 }}>
-              新对话
-            </Button>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto' }}>
-            {conversations.map((conv) => (
-              <div
-                key={conv.id}
-                onClick={() => selectConversation(conv.id)}
-                style={{
-                  padding: '10px 12px',
-                  cursor: 'pointer',
-                  borderLeft: activeConversationId === conv.id ? '3px solid #1677ff' : '3px solid transparent',
-                  background: activeConversationId === conv.id ? '#e6f4ff' : 'transparent',
-                  borderBottom: '1px solid #f0f0f0',
-                  transition: 'all 0.2s',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-                  <Text style={{ fontSize: 13, maxWidth: 160 }} ellipsis>
-                    {conv.title || `对话 ${dayjs(conv.created_at * 1000).format('MM/DD HH:mm')}`}
-                  </Text>
-                  <Space size={4} style={{ flexShrink: 0 }}>
-                    <Tooltip title="刷新">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<ReloadOutlined />}
-                        onClick={(e) => handleRefreshConversation(conv.id, e)}
-                      />
-                    </Tooltip>
-                    <Popconfirm
-                      title="确认删除"
-                      description="删除后无法恢复，确定要删除吗？"
-                      onConfirm={(e) => deleteConversation(conv.id, e!)}
-                      okText="确定"
-                      cancelText="取消"
-                    >
-                      <Tooltip title="删除">
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                      </Tooltip>
-                    </Popconfirm>
-                  </Space>
+      {/* 主内容区域 */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* 侧面板：对话列表 (可折叠) */}
+        {showSidePanel && (
+          <div style={{
+            width: 280,
+            flexShrink: 0,
+            borderRight: '1px solid #f0f0f0',
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#fafafa',
+          }}>
+            <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
+              <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
+                onClick={startNewConversation}>新对话</Button>
+              {conversations.length > 0 && (
+                <Popconfirm
+                  title="确认清空所有对话记录？"
+                  description="此操作不可恢复"
+                  onConfirm={deleteAllConversations}
+                  okText="确认"
+                  cancelText="取消"
+                >
+                  <Button danger icon={<ClearOutlined />} />
+                </Popconfirm>
+              )}
+            </div>
+            <div 
+              ref={conversationListRef}
+              style={{ flex: 1, overflow: 'auto' }}
+              onScroll={handleConversationListScroll}
+            >
+              {conversations.map((conv) => (
+                <ConversationItem
+                  key={conv.id}
+                  conv={conv}
+                  isActive={activeConversationId === conv.id}
+                  isEditing={editingConversationId === conv.id}
+                  editingTitle={editingTitle}
+                  onSelect={selectConversation}
+                  onStartEdit={startEditTitle}
+                  onSaveEdit={saveEditTitle}
+                  onCancelEdit={cancelEditTitle}
+                  onEditTitleChange={(e) => setEditingTitle(e.target.value)}
+                  onEditKeyDown={handleEditKeyDown}
+                  onDelete={deleteConversation}
+                />
+              ))}
+              
+              {/* 加载更多按钮 */}
+              {conversations.length < allConversations.length && (
+                <div style={{ padding: '12px', textAlign: 'center' }}>
+                  <Button 
+                    type="dashed" 
+                    block
+                    onClick={loadMoreConversations}
+                  >
+                    加载更多 ({conversations.length}/{allConversations.length})
+                  </Button>
                 </div>
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {conv.message_count || 0} 条消息 · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
-                </Text>
-              </div>
-            ))}
-            {conversations.length === 0 && (
-              <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
-                暂无对话
-              </div>
-            )}
-          </div>
-        </Card>
-        )}
-
-        {!showHistoryPanel && (
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', marginRight: -8 }}>
-            <Tooltip title="展开对话列表">
-              <Button
-                type="text"
-                icon={<MenuUnfoldOutlined />}
-                onClick={() => setShowHistoryPanel(true)}
-                style={{ height: 64 }}
-              />
-            </Tooltip>
+              )}
+              
+              {conversations.length === 0 && (
+                <div style={{ textAlign: 'center', padding: 24, color: '#999', fontSize: 13 }}>暂无对话</div>
+              )}
+            </div>
           </div>
         )}
 
-        <Card
-          style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
-          styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' } }}
-        >
-          <div
+        {/* 对话区域 */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+
+          {/* 消息列表 */}
+          <div ref={chatContainerRef} onScroll={handleScroll}
             style={{
               flex: 1,
               overflow: 'auto',
-              padding: 16,
+              padding: '24px 20%',
               display: 'flex',
               flexDirection: 'column',
-              gap: 16,
+              gap: 20,
             }}
           >
+            {/* 知识检索结果迷你提示 */}
+            {hasRagResults && (
+              <div style={{
+                background: '#f0f5ff',
+                borderRadius: 8,
+                padding: '8px 14px',
+                marginBottom: 8,
+              }}>
+                <Collapse size="small" ghost items={[
+                  ...(searchResults.length > 0 ? [{
+                    key: 'kb-mini',
+                    label: <Space><DatabaseOutlined style={{ color: '#722ed1' }} /><Text strong style={{ fontSize: 13 }}>知识库检索结果 ({searchResults.length})</Text></Space>,
+                    children: searchResults.map((r, i) => (
+                      <div key={i} style={{ padding: '6px 8px', marginBottom: 6, background: '#f0f5ff', borderRadius: 6 }}>
+                        <Text strong style={{ fontSize: 12, cursor: 'pointer' }} onClick={() => handleSourceClick(r)}>
+                          <LinkOutlined style={{ marginRight: 4, color: '#1677ff' }} />{r.source.file_name}
+                        </Text>
+                        <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>相关度: {(r.score * 100).toFixed(1)}%</Text>
+                      </div>
+                    )),
+                  }] : []),
+                ]} />
+              </div>
+            )}
+
+            {/* 空状态 */}
             {messages.length === 0 && !activeConversationId && (
-              <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-                <RobotOutlined style={{ fontSize: 64, marginBottom: 16 }} />
-                <Paragraph type="secondary">
-                  选择一个对话或创建新对话开始与数字员工交流
+              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
+                <RobotOutlined style={{ fontSize: 56, color: '#d9d9d9', marginBottom: 20 }} />
+                <Paragraph type="secondary" style={{ fontSize: 15, marginBottom: 24 }}>
+                  创建新对话，开始与数字员工交流
                 </Paragraph>
-                <Button type="primary" onClick={startNewConversation}>
+                <Button type="primary" size="large" icon={<PlusOutlined />} onClick={startNewConversation}>
                   开始新对话
                 </Button>
               </div>
             )}
 
             {messages.length === 0 && activeConversationId && (
-              <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>
-                <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-                <Paragraph type="secondary">
-                  在下方输入消息，开始与数字员工对话
-                </Paragraph>
+              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
+                <RobotOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
+                <Paragraph type="secondary" style={{ fontSize: 14 }}>在下方输入消息开始对话</Paragraph>
               </div>
             )}
 
+            {/* 消息列表 */}
             {messages.map((msg) => (
-              <div
-                key={msg.id}
+              <div key={msg.id}
                 style={{
                   display: 'flex',
-                  justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                  gap: 8,
+                  gap: 12,
+                  flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
+                  alignItems: 'flex-start',
                 }}
               >
-                {msg.role === 'assistant' && (
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 6,
-                      background: '#e6f4ff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <RobotOutlined style={{ color: '#1677ff' }} />
-                  </div>
-                )}
+                {/* 头像 */}
+                <div style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  background: msg.role === 'assistant' ? '#f0f5ff' : '#e6f4ff',
+                }}>
+                  {msg.role === 'assistant'
+                    ? <RobotOutlined style={{ color: '#1677ff', fontSize: 18 }} />
+                    : <UserOutlined style={{ color: '#1677ff', fontSize: 18 }} />}
+                </div>
 
-                <div style={{ maxWidth: '70%', minWidth: 0 }}>
+                <div style={{ maxWidth: '80%', minWidth: 0 }}>
+                  {/* 思考过程 */}
                   {msg.thought && (
-                    <div style={{ marginBottom: 8 }}>
-                      <div
+                    <div style={{ marginBottom: 6 }}>
+                      <div onClick={() => {
+                        if (!msg.isStreamingThought) {
+                          setMessages(prev => prev.map(m =>
+                            m.id === msg.id ? { ...m, thoughtCollapsed: !m.thoughtCollapsed } : m
+                          ))
+                        }
+                      }}
                         style={{
-                          padding: '8px 12px',
+                          padding: '6px 12px',
                           borderRadius: 8,
-                          background: '#f0f5ff',
-                          border: '1px solid #adc6ff',
-                          fontSize: 13,
-                          color: '#1677ff',
+                          background: '#faf5ff',
+                          border: '1px solid #d3adf7',
+                          cursor: msg.isStreamingThought ? 'default' : 'pointer',
                         }}
                       >
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            cursor: 'pointer',
-                            marginBottom: msg.thoughtCollapsed ? 0 : 4,
-                          }}
-                          onClick={() => {
-                            if (!msg.isStreamingThought) {
-                              setMessages((prev) =>
-                                prev.map((m) =>
-                                  m.id === msg.id ? { ...m, thoughtCollapsed: !m.thoughtCollapsed } : m
-                                )
-                              )
-                            }
-                          }}
-                        >
-                          <Space>
-                            <BulbOutlined />
-                            <Text strong>思考过程</Text>
-                            {msg.isStreamingThought && <span className="cursor-blink">▊</span>}
-                          </Space>
+                        <Space size={4} style={{ fontSize: 12 }}>
+                          <BulbOutlined style={{ color: '#722ed1' }} />
+                          <Text type="secondary" style={{ fontSize: 12 }}>思考过程
+                            {msg.isStreamingThought && <span className="cursor-blink" style={{ color: '#1677ff' }}>▊</span>}
+                          </Text>
                           {!msg.isStreamingThought && (
-                            <span style={{ fontSize: 12, color: '#1677ff' }}>
-                              {msg.thoughtCollapsed ? '展开' : '折叠'}
-                            </span>
+                            <Text style={{ fontSize: 11, color: '#722ed1' }}>{msg.thoughtCollapsed ? '展开' : '折叠'}</Text>
                           )}
-                        </div>
+                        </Space>
                         {!msg.thoughtCollapsed && (
-                          <Paragraph style={{ fontSize: 12, margin: 0, color: '#333' }}>
+                          <Paragraph style={{ fontSize: 12, margin: '6px 0 0', color: '#555', whiteSpace: 'pre-wrap' }}>
                             {msg.thought}
                           </Paragraph>
                         )}
@@ -646,66 +855,176 @@ const EmployeeWorkbench: React.FC = () => {
                     </div>
                   )}
 
-                  <div
-                    style={{
-                      padding: '10px 14px',
-                      borderRadius: 12,
-                      background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
-                      color: msg.role === 'user' ? '#fff' : 'inherit',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      border: msg.isError ? '1px solid #ff4d4f' : 'none',
-                    }}
-                  >
+                  {/* 工具调用卡片 */}
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div style={{ marginBottom: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {msg.toolCalls.map((tc) => {
+                        const isExpanded = expandedToolCalls.has(tc.id)
+                        const isRunning = !tc.isComplete
+                        const resultStr = tc.result !== undefined
+                          ? (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2))
+                          : ''
+                        const argsStr = tc.args !== undefined
+                          ? (typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args, null, 2))
+                          : ''
+                        return (
+                          <div key={tc.id}
+                            style={{
+                              borderRadius: 8,
+                              border: '1px solid #d9d9d9',
+                              borderLeft: `3px solid ${isRunning ? '#1677ff' : '#52c41a'}`,
+                              background: '#fafafa',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div
+                              onClick={() => toggleToolCallExpand(tc.id)}
+                              style={{
+                                padding: '6px 12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                              }}
+                            >
+                              {isExpanded ? <DownOutlined style={{ fontSize: 10, color: '#999' }} /> : <RightOutlined style={{ fontSize: 10, color: '#999' }} />}
+                              <CodeOutlined style={{ fontSize: 13, color: isRunning ? '#1677ff' : '#52c41a' }} />
+                              <Text strong style={{ fontSize: 13, color: '#333' }}>{getToolDisplayName(tc.name)}</Text>
+                              <Text type="secondary" style={{ fontSize: 11 }}>({tc.name})</Text>
+                              {isRunning ? (
+                                <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+                                  <LoadingOutlined spin /> 执行中
+                                </Tag>
+                              ) : (
+                                <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+                                  <CheckCircleOutlined /> 完成
+                                </Tag>
+                              )}
+                            </div>
+                            {isExpanded && (
+                              <div style={{ borderTop: '1px solid #f0f0f0', padding: '8px 12px' }}>
+                                {argsStr && (
+                                  <div style={{ marginBottom: tc.result !== undefined ? 8 : 0 }}>
+                                    <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>输入参数</Text>
+                                    <pre style={{
+                                      margin: 0,
+                                      padding: '6px 10px',
+                                      background: '#fff',
+                                      borderRadius: 6,
+                                      fontSize: 12,
+                                      lineHeight: 1.5,
+                                      maxHeight: 200,
+                                      overflow: 'auto',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-all',
+                                      border: '1px solid #f0f0f0',
+                                    }}>
+                                      {argsStr}
+                                    </pre>
+                                  </div>
+                                )}
+                                {tc.result !== undefined && (
+                                  <div>
+                                    <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>返回结果</Text>
+                                    <pre style={{
+                                      margin: 0,
+                                      padding: '6px 10px',
+                                      background: '#f6ffed',
+                                      borderRadius: 6,
+                                      fontSize: 12,
+                                      lineHeight: 1.5,
+                                      maxHeight: 300,
+                                      overflow: 'auto',
+                                      whiteSpace: 'pre-wrap',
+                                      wordBreak: 'break-all',
+                                      border: '1px solid #b7eb8f',
+                                    }}>
+                                      {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n...(结果已截断)' : resultStr}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* 消息气泡 */}
+                  <div style={{
+                    padding: '10px 16px',
+                    borderRadius: 12,
+                    background: msg.role === 'user' ? '#1677ff' : '#f5f5f5',
+                    color: msg.role === 'user' ? '#fff' : 'inherit',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    border: msg.isError ? '1px solid #ff4d4f' : 'none',
+                    lineHeight: 1.7,
+                  }}>
                     {msg.isStreaming && !msg.content ? (
-                      <Text type="secondary" style={{ color: msg.role === 'user' ? '#fff' : 'inherit' }}>
-                        正在思考...
-                      </Text>
+                      <Text style={{ color: '#999', fontSize: 14 }}>正在思考...</Text>
                     ) : (
                       <Text style={{ color: msg.role === 'user' ? '#fff' : 'inherit', fontSize: 14 }}>
                         {msg.content}
                       </Text>
                     )}
-                    {msg.isStreaming && <span className="cursor-blink">▊</span>}
+                    {msg.isStreaming && <span className="cursor-blink" style={{ color: msg.role === 'user' ? '#fff' : '#999' }}>▊</span>}
                   </div>
 
+                  {/* 操作按钮 */}
                   {msg.role === 'assistant' && msg.content && !msg.isStreaming && !msg.isError && (
-                    <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CopyOutlined />}
-                        onClick={() => handleCopy(msg.content)}
-                      />
-                      <Button type="text" size="small" icon={<LikeOutlined />} />
-                      <Button type="text" size="small" icon={<DislikeOutlined />} />
-                    </div>
+                    <Space size={4} style={{ marginTop: 4, marginLeft: 2 }}>
+                      <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
+                        onClick={() => handleCopy(msg.content)} />
+                      <Button type="text" size="small" icon={<LikeOutlined style={{ fontSize: 12 }} />} />
+                      <Button type="text" size="small" icon={<DislikeOutlined style={{ fontSize: 12 }} />} />
+                    </Space>
                   )}
                 </div>
-
-                {msg.role === 'user' && (
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 6,
-                      background: '#1677ff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <UserOutlined style={{ color: '#fff' }} />
-                  </div>
-                )}
               </div>
             ))}
             <div ref={messagesEndRef} />
           </div>
 
-          <div style={{ borderTop: '1px solid #f0f0f0', padding: 16 }}>
-            <Space.Compact style={{ width: '100%' }}>
+          {/* 底部快捷标签 */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 8,
+            padding: '0 0 4px',
+          }}>
+            <Tag color={useRAG ? 'green' : 'default'} style={{ cursor: 'pointer', fontSize: 12, borderRadius: 12 }}
+              onClick={() => setUseRAG(!useRAG)}>
+              <DatabaseOutlined /> 知识库 {useRAG ? '开' : '关'}
+            </Tag>
+          </div>
+
+          {/* 输入区域 */}
+          <div
+            style={{
+              padding: '12px 20% 20px 20%',
+              flexShrink: 0,
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-end',
+              background: '#f7f7f7',
+              borderRadius: 16,
+              padding: '6px 6px 6px 16px',
+              border: '2px solid transparent',
+              transition: 'border-color 0.3s',
+            }}
+              onFocusCapture={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = '#1677ff'
+              }}
+              onBlurCapture={(e) => {
+                (e.currentTarget as HTMLElement).style.borderColor = 'transparent'
+              }}
+            >
               <TextArea
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
@@ -715,175 +1034,50 @@ const EmployeeWorkbench: React.FC = () => {
                     handleSend()
                   }
                 }}
-                placeholder={
-                  activeConversationId
-                    ? '输入消息，Enter发送，Shift+Enter换行...'
-                    : '先创建新对话...'
-                }
-                autoSize={{ minRows: 1, maxRows: 4 }}
-                style={{ flex: 1 }}
-                disabled={!activeConversationId}
+                placeholder={activeConversationId ? '输入消息，Enter发送，Shift+Enter换行...' : '创建新对话开始交流...'}
+                autoSize={{ minRows: 1, maxRows: 5 }}
+                disabled={isStreaming}
+                style={{
+                  flex: 1,
+                  background: 'transparent',
+                  border: 'none',
+                  resize: 'none',
+                  fontSize: 14,
+                  lineHeight: 1.6,
+                  padding: '4px 0',
+                  boxShadow: 'none',
+                }}
+                className="workbench-input"
               />
               {isStreaming ? (
-                <Button icon={<StopOutlined />} danger onClick={handleStop}>
-                  停止
-                </Button>
+                <Button icon={<StopOutlined />} danger
+                  onClick={handleStop}
+                  shape="circle" size="middle" />
               ) : (
-                <Button
-                  type="primary"
-                  icon={<SendOutlined />}
+                <Button icon={<SendOutlined />} type="primary"
                   onClick={handleSend}
-                  disabled={!inputValue.trim() || !activeConversationId}
-                >
-                  发送
-                </Button>
+                  disabled={!inputValue.trim()}
+                  shape="circle" size="middle"
+                  style={{ flexShrink: 0 }} />
               )}
-            </Space.Compact>
+            </div>
           </div>
-        </Card>
-
-        {showRAGPanel && (
-          <Card
-            size="small"
-            title={
-              <Space>
-                <DatabaseOutlined />
-                <span>知识检索</span>
-                {(wikiResults.length > 0 || searchResults.length > 0) && (
-                  <Badge count={wikiResults.length || searchResults.length} style={{ backgroundColor: '#1677ff' }} />
-                )}
-              </Space>
-            }
-            extra={
-              <Space size={4}>
-                <Tag
-                  color={useWiki ? 'blue' : 'default'}
-                  style={{ cursor: 'pointer', fontSize: 11 }}
-                  onClick={() => setUseWiki(!useWiki)}
-                >
-                  Wiki
-                </Tag>
-                <Tag
-                  color={useRAG ? 'green' : 'default'}
-                  style={{ cursor: 'pointer', fontSize: 11 }}
-                  onClick={() => setUseRAG(!useRAG)}
-                >
-                  RAG
-                </Tag>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<MenuFoldOutlined />}
-                  onClick={() => setShowRAGPanel(false)}
-                  title="隐藏知识检索"
-                />
-              </Space>
-            }
-            style={{ width: 320, flexShrink: 0 }}
-            styles={{ body: { padding: 12, overflow: 'auto', maxHeight: 'calc(100vh - 200px)' } }}
-          >
-            {wikiResults.length === 0 && searchResults.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>
-                <BookOutlined style={{ fontSize: 32, marginBottom: 8 }} />
-                <Paragraph type="secondary" style={{ fontSize: 12 }}>
-                  发送消息后，将在此显示检索到的相关知识
-                </Paragraph>
-                <div style={{ marginTop: 8 }}>
-                  {useWiki && <Tag style={{ fontSize: 12 }} color="blue">Wiki 知识库</Tag>}
-                  {useRAG && <Tag style={{ fontSize: 12 }} color="green">RAG 模式</Tag>}
-                  {!useWiki && !useRAG && <Tag style={{ fontSize: 12 }}>知识检索已关闭</Tag>}
-                </div>
-              </div>
-            ) : (
-              <Collapse
-                size="small"
-                defaultActiveKey={['0']}
-              >
-                {wikiResults.length > 0 && (
-                  <Collapse.Panel
-                    header={
-                      <Space>
-                        <BookOutlined style={{ color: '#1677ff' }} />
-                        <span>Wiki 知识 ({wikiResults.length})</span>
-                      </Space>
-                    }
-                    key="wiki"
-                  >
-                    {wikiResults.map((result, idx) => (
-                      <div key={idx} style={{ marginBottom: 12, padding: 8, background: '#f6ffed', borderRadius: 6 }}>
-                        <Text strong style={{ fontSize: 13, color: '#52c41a' }}>
-                          {result.page.title}
-                        </Text>
-                        <div style={{ marginTop: 4 }}>
-                          <Tag color={result.page.type === 'concept' ? 'blue' : result.page.type === 'entity' ? 'green' : 'orange'} style={{ marginBottom: 4, fontSize: 10, padding: '0 4px' }}>
-                            {result.page.type}
-                          </Tag>
-                          {result.page.tags.map((tag) => (
-                            <Tag key={tag} style={{ marginBottom: 4, fontSize: 10, padding: '0 4px' }}>{tag}</Tag>
-                          ))}
-                        </div>
-                        <Paragraph style={{ fontSize: 12, margin: '4px 0 0' }} ellipsis={{ rows: 3 }}>
-                          {result.page.content.substring(0, 300)}
-                        </Paragraph>
-                        <Text type="secondary" style={{ fontSize: 11 }}>
-                          相关度: {(result.relevance * 100).toFixed(0)}%
-                        </Text>
-                      </div>
-                    ))}
-                  </Collapse.Panel>
-                )}
-                {searchResults.length > 0 && (
-                  <Collapse.Panel
-                    header={
-                      <Space>
-                        <DatabaseOutlined style={{ color: '#722ed1' }} />
-                        <span>RAG 检索 ({searchResults.length})</span>
-                      </Space>
-                    }
-                    key="rag"
-                  >
-                    {searchResults.map((result, idx) => (
-                      <div key={idx} style={{ marginBottom: 8, padding: 8, background: '#f0f5ff', borderRadius: 6 }}>
-                        <Text strong style={{ fontSize: 12, cursor: 'pointer' }} ellipsis onClick={() => handleSourceClick(result)}>
-                          <LinkOutlined style={{ marginRight: 4, color: '#1677ff' }} />
-                          {result.source.file_name}
-                        </Text>
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                          相关度: {(result.score * 100).toFixed(1)}%
-                        </Text>
-                        <Paragraph style={{ fontSize: 11, margin: '4px 0 0' }}>
-                          {result.text.substring(0, 200)}...
-                        </Paragraph>
-                      </div>
-                    ))}
-                  </Collapse.Panel>
-                )}
-              </Collapse>
-            )}
-          </Card>
-        )}
-
-        {!showRAGPanel && (
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', marginLeft: -8 }}>
-            <Tooltip title="展开知识检索">
-              <Button
-                type="text"
-                icon={<MenuUnfoldOutlined />}
-                onClick={() => setShowRAGPanel(true)}
-                style={{ height: 64 }}
-              />
-            </Tooltip>
-          </div>
-        )}
+        </div>
       </div>
 
       <style>{`
-        @keyframes blink {
-          0%, 50% { opacity: 1; }
-          51%, 100% { opacity: 0; }
+        .cursor-blink { animation: blink 1s infinite; }
+        @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+        .workbench-input::placeholder { color: #bfbfbf; }
+        .workbench-input:focus { outline: none; }
+        .workbench-input {
+          background: transparent !important;
         }
-        .cursor-blink {
-          animation: blink 1s infinite;
+        .workbench-input:hover, .workbench-input:focus {
+          background: transparent !important;
+        }
+        .ant-input-textarea-focused {
+          background: transparent !important;
         }
       `}</style>
     </div>

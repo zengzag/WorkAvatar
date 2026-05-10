@@ -280,9 +280,55 @@ class FileParserService {
     return sections
   }
 
+  async parseFilePath(filePath: string): Promise<ParseResult> {
+    const fileType = this.getFileType(filePath)
+    let result: ParseResult
+
+    switch (fileType) {
+      case 'pdf':
+        result = await this.parsePDF(filePath)
+        break
+      case 'doc':
+        result = await this.parseDoc(filePath)
+        break
+      case 'docx':
+        result = await this.parseWord(filePath)
+        break
+      case 'xlsx':
+      case 'xls':
+      case 'csv':
+        result = await this.parseExcel(filePath)
+        break
+      case 'txt':
+      case 'md':
+      case 'html':
+        result = await this.parseText(filePath, fileType)
+        break
+      case 'png':
+      case 'jpg':
+      case 'jpeg':
+      case 'bmp':
+      case 'tiff':
+      case 'webp':
+        result = await this.parseImage(filePath)
+        break
+      default:
+        throw new Error(`Unsupported file type: ${fileType}`)
+    }
+
+    return result
+  }
+
   getFileContent(fileId: string): string | null {
     const file = this.db.getDb().prepare('SELECT thumbnail_text FROM files WHERE id = ?').get(fileId) as any
     return file?.thumbnail_text || null
+  }
+
+  updateFileFromKB(fileId: string, contentText: string, parsedJson: string) {
+    this.db.getDb().prepare(`
+      UPDATE files SET status = 'completed', thumbnail_text = ?, parsed_json = ?, updated_at = unixepoch()
+      WHERE id = ?
+    `).run(contentText, parsedJson, fileId)
   }
 }
 

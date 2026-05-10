@@ -1,24 +1,22 @@
 import { useState } from 'react'
-import { Layout, Menu, theme, Badge, Avatar, Dropdown, Typography, Space } from 'antd'
+import { Layout, Menu, Typography } from 'antd'
 import {
   RocketOutlined,
   FolderOpenOutlined,
   UserOutlined,
   SettingOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import TaskProgressPanel from './components/common/TaskProgressPanel'
 
-const { Header, Sider, Content } = Layout
+const { Sider, Content } = Layout
 const { Title } = Typography
 
 const App: React.FC = () => {
-  const {
-    token: { colorBgContainer },
-  } = theme.useToken()
-
   const navigate = useNavigate()
   const location = useLocation()
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
 
   const getSelectedKey = () => {
     const path = location.pathname
@@ -26,6 +24,7 @@ const App: React.FC = () => {
     if (path === '/projects' || path.startsWith('/project/')) return 'projects'
     if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
     if (path.startsWith('/settings')) return 'settings'
+    if (path.startsWith('/knowledge-base')) return 'knowledge-base'
     return 'dashboard'
   }
 
@@ -49,27 +48,16 @@ const App: React.FC = () => {
       onClick: () => navigate('/employees'),
     },
     {
+      key: 'knowledge-base',
+      icon: <BookOutlined />,
+      label: '知识库',
+      onClick: () => navigate('/knowledge-base'),
+    },
+    {
       key: 'settings',
       icon: <SettingOutlined />,
       label: '全局设置',
       onClick: () => navigate('/settings'),
-    },
-  ]
-
-  const userMenuItems = [
-    {
-      key: 'settings',
-      icon: <SettingOutlined />,
-      label: '设置',
-      onClick: () => navigate('/settings'),
-    },
-    {
-      type: 'divider' as const,
-    },
-    {
-      key: 'about',
-      icon: <RocketOutlined />,
-      label: '关于 WorkAvatar',
     },
   ]
 
@@ -81,6 +69,8 @@ const App: React.FC = () => {
         collapsed={collapsed}
         onCollapse={setCollapsed}
         width={200}
+        collapsedWidth={64}
+        style={{ display: 'flex', flexDirection: 'column' }}
       >
         <div
           style={{
@@ -105,35 +95,13 @@ const App: React.FC = () => {
           mode="inline"
           selectedKeys={[getSelectedKey()]}
           items={menuItems}
-          style={{ borderRight: 'none', marginTop: 8 }}
+          style={{ borderRight: 'none', marginTop: 8, flex: 1 }}
         />
+        <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #f0f0f0' }}>
+          <TaskProgressPanel />
+        </div>
       </Sider>
       <Layout>
-        <Header
-          style={{
-            padding: '0 24px',
-            background: colorBgContainer,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            borderBottom: '1px solid #f0f0f0',
-          }}
-        >
-          <Space>
-            <Badge dot>
-              <Avatar
-                icon={<UserOutlined />}
-                style={{ backgroundColor: '#1677ff', cursor: 'pointer' }}
-                onClick={() => navigate('/settings')}
-              />
-            </Badge>
-          </Space>
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <Space style={{ cursor: 'pointer' }}>
-              <UserOutlined />
-            </Space>
-          </Dropdown>
-        </Header>
         <Content
           style={{
             background: '#f5f5f5',

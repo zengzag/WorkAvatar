@@ -2,19 +2,20 @@ import { useEffect, useState } from 'react'
 import {
   Card,
   Button,
-  Tag,
   Table,
   message,
   Space,
   Popconfirm,
   Typography,
+  Modal,
+  Input,
 } from 'antd'
 import {
   FolderOpenOutlined,
   PlusOutlined,
   DeleteOutlined,
   EyeOutlined,
-  FileOutlined,
+  EditOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/app.store'
@@ -29,6 +30,9 @@ const ProjectManager: React.FC = () => {
   const navigate = useNavigate()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [loadingTable, setLoadingTable] = useState(false)
+  const [renameModalOpen, setRenameModalOpen] = useState(false)
+  const [currentProject, setCurrentProject] = useState<any>(null)
+  const [newProjectName, setNewProjectName] = useState('')
 
   useEffect(() => {
     loadProjects()
@@ -77,46 +81,91 @@ const ProjectManager: React.FC = () => {
     }
   }
 
+  const handleRenameProject = (project: any) => {
+    setCurrentProject(project)
+    setNewProjectName(project.name)
+    setRenameModalOpen(true)
+  }
+
+  const confirmRenameProject = async () => {
+    if (!newProjectName.trim() || !currentProject) {
+      message.error('项目名称不能为空')
+      return
+    }
+    try {
+      await window.electronAPI.project.update({
+        id: currentProject.id,
+        name: newProjectName,
+      })
+      setProjects(projects.map(p => p.id === currentProject.id ? { ...p, name: newProjectName } : p))
+      message.success('项目重命名成功')
+      setRenameModalOpen(false)
+    } catch (error) {
+      console.error('重命名项目失败:', error)
+      message.error('重命名项目失败')
+    }
+  }
+
   const columns = [
     {
       title: '项目名称',
       dataIndex: 'name',
       key: 'name',
       render: (_: string, record: Project) => (
-        <Space>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: '#e6f4ff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <FolderOpenOutlined style={{ fontSize: 20, color: '#1677ff' }} />
-          </div>
-          <div>
-            <Text strong>{record.name}</Text>
-            <div>
-              <Text type="secondary" style={{ fontSize: 13 }}>
-                {record.description || ''}
-              </Text>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: '#e6f4ff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <FolderOpenOutlined style={{ fontSize: 20, color: '#1677ff' }} />
             </div>
-          </div>
+            <div>
+              <Text strong>{record.name}</Text>
+              <div>
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  {record.description || ''}
+                </Text>
+              </div>
+            </div>
+          </Space>
+          <Space>
+            <Button
+              type="link"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => navigate(`/project/${record.id}`)}
+            >
+              查看
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleRenameProject(record)}
+            >
+              重命名
+            </Button>
+            <Popconfirm
+              title="确定删除该项目?"
+              description="删除后项目下的所有文件和员工也将被删除，此操作不可撤销。"
+              onConfirm={() => handleDeleteProject(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
         </Space>
-      ),
-    },
-    {
-      title: '文件数量',
-      dataIndex: 'file_count',
-      key: 'file_count',
-      width: 120,
-      render: (value: number) => (
-        <Tag icon={<FileOutlined />} color="blue">
-          {value || 0} 个文件
-        </Tag>
       ),
     },
     {
@@ -126,34 +175,6 @@ const ProjectManager: React.FC = () => {
       width: 180,
       render: (value: number) =>
         value ? dayjs(value * 1000).format('YYYY-MM-DD HH:mm') : '-',
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 200,
-      render: (_: any, record: Project) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => navigate(`/project/${record.id}`)}
-          >
-            查看
-          </Button>
-          <Popconfirm
-            title="确定删除该项目?"
-            description="删除后项目下的所有文件和员工也将被删除，此操作不可撤销。"
-            onConfirm={() => handleDeleteProject(record.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
     },
   ]
 
@@ -191,6 +212,22 @@ const ProjectManager: React.FC = () => {
           />
         )}
       </Card>
+
+      <Modal
+        title="重命名项目"
+        open={renameModalOpen}
+        onOk={confirmRenameProject}
+        onCancel={() => setRenameModalOpen(false)}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Input
+          placeholder="请输入新的项目名称"
+          value={newProjectName}
+          onChange={(e) => setNewProjectName(e.target.value)}
+          onPressEnter={confirmRenameProject}
+        />
+      </Modal>
     </div>
   )
 }

@@ -425,7 +425,7 @@ class ToolEngineService {
     ]
 
     try {
-      const response = await fetch(`${baseURL}/v1/chat/completions`, {
+      const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -514,13 +514,27 @@ class ToolEngineService {
     switch (config.provider_type) {
       case 'openai':
       case 'openai-compatible':
-        return 'https://api.openai.com'
+        return 'https://api.openai.com/v1'
+      case 'deepseek':
+        return 'https://api.deepseek.com/v1'
+      case 'qwen':
+        return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+      case 'zhipu':
+        return 'https://open.bigmodel.cn/api/paas/v4'
+      case 'volcengine':
+        return 'https://ark.cn-beijing.volces.com/api/v3'
+      case 'moonshot':
+        return 'https://api.moonshot.cn/v1'
+      case 'yi':
+        return 'https://api.lingyiwanwu.com/v1'
       case 'groq':
-        return 'https://api.groq.com'
+        return 'https://api.groq.com/openai/v1'
       case 'mistral':
-        return 'https://api.mistral.ai'
+        return 'https://api.mistral.ai/v1'
+      case 'xai':
+        return 'https://api.x.ai/v1'
       default:
-        return config.base_url || 'https://api.openai.com'
+        return config.base_url || 'https://api.openai.com/v1'
     }
   }
 }

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm } from 'antd'
+import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip } from 'antd'
 import {
   RocketOutlined,
   FolderOpenOutlined,
   UserOutlined,
-  FileOutlined,
+  DatabaseOutlined,
   PlusOutlined,
   RobotOutlined,
   EyeOutlined,
@@ -39,10 +39,12 @@ const Dashboard: React.FC = () => {
   const location = useLocation()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [kbList, setKBList] = useState<any[]>([])
 
   useEffect(() => {
     loadProjects()
     loadEmployees()
+    loadKBs()
   }, [])
 
   useEffect(() => {
@@ -74,6 +76,15 @@ const Dashboard: React.FC = () => {
       setEmployees(result)
     } catch (error) {
       console.error('加载数字员工失败:', error)
+    }
+  }
+
+  const loadKBs = async () => {
+    try {
+      const result = await window.electronAPI.kb.list()
+      setKBList(result)
+    } catch (error) {
+      console.error('加载知识库失败:', error)
     }
   }
 
@@ -116,7 +127,7 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const totalFiles = projects.reduce((sum, p) => sum + ((p as any).file_count || 0), 0)
+  const totalKBs = kbList.length
   const totalEmployees = employees.length
 
   return (
@@ -165,9 +176,9 @@ const Dashboard: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="文件数量"
-                value={totalFiles}
-                prefix={<FileOutlined style={{ color: '#faad14' }} />}
+                title="知识库数量"
+                value={totalKBs}
+                prefix={<DatabaseOutlined style={{ color: '#faad14' }} />}
                 styles={{ content: { color: '#faad14' } }}
               />
             </Card>
@@ -186,7 +197,7 @@ const Dashboard: React.FC = () => {
       </Card>
 
       <Row gutter={16}>
-        <Col span={14}>
+        <Col span={12}>
           <Card
             id="projects"
             title="最近项目"
@@ -228,14 +239,11 @@ const Dashboard: React.FC = () => {
                       >
                         <FolderOpenOutlined style={{ fontSize: 20, color: '#1677ff' }} />
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ marginBottom: 2 }}>
-                          <Text strong>{item.name}</Text>
-                          <Tag color="blue" style={{ marginLeft: 8 }}>
-                            {(item as any).file_count || 0} 个文件
-                          </Tag>
+                      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                        <div style={{ marginBottom: 2, overflow: 'hidden' }}>
+                          <Text strong ellipsis style={{ display: 'block' }}>{item.name}</Text>
                         </div>
-                        <Text type="secondary" style={{ fontSize: 13 }}>
+                        <Text type="secondary" style={{ fontSize: 13, display: 'block' }} ellipsis>
                           {item.description || ''}
                         </Text>
                       </div>
@@ -268,7 +276,7 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
 
-        <Col span={10}>
+        <Col span={12}>
           <Card
             id="employees"
             title="数字员工"
@@ -296,7 +304,7 @@ const Dashboard: React.FC = () => {
                       borderBottom: '1px solid #f0f0f0',
                     }}
                   >
-                    <div style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, marginRight: 8, overflow: 'hidden' }}>
                       <div style={{ marginBottom: 4 }}>
                         <Space>
                           <Text strong style={{ fontSize: 14 }}>{emp.name}</Text>
@@ -305,9 +313,11 @@ const Dashboard: React.FC = () => {
                           </Tag>
                         </Space>
                       </div>
-                      <Text type="secondary" style={{ fontSize: 12 }} ellipsis>
-                        {emp.description || '暂无描述'}
-                      </Text>
+                      <Tooltip title={emp.description || '暂无描述'}>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis>
+                          {emp.description || '暂无描述'}
+                        </Text>
+                      </Tooltip>
                     </div>
                     <Space>
                       <Button

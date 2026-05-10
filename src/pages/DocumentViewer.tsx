@@ -262,7 +262,7 @@ const DocumentViewer: React.FC = () => {
       children: (
         <div>
           {parseResult?.tables && parseResult.tables.length > 0 ? (
-            <Space direction="vertical" style={{ width: '100%' }} size={16}>
+            <Space orientation="vertical" style={{ width: '100%' }} size={16}>
               {parseResult.tables.map((table, idx) => (
                 <Card key={idx} size="small" title={table.context || `表格 ${idx + 1}`}>
                   <Table
@@ -340,7 +340,7 @@ const DocumentViewer: React.FC = () => {
           {file.error_message && (
             <>
               <Divider />
-              <Alert message="解析错误" description={file.error_message} type="error" showIcon />
+              <Alert title="解析错误" description={file.error_message} type="error" showIcon />
             </>
           )}
         </div>
