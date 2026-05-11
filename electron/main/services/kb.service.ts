@@ -1,17 +1,15 @@
-import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 import DatabaseService from './database.service'
 import FileParserService from './file-parser.service'
 import KnowledgeProcessorService from './knowledge-processor.service'
-import RAGService from './rag.service'
+import { calculateFileHash, getDefaultProviderId } from './common-utils'
 
 class KnowledgeBaseService {
   private db: DatabaseService
   private fileParser: FileParserService
   private processor: KnowledgeProcessorService
-  private ragService: RAGService
   private static instance: KnowledgeBaseService
   private defaultKBId: string | null = null
 
@@ -19,7 +17,6 @@ class KnowledgeBaseService {
     this.db = DatabaseService.getInstance()
     this.fileParser = FileParserService.getInstance()
     this.processor = KnowledgeProcessorService.getInstance()
-    this.ragService = RAGService.getInstance()
   }
 
   static getInstance(): KnowledgeBaseService {
@@ -107,7 +104,6 @@ class KnowledgeBaseService {
 
   deleteKB(id: string): boolean {
     this.processor.deleteKnowledgeData(id)
-    this.ragService.deleteKBIndex(id)
 
     const docs = this.db.getDb().prepare('SELECT original_name FROM kb_documents WHERE kb_id = ?').all(id) as any[]
     const kbBasePath = this.getKBBasePath(id)
@@ -120,15 +116,6 @@ class KnowledgeBaseService {
 
     const result = this.db.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id)
     return result.changes > 0
-  }
-
-  async calculateFileHash(filePath: string): Promise<string> {
-    const hash = crypto.createHash('sha256')
-    const stream = fs.createReadStream(filePath)
-    for await (const chunk of stream) {
-      hash.update(chunk as Buffer)
-    }
-    return hash.digest('hex')
   }
 
   async getExistingDocByHash(hash: string, kbId?: string): Promise<any | null> {
@@ -165,7 +152,7 @@ class KnowledgeBaseService {
         const stats = await fs.promises.stat(filePath)
         const originalName = path.basename(filePath)
         const fileType = path.extname(filePath).toLowerCase().slice(1)
-        const fileHash = await this.calculateFileHash(filePath)
+        const fileHash = await calculateFileHash(filePath)
 
         onProgress?.(i + 1, total, originalName)
 
@@ -490,11 +477,6 @@ class KnowledgeBaseService {
 
       this.processor.saveGlobalSummary(kbId, globalSummary)
 
-      onProgress?.('向量索引', '正在构建向量索引...')
-      await this.ragService.indexKBDocuments(kbId, (current, total) => {
-        onProgress?.('向量索引', `正在索引向量 ${current}/${total}`)
-      })
-
       onProgress?.('完成', '全局知识构建完成')
       return { success: true }
     } catch (error) {
@@ -513,10 +495,6 @@ class KnowledgeBaseService {
     }
     const result = this.db.getDb().prepare('DELETE FROM kb_documents WHERE id = ?').run(docId)
     return result.changes > 0
-  }
-
-  getDocumentById(docId: string): any | null {
-    return this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) || null
   }
 
   getDocumentList(kbId: string, status?: string): any[] {
@@ -580,26 +558,6 @@ class KnowledgeBaseService {
     return doc?.parsed_json || null
   }
 
-  async getKBContextForQuery(kbId: string, query: string, maxChars: number = 6000): Promise<string> {
-    const results = await this.ragService.searchKB(kbId, query, { topK: 5, contextSize: 200 })
-    if (results.length === 0) return ''
-
-    let context = '\n\n【知识库参考】\n\n'
-    let used = context.length
-
-    for (const result of results) {
-      const sourceInfo = result.source.document_name
-        ? `[${result.source.document_name}${result.source.chapter_title ? ' - ' + result.source.chapter_title : ''}]`
-        : ''
-      const snippet = `${sourceInfo}\n${result.text}\n\n`
-      if (used + snippet.length > maxChars) break
-      context += snippet
-      used += snippet.length
-    }
-
-    return context
-  }
-
   async importOrSyncToKB(
     filePath: string,
     projectId?: string,
@@ -613,8 +571,8 @@ class KnowledgeBaseService {
       const originalName = path.basename(filePath)
       const fileType = path.extname(filePath).toLowerCase().slice(1)
       const fileHash = options?.contentText
-        ? crypto.createHash('sha256').update(options.contentText).digest('hex')
-        : await this.calculateFileHash(filePath)
+        ? require('crypto').createHash('sha256').update(options.contentText).digest('hex')
+        : await calculateFileHash(filePath)
 
       const existingDoc = await this.getExistingDocByHash(fileHash, kbId)
       if (existingDoc) {
@@ -659,11 +617,6 @@ class KnowledgeBaseService {
   async syncForProject(projectId: string): Promise<void> {
     const kbId = this.ensureDefaultKB()
     this.linkProject(kbId, projectId)
-  }
-
-  getKBDocFilePath(kbId: string, originalName: string): string {
-    const kbBasePath = this.getKBBasePath(kbId)
-    return path.join(kbBasePath, originalName)
   }
 
   async importKBDocsToProject(
@@ -786,10 +739,7 @@ class KnowledgeBaseService {
   }
 
   private getDefaultProviderId(): string | null {
-    const row = this.db.getDb().prepare(
-      "SELECT id FROM llm_providers WHERE is_default = 1 LIMIT 1"
-    ).get() as any
-    return row?.id || null
+    return getDefaultProviderId(this.db)
   }
 }
 

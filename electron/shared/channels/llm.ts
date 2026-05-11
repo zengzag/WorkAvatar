@@ -8,7 +8,6 @@ export const LLM_CHANNELS = {
   LLM_PROVIDER_DELETE: 'llm:provider-delete',
   LLM_TEST_CONNECTION: 'llm:test-connection',
   LLM_CHAT_STREAM: 'llm:chat-stream',
-  LLM_CHAT_STREAM_WITH_RAG: 'llm:chat-stream-with-rag',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
 } as const
 
@@ -58,22 +57,6 @@ export interface LLMChatStreamParams {
   }
 }
 
-export interface LLMChatStreamWithRAGParams {
-  provider_id: string
-  model_id?: string
-  project_id: string
-  messages: Array<{ role: string; content: string }>
-  options?: {
-    temperature?: number
-    max_tokens?: number
-    stream?: boolean
-  }
-  rag_options?: {
-    top_k?: number
-    min_score?: number
-  }
-}
-
 export interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
@@ -84,5 +67,4 @@ export interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
-  use_rag?: boolean
 }

@@ -22,7 +22,6 @@ import type {
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatStreamParams,
-  LLMChatStreamWithRAGParams,
   EmployeeChatStreamParams,
   SettingsGetParams,
   SettingsSetParams,
@@ -98,7 +97,6 @@ const electronAPI = {
     deleteProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_DELETE, id),
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
-    chatStreamWithRAG: (params: LLMChatStreamWithRAGParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM_WITH_RAG, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
     abortChat: () => ipcRenderer.invoke('llm:abort-chat'),
     onChunk: (callback: (chunk: string) => void) => {
@@ -115,11 +113,6 @@ const electronAPI = {
       const handler = (_event: any, error: string) => callback(error)
       ipcRenderer.on('llm:chat-error', handler)
       return () => ipcRenderer.removeListener('llm:chat-error', handler)
-    },
-    onRAGResults: (callback: (results: any[]) => void) => {
-      const handler = (_event: any, results: any[]) => callback(results)
-      ipcRenderer.on('llm:rag-results', handler)
-      return () => ipcRenderer.removeListener('llm:rag-results', handler)
     },
     onThought: (callback: (thought: string) => void) => {
       const handler = (_event: any, thought: string) => callback(thought)
@@ -147,13 +140,6 @@ const electronAPI = {
     getPath: (params: AppGetPathParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_PATH, params),
     showOpenDialog: (params: AppShowOpenDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, params),
     showMessageBox: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_MESSAGE_BOX, params),
-  },
-
-  rag: {
-    indexProject: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.RAG_INDEX_PROJECT, params),
-    search: (params: { project_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.RAG_SEARCH, params),
-    indexStatus: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.RAG_INDEX_STATUS, params),
-    deleteIndex: (params: { project_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.RAG_DELETE_INDEX, params),
   },
 
   ocr: {

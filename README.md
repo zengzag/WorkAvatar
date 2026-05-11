@@ -548,13 +548,7 @@ npm run build
 
 ### 运行测试
 
-```bash
-# 单元测试
-npm run test:unit
-
-# E2E 测试
-npm run test:e2e
-```
+暂未配置测试框架，后续计划添加。
 
 ---
 
@@ -602,6 +596,7 @@ WorkAvatar/
 │   │       │   │   └── index.ts
 │   │       │   └── index.ts           # Agent 模块导出
 │   │       ├── database.service.ts    # SQLite 数据库服务
+│   │       ├── common-utils.ts        # 共享工具函数（哈希、计算、日期、URL等）
 │   │       ├── file-parser.service.ts # 文件解析服务
 │   │       ├── llm-client.service.ts  # LLM 客户端服务
 │   │       ├── rag.service.ts         # RAG 向量检索服务
@@ -641,11 +636,6 @@ WorkAvatar/
 │   │   ├── KnowledgeBase.tsx          # 独立知识库管理页面
 │   │   ├── EmployeeWorkbench.tsx      # 数字员工工作台
 │   │   ├── EmployeeSettings.tsx       # 数字员工配置管理
-│   │   ├── employee-settings/         # 员工配置子组件
-│   │   │   ├── EmployeeLLMConfig.tsx
-│   │   │   ├── ToolConfigPanel.tsx
-│   │   │   ├── MCPServerPanel.tsx
-│   │   │   └── SkillRegistryPanel.tsx
 │   │   ├── EmployeeManager.tsx        # 员工管理列表
 │   │   ├── ProjectManager.tsx         # 项目管理列表
 │   │   └── Settings.tsx               # 全局设置
@@ -654,15 +644,16 @@ WorkAvatar/
 │   │   │   ├── EmptyState.tsx
 │   │   │   ├── PageHeader.tsx
 │   │   │   └── TaskProgressPanel.tsx
-│   │   ├── file/                      # 文件相关组件
-│   │   │   ├── FileList.tsx
-│   │   │   └── FileUploadZone.tsx
 │   │   └── llm/                       # LLM 相关组件
 │   │       └── LLMSelector.tsx
 │   ├── stores/                        # Zustand 状态管理
 │   │   └── app.store.ts
 │   ├── types/                         # TypeScript 类型定义
 │   │   └── index.ts
+│   ├── utils/                         # 前端共享工具函数
+│   │   ├── status.ts                  # 员工状态映射
+│   │   ├── llm.ts                     # LLM 提供商工具函数
+│   │   └── format.ts                  # 格式化工具函数
 │   ├── router/                        # 路由配置
 │   │   └── index.tsx
 │   ├── styles/                        # 全局样式
@@ -671,9 +662,6 @@ WorkAvatar/
 │   └── main.tsx                       # 应用入口
 ├── resources/                         # 打包资源
 │   └── icons/                         # 应用图标
-├── tests/                             # 测试目录
-│   ├── unit/                          # 单元测试
-│   └── e2e/                           # E2E 测试
 ├── .trae/                             # Trae IDE 配置
 │   └── rules/                         # 项目规则
 │       └── 进展规范.md

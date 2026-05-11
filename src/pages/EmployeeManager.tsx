@@ -8,6 +8,7 @@ import {
   Space,
   Popconfirm,
   Typography,
+  theme,
 } from 'antd'
 import {
   UserOutlined,
@@ -21,23 +22,9 @@ import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
 import type { Employee } from '../types'
-import { theme } from 'antd'
+import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
 
 const { Text } = Typography
-
-const statusColorMap: Record<string, string> = {
-  draft: 'default',
-  active: 'green',
-  paused: 'orange',
-  error: 'red',
-}
-
-const statusTextMap: Record<string, string> = {
-  draft: '草稿',
-  active: '运行中',
-  paused: '已暂停',
-  error: '错误',
-}
 
 const EmployeeManager: React.FC = () => {
   const navigate = useNavigate()
@@ -103,8 +90,8 @@ const EmployeeManager: React.FC = () => {
             <div style={{ minWidth: 0, overflow: 'hidden', flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
                 <Text strong ellipsis style={{ display: 'inline-block', maxWidth: 160 }}>{record.name}</Text>
-                <Tag color={statusColorMap[record.status]} style={{ fontSize: 11, flexShrink: 0 }}>
-                  {statusTextMap[record.status]}
+                <Tag color={EMPLOYEE_STATUS_COLOR_MAP[record.status]} style={{ fontSize: 11, flexShrink: 0 }}>
+                  {EMPLOYEE_STATUS_TEXT_MAP[record.status]}
                 </Tag>
               </div>
             </div>

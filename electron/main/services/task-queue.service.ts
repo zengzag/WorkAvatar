@@ -56,14 +56,6 @@ class TaskQueueService {
     return Array.from(this.tasks.values()).sort((a, b) => b.createdAt - a.createdAt)
   }
 
-  getActiveTaskCount(): number {
-    return Array.from(this.tasks.values()).filter(t => t.status === 'running').length
-  }
-
-  getPendingTaskCount(): number {
-    return Array.from(this.tasks.values()).filter(t => t.status === 'pending').length
-  }
-
   clearCompleted() {
     for (const [id, task] of this.tasks) {
       if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {

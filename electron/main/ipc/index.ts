@@ -8,7 +8,6 @@ import { registerTaskHandlers } from './task.handlers'
 import ProjectManagerService from '../services/project-manager.service'
 import FileParserService from '../services/file-parser.service'
 import LLMClientService from '../services/llm-client.service'
-import RAGService from '../services/rag.service'
 import OCRService from '../services/ocr.service'
 import RuleExtractionService from '../services/rule-extraction.service'
 import SandboxTesterService from '../services/sandbox-tester.service'
@@ -23,7 +22,6 @@ export function registerIpcHandlers() {
   const projectManager = ProjectManagerService.getInstance()
   const fileParser = FileParserService.getInstance()
   const llmClient = LLMClientService.getInstance()
-  const ragService = RAGService.getInstance()
   const ocrService = OCRService.getInstance()
   const ruleExtractor = RuleExtractionService.getInstance()
   const sandboxTester = SandboxTesterService.getInstance()
@@ -36,8 +34,8 @@ export function registerIpcHandlers() {
 
   registerProjectHandlers(projectManager, fileParser, kbService)
   registerEmployeeHandlers(projectManager, profilingService, sandboxTester)
-  registerLLMHandlers(llmClient, ragService, employeeAgent)
-  registerAppHandlers(db, ragService, ocrService, ruleExtractor)
+  registerLLMHandlers(llmClient, employeeAgent)
+  registerAppHandlers(db, ocrService, ruleExtractor)
   registerToolHandlers(db, toolEngine, skillRegistry)
   registerKBHandlers(kbService)
   registerTaskHandlers()

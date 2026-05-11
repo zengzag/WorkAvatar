@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import DatabaseService from './database.service'
-import LLMClientService from './llm-client.service'
+import { safeCalculate, formatDate } from './common-utils'
 
 export interface ToolDefinition {
   id: string
@@ -30,7 +30,6 @@ export interface ToolCallResult {
 
 class ToolEngineService {
   private db: DatabaseService
-  private llmClient: LLMClientService
   private tools: Map<string, ToolDefinition> = new Map()
   private mcpClients: Map<string, Client> = new Map()
   private mcpTransports: Map<string, StdioClientTransport> = new Map()
@@ -38,7 +37,6 @@ class ToolEngineService {
 
   private constructor() {
     this.db = DatabaseService.getInstance()
-    this.llmClient = LLMClientService.getInstance()
     this.registerBuiltinTools()
   }
 
@@ -66,7 +64,7 @@ class ToolEngineService {
       },
       handler: async (args) => {
         try {
-          const result = this.safeCalculate(args.expression)
+          const result = safeCalculate(args.expression)
           return { result: String(result) }
         } catch (error: any) {
           return { error: error.message }
@@ -167,7 +165,7 @@ class ToolEngineService {
         }
         if (args.operation === 'format') {
           const fmt = args.format || 'YYYY-MM-DD HH:mm:ss'
-          return { formatted: this.formatDate(now, fmt) }
+          return { formatted: formatDate(now, fmt) }
         }
         if (args.operation === 'add_days' && typeof args.days === 'number') {
           const target = new Date(now.getTime() + args.days * 24 * 60 * 60 * 1000)
@@ -222,34 +220,6 @@ class ToolEngineService {
       },
       source: 'builtin',
     })
-  }
-
-  private safeCalculate(expression: string): number {
-    const sanitized = expression
-      .replace(/[^0-9+\-*/().\s%^]/g, '')
-      .replace(/\^/g, '**')
-      .replace(/%/g, '/100')
-
-    if (!sanitized || sanitized.length === 0) {
-      throw new Error('Invalid expression')
-    }
-
-    const result = Function(`"use strict"; return (${sanitized})`)()
-    if (typeof result !== 'number' || !isFinite(result)) {
-      throw new Error('Calculation error')
-    }
-    return result
-  }
-
-  private formatDate(date: Date, format: string): string {
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return format
-      .replace('YYYY', String(date.getFullYear()))
-      .replace('MM', pad(date.getMonth() + 1))
-      .replace('DD', pad(date.getDate()))
-      .replace('HH', pad(date.getHours()))
-      .replace('mm', pad(date.getMinutes()))
-      .replace('ss', pad(date.getSeconds()))
   }
 
   getBuiltinTools(): ToolDefinition[] {
@@ -364,177 +334,6 @@ class ToolEngineService {
       if (tool.mcpServerId === serverId) {
         this.tools.delete(toolId)
       }
-    }
-  }
-
-  async disconnectAllMCPServers(): Promise<void> {
-    for (const serverId of this.mcpClients.keys()) {
-      await this.disconnectMCPServer(serverId)
-    }
-  }
-
-  getToolsDescriptionForLLM(employeeId?: string): Array<{
-    name: string
-    description: string
-    parameters: Record<string, any>
-  }> {
-    const tools = employeeId ? this.getToolsForEmployee(employeeId) : this.getAllTools()
-    return tools.map((t) => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }))
-  }
-
-  async callToolWithLLM(
-    employeeId: string,
-    providerId: string,
-    userMessage: string,
-    conversationContext: Array<{ role: string; content: string }> = []
-  ): Promise<{ response: string; toolCalls: Array<{ tool: string; args: any; result: any }> }> {
-    const tools = this.getToolsForEmployee(employeeId)
-    if (tools.length === 0) {
-      return { response: '', toolCalls: [] }
-    }
-
-    const toolDescriptions = tools.map((t) => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
-    }))
-
-    const config = await this.llmClient.getProviderConfig(providerId)
-    if (!config) {
-      return { response: '', toolCalls: [] }
-    }
-
-    const baseURL = this.getBaseURL(config)
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    if (config.api_key) {
-      headers['Authorization'] = `Bearer ${config.api_key}`
-    }
-
-    const messages = [
-      ...conversationContext,
-      { role: 'user', content: userMessage },
-    ]
-
-    try {
-      const response = await fetch(`${baseURL}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: config.model,
-          messages,
-          tools: toolDescriptions,
-          tool_choice: 'auto',
-          temperature: 0.3,
-          max_tokens: 4096,
-        }),
-      })
-
-      if (!response.ok) {
-        return { response: '', toolCalls: [] }
-      }
-
-      const data = await response.json()
-      const message = data.choices?.[0]?.message
-
-      if (!message?.tool_calls || message.tool_calls.length === 0) {
-        return {
-          response: message?.content || '',
-          toolCalls: [],
-        }
-      }
-
-      const toolCalls: Array<{ tool: string; args: any; result: any }> = []
-      const toolResults: Array<{ role: string; content: string; tool_call_id: string }> = []
-
-      for (const call of message.tool_calls) {
-        const toolName = call.function?.name
-        const toolArgs = JSON.parse(call.function?.arguments || '{}')
-        const toolId = tools.find((t) => t.name === toolName)?.id
-
-        if (toolId) {
-          const result = await this.executeTool(toolId, toolArgs)
-          toolCalls.push({ tool: toolName, args: toolArgs, result })
-          toolResults.push({
-            role: 'tool',
-            content: JSON.stringify(result.success ? result.output : { error: result.error }),
-            tool_call_id: call.id,
-          })
-        }
-      }
-
-      const finalMessages = [
-        ...messages,
-        {
-          role: 'assistant',
-          content: message.content || '',
-          tool_calls: message.tool_calls,
-        },
-        ...toolResults,
-      ]
-
-      const finalResponse = await fetch(`${baseURL}/v1/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: config.model,
-          messages: finalMessages,
-          temperature: 0.3,
-          max_tokens: 4096,
-        }),
-      })
-
-      if (!finalResponse.ok) {
-        return { response: message.content || '', toolCalls }
-      }
-
-      const finalData = await finalResponse.json()
-      return {
-        response: finalData.choices?.[0]?.message?.content || message.content || '',
-        toolCalls,
-      }
-    } catch (error: any) {
-      console.error('Tool call with LLM failed:', error)
-      return { response: '', toolCalls: [] }
-    }
-  }
-
-  private getBaseURL(config: any): string {
-    if (config.base_url) {
-      return config.base_url.replace(/\/+$/, '')
-    }
-    switch (config.provider_type) {
-      case 'openai':
-      case 'openai-compatible':
-        return 'https://api.openai.com/v1'
-      case 'deepseek':
-        return 'https://api.deepseek.com/v1'
-      case 'qwen':
-        return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-      case 'zhipu':
-        return 'https://open.bigmodel.cn/api/paas/v4'
-      case 'volcengine':
-        return 'https://ark.cn-beijing.volces.com/api/v3'
-      case 'moonshot':
-        return 'https://api.moonshot.cn/v1'
-      case 'yi':
-        return 'https://api.lingyiwanwu.com/v1'
-      case 'groq':
-        return 'https://api.groq.com/openai/v1'
-      case 'mistral':
-        return 'https://api.mistral.ai/v1'
-      case 'xai':
-        return 'https://api.x.ai/v1'
-      default:
-        return config.base_url || 'https://api.openai.com/v1'
     }
   }
 }

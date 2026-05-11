@@ -1,12 +1,12 @@
 import fs from 'fs'
 import path from 'path'
-import crypto from 'crypto'
 import pdf from 'pdf-parse'
 import mammoth from 'mammoth'
 import XLSX from 'xlsx'
 import type { ParseResult } from '../../shared/types'
 import DatabaseService from './database.service'
 import OCRService from './ocr.service'
+import { calculateFileHash } from './common-utils'
 
 class FileParserService {
   private db: DatabaseService
@@ -221,14 +221,7 @@ class FileParserService {
   }
 
   private async calculateFileHash(filePath: string): Promise<string> {
-    const hash = crypto.createHash('sha256')
-    const stream = fs.createReadStream(filePath)
-
-    for await (const chunk of stream) {
-      hash.update(chunk)
-    }
-
-    return hash.digest('hex')
+    return calculateFileHash(filePath)
   }
 
   private splitIntoSections(text: string): ParseResult['sections'] {

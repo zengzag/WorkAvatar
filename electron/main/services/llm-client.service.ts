@@ -43,6 +43,7 @@ interface ProcessThinkChunkResult {
 const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string; defaultEmbeddingModel: string }> = {
   openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
   'openai-compatible': { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  lmstudio: { baseURL: 'http://localhost:1234/v1', defaultModel: '', defaultEmbeddingModel: '' },
   deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', defaultEmbeddingModel: 'text-embedding-3-small' },
   qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', defaultEmbeddingModel: 'text-embedding-v3' },
   zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', defaultEmbeddingModel: 'embedding-3' },
@@ -57,105 +58,105 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string;
   xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
 }
 
-let thinkTagState: 'normal' | 'thinking' = 'normal'
-let thinkContentBuffer = ''
+function createThinkProcessor() {
+  let state: 'normal' | 'thinking' = 'normal'
+  let buffer = ''
 
-function resetThinkState(): void {
-  thinkTagState = 'normal'
-  thinkContentBuffer = ''
-}
+  function reset(): void {
+    state = 'normal'
+    buffer = ''
+  }
 
-function stripThinkTags(text: string): string {
-  return text.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
-}
+  function processChunk(rawChunk: string): ProcessThinkChunkResult {
+    buffer += rawChunk
+    let thought = ''
+    let content = ''
 
-function processThinkChunk(rawChunk: string): ProcessThinkChunkResult {
-  thinkContentBuffer += rawChunk
-  let thought = ''
-  let content = ''
-
-  while (thinkContentBuffer.length > 0) {
-    if (thinkTagState === 'normal') {
-      const openIdx = thinkContentBuffer.toLowerCase().indexOf('<think')
-      if (openIdx === -1) {
-        const partials = ['<', '<t', '<th', '<thi', '<thin']
-        let hasPartial = false
-        for (const p of partials) {
-          if (thinkContentBuffer.endsWith(p)) { hasPartial = true; break }
-        }
-        if (!hasPartial) {
-          content += thinkContentBuffer
-          thinkContentBuffer = ''
-        }
-        break
-      } else {
-        content += thinkContentBuffer.substring(0, openIdx)
-        const afterOpen = thinkContentBuffer.substring(openIdx)
-        const closeBracketIdx = afterOpen.indexOf('>')
-        if (closeBracketIdx === -1) {
-          thinkContentBuffer = ''
-          thinkTagState = 'thinking'
+    while (buffer.length > 0) {
+      if (state === 'normal') {
+        const openIdx = buffer.toLowerCase().indexOf('<think')
+        if (openIdx === -1) {
+          const partials = ['<', '<t', '<th', '<thi', '<thin']
+          let hasPartial = false
+          for (const p of partials) {
+            if (buffer.endsWith(p)) { hasPartial = true; break }
+          }
+          if (!hasPartial) {
+            content += buffer
+            buffer = ''
+          }
           break
+        } else {
+          content += buffer.substring(0, openIdx)
+          const afterOpen = buffer.substring(openIdx)
+          const closeBracketIdx = afterOpen.indexOf('>')
+          if (closeBracketIdx === -1) {
+            buffer = ''
+            state = 'thinking'
+            break
+          }
+          buffer = afterOpen.substring(closeBracketIdx + 1)
+          state = 'thinking'
         }
-        thinkContentBuffer = afterOpen.substring(closeBracketIdx + 1)
-        thinkTagState = 'thinking'
-      }
-    } else if (thinkTagState === 'thinking') {
-      const closeIdx = thinkContentBuffer.toLowerCase().indexOf('</think')
-      if (closeIdx === -1) {
-        const partials = ['<', '</', '</t', '</th', '</thi', '</thin', '</think']
-        let hasPartial = false
-        for (const p of partials) {
-          if (thinkContentBuffer.endsWith(p)) { hasPartial = true; break }
-        }
-        if (!hasPartial) {
-          thought += thinkContentBuffer
-          thinkContentBuffer = ''
-        }
-        break
-      } else {
-        thought += thinkContentBuffer.substring(0, closeIdx)
-        const afterClose = thinkContentBuffer.substring(closeIdx)
-        const closeBracketIdx = afterClose.indexOf('>')
-        if (closeBracketIdx === -1) {
-          thinkContentBuffer = ''
-          thinkTagState = 'normal'
+      } else if (state === 'thinking') {
+        const closeIdx = buffer.toLowerCase().indexOf('</think')
+        if (closeIdx === -1) {
+          const partials = ['<', '</', '</t', '</th', '</thi', '</thin', '</think']
+          let hasPartial = false
+          for (const p of partials) {
+            if (buffer.endsWith(p)) { hasPartial = true; break }
+          }
+          if (!hasPartial) {
+            thought += buffer
+            buffer = ''
+          }
           break
+        } else {
+          thought += buffer.substring(0, closeIdx)
+          const afterClose = buffer.substring(closeIdx)
+          const closeBracketIdx = afterClose.indexOf('>')
+          if (closeBracketIdx === -1) {
+            buffer = ''
+            state = 'normal'
+            break
+          }
+          buffer = afterClose.substring(closeBracketIdx + 1)
+          state = 'normal'
         }
-        thinkContentBuffer = afterClose.substring(closeBracketIdx + 1)
-        thinkTagState = 'normal'
       }
+    }
+
+    return {
+      thought: thought || undefined,
+      content: content || undefined,
     }
   }
 
-  return {
-    thought: thought || undefined,
-    content: content || undefined,
-  }
-}
+  function finalize(): ProcessThinkChunkResult {
+    let thought = ''
+    let content = ''
 
-function finalizeThinkState(): ProcessThinkChunkResult {
-  let thought = ''
-  let content = ''
-
-  if (thinkContentBuffer.length > 0) {
-    if (thinkTagState === 'thinking') {
-      thought = thinkContentBuffer
-        .replace(/<\/?(?:think|t|th|thi|thin)$/gi, '')
-        .trim()
-    } else {
-      content = thinkContentBuffer
-        .replace(/^<?\/?t(?:h(?:i(?:n(?:k)?)?)?)?$/gi, '')
-        .trim()
+    if (buffer.length > 0) {
+      if (state === 'thinking') {
+        thought = buffer
+          .replace(/<\/?(?:think|t|th|thi|thin)$/gi, '')
+          .trim()
+      } else {
+        content = buffer
+          .replace(/^<?\/?t(?:h(?:i(?:n(?:k)?)?)?)?$/gi, '')
+          .trim()
+      }
+      buffer = ''
     }
-    thinkContentBuffer = ''
-  }
-  thinkTagState = 'normal'
+    state = 'normal'
 
-  return {
-    thought: thought || undefined,
-    content: content || undefined,
+    return {
+      thought: thought || undefined,
+      content: content || undefined,
+    }
   }
+
+  return { reset, processChunk, finalize }
 }
 
 function getModelConfig(provider: LLMProviderConfig, modelName: string): LLMModelConfig | null {
@@ -416,7 +417,7 @@ class LLMClientService {
 
     const data = await response.json()
     const fullContent = data.choices?.[0]?.message?.content || ''
-    return stripThinkTags(fullContent)
+    return fullContent.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
   }
 
   async chatStream(
@@ -455,7 +456,7 @@ class LLMClientService {
     const body = buildRequestBody(config, modelName, messages, true, options)
 
     try {
-      resetThinkState()
+      const thinkProcessor = createThinkProcessor()
       const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
@@ -504,7 +505,7 @@ class LLMClientService {
 
             const content = delta?.content
             if (content) {
-              const result = processThinkChunk(content)
+              const result = thinkProcessor.processChunk(content)
               if (result.thought && onThought) {
                 onThought(result.thought)
               }
@@ -517,7 +518,7 @@ class LLMClientService {
         }
       }
 
-      const finalResult = finalizeThinkState()
+      const finalResult = thinkProcessor.finalize()
       if (finalResult.thought && onThought) {
         onThought(finalResult.thought)
       }

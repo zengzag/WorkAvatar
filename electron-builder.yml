@@ -15,10 +15,10 @@ extraResources:
     to: resources/
     filter:
       - '**/*'
-  - from: node_modules/@lancedb/
-    to: node_modules/@lancedb/
-    filter:
-      - '**/*'
+
+asarUnpack:
+  - '**/*.node'
+  - '**/better_sqlite3/**'
 
 win:
   target:
@@ -26,8 +26,6 @@ win:
     - portable
   icon: resources/icons/icon.ico
   artifactName: '${productName}-Setup-${version}.${ext}'
-  signingHashAlgorithms:
-    - sha256
 
 nsis:
   oneClick: false

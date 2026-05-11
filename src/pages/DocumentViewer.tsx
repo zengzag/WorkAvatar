@@ -8,13 +8,13 @@ import {
   Space,
   Tabs,
   Table,
-  message,
   Spin,
   Empty,
   Descriptions,
   Divider,
   Alert,
   theme,
+  App,
 } from 'antd'
 import {
   FileTextOutlined,
@@ -25,10 +25,30 @@ import {
 import PageHeader from '../components/common/PageHeader'
 import type { File, ParseResult } from '../types'
 import type { TabsProps } from 'antd'
+import { formatFileSize } from '../utils/format'
 
 const { Text, Paragraph } = Typography
 
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'completed': return 'green'
+    case 'failed': return 'red'
+    case 'parsing': return 'blue'
+    default: return 'orange'
+  }
+}
+
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'completed': return '已完成'
+    case 'failed': return '失败'
+    case 'parsing': return '解析中'
+    default: return '待解析'
+  }
+}
+
 const DocumentViewer: React.FC = () => {
+  const { message } = App.useApp()
   const { id, fileId } = useParams<{ id: string; fileId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
@@ -38,7 +58,6 @@ const DocumentViewer: React.FC = () => {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [highlightText, setHighlightText] = useState<string | null>(null)
-  const [_chunkIndex, setChunkIndex] = useState<number | null>(null)
   const textContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -49,12 +68,8 @@ const DocumentViewer: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const chunk = params.get('chunk')
     const text = params.get('text')
     
-    if (chunk) {
-      setChunkIndex(parseInt(chunk, 10))
-    }
     if (text) {
       setHighlightText(decodeURIComponent(text))
     }
@@ -129,30 +144,6 @@ const DocumentViewer: React.FC = () => {
       message.error('重新解析失败')
     } finally {
       setLoading(false)
-    }
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed': return 'green'
-      case 'failed': return 'red'
-      case 'parsing': return 'blue'
-      default: return 'orange'
-    }
-  }
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'completed': return '已完成'
-      case 'failed': return '失败'
-      case 'parsing': return '解析中'
-      default: return '待解析'
     }
   }
 

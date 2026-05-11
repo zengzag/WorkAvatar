@@ -13,6 +13,7 @@ import { randomUtilsTool } from './random-utils.tool'
 import { envVarsTool } from './env-vars.tool'
 import type { ToolDefinition } from '../tool.types'
 
+// 基础内置工具列表（不包含知识库工具，知识库工具由 EmployeeAgentService 动态创建并带权限控制）
 export const allBuiltinTools: ToolDefinition[] = [
   calculatorTool,
   dateTimeTool,
@@ -44,3 +45,9 @@ export {
   randomUtilsTool,
   envVarsTool,
 }
+
+// 导出工厂函数（用于 EmployeeAgentService 动态创建带权限控制的知识库工具）
+export { createKBSearchTool } from './kb-search.tool'
+export { createKBEntitiesTool, createKBEntityDetailTool } from './kb-entities.tool'
+export { createKBAdvancedSearchTool, createKBDocumentCompareTool } from './kb-advanced.tool'
+export { createKBGetContentTool } from './kb-content.tool'

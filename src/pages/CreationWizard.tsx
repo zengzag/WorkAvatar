@@ -12,7 +12,6 @@ import {
   Input,
   Select,
   Switch,
-  message,
   Empty,
   Divider,
   Alert,
@@ -21,6 +20,7 @@ import {
   Progress,
   Timeline,
   theme,
+  App,
 } from 'antd'
 import {
   DatabaseOutlined,
@@ -34,7 +34,8 @@ import {
   ToolOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
-import type { LLMProvider, LLMModelConfig } from '../types'
+import type { LLMProvider } from '../types'
+import { getProviderModels, getProviderModelOptions } from '../utils/llm'
 
 const { Text, Title, Paragraph } = Typography
 const { TextArea } = Input
@@ -49,6 +50,7 @@ interface EmployeeProfile {
 }
 
 const CreationWizard: React.FC = () => {
+  const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
@@ -110,20 +112,6 @@ const CreationWizard: React.FC = () => {
         setSelectedProviderId(defaultProvider.id)
       }
     } catch {}
-  }
-
-  const getProviderModels = (providerId: string): LLMModelConfig[] => {
-    const provider = providers.find(p => p.id === providerId)
-    if (!provider?.models_json) return []
-    try {
-      return JSON.parse(provider.models_json)
-    } catch {
-      return []
-    }
-  }
-
-  const getProviderModelOptions = (providerId: string) => {
-    return getProviderModels(providerId).map((m) => ({ value: m.model, label: m.name }))
   }
 
   const analyzeKBs = async () => {
@@ -234,21 +222,24 @@ const CreationWizard: React.FC = () => {
       }
 
       if (profile?.suggestedTools && profile.suggestedTools.length > 0) {
-        for (const toolName of profile.suggestedTools) {
-          try {
-            const builtinTools = await window.electronAPI.tool.listBuiltin()
-            const matchedTool = builtinTools.find((t: any) =>
-              t.name === toolName || t.id === toolName
-            )
-            if (matchedTool) {
-              await window.electronAPI.tool.assignToEmployee({
-                employee_id: employee.id,
-                tool_id: matchedTool.id,
-                is_enabled: true,
-              })
+        try {
+          const builtinTools = await window.electronAPI.tool.listBuiltin()
+          for (const toolName of profile.suggestedTools) {
+            try {
+              const matchedTool = builtinTools.find((t: any) =>
+                t.name === toolName || t.id === toolName
+              )
+              if (matchedTool) {
+                await window.electronAPI.tool.assignToEmployee({
+                  employee_id: employee.id,
+                  tool_id: matchedTool.id,
+                  is_enabled: true,
+                })
+              }
+            } catch {
             }
-          } catch {
           }
+        } catch {
         }
       }
 
@@ -299,16 +290,16 @@ const CreationWizard: React.FC = () => {
                 setSelectedProviderId(value)
                 setSelectedModelId('')
               }}
-              options={providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model})` }))}
+              options={providers.map((p) => ({ value: p.id, label: p.name }))}
               allowClear
             />
-            {selectedProviderId && getProviderModels(selectedProviderId).length > 0 && (
+            {selectedProviderId && getProviderModels(providers.find(p => p.id === selectedProviderId)!).length > 0 && (
               <Select
                 placeholder="选择模型"
                 style={{ width: 180 }}
                 value={selectedModelId || undefined}
                 onChange={setSelectedModelId}
-                options={getProviderModelOptions(selectedProviderId)}
+                options={getProviderModelOptions(providers.find(p => p.id === selectedProviderId)!)}
                 allowClear
               />
             )}
@@ -537,7 +528,7 @@ const CreationWizard: React.FC = () => {
         <Form.Item name="llm_provider_id" label="LLM 提供商">
           <Select
             placeholder="选择 LLM 提供商"
-            options={providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model})` }))}
+            options={providers.map((p) => ({ value: p.id, label: p.name }))}
             allowClear
             onChange={(value) => {
               setStep5ProviderId(value || '')
@@ -547,11 +538,11 @@ const CreationWizard: React.FC = () => {
         </Form.Item>
 
         <Form.Item name="llm_model" label="模型名称">
-          {step5ProviderId && getProviderModels(step5ProviderId).length > 0 ? (
+          {step5ProviderId && getProviderModels(providers.find(p => p.id === step5ProviderId)!).length > 0 ? (
             <Select
               placeholder="选择模型"
               allowClear
-              options={getProviderModelOptions(step5ProviderId)}
+              options={getProviderModelOptions(providers.find(p => p.id === step5ProviderId)!)}
             />
           ) : (
             <Input placeholder="留空使用提供商默认模型" />

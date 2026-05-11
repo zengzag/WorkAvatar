@@ -17,22 +17,9 @@ import { useAppStore } from '../stores/app.store'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
 import type { Project, Employee } from '../types'
+import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
 
 const { Text } = Typography
-
-const statusColorMap: Record<string, string> = {
-  draft: 'default',
-  active: 'green',
-  paused: 'orange',
-  error: 'red',
-}
-
-const statusTextMap: Record<string, string> = {
-  draft: '草稿',
-  active: '运行中',
-  paused: '已暂停',
-  error: '错误',
-}
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
@@ -309,8 +296,8 @@ const Dashboard: React.FC = () => {
                       <div style={{ marginBottom: 4 }}>
                         <Space>
                           <Text strong style={{ fontSize: 14 }}>{emp.name}</Text>
-                          <Tag color={statusColorMap[emp.status]} style={{ fontSize: 11 }}>
-                            {statusTextMap[emp.status]}
+                          <Tag color={EMPLOYEE_STATUS_COLOR_MAP[emp.status]} style={{ fontSize: 11 }}>
+                            {EMPLOYEE_STATUS_TEXT_MAP[emp.status]}
                           </Tag>
                         </Space>
                       </div>

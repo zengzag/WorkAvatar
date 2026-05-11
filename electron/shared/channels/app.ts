@@ -9,11 +9,6 @@ export const APP_CHANNELS = {
   APP_GET_PATH: 'app:get-path',
   APP_SHOW_OPEN_DIALOG: 'app:show-open-dialog',
   APP_SHOW_MESSAGE_BOX: 'app:show-message-box',
-
-  RAG_INDEX_PROJECT: 'rag:index-project',
-  RAG_SEARCH: 'rag:search',
-  RAG_INDEX_STATUS: 'rag:index-status',
-  RAG_DELETE_INDEX: 'rag:delete-index',
 } as const
 
 export interface SettingsGetParams {

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Card, Button, Typography, Space, message, Table, Tag, Modal,
+  Card, Button, Typography, Space, Table, Tag, Modal,
   Input, Popconfirm, Empty, Statistic, Row, Col,
-  Tooltip, Spin, Tabs, Alert, Select, theme,
+  Tooltip, Spin, Tabs, Alert, Select, theme, App,
 } from 'antd'
 import {
   PlusOutlined, DatabaseOutlined, FileTextOutlined, UploadOutlined,
@@ -16,6 +16,7 @@ import {
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
+import { formatFileSize } from '../utils/format'
 
 const { Title, Text } = Typography
 
@@ -42,6 +43,7 @@ interface KnowledgeBase {
 }
 
 const KnowledgeBasePage: React.FC = () => {
+  const { message } = App.useApp()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [kbs, setKBs] = useState<KnowledgeBase[]>([])
@@ -103,14 +105,16 @@ const KnowledgeBasePage: React.FC = () => {
   }, [])
 
   const loadDocProcessingStatus = async (docList: KBDocument[]) => {
-    const processedIds = new Set<string>()
     const completedDocs = docList.filter(d => d.parse_status === 'completed')
-    for (const doc of completedDocs) {
-      try {
-        const summary = await window.electronAPI.kb.getDocSummary(doc.id)
-        if (summary) processedIds.add(doc.id)
-      } catch {}
-    }
+    const results = await Promise.allSettled(
+      completedDocs.map(doc => window.electronAPI.kb.getDocSummary(doc.id))
+    )
+    const processedIds = new Set<string>()
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled' && result.value) {
+        processedIds.add(completedDocs[i].id)
+      }
+    })
     setProcessedDocIds(processedIds)
   }
 
@@ -391,12 +395,6 @@ const KnowledgeBasePage: React.FC = () => {
   const completedCount = docs.filter(d => d.parse_status === 'completed').length
   const failedCount = docs.filter(d => d.parse_status === 'failed').length
 
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-  }
-
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 24 }}>
       <PageHeader
@@ -526,7 +524,7 @@ const KnowledgeBasePage: React.FC = () => {
                               ),
                             },
                             { title: '大小', dataIndex: 'size', key: 'size', width: 90,
-                              render: (size: number) => <Text type="secondary">{formatSize(size)}</Text>,
+                              render: (size: number) => <Text type="secondary">{formatFileSize(size)}</Text>,
                             },
                             { title: '状态', dataIndex: 'parse_status', key: 'status', width: 120,
                               render: (status: string, record: KBDocument) => {

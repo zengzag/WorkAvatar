@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
 import Dashboard from '../pages/Dashboard'
 import ProjectManager from '../pages/ProjectManager'
@@ -11,7 +11,7 @@ import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
 
-const router = createBrowserRouter([
+const router = createHashRouter([
   {
     path: '/',
     element: <App />,

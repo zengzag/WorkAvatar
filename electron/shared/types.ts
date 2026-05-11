@@ -97,7 +97,7 @@ export interface Feedback {
   created_at: number
 }
 
-export type LLMProviderType = 'openai' | 'openai-compatible' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
+export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
 
 export interface LLMModelConfig {
   id: string
@@ -110,6 +110,7 @@ export interface LLMModelConfig {
   presence_penalty?: number
   enable_thinking?: boolean
   thinking_budget?: number
+  max_retry?: number
   is_default: boolean
 }
 

@@ -20,15 +20,10 @@ export default defineConfig({
               external: [
                 'electron',
                 'better-sqlite3',
-                '@lancedb/lancedb',
-                '@lancedb/lancedb-win32-x64-msvc',
-                'genai-key-storage-lite',
                 'pdf-parse',
                 'mammoth',
                 'xlsx',
-                'mailparser',
-                'tesseract.js',
-                'electron-updater'
+                'tesseract.js'
               ]
             }
           }

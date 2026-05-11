@@ -6,12 +6,11 @@ import {
   Space,
   Typography,
   Tag,
-  message,
   Spin,
-  Collapse,
   Popconfirm,
   Tooltip,
   theme,
+  App,
 } from 'antd'
 import {
   SendOutlined,
@@ -22,7 +21,6 @@ import {
   DislikeOutlined,
   LikeOutlined,
   SettingOutlined,
-  LinkOutlined,
   DeleteOutlined,
   EditOutlined,
   BulbOutlined,
@@ -42,6 +40,8 @@ import {
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import dayjs from 'dayjs'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { Conversation, Message } from '../types'
 
 const { Text, Paragraph } = Typography
@@ -128,16 +128,6 @@ const ConversationItem = memo(({
   )
 })
 
-interface SearchResult {
-  text: string
-  score: number
-  source: {
-    file_id: string
-    file_name: string
-    chunk_index: number
-  }
-}
-
 interface ToolCallInfo {
   id: string
   name: string
@@ -146,33 +136,112 @@ interface ToolCallInfo {
   isComplete?: boolean
 }
 
+interface MessageSegment {
+  type: 'thinking' | 'answer' | 'tool_call'
+  id: string
+  timestamp?: number
+  content?: string
+  isStreaming?: boolean
+  collapsed?: boolean
+  toolName?: string
+  toolArgs?: any
+  toolResult?: any
+  isToolComplete?: boolean
+}
+
 interface MessageWithThought extends Message {
   thought?: string
   isStreamingThought?: boolean
   thoughtCollapsed?: boolean
   toolCalls?: ToolCallInfo[]
+  segments?: MessageSegment[]
+}
+
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  calculator: '计算器',
+  date_time: '日期时间',
+  string_utils: '字符串处理',
+  shell_exec: '执行命令',
+  read_file: '读取文件',
+  write_file: '写入文件',
+  list_dir: '列出目录',
+  system_info: '系统信息',
+  web_search: '网络搜索',
+  web_fetch: '获取网页',
+  json_utils: 'JSON处理',
+  random_utils: '随机工具',
+  env_vars: '环境变量',
+  kb_overview: '知识库概览',
+  query_global_summary: '全局摘要查询',
+  query_knowledge_graph: '知识图谱查询',
+  query_chapters: '章节检索',
+  query_fulltext: '全文检索',
+  get_document_content: '获取文档内容',
+  activate_skill: '激活技能',
+  read_reference: '读取参考',
+}
+
+function ensureSegments(msg: MessageWithThought): MessageWithThought {
+  if (msg.role !== 'assistant') return msg
+  if (msg.segments && msg.segments.length > 0) return msg
+
+  const segments: MessageSegment[] = []
+  let segIdx = 0
+
+  if (msg.thought) {
+    segments.push({
+      type: 'thinking',
+      id: `${msg.id}_seg_${segIdx++}`,
+      content: msg.thought,
+      collapsed: msg.thoughtCollapsed ?? true,
+    })
+  }
+
+  if (msg.content) {
+    segments.push({
+      type: 'answer',
+      id: `${msg.id}_seg_${segIdx++}`,
+      content: msg.content,
+    })
+  }
+
+  if (msg.toolCalls && msg.toolCalls.length > 0) {
+    for (const tc of msg.toolCalls) {
+      segments.push({
+        type: 'tool_call',
+        id: `${msg.id}_tool_${segIdx++}`,
+        toolName: tc.name,
+        toolArgs: tc.args,
+        toolResult: tc.result,
+        isToolComplete: tc.isComplete,
+        collapsed: true,
+      })
+    }
+  }
+
+  return { ...msg, segments }
 }
 
 const EmployeeWorkbench: React.FC = () => {
+  const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [employee, setEmployee] = useState<any | null>(null)
-  const [projectId, setProjectId] = useState<string | null>(null)
+  const [, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false)
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [showSidePanel, setShowSidePanel] = useState(false)
-  const [useRAG, setUseRAG] = useState(true)
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>('')
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('')
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [expandedToolCalls, setExpandedToolCalls] = useState<Set<string>>(new Set())
   const [displayedCount, setDisplayedCount] = useState(10) // 初始显示10条
   const [allConversations, setAllConversations] = useState<Conversation[]>([]) // 保存所有对话
   const conversationListRef = useRef<HTMLDivElement>(null)
@@ -270,31 +339,45 @@ const EmployeeWorkbench: React.FC = () => {
     } catch {}
   }
 
-  const startNewConversation = async () => {
+  const startNewConversation = async (): Promise<string | null> => {
+    if (isCreatingConversation) return null
+    setIsCreatingConversation(true)
     try {
       const result = await window.electronAPI.conversation.create({
         employee_id: id!,
         title: `对话 ${dayjs().format('MM/DD HH:mm')}`,
       })
-      // 同步更新两个状态，新对话在最前面
+      const convId = (result as Conversation).id
       setAllConversations((prev) => [(result as Conversation), ...prev])
       setConversations((prev) => [(result as Conversation), ...prev])
-      setActiveConversationId((result as Conversation).id)
+      setActiveConversationId(convId)
       setMessages([])
-      setSearchResults([])
       setShowSidePanel(false)
       forceScrollToBottom()
-    } catch { message.error('创建对话失败') }
+
+      if (pendingMessage) {
+        setInputValue(pendingMessage)
+        setPendingMessage(null)
+        setTimeout(() => sendMessage(), 0)
+      }
+
+      return convId
+    } catch { 
+      message.error('创建对话失败') 
+      setPendingMessage(null)
+      return null
+    } finally {
+      setIsCreatingConversation(false)
+    }
   }
 
   const selectConversation = (convId: string) => {
     setActiveConversationId(convId)
-    setSearchResults([])
     try {
-      // 只在选中对话时才完整查询该对话的详细信息（包含消息）
       window.electronAPI.conversation.get(convId).then(fullConv => {
         if (fullConv) {
-          const msgs = JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[]
+          const msgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
+            .map(ensureSegments)
           setMessages(msgs)
         }
       }).catch(() => {
@@ -388,12 +471,22 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }
 
-  const handleSourceClick = (result: SearchResult) => {
-    if (!projectId) return
-    navigate(`/project/${projectId}/file/${result.source.file_id}?chunk=${result.source.chunk_index}&text=${encodeURIComponent(result.text.substring(0, 100))}`)
+  const handleSend = async () => {
+    const content = inputValue.trim()
+    if (!content || isStreaming) return
+
+    if (!activeConversationId) {
+      if (isCreatingConversation) return
+      setPendingMessage(content)
+      await startNewConversation()
+      return
+    }
+
+    setInputValue(content)
+    sendMessage()
   }
 
-  const handleSend = async () => {
+  const sendMessage = async () => {
     const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
     if (!providerId) {
       message.warning('请先在设置中配置 LLM 提供商')
@@ -403,12 +496,7 @@ const EmployeeWorkbench: React.FC = () => {
     const content = inputValue.trim()
     if (!content || isStreaming) return
 
-    if (!activeConversationId) {
-      await startNewConversation()
-      setInputValue(content)
-      setTimeout(() => handleSend(), 100)
-      return
-    }
+    if (!activeConversationId) return
 
     setInputValue('')
 
@@ -429,52 +517,108 @@ const EmployeeWorkbench: React.FC = () => {
       content: '',
       timestamp: Date.now(),
       isStreaming: true,
-      thought: '',
-      isStreamingThought: false,
+      segments: [],
     }
     setMessages((prev) => [...prev, assistantMessage])
 
     setIsStreaming(true)
-    setSearchResults([])
+
+    let segCounter = 0
+    const nextSegId = () => `${assistantMessageId}_seg_${segCounter++}`
+    let toolCallCounter = 0
+    const nextToolCallId = () => `${assistantMessageId}_tool_${toolCallCounter++}`
 
     let chunkCleanup: () => void
     let doneCleanupFn: () => void
     let errorCleanupFn: () => void
-    let ragCleanupFn: () => void
     let thoughtCleanupFn: () => void
     let toolCallCleanupFn: () => void
     let toolResultCleanupFn: () => void
 
     chunkCleanup = window.electronAPI.llm.onChunk((chunk: string) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? { ...m, content: m.content + chunk }
-            : m
-        )
+        prev.map((m) => {
+          if (m.id !== assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+          
+          // 在开始输出答案前，先结束并收起之前的思考过程
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].type === 'thinking' && segs[i].isStreaming) {
+              segs[i] = { ...segs[i], isStreaming: false, collapsed: true }
+            }
+          }
+          
+          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + chunk }
+          } else {
+            segs.push({
+              type: 'answer',
+              id: nextSegId(),
+              content: chunk,
+              isStreaming: true,
+              timestamp: Date.now(),
+            })
+          }
+          return { ...m, segments: segs, content: (m.content || '') + chunk }
+        })
       )
     })
 
     thoughtCleanupFn = window.electronAPI.llm.onThought((thoughtChunk: string) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? { ...m, thought: (m.thought || '') + thoughtChunk, isStreamingThought: true }
-            : m
-        )
+        prev.map((m) => {
+          if (m.id !== assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+          
+          // 在开始新思考前，先结束之前所有仍在流式的内容
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].isStreaming && segs[i].type !== 'thinking') {
+              segs[i] = { ...segs[i], isStreaming: false }
+            }
+          }
+          
+          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + thoughtChunk }
+          } else {
+            segs.push({
+              type: 'thinking',
+              id: nextSegId(),
+              content: thoughtChunk,
+              isStreaming: true,
+              collapsed: false,
+              timestamp: Date.now(),
+            })
+          }
+          return { ...m, segments: segs, thought: (m.thought || '') + thoughtChunk }
+        })
       )
     })
 
     toolCallCleanupFn = window.electronAPI.llm.onToolCall((toolCall: { name: string; args: any }) => {
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? {
-                ...m,
-                toolCalls: [...(m.toolCalls || []), { id: `tc_${Date.now()}`, name: toolCall.name, args: toolCall.args, isComplete: false }],
-              }
-            : m
-        )
+        prev.map((m) => {
+          if (m.id !== assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false }
+          }
+          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true }
+          }
+          segs.push({
+            type: 'tool_call',
+            id: nextToolCallId(),
+            toolName: toolCall.name,
+            toolArgs: toolCall.args,
+            isToolComplete: false,
+            collapsed: false,
+            timestamp: Date.now(),
+          })
+          return { ...m, segments: segs }
+        })
       )
     })
 
@@ -482,19 +626,16 @@ const EmployeeWorkbench: React.FC = () => {
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantMessageId) return m
-          const toolCalls = m.toolCalls || []
-          const lastIncompleteIndex = [...toolCalls].reverse().findIndex(tc => tc.name === toolResult.name && !tc.isComplete)
+          const segs = [...(m.segments || [])]
+          const lastIncompleteIndex = [...segs].reverse().findIndex(
+            s => s.type === 'tool_call' && s.toolName === toolResult.name && !s.isToolComplete
+          )
           if (lastIncompleteIndex === -1) return m
-          const actualIndex = toolCalls.length - 1 - lastIncompleteIndex
-          const updatedToolCalls = [...toolCalls]
-          updatedToolCalls[actualIndex] = { ...updatedToolCalls[actualIndex], result: toolResult.result, isComplete: true }
-          return { ...m, toolCalls: updatedToolCalls }
+          const actualIndex = segs.length - 1 - lastIncompleteIndex
+          segs[actualIndex] = { ...segs[actualIndex], toolResult: toolResult.result, isToolComplete: true, collapsed: true }
+          return { ...m, segments: segs }
         })
       )
-    })
-
-    ragCleanupFn = window.electronAPI.llm.onRAGResults((results: SearchResult[]) => {
-      setSearchResults(results)
     })
 
     const finish = () => {
@@ -502,7 +643,6 @@ const EmployeeWorkbench: React.FC = () => {
       if (thoughtCleanupFn) thoughtCleanupFn()
       if (doneCleanupFn) doneCleanupFn()
       if (errorCleanupFn) errorCleanupFn()
-      if (ragCleanupFn) ragCleanupFn()
       if (toolCallCleanupFn) toolCallCleanupFn()
       if (toolResultCleanupFn) toolResultCleanupFn()
       finishRef.current = null
@@ -514,11 +654,15 @@ const EmployeeWorkbench: React.FC = () => {
       setMessages((prev) => {
         const assistantMsg = prev.find((m) => m.id === assistantMessageId)
         if (!assistantMsg) return prev
+        const segs = (assistantMsg.segments || []).map(s => ({
+          ...s,
+          isStreaming: false,
+          ...(s.type === 'thinking' ? { collapsed: true } : {}),
+        }))
         const savedAssistantMsg: MessageWithThought = {
           ...assistantMsg,
           isStreaming: false,
-          isStreamingThought: false,
-          thoughtCollapsed: true,
+          segments: segs,
         }
         window.electronAPI.conversation.update({
           id: activeConversationId,
@@ -540,7 +684,7 @@ const EmployeeWorkbench: React.FC = () => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMessageId
-            ? { ...m, content: `错误: ${error}`, isStreaming: false, isError: true, isStreamingThought: false }
+            ? { ...m, content: `错误: ${error}`, isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
             : m
         )
       )
@@ -559,7 +703,6 @@ const EmployeeWorkbench: React.FC = () => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        use_rag: useRAG,
       })
     } catch {
       finish()
@@ -574,12 +717,32 @@ const EmployeeWorkbench: React.FC = () => {
     } catch { message.error('复制失败') }
   }
 
+  const handleDeleteMessage = async (msgId: string) => {
+    if (!activeConversationId) return
+    try {
+      const newMessages = messages.filter((m) => m.id !== msgId)
+      setMessages(newMessages)
+      await window.electronAPI.conversation.update({
+        id: activeConversationId,
+        messages_json: JSON.stringify(newMessages),
+        message_count: newMessages.length,
+      })
+      message.success('已删除')
+    } catch {
+      message.error('删除失败')
+    }
+  }
+
   const handleStop = async () => {
     setIsStreaming(false)
     setMessages((prev) =>
       prev.map((m) =>
-        m.isStreaming || m.isStreamingThought
-          ? { ...m, isStreaming: false, isStreamingThought: false }
+        m.isStreaming
+          ? {
+              ...m,
+              isStreaming: false,
+              segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })),
+            }
           : m
       )
     )
@@ -591,47 +754,7 @@ const EmployeeWorkbench: React.FC = () => {
     } catch {}
   }
 
-  const toggleToolCallExpand = (id: string) => {
-    setExpandedToolCalls(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }
-
-  const TOOL_DISPLAY_NAMES: Record<string, string> = {
-    calculator: '计算器',
-    date_time: '日期时间',
-    string_utils: '字符串处理',
-    shell_exec: '执行命令',
-    read_file: '读取文件',
-    write_file: '写入文件',
-    list_dir: '列出目录',
-    system_info: '系统信息',
-    web_search: '网络搜索',
-    web_fetch: '获取网页',
-    json_utils: 'JSON处理',
-    random_utils: '随机工具',
-    env_vars: '环境变量',
-    kb_overview: '知识库概览',
-    query_global_summary: '全局摘要查询',
-    query_knowledge_graph: '知识图谱查询',
-    query_chapters: '章节检索',
-    query_fulltext: '全文检索',
-    get_document_content: '获取文档内容',
-    generate_timeline: '生成时间线',
-    query_rag: 'RAG检索',
-    activate_skill: '激活技能',
-    read_reference: '读取参考',
-  }
-
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
-
-  const hasRagResults = searchResults.length > 0
 
   if (!employee) {
     return (
@@ -763,36 +886,13 @@ const EmployeeWorkbench: React.FC = () => {
             style={{
               flex: 1,
               overflow: 'auto',
-              padding: '24px 20%',
+              padding: '24px 10%',
               display: 'flex',
               flexDirection: 'column',
               gap: 20,
             }}
           >
             {/* 知识检索结果迷你提示 */}
-            {hasRagResults && (
-              <div style={{
-                background: token.colorPrimaryBg,
-                borderRadius: 8,
-                padding: '8px 14px',
-                marginBottom: 8,
-              }}>
-                <Collapse size="small" ghost items={[
-                  ...(searchResults.length > 0 ? [{
-                    key: 'kb-mini',
-                    label: <Space><DatabaseOutlined style={{ color: '#722ed1' }} /><Text strong style={{ fontSize: 13 }}>知识库检索结果 ({searchResults.length})</Text></Space>,
-                    children: searchResults.map((r, i) => (
-                      <div key={i} style={{ padding: '6px 8px', marginBottom: 6, background: token.colorPrimaryBg, borderRadius: 6 }}>
-                        <Text strong style={{ fontSize: 12, cursor: 'pointer' }} onClick={() => handleSourceClick(r)}>
-                          <LinkOutlined style={{ marginRight: 4, color: '#1677ff' }} />{r.source.file_name}
-                        </Text>
-                        <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>相关度: {(r.score * 100).toFixed(1)}%</Text>
-                      </div>
-                    )),
-                  }] : []),
-                ]} />
-              </div>
-            )}
 
 
 
@@ -803,8 +903,10 @@ const EmployeeWorkbench: React.FC = () => {
               </div>
             )}
 
-            {/* 消息列表 */}
-            {messages.map((msg) => (
+            {/* 消息列表 - 时间线模式 */}
+            {messages.map((msg) => {
+              const displayMsg = msg.role === 'assistant' ? ensureSegments(msg) : msg
+              return (
               <div key={msg.id}
                 style={{
                   display: 'flex',
@@ -830,172 +932,270 @@ const EmployeeWorkbench: React.FC = () => {
                 </div>
 
                 <div style={{ maxWidth: '80%', minWidth: 0 }}>
-                  {/* 思考过程 */}
-                  {msg.thought && (
-                    <div style={{ marginBottom: 6 }}>
-                      <div onClick={() => {
-                        if (!msg.isStreamingThought) {
-                          setMessages(prev => prev.map(m =>
-                            m.id === msg.id ? { ...m, thoughtCollapsed: !m.thoughtCollapsed } : m
-                          ))
-                        }
-                      }}
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: 8,
-                          background: token.colorBgTextHover,
-                          border: '1px solid #d3adf7',
-                          cursor: msg.isStreamingThought ? 'default' : 'pointer',
-                        }}
-                      >
-                        <Space size={4} style={{ fontSize: 12 }}>
-                          <BulbOutlined style={{ color: '#722ed1' }} />
-                          <Text type="secondary" style={{ fontSize: 12 }}>思考过程
-                            {msg.isStreamingThought && <span className="cursor-blink" style={{ color: '#1677ff' }}>▊</span>}
-                          </Text>
-                          {!msg.isStreamingThought && (
-                            <Text style={{ fontSize: 11, color: '#722ed1' }}>{msg.thoughtCollapsed ? '展开' : '折叠'}</Text>
-                          )}
-                        </Space>
-                        {!msg.thoughtCollapsed && (
-                          <Paragraph style={{ fontSize: 12, margin: '6px 0 0', color: token.colorTextSecondary, whiteSpace: 'pre-wrap' }}>
-                            {msg.thought}
-                          </Paragraph>
-                        )}
+                  {/* 用户消息：简单气泡 */}
+                  {msg.role === 'user' && (
+                    <div>
+                      <div style={{
+                        padding: '10px 16px',
+                        borderRadius: 12,
+                        background: token.colorPrimary,
+                        color: '#fff',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                        lineHeight: 1.7,
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 14 }}>{msg.content}</Text>
                       </div>
+                      {!msg.isStreaming && (
+                        <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+                          <Popconfirm title="确认删除此消息" onConfirm={() => handleDeleteMessage(msg.id)}
+                            okText="确定" cancelText="取消">
+                            <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                          </Popconfirm>
+                        </Space>
+                      )}
                     </div>
                   )}
 
-                  {/* 工具调用卡片 */}
-                  {msg.toolCalls && msg.toolCalls.length > 0 && (
-                    <div style={{ marginBottom: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {msg.toolCalls.map((tc) => {
-                        const isExpanded = expandedToolCalls.has(tc.id)
-                        const isRunning = !tc.isComplete
-                        const resultStr = tc.result !== undefined
-                          ? (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2))
-                          : ''
-                        const argsStr = tc.args !== undefined
-                          ? (typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args, null, 2))
-                          : ''
-                        return (
-                          <div key={tc.id}
-                            style={{
-                              borderRadius: 8,
-                              border: '1px solid #d9d9d9',
-                              borderLeft: `3px solid ${isRunning ? token.colorPrimary : token.colorSuccess}`,
-                              background: token.colorBgLayout,
-                              overflow: 'hidden',
-                            }}
-                          >
-                            <div
-                              onClick={() => toggleToolCallExpand(tc.id)}
-                              style={{
-                                padding: '6px 12px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                cursor: 'pointer',
-                                userSelect: 'none',
-                              }}
-                            >
-                              {isExpanded ? <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} /> : <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />}
-                              <CodeOutlined style={{ fontSize: 13, color: isRunning ? token.colorPrimary : token.colorSuccess }} />
-                              <Text strong style={{ fontSize: 13, color: token.colorText }}>{getToolDisplayName(tc.name)}</Text>
-                              <Text type="secondary" style={{ fontSize: 11 }}>({tc.name})</Text>
-                              {isRunning ? (
-                                <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                  <LoadingOutlined spin /> 执行中
-                                </Tag>
-                              ) : (
-                                <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                  <CheckCircleOutlined /> 完成
-                                </Tag>
-                              )}
-                            </div>
-                            {isExpanded && (
-                              <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}>
-                                {argsStr && (
-                                  <div style={{ marginBottom: tc.result !== undefined ? 8 : 0 }}>
-                                    <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>输入参数</Text>
-                                    <pre style={{
-                                      margin: 0,
-                                      padding: '6px 10px',
-                                      background: token.colorBgContainer,
-                                      borderRadius: 6,
-                                      fontSize: 12,
-                                      lineHeight: 1.5,
-                                      maxHeight: 200,
-                                      overflow: 'auto',
-                                      whiteSpace: 'pre-wrap',
-                                      wordBreak: 'break-all',
-                                      border: `1px solid ${token.colorBorderSecondary}`,
-                                    }}>
-                                      {argsStr}
-                                    </pre>
+                  {/* 助手消息：时间线分段渲染 */}
+                  {msg.role === 'assistant' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
+                        <div style={{
+                          padding: '10px 16px',
+                          borderRadius: 12,
+                          background: token.colorBgLayout,
+                          lineHeight: 1.7,
+                        }}>
+                          <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>正在思考...</Text>
+                        </div>
+                      )}
+
+                      {displayMsg.segments && displayMsg.segments.length > 0 && (
+                        <>
+                          {/* 时间线连接线 */}
+                          <div style={{ position: 'relative', paddingLeft: 0 }}>
+                            {/* 先渲染各段 */}
+                            {displayMsg.segments.map((seg) => {
+                              const isToolPending = seg.type === 'tool_call' && !seg.isToolComplete
+
+                              if (seg.type === 'thinking') {
+                                return (
+                                  <div key={seg.id} style={{ marginBottom: 0 }}>
+                                    <div
+                                      onClick={() => {
+                                        if (!seg.isStreaming) {
+                                          setMessages(prev => prev.map(m => {
+                                            if (m.id !== msg.id || !m.segments) return m
+                                            const newSegs = m.segments.map(s =>
+                                              s.id === seg.id ? { ...s, collapsed: !s.collapsed } : s
+                                            )
+                                            return { ...m, segments: newSegs }
+                                          }))
+                                        }
+                                      }}
+                                      style={{
+                                        padding: '8px 14px',
+                                        borderRadius: 8,
+                                        background: token.colorPrimaryBg,
+                                        border: `1px solid ${token.colorPrimaryBorder}`,
+                                        borderLeft: `3px solid ${token.colorPrimary}`,
+                                        cursor: seg.isStreaming ? 'default' : 'pointer',
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <BulbOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
+                                        <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>思考过程</Text>
+                                        {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorPrimary }}>▊</span>}
+                                        {!seg.isStreaming && (
+                                          <Text style={{ fontSize: 11, color: token.colorPrimary, marginLeft: 'auto' }}>
+                                            {seg.collapsed ? '展开 ▸' : '折叠 ▾'}
+                                          </Text>
+                                        )}
+                                      </div>
+                                      {!seg.collapsed && seg.content && (
+                                        <Paragraph style={{
+                                          fontSize: 12,
+                                          margin: '8px 0 0',
+                                          color: token.colorTextSecondary,
+                                          whiteSpace: 'pre-wrap',
+                                        }}>
+                                          {seg.content}
+                                        </Paragraph>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
-                                {tc.result !== undefined && (
-                                  <div>
-                                    <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>返回结果</Text>
-                                    <pre style={{
-                                      margin: 0,
-                                      padding: '6px 10px',
-                                      background: '#f6ffed',
-                                      borderRadius: 6,
-                                      fontSize: 12,
-                                      lineHeight: 1.5,
-                                      maxHeight: 300,
-                                      overflow: 'auto',
-                                      whiteSpace: 'pre-wrap',
-                                      wordBreak: 'break-all',
-                                      border: '1px solid #b7eb8f',
-                                    }}>
-                                      {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n...(结果已截断)' : resultStr}
-                                    </pre>
+                                )
+                              }
+
+                              if (seg.type === 'tool_call') {
+                                const isExpanded = !seg.collapsed
+                                const resultStr = seg.toolResult !== undefined
+                                  ? (typeof seg.toolResult === 'string' ? seg.toolResult : JSON.stringify(seg.toolResult, null, 2))
+                                  : ''
+                                const argsStr = seg.toolArgs !== undefined
+                                  ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
+                                  : ''
+                                return (
+                                  <div key={seg.id} style={{ marginBottom: 0 }}>
+                                    <div
+                                      style={{
+                                        borderRadius: 8,
+                                        border: `1px solid ${token.colorBorderSecondary}`,
+                                        borderLeft: `3px solid ${isToolPending ? token.colorPrimary : token.colorSuccess}`,
+                                        background: token.colorBgLayout,
+                                        overflow: 'hidden',
+                                        opacity: 0.9,
+                                      }}
+                                    >
+                                      <div
+                                        onClick={() => {
+                                          setMessages(prev => prev.map(m => {
+                                            if (m.id !== msg.id || !m.segments) return m
+                                            const newSegs = m.segments.map(s =>
+                                              s.id === seg.id ? { ...s, collapsed: !s.collapsed } : s
+                                            )
+                                            return { ...m, segments: newSegs }
+                                          }))
+                                        }}
+                                        style={{
+                                          padding: '6px 12px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                          cursor: 'pointer',
+                                          userSelect: 'none',
+                                        }}
+                                      >
+                                        {isExpanded ? <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} /> : <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />}
+                                        <CodeOutlined style={{ fontSize: 13, color: isToolPending ? token.colorPrimary : token.colorSuccess }} />
+                                        <Text strong style={{ fontSize: 13, color: token.colorText }}>
+                                          {seg.toolName ? getToolDisplayName(seg.toolName) : '工具调用'}
+                                        </Text>
+                                        <Text type="secondary" style={{ fontSize: 11 }}>({seg.toolName})</Text>
+                                        {isToolPending ? (
+                                          <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+                                            <LoadingOutlined spin /> 执行中
+                                          </Tag>
+                                        ) : (
+                                          <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+                                            <CheckCircleOutlined /> 完成
+                                          </Tag>
+                                        )}
+                                      </div>
+                                      {isExpanded && (
+                                        <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}>
+                                          {argsStr && (
+                                            <div style={{ marginBottom: seg.toolResult !== undefined ? 8 : 0 }}>
+                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>输入参数</Text>
+                                              <pre style={{
+                                                margin: 0,
+                                                padding: '6px 10px',
+                                                background: token.colorBgContainer,
+                                                borderRadius: 6,
+                                                fontSize: 12,
+                                                lineHeight: 1.5,
+                                                maxHeight: 200,
+                                                overflow: 'auto',
+                                                whiteSpace: 'pre-wrap',
+                                                wordBreak: 'break-all',
+                                                border: `1px solid ${token.colorBorderSecondary}`,
+                                              }}>
+                                                {argsStr}
+                                              </pre>
+                                            </div>
+                                          )}
+                                          {seg.toolResult !== undefined && (
+                                            <div>
+                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>返回结果</Text>
+                                              <pre style={{
+                                                margin: 0,
+                                                padding: '6px 10px',
+                                                background: token.colorSuccessBg,
+                                                borderRadius: 6,
+                                                fontSize: 12,
+                                                lineHeight: 1.5,
+                                                maxHeight: 300,
+                                                overflow: 'auto',
+                                                whiteSpace: 'pre-wrap',
+                                                wordBreak: 'break-all',
+                                                border: `1px solid ${token.colorSuccessBorder}`,
+                                              }}>
+                                                {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n...(结果已截断)' : resultStr}
+                                              </pre>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
-                              </div>
-                            )}
+                                )
+                              }
+
+                              if (seg.type === 'answer') {
+                                return (
+                                  <div key={seg.id} style={{ marginBottom: 0 }}>
+                                    <div style={{
+                                      padding: '10px 16px',
+                                      borderRadius: 12,
+                                      background: token.colorBgLayout,
+                                      lineHeight: 1.7,
+                                      wordBreak: 'break-word',
+                                      border: msg.isError ? '1px solid #ff4d4f' : 'none',
+                                    }}>
+                                      <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                          {seg.content || (seg.isStreaming ? '▊' : '')}
+                                        </ReactMarkdown>
+                                      </div>
+                                      {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>}
+                                    </div>
+                                  </div>
+                                )
+                              }
+
+                              return null
+                            })}
                           </div>
-                        )
-                      })}
+                        </>
+                      )}
+
+                      {/* 旧格式兜底：没有segments的assistant消息 */}
+                      {(!displayMsg.segments || displayMsg.segments.length === 0) && msg.content && !msg.isStreaming && (
+                        <div style={{
+                          padding: '10px 16px',
+                          borderRadius: 12,
+                          background: token.colorBgLayout,
+                          lineHeight: 1.7,
+                          wordBreak: 'break-word',
+                          border: msg.isError ? '1px solid #ff4d4f' : 'none',
+                        }}>
+                          <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {msg.content}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 操作按钮 */}
+                      {!msg.isStreaming && !msg.isError && msg.content && (
+                        <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
+                          <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
+                            onClick={() => handleCopy(msg.content)} />
+                          <Button type="text" size="small" icon={<LikeOutlined style={{ fontSize: 12 }} />} />
+                          <Button type="text" size="small" icon={<DislikeOutlined style={{ fontSize: 12 }} />} />
+                          <Popconfirm title="确认删除此消息" onConfirm={() => handleDeleteMessage(msg.id)}
+                            okText="确定" cancelText="取消">
+                            <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                          </Popconfirm>
+                        </Space>
+                      )}
                     </div>
-                  )}
-
-                  {/* 消息气泡 */}
-                  <div style={{
-                    padding: '10px 16px',
-                    borderRadius: 12,
-                    background: msg.role === 'user' ? token.colorPrimary : token.colorBgLayout,
-                    color: msg.role === 'user' ? '#fff' : 'inherit',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    border: msg.isError ? '1px solid #ff4d4f' : 'none',
-                    lineHeight: 1.7,
-                  }}>
-                    {msg.isStreaming && !msg.content ? (
-                      <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>正在思考...</Text>
-                    ) : (
-                      <Text style={{ color: msg.role === 'user' ? '#fff' : 'inherit', fontSize: 14 }}>
-                        {msg.content}
-                      </Text>
-                    )}
-                    {msg.isStreaming && <span className="cursor-blink" style={{ color: msg.role === 'user' ? '#fff' : token.colorTextQuaternary }}>▊</span>}
-                  </div>
-
-                  {/* 操作按钮 */}
-                  {msg.role === 'assistant' && msg.content && !msg.isStreaming && !msg.isError && (
-                    <Space size={4} style={{ marginTop: 4, marginLeft: 2 }}>
-                      <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
-                        onClick={() => handleCopy(msg.content)} />
-                      <Button type="text" size="small" icon={<LikeOutlined style={{ fontSize: 12 }} />} />
-                      <Button type="text" size="small" icon={<DislikeOutlined style={{ fontSize: 12 }} />} />
-                    </Space>
                   )}
                 </div>
               </div>
-            ))}
+            )})}
             <div ref={messagesEndRef} />
           </div>
 
@@ -1006,16 +1206,15 @@ const EmployeeWorkbench: React.FC = () => {
             gap: 8,
             padding: '0 0 4px',
           }}>
-            <Tag color={useRAG ? 'green' : 'default'} style={{ cursor: 'pointer', fontSize: 12, borderRadius: 12 }}
-              onClick={() => setUseRAG(!useRAG)}>
-              <DatabaseOutlined /> 知识库 {useRAG ? '开' : '关'}
+            <Tag color="green" style={{ cursor: 'pointer', fontSize: 12, borderRadius: 12 }}>
+              <DatabaseOutlined /> 知识库
             </Tag>
           </div>
 
           {/* 输入区域 */}
           <div
             style={{
-              padding: '12px 20% 20px 20%',
+              padding: '12px 10% 20px 10%',
               flexShrink: 0,
             }}
           >
@@ -1089,6 +1288,80 @@ const EmployeeWorkbench: React.FC = () => {
         }
         .ant-input-textarea-focused {
           background: transparent !important;
+        }
+        .markdown-content h1, .markdown-content h2, .markdown-content h3,
+        .markdown-content h4, .markdown-content h5, .markdown-content h6 {
+          margin-top: 16px;
+          margin-bottom: 8px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
+        .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
+        .markdown-content h3 { font-size: 1.1em; }
+        .markdown-content p { margin: 0 0 8px; }
+        .markdown-content p:last-child { margin-bottom: 0; }
+        .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
+        .markdown-content li { margin-bottom: 4px; }
+        .markdown-content code {
+          background: ${token.colorBgTextHover};
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 0.9em;
+          font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+        }
+        .markdown-content pre {
+          background: ${token.colorBgTextHover};
+          padding: 12px 16px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 8px 0;
+          border: 1px solid ${token.colorBorderSecondary};
+        }
+        .markdown-content pre code {
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+          font-size: 0.85em;
+          line-height: 1.6;
+        }
+        .markdown-content blockquote {
+          border-left: 3px solid ${token.colorPrimary};
+          margin: 8px 0;
+          padding: 4px 12px;
+          color: ${token.colorTextSecondary};
+          background: ${token.colorPrimaryBg};
+          border-radius: 0 6px 6px 0;
+        }
+        .markdown-content table {
+          border-collapse: collapse;
+          width: 100%;
+          margin: 8px 0;
+        }
+        .markdown-content th, .markdown-content td {
+          border: 1px solid ${token.colorBorderSecondary};
+          padding: 6px 12px;
+          text-align: left;
+        }
+        .markdown-content th {
+          background: ${token.colorBgTextHover};
+          font-weight: 600;
+        }
+        .markdown-content a {
+          color: ${token.colorPrimary};
+          text-decoration: none;
+        }
+        .markdown-content a:hover {
+          text-decoration: underline;
+        }
+        .markdown-content hr {
+          border: none;
+          border-top: 1px solid ${token.colorBorderSecondary};
+          margin: 16px 0;
+        }
+        .markdown-content img {
+          max-width: 100%;
+          border-radius: 6px;
         }
       `}</style>
     </div>

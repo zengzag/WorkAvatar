@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo } from 'react'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
-import { ConfigProvider, theme as antdTheme } from 'antd'
+import { ConfigProvider, theme as antdTheme, App as AntApp } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import router from './router'
 import './styles/index.css'
@@ -53,7 +53,9 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
   return (
     <ConfigProvider locale={zhCN} theme={themeConfig}>
-      {children}
+      <AntApp>
+        {children}
+      </AntApp>
     </ConfigProvider>
   )
 }

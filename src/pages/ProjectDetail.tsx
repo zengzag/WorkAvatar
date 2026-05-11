@@ -15,6 +15,7 @@ import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import type { Employee } from '../types'
 import type { TabsProps } from 'antd'
+import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
 
 const { Text } = Typography
 
@@ -24,7 +25,6 @@ const ProjectDetail: React.FC = () => {
   const { token } = theme.useToken()
   const [project, setProject] = useState<any>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
-  const [, setEmployeesLoading] = useState(false)
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
   const [kbLinkModalOpen, setKbLinkModalOpen] = useState(false)
   const [allKBs, setAllKBs] = useState<any[]>([])
@@ -48,14 +48,11 @@ const ProjectDetail: React.FC = () => {
   }
 
   const loadEmployees = async () => {
-    setEmployeesLoading(true)
     try {
       const result = await window.electronAPI.employee.list({ project_id: id! })
       setEmployees(result)
     } catch (error) {
       console.error('加载数字员工失败:', error)
-    } finally {
-      setEmployeesLoading(false)
     }
   }
 
@@ -106,19 +103,8 @@ const ProjectDetail: React.FC = () => {
     )
   }
 
-  const statusColorMap: Record<string, string> = {
-    draft: 'default',
-    active: 'green',
-    paused: 'orange',
-    error: 'red',
-  }
-
-  const statusTextMap: Record<string, string> = {
-    draft: '草稿',
-    active: '运行中',
-    paused: '已暂停',
-    error: '错误',
-  }
+  const statusColorMap = EMPLOYEE_STATUS_COLOR_MAP
+  const statusTextMap = EMPLOYEE_STATUS_TEXT_MAP
 
   return (
     <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column' }}>

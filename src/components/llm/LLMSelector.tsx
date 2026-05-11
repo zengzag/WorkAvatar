@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Select, Space, Tag, theme } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
-import type { LLMProvider, LLMModelConfig } from '../../types'
+import type { LLMProvider } from '../../types'
+import { getProviderModels } from '../../utils/llm'
 
 const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
+const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
 
 interface LLMSelectorProps {
   providerId?: string
@@ -31,25 +33,16 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
     }).catch(() => {})
   }, [])
 
-  const getProviderModels = (pid: string): LLMModelConfig[] => {
-    const provider = providers.find(p => p.id === pid)
-    if (!provider?.models_json) return []
-    try {
-      return JSON.parse(provider.models_json)
-    } catch {
-      return []
-    }
-  }
-
   const providerOptions = providers.map((p) => {
     const isDomestic = DOMESTIC_PROVIDERS.has(p.provider_type)
+    const isLocal = LOCAL_PROVIDERS.has(p.provider_type)
     return {
       value: p.id,
       label: (
         <Space size={4}>
           {isDomestic && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>国产</Tag>}
+          {isLocal && <Tag color="green" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>本地</Tag>}
           <span>{p.name}</span>
-          <span style={{ color: token.colorTextSecondary, fontSize: 11 }}>({p.model})</span>
         </Space>
       ),
       searchLabel: `${p.name} ${p.model} ${p.provider_type}`,
@@ -57,7 +50,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   })
 
   const modelOptions = providerId
-    ? getProviderModels(providerId).map((m) => ({
+    ? getProviderModels(providers.find(p => p.id === providerId)!).map((m) => ({
         value: m.model,
         label: (
           <Space size={4}>

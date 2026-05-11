@@ -7,13 +7,11 @@ import type {
   AppShowOpenDialogParams,
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
-import type RAGService from '../services/rag.service'
 import type OCRService from '../services/ocr.service'
 import type RuleExtractionService from '../services/rule-extraction.service'
 
 export function registerAppHandlers(
   db: ReturnType<DatabaseService['getDb']>,
-  ragService: RAGService,
   ocrService: OCRService,
   ruleExtractor: RuleExtractionService
 ) {
@@ -70,26 +68,6 @@ export function registerAppHandlers(
       'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
     ).run(params.key, params.value)
     return { success: true }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.RAG_INDEX_PROJECT, async (_, params: { project_id: string }) => {
-    const result = await ragService.indexProjectFiles(params.project_id)
-    return result
-  })
-
-  ipcMain.handle(IPC_CHANNELS.RAG_SEARCH, async (_, params: { project_id: string; query: string; top_k?: number }) => {
-    const results = await ragService.search(params.project_id, params.query, params.top_k || 5)
-    return results
-  })
-
-  ipcMain.handle(IPC_CHANNELS.RAG_INDEX_STATUS, async (_, params: { project_id: string }) => {
-    const status = await ragService.getIndexStatus(params.project_id)
-    return status
-  })
-
-  ipcMain.handle(IPC_CHANNELS.RAG_DELETE_INDEX, async (_, params: { project_id: string }) => {
-    const result = await ragService.deleteIndex(params.project_id)
-    return { success: result }
   })
 
   ipcMain.handle(IPC_CHANNELS.OCR_RECOGNIZE, async (_, params: { image_path: string; language?: string }) => {

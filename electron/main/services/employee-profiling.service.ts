@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
+import { getDefaultProviderId } from './common-utils'
 
 export interface EmployeeProfile {
   roleName: string
@@ -157,16 +158,7 @@ class EmployeeProfilingService {
   }
 
   private getDefaultProviderId(): string | null {
-    const defaultRow = this.db.getDb().prepare(
-      'SELECT id FROM llm_providers WHERE is_default = 1 LIMIT 1'
-    ).get() as any
-    if (defaultRow?.id) {
-      return defaultRow.id
-    }
-    const anyRow = this.db.getDb().prepare(
-      'SELECT id FROM llm_providers LIMIT 1'
-    ).get() as any
-    return anyRow?.id || null
+    return getDefaultProviderId(this.db)
   }
 
   private async analyzeWithLLM(

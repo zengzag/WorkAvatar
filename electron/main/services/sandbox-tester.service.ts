@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
+import { getDefaultProviderId } from './common-utils'
 
 interface TestCase {
   id: string
@@ -266,10 +267,7 @@ class SandboxTesterService {
   }
 
   private getDefaultProviderId(): string | null {
-    const row = this.db.getDb().prepare(
-      'SELECT id FROM llm_providers WHERE is_default = 1 LIMIT 1'
-    ).get() as any
-    return row?.id || null
+    return getDefaultProviderId(this.db)
   }
 
   generateTestCasesFromRules(skillId: string): TestCase[] {

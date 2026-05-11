@@ -12,13 +12,14 @@ import {
   Space,
   Tag,
   Modal,
-  message,
   Popconfirm,
   Typography,
   Radio,
   Divider,
   Tooltip,
   Collapse,
+  App,
+  theme,
 } from 'antd'
 import {
   PlusOutlined,
@@ -42,7 +43,6 @@ const { Text, Title } = Typography
 
 const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; icon?: string }[] = [
   { value: 'openai', label: 'OpenAI', group: '国际' },
-  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: '国际' },
   { value: 'groq', label: 'Groq', group: '国际' },
   { value: 'mistral', label: 'Mistral AI', group: '国际' },
   { value: 'xai', label: 'xAI (Grok)', group: '国际' },
@@ -55,23 +55,26 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; ic
   { value: 'volcengine', label: '火山引擎 (豆包)', group: '国产' },
   { value: 'moonshot', label: 'Moonshot (Kimi)', group: '国产' },
   { value: 'yi', label: '零一万物 (Yi)', group: '国产' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: '本地' },
+  { value: 'lmstudio', label: 'LM Studio', group: '本地' },
 ]
 
-const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string; defaultEmbeddingModel: string }> = {
-  openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  'openai-compatible': { baseURL: '', defaultModel: '', defaultEmbeddingModel: 'text-embedding-3-small' },
-  deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', defaultEmbeddingModel: 'text-embedding-3-small' },
-  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', defaultEmbeddingModel: 'text-embedding-v3' },
-  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', defaultEmbeddingModel: 'embedding-3' },
-  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k', defaultEmbeddingModel: 'text-embedding-v3' },
-  moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k', defaultEmbeddingModel: 'text-embedding-3-small' },
-  yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning', defaultEmbeddingModel: 'text-embedding-3-small' },
-  groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', defaultEmbeddingModel: 'text-embedding-3-small' },
-  mistral: { baseURL: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', defaultEmbeddingModel: 'mistral-embed' },
-  azure: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  vertex: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string }> = {
+  openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini' },
+  'openai-compatible': { baseURL: '', defaultModel: '' },
+  lmstudio: { baseURL: 'http://localhost:1234/v1', defaultModel: '' },
+  deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat' },
+  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
+  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash' },
+  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k' },
+  moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k' },
+  yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning' },
+  groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile' },
+  mistral: { baseURL: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest' },
+  azure: { baseURL: '', defaultModel: 'gpt-4o-mini' },
+  vertex: { baseURL: '', defaultModel: 'gpt-4o-mini' },
+  bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini' },
+  xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini' },
 }
 
 const getProviderTypeLabel = (type: string): string => {
@@ -85,6 +88,8 @@ const getProviderTypeGroup = (type: string): string => {
 }
 
 const Settings: React.FC = () => {
+  const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modalVisible, setModalVisible] = useState(false)
   const [editingProvider, setEditingProvider] = useState<LLMProvider | null>(null)
@@ -131,16 +136,12 @@ const Settings: React.FC = () => {
     if (defaults) {
       const currentBaseUrl = form.getFieldValue('base_url')
       const currentModel = form.getFieldValue('model')
-      const currentEmbedding = form.getFieldValue('embedding_model')
 
       if (!currentBaseUrl && defaults.baseURL) {
         form.setFieldsValue({ base_url: defaults.baseURL })
       }
       if (!currentModel && defaults.defaultModel) {
         form.setFieldsValue({ model: defaults.defaultModel })
-      }
-      if (!currentEmbedding && defaults.defaultEmbeddingModel) {
-        form.setFieldsValue({ embedding_model: defaults.defaultEmbeddingModel })
       }
     }
   }
@@ -224,6 +225,7 @@ const Settings: React.FC = () => {
     modelForm.setFieldsValue({
       temperature: 0.3,
       max_tokens: 4096,
+      max_retry: 100,
       is_default: false,
       enable_thinking: false,
     })
@@ -242,6 +244,7 @@ const Settings: React.FC = () => {
       presence_penalty: model.presence_penalty,
       enable_thinking: model.enable_thinking || false,
       thinking_budget: model.thinking_budget,
+      max_retry: model.max_retry ?? 100,
       is_default: model.is_default,
     })
     setModelModalVisible(true)
@@ -261,6 +264,7 @@ const Settings: React.FC = () => {
         presence_penalty: values.presence_penalty,
         enable_thinking: values.enable_thinking,
         thinking_budget: values.thinking_budget,
+        max_retry: values.max_retry,
         is_default: values.is_default,
       }
 
@@ -290,6 +294,8 @@ const Settings: React.FC = () => {
     { title: '模型 ID', dataIndex: 'model', key: 'model', width: 160 },
     { title: '温度', dataIndex: 'temperature', key: 'temperature', width: 60 },
     { title: '最大 Token', dataIndex: 'max_tokens', key: 'max_tokens', width: 90 },
+    { title: '最大重试', dataIndex: 'max_retry', key: 'max_retry', width: 80, 
+      render: (r: number | undefined) => r ?? 100 },
     {
       title: '思考模式',
       key: 'thinking',
@@ -336,7 +342,7 @@ const Settings: React.FC = () => {
         const label = getProviderTypeLabel(type)
         return (
           <Space size={4}>
-            <Tag color={group === '国产' ? 'red' : 'blue'} style={{ fontSize: 11 }}>{group}</Tag>
+            <Tag color={group === '国产' ? 'red' : group === '本地' ? 'green' : 'blue'} style={{ fontSize: 11 }}>{group}</Tag>
             <span style={{ fontSize: 12 }}>{label}</span>
           </Space>
         )
@@ -389,6 +395,10 @@ const Settings: React.FC = () => {
   ]
 
   const providerTypeOptions = [
+    {
+      label: '本地服务商',
+      options: PROVIDER_TYPES.filter(p => p.group === '本地').map(p => ({ value: p.value, label: p.label })),
+    },
     {
       label: '国产服务商',
       options: PROVIDER_TYPES.filter(p => p.group === '国产').map(p => ({ value: p.value, label: p.label })),
@@ -629,11 +639,6 @@ const Settings: React.FC = () => {
                     <Form.Item name="model" label="默认模型" rules={[{ required: true, message: '请输入模型名称' }]}>
                       <Input placeholder="gpt-4o-mini" style={{ width: 180 }} />
                     </Form.Item>
-                    <Form.Item name="embedding_model" label={
-                      <span>嵌入模型 <Tooltip title="用于 RAG 知识库的向量嵌入"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                    }>
-                      <Input placeholder="text-embedding-3-small" style={{ width: 180 }} />
-                    </Form.Item>
                     <Form.Item name="temperature" label={
                       <span>温度 <Tooltip title="控制随机性，0=确定性，2=高随机性"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>
@@ -712,6 +717,11 @@ const Settings: React.FC = () => {
             <Form.Item name="max_tokens" label="最大 Token">
               <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
             </Form.Item>
+            <Form.Item name="max_retry" label={
+              <span>最大重试次数 <Tooltip title="工具调用最大循环次数，超过则返回错误"><QuestionCircleOutlined /></Tooltip></span>
+            }>
+              <InputNumber min={1} max={1000} step={10} style={{ width: 140 }} />
+            </Form.Item>
             <Form.Item name="top_p" label={
               <span>Top P <Tooltip title="核采样参数，与 temperature 配合使用，通常二选一"><QuestionCircleOutlined /></Tooltip></span>
             }>
@@ -736,7 +746,7 @@ const Settings: React.FC = () => {
             <BulbOutlined /> 思考模式（Reasoning / Thinking）
           </Divider>
 
-          <div style={{ background: '#f6f8fa', padding: 16, borderRadius: 8, marginBottom: 16 }}>
+          <div style={{ background: token.colorBgContainerDisabled, padding: 16, borderRadius: 8, marginBottom: 16 }}>
             <Form.Item name="enable_thinking" valuePropName="checked" label={
               <span>启用思考模式 <Tooltip title="开启后，模型会先进行内部推理再给出回答。DeepSeek Reasoner 通过 reasoning_content 返回思考过程，通义千问通过 enable_thinking 参数开启"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
             } style={{ marginBottom: 8 }}>

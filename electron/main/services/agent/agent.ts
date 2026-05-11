@@ -135,7 +135,7 @@ export class LightAgent {
       query,
       tools: runtimeTools,
       stream = false,
-      maxRetry = 10,
+      maxRetry = 100,
       userId = 'default_user',
       history = [],
       useSkills = true
@@ -166,7 +166,7 @@ export class LightAgent {
     const {
       query,
       tools: runtimeTools,
-      maxRetry = 10,
+      maxRetry = 100,
       history = [],
       useSkills = true
     } = options
@@ -201,7 +201,7 @@ export class LightAgent {
 
     systemPrompt.push(
       '请一步一步思考来完成用户的要求。尽可能完成用户的回答，如果有补充信息，请参考补充信息来调用工具，直到获取所有满足用户的提问所需的答案。',
-      '你可以使用知识库工具查询知识，包括 kb_overview、query_global_summary、query_knowledge_graph、query_chapters、query_fulltext、get_document_content、generate_timeline 等。当不确定知识库有哪些内容时，优先使用 kb_overview 获取文件列表和摘要；当用户问题涉及专业知识、业务规则、概念定义时，优先使用 query_chapters；当需要查找具体文档段落、细节信息时，使用 query_fulltext；当涉及人物/组织关系时，使用 query_knowledge_graph；当需要查看某个文件的完整内容时，使用 get_document_content。',
+      '你可以使用知识库工具查询知识。快速检索首选：kb_search（智能综合检索，同时搜索标题/摘要/章节/实体/内容）、kb_advanced_search（高级检索，支持精确短语"xxx"、+必须包含、-排除词）。分层查询工具：kb_overview（知识库概览）、query_global_summary（全局摘要）、kb_list_entities（浏览实体列表）、kb_entity_detail（实体详情）、query_knowledge_graph（实体关系）、query_chapters（章节检索）、query_fulltext（全文检索）、kb_get_content（获取文档内容，支持chapter_id/偏移量/行号精准定位）、kb_compare_documents（文档对比）。当不确定知识库有哪些内容时，优先使用 kb_overview 或 kb_search；当需要快速全面了解某主题时，优先使用 kb_search；当需要精确匹配时，使用 kb_advanced_search；当用户问题涉及专业知识、业务规则、概念定义时，优先使用 query_chapters；当需要查找具体文档段落、细节信息时，使用 query_fulltext；当涉及人物/组织关系时，使用 query_knowledge_graph 或 kb_entity_detail；当需要查看某个文件的完整内容或指定文本区间时，使用 kb_get_content（支持 chapter_id、start_offset/end_offset、start_line/end_line）。',
       `今日的日期：${now.toISOString().split('T')[0]}`,
       `当前时间：${now.toTimeString().split(' ')[0]}`
     )
@@ -257,6 +257,7 @@ export class LightAgent {
         currentMessages.push({
           role: 'assistant',
           content: assistantMessage.content || '',
+          reasoning_content: assistantMessage.reasoning_content || undefined,
           toolCalls: assistantMessage.tool_calls
         })
 
@@ -358,6 +359,7 @@ export class LightAgent {
         currentMessages.push({
           role: 'assistant',
           content: assistantContent,
+          reasoning_content: assistantReasoning || undefined,
           toolCalls: assistantToolCalls.length > 0 ? assistantToolCalls : undefined
         })
 
@@ -500,12 +502,18 @@ export class LightAgent {
 
     const body: any = {
       model: this.config.model,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        tool_calls: m.toolCalls,
-        tool_call_id: m.toolCallId
-      }))
+      messages: messages.map(m => {
+        const msg: any = {
+          role: m.role,
+          content: m.content,
+          tool_calls: m.toolCalls,
+          tool_call_id: m.toolCallId
+        }
+        if (m.reasoning_content) {
+          msg.reasoning_content = m.reasoning_content
+        }
+        return msg
+      })
     }
 
     if (tools.length > 0) {
@@ -550,12 +558,18 @@ export class LightAgent {
 
     const body: any = {
       model: this.config.model,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        tool_calls: m.toolCalls,
-        tool_call_id: m.toolCallId
-      })),
+      messages: messages.map(m => {
+        const msg: any = {
+          role: m.role,
+          content: m.content,
+          tool_calls: m.toolCalls,
+          tool_call_id: m.toolCallId
+        }
+        if (m.reasoning_content) {
+          msg.reasoning_content = m.reasoning_content
+        }
+        return msg
+      }),
       stream: true
     }
 

@@ -10,7 +10,6 @@ import {
   Switch,
   Space,
   Tag,
-  message,
   Avatar,
   Divider,
   Popconfirm,
@@ -24,6 +23,7 @@ import {
   Badge,
   Tooltip,
   theme,
+  App,
 } from 'antd'
 import {
   SaveOutlined,
@@ -54,6 +54,8 @@ import {
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import type { Employee, LLMProvider } from '../types'
+import { getProviderModelOptions } from '../utils/llm'
+import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
 
 const { TextArea } = Input
 const { Text } = Typography
@@ -103,6 +105,7 @@ const TOOL_ICON_MAP: Record<string, React.ReactNode> = {
 }
 
 const EmployeeSettings: React.FC = () => {
+  const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
@@ -167,19 +170,6 @@ const EmployeeSettings: React.FC = () => {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
     } catch {}
-  }
-
-  const getProviderModels = (providerId: string): Array<{ value: string; label: string }> => {
-    const provider = providers.find(p => p.id === providerId)
-    if (!provider?.models_json) return []
-    try {
-      return JSON.parse(provider.models_json).map((m: any) => ({
-        value: m.model,
-        label: m.name,
-      }))
-    } catch {
-      return []
-    }
   }
 
   const loadLinkedKBs = async (projectId: string) => {
@@ -459,13 +449,6 @@ const EmployeeSettings: React.FC = () => {
     setIsMcpModalOpen(true)
   }
 
-  const statusConfig = {
-    draft: { color: 'default', text: '草稿' },
-    active: { color: 'green', text: '运行中' },
-    paused: { color: 'orange', text: '已暂停' },
-    error: { color: 'red', text: '错误' },
-  }
-
   if (!employee) {
     return (
       <div style={{ padding: 24 }}>
@@ -487,8 +470,8 @@ const EmployeeSettings: React.FC = () => {
         ]}
         extra={
           <Space>
-            <Tag color={statusConfig[employee.status].color}>
-              {statusConfig[employee.status].text}
+            <Tag color={EMPLOYEE_STATUS_COLOR_MAP[employee.status]}>
+              {EMPLOYEE_STATUS_TEXT_MAP[employee.status]}
             </Tag>
             <Button
               icon={employee.status === 'active' ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
@@ -570,11 +553,11 @@ const EmployeeSettings: React.FC = () => {
                     </Col>
                     <Col span={12}>
                       <Form.Item name="llm_model" label="模型名称">
-                        {formLlmProviderId && getProviderModels(formLlmProviderId).length > 0 ? (
+                        {formLlmProviderId && getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!).length > 0 ? (
                           <Select 
                             placeholder="选择模型" 
                             allowClear
-                            options={getProviderModels(formLlmProviderId)}
+                            options={getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!)}
                           />
                         ) : (
                           <Input placeholder="如 gpt-4o, claude-3-sonnet 等" />

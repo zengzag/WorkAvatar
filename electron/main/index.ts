@@ -7,18 +7,25 @@ let mainWindow: BrowserWindow | null = null
 
 const isDev = !app.isPackaged
 
-function resolvePath(...paths: string[]): string {
+function getDistPath(...paths: string[]): string {
   if (isDev) {
     return path.join(process.cwd(), ...paths)
   }
-  return path.join(process.resourcesPath, ...paths)
+  return path.join(__dirname, '..', '..', ...paths)
 }
 
 function getPreloadPath(): string {
   if (isDev) {
     return path.join(process.cwd(), 'dist-electron', 'preload', 'index.js')
   }
-  return path.join(process.resourcesPath, 'preload', 'index.js')
+  return path.join(__dirname, '..', 'preload', 'index.js')
+}
+
+function getResourcePath(...paths: string[]): string {
+  if (isDev) {
+    return path.join(process.cwd(), ...paths)
+  }
+  return path.join(process.resourcesPath, ...paths)
 }
 
 async function createWindow() {
@@ -28,7 +35,7 @@ async function createWindow() {
     height: 720,
     minWidth: 1024,
     minHeight: 640,
-    icon: resolvePath('resources', 'icons', 'icon.png'),
+    icon: getResourcePath('resources', 'icons', 'icon.png'),
     webPreferences: {
       preload: getPreloadPath(),
       nodeIntegration: false,
@@ -55,7 +62,7 @@ async function createWindow() {
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
-    mainWindow.loadFile(resolvePath('dist', 'index.html'))
+    mainWindow.loadFile(getDistPath('dist', 'index.html'))
   }
 
   DatabaseService.getInstance()

@@ -24,7 +24,6 @@ export type {
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatStreamParams,
-  LLMChatStreamWithRAGParams,
   EmployeeChatStreamParams,
 } from './channels/llm'
 export type {

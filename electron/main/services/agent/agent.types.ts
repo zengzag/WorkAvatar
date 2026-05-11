@@ -20,6 +20,7 @@ export interface AgentConfig {
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  reasoning_content?: string
   toolCallId?: string
   toolCalls?: Array<{
     id: string
