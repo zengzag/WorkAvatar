@@ -15,7 +15,7 @@ export function registerLLMHandlers(
 ) {
   let activeAbortController: AbortController | null = null
 
-  ipcMain.handle('llm:abort-chat', () => {
+  ipcMain.handle(IPC_CHANNELS.LLM_ABORT_CHAT, () => {
     if (activeAbortController) {
       activeAbortController.abort()
       activeAbortController = null
@@ -51,12 +51,12 @@ export function registerLLMHandlers(
     await llmClient.chatStream(
       params.provider_id,
       params.messages,
-      (chunk: string) => { event.sender.send('llm:chat-chunk', chunk) },
-      () => { event.sender.send('llm:chat-done') },
-      (error: Error) => { event.sender.send('llm:chat-error', error.message) },
+      (chunk: string) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
+      () => { event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE) },
+      (error: Error) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error.message) },
       params.model_id ? { ...params.options, model: params.model_id } : params.options,
       undefined,
-      (thoughtChunk: string) => { event.sender.send('llm:thought', thoughtChunk) },
+      (thoughtChunk: string) => { event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thoughtChunk) },
     )
     return { success: true }
   })
@@ -74,25 +74,25 @@ export function registerLLMHandlers(
           use_skills: params.use_skills !== false,
         },
         {
-          onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send('llm:chat-chunk', chunk) },
-          onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send('llm:thought', thought) },
-          onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send('agent:tool-call', toolCall) },
+          onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
+          onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thought) },
+          onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, toolCall) },
           onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
             if (abortController.signal.aborted) return
-            event.sender.send('agent:tool-result', toolResult)
+            event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, toolResult)
           },
-          onDone: () => { if (!abortController.signal.aborted) event.sender.send('llm:chat-done'); activeAbortController = null },
-          onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send('llm:chat-error', error); activeAbortController = null },
+          onDone: () => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE); activeAbortController = null },
+          onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error); activeAbortController = null },
         },
         abortController.signal
       )
       return { success: true }
     } catch (error: any) {
       if (abortController.signal.aborted) {
-        event.sender.send('llm:chat-done')
+        event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE)
         return { success: true, aborted: true }
       }
-      event.sender.send('llm:chat-error', error.message || String(error))
+      event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error.message || String(error))
       activeAbortController = null
       return { success: false, error: error.message || String(error) }
     }

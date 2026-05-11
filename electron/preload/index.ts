@@ -85,8 +85,6 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
-    sendMessage: (params: { conversation_id: string; role: 'user' | 'assistant'; content: string }) =>
-      ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEND_MESSAGE, params),
   },
 
   llm: {
@@ -98,36 +96,36 @@ const electronAPI = {
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
-    abortChat: () => ipcRenderer.invoke('llm:abort-chat'),
+    abortChat: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT),
     onChunk: (callback: (chunk: string) => void) => {
       const handler = (_event: any, chunk: string) => callback(chunk)
-      ipcRenderer.on('llm:chat-chunk', handler)
-      return () => ipcRenderer.removeListener('llm:chat-chunk', handler)
+      ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
     onDone: (callback: () => void) => {
       const handler = () => callback()
-      ipcRenderer.on('llm:chat-done', handler)
-      return () => ipcRenderer.removeListener('llm:chat-done', handler)
+      ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },
     onError: (callback: (error: string) => void) => {
       const handler = (_event: any, error: string) => callback(error)
-      ipcRenderer.on('llm:chat-error', handler)
-      return () => ipcRenderer.removeListener('llm:chat-error', handler)
+      ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
     },
     onThought: (callback: (thought: string) => void) => {
       const handler = (_event: any, thought: string) => callback(thought)
-      ipcRenderer.on('llm:thought', handler)
-      return () => ipcRenderer.removeListener('llm:thought', handler)
+      ipcRenderer.on(IPC_CHANNELS.LLM_THOUGHT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_THOUGHT, handler)
     },
     onToolCall: (callback: (toolCall: { name: string; args: any }) => void) => {
       const handler = (_event: any, toolCall: { name: string; args: any }) => callback(toolCall)
-      ipcRenderer.on('agent:tool-call', handler)
-      return () => ipcRenderer.removeListener('agent:tool-call', handler)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
     onToolResult: (callback: (toolResult: { name: string; result: any }) => void) => {
       const handler = (_event: any, toolResult: { name: string; result: any }) => callback(toolResult)
-      ipcRenderer.on('agent:tool-result', handler)
-      return () => ipcRenderer.removeListener('agent:tool-result', handler)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },
   },
 
@@ -204,18 +202,18 @@ const electronAPI = {
     importDocsToProject: (params: { project_id: string; doc_ids: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_DOCS_TO_PROJECT, params),
     onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
       const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
-      ipcRenderer.on('kb:upload-progress', handler)
-      return () => ipcRenderer.removeListener('kb:upload-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
     },
     onParseProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('kb:parse-progress', handler)
-      return () => ipcRenderer.removeListener('kb:parse-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
     },
     onParseAllProgress: (callback: (progress: { current: number; total: number; docName: string }) => void) => {
       const handler = (_event: any, progress: { current: number; total: number; docName: string }) => callback(progress)
-      ipcRenderer.on('kb:parse-all-progress', handler)
-      return () => ipcRenderer.removeListener('kb:parse-all-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
     },
     processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
     processAll: (params: { kb_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
@@ -236,18 +234,18 @@ const electronAPI = {
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
     onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('kb:process-progress', handler)
-      return () => ipcRenderer.removeListener('kb:process-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_PROCESS_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PROCESS_PROGRESS, handler)
     },
     onProcessAllProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('kb:process-all-progress', handler)
-      return () => ipcRenderer.removeListener('kb:process-all-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, handler)
     },
     onBuildGlobalProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on('kb:build-global-progress', handler)
-      return () => ipcRenderer.removeListener('kb:build-global-progress', handler)
+      ipcRenderer.on(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
     },
   },
 }
@@ -255,13 +253,13 @@ const electronAPI = {
 contextBridge.exposeInMainWorld('electronAPI', {
   ...electronAPI,
   tasks: {
-    getAll: () => ipcRenderer.invoke('tasks:get-all'),
-    clearCompleted: () => ipcRenderer.invoke('tasks:clear-completed'),
-    cancel: (taskId: string) => ipcRenderer.invoke('tasks:cancel', taskId),
+    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_ALL),
+    clearCompleted: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_COMPLETED),
+    cancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, taskId),
     onTasksUpdated: (callback: (tasks: any[]) => void) => {
       const handler = (_event: any, tasks: any[]) => callback(tasks)
-      ipcRenderer.on('tasks:updated', handler)
-      return () => ipcRenderer.removeListener('tasks:updated', handler)
+      ipcRenderer.on(IPC_CHANNELS.TASK_UPDATED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_UPDATED, handler)
     },
   },
 })

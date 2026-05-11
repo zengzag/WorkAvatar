@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 export interface BackgroundTask {
   id: string
@@ -29,7 +30,7 @@ class TaskQueueService {
     const tasks = this.getAllTasks()
     const window = BrowserWindow.getAllWindows()[0]
     if (window && !window.isDestroyed()) {
-      window.webContents.send('tasks:updated', tasks)
+      window.webContents.send(IPC_CHANNELS.TASK_UPDATED, tasks)
     }
   }
 

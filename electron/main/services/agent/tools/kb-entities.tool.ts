@@ -243,7 +243,3 @@ export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition
     source: 'builtin'
   }
 }
-
-// 保留默认导出以兼容现有代码
-export const kbListEntitiesTool = createKBEntitiesTool([])
-export const kbEntityDetailTool = createKBEntityDetailTool([])

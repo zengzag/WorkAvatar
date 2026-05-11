@@ -19,7 +19,6 @@ always: false
 
 1. 使用 `calculator` 工具进行数学计算
 2. 使用 `date_time` 工具获取当前时间或进行日期计算
-3. 使用 `string_utils` 工具处理字符串
 
 ## 示例对话
 

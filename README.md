@@ -8,7 +8,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)
 ![License](https://img.shields.io/badge/license-ISC-green)
 
-**本地优先、零代码、隐私安全的 Windows 桌面数字员工生成平台**
+**本地优先、隐私安全的 Windows 桌面数字员工生成平台**
 
 </div>
 
@@ -27,19 +27,18 @@
 
 ## 产品概述
 
-WorkAvatar 是一款**本地优先、隐私安全、零代码**的 Windows 桌面软件。用户通过上传或连接日常工作中的参考文件与资料（合同、报表、操作手册、邮件、流程图等），系统自动分析这些资料，提取其中的业务规则、知识体系与输出模板，进而自动创建可在本地独立运行的"数字员工"。
+WorkAvatar 是一款**本地优先、隐私安全**的 Windows 桌面软件。用户通过上传日常工作中的参考文件与资料（合同、报表、操作手册、邮件等），系统解析这些资料并提取知识，辅助用户创建可在本地运行的"数字员工"。
 
-数字员工配备智能代理系统，支持工具调用、技能扩展、思维链推理，能够自主完成复杂任务。
+数字员工配备智能代理系统，支持工具调用、技能扩展、多步推理，能够辅助完成业务任务。
 
 ### 核心价值主张
 
-- ✅ **零代码构建**：不需编写一行代码，上传资料即可生成数字员工
-- ✅ **智能角色分析**：基于知识库自动分析业务场景，智能生成员工角色、职责和技能
-- ✅ **强大的工具生态**：内置 13+ 实用工具，支持 Claude Skills 技能扩展和 MCP 服务器集成
-- ✅ **思维链推理**：支持 Tree-of-Thought 思维链，复杂任务多步规划
-- ✅ **高还原度**：数字员工在判断逻辑、输出格式、知识引用上高度贴近用户真实工作要求，每一处输出均可追溯到源文件的具体段落
-- ✅ **持续进化**：数字员工在使用中根据用户反馈（赞/踩）和新增资料不断优化，成为越用越懂业务的长期伙伴
-- ✅ **数据主权完全归属用户**：所有资料文件永远保留在用户本地磁盘，不主动上传任何文件至云端；LLM 调用仅将脱敏后的文本摘要按用户配置的 API 发送，用户可在设置中预览并控制发送内容
+- ✅ **低门槛构建**：通过向导式流程创建数字员工，无需编写代码，上传资料后系统自动分析生成员工画像和技能建议
+- ✅ **智能角色分析**：基于知识库内容自动分析业务场景，智能生成员工角色、职责和技能建议（支持 LLM 分析、启发式分析、默认模板三级降级策略）
+- ✅ **丰富的工具生态**：内置 12 个实用工具 + 11 个知识库查询工具，支持 Claude Skills 技能扩展和 MCP 服务器集成
+- ✅ **多步推理与工具过滤**：支持"思考-反思-提取"三步链式推理，自动规划和筛选适用工具
+- ✅ **知识驱动**：数字员工基于知识库内容回答问题，支持分层渐进式知识查询（概览→摘要→实体→章节→全文→原文），逐步精确定位所需知识
+- ✅ **数据主权归属用户**：所有资料文件保留在用户本地磁盘，不主动上传任何文件至云端；LLM 调用仅将文本内容按用户配置的 API 发送
 
 ---
 
@@ -50,19 +49,18 @@ WorkAvatar 是一款**本地优先、隐私安全、零代码**的 Windows 桌�
 #### 多源资料上传
 - 支持从文件管理器直接拖入文件或文件夹到上传区，自动识别目录结构
 - 点击上传按钮调起系统文件选择器，支持多选
-- 支持文件格式：**PDF**（含扫描件）、**Word**（.doc/.docx）、**Excel**（.xls/.xlsx/.csv）、**PowerPoint**、**图片**（JPG/PNG/BMP/TIFF）、**邮件**（.eml）、**Markdown**、**TXT**、**HTML**
+- 支持文件格式：**PDF**、**Word**（.docx，.doc 格式不稳定建议转换）、**Excel**（.xlsx/.xls/.csv）、**图片**（JPG/PNG/BMP/TIFF/WebP）、**Markdown**、**TXT**、**HTML**
 - 实时进度展示（文件级和总体级）
 - 错误处理：对损坏文件、加密文件、格式不支持文件给出明确提示
 
-#### 智能解析与结构化
+#### 文件解析
 - **文件类型识别与路由**：根据扩展名自动选择合适的解析器
-- **PDF 解析**：使用 `pdf-parse` 提取纯文本及元数据
-- **Word 解析**：使用 `mammoth` 转换为结构化文本
+- **PDF 解析**：使用 `pdf-parse` 提取纯文本及元数据（不支持表格提取和扫描件 OCR）
+- **Word 解析**：使用 `mammoth` 转换为纯文本（不支持表格结构保留）
 - **Excel 解析**：使用 `SheetJS` 提取所有工作表，保留行列结构
-- **OCR 识别**：集成 `Tesseract.js` 引擎进行离线文字识别，支持 RapidOCR 降级方案
-- **章节切分**：自动按标题层级切分为文档块
-- **表格检测**：识别文档中的表格结构
-- **规则抽取**：基于 LLM 自动从文档中提取业务规则、问答对、知识点
+- **OCR 识别**：集成 `Tesseract.js` 引擎进行离线文字识别，支持 RapidOCR 降级方案（需手动部署可执行文件）
+- **章节切分**：基于标题层级（Markdown 标题语法）自动切分为文档块，无标题时按固定长度分块
+- **规则抽取**：基于 LLM 或启发式方法从文档中提取业务规则、问答对、知识点（LLM 模式有文本长度限制）
 
 ---
 
@@ -74,7 +72,7 @@ WorkAvatar 是一款**本地优先、隐私安全、零代码**的 Windows 桌�
 - 自动识别员工职责清单
 - 推荐合适的工作风格和性格特质
 - 支持用户补充说明和期望，引导分析方向
-- 提供 LLM 分析、启发式分析、默认模板三种 fallback 策略
+- 提供 LLM 分析、启发式分析、默认模板三级降级策略
 - 流式展示分析过程，实时查看思考进度
 
 #### 自动技能推荐
@@ -97,25 +95,28 @@ WorkAvatar 是一款**本地优先、隐私安全、零代码**的 Windows 桌�
 #### 核心特性
 - **工具调用（Function Calling）**：支持 OpenAI 格式的工具调用，自动处理多轮工具调用
 - **技能系统**：支持 Claude Skills 格式的技能加载、激活和引用读取
-- **思维链（Tree-of-Thought）**：支持 ToT 推理模式，复杂任务多步规划
+- **多步推理**：支持"思考-反思-提取"三步链式推理模式，自动规划工具使用并过滤适用工具子集
 - **流式响应**：支持 SSE 流式输出，包括思考过程和工具调用实时展示
 - **可中断**：支持 AbortController 实时中断生成
 
-#### 内置工具集（13+ 实用工具）
+#### 内置工具集（12 个实用工具）
 - **文件操作**：`read_file`（读取文件）、`write_file`（写入文件）、`list_dir`（列出目录）
 - **系统工具**：`shell_exec`（执行 shell 命令）、`system_info`（系统信息）、`env_vars`（环境变量）
 - **网络工具**：`web_search`（网络搜索）、`web_fetch`（获取网页内容）
-- **实用工具**：`calculator`（计算器）、`date_time`（日期时间）、`string_utils`（字符串处理）、`json_utils`（JSON 处理）、`random_utils`（随机工具）
+- **实用工具**：`calculator`（计算器）、`date_time`（日期时间）、`json_utils`（JSON 处理）、`random_utils`（随机工具）
 
-#### 渐进式知识查询工具
+#### 渐进式知识查询工具（11 个）
 Agent 内置知识库查询工具，支持分层查询：
 - `kb_overview`：获取知识库概览（文件列表和摘要）
 - `query_global_summary`：查询全局摘要
 - `query_knowledge_graph`：查询知识图谱和实体关系
-- `query_chapters`：按章节检索知识
-- `query_fulltext`：全文检索
-- `get_document_content`：获取原始文档内容
-- `generate_timeline`：生成时间线
+- `query_chapters`：按章节检索知识（关键词权重计分）
+- `query_fulltext`：全文关键词检索
+- `kb_search`：多维度混合检索（标题/摘要/章节/实体/内容）
+- `kb_advanced_search`：高级检索（精确短语/必须包含/排除词）
+- `kb_list_entities` / `kb_entity_detail`：浏览和查看实体详情
+- `kb_compare_documents`：文档对比分析
+- `kb_get_content`：获取原始文档内容（支持章节/偏移量/行号定位）
 
 ---
 
@@ -159,21 +160,16 @@ skill-name/
 ### 6. 数字员工工作台
 
 #### 沉浸式对话界面
-- **极简顶栏**：仅显示员工名称、状态、LLM 选择器和快捷操作图标
+- **极简顶栏**：显示员工名称、状态标签、LLM 选择器和快捷操作图标
 - **对话优先布局**：对话区域占据绝大部分版面，消息列表居中显示
-- **面板按需展开**：历史对话列表和知识检索面板默认隐藏，通过顶部图标一键切换
+- **面板按需展开**：历史对话列表默认隐藏，通过顶部图标一键切换
 - **消息气泡**：用户与助手消息样式区分，支持思考过程折叠/展开
 - 流式响应的打字机效果，支持 `Enter` 发送 / `Shift+Enter` 换行
-- 实时中断生成功能（真正中断后端 LLM 请求）
+- 实时中断生成功能（中断后端 LLM 请求）
 
 #### 智能滚动行为
-- 模型输出新内容时，仅在用户在消息列表底部时自动滚动
+- 模型输出新内容时，仅在用户位于消息列表底部时自动滚动
 - 用户上翻查看历史消息时，新内容不会导致跳动
-
-#### 知识检索结果内联展示
-- Wiki 检索结果和 RAG 检索结果内联在消息列表顶部
-- 可折叠面板展示，支持点击来源文件跳转
-- Wiki/RAG 开关快捷切换（底部标签）
 
 #### 工具调用可视化
 - 工具调用过程实时展示
@@ -201,7 +197,7 @@ skill-name/
 - 全局知识摘要展示（含核心主题和关键实体标签）
 - 文档摘要列表（支持查看章节、原文）
 - 章节详情查看（摘要、关键词、实体）
-- 实体图谱（按类型筛选、关系网络导航、关联实体跳转）
+- 实体列表与关系浏览（按类型筛选、关系网络导航、关联实体跳转）
 - 关系网络总览（源实体-关系-目标实体列表）
 - 原始文档内容查看
 - 时间线生成与展示
@@ -212,33 +208,28 @@ skill-name/
 
 #### 任务进度面板
 - 全局任务进度指示器，位于侧边栏底部
-- 实时展示：文档上传、文件解析、Wiki 编译、知识处理等后台任务
+- 实时展示：文档上传、文件解析、知识处理等后台任务
 - 支持查看任务详情、各任务状态（等待中/运行中/已完成/失败/已取消）
 - 可一键清除已完成任务
 
 ---
 
-### 9. RAG 增强检索与 LLM Wiki 知识库
+### 9. 知识检索
 
-#### RAG 增强检索
-- 基于 **LanceDB** 嵌入式向量数据库，零服务器依赖
-- 智能文档分块：1000字符/块，200字符重叠，优先在句号/换行处切分
-- 语义检索：基于 OpenAI 兼容嵌入 API 的余弦相似度搜索
-- 可配置 top-K 数量和最小相似度阈值
-- 检索结果实时推送到工作台右侧面板
+#### 关键词检索
+- 基于 SQLite 的关键词模糊匹配与权重计分检索
+- 章节检索：在标题（+5）、标注（+3）、摘要（+2）中关键词匹配计分
+- 文档摘要检索：关键词匹配与权重排序
+- 多维度混合检索：同时搜索标题、摘要、章节、实体、原始内容，综合排序
+- 高级检索语法：支持精确短语、必须包含、排除词等过滤条件
+- 全文检索：段落级关键词匹配，返回上下文片段和精准定位信息（偏移量/行号）
 
-#### LLM Wiki 知识库（编译时结构化）
-- **核心思想**：让大模型扮演"知识编译器"，将原始资料转化为结构化、相互链接的 Markdown Wiki 文件
-- **3+1 文件夹结构**：
-  - `raw/` - 存放原始材料（只读，事实来源）
-  - `wiki/` - AI 生成的结构化 Markdown（主题页、实体页、索引、标签）
-  - `outputs/` - 问答记录与生成报告（可反馈为新材料）
-  - `AGENTS.md` - AI 指引文件，定义知识库规则
-- **知识编译**：LLM 自动提取实体、主题、关系，生成双向链接的 Wiki 页面
-- **多维搜索**：基于标题、内容、标签的混合搜索，比纯向量检索更精准
-- **滚雪球效应**：每添加新资料，自动与已有 Wiki 关联更新，知识持续积累
-- **双模式对话**：工作台支持 Wiki 模式 / RAG 模式 / 双模式同时启用
-- 渐进式知识查询：Agent 工具支持分层查询（全局摘要→实体关系→章节检索→全文检索→原始文档），每层返回关联信息和下一步查询建议，LLM 可精准定位知识
+#### 知识处理流水线
+- **章节识别**：基于 Markdown 标题层级切分，无标题时按 5000 字符/500 字符重叠分块
+- **章节摘要生成**：LLM 驱动，生成摘要、关键词、实体列表
+- **文档摘要生成**：汇总章节摘要，生成全局摘要、关键实体、时间线、关键词、主要主题
+- **实体与关系抽取**：LLM 驱动，支持 7 种实体类型（人物/组织/地点/事件/概念/工具/其他）和关系网络
+- **全局知识构建**：跨文档汇总生成全局摘要、核心主题、关键实体、全局时间线
 
 ---
 
@@ -255,6 +246,7 @@ skill-name/
   - **国际服务商**：
     - OpenAI
     - OpenAI 兼容接口（如 Llama.cpp、vLLM、Ollama OpenAI 模式）
+    - LM Studio（本地模型）
     - Groq
     - Mistral AI
     - xAI (Grok)
@@ -303,8 +295,8 @@ skill-name/
 │  │   (better-sqlite3)    │  │                       │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │   LLM Client Service  │  │   RAG Service         │                  │
-│  │                       │  │   (LanceDB)           │                  │
+│  │   LLM Client Service  │  │   Knowledge Processor │                  │
+│  │                       │  │   Svc                 │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
 │  │   OCR Service         │  │   Project Mgmt Svc    │                  │
@@ -318,11 +310,11 @@ skill-name/
 │  │                     LightAgent 智能代理系统                        │ │
 │  │  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────┐ │ │
 │  │  │  Agent Core         │  │  Tool Registry      │  │  Skill Mgr  │ │ │
-│  │  │  (思维链/工具调用)  │  │  (13+内置工具)      │  │  (Claude)   │ │ │
+│  │  │  (多步推理/工具调用)│  │  (12内置+11知识库)  │  │  (Claude)   │ │ │
 │  │  └─────────────────────┘  └─────────────────────┘  └─────────────┘ │ │
 │  │  ┌─────────────────────┐  ┌─────────────────────┐                  │ │
 │  │  │  Tool Dispatcher    │  │  Knowledge Query    │                  │ │
-│  │  │                     │  │  Tools              │                  │ │
+│  │  │                     │  │  Tools (11个)       │                  │ │
 │  │  └─────────────────────┘  └─────────────────────┘                  │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
@@ -330,8 +322,8 @@ skill-name/
 │  │  Svc (智能画像分析)   │  │                       │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │  Employee Agent Svc   │  │  Knowledge Processor  │                  │
-│  │                       │  │  Svc                  │                  │
+│  │  Employee Agent Svc   │  │  Rule Extraction Svc  │                  │
+│  │                       │  │                       │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
 │  │  Tool Engine Svc      │  │  MCP Integration      │                  │
@@ -378,7 +370,7 @@ Employee Profiling Service 加载知识库内容
     ├─ 关键实体
     └─ 章节样本
     ↓
-LLM 智能分析（流式输出思考过程
+LLM 智能分析（流式输出思考过程）
     ↓
 生成员工画像
     ├─ 角色名称
@@ -417,11 +409,11 @@ LLM 智能分析（流式输出思考过程
     ↓
 文件解析队列 → 文件解析服务
     ├─ PDF/Word/Excel → 文本提取
-    └─ 图片/扫描件 → OCR 识别 → 文本提取
+    └─ 图片 → OCR 识别 → 文本提取
     ↓
 解析结果存储到 files.parsed_json
     ↓
-规则抽取引擎 → LLM 智能提取规则/知识/模板
+规则抽取引擎 → LLM 或启发式提取规则/知识/模板
     ↓
 用户在创建向导中确认解析结果
     ↓
@@ -430,8 +422,6 @@ LLM 智能分析（流式输出思考过程
 创建数字员工记录（employees 表）
     ↓
 创建关联技能记录（skills 表）
-    ↓
-LanceDB 向量索引构建
     ↓
 数字员工启用完成，可进入工作台对话
 ```
@@ -447,7 +437,7 @@ LightAgent 初始化
     ├─ 构建系统 Prompt
     └─ 加载对话历史
     ↓
-思维链（可选）
+多步推理（可选）
     ├─ 分析用户需求
     ├─ 规划工具使用
     └─ 过滤工具列表
@@ -459,17 +449,20 @@ LLM 调用（流式）
     ↓
 如果需要工具调用？
     ├─ 是 → Tool Dispatcher 执行工具
-    │       ├─ 内置工具（13+）
+    │       ├─ 内置工具（12个）
     │       ├─ MCP 服务器工具
     │       ├─ Claude Skills 工具
-    │       └─ 知识库查询工具
+    │       └─ 知识库查询工具（11个）
     │           ├─ kb_overview
     │           ├─ query_global_summary
     │           ├─ query_knowledge_graph
     │           ├─ query_chapters
     │           ├─ query_fulltext
-    │           ├─ get_document_content
-    │           └─ generate_timeline
+    │           ├─ kb_search
+    │           ├─ kb_advanced_search
+    │           ├─ kb_list_entities / kb_entity_detail
+    │           ├─ kb_compare_documents
+    │           └─ kb_get_content
     │       ↓
     │       获取工具结果
     │       ↓
@@ -487,28 +480,6 @@ LLM 调用（流式）
     └─ 工具调用详情展示
     ↓
 对话消息保存
-```
-
-#### RAG 增强对话流程（兼容）
-
-```
-用户输入问题
-    ↓
-获取数字员工关联的项目 ID
-    ↓
-调用 LLM 嵌入 API → 问题向量
-    ↓
-LanceDB 向量检索 → top-K 相关文档块
-    ↓
-组装 Prompt：系统提示 + 知识上下文 + 用户问题
-    ↓
-调用 LLM 流式聊天 API
-    ↓
-SSE 事件推送 → 前端打字机效果渲染
-    ↓
-检索结果实时推送到右侧溯源面板
-    ↓
-对话消息保存到 conversations.messages_json
 ```
 
 ---
@@ -577,11 +548,11 @@ WorkAvatar/
 │   │       │   ├── tool-dispatcher.ts # 工具调用分发器
 │   │       │   ├── skill-manager.ts   # Claude Skills 管理
 │   │       │   ├── skill.types.ts     # 技能相关类型
+│   │       │   ├── tool.types.ts      # 工具相关类型
 │   │       │   ├── builtin-tools.ts   # 内置工具导出
 │   │       │   ├── tools/             # 内置工具实现
 │   │       │   │   ├── calculator.tool.ts
 │   │       │   │   ├── date-time.tool.ts
-│   │       │   │   ├── string-utils.tool.ts
 │   │       │   │   ├── shell-exec.tool.ts
 │   │       │   │   ├── read-file.tool.ts
 │   │       │   │   ├── write-file.tool.ts
@@ -592,14 +563,17 @@ WorkAvatar/
 │   │       │   │   ├── json-utils.tool.ts
 │   │       │   │   ├── random-utils.tool.ts
 │   │       │   │   ├── env-vars.tool.ts
+│   │       │   │   ├── kb-search.tool.ts       # 知识库检索工具
+│   │       │   │   ├── kb-advanced.tool.ts     # 知识库高级检索工具
+│   │       │   │   ├── kb-content.tool.ts      # 知识库内容获取工具
+│   │       │   │   ├── kb-entities.tool.ts     # 知识库实体工具
+│   │       │   │   ├── kb-agent-tools.ts       # 员工代理知识库工具集
 │   │       │   │   ├── utils.ts
 │   │       │   │   └── index.ts
-│   │       │   └── index.ts           # Agent 模块导出
 │   │       ├── database.service.ts    # SQLite 数据库服务
 │   │       ├── common-utils.ts        # 共享工具函数（哈希、计算、日期、URL等）
 │   │       ├── file-parser.service.ts # 文件解析服务
 │   │       ├── llm-client.service.ts  # LLM 客户端服务
-│   │       ├── rag.service.ts         # RAG 向量检索服务
 │   │       ├── knowledge-processor.service.ts  # 知识处理服务
 │   │       ├── kb.service.ts          # 独立知识库服务
 │   │       ├── employee-profiling.service.ts   # 员工画像分析服务
@@ -620,6 +594,7 @@ WorkAvatar/
 │       │   ├── kb.ts
 │       │   ├── llm.ts
 │       │   ├── project.ts
+│       │   ├── task.ts
 │       │   ├── tool.ts
 │       │   └── index.ts
 │       ├── ipc-channels.ts            # IPC 通道统一导出
@@ -644,10 +619,47 @@ WorkAvatar/
 │   │   │   ├── EmptyState.tsx
 │   │   │   ├── PageHeader.tsx
 │   │   │   └── TaskProgressPanel.tsx
-│   │   └── llm/                       # LLM 相关组件
-│   │       └── LLMSelector.tsx
+│   │   ├── llm/                       # LLM 相关组件
+│   │   │   └── LLMSelector.tsx
+│   │   ├── workbench/                 # 工作台子组件
+│   │   │   ├── ConversationSidebar.tsx
+│   │   │   ├── MessageBubble.tsx
+│   │   │   ├── ThinkingSegment.tsx
+│   │   │   ├── ToolCallSegment.tsx
+│   │   │   ├── AnswerSegment.tsx
+│   │   │   ├── ChatInput.tsx
+│   │   │   ├── types.ts
+│   │   │   └── index.ts
+│   │   ├── employee-settings/         # 员工设置子组件
+│   │   │   ├── BasicInfoSection.tsx
+│   │   │   ├── ProfileSection.tsx
+│   │   │   ├── ToolsSection.tsx
+│   │   │   ├── SkillsSection.tsx
+│   │   │   ├── MCPServersSection.tsx
+│   │   │   ├── KnowledgeBaseSection.tsx
+│   │   │   └── index.ts
+│   │   ├── knowledge-base/            # 知识库子组件
+│   │   │   ├── KBListPanel.tsx
+│   │   │   ├── KBDocList.tsx
+│   │   │   ├── KBKnowledgeView.tsx
+│   │   │   ├── KBEntityGraph.tsx
+│   │   │   └── index.ts
+│   │   └── settings/                  # 设置子组件
+│   │       ├── LLMSettings.tsx
+│   │       ├── MCPServerSettings.tsx
+│   │       ├── SkillSettings.tsx
+│   │       ├── AppearanceSettings.tsx
+│   │       ├── StorageSettings.tsx
+│   │       ├── AboutSection.tsx
+│   │       └── index.ts
 │   ├── stores/                        # Zustand 状态管理
-│   │   └── app.store.ts
+│   │   ├── app.store.ts
+│   │   └── appearance.store.ts
+│   ├── i18n/                          # 国际化
+│   │   ├── index.ts
+│   │   └── locales/
+│   │       ├── zh-CN.ts
+│   │       └── en-US.ts
 │   ├── types/                         # TypeScript 类型定义
 │   │   └── index.ts
 │   ├── utils/                         # 前端共享工具函数

@@ -35,7 +35,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       params.kb_id,
       params.paths,
       (current, total, fileName) => {
-        event.sender.send('kb:upload-progress', { current, total, fileName })
+        event.sender.send(IPC_CHANNELS.KB_UPLOAD_PROGRESS, { current, total, fileName })
       }
     )
     return result
@@ -45,7 +45,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     const result = await kbService.parseDocument(
       params.doc_id,
       (stage, detail) => {
-        event.sender.send('kb:parse-progress', { doc_id: params.doc_id, stage, detail })
+        event.sender.send(IPC_CHANNELS.KB_PARSE_PROGRESS, { doc_id: params.doc_id, stage, detail })
       }
     )
     return result
@@ -75,7 +75,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     const result = await kbService.parseAllDocuments(
       params.kb_id,
       (current, total, docName) => {
-        event.sender.send('kb:parse-all-progress', { current, total, docName })
+        event.sender.send(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, { current, total, docName })
       }
     )
     return result
@@ -95,7 +95,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       params.provider_id,
       params.model_id,
       (stage, detail) => {
-        event.sender.send('kb:process-progress', { doc_id: params.doc_id, stage, detail })
+        event.sender.send(IPC_CHANNELS.KB_PROCESS_PROGRESS, { doc_id: params.doc_id, stage, detail })
       }
     )
   })
@@ -106,7 +106,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       params.provider_id,
       params.model_id,
       (stage, detail) => {
-        event.sender.send('kb:process-all-progress', { kb_id: params.kb_id, stage, detail })
+        event.sender.send(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, { kb_id: params.kb_id, stage, detail })
       }
     )
   })
@@ -117,7 +117,7 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       params.provider_id,
       params.model_id,
       (stage, detail) => {
-        event.sender.send('kb:build-global-progress', { kb_id: params.kb_id, stage, detail })
+        event.sender.send(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, { kb_id: params.kb_id, stage, detail })
       }
     )
   })

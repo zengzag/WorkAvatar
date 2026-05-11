@@ -41,17 +41,6 @@ export type {
 export type {
   KBCreateParams,
   KBUpdateParams,
-  KBDocParseParams,
   KBLinkProjectParams,
-  KBGetFileByHashParams,
-  KBProcessDocumentParams,
-  KBProcessAllParams,
-  KBBuildGlobalParams,
-  KBGetEntitiesParams,
-  KBGetEntityParams,
-  KBGetEntityRelationsParams,
-  KBSearchChaptersParams,
-  KBSearchDocSummariesParams,
-  KBGenerateTimelineParams,
-  KBGetDocContentParams,
+  KBDocParseParams,
 } from './channels/kb'

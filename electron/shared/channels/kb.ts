@@ -31,6 +31,12 @@ export const KB_CHANNELS = {
   KB_GET_PROCESSING_JOBS: 'kb:get-processing-jobs',
   KB_GET_KBS_FOR_PROJECT: 'kb:get-kbs-for-project',
   KB_GET_DOC_CONTENT: 'kb:get-doc-content',
+  KB_UPLOAD_PROGRESS: 'kb:upload-progress',
+  KB_PARSE_PROGRESS: 'kb:parse-progress',
+  KB_PARSE_ALL_PROGRESS: 'kb:parse-all-progress',
+  KB_PROCESS_PROGRESS: 'kb:process-progress',
+  KB_PROCESS_ALL_PROGRESS: 'kb:process-all-progress',
+  KB_BUILD_GLOBAL_PROGRESS: 'kb:build-global-progress',
 } as const
 
 export interface KBCreateParams {
@@ -44,75 +50,12 @@ export interface KBUpdateParams {
   description?: string
 }
 
-export interface KBDocUploadParams {
-  kb_id: string
-  paths: string[]
-}
-
-export interface KBDocParseParams {
-  doc_id: string
-  provider_id?: string
-}
-
 export interface KBLinkProjectParams {
   kb_id: string
   project_id: string
 }
 
-export interface KBGetFileByHashParams {
-  hash: string
-}
-
-export interface KBProcessDocumentParams {
+export interface KBDocParseParams {
   doc_id: string
   provider_id?: string
-  model_id?: string
-}
-
-export interface KBProcessAllParams {
-  kb_id: string
-  provider_id?: string
-  model_id?: string
-}
-
-export interface KBBuildGlobalParams {
-  kb_id: string
-  provider_id?: string
-  model_id?: string
-}
-
-export interface KBGetEntitiesParams {
-  kb_id: string
-  type?: string
-}
-
-export interface KBGetEntityParams {
-  kb_id: string
-  name: string
-}
-
-export interface KBGetEntityRelationsParams {
-  entity_id: string
-  depth?: number
-}
-
-export interface KBSearchChaptersParams {
-  kb_id: string
-  query: string
-  top_k?: number
-}
-
-export interface KBSearchDocSummariesParams {
-  kb_id: string
-  query: string
-  top_k?: number
-}
-
-export interface KBGenerateTimelineParams {
-  kb_id: string
-  topic?: string
-}
-
-export interface KBGetDocContentParams {
-  doc_id: string
 }

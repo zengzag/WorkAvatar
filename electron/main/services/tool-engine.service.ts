@@ -73,63 +73,6 @@ class ToolEngineService {
       source: 'builtin',
     })
 
-    this.tools.set('file_search', {
-      id: 'file_search',
-      name: 'file_search',
-      description: '在项目文件中搜索包含指定关键词的内容',
-      parameters: {
-        type: 'object',
-        properties: {
-          project_id: {
-            type: 'string',
-            description: '项目ID',
-          },
-          keyword: {
-            type: 'string',
-            description: '搜索关键词',
-          },
-        },
-        required: ['project_id', 'keyword'],
-      },
-      handler: async (args) => {
-        try {
-          const files = this.db.getDb().prepare(
-            'SELECT id, original_name, parsed_json FROM files WHERE project_id = ? AND status = ?'
-          ).all(args.project_id, 'completed') as any[]
-
-          const results: Array<{ file: string; snippets: string[] }> = []
-          for (const file of files) {
-            if (!file.parsed_json) continue
-            try {
-              const parsed = JSON.parse(file.parsed_json)
-              const text = parsed.fullText || ''
-              const lines = text.split('\n')
-              const snippets: string[] = []
-
-              for (let i = 0; i < lines.length; i++) {
-                if (lines[i].toLowerCase().includes(args.keyword.toLowerCase())) {
-                  const start = Math.max(0, i - 1)
-                  const end = Math.min(lines.length, i + 2)
-                  snippets.push(lines.slice(start, end).join('\n'))
-                }
-              }
-
-              if (snippets.length > 0) {
-                results.push({ file: file.original_name, snippets: snippets.slice(0, 5) })
-              }
-            } catch {
-              // Skip
-            }
-          }
-
-          return { results, totalFiles: results.length }
-        } catch (error: any) {
-          return { error: error.message }
-        }
-      },
-      source: 'builtin',
-    })
-
     this.tools.set('date_time', {
       id: 'date_time',
       name: 'date_time',
@@ -176,50 +119,6 @@ class ToolEngineService {
       source: 'builtin',
     })
 
-    this.tools.set('string_utils', {
-      id: 'string_utils',
-      name: 'string_utils',
-      description: '字符串处理工具：截取、替换、统计、格式化等',
-      parameters: {
-        type: 'object',
-        properties: {
-          operation: {
-            type: 'string',
-            enum: ['length', 'substring', 'replace', 'split', 'trim', 'uppercase', 'lowercase'],
-            description: '操作类型',
-          },
-          text: { type: 'string', description: '输入文本' },
-          start: { type: 'number', description: '起始位置' },
-          end: { type: 'number', description: '结束位置' },
-          search: { type: 'string', description: '搜索字符串' },
-          replacement: { type: 'string', description: '替换字符串' },
-          delimiter: { type: 'string', description: '分隔符' },
-        },
-        required: ['operation', 'text'],
-      },
-      handler: async (args) => {
-        const { operation, text } = args
-        switch (operation) {
-          case 'length':
-            return { result: text.length }
-          case 'substring':
-            return { result: text.substring(args.start || 0, args.end || text.length) }
-          case 'replace':
-            return { result: text.replaceAll(args.search || '', args.replacement || '') }
-          case 'split':
-            return { result: text.split(args.delimiter || ',') }
-          case 'trim':
-            return { result: text.trim() }
-          case 'uppercase':
-            return { result: text.toUpperCase() }
-          case 'lowercase':
-            return { result: text.toLowerCase() }
-          default:
-            return { error: 'Unknown operation' }
-        }
-      },
-      source: 'builtin',
-    })
   }
 
   getBuiltinTools(): ToolDefinition[] {

@@ -1,5 +1,3 @@
-import type { Project, File, ParseResult } from '../types'
-
 export const PROJECT_CHANNELS = {
   PROJECT_LIST: 'project:list',
   PROJECT_GET: 'project:get',
@@ -18,11 +16,6 @@ export const PROJECT_CHANNELS = {
 export interface ProjectListParams {
   limit?: number
   offset?: number
-}
-
-export interface ProjectListResult {
-  projects: Project[]
-  total: number
 }
 
 export interface ProjectCreateParams {
@@ -44,38 +37,15 @@ export interface FileListParams {
   status?: string
 }
 
-export interface FileListResult {
-  files: File[]
-  total: number
-}
-
 export interface FileImportParams {
   project_id: string
   paths: string[]
-}
-
-export interface FileImportResult {
-  success: boolean
-  imported: Array<{ id: string; path: string; original_name: string }>
-  errors: Array<{ path: string; error: string }>
 }
 
 export interface FileParseParams {
   file_id: string
 }
 
-export interface FileParseResult {
-  success: boolean
-  result?: ParseResult
-  error?: string
-}
-
 export interface FileGetContentParams {
   file_id: string
-}
-
-export interface FileGetContentResult {
-  success: boolean
-  content?: string
-  error?: string
 }

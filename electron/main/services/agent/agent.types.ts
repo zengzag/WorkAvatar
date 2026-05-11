@@ -63,17 +63,3 @@ export interface AgentResponse {
   success: boolean
   error?: string
 }
-
-export interface StreamChunk {
-  type: 'content' | 'tool_call' | 'tool_result' | 'error' | 'done'
-  content?: string
-  toolCall?: {
-    name: string
-    args: any
-  }
-  toolResult?: {
-    name: string
-    result: any
-  }
-  error?: string
-}

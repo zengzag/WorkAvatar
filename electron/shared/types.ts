@@ -26,17 +26,6 @@ export interface File {
   updated_at: number
 }
 
-export interface FileAnnotation {
-  id: string
-  file_id: string
-  type: 'rule' | 'template' | 'knowledge' | 'qa_pair'
-  text: string
-  start_offset: number
-  end_offset: number
-  comment?: string
-  created_at: number
-}
-
 export interface Employee {
   id: string
   project_id: string
@@ -85,18 +74,6 @@ export interface Conversation {
   updated_at: number
 }
 
-export interface Feedback {
-  id: string
-  skill_id: string
-  conversation_id?: string
-  rating: 'positive' | 'negative'
-  note?: string
-  original_output?: string
-  corrected_output?: string
-  is_used_for_training: boolean
-  created_at: number
-}
-
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
 
 export interface LLMModelConfig {
@@ -131,12 +108,6 @@ export interface LLMProvider {
   created_at: number
 }
 
-export interface Setting {
-  key: string
-  value: string
-  updated_at: number
-}
-
 export interface ParseResult {
   type: string
   fullText: string
@@ -156,13 +127,4 @@ export interface ParseResult {
     context: string
   }>
   metadata: Record<string, any>
-}
-
-export interface Message {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: number
-  isStreaming?: boolean
-  isError?: boolean
 }

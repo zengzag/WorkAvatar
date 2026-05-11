@@ -162,7 +162,6 @@ export default {
     toolNames: {
       calculator: 'Calculator',
       date_time: 'Date & Time',
-      string_utils: 'String Utils',
       shell_exec: 'Execute Command',
       read_file: 'Read File',
       write_file: 'Write File',
@@ -631,6 +630,10 @@ export default {
     tabStorage: 'Storage',
     tabAppearance: 'Appearance',
     tabAbout: 'About',
+    mcpServerTitle: 'MCP Servers',
+    mcpServerDesc: 'Configure and manage MCP server connections',
+    skillTitle: 'Skills',
+    skillDesc: 'Manage and configure available skills',
     llmProviders: 'LLM Providers',
     addProvider: 'Add Provider',
     noProviders: 'No providers yet. Click the button above to add',

@@ -9,6 +9,13 @@ export const LLM_CHANNELS = {
   LLM_TEST_CONNECTION: 'llm:test-connection',
   LLM_CHAT_STREAM: 'llm:chat-stream',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
+  LLM_ABORT_CHAT: 'llm:abort-chat',
+  LLM_CHAT_CHUNK: 'llm:chat-chunk',
+  LLM_CHAT_DONE: 'llm:chat-done',
+  LLM_CHAT_ERROR: 'llm:chat-error',
+  LLM_THOUGHT: 'llm:thought',
+  AGENT_TOOL_CALL: 'agent:tool-call',
+  AGENT_TOOL_RESULT: 'agent:tool-result',
 } as const
 
 export interface LLMProviderCreateParams {
@@ -38,12 +45,6 @@ export interface LLMProviderUpdateParams {
 
 export interface LLMTestConnectionParams {
   provider_id: string
-}
-
-export interface LLMTestConnectionResult {
-  success: boolean
-  error?: string
-  latency?: number
 }
 
 export interface LLMChatStreamParams {

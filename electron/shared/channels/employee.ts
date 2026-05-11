@@ -18,7 +18,6 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
-  CONVERSATION_SEND_MESSAGE: 'conversation:send-message',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
@@ -79,12 +78,6 @@ export interface ConversationCreateParams {
   employee_id: string
   skill_id?: string
   title?: string
-}
-
-export interface ConversationSendMessageParams {
-  conversation_id: string
-  role: 'user' | 'assistant'
-  content: string
 }
 
 export interface EmployeeProfileAnalyzeParams {

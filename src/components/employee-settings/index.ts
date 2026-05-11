@@ -1,0 +1,6 @@
+export { default as BasicInfoSection } from './BasicInfoSection'
+export { default as ProfileSection } from './ProfileSection'
+export { default as ToolsSection } from './ToolsSection'
+export { default as SkillsSection } from './SkillsSection'
+export { default as MCPServersSection } from './MCPServersSection'
+export { default as KnowledgeBaseSection } from './KnowledgeBaseSection'

@@ -162,7 +162,6 @@ export default {
     toolNames: {
       calculator: '计算器',
       date_time: '日期时间',
-      string_utils: '字符串处理',
       shell_exec: '执行命令',
       read_file: '读取文件',
       write_file: '写入文件',
@@ -631,6 +630,10 @@ export default {
     tabStorage: '存储',
     tabAppearance: '外观',
     tabAbout: '关于',
+    mcpServerTitle: 'MCP 服务器',
+    mcpServerDesc: '配置和管理 MCP 服务器连接',
+    skillTitle: '技能管理',
+    skillDesc: '管理和配置可用技能',
     llmProviders: 'LLM 提供商',
     addProvider: '添加提供商',
     noProviders: '暂无提供商，点击上方按钮添加',

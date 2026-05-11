@@ -1,203 +1,32 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Input,
   Button,
   Space,
   Typography,
   Tag,
   Spin,
-  Popconfirm,
   Tooltip,
   theme,
   App,
 } from 'antd'
 import {
-  SendOutlined,
   RobotOutlined,
-  UserOutlined,
-  StopOutlined,
-  CopyOutlined,
-  DislikeOutlined,
-  LikeOutlined,
   SettingOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  BulbOutlined,
-  DatabaseOutlined,
   MenuFoldOutlined,
   HistoryOutlined,
-  PlusOutlined,
   ArrowLeftOutlined,
-  CheckOutlined,
-  CloseOutlined,
-  ClearOutlined,
-  DownOutlined,
-  RightOutlined,
-  CodeOutlined,
-  LoadingOutlined,
-  CheckCircleOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import dayjs from 'dayjs'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import type { Conversation, Message } from '../types'
+import type { Conversation } from '../types'
 import { useTranslation } from 'react-i18next'
+import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
+import type { MessageWithThought } from '../components/workbench'
+import { ensureSegments } from '../components/workbench'
 
 const { Text, Paragraph } = Typography
-const { TextArea } = Input
-
-const ConversationItem = memo(({
-  conv,
-  isActive,
-  isEditing,
-  editingTitle,
-  onSelect,
-  onStartEdit,
-  onSaveEdit,
-  onCancelEdit,
-  onEditTitleChange,
-  onEditKeyDown,
-  onDelete,
-}: {
-  conv: Conversation
-  isActive: boolean
-  isEditing: boolean
-  editingTitle: string
-  onSelect: (id: string) => void
-  onStartEdit: (conv: Conversation, e: React.MouseEvent) => void
-  onSaveEdit: () => void
-  onCancelEdit: () => void
-  onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
-  onEditKeyDown: (e: React.KeyboardEvent) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
-}) => {
-  const { token } = theme.useToken()
-  const { t } = useTranslation()
-  return (
-    <div
-      onClick={() => !isEditing && onSelect(conv.id)}
-      style={{
-        padding: '10px 14px',
-        cursor: isEditing ? 'default' : 'pointer',
-        borderLeft: isActive ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
-        background: isActive ? token.colorPrimaryBg : 'transparent',
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        {isEditing ? (
-          <Input
-            value={editingTitle}
-            onChange={onEditTitleChange}
-            onKeyDown={onEditKeyDown}
-            autoFocus
-            style={{ fontSize: 13, flex: 1, marginRight: 8 }}
-            size="small"
-          />
-        ) : (
-          <Text style={{ fontSize: 13, maxWidth: 150 }} ellipsis>
-            {conv.title || t('workbench.defaultConvTitle', { date: dayjs(conv.created_at * 1000).format('MM/DD HH:mm') })}
-          </Text>
-        )}
-        <Space size={2}>
-          {isEditing ? (
-            <>
-              <Button type="text" size="small" icon={<CheckOutlined />}
-                onClick={onSaveEdit} style={{ color: '#52c41a' }} />
-              <Button type="text" size="small" icon={<CloseOutlined />}
-                onClick={onCancelEdit} />
-            </>
-          ) : (
-            <>
-              <Button type="text" size="small" icon={<EditOutlined />}
-                onClick={(e) => onStartEdit(conv, e)} />
-              <Popconfirm title={t('workbench.confirmDelete')} onConfirm={(e) => onDelete(conv.id, e!)}
-                okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                <Button type="text" size="small" danger icon={<DeleteOutlined />}
-                  onClick={(ev) => ev.stopPropagation()} />
-              </Popconfirm>
-            </>
-          )}
-        </Space>
-      </div>
-      <Text type="secondary" style={{ fontSize: 11 }}>
-        {t('common.messages', { count: conv.message_count || 0 })} · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
-      </Text>
-    </div>
-  )
-})
-
-interface ToolCallInfo {
-  id: string
-  name: string
-  args: any
-  result?: any
-  isComplete?: boolean
-}
-
-interface MessageSegment {
-  type: 'thinking' | 'answer' | 'tool_call'
-  id: string
-  timestamp?: number
-  content?: string
-  isStreaming?: boolean
-  collapsed?: boolean
-  toolName?: string
-  toolArgs?: any
-  toolResult?: any
-  isToolComplete?: boolean
-}
-
-interface MessageWithThought extends Message {
-  thought?: string
-  isStreamingThought?: boolean
-  thoughtCollapsed?: boolean
-  toolCalls?: ToolCallInfo[]
-  segments?: MessageSegment[]
-}
-
-function ensureSegments(msg: MessageWithThought): MessageWithThought {
-  if (msg.role !== 'assistant') return msg
-  if (msg.segments && msg.segments.length > 0) return msg
-
-  const segments: MessageSegment[] = []
-  let segIdx = 0
-
-  if (msg.thought) {
-    segments.push({
-      type: 'thinking',
-      id: `${msg.id}_seg_${segIdx++}`,
-      content: msg.thought,
-      collapsed: msg.thoughtCollapsed ?? true,
-    })
-  }
-
-  if (msg.content) {
-    segments.push({
-      type: 'answer',
-      id: `${msg.id}_seg_${segIdx++}`,
-      content: msg.content,
-    })
-  }
-
-  if (msg.toolCalls && msg.toolCalls.length > 0) {
-    for (const tc of msg.toolCalls) {
-      segments.push({
-        type: 'tool_call',
-        id: `${msg.id}_tool_${segIdx++}`,
-        toolName: tc.name,
-        toolArgs: tc.args,
-        toolResult: tc.result,
-        isToolComplete: tc.isComplete,
-        collapsed: true,
-      })
-    }
-  }
-
-  return { ...msg, segments }
-}
 
 const EmployeeWorkbench: React.FC = () => {
   const { message } = App.useApp()
@@ -209,7 +38,6 @@ const EmployeeWorkbench: React.FC = () => {
   const TOOL_DISPLAY_NAMES: Record<string, string> = {
     calculator: t('workbench.toolNames.calculator'),
     date_time: t('workbench.toolNames.date_time'),
-    string_utils: t('workbench.toolNames.string_utils'),
     shell_exec: t('workbench.toolNames.shell_exec'),
     read_file: t('workbench.toolNames.read_file'),
     write_file: t('workbench.toolNames.write_file'),
@@ -247,7 +75,6 @@ const EmployeeWorkbench: React.FC = () => {
   const [editingTitle, setEditingTitle] = useState('')
   const [displayedCount, setDisplayedCount] = useState(10)
   const [allConversations, setAllConversations] = useState<Conversation[]>([])
-  const conversationListRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
@@ -749,6 +576,16 @@ const EmployeeWorkbench: React.FC = () => {
 
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
 
+  const handleToggleSegment = (msgId: string, segId: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.segments) return m
+      const newSegs = m.segments.map(s =>
+        s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+      )
+      return { ...m, segments: newSegs }
+    }))
+  }
+
   if (!employee) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -803,68 +640,24 @@ const EmployeeWorkbench: React.FC = () => {
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {showSidePanel && (
-          <div style={{
-            width: 280,
-            flexShrink: 0,
-            borderRight: `1px solid ${token.colorBorderSecondary}`,
-            display: 'flex',
-            flexDirection: 'column',
-            background: token.colorBgLayout,
-          }}>
-            <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
-              <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
-                onClick={startNewConversation}>{t('workbench.newConv')}</Button>
-              {conversations.length > 0 && (
-                <Popconfirm
-                  title={t('workbench.confirmClearAll')}
-                  description={t('workbench.clearAllDesc')}
-                  onConfirm={deleteAllConversations}
-                  okText={t('common.confirm')}
-                  cancelText={t('common.cancel')}
-                >
-                  <Button danger icon={<ClearOutlined />} />
-                </Popconfirm>
-              )}
-            </div>
-            <div 
-              ref={conversationListRef}
-              style={{ flex: 1, overflow: 'auto' }}
-              onScroll={handleConversationListScroll}
-            >
-              {conversations.map((conv) => (
-                <ConversationItem
-                  key={conv.id}
-                  conv={conv}
-                  isActive={activeConversationId === conv.id}
-                  isEditing={editingConversationId === conv.id}
-                  editingTitle={editingTitle}
-                  onSelect={selectConversation}
-                  onStartEdit={startEditTitle}
-                  onSaveEdit={saveEditTitle}
-                  onCancelEdit={cancelEditTitle}
-                  onEditTitleChange={(e) => setEditingTitle(e.target.value)}
-                  onEditKeyDown={handleEditKeyDown}
-                  onDelete={deleteConversation}
-                />
-              ))}
-              
-              {conversations.length < allConversations.length && (
-                <div style={{ padding: '12px', textAlign: 'center' }}>
-                  <Button 
-                    type="dashed" 
-                    block
-                    onClick={loadMoreConversations}
-                  >
-                    {t('workbench.loadMore', { current: conversations.length, total: allConversations.length })}
-                  </Button>
-                </div>
-              )}
-              
-              {conversations.length === 0 && (
-                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary, fontSize: 13 }}>{t('workbench.noConv')}</div>
-              )}
-            </div>
-          </div>
+          <ConversationSidebar
+            conversations={conversations}
+            allConversations={allConversations}
+            activeConversationId={activeConversationId}
+            editingConversationId={editingConversationId}
+            editingTitle={editingTitle}
+            onSelect={selectConversation}
+            onStartEdit={startEditTitle}
+            onSaveEdit={saveEditTitle}
+            onCancelEdit={cancelEditTitle}
+            onEditTitleChange={(e) => setEditingTitle(e.target.value)}
+            onEditKeyDown={handleEditKeyDown}
+            onDelete={deleteConversation}
+            onDeleteAll={deleteAllConversations}
+            onNewConversation={startNewConversation}
+            onLoadMore={loadMoreConversations}
+            onListScroll={handleConversationListScroll}
+          />
         )}
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -886,291 +679,16 @@ const EmployeeWorkbench: React.FC = () => {
               </div>
             )}
 
-            {messages.map((msg) => {
-              const displayMsg = msg.role === 'assistant' ? ensureSegments(msg) : msg
-              return (
-              <div key={msg.id}
-                style={{
-                  display: 'flex',
-                  gap: 12,
-                  flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-                  alignItems: 'flex-start',
-                }}
-              >
-                <div style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 8,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
-                }}>
-                  {msg.role === 'assistant'
-                    ? <RobotOutlined style={{ color: '#1677ff', fontSize: 18 }} />
-                    : <UserOutlined style={{ color: '#1677ff', fontSize: 18 }} />}
-                </div>
-
-                <div style={{ maxWidth: '80%', minWidth: 0 }}>
-                  {msg.role === 'user' && (
-                    <div>
-                      <div style={{
-                        padding: '10px 16px',
-                        borderRadius: 12,
-                        background: token.colorPrimary,
-                        color: '#fff',
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        lineHeight: 1.7,
-                      }}>
-                        <Text style={{ color: '#fff', fontSize: 14 }}>{msg.content}</Text>
-                      </div>
-                      {!msg.isStreaming && (
-                        <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
-                          <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => handleDeleteMessage(msg.id)}
-                            okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                            <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
-                          </Popconfirm>
-                        </Space>
-                      )}
-                    </div>
-                  )}
-
-                  {msg.role === 'assistant' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
-                        <div style={{
-                          padding: '10px 16px',
-                          borderRadius: 12,
-                          background: token.colorBgLayout,
-                          lineHeight: 1.7,
-                        }}>
-                          <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>{t('workbench.thinking')}</Text>
-                        </div>
-                      )}
-
-                      {displayMsg.segments && displayMsg.segments.length > 0 && (
-                        <>
-                          <div style={{ position: 'relative', paddingLeft: 0 }}>
-                            {displayMsg.segments.map((seg) => {
-                              const isToolPending = seg.type === 'tool_call' && !seg.isToolComplete
-
-                              if (seg.type === 'thinking') {
-                                return (
-                                  <div key={seg.id} style={{ marginBottom: 0 }}>
-                                    <div
-                                      onClick={() => {
-                                        if (!seg.isStreaming) {
-                                          setMessages(prev => prev.map(m => {
-                                            if (m.id !== msg.id || !m.segments) return m
-                                            const newSegs = m.segments.map(s =>
-                                              s.id === seg.id ? { ...s, collapsed: !s.collapsed } : s
-                                            )
-                                            return { ...m, segments: newSegs }
-                                          }))
-                                        }
-                                      }}
-                                      style={{
-                                        padding: '8px 14px',
-                                        borderRadius: 8,
-                                        background: token.colorPrimaryBg,
-                                        border: `1px solid ${token.colorPrimaryBorder}`,
-                                        borderLeft: `3px solid ${token.colorPrimary}`,
-                                        cursor: seg.isStreaming ? 'default' : 'pointer',
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <BulbOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-                                        <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{t('workbench.thinkingProcess')}</Text>
-                                        {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorPrimary }}>▊</span>}
-                                        {!seg.isStreaming && (
-                                          <Text style={{ fontSize: 11, color: token.colorPrimary, marginLeft: 'auto' }}>
-                                            {seg.collapsed ? t('workbench.expand') : t('workbench.collapse')}
-                                          </Text>
-                                        )}
-                                      </div>
-                                      {!seg.collapsed && seg.content && (
-                                        <Paragraph style={{
-                                          fontSize: 12,
-                                          margin: '8px 0 0',
-                                          color: token.colorTextSecondary,
-                                          whiteSpace: 'pre-wrap',
-                                        }}>
-                                          {seg.content}
-                                        </Paragraph>
-                                      )}
-                                    </div>
-                                  </div>
-                                )
-                              }
-
-                              if (seg.type === 'tool_call') {
-                                const isExpanded = !seg.collapsed
-                                const resultStr = seg.toolResult !== undefined
-                                  ? (typeof seg.toolResult === 'string' ? seg.toolResult : JSON.stringify(seg.toolResult, null, 2))
-                                  : ''
-                                const argsStr = seg.toolArgs !== undefined
-                                  ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
-                                  : ''
-                                return (
-                                  <div key={seg.id} style={{ marginBottom: 0 }}>
-                                    <div
-                                      style={{
-                                        borderRadius: 8,
-                                        border: `1px solid ${token.colorBorderSecondary}`,
-                                        borderLeft: `3px solid ${isToolPending ? token.colorPrimary : token.colorSuccess}`,
-                                        background: token.colorBgLayout,
-                                        overflow: 'hidden',
-                                        opacity: 0.9,
-                                      }}
-                                    >
-                                      <div
-                                        onClick={() => {
-                                          setMessages(prev => prev.map(m => {
-                                            if (m.id !== msg.id || !m.segments) return m
-                                            const newSegs = m.segments.map(s =>
-                                              s.id === seg.id ? { ...s, collapsed: !s.collapsed } : s
-                                            )
-                                            return { ...m, segments: newSegs }
-                                          }))
-                                        }}
-                                        style={{
-                                          padding: '6px 12px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: 8,
-                                          cursor: 'pointer',
-                                          userSelect: 'none',
-                                        }}
-                                      >
-                                        {isExpanded ? <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} /> : <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />}
-                                        <CodeOutlined style={{ fontSize: 13, color: isToolPending ? token.colorPrimary : token.colorSuccess }} />
-                                        <Text strong style={{ fontSize: 13, color: token.colorText }}>
-                                          {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
-                                        </Text>
-                                        <Text type="secondary" style={{ fontSize: 11 }}>({seg.toolName})</Text>
-                                        {isToolPending ? (
-                                          <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                            <LoadingOutlined spin /> {t('workbench.executing')}
-                                          </Tag>
-                                        ) : (
-                                          <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                            <CheckCircleOutlined /> {t('workbench.completed')}
-                                          </Tag>
-                                        )}
-                                      </div>
-                                      {isExpanded && (
-                                        <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}>
-                                          {argsStr && (
-                                            <div style={{ marginBottom: seg.toolResult !== undefined ? 8 : 0 }}>
-                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>{t('workbench.inputParams')}</Text>
-                                              <pre style={{
-                                                margin: 0,
-                                                padding: '6px 10px',
-                                                background: token.colorBgContainer,
-                                                borderRadius: 6,
-                                                fontSize: 12,
-                                                lineHeight: 1.5,
-                                                maxHeight: 200,
-                                                overflow: 'auto',
-                                                whiteSpace: 'pre-wrap',
-                                                wordBreak: 'break-all',
-                                                border: `1px solid ${token.colorBorderSecondary}`,
-                                              }}>
-                                                {argsStr}
-                                              </pre>
-                                            </div>
-                                          )}
-                                          {seg.toolResult !== undefined && (
-                                            <div>
-                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>{t('workbench.outputResult')}</Text>
-                                              <pre style={{
-                                                margin: 0,
-                                                padding: '6px 10px',
-                                                background: token.colorSuccessBg,
-                                                borderRadius: 6,
-                                                fontSize: 12,
-                                                lineHeight: 1.5,
-                                                maxHeight: 300,
-                                                overflow: 'auto',
-                                                whiteSpace: 'pre-wrap',
-                                                wordBreak: 'break-all',
-                                                border: `1px solid ${token.colorSuccessBorder}`,
-                                              }}>
-                                                {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n' + t('workbench.resultTruncated') : resultStr}
-                                              </pre>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )
-                              }
-
-                              if (seg.type === 'answer') {
-                                return (
-                                  <div key={seg.id} style={{ marginBottom: 0 }}>
-                                    <div style={{
-                                      padding: '10px 16px',
-                                      borderRadius: 12,
-                                      background: token.colorBgLayout,
-                                      lineHeight: 1.7,
-                                      wordBreak: 'break-word',
-                                      border: msg.isError ? '1px solid #ff4d4f' : 'none',
-                                    }}>
-                                      <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
-                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                          {seg.content || (seg.isStreaming ? '▊' : '')}
-                                        </ReactMarkdown>
-                                      </div>
-                                      {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>}
-                                    </div>
-                                  </div>
-                                )
-                              }
-
-                              return null
-                            })}
-                          </div>
-                        </>
-                      )}
-
-                      {(!displayMsg.segments || displayMsg.segments.length === 0) && msg.content && !msg.isStreaming && (
-                        <div style={{
-                          padding: '10px 16px',
-                          borderRadius: 12,
-                          background: token.colorBgLayout,
-                          lineHeight: 1.7,
-                          wordBreak: 'break-word',
-                          border: msg.isError ? '1px solid #ff4d4f' : 'none',
-                        }}>
-                          <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.content}
-                            </ReactMarkdown>
-                          </div>
-                        </div>
-                      )}
-
-                      {!msg.isStreaming && !msg.isError && msg.content && (
-                        <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
-                          <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
-                            onClick={() => handleCopy(msg.content)} />
-                          <Button type="text" size="small" icon={<LikeOutlined style={{ fontSize: 12 }} />} />
-                          <Button type="text" size="small" icon={<DislikeOutlined style={{ fontSize: 12 }} />} />
-                          <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => handleDeleteMessage(msg.id)}
-                            okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                            <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
-                          </Popconfirm>
-                        </Space>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )})}
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                onCopy={handleCopy}
+                onDeleteMessage={handleDeleteMessage}
+                onToggleSegment={handleToggleSegment}
+                getToolDisplayName={getToolDisplayName}
+              />
+            ))}
             <div ref={messagesEndRef} />
           </div>
 
@@ -1185,66 +703,14 @@ const EmployeeWorkbench: React.FC = () => {
             </Tag>
           </div>
 
-          <div
-            style={{
-              padding: '12px 10% 20px 10%',
-              flexShrink: 0,
-            }}
-          >
-            <div style={{
-              display: 'flex',
-              gap: 8,
-              alignItems: 'flex-end',
-              background: token.colorBgLayout,
-              borderRadius: 16,
-              padding: '6px 6px 6px 16px',
-              border: '2px solid transparent',
-              transition: 'border-color 0.3s',
-            }}
-              onFocusCapture={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary
-              }}
-              onBlurCapture={(e) => {
-                (e.currentTarget as HTMLElement).style.borderColor = 'transparent'
-              }}
-            >
-              <TextArea
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onPressEnter={(e) => {
-                  if (!e.shiftKey) {
-                    e.preventDefault()
-                    handleSend()
-                  }
-                }}
-                placeholder={t('workbench.inputPlaceholder')}
-                autoSize={{ minRows: 1, maxRows: 5 }}
-                disabled={isStreaming}
-                style={{
-                  flex: 1,
-                  background: 'transparent',
-                  border: 'none',
-                  resize: 'none',
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  padding: '4px 0',
-                  boxShadow: 'none',
-                }}
-                className="workbench-input"
-              />
-              {isStreaming ? (
-                <Button icon={<StopOutlined />} danger
-                  onClick={handleStop}
-                  shape="circle" size="middle" />
-              ) : (
-                <Button icon={<SendOutlined />} type="primary"
-                  onClick={handleSend}
-                  disabled={!inputValue.trim()}
-                  shape="circle" size="middle"
-                  style={{ flexShrink: 0 }} />
-              )}
-            </div>
-          </div>
+          <ChatInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSend={handleSend}
+            onStop={handleStop}
+            isStreaming={isStreaming}
+            placeholder={t('workbench.inputPlaceholder')}
+          />
         </div>
       </div>
 
