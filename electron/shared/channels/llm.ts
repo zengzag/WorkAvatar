@@ -56,6 +56,7 @@ export interface LLMChatStreamParams {
     max_tokens?: number
     stream?: boolean
   }
+  enable_thinking?: boolean
 }
 
 export interface EmployeeChatStreamParams {
@@ -68,4 +69,5 @@ export interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
+  enable_thinking?: boolean
 }

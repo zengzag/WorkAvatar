@@ -12,6 +12,5 @@ export {
   createKBEntitiesTool,
   createKBEntityDetailTool,
   createKBAdvancedSearchTool,
-  createKBDocumentCompareTool,
   createKBGetContentTool,
 } from './tools'

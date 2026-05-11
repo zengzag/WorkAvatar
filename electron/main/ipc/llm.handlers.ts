@@ -54,7 +54,7 @@ export function registerLLMHandlers(
       (chunk: string) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
       () => { event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE) },
       (error: Error) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error.message) },
-      params.model_id ? { ...params.options, model: params.model_id } : params.options,
+      params.model_id ? { ...params.options, model: params.model_id, enable_thinking: params.enable_thinking } : { ...params.options, enable_thinking: params.enable_thinking },
       undefined,
       (thoughtChunk: string) => { event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thoughtChunk) },
     )
@@ -72,6 +72,7 @@ export function registerLLMHandlers(
           model_id: params.model_id,
           messages: params.messages,
           use_skills: params.use_skills !== false,
+          enable_thinking: params.enable_thinking,
         },
         {
           onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },

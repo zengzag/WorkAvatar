@@ -5,6 +5,8 @@ export interface AgentConfig {
   model: string
   apiKey?: string
   baseUrl?: string
+  providerType?: string
+  enableThinking?: boolean
   treeOfThought?: boolean
   totModel?: string
   totApiKey?: string

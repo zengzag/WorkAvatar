@@ -1,7 +1,7 @@
 import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
 import { ToolDefinition } from '../tool.types'
-import { createKBSearchTool, createKBAdvancedSearchTool, createKBDocumentCompareTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
+import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
 
 export function createKBAgentTools(
   kbService: KnowledgeBaseService,
@@ -420,7 +420,6 @@ export function createKBAgentTools(
 
   tools.push(createKBSearchTool(kbIds))
   tools.push(createKBAdvancedSearchTool(kbIds))
-  tools.push(createKBDocumentCompareTool(kbIds))
   tools.push(createKBEntitiesTool(kbIds))
   tools.push(createKBEntityDetailTool(kbIds))
   tools.push(createKBGetContentTool(kbIds))

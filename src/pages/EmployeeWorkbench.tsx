@@ -17,6 +17,8 @@ import {
   HistoryOutlined,
   ArrowLeftOutlined,
   DatabaseOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import dayjs from 'dayjs'
@@ -71,6 +73,7 @@ const EmployeeWorkbench: React.FC = () => {
   const [showSidePanel, setShowSidePanel] = useState(false)
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>('')
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('')
+  const [enableThinking, setEnableThinking] = useState<boolean>(false)
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [displayedCount, setDisplayedCount] = useState(10)
@@ -523,6 +526,7 @@ const EmployeeWorkbench: React.FC = () => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
+        enable_thinking: enableThinking,
       })
     } catch {
       finish()
@@ -624,6 +628,15 @@ const EmployeeWorkbench: React.FC = () => {
             onProviderChange={setSelectedLlmProviderId}
             onModelChange={setSelectedLlmModelId}
           />
+          <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+            <Button
+              type={enableThinking ? 'primary' : 'text'}
+              icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+              size="small"
+              onClick={() => setEnableThinking(!enableThinking)}
+              style={enableThinking ? {} : { color: token.colorTextSecondary }}
+            />
+          </Tooltip>
           <Tooltip title={t('workbench.employeeConfig')}>
             <Button type="text" icon={<SettingOutlined />}
               onClick={() => navigate(`/employee/${id}/settings`)} />

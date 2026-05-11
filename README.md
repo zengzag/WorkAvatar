@@ -115,7 +115,6 @@ Agent 内置知识库查询工具，支持分层查询：
 - `kb_search`：多维度混合检索（标题/摘要/章节/实体/内容）
 - `kb_advanced_search`：高级检索（精确短语/必须包含/排除词）
 - `kb_list_entities` / `kb_entity_detail`：浏览和查看实体详情
-- `kb_compare_documents`：文档对比分析
 - `kb_get_content`：获取原始文档内容（支持章节/偏移量/行号定位）
 
 ---
@@ -461,7 +460,6 @@ LLM 调用（流式）
     │           ├─ kb_search
     │           ├─ kb_advanced_search
     │           ├─ kb_list_entities / kb_entity_detail
-    │           ├─ kb_compare_documents
     │           └─ kb_get_content
     │       ↓
     │       获取工具结果

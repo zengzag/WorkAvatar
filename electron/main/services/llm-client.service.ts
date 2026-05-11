@@ -174,9 +174,10 @@ function buildRequestBody(
   modelName: string,
   messages: ChatMessage[],
   stream: boolean,
-  overrides?: { temperature?: number; max_tokens?: number }
+  overrides?: { temperature?: number; max_tokens?: number; enable_thinking?: boolean }
 ): ChatCompletionRequest {
   const modelConfig = getModelConfig(config, modelName)
+  const enableThinking = overrides?.enable_thinking ?? modelConfig?.enable_thinking ?? false
   const body: ChatCompletionRequest = {
     model: modelName,
     messages,
@@ -195,17 +196,27 @@ function buildRequestBody(
     body.presence_penalty = modelConfig.presence_penalty
   }
 
-  if (modelConfig?.enable_thinking) {
+  if (enableThinking) {
     if (config.provider_type === 'deepseek') {
-      // DeepSeek reasoner models use reasoning_content natively
-      // For deepseek-chat with thinking, no extra param needed - it uses <think/> tags
+      body.thinking = { type: 'enabled' }
+      body.reasoning_effort = 'high'
     } else if (config.provider_type === 'qwen') {
       body.enable_thinking = true
-      if (modelConfig.thinking_budget) {
+      if (modelConfig?.thinking_budget) {
         body.thinking_budget = modelConfig.thinking_budget
       }
+    } else if (config.provider_type === 'volcengine') {
+      body.thinking = { type: 'enabled' }
     } else if (config.provider_type === 'zhipu') {
-      // Zhipu GLM models with thinking
+      body.thinking = { type: 'enabled' }
+    }
+  } else {
+    if (config.provider_type === 'deepseek') {
+      body.thinking = { type: 'disabled' }
+    } else if (config.provider_type === 'volcengine') {
+      body.thinking = { type: 'disabled' }
+    } else if (config.provider_type === 'zhipu') {
+      body.thinking = { type: 'disabled' }
     }
   }
 
@@ -378,7 +389,7 @@ class LLMClientService {
   async chat(
     providerId: string,
     messages: ChatMessage[],
-    options?: { temperature?: number; max_tokens?: number; model?: string }
+    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean }
   ): Promise<string> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
@@ -426,7 +437,7 @@ class LLMClientService {
     onChunk: (chunk: string) => void,
     onDone: () => void,
     onError: (error: Error) => void,
-    options?: { temperature?: number; max_tokens?: number; model?: string },
+    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean },
     signal?: AbortSignal,
     onThought?: (thoughtChunk: string) => void
   ): Promise<void> {
