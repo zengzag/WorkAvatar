@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Card,
   Button,
@@ -50,6 +51,7 @@ interface EmployeeProfile {
 }
 
 const CreationWizard: React.FC = () => {
+  const { t } = useTranslation()
   const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -89,7 +91,7 @@ const CreationWizard: React.FC = () => {
       const result = await window.electronAPI.project.get(id!)
       setProject(result)
     } catch {
-      message.error('加载项目失败')
+      message.error(t('creationWizard.loadProjectFailed'))
     }
   }
 
@@ -99,7 +101,7 @@ const CreationWizard: React.FC = () => {
       setLinkedKBs(result)
       setSelectedKBIds(result.map((kb: any) => kb.id))
     } catch {
-      message.error('加载知识库失败')
+      message.error(t('creationWizard.loadKbFailed'))
     }
   }
 
@@ -150,7 +152,7 @@ const CreationWizard: React.FC = () => {
     try {
       const enhancedDescription = [
         businessDescription,
-        additionalResponsibilities ? `额外职责要求: ${additionalResponsibilities}` : '',
+        additionalResponsibilities ? `${t('creationWizard.extraDuties')} ${additionalResponsibilities}` : '',
       ].filter(Boolean).join('\n\n')
 
       const result = await window.electronAPI.employee.analyzeProfile({
@@ -169,21 +171,21 @@ const CreationWizard: React.FC = () => {
         })
 
         if (result.analysisMethod === 'llm') {
-          message.success('LLM 智能分析完成')
+          message.success(t('creationWizard.llmAnalysisComplete'))
         } else if (result.analysisMethod === 'heuristic') {
           if (result.error) {
             message.warning(result.error)
           } else {
-            message.info('已使用启发式规则完成分析')
+            message.info(t('creationWizard.heuristicAnalysis'))
           }
         } else {
-          message.info('使用默认配置完成')
+          message.info(t('creationWizard.defaultConfig'))
         }
       } else {
-        message.error(result.error || '分析失败')
+        message.error(result.error || t('creationWizard.analysisFailed'))
       }
     } catch {
-      message.error('分析知识库失败')
+      message.error(t('creationWizard.analyzeKbFailed'))
     } finally {
       setLoading(false)
       if (progressCleanupRef.current) {
@@ -245,7 +247,7 @@ const CreationWizard: React.FC = () => {
 
       navigate(`/employee/${employee.id}`)
     } catch (error) {
-      message.error('创建失败')
+      message.error(t('creationWizard.createFailed'))
       console.error(error)
     } finally {
       setCreating(false)
@@ -253,37 +255,37 @@ const CreationWizard: React.FC = () => {
   }
 
   const steps = [
-    { title: '选择知识库', icon: <DatabaseOutlined /> },
-    { title: '业务描述', icon: <BulbOutlined /> },
-    { title: '智能分析', icon: <RobotOutlined /> },
-    { title: '完成创建', icon: <CheckOutlined /> },
+    { title: t('creationWizard.stepSelectKb'), icon: <DatabaseOutlined /> },
+    { title: t('creationWizard.stepBusinessDesc'), icon: <BulbOutlined /> },
+    { title: t('creationWizard.stepAnalysis'), icon: <RobotOutlined /> },
+    { title: t('creationWizard.stepComplete'), icon: <CheckOutlined /> },
   ]
 
   const renderStep1 = () => (
     <div>
       {providers.length === 0 && (
         <Alert
-          title="未配置 LLM 提供商"
-          description="系统将使用启发式规则进行分析，质量可能较低。建议在设置中配置 LLM 提供商以获得更好的分析效果。"
+          title={t('creationWizard.noLlmAlert')}
+          description={t('creationWizard.noLlmAlertDesc')}
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
         />
       )}
       <Alert
-        title="选择用于创建数字员工的知识库"
-        description="系统将调用 LLM 深度分析选中的知识库内容，自动理解业务场景、识别职责。只有项目已关联的知识库可供选择。"
+        title={t('creationWizard.selectKbAlert')}
+        description={t('creationWizard.selectKbAlertDesc')}
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
       />
 
       <Card
-        title={`项目关联的知识库 (${linkedKBs.length})`}
+        title={t('creationWizard.projectLinkedKb', { count: linkedKBs.length })}
         extra={
           <Space>
             <Select
-              placeholder="选择 LLM 提供商"
+              placeholder={t('creationWizard.selectProvider')}
               style={{ width: 200 }}
               value={selectedProviderId || undefined}
               onChange={(value) => {
@@ -295,7 +297,7 @@ const CreationWizard: React.FC = () => {
             />
             {selectedProviderId && getProviderModels(providers.find(p => p.id === selectedProviderId)!).length > 0 && (
               <Select
-                placeholder="选择模型"
+                placeholder={t('creationWizard.selectModel')}
                 style={{ width: 180 }}
                 value={selectedModelId || undefined}
                 onChange={setSelectedModelId}
@@ -307,10 +309,10 @@ const CreationWizard: React.FC = () => {
               size="small"
               onClick={() => setSelectedKBIds(linkedKBs.map((kb: any) => kb.id))}
             >
-              全选
+              {t('common.selectAll')}
             </Button>
             <Button size="small" onClick={() => setSelectedKBIds([])}>
-              清空
+              {t('common.clearAll')}
             </Button>
           </Space>
         }
@@ -345,11 +347,11 @@ const CreationWizard: React.FC = () => {
                     <Space>
                       <DatabaseOutlined style={{ color: '#722ed1' }} />
                       <Text strong>{kb.name}</Text>
-                      <Tag>{kb.doc_count || 0} 文档</Tag>
+                      <Tag>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
                     </Space>
                   </div>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {kb.description || '暂无描述'}
+                    {kb.description || t('common.noDescription')}
                   </Text>
                 </div>
               </div>
@@ -357,9 +359,9 @@ const CreationWizard: React.FC = () => {
           })}
         </div>
         {linkedKBs.length === 0 && (
-          <Empty description="暂无关联的知识库，请先在项目中关联知识库">
+          <Empty description={t('creationWizard.noLinkedKb')}>
             <Button type="primary" onClick={() => navigate(`/project/${id}`)}>
-              前往关联知识库
+              {t('creationWizard.goToLinkKb')}
             </Button>
           </Empty>
         )}
@@ -370,26 +372,26 @@ const CreationWizard: React.FC = () => {
   const renderStep2 = () => (
     <div>
       <Alert
-        title="描述您的业务场景"
-        description="提供更多信息可以让 LLM 更准确地理解您的需求，生成更贴合实际的数字员工角色。"
+        title={t('creationWizard.businessDescAlert')}
+        description={t('creationWizard.businessDescAlertDesc')}
         type="info"
         showIcon
         style={{ marginBottom: 24 }}
       />
 
-      <Card title="业务场景补充描述" style={{ marginBottom: 24 }}>
-        <Paragraph type="secondary">请描述一下您的业务场景、工作流程或对这个数字员工的具体期望。</Paragraph>
+      <Card title={t('creationWizard.businessDescCard')} style={{ marginBottom: 24 }}>
+        <Paragraph type="secondary">{t('creationWizard.businessDescHint')}</Paragraph>
         <TextArea
-          placeholder="例如：这是一个电商平台的客服知识库，包含产品信息、退换货政策、常见问题等。希望这个数字员工能够：1. 准确回答客户咨询；2. 语气友好专业；3. 遇到复杂问题能引导人工客服..."
+          placeholder={t('creationWizard.businessDescPlaceholder')}
           value={businessDescription}
           onChange={(e) => setBusinessDescription(e.target.value)}
           rows={6}
         />
       </Card>
 
-      <Card title="额外职责要求（可选）">
+      <Card title={t('creationWizard.extraDutiesCard')}>
         <TextArea
-          placeholder="列出您希望这个数字员工承担的额外职责，每行一条，或用逗号分隔"
+          placeholder={t('creationWizard.extraDutiesPlaceholder')}
           value={additionalResponsibilities}
           onChange={(e) => setAdditionalResponsibilities(e.target.value)}
           rows={3}
@@ -402,15 +404,15 @@ const CreationWizard: React.FC = () => {
     <div>
       {loading ? (
         <div style={{ padding: 24 }}>
-          <Card title="智能分析进度" style={{ marginBottom: 16 }}>
+          <Card title={t('creationWizard.analysisProgress')} style={{ marginBottom: 16 }}>
             <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
             <Timeline
               items={[
-                { color: analyzeProgress >= 10 ? 'green' : 'gray', children: '准备分析知识库' },
-                { color: analyzeProgress >= 30 ? 'green' : 'gray', children: '调用 LLM 进行智能分析' },
-                { color: analyzeProgress >= 45 ? 'green' : 'gray', children: 'LLM 思考中' },
-                { color: analyzeProgress >= 60 ? 'green' : 'gray', children: '接收 LLM 流式响应' },
-                { color: analyzeProgress >= 90 ? 'green' : 'gray', children: '解析分析结果' },
+                { color: analyzeProgress >= 10 ? 'green' : 'gray', children: t('creationWizard.stepPrepare') },
+                { color: analyzeProgress >= 30 ? 'green' : 'gray', children: t('creationWizard.stepCallLlm') },
+                { color: analyzeProgress >= 45 ? 'green' : 'gray', children: t('creationWizard.stepLlmThinking') },
+                { color: analyzeProgress >= 60 ? 'green' : 'gray', children: t('creationWizard.stepReceiveStream') },
+                { color: analyzeProgress >= 90 ? 'green' : 'gray', children: t('creationWizard.stepParseResult') },
               ]}
             />
             {analyzeDetail && (
@@ -418,14 +420,14 @@ const CreationWizard: React.FC = () => {
             )}
           </Card>
           {analyzeThinkChunks.length > 0 && (
-            <Card title="LLM 思考过程" size="small" style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto' }}>
+            <Card title={t('creationWizard.llmThinkingProcess')} size="small" style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto' }}>
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0, color: '#8c8c8c' }}>
                 {analyzeThinkChunks.join('')}
               </pre>
             </Card>
           )}
           {analyzeChunks.length > 0 && (
-            <Card title="LLM 实时输出" size="small" style={{ maxHeight: 300, overflow: 'auto' }}>
+            <Card title={t('creationWizard.llmRealtimeOutput')} size="small" style={{ maxHeight: 300, overflow: 'auto' }}>
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0 }}>
                 {analyzeChunks.join('')}
               </pre>
@@ -435,37 +437,37 @@ const CreationWizard: React.FC = () => {
       ) : profile ? (
         <>
           <Alert
-            title={`分析完成：识别出 "${profile.roleName}" 角色`}
+            title={t('creationWizard.analysisComplete', { roleName: profile.roleName })}
             type="success"
             showIcon
             style={{ marginBottom: 16 }}
             action={
               <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
-                重新分析
+                {t('creationWizard.reAnalyze')}
               </Button>
             }
           />
 
           <Card style={{ marginBottom: 16 }}>
-            <Descriptions title="员工画像" bordered column={1} size="small">
-              <Descriptions.Item label="角色名称">
+            <Descriptions title={t('creationWizard.employeeProfile')} bordered column={1} size="small">
+              <Descriptions.Item label={t('creationWizard.roleName')}>
                 <Space>
                   <UserOutlined />
                   <Text strong>{profile.roleName}</Text>
                 </Space>
               </Descriptions.Item>
-              <Descriptions.Item label="角色描述">{profile.roleDescription}</Descriptions.Item>
-              <Descriptions.Item label="工作风格">
+              <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile.roleDescription}</Descriptions.Item>
+              <Descriptions.Item label={t('creationWizard.workStyle')}>
                 <Badge status="processing" text={profile.workingStyle} />
               </Descriptions.Item>
-              <Descriptions.Item label="职责">
+              <Descriptions.Item label={t('creationWizard.duties')}>
                 <Space orientation="vertical" size={4}>
                   {profile.responsibilities.map((r, i) => (
                     <Text key={i}>· {r}</Text>
                   ))}
                 </Space>
               </Descriptions.Item>
-              <Descriptions.Item label="特质">
+              <Descriptions.Item label={t('creationWizard.traits')}>
                 <Space wrap>
                   {profile.personalityTraits.map((t, i) => (
                     <Tag key={i} color="blue">{t}</Tag>
@@ -473,7 +475,7 @@ const CreationWizard: React.FC = () => {
                 </Space>
               </Descriptions.Item>
               {profile.suggestedTools.length > 0 && (
-                <Descriptions.Item label="建议工具">
+                <Descriptions.Item label={t('creationWizard.suggestedTools')}>
                   <Space wrap>
                     {profile.suggestedTools.map((tool, i) => (
                       <Tag key={i} icon={<ToolOutlined />} color="orange">{tool}</Tag>
@@ -487,9 +489,9 @@ const CreationWizard: React.FC = () => {
       ) : (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: token.colorPrimary }} />
-          <Paragraph>点击下方按钮开始分析知识库</Paragraph>
+          <Paragraph>{t('creationWizard.clickToAnalyze')}</Paragraph>
           <Button type="primary" size="large" onClick={analyzeKBs} icon={<RobotOutlined />}>
-            开始智能分析
+            {t('creationWizard.startAnalysis')}
           </Button>
         </div>
       )}
@@ -499,8 +501,8 @@ const CreationWizard: React.FC = () => {
   const renderStep5 = () => (
     <div>
       <Alert
-        message="最后确认"
-        description="确认数字员工的基本信息，完成创建后即可开始使用。"
+        message={t('creationWizard.finalConfirm')}
+        description={t('creationWizard.finalConfirmDesc')}
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
@@ -515,19 +517,19 @@ const CreationWizard: React.FC = () => {
       >
         <Form.Item
           name="name"
-          label="数字员工名称"
-          rules={[{ required: true, message: '请输入名称' }]}
+          label={t('creationWizard.employeeName')}
+          rules={[{ required: true, message: t('creationWizard.enterName') }]}
         >
-          <Input placeholder="例如：合同审核专员" prefix={<UserOutlined />} />
+          <Input placeholder={t('creationWizard.namePlaceholder')} prefix={<UserOutlined />} />
         </Form.Item>
 
-        <Form.Item name="description" label="描述">
-          <TextArea rows={3} placeholder="描述这个数字员工的职责和能力..." />
+        <Form.Item name="description" label={t('common.description')}>
+          <TextArea rows={3} placeholder={t('creationWizard.descPlaceholder')} />
         </Form.Item>
 
-        <Form.Item name="llm_provider_id" label="LLM 提供商">
+        <Form.Item name="llm_provider_id" label={t('creationWizard.llmProvider')}>
           <Select
-            placeholder="选择 LLM 提供商"
+            placeholder={t('creationWizard.selectProvider')}
             options={providers.map((p) => ({ value: p.id, label: p.name }))}
             allowClear
             onChange={(value) => {
@@ -537,40 +539,40 @@ const CreationWizard: React.FC = () => {
           />
         </Form.Item>
 
-        <Form.Item name="llm_model" label="模型名称">
+        <Form.Item name="llm_model" label={t('creationWizard.modelName')}>
           {step5ProviderId && getProviderModels(providers.find(p => p.id === step5ProviderId)!).length > 0 ? (
             <Select
-              placeholder="选择模型"
+              placeholder={t('creationWizard.selectModel')}
               allowClear
               options={getProviderModelOptions(providers.find(p => p.id === step5ProviderId)!)}
             />
           ) : (
-            <Input placeholder="留空使用提供商默认模型" />
+            <Input placeholder={t('creationWizard.modelPlaceholder')} />
           )}
         </Form.Item>
 
-        <Form.Item name="review_mode" valuePropName="checked" label="人工复核模式">
+        <Form.Item name="review_mode" valuePropName="checked" label={t('creationWizard.manualReview')}>
           <Switch />
         </Form.Item>
         <Text type="secondary" style={{ display: 'block', marginTop: -16, marginBottom: 16 }}>
-          开启后，数字员工的输出需要人工确认后方可发送
+          {t('creationWizard.manualReviewDesc')}
         </Text>
 
         <Divider />
 
-        <Title level={5}>创建摘要</Title>
+        <Title level={5}>{t('creationWizard.createSummary')}</Title>
         <Space orientation="vertical" style={{ width: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Text type="secondary">选中知识库</Text>
-            <Text>{selectedKBIds.length} 个</Text>
+            <Text type="secondary">{t('creationWizard.selectedKb')}</Text>
+            <Text>{selectedKBIds.length} {t('common.unit')}</Text>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Text type="secondary">识别角色</Text>
+            <Text type="secondary">{t('creationWizard.identifiedRole')}</Text>
             <Text strong>{profile?.roleName || '-'}</Text>
           </div>
           {profile?.suggestedTools && profile.suggestedTools.length > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Text type="secondary">建议工具</Text>
+              <Text type="secondary">{t('creationWizard.suggestedToolsLabel')}</Text>
               <Text>{profile.suggestedTools.join(', ')}</Text>
             </div>
           )}
@@ -582,12 +584,12 @@ const CreationWizard: React.FC = () => {
   const handleNext = async () => {
     if (currentStep === 0) {
       if (selectedKBIds.length === 0) {
-        message.warning('请至少选择一个知识库')
+        message.warning(t('creationWizard.selectAtLeastOneKb'))
         return
       }
     }
     if (currentStep === 2 && !profile) {
-      message.warning('请先完成分析')
+      message.warning(t('creationWizard.completeAnalysisFirst'))
       return
     }
     setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1))
@@ -600,10 +602,10 @@ const CreationWizard: React.FC = () => {
   return (
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <PageHeader
-        title="创建数字员工"
+        title={t('creationWizard.title')}
         subTitle={project?.name}
         onBack={() => navigate(`/project/${id}`)}
-        breadcrumb={[{ title: '仪表盘' }, { title: project?.name || '项目' }, { title: '创建数字员工' }]}
+        breadcrumb={[{ title: t('creationWizard.breadcrumbDashboard') }, { title: project?.name || t('creationWizard.breadcrumbProject') }, { title: t('creationWizard.breadcrumbCreate') }]}
       />
 
       <Card style={{ marginBottom: 24 }}>
@@ -623,7 +625,7 @@ const CreationWizard: React.FC = () => {
           onClick={handlePrev}
           disabled={currentStep === 0}
         >
-          上一步
+          {t('common.prev')}
         </Button>
 
         {currentStep < steps.length - 1 ? (
@@ -633,7 +635,7 @@ const CreationWizard: React.FC = () => {
             onClick={handleNext}
             loading={loading && currentStep === 2}
           >
-            下一步
+            {t('common.next')}
           </Button>
         ) : (
           <Button
@@ -642,7 +644,7 @@ const CreationWizard: React.FC = () => {
             onClick={handleCreateEmployee}
             loading={creating}
           >
-            完成创建
+            {t('common.finish')}
           </Button>
         )}
       </div>

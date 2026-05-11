@@ -7,6 +7,7 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
 } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 
 const { Text } = Typography
 
@@ -24,6 +25,7 @@ export interface BackgroundTask {
 const TaskProgressPanel: React.FC = () => {
   const [tasks, setTasks] = useState<BackgroundTask[]>([])
   const { token } = theme.useToken()
+  const { t } = useTranslation()
 
   useEffect(() => {
     const load = async () => {
@@ -62,11 +64,11 @@ const TaskProgressPanel: React.FC = () => {
 
   const getStatusText = (status: string) => {
     switch (status) {
-      case 'pending': return '等待中'
-      case 'running': return '运行中'
-      case 'completed': return '已完成'
-      case 'failed': return '失败'
-      case 'cancelled': return '已取消'
+      case 'pending': return t('taskProgress.pending')
+      case 'running': return t('taskProgress.running')
+      case 'completed': return t('taskProgress.completed')
+      case 'failed': return t('taskProgress.failed')
+      case 'cancelled': return t('taskProgress.cancelled')
       default: return status
     }
   }
@@ -77,10 +79,10 @@ const TaskProgressPanel: React.FC = () => {
 
   const summaryContent = (
     <Space size={8}>
-      {activeCount > 0 && <Tag color="blue" icon={<SyncOutlined spin />}>{activeCount} 运行中</Tag>}
-      {pendingCount > 0 && <Tag color="orange">{pendingCount} 等待中</Tag>}
-      {failedCount > 0 && <Tag color="red">{failedCount} 失败</Tag>}
-      <Button type="link" size="small" onClick={handleClearCompleted}>清除已完成</Button>
+      {activeCount > 0 && <Tag color="blue" icon={<SyncOutlined spin />}>{t('taskProgress.runningCount', { count: activeCount })}</Tag>}
+      {pendingCount > 0 && <Tag color="orange">{t('taskProgress.pendingCount', { count: pendingCount })}</Tag>}
+      {failedCount > 0 && <Tag color="red">{t('taskProgress.failedCount', { count: failedCount })}</Tag>}
+      <Button type="link" size="small" onClick={handleClearCompleted}>{t('taskProgress.clearCompleted')}</Button>
     </Space>
   )
 
@@ -102,7 +104,7 @@ const TaskProgressPanel: React.FC = () => {
             <Progress percent={task.progress} size="small" showInfo={false} />
           )}
           {task.error && (
-            <Text type="danger" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>错误: {task.error}</Text>
+            <Text type="danger" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>{t('taskProgress.errorLabel')} {task.error}</Text>
           )}
         </div>
       ))}

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Select, Space, Tag, theme } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import type { LLMProvider } from '../../types'
 import { getProviderModels } from '../../utils/llm'
 
@@ -25,6 +26,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   style,
 }) => {
   const { token } = theme.useToken()
+  const { t } = useTranslation()
   const [providers, setProviders] = useState<LLMProvider[]>([])
 
   useEffect(() => {
@@ -40,8 +42,8 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
       value: p.id,
       label: (
         <Space size={4}>
-          {isDomestic && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>国产</Tag>}
-          {isLocal && <Tag color="green" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>本地</Tag>}
+          {isDomestic && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.domestic')}</Tag>}
+          {isLocal && <Tag color="green" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.local')}</Tag>}
           <span>{p.name}</span>
         </Space>
       ),
@@ -55,7 +57,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
         label: (
           <Space size={4}>
             <span>{m.name}</span>
-            {m.enable_thinking && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>思考</Tag>}
+            {m.enable_thinking && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.thinking')}</Tag>}
           </Space>
         ),
       }))
@@ -68,7 +70,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
       <RobotOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
       <Select
         size="small"
-        placeholder="服务商"
+        placeholder={t('llmSelector.selectProvider')}
         style={{ minWidth: 100, maxWidth: selectMaxWidth }}
         value={providerId || undefined}
         onChange={(value) => {
@@ -91,7 +93,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
       {providerId && modelOptions.length > 0 && (
         <Select
           size="small"
-          placeholder="模型"
+          placeholder={t('llmSelector.selectModel')}
           style={{ minWidth: 90, maxWidth: selectMaxWidth }}
           value={modelId || undefined}
           onChange={onModelChange}

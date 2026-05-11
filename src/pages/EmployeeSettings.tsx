@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Card,
   Tabs,
@@ -55,7 +56,7 @@ import {
 import PageHeader from '../components/common/PageHeader'
 import type { Employee, LLMProvider } from '../types'
 import { getProviderModelOptions } from '../utils/llm'
-import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
+import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
 
 const { TextArea } = Input
 const { Text } = Typography
@@ -105,6 +106,7 @@ const TOOL_ICON_MAP: Record<string, React.ReactNode> = {
 }
 
 const EmployeeSettings: React.FC = () => {
+  const { t } = useTranslation()
   const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -161,7 +163,7 @@ const EmployeeSettings: React.FC = () => {
       const result = await window.electronAPI.employee.get(id!)
       setEmployee(result)
     } catch {
-      message.error('加载员工信息失败')
+      message.error(t('employeeSettings.loadFailed'))
     }
   }
 
@@ -219,7 +221,7 @@ const EmployeeSettings: React.FC = () => {
   const handleInstallSkillFromDir = async () => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
-        title: '选择 Skill 目录',
+        title: t('employeeSettings.selectSkillDir'),
         properties: ['openDirectory'],
       })
       if (result.canceled || !result.filePaths.length) return
@@ -231,14 +233,14 @@ const EmployeeSettings: React.FC = () => {
       })
 
       if (installResult.success) {
-        message.success(`Skill "${installResult.skill?.name}" 安装成功`)
+        message.success(t('employeeSettings.skillInstalled', { name: installResult.skill?.name }))
         loadInstalledSkills()
         loadEmployeeSkills()
       } else {
-        message.error(installResult.error || '安装失败')
+        message.error(installResult.error || t('employeeSettings.installFailed'))
       }
     } catch {
-      message.error('安装失败')
+      message.error(t('employeeSettings.installFailed'))
     } finally {
       setInstallingSkill(false)
     }
@@ -247,9 +249,9 @@ const EmployeeSettings: React.FC = () => {
   const handleInstallSkillFromZip = async () => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
-        title: '选择 Skill ZIP 文件',
+        title: t('employeeSettings.selectSkillZip'),
         properties: ['openFile'],
-        filters: [{ name: 'ZIP 文件', extensions: ['zip'] }],
+        filters: [{ name: t('employeeSettings.zipFile'), extensions: ['zip'] }],
       })
       if (result.canceled || !result.filePaths.length) return
 
@@ -260,14 +262,14 @@ const EmployeeSettings: React.FC = () => {
       })
 
       if (installResult.success) {
-        message.success(`Skill "${installResult.skill?.name}" 安装成功`)
+        message.success(t('employeeSettings.skillInstalled', { name: installResult.skill?.name }))
         loadInstalledSkills()
         loadEmployeeSkills()
       } else {
-        message.error(installResult.error || '安装失败')
+        message.error(installResult.error || t('employeeSettings.installFailed'))
       }
     } catch {
-      message.error('安装失败')
+      message.error(t('employeeSettings.installFailed'))
     } finally {
       setInstallingSkill(false)
     }
@@ -277,14 +279,14 @@ const EmployeeSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.skillRegistry.uninstall(skillId)
       if (result.success) {
-        message.success('Skill 已卸载')
+        message.success(t('employeeSettings.skillUninstalled'))
         loadInstalledSkills()
         loadEmployeeSkills()
       } else {
-        message.error('卸载失败')
+        message.error(t('employeeSettings.uninstallFailed'))
       }
     } catch {
-      message.error('卸载失败')
+      message.error(t('employeeSettings.uninstallFailed'))
     }
   }
 
@@ -294,10 +296,10 @@ const EmployeeSettings: React.FC = () => {
         employee_id: id!,
         skill_id: skillId,
       })
-      message.success('Skill 已分配')
+      message.success(t('employeeSettings.skillAssigned'))
       loadEmployeeSkills()
     } catch {
-      message.error('分配失败')
+      message.error(t('employeeSettings.assignFailed'))
     }
   }
 
@@ -307,10 +309,10 @@ const EmployeeSettings: React.FC = () => {
         employee_id: id!,
         skill_id: skillId,
       })
-      message.success('Skill 已移除')
+      message.success(t('employeeSettings.skillRemoved'))
       loadEmployeeSkills()
     } catch {
-      message.error('移除失败')
+      message.error(t('employeeSettings.removeFailed'))
     }
   }
 
@@ -321,10 +323,10 @@ const EmployeeSettings: React.FC = () => {
         id: id!,
         ...values,
       })
-      message.success('保存成功')
+      message.success(t('common.saveSuccess'))
       loadEmployee()
     } catch {
-      message.error('保存失败')
+      message.error(t('common.saveFailed'))
     } finally {
       setLoading(false)
     }
@@ -338,20 +340,20 @@ const EmployeeSettings: React.FC = () => {
         id: id!,
         status: newStatus,
       })
-      message.success(newStatus === 'active' ? '已启用' : '已暂停')
+      message.success(newStatus === 'active' ? t('employeeSettings.enabled') : t('employeeSettings.paused'))
       loadEmployee()
     } catch {
-      message.error('操作失败')
+      message.error(t('employeeSettings.operationFailed'))
     }
   }
 
   const handleDeleteEmployee = async () => {
     try {
       await window.electronAPI.employee.delete(id!)
-      message.success('已删除')
+      message.success(t('common.deleted'))
       navigate('/dashboard')
     } catch {
-      message.error('删除失败')
+      message.error(t('common.deleteFailed'))
     }
   }
 
@@ -363,9 +365,9 @@ const EmployeeSettings: React.FC = () => {
         is_enabled: enabled,
       })
       setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, is_enabled: enabled, is_assigned: true } : t))
-      message.success(enabled ? '工具已启用' : '工具已禁用')
+      message.success(enabled ? t('employeeSettings.toolEnabled') : t('employeeSettings.toolDisabled'))
     } catch {
-      message.error('操作失败')
+      message.error(t('employeeSettings.operationFailed'))
     }
   }
 
@@ -376,7 +378,7 @@ const EmployeeSettings: React.FC = () => {
           id: editingMcpServer.id,
           ...values,
         })
-        message.success('MCP 服务器已更新')
+        message.success(t('employeeSettings.mcpUpdated'))
       } else {
         await window.electronAPI.mcp.createServer({
           name: values.name,
@@ -384,14 +386,14 @@ const EmployeeSettings: React.FC = () => {
           args: values.args ? values.args.split('\n').filter((s: string) => s.trim()) : [],
           env: values.env ? JSON.parse(values.env) : {},
         })
-        message.success('MCP 服务器已创建')
+        message.success(t('employeeSettings.mcpCreated'))
       }
       setIsMcpModalOpen(false)
       setEditingMcpServer(null)
       mcpForm.resetFields()
       loadMCPServers()
     } catch {
-      message.error('保存失败')
+      message.error(t('common.saveFailed'))
     }
   }
 
@@ -400,16 +402,16 @@ const EmployeeSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.mcp.connectServer(serverId)
       if (result.success) {
-        message.success('MCP 服务器连接成功')
+        message.success(t('employeeSettings.mcpConnected'))
         if (result.tools) {
-          message.info(`发现 ${result.tools.length} 个工具`)
+          message.info(t('employeeSettings.mcpToolsFound', { count: result.tools.length }))
         }
       } else {
-        message.error(result.error || '连接失败')
+        message.error(result.error || t('employeeSettings.mcpConnectFailed'))
       }
       loadMCPServers()
     } catch {
-      message.error('连接失败')
+      message.error(t('employeeSettings.mcpConnectFailed'))
     } finally {
       setConnectingMcp(null)
     }
@@ -418,20 +420,20 @@ const EmployeeSettings: React.FC = () => {
   const handleDisconnectMCPServer = async (serverId: string) => {
     try {
       await window.electronAPI.mcp.disconnectServer(serverId)
-      message.success('已断开连接')
+      message.success(t('employeeSettings.mcpDisconnected'))
       loadMCPServers()
     } catch {
-      message.error('断开失败')
+      message.error(t('employeeSettings.mcpDisconnectFailed'))
     }
   }
 
   const handleDeleteMCPServer = async (serverId: string) => {
     try {
       await window.electronAPI.mcp.deleteServer(serverId)
-      message.success('已删除')
+      message.success(t('common.deleted'))
       loadMCPServers()
     } catch {
-      message.error('删除失败')
+      message.error(t('common.deleteFailed'))
     }
   }
 
@@ -461,26 +463,26 @@ const EmployeeSettings: React.FC = () => {
     <div style={{ padding: '16px 24px 24px' }}>
       <PageHeader
         title={employee.name}
-        subTitle="数字员工配置管理"
+        subTitle={t('employeeSettings.subtitle')}
         onBack={() => navigate(`/employee/${id}`)}
         breadcrumb={[
-          { title: '仪表盘' },
+          { title: t('employeeSettings.breadcrumbDashboard') },
           { title: employee.name },
-          { title: '配置管理' },
+          { title: t('employeeSettings.breadcrumbConfig') },
         ]}
         extra={
           <Space>
             <Tag color={EMPLOYEE_STATUS_COLOR_MAP[employee.status]}>
-              {EMPLOYEE_STATUS_TEXT_MAP[employee.status]}
+              {getEmployeeStatusTextMap(t)[employee.status]}
             </Tag>
             <Button
               icon={employee.status === 'active' ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
               onClick={handleToggleStatus}
             >
-              {employee.status === 'active' ? '暂停' : '启用'}
+              {employee.status === 'active' ? t('employeeSettings.pause') : t('employeeSettings.activate')}
             </Button>
             <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -493,7 +495,7 @@ const EmployeeSettings: React.FC = () => {
         items={[
           {
             key: 'basic',
-            label: '基本信息',
+            label: t('employeeSettings.tabBasic'),
             children: (
               <Card>
                 <Form form={form} layout="vertical" onFinish={handleSaveBasic}>
@@ -501,14 +503,14 @@ const EmployeeSettings: React.FC = () => {
                     <Col span={16}>
                       <Form.Item
                         name="name"
-                        label="数字员工名称"
-                        rules={[{ required: true, message: '请输入名称' }]}
+                        label={t('employeeSettings.employeeName')}
+                        rules={[{ required: true, message: t('employeeSettings.enterName') }]}
                       >
-                        <Input placeholder="输入数字员工名称" />
+                        <Input placeholder={t('employeeSettings.namePlaceholder')} />
                       </Form.Item>
                     </Col>
                     <Col span={8}>
-                      <Form.Item name="avatar_type" label="头像样式">
+                      <Form.Item name="avatar_type" label={t('employeeSettings.avatarStyle')}>
                         <Select>
                           {AVATAR_OPTIONS.map((opt) => (
                             <Select.Option key={opt.value} value={opt.value}>
@@ -516,10 +518,10 @@ const EmployeeSettings: React.FC = () => {
                                 <Avatar size="small" style={{ backgroundColor: opt.color }}>
                                   {opt.icon}
                                 </Avatar>
-                                {opt.value === 'default' && '默认'}
-                                {opt.value === 'business' && '商务'}
-                                {opt.value === 'document' && '文档'}
-                                {opt.value === 'settings' && '设置'}
+                                {opt.value === 'default' && t('employeeSettings.avatarDefault')}
+                                {opt.value === 'business' && t('employeeSettings.avatarBusiness')}
+                                {opt.value === 'document' && t('employeeSettings.avatarDocument')}
+                                {opt.value === 'settings' && t('employeeSettings.avatarSettings')}
                               </Space>
                             </Select.Option>
                           ))}
@@ -528,15 +530,15 @@ const EmployeeSettings: React.FC = () => {
                     </Col>
                   </Row>
 
-                  <Form.Item name="description" label="描述">
-                    <TextArea rows={3} placeholder="描述这个数字员工的职责和能力..." />
+                  <Form.Item name="description" label={t('common.description')}>
+                    <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
                   </Form.Item>
 
                   <Row gutter={24}>
                     <Col span={12}>
-                      <Form.Item name="llm_provider_id" label="LLM 提供商">
-                        <Select 
-                          placeholder="选择 LLM 提供商" 
+                      <Form.Item name="llm_provider_id" label={t('employeeSettings.llmProvider')}>
+                        <Select
+                          placeholder={t('employeeSettings.selectProvider')}
                           allowClear
                           onChange={(value) => {
                             setFormLlmProviderId(value || '')
@@ -552,42 +554,42 @@ const EmployeeSettings: React.FC = () => {
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item name="llm_model" label="模型名称">
+                      <Form.Item name="llm_model" label={t('employeeSettings.modelName')}>
                         {formLlmProviderId && getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!).length > 0 ? (
-                          <Select 
-                            placeholder="选择模型" 
+                          <Select
+                            placeholder={t('employeeSettings.selectModel')}
                             allowClear
                             options={getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!)}
                           />
                         ) : (
-                          <Input placeholder="如 gpt-4o, claude-3-sonnet 等" />
+                          <Input placeholder={t('employeeSettings.modelPlaceholder')} />
                         )}
                       </Form.Item>
                     </Col>
                   </Row>
 
                   <Form.Item name="review_mode" valuePropName="checked" label={null}>
-                    <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                    <Switch checkedChildren={t('common.on')} unCheckedChildren={t('common.off')} />
                   </Form.Item>
-                  <Text type="secondary">启用人工复核模式后，数字员工的输出需要用户确认后才能生效</Text>
+                  <Text type="secondary">{t('employeeSettings.manualReviewDesc')}</Text>
 
                   <Divider />
 
                   <Form.Item>
                     <Space>
                       <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
-                        保存基本信息
+                        {t('employeeSettings.saveBasic')}
                       </Button>
                       <Popconfirm
-                        title="确定删除此数字员工？"
-                        description="删除后无法恢复，相关对话记录也将被清除。"
+                        title={t('employeeSettings.confirmDeleteEmployee')}
+                        description={t('employeeSettings.deleteEmployeeDesc')}
                         onConfirm={handleDeleteEmployee}
-                        okText="删除"
-                        cancelText="取消"
+                        okText={t('common.delete')}
+                        cancelText={t('common.cancel')}
                         okButtonProps={{ danger: true }}
                       >
                         <Button danger icon={<DeleteOutlined />}>
-                          删除数字员工
+                          {t('employeeSettings.deleteEmployee')}
                         </Button>
                       </Popconfirm>
                     </Space>
@@ -598,12 +600,12 @@ const EmployeeSettings: React.FC = () => {
           },
           {
             key: 'tools',
-            label: '系统工具',
+            label: t('employeeSettings.tabTools'),
             children: (
               <Space orientation="vertical" style={{ width: '100%' }} size={16}>
                 <Alert
-                  title="系统工具让数字员工具备调用外部功能的能力"
-                  description="开启工具后，数字员工在对话时可以根据需要自动调用这些工具。关闭则该员工无法使用对应工具。"
+                  title={t('employeeSettings.toolsAlertTitle')}
+                  description={t('employeeSettings.toolsAlertDesc')}
                   type="info"
                   showIcon
                 />
@@ -612,12 +614,12 @@ const EmployeeSettings: React.FC = () => {
                   title={
                     <Space>
                       <ToolOutlined />
-                      <span>内置工具 ({employeeTools.length})</span>
+                      <span>{t('employeeSettings.builtinTools', { count: employeeTools.length })}</span>
                     </Space>
                   }
                 >
                   {employeeTools.length === 0 ? (
-                    <Empty description="暂无内置工具" />
+                    <Empty description={t('employeeSettings.noBuiltinTools')} />
                   ) : (
                     <div>
                       {employeeTools.map((tool) => (
@@ -639,16 +641,16 @@ const EmployeeSettings: React.FC = () => {
                             <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                               <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <Text strong ellipsis style={{ display: 'inline-block' }}>{tool.title || tool.name}</Text>
-                                <Tag color="blue" style={{ flexShrink: 0 }}>内置</Tag>
+                                <Tag color="blue" style={{ flexShrink: 0 }}>{t('employeeSettings.builtin')}</Tag>
                               </div>
-                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{tool.description || '无描述'}</Text>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{tool.description || t('employeeSettings.noDesc')}</Text>
                             </div>
                           </div>
                           <Switch
                             checked={tool.is_enabled}
                             onChange={(checked) => handleToggleTool(tool.id, checked)}
-                            checkedChildren="启用"
-                            unCheckedChildren="关闭"
+                            checkedChildren={t('common.enable')}
+                            unCheckedChildren={t('common.disable')}
                           />
                         </div>
                       ))}
@@ -660,12 +662,12 @@ const EmployeeSettings: React.FC = () => {
           },
           {
             key: 'skills-market',
-            label: 'Skills 市场',
+            label: t('employeeSettings.tabSkills'),
             children: (
               <Space orientation="vertical" style={{ width: '100%' }} size={16}>
                 <Alert
-                  title="Skills 是符合 Claude 协议的模块化能力包"
-                  description="安装 Skill 后，可以直接分配给数字员工使用。Skill 包含完整的指令、参考资料和脚本，无需手动配置提示词。"
+                  title={t('employeeSettings.skillsAlertTitle')}
+                  description={t('employeeSettings.skillsAlertDesc')}
                   type="info"
                   showIcon
                 />
@@ -674,22 +676,22 @@ const EmployeeSettings: React.FC = () => {
                   title={
                     <Space>
                       <BookOutlined />
-                      <span>已安装 Skills ({installedSkills.length})</span>
+                      <span>{t('employeeSettings.installedSkills', { count: installedSkills.length })}</span>
                     </Space>
                   }
                   extra={
                     <Space>
                       <Button icon={<FolderOpenOutlined />} onClick={handleInstallSkillFromDir} loading={installingSkill}>
-                        从目录安装
+                        {t('employeeSettings.installFromDir')}
                       </Button>
                       <Button icon={<FileZipOutlined />} onClick={handleInstallSkillFromZip} loading={installingSkill}>
-                        从 ZIP 安装
+                        {t('employeeSettings.installFromZip')}
                       </Button>
                     </Space>
                   }
                 >
                   {installedSkills.length === 0 ? (
-                    <Empty description="暂无已安装的 Skills，点击上方按钮安装" />
+                    <Empty description={t('employeeSettings.noInstalledSkills')} />
                   ) : (
                     <div>
                       {installedSkills.map((skill) => (
@@ -712,7 +714,7 @@ const EmployeeSettings: React.FC = () => {
                                 <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
                               </div>
                               <Space orientation="vertical" size={0} style={{ width: '100%' }}>
-                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
                                 <Space size={4} style={{ marginTop: 4 }} wrap>
                                   {skill.tags.map((tag) => (
                                     <Tag key={tag}>{tag}</Tag>
@@ -722,12 +724,12 @@ const EmployeeSettings: React.FC = () => {
                             </div>
                           </div>
                           <Popconfirm
-                            title="卸载 Skill？"
-                            description="卸载后所有分配了此 Skill 的员工将无法使用"
+                            title={t('employeeSettings.confirmUninstallSkill')}
+                            description={t('employeeSettings.uninstallSkillDesc')}
                             onConfirm={() => handleUninstallSkill(skill.id)}
                           >
                             <Button type="text" danger icon={<DeleteOutlined />}>
-                              卸载
+                              {t('common.uninstall')}
                             </Button>
                           </Popconfirm>
                         </div>
@@ -740,12 +742,12 @@ const EmployeeSettings: React.FC = () => {
                   title={
                     <Space>
                       <ImportOutlined />
-                      <span>已分配 Skills ({employeeSkills.length})</span>
+                      <span>{t('employeeSettings.assignedSkills', { count: employeeSkills.length })}</span>
                     </Space>
                   }
                 >
                   {employeeSkills.length === 0 ? (
-                    <Empty description="暂无分配的 Skills，请从下方可用 Skills 中添加" />
+                    <Empty description={t('employeeSettings.noAssignedSkills')} />
                   ) : (
                     <div>
                       {employeeSkills.map((skill) => (
@@ -766,16 +768,16 @@ const EmployeeSettings: React.FC = () => {
                                 <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                                 <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                               </div>
-                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
                             </div>
                           </div>
                           <Popconfirm
-                            title="移除 Skill？"
-                            description="移除后该员工将无法使用此 Skill"
+                            title={t('employeeSettings.confirmRemoveSkill')}
+                            description={t('employeeSettings.removeSkillDesc')}
                             onConfirm={() => handleRemoveSkill(skill.id)}
                           >
                             <Button type="text" danger icon={<DeleteOutlined />}>
-                              移除
+                              {t('common.remove')}
                             </Button>
                           </Popconfirm>
                         </div>
@@ -788,12 +790,12 @@ const EmployeeSettings: React.FC = () => {
                   title={
                     <Space>
                       <ThunderboltOutlined />
-                      <span>可用 Skills ({availableSkills.length})</span>
+                      <span>{t('employeeSettings.availableSkills', { count: availableSkills.length })}</span>
                     </Space>
                   }
                 >
                   {availableSkills.length === 0 ? (
-                    <Empty description="暂无可用的 Skills，请先安装" />
+                    <Empty description={t('employeeSettings.noAvailableSkills')} />
                   ) : (
                     <div>
                       {availableSkills.map((skill) => (
@@ -814,7 +816,7 @@ const EmployeeSettings: React.FC = () => {
                                 <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                                 <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                               </div>
-                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || '无描述'}</Text>
+                              <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
                             </div>
                           </div>
                           <Button
@@ -822,7 +824,7 @@ const EmployeeSettings: React.FC = () => {
                             icon={<PlusOutlined />}
                             onClick={() => handleAssignSkill(skill.id)}
                           >
-                            分配
+                            {t('common.assign')}
                           </Button>
                         </div>
                       ))}
@@ -834,12 +836,12 @@ const EmployeeSettings: React.FC = () => {
           },
           {
             key: 'mcp',
-            label: 'MCP 服务',
+            label: t('employeeSettings.tabMcp'),
             children: (
               <Space orientation="vertical" style={{ width: '100%' }} size={16}>
                 <Alert
-                  title="MCP (Model Context Protocol) 让数字员工连接外部服务"
-                  description="配置 MCP Server 后，数字员工可以调用外部工具和服务。例如：数据库查询、文件系统操作、API 调用等。"
+                  title={t('employeeSettings.mcpAlertTitle')}
+                  description={t('employeeSettings.mcpAlertDesc')}
                   type="info"
                   showIcon
                 />
@@ -848,17 +850,17 @@ const EmployeeSettings: React.FC = () => {
                   title={
                     <Space>
                       <ApiOutlined />
-                      <span>MCP 服务器列表 ({mcpServers.length})</span>
+                      <span>{t('employeeSettings.mcpServerList', { count: mcpServers.length })}</span>
                     </Space>
                   }
                   extra={
                     <Button type="primary" icon={<PlusOutlined />} onClick={() => openMcpEditor()}>
-                      添加服务器
+                      {t('employeeSettings.addServer')}
                     </Button>
                   }
                 >
                   {mcpServers.length === 0 ? (
-                    <Empty description="暂无 MCP 服务器，点击添加按钮创建" />
+                    <Empty description={t('employeeSettings.noMcpServers')} />
                   ) : (
                     <div>
                       {mcpServers.map((server) => (
@@ -898,21 +900,21 @@ const EmployeeSettings: React.FC = () => {
                                   }
                                   text={
                                     server.status === 'connected'
-                                      ? '已连接'
+                                      ? t('employeeSettings.connected')
                                       : server.status === 'error'
-                                      ? '错误'
-                                      : '未连接'
+                                      ? t('employeeSettings.error')
+                                      : t('employeeSettings.notConnected')
                                   }
                                   style={{ flexShrink: 0 }}
                                 />
                               </div>
                               <Space orientation="vertical" size={0} style={{ width: '100%' }}>
                                 <Text type="secondary" style={{ fontSize: 12 }}>
-                                  命令: {server.command}
+                                  {t('employeeSettings.command')} {server.command}
                                 </Text>
                                 {server.last_error && (
                                   <Text type="danger" style={{ fontSize: 12 }}>
-                                    错误: {server.last_error}
+                                    {t('employeeSettings.errorLabel')} {server.last_error}
                                   </Text>
                                 )}
                               </Space>
@@ -925,7 +927,7 @@ const EmployeeSettings: React.FC = () => {
                                 icon={<DisconnectOutlined />}
                                 onClick={() => handleDisconnectMCPServer(server.id)}
                               >
-                                断开
+                                {t('common.disconnect')}
                               </Button>
                             ) : (
                               <Button
@@ -934,18 +936,18 @@ const EmployeeSettings: React.FC = () => {
                                 loading={connectingMcp === server.id}
                                 onClick={() => handleConnectMCPServer(server.id)}
                               >
-                                连接
+                                {t('common.connect')}
                               </Button>
                             )}
                             <Button type="text" icon={<EditOutlined />} onClick={() => openMcpEditor(server)}>
-                              编辑
+                              {t('common.edit')}
                             </Button>
                             <Popconfirm
-                              title="删除 MCP 服务器？"
+                              title={t('employeeSettings.confirmDeleteMcp')}
                               onConfirm={() => handleDeleteMCPServer(server.id)}
                             >
                               <Button type="text" danger icon={<DeleteOutlined />}>
-                                删除
+                                {t('common.delete')}
                               </Button>
                             </Popconfirm>
                           </Space>
@@ -959,9 +961,9 @@ const EmployeeSettings: React.FC = () => {
           },
           {
             key: 'knowledge',
-            label: '知识库',
+            label: t('employeeSettings.tabKnowledge'),
             children: (
-              <Card title="项目关联的知识库" extra={<Button type="link" icon={<LinkOutlined />} onClick={() => navigate(`/project/${employee?.project_id}`)}>管理关联</Button>}>
+              <Card title={t('employeeSettings.projectKb')} extra={<Button type="link" icon={<LinkOutlined />} onClick={() => navigate(`/project/${employee?.project_id}`)}>{t('employeeSettings.manageAssociation')}</Button>}>
                 {linkedKBs.length > 0 ? (
                   <div>
                     {linkedKBs.map((kb: any) => (
@@ -994,10 +996,10 @@ const EmployeeSettings: React.FC = () => {
                               <Text strong ellipsis style={{ display: 'block' }}>{kb.name}</Text>
                             </Tooltip>
                             <div style={{ overflow: 'hidden' }}>
-                              <Tooltip title={kb.description || '暂无描述'}>
-                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                              <Tooltip title={kb.description || t('common.noDescription')}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || t('common.noDescription')}</Text>
                               </Tooltip>
-                              <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                              <Tag style={{ marginTop: 4 }}>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
                             </div>
                           </div>
                         </div>
@@ -1005,9 +1007,9 @@ const EmployeeSettings: React.FC = () => {
                     ))}
                   </div>
                 ) : (
-                  <Empty description="暂无关联的知识库">
+                  <Empty description={t('employeeSettings.noLinkedKb')}>
                     <Button type="primary" onClick={() => navigate(`/project/${employee?.project_id}`)}>
-                      前往关联知识库
+                      {t('employeeSettings.goToLinkKb')}
                     </Button>
                   </Empty>
                 )}
@@ -1016,14 +1018,14 @@ const EmployeeSettings: React.FC = () => {
           },
           {
             key: 'stats',
-            label: '监控统计',
+            label: t('employeeSettings.tabMonitor'),
             children: (
               <>
                 <Row gutter={16}>
                   <Col span={6}>
                     <Card>
                       <Statistic
-                        title="总处理任务"
+                        title={t('employeeSettings.totalTasks')}
                         value={employee.total_tasks}
                         prefix={<BarChartOutlined />}
                       />
@@ -1032,7 +1034,7 @@ const EmployeeSettings: React.FC = () => {
                   <Col span={6}>
                     <Card>
                       <Statistic
-                        title="用户赞"
+                        title={t('employeeSettings.userApprovals')}
                         value={employee.total_approvals}
                         prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
                       />
@@ -1040,14 +1042,14 @@ const EmployeeSettings: React.FC = () => {
                   </Col>
                   <Col span={6}>
                     <Card>
-                      <Statistic title="关联知识库" value={linkedKBs.length} prefix={<DatabaseOutlined />} />
+                      <Statistic title={t('employeeSettings.linkedKb')} value={linkedKBs.length} prefix={<DatabaseOutlined />} />
                     </Card>
                   </Col>
                 </Row>
-                <Card title="版本信息" style={{ marginTop: 16 }}>
-                  <p>当前版本: v{employee.arch_version}</p>
-                  <p>创建时间: {new Date(employee.created_at * 1000).toLocaleString()}</p>
-                  <p>更新时间: {new Date(employee.updated_at * 1000).toLocaleString()}</p>
+                <Card title={t('employeeSettings.versionInfo')} style={{ marginTop: 16 }}>
+                  <p>{t('employeeSettings.currentVersion')} v{employee.arch_version}</p>
+                  <p>{t('employeeSettings.createTime')} {new Date(employee.created_at * 1000).toLocaleString()}</p>
+                  <p>{t('employeeSettings.updateTime')} {new Date(employee.updated_at * 1000).toLocaleString()}</p>
                 </Card>
               </>
             )
@@ -1056,7 +1058,7 @@ const EmployeeSettings: React.FC = () => {
       />
 
       <Modal
-        title={editingMcpServer ? '编辑 MCP 服务器' : '添加 MCP 服务器'}
+        title={editingMcpServer ? t('employeeSettings.editMcp') : t('employeeSettings.addMcp')}
         open={isMcpModalOpen}
         onCancel={() => {
           setIsMcpModalOpen(false)
@@ -1067,24 +1069,24 @@ const EmployeeSettings: React.FC = () => {
         width={560}
       >
         <Form form={mcpForm} layout="vertical" onFinish={handleCreateMCPServer}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input placeholder="例如：文件系统 MCP" />
+          <Form.Item name="name" label={t('employeeSettings.serverName')} rules={[{ required: true, message: t('employeeSettings.enterServerName') }]}>
+            <Input placeholder={t('employeeSettings.serverNamePlaceholder')} />
           </Form.Item>
-          <Form.Item name="command" label="启动命令" rules={[{ required: true, message: '请输入命令' }]}>
-            <Input placeholder="例如：npx 或 python mcp_server.py" />
+          <Form.Item name="command" label={t('employeeSettings.startCommand')} rules={[{ required: true, message: t('employeeSettings.enterCommand') }]}>
+            <Input placeholder={t('employeeSettings.commandPlaceholder')} />
           </Form.Item>
-          <Form.Item name="args" label="参数（每行一个）">
+          <Form.Item name="args" label={t('employeeSettings.args')}>
             <TextArea rows={3} placeholder="例如：-m&#10;mcp-server-filesystem&#10;/path/to/allowed/dir" />
           </Form.Item>
-          <Form.Item name="env" label="环境变量（JSON 格式）">
+          <Form.Item name="env" label={t('employeeSettings.envVars')}>
             <TextArea rows={2} placeholder={`{"API_KEY": "xxx", "DEBUG": "true"}`} />
           </Form.Item>
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit">
-                {editingMcpServer ? '更新' : '创建'}
+                {editingMcpServer ? t('employeeSettings.update') : t('common.create')}
               </Button>
-              <Button onClick={() => setIsMcpModalOpen(false)}>取消</Button>
+              <Button onClick={() => setIsMcpModalOpen(false)}>{t('common.cancel')}</Button>
             </Space>
           </Form.Item>
         </Form>

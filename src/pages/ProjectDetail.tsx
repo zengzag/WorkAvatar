@@ -15,7 +15,8 @@ import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import type { Employee } from '../types'
 import type { TabsProps } from 'antd'
-import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
+import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
+import { useTranslation } from 'react-i18next'
 
 const { Text } = Typography
 
@@ -23,6 +24,7 @@ const ProjectDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
+  const { t } = useTranslation()
   const [project, setProject] = useState<any>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
@@ -43,7 +45,7 @@ const ProjectDetail: React.FC = () => {
       setProject(result)
     } catch (error) {
       console.error('加载项目失败:', error)
-      message.error('加载项目失败')
+      message.error(t('projectDetail.loadFailed'))
     }
   }
 
@@ -76,35 +78,35 @@ const ProjectDetail: React.FC = () => {
       const result = await window.electronAPI.kb.list()
       setAllKBs(result)
       setKbLinkModalOpen(true)
-    } catch { message.error('加载知识库列表失败') }
+    } catch { message.error(t('projectDetail.loadKbFailed')) }
   }
 
   const handleLinkKB = async (kbId: string) => {
     try {
       await window.electronAPI.kb.linkProject({ kb_id: kbId, project_id: id! })
-      message.success('关联知识库成功')
+      message.success(t('projectDetail.linkKbSuccess'))
       loadLinkedKBs()
-    } catch { message.error('关联失败') }
+    } catch { message.error(t('projectDetail.linkFailed')) }
   }
 
   const handleUnlinkKB = async (kbId: string) => {
     try {
       await window.electronAPI.kb.unlinkProject({ kb_id: kbId, project_id: id! })
-      message.success('取消关联成功')
+      message.success(t('projectDetail.unlinkSuccess'))
       loadLinkedKBs()
-    } catch { message.error('取消关联失败') }
+    } catch { message.error(t('projectDetail.unlinkFailed')) }
   }
 
   if (!project) {
     return (
       <div style={{ padding: 24 }}>
-        <EmptyState title="项目不存在" description="请检查项目ID是否正确" />
+        <EmptyState title={t('projectDetail.projectNotFound')} description={t('projectDetail.projectNotFoundDesc')} />
       </div>
     )
   }
 
   const statusColorMap = EMPLOYEE_STATUS_COLOR_MAP
-  const statusTextMap = EMPLOYEE_STATUS_TEXT_MAP
+  const statusTextMap = getEmployeeStatusTextMap(t)
 
   return (
     <div style={{ padding: 24, height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -112,11 +114,11 @@ const ProjectDetail: React.FC = () => {
         title={project.name}
         subTitle={project.description}
         onBack={() => navigate('/dashboard')}
-        breadcrumb={[{ title: '仪表盘' }, { title: '项目详情' }]}
+        breadcrumb={[{ title: t('projectDetail.breadcrumbDashboard') }, { title: t('projectDetail.breadcrumbProjectDetail') }]}
         extra={
           <Space>
             <Button icon={<RobotOutlined />} type="primary" onClick={handleCreateEmployee}>
-              创建数字员工
+              {t('projectDetail.createEmployee')}
             </Button>
           </Space>
         }
@@ -126,7 +128,7 @@ const ProjectDetail: React.FC = () => {
         <Col span={8}>
           <Card>
             <Statistic
-              title="关联知识库"
+              title={t('projectDetail.linkedKb')}
               value={linkedKBs.length}
               prefix={<DatabaseOutlined style={{ color: '#722ed1' }} />}
               styles={{ content: { color: '#722ed1' } }}
@@ -136,7 +138,7 @@ const ProjectDetail: React.FC = () => {
         <Col span={8}>
           <Card>
             <Statistic
-              title="数字员工"
+              title={t('projectDetail.runningEmployees')}
               value={employees.length}
               prefix={<RobotOutlined style={{ color: token.colorPrimary }} />}
               styles={{ content: { color: token.colorPrimary } }}
@@ -146,7 +148,7 @@ const ProjectDetail: React.FC = () => {
         <Col span={8}>
           <Card>
             <Statistic
-              title="运行中"
+              title={t('projectDetail.running')}
               value={employees.filter((e) => e.status === 'active').length}
               styles={{ content: { color: token.colorSuccess } }}
             />
@@ -163,16 +165,16 @@ const ProjectDetail: React.FC = () => {
               label: (
                 <Space>
                   <DatabaseOutlined />
-                  知识库
+                  {t('projectDetail.tabKb')}
                   <Tag color="purple">{linkedKBs.length}</Tag>
                 </Space>
               ),
               children: (
                 <Card
-                  title="关联的知识库"
+                  title={t('projectDetail.linkedKbCard')}
                   extra={
                     <Button type="primary" icon={<LinkOutlined />} onClick={handleOpenKBLinkModal}>
-                      关联知识库
+                      {t('projectDetail.linkKb')}
                     </Button>
                   }
                 >
@@ -208,10 +210,10 @@ const ProjectDetail: React.FC = () => {
                               <Tooltip title={kb.name}>
                                 <Text strong ellipsis style={{ display: 'block' }}>{kb.name}</Text>
                               </Tooltip>
-                              <Tooltip title={kb.description || '暂无描述'}>
-                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                              <Tooltip title={kb.description || t('common.noDescription')}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || t('common.noDescription')}</Text>
                               </Tooltip>
-                              <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                              <Tag style={{ marginTop: 4 }}>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
                             </div>
                           </div>
                           <Space>
@@ -220,15 +222,15 @@ const ProjectDetail: React.FC = () => {
                               icon={<EyeOutlined />}
                               onClick={() => navigate('/knowledge-base')}
                             >
-                              查看
+                              {t('projectManager.view')}
                             </Button>
                             <Popconfirm
-                              title="确认取消关联？"
-                              description="取消关联后，本项目的数字员工将无法查询该知识库"
+                              title={t('projectDetail.confirmUnlink')}
+                              description={t('projectDetail.unlinkDesc')}
                               onConfirm={() => handleUnlinkKB(kb.id)}
                             >
                               <Button type="link" danger icon={<DisconnectOutlined />}>
-                                取消关联
+                                {t('projectDetail.unlink')}
                               </Button>
                             </Popconfirm>
                           </Space>
@@ -237,9 +239,9 @@ const ProjectDetail: React.FC = () => {
                     </div>
                   ) : (
                     <EmptyState
-                      title="尚未关联知识库"
-                      description="关联全局知识库后，本项目的数字员工可以查询知识库中的内容"
-                      actionText="关联知识库"
+                      title={t('projectDetail.noLinkedKb')}
+                      description={t('projectDetail.noLinkedKbDesc')}
+                      actionText={t('projectDetail.linkKbAction')}
                       onAction={handleOpenKBLinkModal}
                     />
                   )}
@@ -251,16 +253,16 @@ const ProjectDetail: React.FC = () => {
               label: (
                 <Space>
                   <RobotOutlined />
-                  数字员工
+                  {t('projectDetail.tabEmployees')}
                   <Tag color="purple">{employees.length}</Tag>
                 </Space>
               ),
               children: (
                 <Card
-                  title="项目数字员工"
+                  title={t('projectDetail.projectEmployees')}
                   extra={
                     <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateEmployee}>
-                      新建数字员工
+                      {t('projectDetail.newEmployee')}
                     </Button>
                   }
                 >
@@ -301,14 +303,14 @@ const ProjectDetail: React.FC = () => {
                                   {statusTextMap[emp.status]}
                                 </Tag>
                               </div>
-                              <Tooltip title={emp.description || '暂无描述'}>
-                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{emp.description || '暂无描述'}</Text>
+                              <Tooltip title={emp.description || t('common.noDescription')}>
+                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{emp.description || t('common.noDescription')}</Text>
                               </Tooltip>
                               <div style={{ marginTop: 2 }}>
                                 <Text type="secondary" style={{ fontSize: 12 }}>
-                                  <RocketOutlined /> 处理任务: {emp.total_tasks || 0} ·
-                                  赞: {emp.total_approvals || 0} ·
-                                  版本: v{emp.arch_version || 1}
+                                  <RocketOutlined /> {t('projectDetail.processingTasks')}: {emp.total_tasks || 0} ·
+                                  {t('projectDetail.likes')}: {emp.total_approvals || 0} ·
+                                  {t('projectDetail.version')}: v{emp.arch_version || 1}
                                 </Text>
                               </div>
                             </div>
@@ -318,16 +320,16 @@ const ProjectDetail: React.FC = () => {
                             icon={<EyeOutlined />}
                             onClick={() => handleNavigateToEmployee(emp.id)}
                           >
-                            进入工作台
+                            {t('projectDetail.enterWorkbench')}
                           </Button>
                         </div>
                       ))}
                     </div>
                   ) : (
                     <EmptyState
-                      title="暂无数字员工"
-                      description="基于知识库创建专属数字员工"
-                      actionText="创建第一个数字员工"
+                      title={t('projectDetail.noEmployees')}
+                      description={t('projectDetail.noEmployeesDesc')}
+                      actionText={t('projectDetail.createFirstEmployee')}
                       onAction={handleCreateEmployee}
                     />
                   )}
@@ -336,12 +338,12 @@ const ProjectDetail: React.FC = () => {
             },
             {
               key: 'settings',
-              label: '项目设置',
+              label: t('projectDetail.tabSettings'),
               children: (
                 <Card>
-                  <p>项目ID: {project.id}</p>
-                  <p>项目路径: {project.root_path}</p>
-                  <p>创建时间: {new Date(project.created_at * 1000).toLocaleString()}</p>
+                  <p>{t('projectDetail.projectId')} {project.id}</p>
+                  <p>{t('projectDetail.projectPath')} {project.root_path}</p>
+                  <p>{t('projectDetail.createTime')} {new Date(project.created_at * 1000).toLocaleString()}</p>
                 </Card>
               ),
             },
@@ -350,7 +352,7 @@ const ProjectDetail: React.FC = () => {
       </div>
 
       <Modal
-        title="关联知识库"
+        title={t('projectDetail.linkKbModal')}
         open={kbLinkModalOpen}
         onCancel={() => setKbLinkModalOpen(false)}
         footer={null}
@@ -358,9 +360,9 @@ const ProjectDetail: React.FC = () => {
       >
         {allKBs.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
-            暂无知识库。请先在知识库管理中创建知识库。
+            {t('projectDetail.noKbAvailable')}
             <Button type="link" onClick={() => { setKbLinkModalOpen(false); navigate('/knowledge-base') }}>
-              前往知识库管理
+              {t('projectDetail.goToKb')}
             </Button>
           </div>
         ) : (
@@ -397,17 +399,17 @@ const ProjectDetail: React.FC = () => {
                       <Tooltip title={kb.name}>
                         <Text ellipsis style={{ display: 'block' }}>{kb.name}</Text>
                       </Tooltip>
-                      <Tooltip title={kb.description || '暂无描述'}>
-                        <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || '暂无描述'}</Text>
+                      <Tooltip title={kb.description || t('common.noDescription')}>
+                        <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || t('common.noDescription')}</Text>
                       </Tooltip>
-                      <Tag style={{ marginTop: 4 }}>{kb.doc_count || 0} 文档</Tag>
+                      <Tag style={{ marginTop: 4 }}>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
                     </div>
                   </div>
                   {isLinked ? (
-                    <Tag color="green">已关联</Tag>
+                    <Tag color="green">{t('projectDetail.linked')}</Tag>
                   ) : (
                     <Button type="primary" size="small" icon={<LinkOutlined />} onClick={() => handleLinkKB(kb.id)}>
-                      关联
+                      {t('knowledgeBase.link')}
                     </Button>
                   )}
                 </div>

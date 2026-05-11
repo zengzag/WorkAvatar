@@ -37,26 +37,27 @@ import {
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import type { LLMProvider, LLMModelConfig, LLMProviderType } from '../types'
-import { useAppearanceStore, type ThemeMode, type FontSizeLevel } from '../stores/appearance.store'
+import { useAppearanceStore, type ThemeMode, type FontSizeLevel, type AppLocale } from '../stores/appearance.store'
+import { useTranslation } from 'react-i18next'
 
 const { Text, Title } = Typography
 
 const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; icon?: string }[] = [
-  { value: 'openai', label: 'OpenAI', group: '国际' },
-  { value: 'groq', label: 'Groq', group: '国际' },
-  { value: 'mistral', label: 'Mistral AI', group: '国际' },
-  { value: 'xai', label: 'xAI (Grok)', group: '国际' },
-  { value: 'azure', label: 'Azure OpenAI', group: '国际' },
-  { value: 'vertex', label: 'Google Vertex AI', group: '国际' },
-  { value: 'bedrock', label: 'AWS Bedrock', group: '国际' },
-  { value: 'deepseek', label: 'DeepSeek (深度求索)', group: '国产' },
-  { value: 'qwen', label: '通义千问 (Qwen)', group: '国产' },
-  { value: 'zhipu', label: '智谱 AI (GLM)', group: '国产' },
-  { value: 'volcengine', label: '火山引擎 (豆包)', group: '国产' },
-  { value: 'moonshot', label: 'Moonshot (Kimi)', group: '国产' },
-  { value: 'yi', label: '零一万物 (Yi)', group: '国产' },
-  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: '本地' },
-  { value: 'lmstudio', label: 'LM Studio', group: '本地' },
+  { value: 'openai', label: 'OpenAI', group: 'international' },
+  { value: 'groq', label: 'Groq', group: 'international' },
+  { value: 'mistral', label: 'Mistral AI', group: 'international' },
+  { value: 'xai', label: 'xAI (Grok)', group: 'international' },
+  { value: 'azure', label: 'Azure OpenAI', group: 'international' },
+  { value: 'vertex', label: 'Google Vertex AI', group: 'international' },
+  { value: 'bedrock', label: 'AWS Bedrock', group: 'international' },
+  { value: 'deepseek', label: 'DeepSeek (深度求索)', group: 'domestic' },
+  { value: 'qwen', label: '通义千问 (Qwen)', group: 'domestic' },
+  { value: 'zhipu', label: '智谱 AI (GLM)', group: 'domestic' },
+  { value: 'volcengine', label: '火山引擎 (豆包)', group: 'domestic' },
+  { value: 'moonshot', label: 'Moonshot (Kimi)', group: 'domestic' },
+  { value: 'yi', label: '零一万物 (Yi)', group: 'domestic' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: 'local' },
+  { value: 'lmstudio', label: 'LM Studio', group: 'local' },
 ]
 
 const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string }> = {
@@ -84,10 +85,17 @@ const getProviderTypeLabel = (type: string): string => {
 
 const getProviderTypeGroup = (type: string): string => {
   const info = PROVIDER_TYPES.find((p) => p.value === type)
-  return info?.group || '其他'
+  return info?.group || 'other'
+}
+
+const GROUP_COLOR_MAP: Record<string, string> = {
+  domestic: 'red',
+  local: 'green',
+  international: 'blue',
 }
 
 const Settings: React.FC = () => {
+  const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -104,6 +112,8 @@ const Settings: React.FC = () => {
   const fontSizeLevel = useAppearanceStore((s) => s.fontSizeLevel)
   const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
   const setFontSizeLevel = useAppearanceStore((s) => s.setFontSizeLevel)
+  const locale = useAppearanceStore((s) => s.locale)
+  const setLocale = useAppearanceStore((s) => s.setLocale)
 
   useEffect(() => {
     loadProviders()
@@ -114,7 +124,7 @@ const Settings: React.FC = () => {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
     } catch (error) {
-      console.error('加载LLM提供商失败:', error)
+      console.error('Failed to load LLM providers:', error)
     }
   }
 
@@ -171,10 +181,10 @@ const Settings: React.FC = () => {
   const handleDelete = async (id: string) => {
     try {
       await window.electronAPI.llm.deleteProvider(id)
-      message.success('已删除')
+      message.success(t('settings.deleted'))
       loadProviders()
     } catch {
-      message.error('删除失败')
+      message.error(t('settings.deleteFailed'))
     }
   }
 
@@ -189,10 +199,10 @@ const Settings: React.FC = () => {
       }
       if (editingProvider) {
         await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
-        message.success('更新成功')
+        message.success(t('settings.updated'))
       } else {
         await window.electronAPI.llm.createProvider(providerData)
-        message.success('添加成功')
+        message.success(t('settings.added'))
       }
       setModalVisible(false)
       loadProviders()
@@ -208,12 +218,12 @@ const Settings: React.FC = () => {
     try {
       const result = await window.electronAPI.llm.testConnection({ provider_id: id })
       if (result.success) {
-        message.success(`连接成功! 延迟: ${result.latency}ms`)
+        message.success(t('settings.testSuccess', { latency: result.latency }))
       } else {
-        message.error(`连接失败: ${result.error}`)
+        message.error(t('settings.testFailed', { error: result.error }))
       }
     } catch {
-      message.error('测试连接失败')
+      message.error(t('settings.testConnectionFailed'))
     } finally {
       setTestingId(null)
     }
@@ -290,34 +300,34 @@ const Settings: React.FC = () => {
   }
 
   const modelColumns = [
-    { title: '名称', dataIndex: 'name', key: 'name', width: 120 },
-    { title: '模型 ID', dataIndex: 'model', key: 'model', width: 160 },
-    { title: '温度', dataIndex: 'temperature', key: 'temperature', width: 60 },
-    { title: '最大 Token', dataIndex: 'max_tokens', key: 'max_tokens', width: 90 },
-    { title: '最大重试', dataIndex: 'max_retry', key: 'max_retry', width: 80, 
+    { title: t('settings.providerName'), dataIndex: 'name', key: 'name', width: 120 },
+    { title: t('settings.modelId'), dataIndex: 'model', key: 'model', width: 160 },
+    { title: t('settings.temperature'), dataIndex: 'temperature', key: 'temperature', width: 60 },
+    { title: t('settings.maxToken'), dataIndex: 'max_tokens', key: 'max_tokens', width: 90 },
+    { title: t('settings.maxRetry'), dataIndex: 'max_retry', key: 'max_retry', width: 80,
       render: (r: number | undefined) => r ?? 100 },
     {
-      title: '思考模式',
+      title: t('settings.thinkingMode'),
       key: 'thinking',
       width: 80,
       render: (_: any, record: LLMModelConfig) =>
-        record.enable_thinking ? <Tag color="blue" icon={<BulbOutlined />}>开启</Tag> : <Tag>关闭</Tag>,
+        record.enable_thinking ? <Tag color="blue" icon={<BulbOutlined />}>{t('common.on')}</Tag> : <Tag>{t('common.off')}</Tag>,
     },
     {
-      title: '默认',
+      title: t('settings.defaultModel'),
       dataIndex: 'is_default',
       key: 'is_default',
       width: 60,
       render: (isDefault: boolean) => isDefault ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null,
     },
     {
-      title: '操作',
+      title: t('common.edit'),
       key: 'actions',
       width: 80,
       render: (_: any, record: LLMModelConfig) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEditModel(record)} />
-          <Popconfirm title="确定删除?" onConfirm={() => handleDeleteModel(record.id)}>
+          <Popconfirm title={t('common.confirmDelete')} onConfirm={() => handleDeleteModel(record.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -327,42 +337,48 @@ const Settings: React.FC = () => {
 
   const columns = [
     {
-      title: '名称',
+      title: t('settings.providerName'),
       dataIndex: 'name',
       key: 'name',
       width: 140,
     },
     {
-      title: '类型',
+      title: t('settings.providerType'),
       dataIndex: 'provider_type',
       key: 'provider_type',
       width: 140,
       render: (type: string) => {
         const group = getProviderTypeGroup(type)
         const label = getProviderTypeLabel(type)
+        const groupTranslationMap: Record<string, string> = {
+          domestic: t('settings.providerGroupDomestic'),
+          local: t('settings.providerGroupLocal'),
+          international: t('settings.providerGroupInternational'),
+          other: t('settings.providerGroupOther'),
+        }
         return (
           <Space size={4}>
-            <Tag color={group === '国产' ? 'red' : group === '本地' ? 'green' : 'blue'} style={{ fontSize: 11 }}>{group}</Tag>
+            <Tag color={GROUP_COLOR_MAP[group] || 'default'} style={{ fontSize: 11 }}>{groupTranslationMap[group] || group}</Tag>
             <span style={{ fontSize: 12 }}>{label}</span>
           </Space>
         )
       },
     },
     {
-      title: '模型',
+      title: t('settings.modelConfig'),
       key: 'model_info',
       render: (_: any, record: LLMProvider) => {
         const modelCount = record.models_json ? JSON.parse(record.models_json).length : 0
         return (
           <Space size={4} orientation="vertical" style={{ lineHeight: 1.4 }}>
             <Text style={{ fontSize: 12 }}>{record.model}</Text>
-            {modelCount > 0 && <Text type="secondary" style={{ fontSize: 11 }}>{modelCount} 个模型配置</Text>}
+            {modelCount > 0 && <Text type="secondary" style={{ fontSize: 11 }}>{t('settings.modelCount', { count: modelCount })}</Text>}
           </Space>
         )
       },
     },
     {
-      title: '默认',
+      title: t('settings.defaultModel'),
       dataIndex: 'is_default',
       key: 'is_default',
       width: 80,
@@ -370,7 +386,7 @@ const Settings: React.FC = () => {
         isDefault ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null,
     },
     {
-      title: '操作',
+      title: t('common.edit'),
       key: 'actions',
       width: 200,
       render: (_: any, record: LLMProvider) => (
@@ -381,12 +397,12 @@ const Settings: React.FC = () => {
             onClick={() => handleTestConnection(record.id)}
             loading={testingId === record.id}
           >
-            测试
+            {t('settings.testConnection')}
           </Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
-          <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm title={t('common.confirmDelete')} onConfirm={() => handleDelete(record.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -396,25 +412,25 @@ const Settings: React.FC = () => {
 
   const providerTypeOptions = [
     {
-      label: '本地服务商',
-      options: PROVIDER_TYPES.filter(p => p.group === '本地').map(p => ({ value: p.value, label: p.label })),
+      label: t('settings.localProviders'),
+      options: PROVIDER_TYPES.filter(p => p.group === 'local').map(p => ({ value: p.value, label: p.label })),
     },
     {
-      label: '国产服务商',
-      options: PROVIDER_TYPES.filter(p => p.group === '国产').map(p => ({ value: p.value, label: p.label })),
+      label: t('settings.domesticProviders'),
+      options: PROVIDER_TYPES.filter(p => p.group === 'domestic').map(p => ({ value: p.value, label: p.label })),
     },
     {
-      label: '国际服务商',
-      options: PROVIDER_TYPES.filter(p => p.group === '国际').map(p => ({ value: p.value, label: p.label })),
+      label: t('settings.internationalProviders'),
+      options: PROVIDER_TYPES.filter(p => p.group === 'international').map(p => ({ value: p.value, label: p.label })),
     },
   ]
 
   const llmTabContent = (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={5} style={{ margin: 0 }}>LLM 提供商</Title>
+        <Title level={5} style={{ margin: 0 }}>{t('settings.llmProviders')}</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-          添加提供商
+          {t('settings.addProvider')}
         </Button>
       </div>
 
@@ -424,77 +440,77 @@ const Settings: React.FC = () => {
         rowKey="id"
         pagination={false}
         scroll={{ y: 400 }}
-        locale={{ emptyText: '暂无提供商，点击上方按钮添加' }}
+        locale={{ emptyText: t('settings.noProviders') }}
       />
     </div>
   )
 
   const storageTabContent = (
     <div>
-      <Title level={5}>数据存储</Title>
+      <Title level={5}>{t('settings.storageTitle')}</Title>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <Text strong>数据存储目录</Text>
+            <Text strong>{t('settings.dataDir')}</Text>
             <br />
-            <Text type="secondary">所有项目、员工和对话数据存储位置</Text>
+            <Text type="secondary">{t('settings.dataDirDesc')}</Text>
           </div>
-          <Button icon={<FolderOutlined />}>选择目录</Button>
+          <Button icon={<FolderOutlined />}>{t('settings.selectDir')}</Button>
         </div>
         <Divider />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <Text strong>自动备份</Text>
+            <Text strong>{t('settings.autoBackup')}</Text>
             <br />
-            <Text type="secondary">定期备份数据库和配置</Text>
+            <Text type="secondary">{t('settings.autoBackupDesc')}</Text>
           </div>
           <Select defaultValue="manual" style={{ width: 150 }} options={[
-            { value: 'manual', label: '手动' },
-            { value: 'daily', label: '每天' },
-            { value: 'weekly', label: '每周' },
+            { value: 'manual', label: t('settings.backupManual') },
+            { value: 'daily', label: t('settings.backupDaily') },
+            { value: 'weekly', label: t('settings.backupWeekly') },
           ]} />
         </div>
         <Divider />
-        <Button danger>清除所有数据</Button>
+        <Button danger>{t('settings.clearAllData')}</Button>
       </div>
     </div>
   )
 
   const appearanceTabContent = (
     <div>
-      <Title level={5}>主题设置</Title>
+      <Title level={5}>{t('settings.appearanceTitle')}</Title>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>主题模式</Text>
+          <Text strong>{t('settings.themeMode')}</Text>
           <Radio.Group
             value={themeMode}
             optionType="button"
             buttonStyle="solid"
             onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
           >
-            <Radio.Button value="light">亮色</Radio.Button>
-            <Radio.Button value="dark">暗色</Radio.Button>
-            <Radio.Button value="system">跟随系统</Radio.Button>
+            <Radio.Button value="light">{t('settings.light')}</Radio.Button>
+            <Radio.Button value="dark">{t('settings.dark')}</Radio.Button>
+            <Radio.Button value="system">{t('settings.system')}</Radio.Button>
           </Radio.Group>
         </div>
         <Divider />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>字体大小</Text>
+          <Text strong>{t('settings.fontSize')}</Text>
           <Radio.Group
             value={fontSizeLevel}
             optionType="button"
             buttonStyle="solid"
             onChange={(e) => setFontSizeLevel(e.target.value as FontSizeLevel)}
           >
-            <Radio.Button value="small">小</Radio.Button>
-            <Radio.Button value="medium">中</Radio.Button>
-            <Radio.Button value="large">大</Radio.Button>
+            <Radio.Button value="small">{t('settings.small')}</Radio.Button>
+            <Radio.Button value="medium">{t('settings.medium')}</Radio.Button>
+            <Radio.Button value="large">{t('settings.large')}</Radio.Button>
           </Radio.Group>
         </div>
         <Divider />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>界面语言</Text>
-          <Radio.Group defaultValue="zh-CN" optionType="button" buttonStyle="solid">
+          <Text strong>{t('settings.language')}</Text>
+          <Radio.Group value={locale} optionType="button" buttonStyle="solid" onChange={(e) => setLocale(e.target.value as AppLocale)}>
             <Radio.Button value="zh-CN">中文</Radio.Button>
             <Radio.Button value="en-US">English</Radio.Button>
           </Radio.Group>
@@ -505,18 +521,18 @@ const Settings: React.FC = () => {
 
   const aboutTabContent = (
     <div>
-      <Title level={5}>关于 WorkAvatar</Title>
+      <Title level={5}>{t('settings.aboutTitle')}</Title>
       <Space orientation="vertical" style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Text type="secondary">版本号</Text>
+          <Text type="secondary">{t('settings.version')}</Text>
           <Text>1.0.0-dev</Text>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Text type="secondary">构建日期</Text>
+          <Text type="secondary">{t('settings.buildDate')}</Text>
           <Text>2026-05-06</Text>
         </div>
         <Divider />
-        <Button block>导出日志</Button>
+        <Button block>{t('settings.exportLogs')}</Button>
       </Space>
     </div>
   )
@@ -526,7 +542,7 @@ const Settings: React.FC = () => {
       key: 'llm',
       label: (
         <span>
-          <ApiOutlined /> LLM 配置
+          <ApiOutlined /> {t('settings.tabLlm')}
         </span>
       ),
       children: llmTabContent,
@@ -535,7 +551,7 @@ const Settings: React.FC = () => {
       key: 'storage',
       label: (
         <span>
-          <SaveOutlined /> 存储
+          <SaveOutlined /> {t('settings.tabStorage')}
         </span>
       ),
       children: storageTabContent,
@@ -544,14 +560,14 @@ const Settings: React.FC = () => {
       key: 'appearance',
       label: (
         <span>
-          <SettingOutlined /> 外观
+          <SettingOutlined /> {t('settings.tabAppearance')}
         </span>
       ),
       children: appearanceTabContent,
     },
     {
       key: 'about',
-      label: '关于',
+      label: t('settings.tabAbout'),
       children: aboutTabContent,
     },
   ]
@@ -563,20 +579,20 @@ const Settings: React.FC = () => {
       </Card>
 
       <Modal
-        title={editingProvider ? '编辑 LLM 提供商' : '添加 LLM 提供商'}
+        title={editingProvider ? t('settings.editProvider') : t('settings.addProviderModal')}
         open={modalVisible}
         onOk={handleSave}
         onCancel={() => setModalVisible(false)}
         width={780}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', gap: 16 }}>
-            <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]} style={{ flex: 1 }}>
-              <Input placeholder="例如：我的 DeepSeek" />
+            <Form.Item name="name" label={t('settings.providerName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
+              <Input placeholder="DeepSeek" />
             </Form.Item>
-            <Form.Item name="provider_type" label="提供商类型" rules={[{ required: true }]} style={{ flex: 1 }}>
+            <Form.Item name="provider_type" label={t('settings.providerType')} rules={[{ required: true }]} style={{ flex: 1 }}>
               <Select
                 options={providerTypeOptions}
                 onChange={handleProviderTypeChange}
@@ -586,12 +602,12 @@ const Settings: React.FC = () => {
 
           <div style={{ display: 'flex', gap: 16 }}>
             <Form.Item name="base_url" label={
-              <span>API 端点 <Tooltip title="包含完整路径，如 https://api.deepseek.com/v1。选择服务商类型后会自动填充默认端点，也可手动修改"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+              <span>{t('settings.apiEndpoint')} <Tooltip title={t('settings.apiEndpointTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
             } style={{ flex: 1 }}>
               <Input placeholder="https://api.openai.com/v1" />
             </Form.Item>
-            <Form.Item name="api_key" label="API Key" style={{ flex: 1 }}
-              extra="仅输入时更新，留空保持不变">
+            <Form.Item name="api_key" label={t('settings.apiKey')} style={{ flex: 1 }}
+              extra={t('settings.apiKeyHint')}>
               <Input.Password placeholder="sk-..." />
             </Form.Item>
           </div>
@@ -603,13 +619,13 @@ const Settings: React.FC = () => {
             items={[
               {
                 key: 'models',
-                label: <span><SettingOutlined /> 模型配置</span>,
+                label: <span><SettingOutlined /> {t('settings.modelConfig')}</span>,
                 children: (
                   <>
                     <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text type="secondary">为该提供商配置可用模型，每个模型可独立设置参数和思考模式</Text>
+                      <Text type="secondary">{t('settings.modelConfigHint')}</Text>
                       <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAddModel}>
-                        添加模型
+                        {t('settings.addModel')}
                       </Button>
                     </div>
                     <Table
@@ -618,7 +634,7 @@ const Settings: React.FC = () => {
                       rowKey="id"
                       size="small"
                       pagination={false}
-                      locale={{ emptyText: '暂无配置的模型，请先添加' }}
+                      locale={{ emptyText: t('settings.noModels') }}
                       scroll={{ x: 650 }}
                     />
                   </>
@@ -633,21 +649,21 @@ const Settings: React.FC = () => {
             items={[
               {
                 key: 'defaults',
-                label: <span><SettingOutlined /> 默认参数（适用于未单独配置的模型）</span>,
+                label: <span><SettingOutlined /> {t('settings.defaultParams')}</span>,
                 children: (
                   <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                    <Form.Item name="model" label="默认模型" rules={[{ required: true, message: '请输入模型名称' }]}>
+                    <Form.Item name="model" label={t('settings.defaultModel')} rules={[{ required: true, message: t('settings.enterModelName') }]}>
                       <Input placeholder="gpt-4o-mini" style={{ width: 180 }} />
                     </Form.Item>
                     <Form.Item name="temperature" label={
-                      <span>温度 <Tooltip title="控制随机性，0=确定性，2=高随机性"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                      <span>{t('settings.temperature')} <Tooltip title={t('settings.temperatureTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>
                       <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
                     </Form.Item>
-                    <Form.Item name="max_tokens" label="最大 Token">
+                    <Form.Item name="max_tokens" label={t('settings.maxToken')}>
                       <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
                     </Form.Item>
-                    <Form.Item name="timeout_ms" label="超时(ms)">
+                    <Form.Item name="timeout_ms" label={t('settings.timeout')}>
                       <InputNumber min={1000} max={300000} step={1000} style={{ width: 140 }} />
                     </Form.Item>
                   </div>
@@ -662,16 +678,16 @@ const Settings: React.FC = () => {
             items={[
               {
                 key: 'advanced',
-                label: <span><GlobalOutlined /> 高级配置</span>,
+                label: <span><GlobalOutlined /> {t('settings.advancedConfig')}</span>,
                 children: (
                   <>
                     <Form.Item name="extra_headers_json" label={
-                      <span>额外请求头 (JSON) <Tooltip title={'自定义 HTTP 请求头，如火山引擎的认证头。格式：{"Header-Name": "value"}'}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                      <span>{t('settings.extraHeaders')} <Tooltip title={t('settings.extraHeadersTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>
                       <Input.TextArea rows={2} placeholder='{"X-Custom-Header": "value"}' />
                     </Form.Item>
                     <Form.Item name="extra_body_json" label={
-                      <span>额外请求体 (JSON) <Tooltip title="追加到每次 API 请求体中的额外参数，如服务商特有的配置项"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                      <span>{t('settings.extraBody')} <Tooltip title={t('settings.extraBodyTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>
                       <Input.TextArea rows={2} placeholder='{"key": "value"}' />
                     </Form.Item>
@@ -681,49 +697,49 @@ const Settings: React.FC = () => {
             ]}
           />
 
-          <Form.Item name="is_default" valuePropName="checked" label="设为默认提供商">
+          <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefault')}>
             <Switch />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={editingModel ? '编辑模型' : '添加模型'}
+        title={editingModel ? t('settings.editModel') : t('settings.addModelModal')}
         open={modelModalVisible}
         onOk={handleSaveModel}
         onCancel={() => setModelModalVisible(false)}
         width={600}
-        okText="保存"
-        cancelText="取消"
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
       >
         <Form form={modelForm} layout="vertical" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', gap: 16 }}>
-            <Form.Item name="name" label="显示名称" rules={[{ required: true, message: '请输入名称' }]} style={{ flex: 1 }}>
-              <Input placeholder="例如：DeepSeek-V3" />
+            <Form.Item name="name" label={t('settings.displayName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
+              <Input placeholder="DeepSeek-V3" />
             </Form.Item>
-            <Form.Item name="model" label="模型 ID" rules={[{ required: true, message: '请输入模型 ID' }]} style={{ flex: 1 }}>
+            <Form.Item name="model" label={t('settings.modelId')} rules={[{ required: true, message: t('settings.enterModelId') }]} style={{ flex: 1 }}>
               <Input placeholder="deepseek-chat" />
             </Form.Item>
           </div>
 
-          <Divider plain>生成参数</Divider>
+          <Divider plain>{t('settings.generateParams')}</Divider>
 
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             <Form.Item name="temperature" label={
-              <span>Temperature <Tooltip title="控制随机性，0=确定性输出，2=高随机性"><QuestionCircleOutlined /></Tooltip></span>
+              <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
             }>
               <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
             </Form.Item>
-            <Form.Item name="max_tokens" label="最大 Token">
+            <Form.Item name="max_tokens" label={t('settings.maxToken')}>
               <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
             </Form.Item>
             <Form.Item name="max_retry" label={
-              <span>最大重试次数 <Tooltip title="工具调用最大循环次数，超过则返回错误"><QuestionCircleOutlined /></Tooltip></span>
+              <span>{t('settings.maxRetry')} <Tooltip title={t('settings.maxRetryTooltip')}><QuestionCircleOutlined /></Tooltip></span>
             }>
               <InputNumber min={1} max={1000} step={10} style={{ width: 140 }} />
             </Form.Item>
             <Form.Item name="top_p" label={
-              <span>Top P <Tooltip title="核采样参数，与 temperature 配合使用，通常二选一"><QuestionCircleOutlined /></Tooltip></span>
+              <span>{t('settings.topP')} <Tooltip title={t('settings.topPTooltip')}><QuestionCircleOutlined /></Tooltip></span>
             }>
               <InputNumber min={0} max={1} step={0.05} style={{ width: 120 }} />
             </Form.Item>
@@ -731,24 +747,24 @@ const Settings: React.FC = () => {
 
           <div style={{ display: 'flex', gap: 16 }}>
             <Form.Item name="frequency_penalty" label={
-              <span>频率惩罚 <Tooltip title="-2~2，正值降低重复用词频率"><QuestionCircleOutlined /></Tooltip></span>
+              <span>{t('settings.frequencyPenalty')} <Tooltip title={t('settings.frequencyPenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
             }>
               <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
             </Form.Item>
             <Form.Item name="presence_penalty" label={
-              <span>存在惩罚 <Tooltip title="-2~2，正值增加话题多样性"><QuestionCircleOutlined /></Tooltip></span>
+              <span>{t('settings.presencePenalty')} <Tooltip title={t('settings.presencePenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
             }>
               <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
             </Form.Item>
           </div>
 
           <Divider plain>
-            <BulbOutlined /> 思考模式（Reasoning / Thinking）
+            <BulbOutlined /> {t('settings.thinkingMode')}
           </Divider>
 
           <div style={{ background: token.colorBgContainerDisabled, padding: 16, borderRadius: 8, marginBottom: 16 }}>
             <Form.Item name="enable_thinking" valuePropName="checked" label={
-              <span>启用思考模式 <Tooltip title="开启后，模型会先进行内部推理再给出回答。DeepSeek Reasoner 通过 reasoning_content 返回思考过程，通义千问通过 enable_thinking 参数开启"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+              <span>{t('settings.enableThinking')} <Tooltip title={t('settings.enableThinkingTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
             } style={{ marginBottom: 8 }}>
               <Switch />
             </Form.Item>
@@ -756,20 +772,19 @@ const Settings: React.FC = () => {
               {({ getFieldValue }) =>
                 getFieldValue('enable_thinking') ? (
                   <Form.Item name="thinking_budget" label={
-                    <span>思考预算 (Token) <Tooltip title="模型思考过程的最大 Token 数，仅部分服务商支持"><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                    <span>{t('settings.thinkingBudget')} <Tooltip title={t('settings.thinkingBudgetTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                   }>
-                    <InputNumber min={0} max={32768} step={1024} style={{ width: 180 }} placeholder="如 8192" />
+                    <InputNumber min={0} max={32768} step={1024} style={{ width: 180 }} placeholder={t('settings.thinkingBudgetPlaceholder')} />
                   </Form.Item>
                 ) : null
               }
             </Form.Item>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              支持思考模式的服务商：DeepSeek (deepseek-reasoner)、通义千问 (Qwen/QwQ)、智谱 GLM (GLM-Z1) 等。
-              开启后模型会先输出推理过程，再给出最终回答。
+              {t('settings.thinkingSupportDesc')}
             </Text>
           </div>
 
-          <Form.Item name="is_default" valuePropName="checked" label="设为该提供商的默认模型">
+          <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefaultModel')}>
             <Switch />
           </Form.Item>
         </Form>

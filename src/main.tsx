@@ -3,7 +3,9 @@ import ReactDOM from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 import { ConfigProvider, theme as antdTheme, App as AntApp } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
+import enUS from 'antd/locale/en_US'
 import router from './router'
+import './i18n'
 import './styles/index.css'
 import {
   useAppearanceStore,
@@ -14,9 +16,15 @@ import {
   listenSystemThemeChange,
 } from './stores/appearance.store'
 
+const ANT_LOCALE_MAP: Record<string, any> = {
+  'zh-CN': zhCN,
+  'en-US': enUS,
+}
+
 const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const fontSizeLevel = useAppearanceStore((s) => s.fontSizeLevel)
+  const locale = useAppearanceStore((s) => s.locale)
   const initialize = useAppearanceStore((s) => s.initialize)
 
   useEffect(() => {
@@ -26,6 +34,8 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   }, [initialize])
 
   const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
+
+  const antLocale = useMemo(() => ANT_LOCALE_MAP[locale] || zhCN, [locale])
 
   const themeConfig = useMemo(
     () => ({
@@ -52,7 +62,7 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   )
 
   return (
-    <ConfigProvider locale={zhCN} theme={themeConfig}>
+    <ConfigProvider locale={antLocale} theme={themeConfig}>
       <AntApp>
         {children}
       </AntApp>

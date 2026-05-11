@@ -26,6 +26,7 @@ import PageHeader from '../components/common/PageHeader'
 import type { File, ParseResult } from '../types'
 import type { TabsProps } from 'antd'
 import { formatFileSize } from '../utils/format'
+import { useTranslation } from 'react-i18next'
 
 const { Text, Paragraph } = Typography
 
@@ -38,16 +39,8 @@ const getStatusColor = (status: string) => {
   }
 }
 
-const getStatusText = (status: string) => {
-  switch (status) {
-    case 'completed': return '已完成'
-    case 'failed': return '失败'
-    case 'parsing': return '解析中'
-    default: return '待解析'
-  }
-}
-
 const DocumentViewer: React.FC = () => {
+  const { t } = useTranslation()
   const { message } = App.useApp()
   const { id, fileId } = useParams<{ id: string; fileId: string }>()
   const navigate = useNavigate()
@@ -59,6 +52,15 @@ const DocumentViewer: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [highlightText, setHighlightText] = useState<string | null>(null)
   const textContainerRef = useRef<HTMLDivElement>(null)
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'completed': return t('documentViewer.completed')
+      case 'failed': return t('documentViewer.failed')
+      case 'parsing': return t('documentViewer.parsing')
+      default: return t('documentViewer.pending')
+    }
+  }
 
   useEffect(() => {
     if (fileId) {
@@ -109,9 +111,9 @@ const DocumentViewer: React.FC = () => {
       if (result?.project_id) {
         try {
           const project = await window.electronAPI.project.get(result.project_id)
-          setProjectName(project?.name || '项目')
+          setProjectName(project?.name || t('documentViewer.defaultProject'))
         } catch {
-          setProjectName('项目')
+          setProjectName(t('documentViewer.defaultProject'))
         }
       }
 
@@ -120,11 +122,11 @@ const DocumentViewer: React.FC = () => {
           const parsed = JSON.parse(result.parsed_json)
           setParseResult(parsed)
         } catch {
-          message.error('解析结果格式错误')
+          message.error(t('documentViewer.parseResultError'))
         }
       }
     } catch {
-      message.error('加载文件失败')
+      message.error(t('documentViewer.loadFileFailed'))
     } finally {
       setLoading(false)
     }
@@ -135,13 +137,13 @@ const DocumentViewer: React.FC = () => {
       setLoading(true)
       const result = await window.electronAPI.file.parse({ file_id: fileId! })
       if (result.success) {
-        message.success('重新解析成功')
+        message.success(t('documentViewer.reparseSuccess'))
         loadFile()
       } else {
-        message.error(result.error || '解析失败')
+        message.error(result.error || t('documentViewer.parseFailed'))
       }
     } catch {
-      message.error('重新解析失败')
+      message.error(t('documentViewer.reparseFailed'))
     } finally {
       setLoading(false)
     }
@@ -151,7 +153,7 @@ const DocumentViewer: React.FC = () => {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
         <Spin size="large" />
-        <Paragraph style={{ marginTop: 16 }}>加载中...</Paragraph>
+        <Paragraph style={{ marginTop: 16 }}>{t('documentViewer.loading')}</Paragraph>
       </div>
     )
   }
@@ -159,9 +161,9 @@ const DocumentViewer: React.FC = () => {
   if (!file) {
     return (
       <div style={{ padding: 24 }}>
-        <Empty description="文件不存在" />
+        <Empty description={t('documentViewer.fileNotFound')} />
         <Button onClick={() => navigate(`/project/${id}`)} style={{ marginTop: 16 }}>
-          返回项目
+          {t('documentViewer.backToProject')}
         </Button>
       </div>
     )
@@ -173,7 +175,7 @@ const DocumentViewer: React.FC = () => {
       label: (
         <Space>
           <FileTextOutlined />
-          文本内容
+          {t('documentViewer.tabText')}
         </Space>
       ),
       children: (
@@ -196,10 +198,10 @@ const DocumentViewer: React.FC = () => {
               {parseResult.fullText}
             </div>
           ) : (
-            <Empty description="暂无文本内容">
+            <Empty description={t('documentViewer.noTextContent')}>
               {file.status !== 'completed' && (
                 <Button type="primary" onClick={handleReparse} style={{ marginTop: 16 }}>
-                  解析文件
+                  {t('documentViewer.parseFile')}
                 </Button>
               )}
             </Empty>
@@ -212,7 +214,7 @@ const DocumentViewer: React.FC = () => {
       label: (
         <Space>
           <BookOutlined />
-          章节结构
+          {t('documentViewer.tabChapters')}
           {parseResult?.sections?.length ? <Tag>{parseResult.sections.length}</Tag> : null}
         </Space>
       ),
@@ -232,13 +234,13 @@ const DocumentViewer: React.FC = () => {
                   }
                 >
                   <Paragraph style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                    {section.content || '<无内容>'}
+                    {section.content || t('documentViewer.noContent')}
                   </Paragraph>
                 </Card>
               ))}
             </div>
           ) : (
-            <Empty description="未检测到章节结构" />
+            <Empty description={t('documentViewer.noChapters')} />
           )}
         </div>
       ),
@@ -248,7 +250,7 @@ const DocumentViewer: React.FC = () => {
       label: (
         <Space>
           <TableOutlined />
-          表格数据
+          {t('documentViewer.tabTables')}
           {parseResult?.tables?.length ? <Tag>{parseResult.tables.length}</Tag> : null}
         </Space>
       ),
@@ -257,7 +259,7 @@ const DocumentViewer: React.FC = () => {
           {parseResult?.tables && parseResult.tables.length > 0 ? (
             <Space orientation="vertical" style={{ width: '100%' }} size={16}>
               {parseResult.tables.map((table, idx) => (
-                <Card key={idx} size="small" title={table.context || `表格 ${idx + 1}`}>
+                <Card key={idx} size="small" title={table.context || t('documentViewer.table', { index: idx + 1 })}>
                   <Table
                     size="small"
                     bordered
@@ -280,7 +282,7 @@ const DocumentViewer: React.FC = () => {
               ))}
             </Space>
           ) : (
-            <Empty description="未检测到表格数据" />
+            <Empty description={t('documentViewer.noTables')} />
           )}
         </div>
       ),
@@ -290,36 +292,36 @@ const DocumentViewer: React.FC = () => {
       label: (
         <Space>
           <InfoCircleOutlined />
-          元数据
+          {t('documentViewer.tabMetadata')}
         </Space>
       ),
       children: (
         <div>
           <Descriptions bordered column={2}>
-            <Descriptions.Item label="文件ID">{file.id}</Descriptions.Item>
-            <Descriptions.Item label="原始文件名">{file.original_name}</Descriptions.Item>
-            <Descriptions.Item label="文件类型">
+            <Descriptions.Item label={t('documentViewer.fileId')}>{file.id}</Descriptions.Item>
+            <Descriptions.Item label={t('documentViewer.originalName')}>{file.original_name}</Descriptions.Item>
+            <Descriptions.Item label={t('documentViewer.fileType')}>
               <Tag>{file.type}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="文件大小">{formatFileSize(file.size)}</Descriptions.Item>
-            <Descriptions.Item label="解析状态">
+            <Descriptions.Item label={t('documentViewer.fileSize')}>{formatFileSize(file.size)}</Descriptions.Item>
+            <Descriptions.Item label={t('documentViewer.parseStatus')}>
               <Tag color={getStatusColor(file.status)}>{getStatusText(file.status)}</Tag>
             </Descriptions.Item>
-            <Descriptions.Item label="规则数量">{file.rule_count || 0}</Descriptions.Item>
-            <Descriptions.Item label="问答对数量">{file.qa_count || 0}</Descriptions.Item>
-            <Descriptions.Item label="创建时间">
+            <Descriptions.Item label={t('documentViewer.ruleCount')}>{file.rule_count || 0}</Descriptions.Item>
+            <Descriptions.Item label={t('documentViewer.qaCount')}>{file.qa_count || 0}</Descriptions.Item>
+            <Descriptions.Item label={t('documentViewer.createTime')}>
               {new Date(file.created_at * 1000).toLocaleString()}
             </Descriptions.Item>
-            <Descriptions.Item label="更新时间">
+            <Descriptions.Item label={t('documentViewer.updateTime')}>
               {new Date(file.updated_at * 1000).toLocaleString()}
             </Descriptions.Item>
-            {file.hash && <Descriptions.Item label="文件哈希">{file.hash}</Descriptions.Item>}
+            {file.hash && <Descriptions.Item label={t('documentViewer.fileHash')}>{file.hash}</Descriptions.Item>}
           </Descriptions>
 
           {parseResult?.metadata && Object.keys(parseResult.metadata).length > 0 && (
             <>
               <Divider />
-              <Text strong>解析元数据</Text>
+              <Text strong>{t('documentViewer.parseMetadata')}</Text>
               <Descriptions bordered column={2} style={{ marginTop: 16 }}>
                 {Object.entries(parseResult.metadata).map(([key, value]) => (
                   <Descriptions.Item key={key} label={key}>
@@ -333,7 +335,7 @@ const DocumentViewer: React.FC = () => {
           {file.error_message && (
             <>
               <Divider />
-              <Alert title="解析错误" description={file.error_message} type="error" showIcon />
+              <Alert title={t('documentViewer.parseError')} description={file.error_message} type="error" showIcon />
             </>
           )}
         </div>
@@ -345,26 +347,26 @@ const DocumentViewer: React.FC = () => {
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <PageHeader
         title={file.original_name}
-        subTitle="文档预览"
+        subTitle={t('documentViewer.breadcrumbDocPreview')}
         onBack={() => navigate(`/project/${id}`)}
         breadcrumb={[
-          { title: '仪表盘' },
+          { title: t('documentViewer.breadcrumbDashboard') },
           { title: projectName },
-          { title: '文档预览' },
+          { title: t('documentViewer.breadcrumbDocPreview') },
         ]}
         extra={
           <Space>
             {highlightText && (
               <Tag color="orange" closable onClose={() => setHighlightText(null)}>
-                高亮模式
+                {t('documentViewer.highlightMode')}
               </Tag>
             )}
             {file.status === 'completed' && (
-              <Button onClick={handleReparse}>重新解析</Button>
+              <Button onClick={handleReparse}>{t('documentViewer.reparse')}</Button>
             )}
             {file.status !== 'completed' && file.status !== 'parsing' && (
               <Button type="primary" onClick={handleReparse}>
-                解析文件
+                {t('documentViewer.parseFile')}
               </Button>
             )}
           </Space>

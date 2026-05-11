@@ -7,6 +7,7 @@ import {
   SettingOutlined,
   BookOutlined,
 } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import TaskProgressPanel from './components/common/TaskProgressPanel'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
@@ -17,6 +18,7 @@ const { Title } = Typography
 const App: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(true)
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
@@ -35,31 +37,31 @@ const App: React.FC = () => {
     {
       key: 'dashboard',
       icon: <RocketOutlined />,
-      label: '仪表盘',
+      label: t('nav.dashboard'),
       onClick: () => navigate('/dashboard'),
     },
     {
       key: 'projects',
       icon: <FolderOpenOutlined />,
-      label: '项目管理',
+      label: t('nav.projects'),
       onClick: () => navigate('/projects'),
     },
     {
       key: 'employees',
       icon: <UserOutlined />,
-      label: '数字员工',
+      label: t('nav.employees'),
       onClick: () => navigate('/employees'),
     },
     {
       key: 'knowledge-base',
       icon: <BookOutlined />,
-      label: '知识库',
+      label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
     },
     {
       key: 'settings',
       icon: <SettingOutlined />,
-      label: '全局设置',
+      label: t('nav.settings'),
       onClick: () => navigate('/settings'),
     },
   ]

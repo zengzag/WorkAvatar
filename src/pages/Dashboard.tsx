@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme } from 'antd'
 import {
   RocketOutlined,
@@ -17,11 +18,12 @@ import { useAppStore } from '../stores/app.store'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
 import type { Project, Employee } from '../types'
-import { EMPLOYEE_STATUS_COLOR_MAP, EMPLOYEE_STATUS_TEXT_MAP } from '../utils/status'
+import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
 
 const { Text } = Typography
 
 const Dashboard: React.FC = () => {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = theme.useToken()
@@ -52,7 +54,7 @@ const Dashboard: React.FC = () => {
       setProjects(result.projects)
     } catch (error) {
       console.error('加载项目失败:', error)
-      message.error('加载项目失败')
+      message.error(t('dashboard.loadProjectsFailed'))
     } finally {
       setLoading('projects', false)
     }
@@ -64,6 +66,7 @@ const Dashboard: React.FC = () => {
       setEmployees(result)
     } catch (error) {
       console.error('加载数字员工失败:', error)
+      message.error(t('dashboard.loadEmployeesFailed'))
     }
   }
 
@@ -80,16 +83,16 @@ const Dashboard: React.FC = () => {
     try {
       const documentsPath = await window.electronAPI.app.getPath({ name: 'documents' })
       const project = await window.electronAPI.project.create({
-        name: `项目 ${dayjs().format('MMDDHHmm')}`,
-        description: '新建的数字员工项目',
+        name: t('dashboard.defaultProjectName', { date: dayjs().format('MMDDHHmm') }),
+        description: t('dashboard.defaultProjectDesc'),
         root_path: documentsPath,
       })
       addProject(project as Project)
-      message.success('项目创建成功')
+      message.success(t('dashboard.projectCreated'))
       navigate(`/project/${project.id}`)
     } catch (error) {
       console.error('创建项目失败:', error)
-      message.error('创建项目失败')
+      message.error(t('dashboard.projectCreateFailed'))
     }
   }
 
@@ -97,10 +100,10 @@ const Dashboard: React.FC = () => {
     try {
       await window.electronAPI.project.delete(id)
       setProjects(projects.filter(p => p.id !== id))
-      message.success('项目删除成功')
+      message.success(t('dashboard.projectDeleted'))
     } catch (error) {
       console.error('删除项目失败:', error)
-      message.error('删除项目失败')
+      message.error(t('dashboard.projectDeleteFailed'))
     }
   }
 
@@ -108,10 +111,10 @@ const Dashboard: React.FC = () => {
     try {
       await window.electronAPI.employee.delete(id)
       setEmployees(employees.filter(e => e.id !== id))
-      message.success('数字员工删除成功')
+      message.success(t('dashboard.employeeDeleted'))
     } catch (error) {
       console.error('删除数字员工失败:', error)
-      message.error('删除数字员工失败')
+      message.error(t('dashboard.employeeDeleteFailed'))
     }
   }
 
@@ -124,19 +127,19 @@ const Dashboard: React.FC = () => {
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <RocketOutlined style={{ fontSize: 48, color: token.colorPrimary, marginBottom: 16 }} />
           <Typography.Title level={3} style={{ marginBottom: 8 }}>
-            欢迎使用 WorkAvatar
+            {t('dashboard.welcome')}
           </Typography.Title>
           <Typography.Text type="secondary">
-            本地优先的零代码数字员工自动生成平台
+            {t('dashboard.subtitle')}
           </Typography.Text>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginBottom: 32 }}>
           <Button type="primary" size="large" icon={<PlusOutlined />} onClick={handleCreateProject}>
-            创建项目
+            {t('dashboard.createProject')}
           </Button>
           <Button size="large" icon={<RobotOutlined />} onClick={() => navigate('/settings')}>
-            配置 LLM 服务
+            {t('dashboard.configureLlm')}
           </Button>
         </div>
 
@@ -144,7 +147,7 @@ const Dashboard: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="项目总数"
+                title={t('dashboard.totalProjects')}
                 value={projects.length}
                 prefix={<FolderOpenOutlined style={{ color: token.colorPrimary }} />}
                 styles={{ content: { color: token.colorPrimary } }}
@@ -154,7 +157,7 @@ const Dashboard: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="数字员工"
+                title={t('dashboard.totalEmployees')}
                 value={totalEmployees}
                 prefix={<UserOutlined style={{ color: token.colorSuccess }} />}
                 styles={{ content: { color: token.colorSuccess } }}
@@ -164,7 +167,7 @@ const Dashboard: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="知识库数量"
+                title={t('dashboard.totalKnowledgeBases')}
                 value={totalKBs}
                 prefix={<DatabaseOutlined style={{ color: token.colorWarning }} />}
                 styles={{ content: { color: token.colorWarning } }}
@@ -174,7 +177,7 @@ const Dashboard: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="处理任务"
+                title={t('dashboard.processingTasks')}
                 value={employees.reduce((sum, e) => sum + (e.total_tasks || 0), 0)}
                 prefix={<RocketOutlined style={{ color: '#722ed1' }} />}
                 styles={{ content: { color: '#722ed1' } }}
@@ -188,14 +191,14 @@ const Dashboard: React.FC = () => {
         <Col span={12}>
           <Card
             id="projects"
-            title="最近项目"
+            title={t('dashboard.recentProjects')}
             extra={
               <Space>
                 <Button type="link" onClick={() => navigate('/projects')}>
-                  查看更多 <RightOutlined />
+                  {t('dashboard.viewMore')} <RightOutlined />
                 </Button>
                 <Button type="link" onClick={handleCreateProject}>
-                  <PlusOutlined /> 新建项目
+                  <PlusOutlined /> {t('dashboard.newProject')}
                 </Button>
               </Space>
             }
@@ -238,14 +241,14 @@ const Dashboard: React.FC = () => {
                     </div>
                     <Space>
                       <Button type="link" size="small" onClick={() => navigate(`/project/${item.id}`)}>
-                        打开
+                        {t('dashboard.open')}
                       </Button>
                       <Popconfirm
-                        title="确定删除该项目?"
-                        description="删除后项目下的所有文件和员工也将被删除，此操作不可撤销。"
+                        title={t('dashboard.confirmDeleteProject')}
+                        description={t('dashboard.deleteProjectDesc')}
                         onConfirm={() => handleDeleteProject(item.id)}
-                        okText="确定"
-                        cancelText="取消"
+                        okText={t('common.confirm')}
+                        cancelText={t('common.cancel')}
                       >
                         <Button type="link" size="small" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
@@ -255,9 +258,9 @@ const Dashboard: React.FC = () => {
               </div>
             ) : (
               <EmptyState
-                title="暂无项目"
-                description="创建您的第一个项目，开始构建数字员工"
-                actionText="创建项目"
+                title={t('dashboard.noProjects')}
+                description={t('dashboard.noProjectsDesc')}
+                actionText={t('dashboard.createProjectAction')}
                 onAction={handleCreateProject}
               />
             )}
@@ -267,14 +270,14 @@ const Dashboard: React.FC = () => {
         <Col span={12}>
           <Card
             id="employees"
-            title="数字员工"
+            title={t('dashboard.employeesSection')}
             extra={
               <Space>
                 <Button type="link" onClick={() => navigate('/employees')}>
-                  查看更多 <RightOutlined />
+                  {t('dashboard.viewMore')} <RightOutlined />
                 </Button>
                 <Button type="link" onClick={() => navigate('/settings')}>
-                  <SettingOutlined /> 设置
+                  <SettingOutlined /> {t('dashboard.settings')}
                 </Button>
               </Space>
             }
@@ -297,13 +300,13 @@ const Dashboard: React.FC = () => {
                         <Space>
                           <Text strong style={{ fontSize: 14 }}>{emp.name}</Text>
                           <Tag color={EMPLOYEE_STATUS_COLOR_MAP[emp.status]} style={{ fontSize: 11 }}>
-                            {EMPLOYEE_STATUS_TEXT_MAP[emp.status]}
+                            {getEmployeeStatusTextMap(t)[emp.status]}
                           </Tag>
                         </Space>
                       </div>
-                      <Tooltip title={emp.description || '暂无描述'}>
+                      <Tooltip title={emp.description || t('common.noDescription')}>
                         <Text type="secondary" style={{ fontSize: 12, display: 'block' }} ellipsis>
-                          {emp.description || '暂无描述'}
+                          {emp.description || t('common.noDescription')}
                         </Text>
                       </Tooltip>
                     </div>
@@ -314,14 +317,14 @@ const Dashboard: React.FC = () => {
                         icon={<EyeOutlined />}
                         onClick={() => navigate(`/employee/${emp.id}`)}
                       >
-                        工作台
+                        {t('dashboard.workbench')}
                       </Button>
                       <Popconfirm
-                        title="确定删除该数字员工?"
-                        description="删除后相关的对话记录也将被删除，此操作不可撤销。"
+                        title={t('dashboard.confirmDeleteEmployee')}
+                        description={t('dashboard.deleteEmployeeDesc')}
                         onConfirm={() => handleDeleteEmployee(emp.id)}
-                        okText="确定"
-                        cancelText="取消"
+                        okText={t('common.confirm')}
+                        cancelText={t('common.cancel')}
                       >
                         <Button type="link" size="small" danger icon={<DeleteOutlined />} />
                       </Popconfirm>
@@ -331,9 +334,9 @@ const Dashboard: React.FC = () => {
               </div>
             ) : (
               <EmptyState
-                title="暂无数字员工"
-                description="在项目中上传文件并创建数字员工"
-                actionText="查看项目"
+                title={t('dashboard.noEmployees')}
+                description={t('dashboard.noEmployeesDesc')}
+                actionText={t('dashboard.viewProjects')}
                 onAction={() => {
                   if (projects.length > 0) {
                     navigate(`/project/${projects[0].id}`)

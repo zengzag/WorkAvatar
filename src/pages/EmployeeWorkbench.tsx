@@ -43,11 +43,11 @@ import dayjs from 'dayjs'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Conversation, Message } from '../types'
+import { useTranslation } from 'react-i18next'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
 
-// 优化对话列表项组件，使用 memo 避免不必要的重渲染
 const ConversationItem = memo(({
   conv,
   isActive,
@@ -74,6 +74,7 @@ const ConversationItem = memo(({
   onDelete: (id: string, e: React.MouseEvent) => void
 }) => {
   const { token } = theme.useToken()
+  const { t } = useTranslation()
   return (
     <div
       onClick={() => !isEditing && onSelect(conv.id)}
@@ -97,7 +98,7 @@ const ConversationItem = memo(({
           />
         ) : (
           <Text style={{ fontSize: 13, maxWidth: 150 }} ellipsis>
-            {conv.title || `对话 ${dayjs(conv.created_at * 1000).format('MM/DD HH:mm')}`}
+            {conv.title || t('workbench.defaultConvTitle', { date: dayjs(conv.created_at * 1000).format('MM/DD HH:mm') })}
           </Text>
         )}
         <Space size={2}>
@@ -112,8 +113,8 @@ const ConversationItem = memo(({
             <>
               <Button type="text" size="small" icon={<EditOutlined />}
                 onClick={(e) => onStartEdit(conv, e)} />
-              <Popconfirm title="确认删除" onConfirm={(e) => onDelete(conv.id, e!)}
-                okText="确定" cancelText="取消">
+              <Popconfirm title={t('workbench.confirmDelete')} onConfirm={(e) => onDelete(conv.id, e!)}
+                okText={t('common.confirm')} cancelText={t('common.cancel')}>
                 <Button type="text" size="small" danger icon={<DeleteOutlined />}
                   onClick={(ev) => ev.stopPropagation()} />
               </Popconfirm>
@@ -122,7 +123,7 @@ const ConversationItem = memo(({
         </Space>
       </div>
       <Text type="secondary" style={{ fontSize: 11 }}>
-        {conv.message_count || 0} 条 · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
+        {t('common.messages', { count: conv.message_count || 0 })} · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
       </Text>
     </div>
   )
@@ -155,30 +156,6 @@ interface MessageWithThought extends Message {
   thoughtCollapsed?: boolean
   toolCalls?: ToolCallInfo[]
   segments?: MessageSegment[]
-}
-
-const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  calculator: '计算器',
-  date_time: '日期时间',
-  string_utils: '字符串处理',
-  shell_exec: '执行命令',
-  read_file: '读取文件',
-  write_file: '写入文件',
-  list_dir: '列出目录',
-  system_info: '系统信息',
-  web_search: '网络搜索',
-  web_fetch: '获取网页',
-  json_utils: 'JSON处理',
-  random_utils: '随机工具',
-  env_vars: '环境变量',
-  kb_overview: '知识库概览',
-  query_global_summary: '全局摘要查询',
-  query_knowledge_graph: '知识图谱查询',
-  query_chapters: '章节检索',
-  query_fulltext: '全文检索',
-  get_document_content: '获取文档内容',
-  activate_skill: '激活技能',
-  read_reference: '读取参考',
 }
 
 function ensureSegments(msg: MessageWithThought): MessageWithThought {
@@ -227,6 +204,32 @@ const EmployeeWorkbench: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
+  const { t } = useTranslation()
+
+  const TOOL_DISPLAY_NAMES: Record<string, string> = {
+    calculator: t('workbench.toolNames.calculator'),
+    date_time: t('workbench.toolNames.date_time'),
+    string_utils: t('workbench.toolNames.string_utils'),
+    shell_exec: t('workbench.toolNames.shell_exec'),
+    read_file: t('workbench.toolNames.read_file'),
+    write_file: t('workbench.toolNames.write_file'),
+    list_dir: t('workbench.toolNames.list_dir'),
+    system_info: t('workbench.toolNames.system_info'),
+    web_search: t('workbench.toolNames.web_search'),
+    web_fetch: t('workbench.toolNames.web_fetch'),
+    json_utils: t('workbench.toolNames.json_utils'),
+    random_utils: t('workbench.toolNames.random_utils'),
+    env_vars: t('workbench.toolNames.env_vars'),
+    kb_overview: t('workbench.toolNames.kb_overview'),
+    query_global_summary: t('workbench.toolNames.query_global_summary'),
+    query_knowledge_graph: t('workbench.toolNames.query_knowledge_graph'),
+    query_chapters: t('workbench.toolNames.query_chapters'),
+    query_fulltext: t('workbench.toolNames.query_fulltext'),
+    get_document_content: t('workbench.toolNames.get_document_content'),
+    activate_skill: t('workbench.toolNames.activate_skill'),
+    read_reference: t('workbench.toolNames.read_reference'),
+  }
+
   const [employee, setEmployee] = useState<any | null>(null)
   const [, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -242,14 +245,14 @@ const EmployeeWorkbench: React.FC = () => {
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('')
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [displayedCount, setDisplayedCount] = useState(10) // 初始显示10条
-  const [allConversations, setAllConversations] = useState<Conversation[]>([]) // 保存所有对话
+  const [displayedCount, setDisplayedCount] = useState(10)
+  const [allConversations, setAllConversations] = useState<Conversation[]>([])
   const conversationListRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
   const finishRef = useRef<(() => void) | null>(null)
-  const initializedRef = useRef(false) // 防止重复初始化
+  const initializedRef = useRef(false)
 
   useEffect(() => {
     if (id) {
@@ -258,7 +261,6 @@ const EmployeeWorkbench: React.FC = () => {
       loadProviders()
     }
     return () => {
-      // 组件卸载时重置初始化标志
       initializedRef.current = false
     }
   }, [id])
@@ -289,7 +291,7 @@ const EmployeeWorkbench: React.FC = () => {
       if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
       if (result.llm_model) setSelectedLlmModelId(result.llm_model)
     } catch {
-      message.error('加载员工信息失败')
+      message.error(t('workbench.loadEmployeeFailed'))
     }
   }
 
@@ -302,10 +304,8 @@ const EmployeeWorkbench: React.FC = () => {
       if (!initializedRef.current) {
         initializedRef.current = true
         if (result.length > 0) {
-          // 有历史对话，自动选择最近的第一个
           selectConversation(result[0].id)
         } else {
-          // 没有历史对话，自动创建一个新对话
           await startNewConversation()
         }
       }
@@ -314,18 +314,15 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }
 
-  // 加载更多对话
   const loadMoreConversations = () => {
     const nextCount = displayedCount + 10
     setDisplayedCount(nextCount)
     setConversations(allConversations.slice(0, nextCount))
   }
 
-  // 检测滚动到底部
   const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
     if (target.scrollHeight - target.scrollTop <= target.clientHeight + 10) {
-      // 距离底部10px时触发加载更多
       if (conversations.length < allConversations.length) {
         loadMoreConversations()
       }
@@ -345,7 +342,7 @@ const EmployeeWorkbench: React.FC = () => {
     try {
       const result = await window.electronAPI.conversation.create({
         employee_id: id!,
-        title: `对话 ${dayjs().format('MM/DD HH:mm')}`,
+        title: t('workbench.defaultConvTitle', { date: dayjs().format('MM/DD HH:mm') }),
       })
       const convId = (result as Conversation).id
       setAllConversations((prev) => [(result as Conversation), ...prev])
@@ -363,7 +360,7 @@ const EmployeeWorkbench: React.FC = () => {
 
       return convId
     } catch { 
-      message.error('创建对话失败') 
+      message.error(t('workbench.createConvFailed')) 
       setPendingMessage(null)
       return null
     } finally {
@@ -393,16 +390,15 @@ const EmployeeWorkbench: React.FC = () => {
     e.stopPropagation()
     try {
       await window.electronAPI.conversation.delete(convId)
-      // 同步更新两个状态
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
       setConversations((prev) => prev.filter((c) => c.id !== convId))
       if (activeConversationId === convId) {
         setActiveConversationId(null)
         setMessages([])
       }
-      message.success('删除成功')
+      message.success(t('workbench.deleteSuccess'))
     } catch {
-      message.error('删除失败')
+      message.error(t('workbench.deleteFailed'))
     }
   }
 
@@ -414,16 +410,16 @@ const EmployeeWorkbench: React.FC = () => {
       setConversations([])
       setActiveConversationId(null)
       setMessages([])
-      message.success('已清空所有对话')
+      message.success(t('workbench.clearAllSuccess'))
     } catch {
-      message.error('清空失败')
+      message.error(t('workbench.clearAllFailed'))
     }
   }
 
   const startEditTitle = (conv: Conversation, e: React.MouseEvent) => {
     e.stopPropagation()
     setEditingConversationId(conv.id)
-    setEditingTitle(conv.title || `对话 ${dayjs(conv.created_at * 1000).format('MM/DD HH:mm')}`)
+    setEditingTitle(conv.title || t('workbench.defaultConvTitle', { date: dayjs(conv.created_at * 1000).format('MM/DD HH:mm') }))
   }
 
   const saveEditTitle = async () => {
@@ -436,7 +432,6 @@ const EmployeeWorkbench: React.FC = () => {
         id: editingConversationId,
         title: editingTitle.trim()
       })
-      // 同步更新两个状态
       setAllConversations((prev) =>
         prev.map((c) =>
           c.id === editingConversationId
@@ -451,9 +446,9 @@ const EmployeeWorkbench: React.FC = () => {
             : c
         )
       )
-      message.success('重命名成功')
+      message.success(t('workbench.renameSuccess'))
     } catch {
-      message.error('重命名失败')
+      message.error(t('workbench.renameFailed'))
     } finally {
       setEditingConversationId(null)
     }
@@ -489,7 +484,7 @@ const EmployeeWorkbench: React.FC = () => {
   const sendMessage = async () => {
     const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
     if (!providerId) {
-      message.warning('请先在设置中配置 LLM 提供商')
+      message.warning(t('workbench.noLlmProvider'))
       return
     }
 
@@ -542,7 +537,6 @@ const EmployeeWorkbench: React.FC = () => {
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
           
-          // 在开始输出答案前，先结束并收起之前的思考过程
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].type === 'thinking' && segs[i].isStreaming) {
               segs[i] = { ...segs[i], isStreaming: false, collapsed: true }
@@ -572,7 +566,6 @@ const EmployeeWorkbench: React.FC = () => {
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
           
-          // 在开始新思考前，先结束之前所有仍在流式的内容
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].isStreaming && segs[i].type !== 'thinking') {
               segs[i] = { ...segs[i], isStreaming: false }
@@ -684,7 +677,7 @@ const EmployeeWorkbench: React.FC = () => {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMessageId
-            ? { ...m, content: `错误: ${error}`, isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
+            ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
             : m
         )
       )
@@ -713,8 +706,8 @@ const EmployeeWorkbench: React.FC = () => {
   const handleCopy = async (content: string) => {
     try {
       await navigator.clipboard.writeText(content)
-      message.success('已复制')
-    } catch { message.error('复制失败') }
+      message.success(t('common.copied'))
+    } catch { message.error(t('common.copyFailed')) }
   }
 
   const handleDeleteMessage = async (msgId: string) => {
@@ -727,9 +720,9 @@ const EmployeeWorkbench: React.FC = () => {
         messages_json: JSON.stringify(newMessages),
         message_count: newMessages.length,
       })
-      message.success('已删除')
+      message.success(t('common.deleted'))
     } catch {
-      message.error('删除失败')
+      message.error(t('common.deleteFailed'))
     }
   }
 
@@ -766,7 +759,6 @@ const EmployeeWorkbench: React.FC = () => {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
-      {/* 极简顶栏 */}
       <div style={{
         height: 48,
         display: 'flex',
@@ -778,14 +770,14 @@ const EmployeeWorkbench: React.FC = () => {
         flexShrink: 0,
       }}>
         <Space size={12}>
-          <Tooltip title="返回仪表盘">
+          <Tooltip title={t('workbench.backToDashboard')}>
             <Button type="text" icon={<ArrowLeftOutlined />}
               onClick={() => navigate('/dashboard')} style={{ fontSize: 16 }} />
           </Tooltip>
           <Text strong style={{ fontSize: 15 }}>{employee.name}</Text>
           <Tag color={employee.status === 'active' ? 'green' : employee.status === 'draft' ? 'default' : employee.status === 'paused' ? 'orange' : 'red'}
             style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-            {employee.status === 'active' ? '运行中' : employee.status === 'draft' ? '草稿' : employee.status === 'paused' ? '已暂停' : '错误'}
+            {employee.status === 'active' ? t('workbench.statusRunning') : employee.status === 'draft' ? t('workbench.statusDraft') : employee.status === 'paused' ? t('workbench.statusPaused') : t('workbench.statusError')}
           </Tag>
         </Space>
         <Space size={4}>
@@ -795,11 +787,11 @@ const EmployeeWorkbench: React.FC = () => {
             onProviderChange={setSelectedLlmProviderId}
             onModelChange={setSelectedLlmModelId}
           />
-          <Tooltip title="员工配置">
+          <Tooltip title={t('workbench.employeeConfig')}>
             <Button type="text" icon={<SettingOutlined />}
               onClick={() => navigate(`/employee/${id}/settings`)} />
           </Tooltip>
-          <Tooltip title={showSidePanel ? '关闭面板' : '历史对话'}>
+          <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
             <Button type="text"
               icon={showSidePanel ? <MenuFoldOutlined /> : <HistoryOutlined />}
               onClick={() => setShowSidePanel(!showSidePanel)}
@@ -809,9 +801,7 @@ const EmployeeWorkbench: React.FC = () => {
         </Space>
       </div>
 
-      {/* 主内容区域 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* 侧面板：对话列表 (可折叠) */}
         {showSidePanel && (
           <div style={{
             width: 280,
@@ -823,14 +813,14 @@ const EmployeeWorkbench: React.FC = () => {
           }}>
             <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
               <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
-                onClick={startNewConversation}>新对话</Button>
+                onClick={startNewConversation}>{t('workbench.newConv')}</Button>
               {conversations.length > 0 && (
                 <Popconfirm
-                  title="确认清空所有对话记录？"
-                  description="此操作不可恢复"
+                  title={t('workbench.confirmClearAll')}
+                  description={t('workbench.clearAllDesc')}
                   onConfirm={deleteAllConversations}
-                  okText="确认"
-                  cancelText="取消"
+                  okText={t('common.confirm')}
+                  cancelText={t('common.cancel')}
                 >
                   <Button danger icon={<ClearOutlined />} />
                 </Popconfirm>
@@ -858,7 +848,6 @@ const EmployeeWorkbench: React.FC = () => {
                 />
               ))}
               
-              {/* 加载更多按钮 */}
               {conversations.length < allConversations.length && (
                 <div style={{ padding: '12px', textAlign: 'center' }}>
                   <Button 
@@ -866,22 +855,20 @@ const EmployeeWorkbench: React.FC = () => {
                     block
                     onClick={loadMoreConversations}
                   >
-                    加载更多 ({conversations.length}/{allConversations.length})
+                    {t('workbench.loadMore', { current: conversations.length, total: allConversations.length })}
                   </Button>
                 </div>
               )}
               
               {conversations.length === 0 && (
-                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary, fontSize: 13 }}>暂无对话</div>
+                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary, fontSize: 13 }}>{t('workbench.noConv')}</div>
               )}
             </div>
           </div>
         )}
 
-        {/* 对话区域 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
-          {/* 消息列表 */}
           <div ref={chatContainerRef} onScroll={handleScroll}
             style={{
               flex: 1,
@@ -892,18 +879,13 @@ const EmployeeWorkbench: React.FC = () => {
               gap: 20,
             }}
           >
-            {/* 知识检索结果迷你提示 */}
-
-
-
             {messages.length === 0 && activeConversationId && (
               <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
                 <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
-                <Paragraph type="secondary" style={{ fontSize: 14 }}>在下方输入消息开始对话</Paragraph>
+                <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
               </div>
             )}
 
-            {/* 消息列表 - 时间线模式 */}
             {messages.map((msg) => {
               const displayMsg = msg.role === 'assistant' ? ensureSegments(msg) : msg
               return (
@@ -915,7 +897,6 @@ const EmployeeWorkbench: React.FC = () => {
                   alignItems: 'flex-start',
                 }}
               >
-                {/* 头像 */}
                 <div style={{
                   width: 36,
                   height: 36,
@@ -932,7 +913,6 @@ const EmployeeWorkbench: React.FC = () => {
                 </div>
 
                 <div style={{ maxWidth: '80%', minWidth: 0 }}>
-                  {/* 用户消息：简单气泡 */}
                   {msg.role === 'user' && (
                     <div>
                       <div style={{
@@ -948,8 +928,8 @@ const EmployeeWorkbench: React.FC = () => {
                       </div>
                       {!msg.isStreaming && (
                         <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
-                          <Popconfirm title="确认删除此消息" onConfirm={() => handleDeleteMessage(msg.id)}
-                            okText="确定" cancelText="取消">
+                          <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => handleDeleteMessage(msg.id)}
+                            okText={t('common.confirm')} cancelText={t('common.cancel')}>
                             <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
                           </Popconfirm>
                         </Space>
@@ -957,7 +937,6 @@ const EmployeeWorkbench: React.FC = () => {
                     </div>
                   )}
 
-                  {/* 助手消息：时间线分段渲染 */}
                   {msg.role === 'assistant' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
@@ -967,15 +946,13 @@ const EmployeeWorkbench: React.FC = () => {
                           background: token.colorBgLayout,
                           lineHeight: 1.7,
                         }}>
-                          <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>正在思考...</Text>
+                          <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>{t('workbench.thinking')}</Text>
                         </div>
                       )}
 
                       {displayMsg.segments && displayMsg.segments.length > 0 && (
                         <>
-                          {/* 时间线连接线 */}
                           <div style={{ position: 'relative', paddingLeft: 0 }}>
-                            {/* 先渲染各段 */}
                             {displayMsg.segments.map((seg) => {
                               const isToolPending = seg.type === 'tool_call' && !seg.isToolComplete
 
@@ -1005,11 +982,11 @@ const EmployeeWorkbench: React.FC = () => {
                                     >
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                         <BulbOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-                                        <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>思考过程</Text>
+                                        <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{t('workbench.thinkingProcess')}</Text>
                                         {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorPrimary }}>▊</span>}
                                         {!seg.isStreaming && (
                                           <Text style={{ fontSize: 11, color: token.colorPrimary, marginLeft: 'auto' }}>
-                                            {seg.collapsed ? '展开 ▸' : '折叠 ▾'}
+                                            {seg.collapsed ? t('workbench.expand') : t('workbench.collapse')}
                                           </Text>
                                         )}
                                       </div>
@@ -1070,16 +1047,16 @@ const EmployeeWorkbench: React.FC = () => {
                                         {isExpanded ? <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} /> : <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />}
                                         <CodeOutlined style={{ fontSize: 13, color: isToolPending ? token.colorPrimary : token.colorSuccess }} />
                                         <Text strong style={{ fontSize: 13, color: token.colorText }}>
-                                          {seg.toolName ? getToolDisplayName(seg.toolName) : '工具调用'}
+                                          {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
                                         </Text>
                                         <Text type="secondary" style={{ fontSize: 11 }}>({seg.toolName})</Text>
                                         {isToolPending ? (
                                           <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                            <LoadingOutlined spin /> 执行中
+                                            <LoadingOutlined spin /> {t('workbench.executing')}
                                           </Tag>
                                         ) : (
                                           <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-                                            <CheckCircleOutlined /> 完成
+                                            <CheckCircleOutlined /> {t('workbench.completed')}
                                           </Tag>
                                         )}
                                       </div>
@@ -1087,7 +1064,7 @@ const EmployeeWorkbench: React.FC = () => {
                                         <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '8px 12px' }}>
                                           {argsStr && (
                                             <div style={{ marginBottom: seg.toolResult !== undefined ? 8 : 0 }}>
-                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>输入参数</Text>
+                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>{t('workbench.inputParams')}</Text>
                                               <pre style={{
                                                 margin: 0,
                                                 padding: '6px 10px',
@@ -1107,7 +1084,7 @@ const EmployeeWorkbench: React.FC = () => {
                                           )}
                                           {seg.toolResult !== undefined && (
                                             <div>
-                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>返回结果</Text>
+                                              <Text type="secondary" style={{ fontSize: 11, marginBottom: 4, display: 'block' }}>{t('workbench.outputResult')}</Text>
                                               <pre style={{
                                                 margin: 0,
                                                 padding: '6px 10px',
@@ -1121,7 +1098,7 @@ const EmployeeWorkbench: React.FC = () => {
                                                 wordBreak: 'break-all',
                                                 border: `1px solid ${token.colorSuccessBorder}`,
                                               }}>
-                                                {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n...(结果已截断)' : resultStr}
+                                                {resultStr.length > 2000 ? resultStr.slice(0, 2000) + '\n' + t('workbench.resultTruncated') : resultStr}
                                               </pre>
                                             </div>
                                           )}
@@ -1160,7 +1137,6 @@ const EmployeeWorkbench: React.FC = () => {
                         </>
                       )}
 
-                      {/* 旧格式兜底：没有segments的assistant消息 */}
                       {(!displayMsg.segments || displayMsg.segments.length === 0) && msg.content && !msg.isStreaming && (
                         <div style={{
                           padding: '10px 16px',
@@ -1178,15 +1154,14 @@ const EmployeeWorkbench: React.FC = () => {
                         </div>
                       )}
 
-                      {/* 操作按钮 */}
                       {!msg.isStreaming && !msg.isError && msg.content && (
                         <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
                           <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                             onClick={() => handleCopy(msg.content)} />
                           <Button type="text" size="small" icon={<LikeOutlined style={{ fontSize: 12 }} />} />
                           <Button type="text" size="small" icon={<DislikeOutlined style={{ fontSize: 12 }} />} />
-                          <Popconfirm title="确认删除此消息" onConfirm={() => handleDeleteMessage(msg.id)}
-                            okText="确定" cancelText="取消">
+                          <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => handleDeleteMessage(msg.id)}
+                            okText={t('common.confirm')} cancelText={t('common.cancel')}>
                             <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
                           </Popconfirm>
                         </Space>
@@ -1199,7 +1174,6 @@ const EmployeeWorkbench: React.FC = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* 底部快捷标签 */}
           <div style={{
             display: 'flex',
             justifyContent: 'center',
@@ -1207,11 +1181,10 @@ const EmployeeWorkbench: React.FC = () => {
             padding: '0 0 4px',
           }}>
             <Tag color="green" style={{ cursor: 'pointer', fontSize: 12, borderRadius: 12 }}>
-              <DatabaseOutlined /> 知识库
+              <DatabaseOutlined /> {t('workbench.knowledgeBase')}
             </Tag>
           </div>
 
-          {/* 输入区域 */}
           <div
             style={{
               padding: '12px 10% 20px 10%',
@@ -1244,7 +1217,7 @@ const EmployeeWorkbench: React.FC = () => {
                     handleSend()
                   }
                 }}
-                placeholder='输入消息，Enter发送，Shift+Enter换行...'
+                placeholder={t('workbench.inputPlaceholder')}
                 autoSize={{ minRows: 1, maxRows: 5 }}
                 disabled={isStreaming}
                 style={{

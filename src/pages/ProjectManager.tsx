@@ -24,12 +24,14 @@ import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
 import type { Project } from '../types'
+import { useTranslation } from 'react-i18next'
 
 const { Text } = Typography
 
 const ProjectManager: React.FC = () => {
   const navigate = useNavigate()
   const { token } = theme.useToken()
+  const { t } = useTranslation()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [loadingTable, setLoadingTable] = useState(false)
   const [renameModalOpen, setRenameModalOpen] = useState(false)
@@ -48,7 +50,7 @@ const ProjectManager: React.FC = () => {
       setProjects(result.projects)
     } catch (error) {
       console.error('加载项目失败:', error)
-      message.error('加载项目失败')
+      message.error(t('projectManager.loadFailed'))
     } finally {
       setLoadingTable(false)
       setLoading('projects', false)
@@ -59,16 +61,16 @@ const ProjectManager: React.FC = () => {
     try {
       const documentsPath = await window.electronAPI.app.getPath({ name: 'documents' })
       const project = await window.electronAPI.project.create({
-        name: `项目 ${dayjs().format('MMDDHHmm')}`,
-        description: '新建的数字员工项目',
+        name: t('projectManager.defaultProjectName', { date: dayjs().format('MMDDHHmm') }),
+        description: t('projectManager.defaultProjectDesc'),
         root_path: documentsPath,
       })
       addProject(project as Project)
-      message.success('项目创建成功')
+      message.success(t('projectManager.createSuccess'))
       navigate(`/project/${project.id}`)
     } catch (error) {
       console.error('创建项目失败:', error)
-      message.error('创建项目失败')
+      message.error(t('projectManager.createFailed'))
     }
   }
 
@@ -76,10 +78,10 @@ const ProjectManager: React.FC = () => {
     try {
       await window.electronAPI.project.delete(id)
       setProjects(projects.filter((p) => p.id !== id))
-      message.success('项目删除成功')
+      message.success(t('projectManager.deleteSuccess'))
     } catch (error) {
       console.error('删除项目失败:', error)
-      message.error('删除项目失败')
+      message.error(t('projectManager.deleteFailed'))
     }
   }
 
@@ -91,7 +93,7 @@ const ProjectManager: React.FC = () => {
 
   const confirmRenameProject = async () => {
     if (!newProjectName.trim() || !currentProject) {
-      message.error('项目名称不能为空')
+      message.error(t('projectManager.nameRequired'))
       return
     }
     try {
@@ -100,17 +102,17 @@ const ProjectManager: React.FC = () => {
         name: newProjectName,
       })
       setProjects(projects.map(p => p.id === currentProject.id ? { ...p, name: newProjectName } : p))
-      message.success('项目重命名成功')
+      message.success(t('projectManager.renameSuccess'))
       setRenameModalOpen(false)
     } catch (error) {
       console.error('重命名项目失败:', error)
-      message.error('重命名项目失败')
+      message.error(t('projectManager.renameFailed'))
     }
   }
 
   const columns = [
     {
-      title: '项目名称',
+      title: t('projectManager.projectName'),
       dataIndex: 'name',
       key: 'name',
       render: (_: string, record: Project) => (
@@ -145,7 +147,7 @@ const ProjectManager: React.FC = () => {
               icon={<EyeOutlined />}
               onClick={() => navigate(`/project/${record.id}`)}
             >
-              查看
+              {t('projectManager.view')}
             </Button>
             <Button
               type="link"
@@ -153,17 +155,17 @@ const ProjectManager: React.FC = () => {
               icon={<EditOutlined />}
               onClick={() => handleRenameProject(record)}
             >
-              重命名
+              {t('common.rename')}
             </Button>
             <Popconfirm
-              title="确定删除该项目?"
-              description="删除后项目下的所有文件和员工也将被删除，此操作不可撤销。"
+              title={t('projectManager.confirmDeleteProject')}
+              description={t('projectManager.deleteProjectDesc')}
               onConfirm={() => handleDeleteProject(record.id)}
-              okText="确定"
-              cancelText="取消"
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
             >
               <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                删除
+                {t('common.delete')}
               </Button>
             </Popconfirm>
           </Space>
@@ -171,7 +173,7 @@ const ProjectManager: React.FC = () => {
       ),
     },
     {
-      title: '创建时间',
+      title: t('projectManager.createTime'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
@@ -183,15 +185,15 @@ const ProjectManager: React.FC = () => {
   return (
     <div style={{ padding: '16px 24px 24px' }}>
       <PageHeader
-        title="项目管理"
-        subTitle="管理所有数字员工项目"
+        title={t('projectManager.title')}
+        subTitle={t('projectManager.subtitle')}
         extra={
           <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={handleCreateProject}
           >
-            新建项目
+            {t('projectManager.newProject')}
           </Button>
         }
       />
@@ -207,24 +209,24 @@ const ProjectManager: React.FC = () => {
           />
         ) : (
           <EmptyState
-            title="暂无项目"
-            description="创建您的第一个项目，开始构建数字员工"
-            actionText="创建项目"
+            title={t('projectManager.noProjects')}
+            description={t('projectManager.noProjectsDesc')}
+            actionText={t('projectManager.createProjectAction')}
             onAction={handleCreateProject}
           />
         )}
       </Card>
 
       <Modal
-        title="重命名项目"
+        title={t('projectManager.renameProject')}
         open={renameModalOpen}
         onOk={confirmRenameProject}
         onCancel={() => setRenameModalOpen(false)}
-        okText="确定"
-        cancelText="取消"
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       >
         <Input
-          placeholder="请输入新的项目名称"
+          placeholder={t('projectManager.renamePlaceholder')}
           value={newProjectName}
           onChange={(e) => setNewProjectName(e.target.value)}
           onPressEnter={confirmRenameProject}

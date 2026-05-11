@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
+import i18n, { type AppLocale, saveLocale } from '../i18n'
+
+export type { AppLocale }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type FontSizeLevel = 'small' | 'medium' | 'large'
@@ -31,20 +34,24 @@ export const FONT_SIZE_XL_MAP: Record<FontSizeLevel, number> = {
 interface AppearanceState {
   themeMode: ThemeMode
   fontSizeLevel: FontSizeLevel
+  locale: AppLocale
   initialized: boolean
 
   setThemeMode: (mode: ThemeMode) => void
   setFontSizeLevel: (level: FontSizeLevel) => void
+  setLocale: (locale: AppLocale) => void
   initialize: () => Promise<void>
 }
 
 const SETTINGS_KEY_THEME = 'appearance_theme'
 const SETTINGS_KEY_FONT_SIZE = 'appearance_font_size'
+const SETTINGS_KEY_LOCALE = 'appearance_locale'
 
 export const useAppearanceStore = create<AppearanceState>()(
   immer((set, get) => ({
     themeMode: 'light',
     fontSizeLevel: 'medium',
+    locale: 'zh-CN',
     initialized: false,
 
     setThemeMode: (mode) => {
@@ -63,31 +70,47 @@ export const useAppearanceStore = create<AppearanceState>()(
       applyFontSizeToDOM(level)
     },
 
+    setLocale: (locale) => {
+      set((state) => {
+        state.locale = locale
+      })
+      saveLocale(locale)
+      i18n.changeLanguage(locale)
+      document.documentElement.setAttribute('data-locale', locale)
+    },
+
     initialize: async () => {
       if (get().initialized) return
       try {
-        const [savedTheme, savedFontSize] = await Promise.all([
+        const [savedTheme, savedFontSize, savedLocale] = await Promise.all([
           window.electronAPI.settings.get({ key: SETTINGS_KEY_THEME }),
           window.electronAPI.settings.get({ key: SETTINGS_KEY_FONT_SIZE }),
+          window.electronAPI.settings.get({ key: SETTINGS_KEY_LOCALE }),
         ])
 
         const themeMode = (savedTheme as ThemeMode) || 'light'
         const fontSizeLevel = (savedFontSize as FontSizeLevel) || 'medium'
+        const locale = (savedLocale as AppLocale) || 'zh-CN'
 
         set((state) => {
           state.themeMode = themeMode
           state.fontSizeLevel = fontSizeLevel
+          state.locale = locale
           state.initialized = true
         })
 
         applyThemeToDOM(themeMode)
         applyFontSizeToDOM(fontSizeLevel)
+        i18n.changeLanguage(locale)
+        document.documentElement.setAttribute('data-locale', locale)
       } catch {
         set((state) => {
           state.initialized = true
         })
         applyThemeToDOM('light')
         applyFontSizeToDOM('medium')
+        i18n.changeLanguage('zh-CN')
+        document.documentElement.setAttribute('data-locale', 'zh-CN')
       }
     },
   }))
