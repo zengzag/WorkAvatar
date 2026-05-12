@@ -8,6 +8,7 @@ export const APP_CHANNELS = {
 
   APP_GET_PATH: 'app:get-path',
   APP_SHOW_OPEN_DIALOG: 'app:show-open-dialog',
+  APP_SHOW_SAVE_DIALOG: 'app:show-save-dialog',
   APP_SHOW_MESSAGE_BOX: 'app:show-message-box',
 } as const
 
@@ -30,4 +31,11 @@ export interface AppShowOpenDialogParams {
   buttonLabel?: string
   filters?: Array<{ name: string; extensions: string[] }>
   properties?: Array<'openFile' | 'openDirectory' | 'multiSelections' | 'showHiddenFiles'>
+}
+
+export interface AppShowSaveDialogParams {
+  title?: string
+  defaultPath?: string
+  buttonLabel?: string
+  filters?: Array<{ name: string; extensions: string[] }>
 }

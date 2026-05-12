@@ -18,6 +18,7 @@ import type {
   ConversationCreateParams,
   AppGetPathParams,
   AppShowOpenDialogParams,
+  AppShowSaveDialogParams,
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
@@ -34,6 +35,11 @@ import type {
   KBUpdateParams,
   KBDocParseParams,
   KBLinkProjectParams,
+  KBExportFullParams,
+  KBExportSummaryParams,
+  KBExportDocumentsParams,
+  KBImportFullParams,
+  KBImportGraphParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -137,6 +143,7 @@ const electronAPI = {
   app: {
     getPath: (params: AppGetPathParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_PATH, params),
     showOpenDialog: (params: AppShowOpenDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, params),
+    showSaveDialog: (params: AppShowSaveDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, params),
     showMessageBox: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_MESSAGE_BOX, params),
   },
 
@@ -254,6 +261,21 @@ const electronAPI = {
     pauseAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_ALL_PARSES),
     resumeAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_ALL_PARSES),
     cancelAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_CANCEL_ALL_PARSES),
+    exportFull: (params: KBExportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_FULL, params),
+    exportSummary: (params: KBExportSummaryParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_SUMMARY, params),
+    exportDocuments: (params: KBExportDocumentsParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_DOCUMENTS, params),
+    importFull: (params: KBImportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_FULL, params),
+    importGraph: (params: KBImportGraphParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_GRAPH, params),
+    onExportProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KB_EXPORT_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_EXPORT_PROGRESS, handler)
+    },
+    onImportProgress: (callback: (progress: { kb_id?: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { kb_id?: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
+    },
   },
 }
 

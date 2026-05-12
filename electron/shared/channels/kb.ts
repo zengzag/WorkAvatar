@@ -44,6 +44,13 @@ export const KB_CHANNELS = {
   KB_PAUSE_ALL_PARSES: 'kb:pause-all-parses',
   KB_RESUME_ALL_PARSES: 'kb:resume-all-parses',
   KB_CANCEL_ALL_PARSES: 'kb:cancel-all-parses',
+  KB_EXPORT_FULL: 'kb:export-full',
+  KB_EXPORT_SUMMARY: 'kb:export-summary',
+  KB_EXPORT_DOCUMENTS: 'kb:export-documents',
+  KB_IMPORT_FULL: 'kb:import-full',
+  KB_IMPORT_GRAPH: 'kb:import-graph',
+  KB_EXPORT_PROGRESS: 'kb:export-progress',
+  KB_IMPORT_PROGRESS: 'kb:import-progress',
 } as const
 
 export interface KBCreateParams {
@@ -86,4 +93,34 @@ export interface KBBuildGlobalParams {
   provider_id?: string
   model_id?: string
   enable_thinking?: boolean
+}
+
+export interface KBExportFullParams {
+  kb_id: string
+  export_path: string
+}
+
+export interface KBExportSummaryParams {
+  kb_id: string
+  export_path: string
+  format: 'json-ld' | 'csv'
+}
+
+export interface KBExportDocumentsParams {
+  kb_id: string
+  export_path: string
+  doc_ids?: string[]
+}
+
+export interface KBImportFullParams {
+  import_path: string
+  kb_name?: string
+  conflict_strategy: 'skip' | 'overwrite' | 'rename'
+}
+
+export interface KBImportGraphParams {
+  kb_id: string
+  import_path: string
+  format: 'json-ld' | 'rdf'
+  conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }

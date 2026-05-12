@@ -37,6 +37,7 @@ export type {
   SettingsSetParams,
   AppGetPathParams,
   AppShowOpenDialogParams,
+  AppShowSaveDialogParams,
 } from './channels/app'
 export type {
   KBCreateParams,
@@ -46,4 +47,9 @@ export type {
   KBProcessDocumentParams,
   KBProcessAllParams,
   KBBuildGlobalParams,
+  KBExportFullParams,
+  KBExportSummaryParams,
+  KBExportDocumentsParams,
+  KBImportFullParams,
+  KBImportGraphParams,
 } from './channels/kb'

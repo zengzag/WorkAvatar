@@ -8,6 +8,11 @@ import type {
   KBProcessDocumentParams,
   KBProcessAllParams,
   KBBuildGlobalParams,
+  KBExportFullParams,
+  KBExportSummaryParams,
+  KBExportDocumentsParams,
+  KBImportFullParams,
+  KBImportGraphParams,
 } from '../../shared/ipc-channels'
 import type KnowledgeBaseService from '../services/kb.service'
 
@@ -211,5 +216,60 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
 
   ipcMain.handle(IPC_CHANNELS.KB_CANCEL_ALL_PARSES, () => {
     return kbService.cancelAllParses()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_EXPORT_FULL, async (event, params: KBExportFullParams) => {
+    return kbService.exportKBFull(
+      params.kb_id,
+      params.export_path,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.KB_EXPORT_PROGRESS, { kb_id: params.kb_id, stage, detail })
+      }
+    )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_EXPORT_SUMMARY, async (event, params: KBExportSummaryParams) => {
+    return kbService.exportKBSummary(
+      params.kb_id,
+      params.export_path,
+      params.format,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.KB_EXPORT_PROGRESS, { kb_id: params.kb_id, stage, detail })
+      }
+    )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_EXPORT_DOCUMENTS, async (event, params: KBExportDocumentsParams) => {
+    return kbService.exportKBDocuments(
+      params.kb_id,
+      params.export_path,
+      params.doc_ids,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.KB_EXPORT_PROGRESS, { kb_id: params.kb_id, stage, detail })
+      }
+    )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_IMPORT_FULL, async (event, params: KBImportFullParams) => {
+    return kbService.importKBFull(
+      params.import_path,
+      params.kb_name,
+      params.conflict_strategy,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.KB_IMPORT_PROGRESS, { stage, detail })
+      }
+    )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_IMPORT_GRAPH, async (event, params: KBImportGraphParams) => {
+    return kbService.importKBGraph(
+      params.kb_id,
+      params.import_path,
+      params.format,
+      params.conflict_strategy,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.KB_IMPORT_PROGRESS, { kb_id: params.kb_id, stage, detail })
+      }
+    )
   })
 }

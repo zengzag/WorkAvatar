@@ -30,11 +30,13 @@ import {
   ArrowRightOutlined,
   CheckOutlined,
   BulbOutlined,
+  BulbFilled,
   UserOutlined,
   EditOutlined,
   ToolOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
+import LLMSelector from '../components/llm/LLMSelector'
 import type { LLMProvider } from '../types'
 import { getProviderModels, getProviderModelOptions } from '../utils/llm'
 
@@ -64,11 +66,29 @@ const CreationWizard: React.FC = () => {
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('')
-  const [selectedModelId, setSelectedModelId] = useState<string>('')
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
+    return localStorage.getItem('creationWizard:selectedProviderId') || ''
+  })
+  const [selectedModelId, setSelectedModelId] = useState<string>(() => {
+    return localStorage.getItem('creationWizard:selectedModelId') || ''
+  })
+  const [enableThinking, setEnableThinking] = useState<boolean>(() => {
+    return localStorage.getItem('creationWizard:enableThinking') === 'true'
+  })
   const [businessDescription, setBusinessDescription] = useState<string>('')
   const [additionalResponsibilities, setAdditionalResponsibilities] = useState<string>('')
   const [step5ProviderId, setStep5ProviderId] = useState<string>('')
+
+  // Persist selections to localStorage
+  useEffect(() => {
+    localStorage.setItem('creationWizard:selectedProviderId', selectedProviderId)
+  }, [selectedProviderId])
+  useEffect(() => {
+    localStorage.setItem('creationWizard:selectedModelId', selectedModelId)
+  }, [selectedModelId])
+  useEffect(() => {
+    localStorage.setItem('creationWizard:enableThinking', String(enableThinking))
+  }, [enableThinking])
   const [analyzeStage, setAnalyzeStage] = useState<string>('')
   const [analyzeDetail, setAnalyzeDetail] = useState<string>('')
   const [analyzeChunks, setAnalyzeChunks] = useState<string[]>([])
@@ -161,6 +181,7 @@ const CreationWizard: React.FC = () => {
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: enhancedDescription || undefined,
+        enable_thinking: enableThinking,
       })
 
       if (result.success && result.profile) {
@@ -284,27 +305,21 @@ const CreationWizard: React.FC = () => {
         title={t('creationWizard.projectLinkedKb', { count: linkedKBs.length })}
         extra={
           <Space>
-            <Select
-              placeholder={t('creationWizard.selectProvider')}
-              style={{ width: 200 }}
-              value={selectedProviderId || undefined}
-              onChange={(value) => {
-                setSelectedProviderId(value)
-                setSelectedModelId('')
-              }}
-              options={providers.map((p) => ({ value: p.id, label: p.name }))}
-              allowClear
+            <LLMSelector
+              providerId={selectedProviderId}
+              modelId={selectedModelId}
+              onProviderChange={setSelectedProviderId}
+              onModelChange={setSelectedModelId}
             />
-            {selectedProviderId && getProviderModels(providers.find(p => p.id === selectedProviderId)!).length > 0 && (
-              <Select
-                placeholder={t('creationWizard.selectModel')}
-                style={{ width: 180 }}
-                value={selectedModelId || undefined}
-                onChange={setSelectedModelId}
-                options={getProviderModelOptions(providers.find(p => p.id === selectedProviderId)!)}
-                allowClear
+            <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
+              <Button
+                type={enableThinking ? 'primary' : 'text'}
+                icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                size="small"
+                onClick={() => setEnableThinking(!enableThinking)}
+                style={enableThinking ? {} : { color: token.colorTextSecondary }}
               />
-            )}
+            </Tooltip>
             <Button
               size="small"
               onClick={() => setSelectedKBIds(linkedKBs.map((kb: any) => kb.id))}

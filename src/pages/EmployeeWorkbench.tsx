@@ -71,9 +71,26 @@ const EmployeeWorkbench: React.FC = () => {
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(false)
-  const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>('')
-  const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>('')
-  const [enableThinking, setEnableThinking] = useState<boolean>(false)
+  const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
+    return localStorage.getItem('employeeWorkbench:selectedProviderId') || ''
+  })
+  const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>(() => {
+    return localStorage.getItem('employeeWorkbench:selectedModelId') || ''
+  })
+  const [enableThinking, setEnableThinking] = useState<boolean>(() => {
+    return localStorage.getItem('employeeWorkbench:enableThinking') === 'true'
+  })
+
+  // Persist selections to localStorage
+  useEffect(() => {
+    localStorage.setItem('employeeWorkbench:selectedProviderId', selectedLlmProviderId)
+  }, [selectedLlmProviderId])
+  useEffect(() => {
+    localStorage.setItem('employeeWorkbench:selectedModelId', selectedLlmModelId)
+  }, [selectedLlmModelId])
+  useEffect(() => {
+    localStorage.setItem('employeeWorkbench:enableThinking', String(enableThinking))
+  }, [enableThinking])
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [displayedCount, setDisplayedCount] = useState(10)

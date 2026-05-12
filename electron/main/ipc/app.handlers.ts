@@ -5,6 +5,7 @@ import type {
   SettingsSetParams,
   AppGetPathParams,
   AppShowOpenDialogParams,
+  AppShowSaveDialogParams,
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type OCRService from '../services/ocr.service'
@@ -30,6 +31,16 @@ export function registerAppHandlers(
       buttonLabel: params.buttonLabel,
       filters: params.filters,
       properties: params.properties,
+    })
+    return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, async (_, params: AppShowSaveDialogParams) => {
+    const result = await dialog.showSaveDialog({
+      title: params.title,
+      defaultPath: params.defaultPath,
+      buttonLabel: params.buttonLabel,
+      filters: params.filters,
     })
     return result
   })

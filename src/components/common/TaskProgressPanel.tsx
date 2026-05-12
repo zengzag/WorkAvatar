@@ -196,7 +196,6 @@ const TaskProgressPanel: React.FC = () => {
 
   const triggerContent = hasActive ? (
     <Space size={4} wrap>
-      <FieldTimeOutlined style={{ color: token.colorPrimary }} />
       {activeCount > 0 && <Tag color="blue" icon={<SyncOutlined spin />} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{activeCount}</Tag>}
       {pausedCount > 0 && <Tag color="gold" icon={<PauseCircleOutlined />} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{pausedCount}</Tag>}
       {failedCount > 0 && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{failedCount}</Tag>}
