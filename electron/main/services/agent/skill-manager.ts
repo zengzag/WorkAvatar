@@ -7,11 +7,13 @@ const FRONTMATTER_REGEX = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n/
 
 export class SkillManager {
   private skillsDirectories: string[]
+  private allowedSkillPaths?: string[]
   private skills: Map<string, Skill> = new Map()
   private logger?: (level: string, action: string, data: any) => void
 
-  constructor(skillsDirectories?: string[], logger?: (level: string, action: string, data: any) => void) {
+  constructor(skillsDirectories?: string[], allowedSkillPaths?: string[], logger?: (level: string, action: string, data: any) => void) {
     this.skillsDirectories = skillsDirectories || ['skills']
+    this.allowedSkillPaths = allowedSkillPaths
     this.logger = logger
   }
 
@@ -40,6 +42,11 @@ export class SkillManager {
         try {
           const skill = this.loadSkillMetadata(skillPath)
           if (skill) {
+            // 如果指定了允许的技能路径，只加载在允许列表中的技能
+            if (this.allowedSkillPaths && !this.allowedSkillPaths.includes(skillPath)) {
+              this.log('debug', 'skip_skill_not_allowed', { name: skill.name, path: skillPath })
+              continue
+            }
             this.skills.set(skill.name, skill)
             discovered.push(skill)
             this.log('debug', 'discover_skill', { name: skill.name, path: skillPath })
@@ -51,6 +58,34 @@ export class SkillManager {
     }
 
     return discovered
+  }
+
+  /**
+   * 手动加载特定的技能路径
+   */
+  loadSkillFromPath(skillPath: string): Skill | null {
+    if (!fs.existsSync(skillPath)) {
+      this.log('error', 'skill_path_not_exists', { path: skillPath })
+      return null
+    }
+
+    const skillFile = path.join(skillPath, 'SKILL.md')
+    if (!fs.existsSync(skillFile)) {
+      this.log('error', 'skill_md_not_exists', { path: skillPath })
+      return null
+    }
+
+    try {
+      const skill = this.loadSkillMetadata(skillPath)
+      if (skill) {
+        this.skills.set(skill.name, skill)
+        this.log('debug', 'load_skill_from_path', { name: skill.name, path: skillPath })
+        return skill
+      }
+    } catch (error) {
+      this.log('error', 'load_skill_failed', { path: skillPath, error: String(error) })
+    }
+    return null
   }
 
   getSkills(): Skill[] {

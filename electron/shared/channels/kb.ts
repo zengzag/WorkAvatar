@@ -20,6 +20,7 @@ export const KB_CHANNELS = {
   KB_GET_STATS: 'kb:get-stats',
   KB_GET_CHAPTERS: 'kb:get-chapters',
   KB_GET_DOC_SUMMARY: 'kb:get-doc-summary',
+  KB_GET_ALL_DOC_SUMMARIES: 'kb:get-all-doc-summaries',
   KB_GET_GLOBAL_SUMMARY: 'kb:get-global-summary',
   KB_GET_ENTITIES: 'kb:get-entities',
   KB_GET_ENTITY: 'kb:get-entity',
@@ -27,7 +28,6 @@ export const KB_CHANNELS = {
   KB_GET_ENTITY_MENTIONS: 'kb:get-entity-mentions',
   KB_SEARCH_CHAPTERS: 'kb:search-chapters',
   KB_SEARCH_DOC_SUMMARIES: 'kb:search-doc-summaries',
-  KB_GENERATE_TIMELINE: 'kb:generate-timeline',
   KB_GET_PROCESSING_JOBS: 'kb:get-processing-jobs',
   KB_GET_KBS_FOR_PROJECT: 'kb:get-kbs-for-project',
   KB_GET_DOC_CONTENT: 'kb:get-doc-content',
@@ -37,6 +37,13 @@ export const KB_CHANNELS = {
   KB_PROCESS_PROGRESS: 'kb:process-progress',
   KB_PROCESS_ALL_PROGRESS: 'kb:process-all-progress',
   KB_BUILD_GLOBAL_PROGRESS: 'kb:build-global-progress',
+  KB_PAUSE_PARSE: 'kb:pause-parse',
+  KB_RESUME_PARSE: 'kb:resume-parse',
+  KB_RETRY_PARSE: 'kb:retry-parse',
+  KB_GET_PARSE_DETAIL: 'kb:get-parse-detail',
+  KB_PAUSE_ALL_PARSES: 'kb:pause-all-parses',
+  KB_RESUME_ALL_PARSES: 'kb:resume-all-parses',
+  KB_CANCEL_ALL_PARSES: 'kb:cancel-all-parses',
 } as const
 
 export interface KBCreateParams {
@@ -58,4 +65,25 @@ export interface KBLinkProjectParams {
 export interface KBDocParseParams {
   doc_id: string
   provider_id?: string
+}
+
+export interface KBProcessDocumentParams {
+  doc_id: string
+  provider_id?: string
+  model_id?: string
+  enable_thinking?: boolean
+}
+
+export interface KBProcessAllParams {
+  kb_id: string
+  provider_id?: string
+  model_id?: string
+  enable_thinking?: boolean
+}
+
+export interface KBBuildGlobalParams {
+  kb_id: string
+  provider_id?: string
+  model_id?: string
+  enable_thinking?: boolean
 }

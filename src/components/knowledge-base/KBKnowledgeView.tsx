@@ -1,14 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Table, Tag, Button, Modal,
-  Empty, Statistic, Row, Col, Alert, Input, theme,
+  Empty, Statistic, Row, Col, Alert, theme,
 } from 'antd'
 import {
   FileTextOutlined, ThunderboltOutlined, ApartmentOutlined,
-  NodeIndexOutlined, ReadOutlined, HistoryOutlined,
-  SearchOutlined, RedoOutlined, EyeOutlined,
+  NodeIndexOutlined, ReadOutlined, RedoOutlined, EyeOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons'
-import LLMSelector from '../llm/LLMSelector'
+
 
 const { Text } = Typography
 
@@ -17,23 +17,16 @@ interface KBKnowledgeViewProps {
   globalSummary: any
   docSummaries: any[]
   allRelations: any[]
-  timeline: any[]
-  timelineTopic: string
-  processingDoc: boolean
+  processingDocId: string | null
   processingAll: boolean
   buildingGlobal: boolean
   processProgress: { stage: string; detail: string }
-  selectedProviderId: string
-  selectedModelId: string
-  onProviderChange: (id: string) => void
-  onModelChange: (id: string) => void
+
   onProcessAll: () => void
   onBuildGlobal: () => void
   onProcessDocument: (docId: string) => void
   onViewChapters: (docId: string, docName: string) => void
   onViewDocContent: (docId: string, docName: string) => void
-  onGenerateTimeline: () => void
-  onTimelineTopicChange: (topic: string) => void
   docChapters: any[]
   chapterModalOpen: boolean
   selectedDocSummary: string | null
@@ -42,18 +35,17 @@ interface KBKnowledgeViewProps {
   docContentTitle: string
   docContentModalOpen: boolean
   onCloseDocContentModal: () => void
+  onViewParseDetail?: (docId: string, docName: string) => void
 }
 
 const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
   knowledgeStats, globalSummary, docSummaries, allRelations,
-  timeline, timelineTopic, processingDoc, processingAll,
-  buildingGlobal, processProgress, selectedProviderId,
-  selectedModelId, onProviderChange, onModelChange,
+  processingDocId, processingAll, buildingGlobal, processProgress,
   onProcessAll, onBuildGlobal, onProcessDocument,
-  onViewChapters, onViewDocContent, onGenerateTimeline,
-  onTimelineTopicChange, docChapters, chapterModalOpen,
-  selectedDocSummary, onCloseChapterModal, docContent,
-  docContentTitle, docContentModalOpen, onCloseDocContentModal,
+  onViewChapters, onViewDocContent,
+  docChapters, chapterModalOpen, selectedDocSummary, onCloseChapterModal,
+  docContent, docContentTitle, docContentModalOpen, onCloseDocContentModal,
+  onViewParseDetail,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -67,19 +59,29 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
             <Typography.Title level={5} style={{ margin: 0 }}>{t('knowledgeBase.layeredKnowledge')}</Typography.Title>
           </Space>
           <Space>
-            <LLMSelector
-              providerId={selectedProviderId}
-              modelId={selectedModelId}
-              onProviderChange={onProviderChange}
-              onModelChange={onModelChange}
-            />
             <Button icon={<ThunderboltOutlined />} onClick={onProcessAll} loading={processingAll}>{t('knowledgeBase.processAllDocs')}</Button>
             <Button type="primary" icon={<ApartmentOutlined />} onClick={onBuildGlobal} loading={buildingGlobal}>{t('knowledgeBase.buildGlobalKnowledge')}</Button>
           </Space>
         </div>
 
-        {(processingDoc || processingAll || buildingGlobal) && processProgress.stage && (
-          <Alert type="info" title={processProgress.stage} description={processProgress.detail} style={{ marginBottom: 16 }} showIcon />
+        {(processingAll || buildingGlobal) && processProgress.stage && (
+          <Alert
+            type="info"
+            title={processProgress.stage}
+            description={processProgress.detail}
+            style={{ marginBottom: 16 }}
+            showIcon
+            action={
+              onViewParseDetail && processingDocId ? (
+                <Button size="small" icon={<InfoCircleOutlined />} onClick={() => {
+                  const doc = docSummaries.find((d: any) => d.doc_id === processingDocId)
+                  onViewParseDetail(processingDocId, doc?.doc_name || '')
+                }}>
+                  {t('parseProgress.detail')}
+                </Button>
+              ) : undefined
+            }
+          />
         )}
 
         {knowledgeStats && (
@@ -140,7 +142,7 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
                     <Space size="small">
                       <Button type="link" size="small" icon={<ReadOutlined />} onClick={() => onViewChapters(record.doc_id, record.doc_name)}>{t('knowledgeBase.chaptersBtn')}</Button>
                       <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => onViewDocContent(record.doc_id, record.doc_name)}>{t('knowledgeBase.original')}</Button>
-                      <Button type="link" size="small" icon={<RedoOutlined />} onClick={() => onProcessDocument(record.doc_id)} loading={processingDoc}>{t('knowledgeBase.reprocess')}</Button>
+                      <Button type="link" size="small" icon={<RedoOutlined />} onClick={() => onProcessDocument(record.doc_id)} loading={processingDocId === record.doc_id}>{t('knowledgeBase.reprocess')}</Button>
                     </Space>
                   ),
                 },
@@ -172,27 +174,6 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
         )}
       </Card>
 
-      <Card title={<Space><HistoryOutlined />{t('knowledgeBase.timeline')}</Space>}>
-        <Space style={{ marginBottom: 16 }}>
-          <Input placeholder={t('knowledgeBase.timelineFilterPlaceholder')} value={timelineTopic}
-            onChange={e => onTimelineTopicChange(e.target.value)} style={{ width: 300 }}
-            onPressEnter={onGenerateTimeline} />
-          <Button icon={<SearchOutlined />} onClick={onGenerateTimeline} type="primary">{t('knowledgeBase.generateTimeline')}</Button>
-        </Space>
-        {timeline.length > 0 ? (
-          <Table dataSource={timeline} rowKey={(r: any) => `${r.time}-${r.event}`} size="small" pagination={{ pageSize: 20 }}
-            scroll={{ x: 'max-content' }}
-            columns={[
-              { title: t('knowledgeBase.time'), dataIndex: 'time', key: 'time', width: 150 },
-              { title: t('knowledgeBase.event'), dataIndex: 'event', key: 'event', ellipsis: true },
-              { title: t('knowledgeBase.source'), dataIndex: 'source', key: 'source', width: 120, ellipsis: true },
-            ]}
-          />
-        ) : (
-          <Empty description={t('knowledgeBase.timelineEmpty')} />
-        )}
-      </Card>
-
       <Modal
         title={<Space><ReadOutlined />{selectedDocSummary} - {t('knowledgeBase.chapterList')}</Space>}
         open={chapterModalOpen}
@@ -203,11 +184,12 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
       >
         {docChapters.length > 0 ? (
           <Table dataSource={docChapters} rowKey="id" size="small" pagination={false}
+            scroll={{ x: 'max-content' }}
             columns={[
               { title: t('knowledgeBase.chapters'), dataIndex: 'title', key: 'title', width: 200,
                 render: (title: string) => <Text strong>{title}</Text>,
               },
-              { title: t('knowledgeBase.summary'), dataIndex: 'summary', key: 'summary',
+              { title: t('knowledgeBase.summary'), dataIndex: 'summary', key: 'summary', width: 350,
                 render: (summary: string) => <Text type="secondary" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{summary || t('knowledgeBase.noSummary')}</Text>,
               },
               { title: t('knowledgeBase.keywords'), dataIndex: 'keywords_json', key: 'keywords', width: 200,

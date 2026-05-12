@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Select, Space, Tag, theme } from 'antd'
+import { Select, Space, Tag, Input, theme } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { LLMProvider } from '../../types'
@@ -28,12 +28,20 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [providers, setProviders] = useState<LLMProvider[]>([])
+  const [customModel, setCustomModel] = useState(modelId || '')
 
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
       setProviders(result as LLMProvider[])
     }).catch(() => {})
   }, [])
+
+  const selectedProvider = providerId ? providers.find(p => p.id === providerId) : null
+  const modelOptions = selectedProvider
+    ? getProviderModels(selectedProvider)
+    : []
+
+  const hasModelOptions = modelOptions.length > 0
 
   const providerOptions = providers.map((p) => {
     const isDomestic = DOMESTIC_PROVIDERS.has(p.provider_type)
@@ -51,19 +59,24 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
     }
   })
 
-  const modelOptions = providerId
-    ? getProviderModels(providers.find(p => p.id === providerId)!).map((m) => ({
-        value: m.model,
-        label: (
-          <Space size={4}>
-            <span>{m.name}</span>
-            {m.enable_thinking && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.thinking')}</Tag>}
-          </Space>
-        ),
-      }))
-    : []
-
   const selectMaxWidth = 160
+
+  const handleProviderChange = (value: string) => {
+    onProviderChange(value)
+    onModelChange('')
+    setCustomModel('')
+  }
+
+  const handleModelSelect = (value: string) => {
+    onModelChange(value)
+    setCustomModel(value)
+  }
+
+  const handleCustomModelConfirm = () => {
+    if (customModel.trim()) {
+      onModelChange(customModel.trim())
+    }
+  }
 
   return (
     <Space size={8} style={style}>
@@ -73,10 +86,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
         placeholder={t('llmSelector.selectProvider')}
         style={{ minWidth: 100, maxWidth: selectMaxWidth }}
         value={providerId || undefined}
-        onChange={(value) => {
-          onProviderChange(value)
-          onModelChange('')
-        }}
+        onChange={handleProviderChange}
         optionLabelProp="label"
         showSearch
         filterOption={(input, option) =>
@@ -90,19 +100,35 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
         }))}
         allowClear
       />
-      {providerId && modelOptions.length > 0 && (
+      {providerId && hasModelOptions && (
         <Select
           size="small"
           placeholder={t('llmSelector.selectModel')}
           style={{ minWidth: 90, maxWidth: selectMaxWidth }}
           value={modelId || undefined}
-          onChange={onModelChange}
+          onChange={handleModelSelect}
           optionLabelProp="label"
           options={modelOptions.map((opt) => ({
-            value: opt.value,
-            label: <span style={ellipsisStyle}>{opt.label}</span>,
+            value: opt.model,
+            label: (
+              <Space size={4}>
+                <span style={ellipsisStyle}>{opt.name}</span>
+                {opt.enable_thinking && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.thinking')}</Tag>}
+              </Space>
+            ),
           }))}
           allowClear
+        />
+      )}
+      {providerId && !hasModelOptions && (
+        <Input
+          size="small"
+          placeholder={selectedProvider?.model || t('llmSelector.inputModel')}
+          value={customModel}
+          onChange={e => setCustomModel(e.target.value)}
+          onPressEnter={handleCustomModelConfirm}
+          onBlur={handleCustomModelConfirm}
+          style={{ minWidth: 90, maxWidth: selectMaxWidth }}
         />
       )}
     </Space>

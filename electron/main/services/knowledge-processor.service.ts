@@ -145,9 +145,10 @@ class KnowledgeProcessorService {
     chapterTitle: string,
     providerId: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
   ): Promise<ChapterSummary> {
-    onProgress?.('章节摘要', `正在生成章节摘要: ${chapterTitle}`)
+    onProgress?.('chapter_summary', `Generating chapter summary: ${chapterTitle}`)
 
     const prompt = `请为以下章节生成一个详细的摘要，包含以下内容：
 1. 章节的核心主题
@@ -172,7 +173,10 @@ ${chapterContent.substring(0, 8000)}
       const result = await this.llmClient.chat(providerId, [
         { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
         { role: 'user', content: prompt },
-      ], modelId ? { model: modelId } : undefined)
+      ], { 
+        ...(modelId ? { model: modelId } : {}),
+        enable_thinking: enableThinking,
+      })
 
       return this.parseJSON<ChapterSummary>(result, {
         title: chapterTitle,
@@ -180,13 +184,8 @@ ${chapterContent.substring(0, 8000)}
         keywords: [],
         entities: [],
       })
-    } catch {
-      return {
-        title: chapterTitle,
-        summary: chapterContent.substring(0, 500),
-        keywords: [],
-        entities: [],
-      }
+    } catch (error) {
+      throw new Error(`Chapter summary generation failed (${chapterTitle}): ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -195,9 +194,10 @@ ${chapterContent.substring(0, 8000)}
     documentTitle: string,
     providerId: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
   ): Promise<DocumentSummary> {
-    onProgress?.('文档摘要', `正在生成文档摘要: ${documentTitle}`)
+    onProgress?.('doc_summary', `Generating document summary: ${documentTitle}`)
 
     const summariesText = chapterSummaries.map((cs, i) =>
       `### 章节${i + 1}: ${cs.title}\n${cs.summary}\n关键词: ${cs.keywords.join(', ')}\n实体: ${cs.entities.map(e => `${e.name}(${e.type})`).join(', ')}`
@@ -223,7 +223,10 @@ ${summariesText.substring(0, 15000)}
       const result = await this.llmClient.chat(providerId, [
         { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
         { role: 'user', content: prompt },
-      ], modelId ? { model: modelId } : undefined)
+      ], { 
+        ...(modelId ? { model: modelId } : {}),
+        enable_thinking: enableThinking,
+      })
 
       return this.parseJSON<DocumentSummary>(result, {
         summary: '',
@@ -232,14 +235,8 @@ ${summariesText.substring(0, 15000)}
         keywords: [],
         mainTopics: [],
       })
-    } catch {
-      return {
-        summary: chapterSummaries.map(cs => cs.summary).join('\n\n').substring(0, 1000),
-        keyEntities: [],
-        timeline: [],
-        keywords: [],
-        mainTopics: [],
-      }
+    } catch (error) {
+      throw new Error(`Document summary generation failed (${documentTitle}): ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -248,9 +245,10 @@ ${summariesText.substring(0, 15000)}
     sourceTitle: string,
     providerId: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
   ): Promise<EntityExtraction> {
-    onProgress?.('实体识别', `正在识别实体: ${sourceTitle}`)
+    onProgress?.('entity_extract', `Extracting entities: ${sourceTitle}`)
 
     const prompt = `请从以下文本中识别和提取实体及其关系。
 
@@ -278,11 +276,14 @@ ${text.substring(0, 10000)}
       const result = await this.llmClient.chat(providerId, [
         { role: 'system', content: 'You are a professional knowledge engineer specializing in entity extraction and relationship mapping. Return only valid JSON.' },
         { role: 'user', content: prompt },
-      ], modelId ? { model: modelId } : undefined)
+      ], { 
+        ...(modelId ? { model: modelId } : {}),
+        enable_thinking: enableThinking,
+      })
 
       return this.parseJSON<EntityExtraction>(result, { entities: [], relations: [] })
-    } catch {
-      return { entities: [], relations: [] }
+    } catch (error) {
+      throw new Error(`Entity extraction failed (${sourceTitle}): ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -291,6 +292,7 @@ ${text.substring(0, 10000)}
     kbName: string,
     providerId: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
   ): Promise<{
     summary: string
@@ -298,7 +300,7 @@ ${text.substring(0, 10000)}
     keyEntities: Array<{ name: string; type: string; description: string }>
     globalTimeline: Array<{ time: string; event: string }>
   }> {
-    onProgress?.('全局摘要', '正在生成全局知识摘要...')
+    onProgress?.('global_summary', 'Generating global knowledge summary...')
 
     const docsText = documentSummaries.map((ds, i) =>
       `### 文档${i + 1}: ${ds.title}\n${ds.summary}\n主要主题: ${ds.mainTopics.join(', ')}\n关键实体: ${ds.keyEntities.map(e => `${e.name}(${e.type})`).join(', ')}`
@@ -323,7 +325,10 @@ ${docsText.substring(0, 20000)}
       const result = await this.llmClient.chat(providerId, [
         { role: 'system', content: 'You are a professional knowledge engineer specializing in cross-document knowledge integration. Return only valid JSON.' },
         { role: 'user', content: prompt },
-      ], modelId ? { model: modelId } : undefined)
+      ], { 
+        ...(modelId ? { model: modelId } : {}),
+        enable_thinking: enableThinking,
+      })
 
       return this.parseJSON(result, {
         summary: '',
@@ -331,13 +336,8 @@ ${docsText.substring(0, 20000)}
         keyEntities: [],
         globalTimeline: [],
       })
-    } catch {
-      return {
-        summary: documentSummaries.map(ds => ds.summary).join('\n\n').substring(0, 2000),
-        keyTopics: [],
-        keyEntities: [],
-        globalTimeline: [],
-      }
+    } catch (error) {
+      throw new Error(`Global summary generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -749,6 +749,13 @@ ${docsText.substring(0, 20000)}
       this.db.getDb().prepare('DELETE FROM kb_global_summaries WHERE kb_id = ?').run(kbId)
       this.db.getDb().prepare('DELETE FROM kb_processing_jobs WHERE kb_id = ?').run(kbId)
     }
+  }
+
+  getAllDocumentSummaries(kbId: string): any[] {
+    const summaries = this.db.getDb().prepare(
+      'SELECT ds.*, d.original_name as doc_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?'
+    ).all(kbId) as any[]
+    return summaries.map(s => ({ ...s, doc_id: s.document_id }))
   }
 
   getKnowledgeStats(kbId: string): {

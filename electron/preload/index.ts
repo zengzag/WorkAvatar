@@ -215,12 +215,13 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
     },
-    processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
-    processAll: (params: { kb_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
-    buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
+    processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
+    processAll: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
+    buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
     getStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_STATS, kbId),
     getChapters: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_CHAPTERS, docId),
     getDocSummary: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_SUMMARY, docId),
+    getAllDocSummaries: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ALL_DOC_SUMMARIES, kbId),
     getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
     getEntities: (params: { kb_id: string; type?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITIES, params),
     getEntity: (params: { kb_id: string; name: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY, params),
@@ -228,7 +229,6 @@ const electronAPI = {
     getEntityMentions: (entityId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_MENTIONS, entityId),
     searchChapters: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_CHAPTERS, params),
     searchDocSummaries: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, params),
-    generateTimeline: (params: { kb_id: string; topic?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GENERATE_TIMELINE, params),
     getProcessingJobs: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, params),
     getKBsForProject: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_KBS_FOR_PROJECT, projectId),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
@@ -247,6 +247,13 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
     },
+    pauseParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_PARSE, docId),
+    resumeParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_PARSE, docId),
+    retryParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RETRY_PARSE, docId),
+    getParseDetail: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARSE_DETAIL, docId),
+    pauseAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_ALL_PARSES),
+    resumeAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_ALL_PARSES),
+    cancelAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_CANCEL_ALL_PARSES),
   },
 }
 
@@ -256,6 +263,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_ALL),
     clearCompleted: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_COMPLETED),
     cancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, taskId),
+    pause: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE, taskId),
+    resume: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME, taskId),
+    pauseAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE_ALL, type),
+    resumeAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME_ALL, type),
+    cancelAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL_ALL, type),
     onTasksUpdated: (callback: (tasks: any[]) => void) => {
       const handler = (_event: any, tasks: any[]) => callback(tasks)
       ipcRenderer.on(IPC_CHANNELS.TASK_UPDATED, handler)
@@ -269,6 +281,11 @@ export type ElectronAPI = typeof electronAPI & {
     getAll: () => Promise<any[]>
     clearCompleted: () => Promise<boolean>
     cancel: (taskId: string) => Promise<boolean>
+    pause: (taskId: string) => Promise<boolean>
+    resume: (taskId: string) => Promise<boolean>
+    pauseAll: (type?: string) => Promise<number>
+    resumeAll: (type?: string) => Promise<number>
+    cancelAll: (type?: string) => Promise<number>
     onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
   }
 }

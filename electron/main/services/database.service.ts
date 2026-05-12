@@ -259,6 +259,16 @@ class DatabaseService {
         parsed_json TEXT,
         parse_status TEXT NOT NULL DEFAULT 'pending',
         parse_error TEXT,
+        parse_progress REAL NOT NULL DEFAULT 0,
+        parse_stage TEXT DEFAULT '',
+        parse_detail TEXT DEFAULT '',
+        processed_pages INTEGER DEFAULT 0,
+        total_pages INTEGER DEFAULT 0,
+        processed_chunks INTEGER DEFAULT 0,
+        total_chunks INTEGER DEFAULT 0,
+        parse_speed REAL DEFAULT 0,
+        parse_eta INTEGER DEFAULT 0,
+        parse_state_json TEXT,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -404,12 +414,74 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_kb ON kb_processing_jobs(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_status ON kb_processing_jobs(status);
+
+      CREATE TABLE IF NOT EXISTS background_tasks (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        progress REAL NOT NULL DEFAULT 0,
+        progress_text TEXT DEFAULT '',
+        error TEXT,
+        metadata_json TEXT DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        paused_at INTEGER,
+        resumed_at INTEGER,
+        speed REAL DEFAULT 0,
+        eta INTEGER DEFAULT 0,
+        stage TEXT DEFAULT '',
+        detail TEXT DEFAULT ''
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
     this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'\'')
+    this.addColumnIfNotExists('kb_documents', 'parse_progress', 'REAL NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'parse_stage', 'TEXT DEFAULT \'\'')
+    this.addColumnIfNotExists('kb_documents', 'parse_detail', 'TEXT DEFAULT \'\'')
+    this.addColumnIfNotExists('kb_documents', 'processed_pages', 'INTEGER DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'total_pages', 'INTEGER DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'processed_chunks', 'INTEGER DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'total_chunks', 'INTEGER DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'parse_speed', 'REAL DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'parse_eta', 'INTEGER DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'parse_state_json', 'TEXT')
+    this.addColumnIfNotExists('kb_documents', 'is_reused', 'INTEGER NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('kb_processing_jobs', 'paused_at', 'INTEGER')
+    this.addColumnIfNotExists('kb_processing_jobs', 'resume_state_json', 'TEXT')
+
+    this.recoverStuckDocs()
+  }
+
+  private recoverStuckDocs(): void {
+    const parsingResult = this.db.prepare(`
+      UPDATE kb_documents 
+      SET parse_status = 'paused'
+      WHERE parse_status = 'parsing'
+    `).run()
+    if (parsingResult.changes > 0) {
+      console.log(`[DB] Recovered ${parsingResult.changes} document(s) from parsing to paused status`)
+    }
+
+    this.db.prepare(`
+      UPDATE kb_processing_jobs 
+      SET status = 'paused'
+      WHERE status = 'running'
+    `).run()
+
+    const runningTasksResult = this.db.prepare(`
+      UPDATE background_tasks
+      SET status = 'paused'
+      WHERE status IN ('running', 'pending')
+    `).run()
+    if (runningTasksResult.changes > 0) {
+      console.log(`[DB] Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
+    }
   }
 
   public getDb(): Database.Database {

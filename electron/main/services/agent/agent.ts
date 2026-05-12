@@ -31,6 +31,7 @@ export class LightAgent {
       filterTools: config.filterTools !== false,
       selfLearning: config.selfLearning || false,
       skillsDirectories: config.skillsDirectories || ['skills'],
+      allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
       debug: config.debug || false,
       logLevel: config.logLevel || 'info'
@@ -40,6 +41,7 @@ export class LightAgent {
     this.toolDispatcher = new ToolDispatcher(this.toolRegistry)
     this.skillManager = new SkillManager(
       this.config.skillsDirectories,
+      this.config.allowedSkillPaths,
       this.config.debug ? this.log.bind(this) : undefined
     )
 
@@ -191,10 +193,9 @@ export class LightAgent {
   }
 
   private buildMessages(query: string, history: Message[], useSkills: boolean): Message[] {
-    const now = new Date()
     let systemPrompt = [
-      `## 代理名称：${this.config.name}`,
-      `## 代理指令：${this.config.instructions}`
+      `## 名称：${this.config.name}`,
+      `## 指令：${this.config.instructions}`
     ]
 
     if (this.config.role) {
@@ -203,9 +204,7 @@ export class LightAgent {
 
     systemPrompt.push(
       '请一步一步思考来完成用户的要求。尽可能完成用户的回答，如果有补充信息，请参考补充信息来调用工具，直到获取所有满足用户的提问所需的答案。',
-      '你可以使用知识库工具查询知识。快速检索首选：kb_search（智能综合检索，同时搜索标题/摘要/章节/实体/内容）、kb_advanced_search（高级检索，支持精确短语"xxx"、+必须包含、-排除词）。分层查询工具：kb_overview（知识库概览）、query_global_summary（全局摘要）、kb_list_entities（浏览实体列表）、kb_entity_detail（实体详情）、query_knowledge_graph（实体关系）、query_chapters（章节检索）、query_fulltext（全文检索）、kb_get_content（获取文档内容，支持chapter_id/偏移量/行号精准定位）。当不确定知识库有哪些内容时，优先使用 kb_overview 或 kb_search；当需要快速全面了解某主题时，优先使用 kb_search；当需要精确匹配时，使用 kb_advanced_search；当用户问题涉及专业知识、业务规则、概念定义时，优先使用 query_chapters；当需要查找具体文档段落、细节信息时，使用 query_fulltext；当涉及人物/组织关系时，使用 query_knowledge_graph 或 kb_entity_detail；当需要查看某个文件的完整内容或指定文本区间时，使用 kb_get_content（支持 chapter_id、start_offset/end_offset、start_line/end_line）。',
-      `今日的日期：${now.toISOString().split('T')[0]}`,
-      `当前时间：${now.toTimeString().split(' ')[0]}`
+      '你可以使用知识库工具查询知识。'
     )
 
     if (useSkills) {

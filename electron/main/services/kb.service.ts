@@ -4,12 +4,16 @@ import { app } from 'electron'
 import DatabaseService from './database.service'
 import FileParserService from './file-parser.service'
 import KnowledgeProcessorService from './knowledge-processor.service'
+import ParseTaskManager from './parse-task-manager.service'
+import TaskQueueService from './task-queue.service'
 import { calculateFileHash, getDefaultProviderId } from './common-utils'
 
 class KnowledgeBaseService {
   private db: DatabaseService
   private fileParser: FileParserService
   private processor: KnowledgeProcessorService
+  private parseTaskManager: ParseTaskManager
+  private taskQueue: TaskQueueService
   private static instance: KnowledgeBaseService
   private defaultKBId: string | null = null
 
@@ -17,6 +21,8 @@ class KnowledgeBaseService {
     this.db = DatabaseService.getInstance()
     this.fileParser = FileParserService.getInstance()
     this.processor = KnowledgeProcessorService.getInstance()
+    this.parseTaskManager = ParseTaskManager.getInstance()
+    this.taskQueue = TaskQueueService.getInstance()
   }
 
   static getInstance(): KnowledgeBaseService {
@@ -159,6 +165,9 @@ class KnowledgeBaseService {
         const existingDoc = await this.getExistingDocByHash(fileHash, kbId)
         if (existingDoc) {
           if (existingDoc.kb_id === kbId) {
+            this.db.getDb().prepare(
+              "UPDATE kb_documents SET is_reused = 1, updated_at = unixepoch() WHERE id = ?"
+            ).run(existingDoc.id)
             imported.push({
               id: existingDoc.id,
               original_name: originalName,
@@ -174,7 +183,7 @@ class KnowledgeBaseService {
           const existingByName = await this.getExistingDocByName(kbId, originalName)
           if (existingByName) {
             this.db.getDb().prepare(`
-              UPDATE kb_documents SET hash = ?, size = ?, content_text = ?, parsed_json = ?, parse_status = 'completed', updated_at = unixepoch()
+              UPDATE kb_documents SET hash = ?, size = ?, content_text = ?, parsed_json = ?, parse_status = 'completed', is_reused = 1, updated_at = unixepoch()
               WHERE id = ?
             `).run(fileHash, stats.size, existingDoc.content_text, existingDoc.parsed_json, existingByName.id)
             imported.push({
@@ -192,10 +201,10 @@ class KnowledgeBaseService {
           const docId = crypto.randomUUID()
           const now = Math.floor(Date.now() / 1000)
           this.db.getDb().prepare(`
-            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, content_text, parsed_json, parse_status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, content_text, parsed_json, parse_status, is_reused, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(docId, kbId, existingDoc.file_id, originalName, fileType, stats.size, fileHash,
-            existingDoc.content_text, existingDoc.parsed_json, 'completed', now, now)
+            existingDoc.content_text, existingDoc.parsed_json, 'completed', 1, now, now)
 
           imported.push({
             id: docId,
@@ -242,45 +251,101 @@ class KnowledgeBaseService {
 
   async parseDocument(
     docId: string,
+    isResume: boolean = false,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc) {
-      return { success: false, error: '文档不存在' }
+      return { success: false, error: 'Document not found' }
     }
 
     const kbBasePath = this.getKBBasePath(doc.kb_id)
     const filePath = path.join(kbBasePath, doc.original_name)
 
     if (!fs.existsSync(filePath)) {
-      return { success: false, error: '文件不存在' }
+      return { success: false, error: 'File not found' }
+    }
+
+    if (isResume) {
+      this.parseTaskManager.resumeOrCreateTask(docId, doc.kb_id, doc.original_name)
+    } else {
+      this.parseTaskManager.createTask(docId, doc.kb_id, doc.original_name)
     }
 
     try {
-      onProgress?.('parsing', `正在解析: ${doc.original_name}`)
-      this.db.getDb().prepare("UPDATE kb_documents SET parse_status = 'parsing', updated_at = unixepoch() WHERE id = ?").run(docId)
+      this.parseTaskManager.updateProgress(docId, {
+        stage: 'reading',
+        stageLabel: 'Reading',
+        progress: 5,
+        detail: `Reading: ${doc.original_name}`,
+      })
+      onProgress?.('reading', `Reading: ${doc.original_name}`)
+
+      if (await this.parseTaskManager.checkPaused(docId)) {
+        return { success: false, error: 'Cancelled' }
+      }
+
+      this.parseTaskManager.updateProgress(docId, {
+        stage: 'parsing',
+        stageLabel: 'Parsing',
+        progress: 10,
+        detail: `Parsing: ${doc.original_name}`,
+      })
+      onProgress?.('parsing', `Parsing: ${doc.original_name}`)
 
       const parseResult = await this.fileParser.parseFilePath(filePath)
-      onProgress?.('saving', `正在保存解析结果...`)
+
+      if (await this.parseTaskManager.checkPaused(docId)) {
+        return { success: false, error: 'Cancelled' }
+      }
+
+      const totalPages = parseResult.metadata?.pageCount || 0
+      const totalChunks = parseResult.sections?.length || 0
+      const processedPages = totalPages
+      const processedChunks = totalChunks
+
+      this.parseTaskManager.updateProgress(docId, {
+        stage: 'chunking',
+        stageLabel: 'Chunking',
+        progress: 70,
+        detail: `Identified ${totalChunks} sections/chunks`,
+        processedPages,
+        totalPages,
+        processedChunks,
+        totalChunks,
+      })
+      onProgress?.('chunking', `Chunking: ${totalChunks} sections`)
+
+      if (await this.parseTaskManager.checkPaused(docId)) {
+        return { success: false, error: 'Cancelled' }
+      }
+
+      this.parseTaskManager.updateProgress(docId, {
+        stage: 'saving',
+        stageLabel: 'Saving',
+        progress: 90,
+        detail: 'Saving parse results...',
+      })
+      onProgress?.('saving', 'Saving parse results...')
 
       const parsedJson = JSON.stringify(parseResult)
       const contentText = parseResult.fullText.substring(0, 500000)
 
       this.db.getDb().prepare(`
         UPDATE kb_documents 
-        SET parse_status = 'completed', parsed_json = ?, content_text = ?, updated_at = unixepoch()
+        SET parse_status = 'completed', parsed_json = ?, content_text = ?,
+            parse_progress = 100, parse_stage = 'done', parse_detail = 'Parse completed',
+            processed_pages = ?, total_pages = ?, processed_chunks = ?, total_chunks = ?,
+            updated_at = unixepoch()
         WHERE id = ?
-      `).run(parsedJson, contentText, docId)
+      `).run(parsedJson, contentText, processedPages, totalPages, processedChunks, totalChunks, docId)
 
-      onProgress?.('done', '解析完成')
+      this.parseTaskManager.completeTask(docId)
+      onProgress?.('done', 'Parse completed')
       return { success: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      this.db.getDb().prepare(`
-        UPDATE kb_documents 
-        SET parse_status = 'failed', parse_error = ?, updated_at = unixepoch()
-        WHERE id = ?
-      `).run(errorMessage, docId)
+      this.parseTaskManager.failTask(docId, errorMessage)
       return { success: false, error: errorMessage }
     }
   }
@@ -307,24 +372,13 @@ class KnowledgeBaseService {
         continue
       }
 
-      try {
-        this.db.getDb().prepare("UPDATE kb_documents SET parse_status = 'parsing', updated_at = unixepoch() WHERE id = ?").run(doc.id)
+      const result = await this.parseDocument(doc.id, false, (_stage, detail) => {
+        onProgress?.(i + 1, docs.length, `${doc.original_name} - ${detail}`)
+      })
 
-        const parseResult = await this.fileParser.parseFilePath(filePath)
-        const parsedJson = JSON.stringify(parseResult)
-        const contentText = parseResult.fullText.substring(0, 500000)
-
-        this.db.getDb().prepare(`
-          UPDATE kb_documents 
-          SET parse_status = 'completed', parsed_json = ?, content_text = ?, updated_at = unixepoch()
-          WHERE id = ?
-        `).run(parsedJson, contentText, doc.id)
+      if (result.success) {
         successCount++
-      } catch {
-        this.db.getDb().prepare(`
-          UPDATE kb_documents SET parse_status = 'failed', parse_error = '解析失败', updated_at = unixepoch()
-          WHERE id = ?
-        `).run(doc.id)
+      } else {
         failedCount++
       }
     }
@@ -336,6 +390,7 @@ class KnowledgeBaseService {
     docId: string,
     providerId?: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
@@ -344,59 +399,78 @@ class KnowledgeBaseService {
     }
 
     if (doc.parse_status !== 'completed') {
-      return { success: false, error: '文档尚未解析完成' }
+      return { success: false, error: 'Document not parsed yet' }
     }
 
     const kbId = doc.kb_id
     const provider = providerId || this.getDefaultProviderId()
     if (!provider) {
-      return { success: false, error: '未配置 LLM 提供商' }
+      return { success: false, error: 'LLM provider not configured' }
     }
 
     const jobId = this.processor.createProcessingJob(kbId, docId, 'full_process', 4)
+    const taskId = `process-${docId}`
+
+    this.taskQueue.addTask({
+      id: taskId,
+      type: 'process',
+      title: `Knowledge Processing: ${doc.original_name}`,
+      status: 'running',
+      progress: 0,
+      progressText: 'Starting process...',
+      createdAt: Date.now(),
+      metadata: { docId, kbId, docName: doc.original_name },
+    })
 
     try {
-      this.processor.updateProcessingJob(jobId, 'running', 0, '章节识别')
-      onProgress?.('章节识别', `正在识别文档结构: ${doc.original_name}`)
+      this.processor.updateProcessingJob(jobId, 'running', 0, 'chapter_identify')
+      onProgress?.('chapter_identify', `Identifying document structure: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Chapter identify: ${doc.original_name}` })
 
       const text = doc.content_text || ''
       const chapters = this.processor.identifyChapters(text)
 
-      this.processor.updateProcessingJob(jobId, 'running', 1, '章节摘要生成')
+      this.processor.updateProcessingJob(jobId, 'running', 1, 'chapter_summary')
       const chapterSummaries = []
       for (let i = 0; i < chapters.length; i++) {
         const chapter = chapters[i]
-        onProgress?.('章节摘要', `正在生成章节摘要 (${i + 1}/${chapters.length}): ${chapter.title}`)
+        const progressPercent = 10 + Math.round((i + 1) / chapters.length * 40)
+        onProgress?.('chapter_summary', `Generating chapter summary (${i + 1}/${chapters.length}): ${chapter.title}`)
+        this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Chapter summary (${i + 1}/${chapters.length}): ${chapter.title}` })
         const summary = await this.processor.generateChapterSummary(
-          chapter.content, chapter.title, provider, modelId, onProgress
+          chapter.content, chapter.title, provider, modelId, enableThinking, onProgress
         )
         chapterSummaries.push(summary)
       }
 
       this.processor.saveChapters(kbId, docId, chapters, chapterSummaries)
 
-      this.processor.updateProcessingJob(jobId, 'running', 2, '文档摘要生成')
+      this.processor.updateProcessingJob(jobId, 'running', 2, 'doc_summary')
+      this.taskQueue.updateTask(taskId, { progress: 60, progressText: `Doc summary: ${doc.original_name}` })
       const docSummary = await this.processor.generateDocumentSummary(
-        chapterSummaries, doc.original_name, provider, modelId, onProgress
+        chapterSummaries, doc.original_name, provider, modelId, enableThinking, onProgress
       )
       this.processor.saveDocumentSummary(kbId, docId, docSummary)
 
-      this.processor.updateProcessingJob(jobId, 'running', 3, '实体识别')
+      this.processor.updateProcessingJob(jobId, 'running', 3, 'entity_extract')
+      this.taskQueue.updateTask(taskId, { progress: 80, progressText: `Entity extract: ${doc.original_name}` })
       const entityText = chapterSummaries.map(cs =>
         `## ${cs.title}\n${cs.summary}\n实体: ${cs.entities.map(e => `${e.name}(${e.type})`).join(', ')}`
       ).join('\n\n')
       const extraction = await this.processor.extractEntities(
-        entityText, doc.original_name, provider, modelId, onProgress
+        entityText, doc.original_name, provider, modelId, enableThinking, onProgress
       )
       this.processor.saveEntities(kbId, docId, extraction)
 
-      this.processor.updateProcessingJob(jobId, 'completed', 4, '完成')
-      onProgress?.('完成', `文档处理完成: ${doc.original_name}`)
+      this.processor.updateProcessingJob(jobId, 'completed', 4, 'complete')
+      onProgress?.('complete', `Document processing completed: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: `Processing completed: ${doc.original_name}` })
 
       return { success: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       this.processor.updateProcessingJob(jobId, 'failed', undefined, undefined, errorMessage)
+      this.taskQueue.updateTask(taskId, { status: 'failed', error: errorMessage, progressText: `Failed: ${errorMessage}` })
       return { success: false, error: errorMessage }
     }
   }
@@ -405,33 +479,50 @@ class KnowledgeBaseService {
     kbId: string,
     providerId?: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: number; failed: number; skipped: number }> {
     const docs = this.db.getDb().prepare(
       "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
     ).all(kbId) as any[]
 
+    const toProcess = docs.filter(doc => !this.processor.getDocumentSummary(doc.id))
+    const taskId = `process-all-${kbId}`
+
+    if (toProcess.length > 0) {
+      this.taskQueue.addTask({
+        id: taskId,
+        type: 'process',
+        title: `Batch Knowledge Processing (${toProcess.length} docs)`,
+        status: 'running',
+        progress: 0,
+        progressText: 'Starting batch processing...',
+        createdAt: Date.now(),
+        metadata: { kbId },
+      })
+    }
+
     let successCount = 0
     let failedCount = 0
-    let skippedCount = 0
+    let skippedCount = docs.length - toProcess.length
 
-    for (let i = 0; i < docs.length; i++) {
-      const doc = docs[i]
+    for (let i = 0; i < toProcess.length; i++) {
+      const doc = toProcess[i]
+      const progressPercent = Math.round((i / toProcess.length) * 100)
+      onProgress?.('processing_docs', `Processing doc ${i + 1}/${toProcess.length}: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Processing (${i + 1}/${toProcess.length}): ${doc.original_name}` })
 
-      const existingSummary = this.processor.getDocumentSummary(doc.id)
-      if (existingSummary) {
-        skippedCount++
-        continue
-      }
-
-      onProgress?.('处理文档', `正在处理第 ${i + 1}/${docs.length} 个文档: ${doc.original_name}`)
-      const result = await this.processDocument(doc.id, providerId, modelId, onProgress)
+      const result = await this.processDocument(doc.id, providerId, modelId, enableThinking, onProgress)
 
       if (result.success) {
         successCount++
       } else {
         failedCount++
       }
+    }
+
+    if (toProcess.length > 0) {
+      this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: `Batch processing complete: ${successCount} success, ${failedCount} failed` })
     }
 
     return { success: successCount, failed: failedCount, skipped: skippedCount }
@@ -441,11 +532,12 @@ class KnowledgeBaseService {
     kbId: string,
     providerId?: string,
     modelId?: string,
+    enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     const kb = this.getKB(kbId)
     if (!kb) {
-      return { success: false, error: '知识库不存在' }
+      return { success: false, error: 'Knowledge base not found' }
     }
 
     const provider = providerId || this.getDefaultProviderId()
@@ -453,16 +545,32 @@ class KnowledgeBaseService {
       return { success: false, error: '未配置 LLM 提供商' }
     }
 
+    const taskId = `build-global-${kbId}`
+    this.taskQueue.addTask({
+      id: taskId,
+      type: 'process',
+      title: `Global Knowledge Build: ${kb.name}`,
+      status: 'running',
+      progress: 0,
+      progressText: 'Starting global knowledge build...',
+      createdAt: Date.now(),
+      metadata: { kbId, kbName: kb.name },
+    })
+
     try {
-      onProgress?.('全局摘要', '正在生成全局知识摘要...')
+      onProgress?.('global_summary', 'Generating global knowledge summary...')
+      this.taskQueue.updateTask(taskId, { progress: 20, progressText: 'Generating global summary...' })
 
       const docSummaries = this.db.getDb().prepare(
         'SELECT ds.*, d.original_name as title FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?'
       ).all(kbId) as any[]
 
       if (docSummaries.length === 0) {
-        return { success: false, error: '没有已处理的文档摘要，请先处理文档' }
+        this.taskQueue.updateTask(taskId, { status: 'failed', error: 'No processed document summaries', progressText: 'Failed: No processed document summaries' })
+        return { success: false, error: 'No processed document summaries, please process documents first' }
       }
+
+      this.taskQueue.updateTask(taskId, { progress: 50, progressText: `Aggregating ${docSummaries.length} doc summaries...` })
 
       const summaryInputs = docSummaries.map(ds => ({
         title: ds.title,
@@ -471,16 +579,20 @@ class KnowledgeBaseService {
         mainTopics: JSON.parse(ds.main_topics_json || '[]'),
       }))
 
+      this.taskQueue.updateTask(taskId, { progress: 70, progressText: 'Calling LLM to generate global summary...' })
+
       const globalSummary = await this.processor.generateGlobalSummary(
-        summaryInputs, kb.name, provider, modelId, onProgress
+        summaryInputs, kb.name, provider, modelId, enableThinking, onProgress
       )
 
       this.processor.saveGlobalSummary(kbId, globalSummary)
 
-      onProgress?.('完成', '全局知识构建完成')
+      onProgress?.('complete', 'Global knowledge build complete')
+      this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: 'Global knowledge build complete' })
       return { success: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      this.taskQueue.updateTask(taskId, { status: 'failed', error: errorMessage, progressText: `Failed: ${errorMessage}` })
       return { success: false, error: errorMessage }
     }
   }
@@ -630,11 +742,11 @@ class KnowledgeBaseService {
       try {
         const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
         if (!doc) {
-          errors.push({ docId, error: '文档不存在' })
+          errors.push({ docId, error: 'Document not found' })
           continue
         }
         if (doc.parse_status !== 'completed') {
-          errors.push({ docId, error: '文档尚未解析完成' })
+          errors.push({ docId, error: 'Document not parsed yet' })
           continue
         }
 
@@ -642,7 +754,7 @@ class KnowledgeBaseService {
         const filePath = path.join(kbBasePath, doc.original_name)
 
         if (!fs.existsSync(filePath)) {
-          errors.push({ docId, error: '源文件不存在于磁盘' })
+          errors.push({ docId, error: 'Source file not found on disk' })
           continue
         }
 
@@ -694,6 +806,10 @@ class KnowledgeBaseService {
     return this.processor.getKnowledgeStats(kbId)
   }
 
+  getAllDocumentSummaries(kbId: string): any[] {
+    return this.processor.getAllDocumentSummaries(kbId)
+  }
+
   getChapters(documentId: string): any[] {
     return this.processor.getChapters(documentId)
   }
@@ -736,6 +852,93 @@ class KnowledgeBaseService {
 
   getProcessingJobs(kbId: string, status?: string): any[] {
     return this.processor.getProcessingJobs(kbId, status)
+  }
+
+  pauseParse(docId: string): boolean {
+    return this.parseTaskManager.pauseTask(docId)
+  }
+
+  resumeParse(docId: string): boolean {
+    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    if (!doc) return false
+
+    const hasActiveTask = this.parseTaskManager.hasActiveTask(docId)
+    if (hasActiveTask) {
+      return this.parseTaskManager.resumeTask(docId)
+    }
+
+    this.parseDocument(docId, true).catch(() => {})
+    return true
+  }
+
+  retryParse(docId: string): boolean {
+    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    if (!doc) return false
+
+    this.db.getDb().prepare(
+      "UPDATE kb_documents SET parse_status = 'pending', parse_error = NULL, parse_progress = 0, parse_stage = '', parse_detail = '', updated_at = unixepoch() WHERE id = ?"
+    ).run(docId)
+
+    this.parseDocument(docId).catch(() => {})
+    return true
+  }
+
+  getParseProgress(docId: string) {
+    return this.parseTaskManager.getProgress(docId)
+  }
+
+  getDocParseDetail(docId: string): any {
+    const doc = this.db.getDb().prepare(
+      'SELECT id, original_name, parse_status, parse_progress, parse_stage, parse_detail, processed_pages, total_pages, processed_chunks, total_chunks, parse_speed, parse_eta, parse_error FROM kb_documents WHERE id = ?'
+    ).get(docId) as any
+    
+    // 如果文档解析完成，但有正在进行的知识处理任务，返回处理进度
+    if (doc?.parse_status === 'completed') {
+      const processTaskId = `process-${docId}`
+      const processTask = this.taskQueue.getTask(processTaskId)
+      if (processTask) {
+        return {
+          ...doc,
+          parse_status: processTask.status === 'running' ? 'parsing' : processTask.status === 'paused' ? 'paused' : processTask.status === 'failed' ? 'failed' : 'completed',
+          parse_progress: processTask.progress,
+          parse_stage: 'knowledge_process',
+          parse_detail: processTask.progressText,
+          parse_error: processTask.error,
+        }
+      }
+    }
+    
+    return doc || null
+  }
+
+  pauseAllParses(): number {
+    return this.parseTaskManager.pauseAllParseTasks()
+  }
+
+  resumeAllParses(): number {
+    let count = 0
+    const activeDocIds = this.parseTaskManager.getActiveDocIds()
+    for (const docId of activeDocIds) {
+      if (this.parseTaskManager.resumeTask(docId)) count++
+    }
+    const pausedDocs = this.db.getDb().prepare(
+      "SELECT id FROM kb_documents WHERE parse_status = 'paused'"
+    ).all() as any[]
+    for (const doc of pausedDocs) {
+      if (!activeDocIds.includes(doc.id)) {
+        this.parseDocument(doc.id, true).catch(() => {})
+        count++
+      }
+    }
+    return count
+  }
+
+  cancelAllParses(): number {
+    return this.parseTaskManager.cancelAllParseTasks()
+  }
+
+  getPausedDocIds(): string[] {
+    return this.parseTaskManager.getPausedDocIds()
   }
 
   private getDefaultProviderId(): string | null {

@@ -10,24 +10,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_get_content',
     name: 'kb_get_content',
     title: '获取文档内容',
-    description: `获取文档的完整内容或指定文本区间的内容。支持通过章节ID、字符偏移量或行号范围精准定位内容。这是获取知识库原始文件内容的唯一入口工具。
-
-【使用场景】
-- 查看某个文档的完整内容
-- 基于搜索结果获取特定文本区间的上下文
-- 获取某个章节的完整内容
-- 精准定位到文档的某一段文字
-
-【定位方式】
-1. 仅传 document_id → 获取整个文档（超过10000字符自动截断）
-2. 传 document_id + chapter_id → 获取指定章节
-3. 传 document_id + start_offset + end_offset → 获取指定字符区间
-4. 传 document_id + start_line + end_line → 获取指定行号范围
-
-【返回结果】
-- 请求的文本内容
-- 内容在文档中的位置信息
-- 相邻章节的导航信息`,
+    description: `获取文档的完整内容或指定文本区间，支持通过章节ID、字符偏移量或行号定位。`,
     parameters: {
       type: 'object',
       properties: {

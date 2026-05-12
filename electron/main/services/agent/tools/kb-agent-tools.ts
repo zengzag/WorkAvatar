@@ -24,12 +24,7 @@ export function createKBAgentTools(
     id: 'kb_overview',
     name: 'kb_overview',
     title: '知识库概览',
-    description: `获取知识库的整体概览。当你需要了解知识库中有什么内容、判断哪些文件可能与用户问题相关时，优先调用此工具。
-【使用说明】
-1. 如果不传 kb_id，将返回所有可访问知识库的列表（包含每个知识库的介绍和ID），方便你了解有哪些知识库可选
-2. 如果传入 kb_id，将返回该知识库中所有已解析完成的文档列表，包含文档摘要、核心主题和章节信息
-3. 返回结果包含每个文件的 document_id，你可以用 kb_get_content 获取完整文件内容或指定文本区间
-【可选知识库】${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`,
+    description: `获取知识库的整体概览，了解有哪些文档和内容。不传 kb_id 返回所有知识库列表，传入则返回该知识库的文档详情。`,
     parameters: {
       type: 'object',
       properties: {
@@ -145,7 +140,7 @@ export function createKBAgentTools(
     id: 'query_global_summary',
     name: 'query_global_summary',
     title: '查询全局知识摘要',
-    description: '查询整个知识库的全局摘要，了解知识库的核心主题、整体结构和关键实体。在回答复杂问题前，先调用此工具了解全局信息，确定问题相关的文档和主题范围。\n【实现说明】返回知识库的全局摘要、核心主题列表和关键实体，帮助进行问题范围定位。\n返回结果会包含关键实体名称，你可以进一步用 query_knowledge_graph 查询实体关系。',
+    description: '查询知识库的全局摘要、核心主题和关键实体。',
     parameters: {
       type: 'object',
       properties: {
@@ -182,7 +177,7 @@ export function createKBAgentTools(
     id: 'query_knowledge_graph',
     name: 'query_knowledge_graph',
     title: '查询知识图谱',
-    description: '查询知识图谱中特定实体的信息和关系网络。当问题涉及人物、组织、事件等实体之间的关系时，使用此工具。\n【实现说明】支持实体名称模糊匹配，如果未找到精确匹配的实体会自动返回相似实体列表，支持查询1-3度的关系网络。\n返回结果会包含关联实体和关系类型，你可以进一步用 kb_search、query_chapters 或 kb_get_content 深入查询相关内容。',
+    description: '查询特定实体的信息和关系网络，支持1-3度深度查询。',
     parameters: {
       type: 'object',
       properties: {
@@ -260,7 +255,7 @@ export function createKBAgentTools(
     id: 'query_chapters',
     name: 'query_chapters',
     title: '检索章节摘要',
-    description: '根据查询内容检索相关的章节摘要，用于定位问题相关的文档章节。在查询具体细节前，先使用此工具定位相关章节，再决定是否需要深入查看原文。\n【实现说明】基于关键词模糊匹配+权重计分实现：\n- 支持空格分隔多个关键词，多个关键词会同时匹配计分\n- 标题包含关键词 +5分/词，章节标注关键词包含 +3分/词，摘要包含关键词 +2分/词\n- 按总分降序排序返回最相关结果\n返回结果包含 document_id 和 chapter_id，你可以用 kb_get_content 获取完整内容或指定文本区间。',
+    description: '根据查询关键词检索相关的章节摘要，定位问题相关的文档部分。',
     parameters: {
       type: 'object',
       properties: {
@@ -309,7 +304,7 @@ export function createKBAgentTools(
     id: 'query_fulltext',
     name: 'query_fulltext',
     title: '全文关键词检索',
-    description: '在原始文档内容中进行关键词检索，获取包含关键词的文本片段。当需要查找具体段落、细节信息，或章节摘要不够详细时使用。支持跨文档检索。\n【实现说明】基于关键词模糊匹配+权重计分实现：\n- 支持空格分隔多个关键词，多个关键词会同时匹配计分\n- 段落中每个关键词匹配 +1分，匹配越多越相关\n- 返回包含关键词的上下文片段（约200字符）\n返回结果包含 document_id，你可以用 kb_get_content 获取完整文档或指定文本区间。',
+    description: '在文档内容中进行关键词检索，获取包含关键词的文本片段。',
     parameters: {
       type: 'object',
       properties: {

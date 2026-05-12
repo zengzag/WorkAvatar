@@ -97,12 +97,15 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const knowledgeGuidance = `\n\n## 知识查询策略（渐进式推理）\n\n当用户提出知识相关问题时，请按以下渐进式策略进行推理和查询：\n\n### 快速检索首选\n- **kb_search**（智能知识库检索）：当你不确定具体检索维度，或需要快速获取与主题相关的所有信息时，优先使用此工具。它会同时搜索文档标题、摘要、章节、关键词、实体和原始内容，返回最相关的结果。\n- **kb_advanced_search**（高级检索）：当你需要精确短语匹配、排除某些词、或限定文档类型时使用。支持 "精确短语"、+必须包含、-排除词 语法。\n\n### 分层查询工具\n1. **知识库概览**：如果不确定知识库中有哪些文件，先调用 kb_overview 获取知识库中所有文件的列表和摘要，判断哪些文件与问题相关\n2. **全局定位**：调用 query_global_summary 了解知识库整体结构和核心主题\n3. **实体浏览**：调用 kb_list_entities 浏览知识库中的关键实体（人物、组织、概念等），了解知识覆盖范围\n4. **实体详情**：调用 kb_entity_detail 获取某个实体的详细信息、属性、关系网络和提及记录\n5. **实体关系**：如果问题涉及特定实体关系，调用 query_knowledge_graph 查询实体关系网络\n6. **章节检索**：调用 query_chapters 定位相关章节摘要，缩小查找范围\n7. **深度检索**：如果需要具体细节，调用 query_fulltext 进行全文关键词检索\n8. **内容获取**：如果需要完整上下文，调用 kb_get_content 获取文档或章节完整内容。支持4种定位方式：仅传document_id获取整个文档、传chapter_id获取指定章节、传start_offset/end_offset获取字符区间、传start_line/end_line获取行号范围\n\n### 工具选择指南\n- 不确定知识库有哪些内容 → 优先 kb_overview\n- 快速全面了解某主题 → kb_search\n- 需要精确匹配或排除词 → kb_advanced_search\n- 想了解知识库有哪些实体 → kb_list_entities\n- 深入了解某个实体 → kb_entity_detail\n- 专业知识/业务规则/概念定义 → 优先 query_chapters\n- 人物/组织关系 → query_knowledge_graph 或 kb_entity_detail\n- 具体文档段落/细节 → query_fulltext\n- 需要查看某个文件的完整内容或指定区间 → kb_get_content（支持 chapter_id / start_offset+end_offset / start_line+end_line）\n- 不要一次性调用所有工具，根据问题类型选择最合适的1-2个工具\n- 回答时标注信息来源，格式为 [文档名称-章节名称]`
+    const knowledgeGuidance = `\n\n当用户提出知识相关问题时，使用知识库工具渐进式查询知识，先了解概述再检索再精准定位。`
 
     instructions += knowledgeGuidance
 
     const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
+    
+    // 只收集已分配技能的安装路径
+    const assignedSkillPaths = employeeSkills.assigned.map(skill => skill.installPath)
 
     const agent = new LightAgent({
       name: employee.name,
@@ -114,6 +117,7 @@ class EmployeeAgentService {
       providerType: config.provider_type,
       enableThinking: enableThinking ?? this.getModelThinkingConfig(config, modelId),
       skillsDirectories: [skillsDir],
+      allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
       debug: false,
     })

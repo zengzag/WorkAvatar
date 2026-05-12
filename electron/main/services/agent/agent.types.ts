@@ -14,6 +14,7 @@ export interface AgentConfig {
   filterTools?: boolean
   selfLearning?: boolean
   skillsDirectories?: string[]
+  allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
   debug?: boolean
   logLevel?: 'debug' | 'info' | 'warn' | 'error'

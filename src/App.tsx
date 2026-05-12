@@ -10,7 +10,9 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import TaskProgressPanel from './components/common/TaskProgressPanel'
+import { ParseDetailModal } from './components/knowledge-base'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
+import { useTaskDetailStore } from './stores/task-detail.store'
 
 const { Sider, Content } = Layout
 const { Title } = Typography
@@ -22,6 +24,10 @@ const App: React.FC = () => {
   const [collapsed, setCollapsed] = useState(true)
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
+  const taskDetailOpen = useTaskDetailStore((s) => s.open)
+  const taskDetailDocId = useTaskDetailStore((s) => s.docId)
+  const taskDetailDocName = useTaskDetailStore((s) => s.docName)
+  const closeDetail = useTaskDetailStore((s) => s.closeDetail)
 
   const getSelectedKey = () => {
     const path = location.pathname
@@ -115,6 +121,12 @@ const App: React.FC = () => {
           <Outlet />
         </Content>
       </Layout>
+      <ParseDetailModal
+        open={taskDetailOpen}
+        docId={taskDetailDocId}
+        docName={taskDetailDocName}
+        onClose={closeDetail}
+      />
     </Layout>
   )
 }

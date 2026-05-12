@@ -35,7 +35,7 @@ WorkAvatar 是一款**本地优先、隐私安全**的 Windows 桌面软件。�
 
 - ✅ **低门槛构建**：通过向导式流程创建数字员工，无需编写代码，上传资料后系统自动分析生成员工画像和技能建议
 - ✅ **智能角色分析**：基于知识库内容自动分析业务场景，智能生成员工角色、职责和技能建议（支持 LLM 分析、启发式分析、默认模板三级降级策略）
-- ✅ **丰富的工具生态**：内置 12 个实用工具 + 11 个知识库查询工具，支持 Claude Skills 技能扩展和 MCP 服务器集成
+- ✅ **丰富的工具生态**：内置多个实用工具 + 知识库查询工具，支持 Claude Skills 技能扩展和 MCP 服务器集成
 - ✅ **多步推理与工具过滤**：支持"思考-反思-提取"三步链式推理，自动规划和筛选适用工具
 - ✅ **知识驱动**：数字员工基于知识库内容回答问题，支持分层渐进式知识查询（概览→摘要→实体→章节→全文→原文），逐步精确定位所需知识
 - ✅ **数据主权归属用户**：所有资料文件保留在用户本地磁盘，不主动上传任何文件至云端；LLM 调用仅将文本内容按用户配置的 API 发送
@@ -99,13 +99,13 @@ WorkAvatar 是一款**本地优先、隐私安全**的 Windows 桌面软件。�
 - **流式响应**：支持 SSE 流式输出，包括思考过程和工具调用实时展示
 - **可中断**：支持 AbortController 实时中断生成
 
-#### 内置工具集（12 个实用工具）
+#### 内置工具集
 - **文件操作**：`read_file`（读取文件）、`write_file`（写入文件）、`list_dir`（列出目录）
 - **系统工具**：`shell_exec`（执行 shell 命令）、`system_info`（系统信息）、`env_vars`（环境变量）
 - **网络工具**：`web_search`（网络搜索）、`web_fetch`（获取网页内容）
 - **实用工具**：`calculator`（计算器）、`date_time`（日期时间）、`json_utils`（JSON 处理）、`random_utils`（随机工具）
 
-#### 渐进式知识查询工具（11 个）
+#### 渐进式知识查询工具
 Agent 内置知识库查询工具，支持分层查询：
 - `kb_overview`：获取知识库概览（文件列表和摘要）
 - `query_global_summary`：查询全局摘要
@@ -235,38 +235,7 @@ skill-name/
 ### 10. 多 LLM 提供商支持
 
 - 支持多种 LLM 提供商：
-  - **国产服务商**：
-    - DeepSeek（深度求索）— 支持 deepseek-chat、deepseek-reasoner 等模型，支持思考模式
-    - 通义千问（Qwen）— 支持 qwen-plus、qwen-max、QwQ 等模型，支持思考模式
-    - 智谱 AI（GLM）— 支持 glm-4-flash、GLM-Z1 等模型
-    - 火山引擎（豆包）— 支持 doubao 系列模型
-    - Moonshot（Kimi）— 支持 moonshot-v1 系列模型
-    - 零一万物（Yi）— 支持 yi-lightning 等模型
-  - **国际服务商**：
-    - OpenAI
-    - OpenAI 兼容接口（如 Llama.cpp、vLLM、Ollama OpenAI 模式）
-    - LM Studio（本地模型）
-    - Groq
-    - Mistral AI
-    - xAI (Grok)
-    - Azure OpenAI
-    - Google Vertex AI
-    - AWS Bedrock
-
-- **思考模式（Reasoning/Thinking）**：
-  - 每个模型可独立配置是否开启思考模式
-  - 支持 DeepSeek Reasoner 的 `reasoning_content` 字段
-  - 支持 `<think/>` 标签解析（兼容 DeepSeek Chat 等）
-  - 支持通义千问的 `enable_thinking` 参数
-  - 可配置思考预算（thinking_budget）
-  - 工作台对话界面支持思考过程折叠/展开展示
-
-- **专业模型配置**：
-  - 每个模型可独立设置 Temperature、Max Tokens、Top P
-  - 支持频率惩罚（frequency_penalty）和存在惩罚（presence_penalty）
-  - 支持额外请求头（extra_headers）和额外请求体（extra_body）
-  - 选择服务商类型时自动填充默认端点和模型
-
+- 思考模式（Reasoning/Thinking）：
 - 连接测试功能：轻量 ping 验证连通性和延迟
 
 ---

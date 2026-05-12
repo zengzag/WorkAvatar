@@ -18,22 +18,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
     id: 'kb_advanced_search',
     name: 'kb_advanced_search',
     title: '高级知识库检索',
-    description: `对知识库进行高级检索，支持精确短语匹配、排除词、文档类型过滤等高级查询语法。当你需要更精确的检索结果时使用此工具。
-
-【查询语法】
-- 精确短语: 用引号包裹，如 "合同条款"
-- 必须包含: 用 + 前缀，如 +重要 +紧急
-- 排除词: 用 - 前缀，如 -草稿 -模板
-- 文档类型过滤: 自动识别文件扩展名
-
-【使用场景】
-- 需要精确匹配某个短语时
-- 需要排除某些不相关内容时
-- 需要在特定文档类型中检索时
-
-【返回结果】
-- 包含匹配详情和文本片段
-- 内容匹配结果包含字符偏移量和行号范围，可用于精准定位`,
+    description: `对知识库进行高级检索，支持精确短语匹配、排除词、文档类型过滤等语法。`,
     parameters: {
       type: 'object',
       properties: {

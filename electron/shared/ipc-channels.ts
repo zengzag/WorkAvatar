@@ -43,4 +43,7 @@ export type {
   KBUpdateParams,
   KBLinkProjectParams,
   KBDocParseParams,
+  KBProcessDocumentParams,
+  KBProcessAllParams,
+  KBBuildGlobalParams,
 } from './channels/kb'

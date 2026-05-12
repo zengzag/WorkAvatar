@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Button, Typography, Space, Tag, Modal,
-  Input, Empty, Tooltip, Tabs, theme, App,
+  Input, Empty, Tooltip, Tabs, theme, App, notification,
 } from 'antd'
 import {
   PlusOutlined, FileTextOutlined, UploadOutlined,
@@ -12,8 +12,14 @@ import {
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import { KBListPanel, KBDocList, KBKnowledgeView, KBEntityGraph } from '../components/knowledge-base'
+import LLMSelector from '../components/llm/LLMSelector'
+import { BulbOutlined } from '@ant-design/icons'
+import { useTaskDetailStore } from '../stores/task-detail.store'
 
 const { Title, Text } = Typography
+
+const KB_SELECTION_KEY = 'workavatar_selected_kb_id'
+const KB_TAB_KEY = 'workavatar_selected_kb_tab'
 
 interface KBDocument {
   id: string
@@ -22,8 +28,18 @@ interface KBDocument {
   type: string
   size: number
   hash: string
-  parse_status: 'pending' | 'parsing' | 'completed' | 'failed'
+  parse_status: 'pending' | 'parsing' | 'paused' | 'completed' | 'failed'
   parse_error?: string
+  parse_progress?: number
+  parse_stage?: string
+  parse_detail?: string
+  processed_pages?: number
+  total_pages?: number
+  processed_chunks?: number
+  total_chunks?: number
+  parse_speed?: number
+  parse_eta?: number
+  is_reused?: number
   created_at: number
 }
 
@@ -53,12 +69,13 @@ const KnowledgeBasePage: React.FC = () => {
   const [parsingAll, setParsingAll] = useState(false)
   const [linkModalOpen, setLinkModalOpen] = useState(false)
   const [allProjects, setAllProjects] = useState<any[]>([])
-  const [activeTab, setActiveTab] = useState('docs')
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem(KB_TAB_KEY) || 'docs')
   const [selectedProviderId, setSelectedProviderId] = useState<string>('')
   const [selectedModelId, setSelectedModelId] = useState<string>('')
+  const [enableThinking, setEnableThinking] = useState<boolean>(false)
 
   const [knowledgeStats, setKnowledgeStats] = useState<any>(null)
-  const [processingDoc, setProcessingDoc] = useState(false)
+  const [processingDocId, setProcessingDocId] = useState<string | null>(null)
   const [processingAll, setProcessingAll] = useState(false)
   const [buildingGlobal, setBuildingGlobal] = useState(false)
   const [processProgress, setProcessProgress] = useState({ stage: '', detail: '' })
@@ -68,8 +85,6 @@ const KnowledgeBasePage: React.FC = () => {
   const [entityRelations, setEntityRelations] = useState<any[]>([])
   const [entityModalOpen, setEntityModalOpen] = useState(false)
   const [globalSummary, setGlobalSummary] = useState<any>(null)
-  const [timeline, setTimeline] = useState<any[]>([])
-  const [timelineTopic, setTimelineTopic] = useState('')
   const [docSummaries, setDocSummaries] = useState<any[]>([])
   const [selectedDocSummary, setSelectedDocSummary] = useState<any>(null)
   const [docChapters, setDocChapters] = useState<any[]>([])
@@ -82,23 +97,117 @@ const KnowledgeBasePage: React.FC = () => {
   const [editKBName, setEditKBName] = useState('')
   const [editKBDesc, setEditKBDesc] = useState('')
   const [processedDocIds, setProcessedDocIds] = useState<Set<string>>(new Set())
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const activeKBRef = useRef<string>('')
+  const autoRestoredRef = useRef(false)
+  const openDetail = useTaskDetailStore((s) => s.openDetail)
 
   const loadKBs = useCallback(async () => {
     try {
       const result = await window.electronAPI.kb.list()
       setKBs(result)
+      return result
     } catch { message.error(t('knowledgeBase.loadKbFailed')) }
+    return []
   }, [])
 
-  useEffect(() => { loadKBs() }, [loadKBs])
+  useEffect(() => {
+    loadKBs().then((kbList) => {
+      if (autoRestoredRef.current) return
+      autoRestoredRef.current = true
+      const savedKbId = localStorage.getItem(KB_SELECTION_KEY)
+      if (savedKbId) {
+        const savedKb = kbList.find((kb: KnowledgeBase) => kb.id === savedKbId)
+        if (savedKb) {
+          handleSelectKB(savedKb)
+        }
+      }
+    })
+  }, [loadKBs])
 
   const loadDocs = useCallback(async (kbId: string) => {
     try {
       const result = await window.electronAPI.kb.getDocumentList({ kb_id: kbId })
+      if (activeKBRef.current !== kbId) return
       setDocs(result)
       loadDocProcessingStatus(result)
+      const hasActiveParsing = result.some((d: KBDocument) => d.parse_status === 'parsing' || d.parse_status === 'paused')
+      if (hasActiveParsing) {
+        setParsingAll(true)
+      }
+
+      const pausedDocs = result.filter((d: KBDocument) => d.parse_status === 'paused')
+      if (pausedDocs.length > 0) {
+        const resumeAll = () => {
+          window.electronAPI.kb.resumeAllParses()
+          message.info(t('parseProgress.resumeAllSuccess'))
+          if (selectedKB) loadDocs(selectedKB.id)
+          notification.destroy(`resumable-${kbId}`)
+        }
+        notification.open({
+          key: `resumable-${kbId}`,
+          message: t('parseProgress.hasResumableTasks', { count: pausedDocs.length }),
+          duration: 8,
+          placement: 'topRight',
+          btn: (
+            <Button size="small" type="primary" onClick={resumeAll}>
+              {t('parseProgress.resumeAllTasks')}
+            </Button>
+          ),
+        })
+      }
+
+      try {
+        const tasks = await window.electronAPI.tasks.getAll()
+        const kbTasks = tasks.filter((t: any) =>
+          t.metadata?.kbId === kbId && (t.status === 'running' || t.status === 'paused')
+        )
+        if (kbTasks.some((t: any) => t.type === 'process')) {
+          setProcessingAll(true)
+        }
+        const singleDocTask = kbTasks.find((t: any) => t.type === 'process' && t.metadata?.docId)
+        if (singleDocTask) {
+          setProcessingDocId(singleDocTask.metadata.docId)
+        }
+        if (kbTasks.some((t: any) => t.id?.startsWith('build-global'))) {
+          setBuildingGlobal(true)
+        }
+      } catch {}
     } catch { message.error(t('knowledgeBase.loadDocsFailed')) }
   }, [])
+
+  useEffect(() => {
+    const hasActiveParsing = docs.some(d => d.parse_status === 'parsing' || d.parse_status === 'paused')
+    if (hasActiveParsing && selectedKB) {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(() => {
+          if (selectedKB) {
+            window.electronAPI.kb.getDocumentList({ kb_id: selectedKB.id }).then(result => {
+              setDocs(result)
+              const stillActive = result.some((d: KBDocument) => d.parse_status === 'parsing' || d.parse_status === 'paused')
+              if (!stillActive && pollRef.current) {
+                clearInterval(pollRef.current)
+                pollRef.current = null
+                setParsingAll(false)
+                loadDocProcessingStatus(result)
+              }
+            }).catch(() => {})
+          }
+        }, 2000)
+      }
+    } else {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [docs, selectedKB])
 
   const loadDocProcessingStatus = async (docList: KBDocument[]) => {
     const completedDocs = docList.filter(d => d.parse_status === 'completed')
@@ -119,7 +228,16 @@ const KnowledgeBasePage: React.FC = () => {
   }, [])
 
   const handleSelectKB = (kb: KnowledgeBase) => {
+    activeKBRef.current = kb.id
     setSelectedKB(kb)
+    localStorage.setItem(KB_SELECTION_KEY, kb.id)
+    setDocs([])
+    setKnowledgeStats(null)
+    setEntities([])
+    setGlobalSummary(null)
+    setDocSummaries([])
+    setAllRelations([])
+    setSelectedEntity(null)
     loadDocs(kb.id)
     loadLinkedProjects(kb.id)
     loadKnowledgeStats(kb.id)
@@ -132,6 +250,7 @@ const KnowledgeBasePage: React.FC = () => {
   const loadKnowledgeStats = async (kbId: string) => {
     try {
       const stats = await window.electronAPI.kb.getStats(kbId)
+      if (activeKBRef.current !== kbId) return
       setKnowledgeStats(stats)
     } catch {}
   }
@@ -139,6 +258,7 @@ const KnowledgeBasePage: React.FC = () => {
   const loadEntities = async (kbId: string, type?: string) => {
     try {
       const result = await window.electronAPI.kb.getEntities({ kb_id: kbId, type })
+      if (activeKBRef.current !== kbId) return
       setEntities(result)
     } catch {}
   }
@@ -146,12 +266,13 @@ const KnowledgeBasePage: React.FC = () => {
   const loadGlobalSummary = async (kbId: string) => {
     try {
       const summary = await window.electronAPI.kb.getGlobalSummary(kbId)
+      if (activeKBRef.current !== kbId) return
       setGlobalSummary(summary)
     } catch {}
   }
 
   const handleProcessDocument = async (docId: string) => {
-    setProcessingDoc(true)
+    setProcessingDocId(docId)
     setProcessProgress({ stage: '', detail: '' })
     const cleanup = (window as any).electronAPI.kb.onProcessProgress((p: any) => setProcessProgress(p))
     try {
@@ -159,6 +280,7 @@ const KnowledgeBasePage: React.FC = () => {
         doc_id: docId,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
+        enable_thinking: enableThinking,
       })
       if (result.success) {
         message.success(t('knowledgeBase.knowledgeProcessed'))
@@ -168,24 +290,31 @@ const KnowledgeBasePage: React.FC = () => {
         message.error(result.error || t('knowledgeBase.processFailed'))
       }
     } catch { message.error(t('knowledgeBase.knowledgeProcessFailed')) }
-    finally { cleanup(); setProcessingDoc(false); setProcessProgress({ stage: '', detail: '' }) }
+    finally { cleanup(); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
   }
 
   const handleProcessAll = async () => {
     if (!selectedKB) return
     setProcessingAll(true)
     setProcessProgress({ stage: '', detail: '' })
-    const cleanup = (window as any).electronAPI.kb.onProcessAllProgress((p: any) => setProcessProgress(p))
+    const cleanupAll = (window as any).electronAPI.kb.onProcessAllProgress((p: any) => setProcessProgress(p))
+    const cleanupProgress = (window as any).electronAPI.kb.onProcessProgress((p: any) => {
+      if (p.doc_id) {
+        setProcessingDocId(p.doc_id)
+        if (p.stage) setProcessProgress({ stage: p.stage, detail: p.detail || '' })
+      }
+    })
     try {
       const result = await window.electronAPI.kb.processAll({
         kb_id: selectedKB.id,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
+        enable_thinking: enableThinking,
       })
       message.success(t('knowledgeBase.batchProcessResult', { success: result.success, failed: result.failed, skipped: result.skipped }))
       loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadEntities(selectedKB.id)
     } catch { message.error(t('knowledgeBase.batchProcessFailed')) }
-    finally { cleanup(); setProcessingAll(false); setProcessProgress({ stage: '', detail: '' }) }
+    finally { cleanupAll(); cleanupProgress(); setProcessingAll(false); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
   }
 
   const handleBuildGlobal = async () => {
@@ -198,6 +327,7 @@ const KnowledgeBasePage: React.FC = () => {
         kb_id: selectedKB.id,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
+        enable_thinking: enableThinking,
       })
       if (result.success) {
         message.success(t('knowledgeBase.globalKnowledgeBuilt'))
@@ -209,16 +339,10 @@ const KnowledgeBasePage: React.FC = () => {
     finally { cleanup(); setBuildingGlobal(false); setProcessProgress({ stage: '', detail: '' }) }
   }
 
-  const loadDocSummaries = async (_kbId: string) => {
+  const loadDocSummaries = async (kbId: string) => {
     try {
-      const completedDocs = docs.filter(d => d.parse_status === 'completed')
-      const summaries: any[] = []
-      for (const doc of completedDocs) {
-        try {
-          const summary = await window.electronAPI.kb.getDocSummary(doc.id)
-          if (summary) summaries.push({ ...summary, doc_name: doc.original_name, doc_id: doc.id })
-        } catch {}
-      }
+      const summaries = await window.electronAPI.kb.getAllDocSummaries(kbId)
+      if (activeKBRef.current !== kbId) return
       setDocSummaries(summaries)
     } catch {}
   }
@@ -226,9 +350,11 @@ const KnowledgeBasePage: React.FC = () => {
   const loadAllRelations = async (kbId: string) => {
     try {
       const allEntities = await window.electronAPI.kb.getEntities({ kb_id: kbId })
+      if (activeKBRef.current !== kbId) return
       const relations: any[] = []
       const seen = new Set<string>()
       for (const entity of allEntities) {
+        if (activeKBRef.current !== kbId) return
         try {
           const entityRels = await window.electronAPI.kb.getEntityRelations({ entity_id: entity.id, depth: 1 })
           for (const rel of entityRels) {
@@ -240,6 +366,7 @@ const KnowledgeBasePage: React.FC = () => {
           }
         } catch {}
       }
+      if (activeKBRef.current !== kbId) return
       setAllRelations(relations)
     } catch {}
   }
@@ -271,14 +398,6 @@ const KnowledgeBasePage: React.FC = () => {
     setEntityModalOpen(true)
   }
 
-  const handleGenerateTimeline = async () => {
-    if (!selectedKB) return
-    try {
-      const result = await window.electronAPI.kb.generateTimeline({ kb_id: selectedKB.id, topic: timelineTopic || undefined })
-      setTimeline(result)
-    } catch { message.error(t('knowledgeBase.generateTimelineFailed')) }
-  }
-
   const handleCreateKB = async () => {
     if (!newKBName.trim()) { message.warning(t('knowledgeBase.enterKbName')); return }
     try {
@@ -296,7 +415,10 @@ const KnowledgeBasePage: React.FC = () => {
     try {
       await window.electronAPI.kb.delete(kbId)
       setKBs(prev => prev.filter(k => k.id !== kbId))
-      if (selectedKB?.id === kbId) setSelectedKB(null)
+      if (selectedKB?.id === kbId) {
+        setSelectedKB(null)
+        localStorage.removeItem(KB_SELECTION_KEY)
+      }
       message.success(t('common.deleteSuccess'))
     } catch { message.error(t('common.deleteFailed')) }
   }
@@ -340,6 +462,58 @@ const KnowledgeBasePage: React.FC = () => {
   const handleDeleteDoc = async (docId: string) => {
     try { await window.electronAPI.kb.deleteDocument(docId); if (selectedKB) { loadDocs(selectedKB.id); loadKBs() }; message.success(t('common.deleteSuccess')) }
     catch { message.error(t('common.deleteFailed')) }
+  }
+
+  const handlePauseParse = async (docId: string) => {
+    try {
+      const result = await window.electronAPI.kb.pauseParse(docId)
+      if (result) { message.info(t('parseProgress.pauseSuccess')); if (selectedKB) loadDocs(selectedKB.id) }
+      else message.warning(t('parseProgress.pauseFailed'))
+    } catch { message.error(t('parseProgress.pauseFailed')) }
+  }
+
+  const handleResumeParse = async (docId: string) => {
+    try {
+      const result = await window.electronAPI.kb.resumeParse(docId)
+      if (result) { message.info(t('parseProgress.resumeSuccess')); if (selectedKB) loadDocs(selectedKB.id) }
+      else message.warning(t('parseProgress.resumeFailed'))
+    } catch { message.error(t('parseProgress.resumeFailed')) }
+  }
+
+  const handleRetryParse = async (docId: string) => {
+    try {
+      const result = await window.electronAPI.kb.retryParse(docId)
+      if (result) { message.info(t('parseProgress.retryStarted')); if (selectedKB) loadDocs(selectedKB.id) }
+      else message.warning(t('parseProgress.retryFailed'))
+    } catch { message.error(t('parseProgress.retryFailed')) }
+  }
+
+  const handlePauseAll = async () => {
+    try {
+      await window.electronAPI.kb.pauseAllParses()
+      message.info(t('parseProgress.pauseAllSuccess'))
+      if (selectedKB) loadDocs(selectedKB.id)
+    } catch { message.error(t('parseProgress.pauseFailed')) }
+  }
+
+  const handleResumeAll = async () => {
+    try {
+      await window.electronAPI.kb.resumeAllParses()
+      message.info(t('parseProgress.resumeAllSuccess'))
+      if (selectedKB) loadDocs(selectedKB.id)
+    } catch { message.error(t('parseProgress.resumeFailed')) }
+  }
+
+  const handleCancelAll = async () => {
+    try {
+      await window.electronAPI.kb.cancelAllParses()
+      message.info(t('parseProgress.cancelAllSuccess'))
+      if (selectedKB) loadDocs(selectedKB.id)
+    } catch { message.error(t('parseProgress.cancelFailed')) }
+  }
+
+  const handleViewParseDetail = (docId: string, docName: string) => {
+    openDetail(docId, docName)
   }
 
   const handleLinkProject = async () => {
@@ -390,6 +564,7 @@ const KnowledgeBasePage: React.FC = () => {
   const pendingCount = docs.filter(d => d.parse_status === 'pending').length
   const completedCount = docs.filter(d => d.parse_status === 'completed').length
   const failedCount = docs.filter(d => d.parse_status === 'failed').length
+  const pausedCount = docs.filter(d => d.parse_status === 'paused').length
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 24 }}>
@@ -446,9 +621,29 @@ const KnowledgeBasePage: React.FC = () => {
                     ))}
                   </div>
                 )}
+
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
+      <LLMSelector
+        providerId={selectedProviderId}
+        modelId={selectedModelId}
+        onProviderChange={setSelectedProviderId}
+        onModelChange={setSelectedModelId}
+      />
+      <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
+        <BulbOutlined
+          style={{
+            fontSize: 18,
+            color: enableThinking ? token.colorWarning : token.colorTextSecondary,
+            cursor: 'pointer',
+            transition: 'color 0.3s'
+          }}
+          onClick={() => setEnableThinking(!enableThinking)}
+        />
+      </Tooltip>
+    </div>
               </Card>
 
-              <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
+              <Tabs activeKey={activeTab} onChange={(key) => { setActiveTab(key); localStorage.setItem(KB_TAB_KEY, key) }} items={[
                 {
                   key: 'docs',
                   label: <Space><FileTextOutlined />{t('knowledgeBase.tabDocs')}</Space>,
@@ -461,14 +656,21 @@ const KnowledgeBasePage: React.FC = () => {
                       completedCount={completedCount}
                       pendingCount={pendingCount}
                       failedCount={failedCount}
+                      pausedCount={pausedCount}
                       processedDocIds={processedDocIds}
-                      processingDoc={processingDoc}
+                      processingDocId={processingDocId}
                       onParseAll={handleParseAll}
-                      onProcessAll={handleProcessAll}
                       onParseDocument={handleParseDocument}
                       onProcessDocument={handleProcessDocument}
                       onDeleteDoc={handleDeleteDoc}
                       onRefresh={() => { loadDocs(selectedKB.id); loadLinkedProjects(selectedKB.id) }}
+                      onPauseParse={handlePauseParse}
+                      onResumeParse={handleResumeParse}
+                      onRetryParse={handleRetryParse}
+                      onPauseAll={handlePauseAll}
+                      onResumeAll={handleResumeAll}
+                      onCancelAll={handleCancelAll}
+                      onViewDetail={handleViewParseDetail}
                     />
                   ),
                 },
@@ -481,23 +683,15 @@ const KnowledgeBasePage: React.FC = () => {
                       globalSummary={globalSummary}
                       docSummaries={docSummaries}
                       allRelations={allRelations}
-                      timeline={timeline}
-                      timelineTopic={timelineTopic}
-                      processingDoc={processingDoc}
+                      processingDocId={processingDocId}
                       processingAll={processingAll}
                       buildingGlobal={buildingGlobal}
                       processProgress={processProgress}
-                      selectedProviderId={selectedProviderId}
-                      selectedModelId={selectedModelId}
-                      onProviderChange={setSelectedProviderId}
-                      onModelChange={setSelectedModelId}
                       onProcessAll={handleProcessAll}
                       onBuildGlobal={handleBuildGlobal}
                       onProcessDocument={handleProcessDocument}
                       onViewChapters={handleViewChapters}
                       onViewDocContent={handleViewDocContent}
-                      onGenerateTimeline={handleGenerateTimeline}
-                      onTimelineTopicChange={setTimelineTopic}
                       docChapters={docChapters}
                       chapterModalOpen={chapterModalOpen}
                       selectedDocSummary={selectedDocSummary}
@@ -506,6 +700,7 @@ const KnowledgeBasePage: React.FC = () => {
                       docContentTitle={docContentTitle}
                       docContentModalOpen={docContentModalOpen}
                       onCloseDocContentModal={() => setDocContentModalOpen(false)}
+                      onViewParseDetail={handleViewParseDetail}
                     />
                   ),
                 },

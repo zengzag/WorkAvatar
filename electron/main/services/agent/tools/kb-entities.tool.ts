@@ -19,17 +19,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_list_entities',
     name: 'kb_list_entities',
     title: '浏览知识库实体',
-    description: `浏览知识库中的实体列表，支持按类型筛选和搜索。当你需要了解知识库中包含哪些关键实体（人物、组织、地点、概念等）时使用此工具。
-
-【使用场景】
-- 了解知识库中有哪些关键人物、组织或概念
-- 在提问前先了解知识库的实体覆盖范围
-- 发现知识库中的核心主题和关键对象
-
-【返回结果】
-- 实体名称、类型、描述
-- 提及次数（反映重要性）
-- 首次出现的文档`,
+    description: `浏览知识库中的实体列表，支持按类型筛选和搜索。`,
     parameters: {
       type: 'object',
       properties: {
@@ -133,12 +123,7 @@ export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition
     id: 'kb_entity_detail',
     name: 'kb_entity_detail',
     title: '获取实体详情',
-    description: `获取某个实体的详细信息，包括描述、属性、关系网络和提及记录。当你需要深入了解某个特定实体时使用此工具。
-
-【使用场景】
-- 深入了解某个人物或组织的详细信息
-- 查看实体之间的关系网络
-- 追踪实体在文档中的出现位置`,
+    description: `获取某个实体的详细信息，包括描述、属性、关系和提及记录。`,
     parameters: {
       type: 'object',
       properties: {

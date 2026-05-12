@@ -8,8 +8,6 @@ import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
   LLMSettings,
-  MCPServerSettings,
-  SkillSettings,
   AppearanceSettings,
   StorageSettings,
   AboutSection,
@@ -27,24 +25,6 @@ const Settings: React.FC = () => {
         </span>
       ),
       children: <LLMSettings />,
-    },
-    {
-      key: 'mcp',
-      label: (
-        <span>
-          <SettingOutlined /> {t('settings.tabMcp')}
-        </span>
-      ),
-      children: <MCPServerSettings />,
-    },
-    {
-      key: 'skills',
-      label: (
-        <span>
-          <SettingOutlined /> {t('settings.tabSkills')}
-        </span>
-      ),
-      children: <SkillSettings />,
     },
     {
       key: 'storage',
