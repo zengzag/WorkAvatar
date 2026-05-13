@@ -20,6 +20,7 @@ import {
   Badge,
   Progress,
   Timeline,
+  Tooltip,
   theme,
   App,
 } from 'antd'
@@ -181,7 +182,6 @@ const CreationWizard: React.FC = () => {
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: enhancedDescription || undefined,
-        enable_thinking: enableThinking,
       })
 
       if (result.success && result.profile) {

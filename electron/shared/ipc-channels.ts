@@ -18,6 +18,10 @@ export type {
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
+  EmployeeExportConfigParams,
+  EmployeeImportConfigParams,
+  EmployeeExportPackageParams,
+  EmployeeImportPackageParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,

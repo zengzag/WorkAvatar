@@ -23,6 +23,7 @@ import {
   SkillsSection,
   MCPServersSection,
   KnowledgeBaseSection,
+  ExportImportSection,
 } from '../components/employee-settings'
 import type { Employee, LLMProvider } from '../types'
 import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
@@ -523,6 +524,17 @@ const EmployeeSettings: React.FC = () => {
               <ProfileSection
                 employee={employee}
                 linkedKBCount={linkedKBs.length}
+              />
+            )
+          },
+          {
+            key: 'export-import',
+            label: t('employeeSettings.tabExportImport'),
+            children: (
+              <ExportImportSection
+                employeeId={id!}
+                employeeName={employee.name}
+                projectId={employee.project_id}
               />
             )
           }

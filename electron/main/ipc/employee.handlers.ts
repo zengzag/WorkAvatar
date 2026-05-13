@@ -10,15 +10,21 @@ import type {
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
+  EmployeeExportConfigParams,
+  EmployeeImportConfigParams,
+  EmployeeExportPackageParams,
+  EmployeeImportPackageParams,
 } from '../../shared/ipc-channels'
 import type ProjectManagerService from '../services/project-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type SandboxTesterService from '../services/sandbox-tester.service'
+import type EmployeeExportService from '../services/employee-export.service'
 
 export function registerEmployeeHandlers(
   projectManager: ProjectManagerService,
   profilingService: EmployeeProfilingService,
-  sandboxTester: SandboxTesterService
+  sandboxTester: SandboxTesterService,
+  employeeExportService: EmployeeExportService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
     return projectManager.getEmployeeList(params?.project_id, params?.status)
@@ -135,5 +141,34 @@ export function registerEmployeeHandlers(
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_CONFIG, (_, params: EmployeeExportConfigParams) => {
+    return employeeExportService.exportConfig(params.employee_id, params.export_path)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_CONFIG, (_, params: EmployeeImportConfigParams) => {
+    return employeeExportService.importConfig(params.import_path, params.project_id, params.conflict_strategy)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_PACKAGE, async (event, params: EmployeeExportPackageParams) => {
+    return employeeExportService.exportPackage(
+      params.employee_id,
+      params.export_path,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.EMPLOYEE_EXPORT_PROGRESS, { employee_id: params.employee_id, stage, detail })
+      }
+    )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_PACKAGE, async (event, params: EmployeeImportPackageParams) => {
+    return employeeExportService.importPackage(
+      params.import_path,
+      params.project_id,
+      params.conflict_strategy,
+      (stage, detail) => {
+        event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
+      }
+    )
   })
 }

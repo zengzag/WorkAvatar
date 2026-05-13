@@ -40,6 +40,10 @@ import type {
   KBExportDocumentsParams,
   KBImportFullParams,
   KBImportGraphParams,
+  EmployeeExportConfigParams,
+  EmployeeImportConfigParams,
+  EmployeeExportPackageParams,
+  EmployeeImportPackageParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -73,6 +77,20 @@ const electronAPI = {
       const handler = (_event: any, data: { stage: string; detail?: string; chunk?: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, handler)
+    },
+    exportConfig: (params: EmployeeExportConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXPORT_CONFIG, params),
+    importConfig: (params: EmployeeImportConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_IMPORT_CONFIG, params),
+    exportPackage: (params: EmployeeExportPackageParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXPORT_PACKAGE, params),
+    importPackage: (params: EmployeeImportPackageParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_IMPORT_PACKAGE, params),
+    onExportProgress: (callback: (data: { employee_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, data: { employee_id: string; stage: string; detail: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_EXPORT_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_EXPORT_PROGRESS, handler)
+    },
+    onImportProgress: (callback: (data: { stage: string; detail: string }) => void) => {
+      const handler = (_event: any, data: { stage: string; detail: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
     },
   },
 

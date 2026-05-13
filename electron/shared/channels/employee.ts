@@ -21,6 +21,13 @@ export const EMPLOYEE_CHANNELS = {
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
+
+  EMPLOYEE_EXPORT_CONFIG: 'employee:export-config',
+  EMPLOYEE_IMPORT_CONFIG: 'employee:import-config',
+  EMPLOYEE_EXPORT_PACKAGE: 'employee:export-package',
+  EMPLOYEE_IMPORT_PACKAGE: 'employee:import-package',
+  EMPLOYEE_EXPORT_PROGRESS: 'employee:export-progress',
+  EMPLOYEE_IMPORT_PROGRESS: 'employee:import-progress',
 } as const
 
 export interface EmployeeListParams {
@@ -86,4 +93,26 @@ export interface EmployeeProfileAnalyzeParams {
   provider_id?: string
   model_id?: string
   additional_context?: string
+}
+
+export interface EmployeeExportConfigParams {
+  employee_id: string
+  export_path: string
+}
+
+export interface EmployeeImportConfigParams {
+  import_path: string
+  project_id: string
+  conflict_strategy: 'skip' | 'overwrite' | 'merge'
+}
+
+export interface EmployeeExportPackageParams {
+  employee_id: string
+  export_path: string
+}
+
+export interface EmployeeImportPackageParams {
+  import_path: string
+  project_id: string
+  conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }

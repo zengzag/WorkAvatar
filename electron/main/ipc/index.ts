@@ -17,6 +17,7 @@ import ToolEngineService from '../services/tool-engine.service'
 import SkillRegistryService from '../services/skill-registry.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import KnowledgeBaseService from '../services/kb.service'
+import EmployeeExportService from '../services/employee-export.service'
 
 export function registerIpcHandlers() {
   const projectManager = ProjectManagerService.getInstance()
@@ -30,10 +31,11 @@ export function registerIpcHandlers() {
   const skillRegistry = SkillRegistryService.getInstance()
   const employeeAgent = EmployeeAgentService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
+  const employeeExportService = EmployeeExportService.getInstance()
   const db = DatabaseService.getInstance().getDb()
 
   registerProjectHandlers(projectManager, fileParser, kbService)
-  registerEmployeeHandlers(projectManager, profilingService, sandboxTester)
+  registerEmployeeHandlers(projectManager, profilingService, sandboxTester, employeeExportService)
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db, ocrService, ruleExtractor)
   registerToolHandlers(db, toolEngine, skillRegistry)
