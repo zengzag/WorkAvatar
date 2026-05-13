@@ -6,6 +6,7 @@ import KnowledgeBaseService from './kb.service'
 import { LightAgent } from './agent/agent'
 import { createBuiltinTools } from './agent/builtin-tools'
 import { createKBAgentTools } from './agent/tools/kb-agent-tools'
+import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
 import { ToolDefinition } from './agent/tool.types'
 import { Message } from './agent/agent.types'
 import type { LLMModelConfig } from '../../shared/types'
@@ -101,6 +102,11 @@ class EmployeeAgentService {
 
     instructions += knowledgeGuidance
 
+    const workspaceGuidance = getWorkspacePrompt(employee.project_id)
+    if (workspaceGuidance) {
+      instructions += '\n' + workspaceGuidance
+    }
+
     const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
     
@@ -154,6 +160,11 @@ class EmployeeAgentService {
     const knowledgeTools = this.getKnowledgeTools(employee.project_id).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
 
+    const workspaceTools = createWorkspaceTools(employee.project_id)
+    if (workspaceTools.length > 0) {
+      agent.registerTools(workspaceTools)
+    }
+
     this.agents.set(cacheKey, agent)
     return agent
   }
@@ -178,6 +189,19 @@ class EmployeeAgentService {
       'query_fulltext',
     ]
     for (const id of kbToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
+    // 添加工作区工具ID（这些工具由 createWorkspaceTools 动态创建）
+    const workspaceToolIds = [
+      'workspace_list_files',
+      'workspace_read_file',
+      'workspace_write_file',
+      'workspace_create_folder',
+      'workspace_delete_item',
+      'workspace_rename_item',
+    ]
+    for (const id of workspaceToolIds) {
       allBuiltinToolIds.add(id)
     }
 

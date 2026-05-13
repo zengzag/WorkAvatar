@@ -4,10 +4,19 @@ import type {
   ProjectListParams,
   ProjectCreateParams,
   ProjectUpdateParams,
+  ProjectDeleteParams,
   FileListParams,
   FileImportParams,
   FileParseParams,
   FileGetContentParams,
+  WorkspaceInfoParams,
+  WorkspaceListFilesParams,
+  WorkspaceReadFileParams,
+  WorkspaceWriteFileParams,
+  WorkspaceCreateFolderParams,
+  WorkspaceDeleteItemParams,
+  WorkspaceRenameItemParams,
+  WorkspaceImportParams,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
@@ -59,7 +68,7 @@ const electronAPI = {
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_GET, id),
     create: (params: ProjectCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, params),
     update: (params: ProjectUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DELETE, id),
+    delete: (params: string | ProjectDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DELETE, params),
   },
 
   file: {
@@ -69,6 +78,17 @@ const electronAPI = {
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DELETE, id),
     parse: (params: FileParseParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_PARSE, params),
     getContent: (params: FileGetContentParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_GET_CONTENT, params),
+  },
+
+  workspace: {
+    info: (params: WorkspaceInfoParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_INFO, params),
+    listFiles: (params: WorkspaceListFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params),
+    readFile: (params: WorkspaceReadFileParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_READ_FILE, params),
+    writeFile: (params: WorkspaceWriteFileParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_FILE, params),
+    createFolder: (params: WorkspaceCreateFolderParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CREATE_FOLDER, params),
+    deleteItem: (params: WorkspaceDeleteItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_ITEM, params),
+    renameItem: (params: WorkspaceRenameItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_ITEM, params),
+    importFiles: (params: WorkspaceImportParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_IMPORT, params),
   },
 
   employee: {

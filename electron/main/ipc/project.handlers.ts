@@ -4,10 +4,19 @@ import type {
   ProjectListParams,
   ProjectCreateParams,
   ProjectUpdateParams,
+  ProjectDeleteParams,
   FileListParams,
   FileImportParams,
   FileParseParams,
   FileGetContentParams,
+  WorkspaceInfoParams,
+  WorkspaceListFilesParams,
+  WorkspaceReadFileParams,
+  WorkspaceWriteFileParams,
+  WorkspaceCreateFolderParams,
+  WorkspaceDeleteItemParams,
+  WorkspaceRenameItemParams,
+  WorkspaceImportParams,
 } from '../../shared/ipc-channels'
 import type ProjectManagerService from '../services/project-manager.service'
 import type FileParserService from '../services/file-parser.service'
@@ -35,8 +44,11 @@ export function registerProjectHandlers(
     return projectManager.updateProject(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.PROJECT_DELETE, (_, id: string) => {
-    return projectManager.deleteProject(id)
+  ipcMain.handle(IPC_CHANNELS.PROJECT_DELETE, (_, params: string | ProjectDeleteParams) => {
+    if (typeof params === 'string') {
+      return projectManager.deleteProject(params, false)
+    }
+    return projectManager.deleteProject(params.id, params.delete_workspace || false)
   })
 
   ipcMain.handle(IPC_CHANNELS.FILE_LIST, (_, params: FileListParams) => {
@@ -109,5 +121,37 @@ export function registerProjectHandlers(
       success: content !== null,
       content: content || undefined,
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_INFO, (_, params: WorkspaceInfoParams) => {
+    return projectManager.getWorkspaceInfo(params.project_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST_FILES, (_, params: WorkspaceListFilesParams) => {
+    return projectManager.listWorkspaceFiles(params.project_id, params.sub_path, params.recursive)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_READ_FILE, (_, params: WorkspaceReadFileParams) => {
+    return projectManager.readWorkspaceFile(params.project_id, params.file_path)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_WRITE_FILE, (_, params: WorkspaceWriteFileParams) => {
+    return projectManager.writeWorkspaceFile(params.project_id, params.file_path, params.content)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CREATE_FOLDER, (_, params: WorkspaceCreateFolderParams) => {
+    return projectManager.createWorkspaceFolder(params.project_id, params.folder_path)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_DELETE_ITEM, (_, params: WorkspaceDeleteItemParams) => {
+    return projectManager.deleteWorkspaceItem(params.project_id, params.item_path)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_RENAME_ITEM, (_, params: WorkspaceRenameItemParams) => {
+    return projectManager.renameWorkspaceItem(params.project_id, params.item_path, params.new_name)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_IMPORT, (_, params: WorkspaceImportParams) => {
+    return projectManager.importToWorkspace(params.project_id, params.source_paths, params.target_folder)
   })
 }

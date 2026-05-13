@@ -5,11 +5,11 @@ import {
   Table,
   message,
   Space,
-  Popconfirm,
   Typography,
   Modal,
   Input,
   theme,
+  Checkbox,
 } from 'antd'
 import {
   FolderOpenOutlined,
@@ -36,6 +36,9 @@ const ProjectManager: React.FC = () => {
   const [loadingTable, setLoadingTable] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [renameModalOpen, setRenameModalOpen] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deleteProject, setDeleteProject] = useState<Project | null>(null)
+  const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [currentProject, setCurrentProject] = useState<any>(null)
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDesc, setNewProjectDesc] = useState('')
@@ -87,11 +90,23 @@ const ProjectManager: React.FC = () => {
     }
   }
 
-  const handleDeleteProject = async (id: string) => {
+  const handleDeleteProject = async (project: Project) => {
+    setDeleteProject(project)
+    setDeleteWorkspace(false)
+    setDeleteModalOpen(true)
+  }
+
+  const confirmDeleteProject = async () => {
+    if (!deleteProject) return
     try {
-      await window.electronAPI.project.delete(id)
-      setProjects(projects.filter((p) => p.id !== id))
+      await window.electronAPI.project.delete({
+        id: deleteProject.id,
+        delete_workspace: deleteWorkspace,
+      })
+      setProjects(projects.filter((p) => p.id !== deleteProject.id))
       message.success(t('projectManager.deleteSuccess'))
+      setDeleteModalOpen(false)
+      setDeleteProject(null)
     } catch (error) {
       console.error('删除项目失败:', error)
       message.error(t('projectManager.deleteFailed'))
@@ -172,17 +187,15 @@ const ProjectManager: React.FC = () => {
             >
               {t('common.rename')}
             </Button>
-            <Popconfirm
-              title={t('projectManager.confirmDeleteProject')}
-              description={t('projectManager.deleteProjectDesc')}
-              onConfirm={() => handleDeleteProject(record.id)}
-              okText={t('common.confirm')}
-              cancelText={t('common.cancel')}
+            <Button
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDeleteProject(record)}
             >
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                {t('common.delete')}
-              </Button>
-            </Popconfirm>
+              {t('common.delete')}
+            </Button>
           </Space>
         </Space>
       ),
@@ -285,6 +298,33 @@ const ProjectManager: React.FC = () => {
             onChange={(e) => setNewProjectDesc(e.target.value)}
           />
         </div>
+      </Modal>
+
+      <Modal
+        title={t('projectManager.confirmDeleteProject')}
+        open={deleteModalOpen}
+        onOk={confirmDeleteProject}
+        onCancel={() => { setDeleteModalOpen(false); setDeleteProject(null) }}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ danger: true }}
+      >
+        <p>{t('projectManager.deleteProjectDesc')}</p>
+        {deleteProject?.root_path && (
+          <Checkbox
+            checked={deleteWorkspace}
+            onChange={(e) => setDeleteWorkspace(e.target.checked)}
+            style={{ marginTop: 8 }}
+          >
+            {t('projectManager.deleteWorkspace')}
+          </Checkbox>
+        )}
+        {deleteWorkspace && deleteProject?.root_path && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: token.colorWarningBg, borderRadius: 6, fontSize: 13 }}>
+            {t('projectManager.deleteWorkspaceWarning')}<br />
+            <Text type="secondary" style={{ fontSize: 12 }}>{deleteProject.root_path}</Text>
+          </div>
+        )}
       </Modal>
     </div>
   )

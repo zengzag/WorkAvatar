@@ -120,7 +120,35 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 4. 任务配置与定时调度
+### 4. 项目工作区
+
+#### 项目工作区（Project Workspace）
+- 每个项目拥有专属工作区文件夹，作为数字员工的"工作目录"
+- 创建项目时自动创建项目工作区目录
+- 数字员工通过 `workspace_*` 系列工具天然可以使用项目工作区：
+  - `workspace_list_files`：列出工作区中的文件和文件夹
+  - `workspace_read_file`：读取工作区中的文件内容
+  - `workspace_write_file`：向工作区写入文件（如文档、报告、数据文件等）
+  - `workspace_create_folder`：在工作区创建文件夹来组织文件
+  - `workspace_delete_item`：删除工作区中的文件或文件夹
+  - `workspace_rename_item`：重命名工作区中的文件或文件夹
+- 所有路径相对于工作区根目录，确保安全沙盒（不可越权访问项目外的文件）
+- Agent 系统提示词自动注入项目工作区信息，数字员工感知并使用工作区
+- 项目详情页提供"工作区"Tab，支持：
+  - 浏览工作区文件和文件夹（面包屑导航）
+  - 新建文件、新建文件夹
+  - 导入外部文件到工作区
+  - 查看文件内容、重命名、删除
+  - 在文件管理器中打开工作区目录
+
+#### 典型应用场景
+- 写文档的数字员工可以在项目工作区中创建和编辑文档
+- 数据分析员工可以在工作区中生成报告和数据文件
+- 项目工作区成为数字员工的产出物存储和管理中心
+
+---
+
+### 5. 任务配置与定时调度
 
 #### 任务配置
 - 为每个数字员工配置可执行的任务，包含自定义提示词、超时设置
@@ -153,7 +181,7 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 5. Claude Skills 技能生态
+### 6. Claude Skills 技能生态
 
 #### 技能管理
 - 支持从目录安装 Claude Skills 格式的技能
@@ -180,7 +208,7 @@ skill-name/
 
 ---
 
-### 6. MCP 服务器集成
+### 7. MCP 服务器集成
 
 #### Model Context Protocol 支持
 - 集成 `@modelcontextprotocol/sdk`
@@ -190,7 +218,7 @@ skill-name/
 
 ---
 
-### 7. 数字员工工作台
+### 8. 数字员工工作台
 
 #### 沉浸式对话界面
 - **极简顶栏**：显示员工名称、状态标签、LLM 选择器和快捷操作图标
@@ -211,7 +239,7 @@ skill-name/
 
 ---
 
-### 8. 独立知识库管理
+### 9. 独立知识库管理
 
 #### 知识库与项目解耦
 - 知识库独立于项目管理，支持跨项目共享复用
@@ -244,7 +272,7 @@ skill-name/
 
 ---
 
-### 9. 后台任务队列
+### 10. 后台任务队列
 
 #### 任务进度面板
 - 全局任务进度指示器，位于侧边栏底部
@@ -254,7 +282,7 @@ skill-name/
 
 ---
 
-### 10. 知识检索
+### 11. 知识检索
 
 #### 关键词检索
 - 基于 SQLite 的关键词模糊匹配与权重计分检索
@@ -273,7 +301,7 @@ skill-name/
 
 ---
 
-### 11. 多 LLM 提供商支持
+### 12. 多 LLM 提供商支持
 
 - 支持多种 LLM 提供商：
 - 思考模式（Reasoning/Thinking）：
@@ -281,7 +309,7 @@ skill-name/
 
 ---
 
-### 12. 全局配置管理
+### 13. 全局配置管理
 
 - **LLM 配置**：多提供商增删改查，连接测试
 - **默认模型**：为不同场景单独配置默认模型（创建数字员工、数字员工对话、知识库处理）
@@ -293,7 +321,7 @@ skill-name/
 
 ---
 
-### 13. 数字员工导入导出
+### 14. 数字员工导入导出
 
 #### 配置导出/导入
 - **配置导出**：将数字员工配置导出为 JSON 文件，包含角色信息、提示词模板、工具配置、关联知识库列表、权限设置等
@@ -336,7 +364,7 @@ skill-name/
 │  │                     LightAgent 智能代理系统                        │ │
 │  │  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────┐ │ │
 │  │  │  Agent Core         │  │  Tool Registry      │  │  Skill Mgr  │ │ │
-│  │  │  (多步推理/工具调用)│  │  (12内置+11知识库)  │  │  (Claude)   │ │ │
+│  │  │  (多步推理/工具调用)│  │  (12内置+11知识库+6工作区)│  │  (Claude)   │ │ │
 │  │  └─────────────────────┘  └─────────────────────┘  └─────────────┘ │ │
 │  │  ┌─────────────────────┐  ┌─────────────────────┐                  │ │
 │  │  │  Tool Dispatcher    │  │  Knowledge Query    │                  │ │
@@ -486,16 +514,23 @@ LLM 调用（流式）
     │       ├─ 内置工具（12个）
     │       ├─ MCP 服务器工具
     │       ├─ Claude Skills 工具
-    │       └─ 知识库查询工具（11个）
-    │           ├─ kb_overview
-    │           ├─ query_global_summary
-    │           ├─ query_knowledge_graph
-    │           ├─ query_chapters
-    │           ├─ query_fulltext
-    │           ├─ kb_search
-    │           ├─ kb_advanced_search
-    │           ├─ kb_list_entities / kb_entity_detail
-    │           └─ kb_get_content
+    │       ├─ 知识库查询工具（11个）
+    │       │   ├─ kb_overview
+    │       │   ├─ query_global_summary
+    │       │   ├─ query_knowledge_graph
+    │       │   ├─ query_chapters
+    │       │   ├─ query_fulltext
+    │       │   ├─ kb_search
+    │       │   ├─ kb_advanced_search
+    │       │   ├─ kb_list_entities / kb_entity_detail
+    │       │   └─ kb_get_content
+    │       └─ 项目工作区工具（6个）
+    │           ├─ workspace_list_files
+    │           ├─ workspace_read_file
+    │           ├─ workspace_write_file
+    │           ├─ workspace_create_folder
+    │           ├─ workspace_delete_item
+    │           └─ workspace_rename_item
     │       ↓
     │       获取工具结果
     │       ↓
@@ -601,6 +636,7 @@ WorkAvatar/
 │   │       │   │   ├── kb-content.tool.ts      # 知识库内容获取工具
 │   │       │   │   ├── kb-entities.tool.ts     # 知识库实体工具
 │   │       │   │   ├── kb-agent-tools.ts       # 员工代理知识库工具集
+│   │       │   │   ├── workspace-tools.ts      # 项目工作区工具集
 │   │       │   │   ├── utils.ts
 │   │       │   │   └── index.ts
 │   │       ├── database.service.ts    # SQLite 数据库服务
@@ -678,6 +714,9 @@ WorkAvatar/
 │   │   │   ├── KBDocList.tsx
 │   │   │   ├── KBKnowledgeView.tsx
 │   │   │   ├── KBEntityGraph.tsx
+│   │   │   └── index.ts
+│   │   ├── project/                   # 项目子组件
+│   │   │   ├── ProjectWorkspace.tsx   # 项目工作区文件管理
 │   │   │   └── index.ts
 │   │   └── settings/                  # 设置子组件
 │   │       ├── LLMSettings.tsx

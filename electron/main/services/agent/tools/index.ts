@@ -32,3 +32,4 @@ export { createKBEntitiesTool, createKBEntityDetailTool } from './kb-entities.to
 export { createKBAdvancedSearchTool } from './kb-advanced.tool'
 export { createKBGetContentTool } from './kb-content.tool'
 export { createKBAgentTools } from './kb-agent-tools'
+export { createWorkspaceTools, getWorkspacePrompt } from './workspace-tools'

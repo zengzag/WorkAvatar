@@ -10,9 +10,11 @@ import {
   DatabaseOutlined,
   LinkOutlined,
   DisconnectOutlined,
+  FolderOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
+import ProjectWorkspace from '../components/project/ProjectWorkspace'
 import type { Employee } from '../types'
 import type { TabsProps } from 'antd'
 import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
@@ -333,6 +335,20 @@ const ProjectDetail: React.FC = () => {
                       onAction={handleCreateEmployee}
                     />
                   )}
+                </Card>
+              ),
+            },
+            {
+              key: 'workspace',
+              label: (
+                <Space>
+                  <FolderOutlined />
+                  {t('projectDetail.tabWorkspace')}
+                </Space>
+              ),
+              children: (
+                <Card title={t('projectDetail.workspaceTitle')}>
+                  <ProjectWorkspace projectId={id!} projectPath={project.root_path} />
                 </Card>
               ),
             },

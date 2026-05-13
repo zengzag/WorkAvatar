@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme, Modal, Input } from 'antd'
+import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme, Modal, Input, Checkbox } from 'antd'
 import {
   RocketOutlined,
   FolderOpenOutlined,
@@ -31,6 +31,9 @@ const Dashboard: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [kbList, setKBList] = useState<any[]>([])
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [deleteProjectModalOpen, setDeleteProjectModalOpen] = useState(false)
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null)
+  const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDesc, setNewProjectDesc] = useState('')
 
@@ -106,11 +109,23 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const handleDeleteProject = async (id: string) => {
+  const handleDeleteProject = (project: Project) => {
+    setDeletingProject(project)
+    setDeleteWorkspace(false)
+    setDeleteProjectModalOpen(true)
+  }
+
+  const confirmDeleteProject = async () => {
+    if (!deletingProject) return
     try {
-      await window.electronAPI.project.delete(id)
-      setProjects(projects.filter(p => p.id !== id))
+      await window.electronAPI.project.delete({
+        id: deletingProject.id,
+        delete_workspace: deleteWorkspace,
+      })
+      setProjects(projects.filter(p => p.id !== deletingProject.id))
       message.success(t('dashboard.projectDeleted'))
+      setDeleteProjectModalOpen(false)
+      setDeletingProject(null)
     } catch (error) {
       console.error('删除项目失败:', error)
       message.error(t('dashboard.projectDeleteFailed'))
@@ -253,15 +268,7 @@ const Dashboard: React.FC = () => {
                       <Button type="link" size="small" onClick={() => navigate(`/project/${item.id}`)}>
                         {t('dashboard.open')}
                       </Button>
-                      <Popconfirm
-                        title={t('dashboard.confirmDeleteProject')}
-                        description={t('dashboard.deleteProjectDesc')}
-                        onConfirm={() => handleDeleteProject(item.id)}
-                        okText={t('common.confirm')}
-                        cancelText={t('common.cancel')}
-                      >
-                        <Button type="link" size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>
+                      <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteProject(item)} />
                     </Space>
                   </div>
                 ))}
@@ -387,6 +394,33 @@ const Dashboard: React.FC = () => {
             />
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        title={t('dashboard.confirmDeleteProject')}
+        open={deleteProjectModalOpen}
+        onOk={confirmDeleteProject}
+        onCancel={() => { setDeleteProjectModalOpen(false); setDeletingProject(null) }}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ danger: true }}
+      >
+        <p>{t('dashboard.deleteProjectDesc')}</p>
+        {deletingProject?.root_path && (
+          <Checkbox
+            checked={deleteWorkspace}
+            onChange={(e) => setDeleteWorkspace(e.target.checked)}
+            style={{ marginTop: 8 }}
+          >
+            {t('dashboard.deleteWorkspace')}
+          </Checkbox>
+        )}
+        {deleteWorkspace && deletingProject?.root_path && (
+          <div style={{ marginTop: 8, padding: '8px 12px', background: token.colorWarningBg, borderRadius: 6, fontSize: 13 }}>
+            {t('dashboard.deleteWorkspaceWarning')}<br />
+            <Text type="secondary" style={{ fontSize: 12 }}>{deletingProject.root_path}</Text>
+          </div>
+        )}
       </Modal>
     </div>
   )

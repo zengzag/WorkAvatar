@@ -30,7 +30,7 @@ export interface ToolDefinition {
     required?: string[]
   }
   handler: (args: Record<string, any>) => Promise<any> | any
-  source: 'builtin' | 'mcp' | 'skill' | 'dynamic'
+  source: 'builtin' | 'mcp' | 'skill' | 'dynamic' | 'workspace'
   mcpServerId?: string
 }
 

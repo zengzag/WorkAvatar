@@ -47,7 +47,9 @@ class ProjectManagerService {
 
   createProject(name: string, description: string = '', rootPath?: string): Project {
     const projectId = crypto.randomUUID()
-    const projectRoot = rootPath || path.join(app.getPath('documents'), 'WorkAvatar', 'projects', projectId)
+    const shortId = crypto.randomBytes(4).toString('hex')
+    const basePath = rootPath || path.join(app.getPath('documents'))
+    const projectRoot = path.join(basePath, 'WorkAvatar', 'projects', shortId)
 
     if (!fs.existsSync(projectRoot)) {
       fs.mkdirSync(projectRoot, { recursive: true })
@@ -98,7 +100,16 @@ class ProjectManagerService {
     return this.getProject(id)
   }
 
-  deleteProject(id: string): boolean {
+  deleteProject(id: string, deleteWorkspace: boolean = false): boolean {
+    if (deleteWorkspace) {
+      const project = this.getProject(id)
+      if (project && project.root_path) {
+        const workspaceRoot = path.resolve(project.root_path)
+        if (fs.existsSync(workspaceRoot)) {
+          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch {}
+        }
+      }
+    }
     const result = this.db.getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
     return result.changes > 0
   }
@@ -323,6 +334,212 @@ class ProjectManagerService {
   deleteAllConversations(employeeId: string): number {
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
     return result.changes
+  }
+
+  private resolveWorkspacePath(projectId: string, relativePath?: string): { fullPath: string; error?: string } {
+    const project = this.getProject(projectId)
+    if (!project) return { fullPath: '', error: '项目不存在' }
+
+    const workspaceRoot = path.resolve(project.root_path)
+    if (!relativePath) return { fullPath: workspaceRoot }
+
+    const fullPath = path.resolve(workspaceRoot, relativePath)
+    if (!fullPath.startsWith(workspaceRoot + path.sep) && fullPath !== workspaceRoot) {
+      return { fullPath: '', error: '路径超出项目工作区范围' }
+    }
+
+    return { fullPath }
+  }
+
+  getWorkspaceInfo(projectId: string): { success: boolean; path?: string; stats?: { fileCount: number; dirCount: number; totalSize: number }; error?: string } {
+    const project = this.getProject(projectId)
+    if (!project) return { success: false, error: '项目不存在' }
+
+    const workspaceRoot = path.resolve(project.root_path)
+    if (!fs.existsSync(workspaceRoot)) {
+      fs.mkdirSync(workspaceRoot, { recursive: true })
+      return { success: true, path: workspaceRoot, stats: { fileCount: 0, dirCount: 0, totalSize: 0 } }
+    }
+
+    let fileCount = 0
+    let dirCount = 0
+    let totalSize = 0
+
+    const walk = (dir: string) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          dirCount++
+          walk(fullPath)
+        } else if (entry.isFile()) {
+          fileCount++
+          try { totalSize += fs.statSync(fullPath).size } catch {}
+        }
+      }
+    }
+
+    try { walk(workspaceRoot) } catch {}
+
+    return { success: true, path: workspaceRoot, stats: { fileCount, dirCount, totalSize } }
+  }
+
+  listWorkspaceFiles(projectId: string, subPath?: string, recursive?: boolean): { success: boolean; items?: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: number }>; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, subPath)
+    if (error) return { success: false, error }
+
+    if (!fs.existsSync(fullPath)) return { success: false, error: '目录不存在' }
+    if (!fs.statSync(fullPath).isDirectory()) return { success: false, error: '路径不是目录' }
+
+    const items: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: number }> = []
+    const project = this.getProject(projectId)!
+    const workspaceRoot = path.resolve(project.root_path)
+
+    const walk = (dir: string) => {
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+          .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+      } catch { return }
+
+      for (const entry of entries) {
+        const entryFullPath = path.join(dir, entry.name)
+        const relativePath = path.relative(workspaceRoot, entryFullPath).replace(/\\/g, '/')
+        if (entry.isDirectory()) {
+          items.push({ name: entry.name, path: relativePath, type: 'dir' })
+          if (recursive) walk(entryFullPath)
+        } else if (entry.isFile()) {
+          try {
+            const stat = fs.statSync(entryFullPath)
+            items.push({ name: entry.name, path: relativePath, type: 'file', size: stat.size, modified: Math.floor(stat.mtimeMs / 1000) })
+          } catch {}
+        }
+      }
+    }
+
+    walk(fullPath)
+    return { success: true, items }
+  }
+
+  readWorkspaceFile(projectId: string, filePath: string): { success: boolean; content?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, filePath)
+    if (error) return { success: false, error }
+
+    if (!fs.existsSync(fullPath)) return { success: false, error: '文件不存在' }
+    if (!fs.statSync(fullPath).isFile()) return { success: false, error: '路径不是文件' }
+
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8')
+      return { success: true, content }
+    } catch (e: any) {
+      return { success: false, error: `读取文件失败: ${e.message}` }
+    }
+  }
+
+  writeWorkspaceFile(projectId: string, filePath: string, content: string): { success: boolean; path?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, filePath)
+    if (error) return { success: false, error }
+
+    const dir = path.dirname(fullPath)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+    try {
+      fs.writeFileSync(fullPath, content, 'utf-8')
+      return { success: true, path: fullPath }
+    } catch (e: any) {
+      return { success: false, error: `写入文件失败: ${e.message}` }
+    }
+  }
+
+  createWorkspaceFolder(projectId: string, folderPath: string): { success: boolean; path?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, folderPath)
+    if (error) return { success: false, error }
+
+    if (fs.existsSync(fullPath)) return { success: false, error: '路径已存在' }
+
+    try {
+      fs.mkdirSync(fullPath, { recursive: true })
+      return { success: true, path: fullPath }
+    } catch (e: any) {
+      return { success: false, error: `创建文件夹失败: ${e.message}` }
+    }
+  }
+
+  deleteWorkspaceItem(projectId: string, itemPath: string): { success: boolean; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, itemPath)
+    if (error) return { success: false, error }
+
+    if (!fs.existsSync(fullPath)) return { success: false, error: '路径不存在' }
+
+    try {
+      const stat = fs.statSync(fullPath)
+      if (stat.isDirectory()) {
+        fs.rmSync(fullPath, { recursive: true, force: true })
+      } else {
+        fs.unlinkSync(fullPath)
+      }
+      return { success: true }
+    } catch (e: any) {
+      return { success: false, error: `删除失败: ${e.message}` }
+    }
+  }
+
+  renameWorkspaceItem(projectId: string, itemPath: string, newName: string): { success: boolean; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(projectId, itemPath)
+    if (error) return { success: false, error }
+
+    if (!fs.existsSync(fullPath)) return { success: false, error: '路径不存在' }
+
+    const dir = path.dirname(fullPath)
+    const newPath = path.join(dir, newName)
+    const { fullPath: newFullPath, error: newError } = this.resolveWorkspacePath(projectId, path.relative(this.getProject(projectId)!.root_path, newPath).replace(/\\/g, '/'))
+    if (newError) return { success: false, error: newError }
+
+    if (fs.existsSync(newFullPath)) return { success: false, error: '目标名称已存在' }
+
+    try {
+      fs.renameSync(fullPath, newFullPath)
+      return { success: true }
+    } catch (e: any) {
+      return { success: false, error: `重命名失败: ${e.message}` }
+    }
+  }
+
+  importToWorkspace(projectId: string, sourcePaths: string[], targetFolder?: string): { success: boolean; imported?: string[]; errors?: Array<{ path: string; error: string }> } {
+    const { fullPath: targetDir, error: dirError } = this.resolveWorkspacePath(projectId, targetFolder)
+    if (dirError) return { success: false, errors: [{ path: '', error: dirError }] }
+
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true })
+    }
+
+    const imported: string[] = []
+    const errors: Array<{ path: string; error: string }> = []
+
+    for (const srcPath of sourcePaths) {
+      try {
+        if (!fs.existsSync(srcPath)) {
+          errors.push({ path: srcPath, error: '源文件不存在' })
+          continue
+        }
+
+        const stat = fs.statSync(srcPath)
+        const fileName = path.basename(srcPath)
+        const destPath = path.join(targetDir, fileName)
+
+        if (stat.isFile()) {
+          fs.copyFileSync(srcPath, destPath)
+          imported.push(fileName)
+        } else if (stat.isDirectory()) {
+          fs.cpSync(srcPath, destPath, { recursive: true })
+          imported.push(fileName)
+        }
+      } catch (e: any) {
+        errors.push({ path: srcPath, error: e.message })
+      }
+    }
+
+    return { success: imported.length > 0, imported, errors }
   }
 }
 
