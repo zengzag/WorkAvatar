@@ -17,6 +17,8 @@ export const LLM_CHANNELS = {
   LLM_THOUGHT: 'llm:thought',
   AGENT_TOOL_CALL: 'agent:tool-call',
   AGENT_TOOL_RESULT: 'agent:tool-result',
+  INTERACTION_REQUEST: 'interaction:request',
+  INTERACTION_RESPONSE: 'interaction:response',
 } as const
 
 export interface LLMProviderCreateParams {
@@ -81,4 +83,5 @@ export interface EmployeeChatStreamParams {
   }
   use_skills?: boolean
   enable_thinking?: boolean
+  project_id?: string
 }

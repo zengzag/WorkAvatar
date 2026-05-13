@@ -21,6 +21,7 @@ import {
   Progress,
   Timeline,
   Tooltip,
+  Modal,
   theme,
   App,
 } from 'antd'
@@ -35,6 +36,7 @@ import {
   UserOutlined,
   EditOutlined,
   ToolOutlined,
+  CommentOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
@@ -80,6 +82,9 @@ const CreationWizard: React.FC = () => {
   const [businessDescription, setBusinessDescription] = useState<string>('')
   const [additionalResponsibilities, setAdditionalResponsibilities] = useState<string>('')
   const [step5ProviderId, setStep5ProviderId] = useState<string>('')
+  const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
+  const [refineModalOpen, setRefineModalOpen] = useState(false)
+  const [refineFeedback, setRefineFeedback] = useState('')
 
   // Persist selections to localStorage
   useEffect(() => {
@@ -204,6 +209,9 @@ const CreationWizard: React.FC = () => {
 
       if (result.success && result.profile) {
         setProfile(result.profile)
+        if (result.messages) {
+          setAnalysisMessages(result.messages)
+        }
 
         if (result.analysisMethod === 'llm') {
           message.success(t('creationWizard.llmAnalysisComplete'))
@@ -223,6 +231,93 @@ const CreationWizard: React.FC = () => {
       message.error(t('creationWizard.analyzeKbFailed'))
     } finally {
       setLoading(false)
+      if (progressCleanupRef.current) {
+        progressCleanupRef.current()
+        progressCleanupRef.current = null
+      }
+    }
+  }
+
+  const handleRefineProfile = async () => {
+    if (!refineFeedback.trim()) {
+      message.warning(t('creationWizard.enterRefineFeedback'))
+      return
+    }
+    if (!profile) return
+
+    const providerId = selectedProviderId || providers.find((p) => p.is_default)?.id
+    if (!providerId) {
+      message.warning(t('creationWizard.noProviderForRefine'))
+      return
+    }
+
+    setRefineModalOpen(false)
+    setLoading(true)
+    setAnalyzeStage('')
+    setAnalyzeDetail('')
+    setAnalyzeChunks([])
+    setAnalyzeThinkChunks([])
+    setAnalyzeProgress(0)
+
+    if (progressCleanupRef.current) {
+      progressCleanupRef.current()
+    }
+    progressCleanupRef.current = window.electronAPI.employee.onProfileProgress((data) => {
+      setAnalyzeStage(data.stage)
+      if (data.detail) setAnalyzeDetail(data.detail)
+      if (data.chunk) {
+        if (data.stage === 'thinking') {
+          setAnalyzeThinkChunks((prev) => [...prev, data.chunk!])
+        } else {
+          setAnalyzeChunks((prev) => [...prev, data.chunk!])
+        }
+      }
+      const stageMap: Record<string, number> = {
+        preparing: 10,
+        llm_calling: 30,
+        thinking: 45,
+        streaming: 60,
+        parsing: 90,
+        done: 100,
+        error: 100,
+      }
+      setAnalyzeProgress(stageMap[data.stage] ?? 50)
+    })
+
+    try {
+      const result = await window.electronAPI.employee.refineProfile({
+        previous_messages: analysisMessages,
+        previous_profile: {
+          roleName: profile.roleName,
+          roleDescription: profile.roleDescription,
+          responsibilities: profile.responsibilities,
+          personalityTraits: profile.personalityTraits,
+          workingStyle: profile.workingStyle,
+          suggestedTools: profile.suggestedTools,
+        },
+        feedback: refineFeedback,
+        provider_id: providerId,
+        model_id: selectedModelId || undefined,
+      })
+
+      if (result.success && result.profile) {
+        setProfile(result.profile)
+        if (result.messages) {
+          setAnalysisMessages(result.messages)
+        }
+        if (result.error) {
+          message.warning(result.error)
+        } else {
+          message.success(t('creationWizard.refineComplete'))
+        }
+      } else {
+        message.error(result.error || t('creationWizard.refineFailed'))
+      }
+    } catch {
+      message.error(t('creationWizard.refineFailed'))
+    } finally {
+      setLoading(false)
+      setRefineFeedback('')
       if (progressCleanupRef.current) {
         progressCleanupRef.current()
         progressCleanupRef.current = null
@@ -290,7 +385,7 @@ const CreationWizard: React.FC = () => {
   }
 
   const steps = [
-    { title: t('creationWizard.stepSelectKb'), icon: <DatabaseOutlined /> },
+    { title: t('creationWizard.stepSelectKbOptional'), icon: <DatabaseOutlined /> },
     { title: t('creationWizard.stepBusinessDesc'), icon: <BulbOutlined /> },
     { title: t('creationWizard.stepAnalysis'), icon: <RobotOutlined /> },
     { title: t('creationWizard.stepComplete'), icon: <CheckOutlined /> },
@@ -314,6 +409,15 @@ const CreationWizard: React.FC = () => {
         showIcon
         style={{ marginBottom: 16 }}
       />
+      {selectedKBIds.length === 0 && (
+        <Alert
+          title={t('creationWizard.noKbSelectedAlert')}
+          description={t('creationWizard.noKbSelectedAlertDesc')}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <Card
         title={t('creationWizard.projectLinkedKb', { count: linkedKBs.length })}
@@ -471,9 +575,16 @@ const CreationWizard: React.FC = () => {
             showIcon
             style={{ marginBottom: 16 }}
             action={
-              <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
-                {t('creationWizard.reAnalyze')}
-              </Button>
+              <Space>
+                <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
+                  {t('creationWizard.reAnalyze')}
+                </Button>
+                {analysisMessages.length > 0 && (
+                  <Button size="small" onClick={() => setRefineModalOpen(true)} icon={<CommentOutlined />}>
+                    {t('creationWizard.refineProfile')}
+                  </Button>
+                )}
+              </Space>
             }
           />
 
@@ -611,12 +722,6 @@ const CreationWizard: React.FC = () => {
   )
 
   const handleNext = async () => {
-    if (currentStep === 0) {
-      if (selectedKBIds.length === 0) {
-        message.warning(t('creationWizard.selectAtLeastOneKb'))
-        return
-      }
-    }
     if (currentStep === 2 && !profile) {
       message.warning(t('creationWizard.completeAnalysisFirst'))
       return
@@ -677,6 +782,28 @@ const CreationWizard: React.FC = () => {
           </Button>
         )}
       </div>
+
+      <Modal
+        title={t('creationWizard.refineModalTitle')}
+        open={refineModalOpen}
+        onOk={handleRefineProfile}
+        onCancel={() => { setRefineModalOpen(false); setRefineFeedback('') }}
+        okText={t('creationWizard.refineSubmit')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ disabled: !refineFeedback.trim() }}
+        width={600}
+      >
+        <Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          {t('creationWizard.refineModalDesc')}
+        </Paragraph>
+        <TextArea
+          placeholder={t('creationWizard.refinePlaceholder')}
+          value={refineFeedback}
+          onChange={(e) => setRefineFeedback(e.target.value)}
+          rows={6}
+          autoFocus
+        />
+      </Modal>
     </div>
   )
 }

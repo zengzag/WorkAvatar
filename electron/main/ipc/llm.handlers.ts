@@ -9,12 +9,15 @@ import type {
 } from '../../shared/ipc-channels'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
+import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
+import { randomUUID } from 'crypto'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
   employeeAgent: EmployeeAgentService
 ) {
   let activeAbortController: AbortController | null = null
+  const interactionService = UnifiedInteractionService.getInstance()
 
   ipcMain.handle(IPC_CHANNELS.LLM_ABORT_CHAT, () => {
     if (activeAbortController) {
@@ -78,28 +81,41 @@ export function registerLLMHandlers(
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: any) => {
     const abortController = new AbortController()
     activeAbortController = abortController
+
+    const sessionId = randomUUID()
+    interactionService.registerSession(sessionId, event.sender)
+
     try {
-      await employeeAgent.chatStream(
+      await interactionContext.run(
         {
-          employee_id: params.employee_id,
-          provider_id: params.provider_id,
-          model_id: params.model_id,
-          messages: params.messages,
-          use_skills: params.use_skills !== false,
-          enable_thinking: params.enable_thinking,
+          sessionId,
+          employeeId: params.employee_id,
+          projectId: params.project_id || '',
         },
-        {
-          onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
-          onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thought) },
-          onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, toolCall) },
-          onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
-            if (abortController.signal.aborted) return
-            event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, toolResult)
-          },
-          onDone: () => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE); activeAbortController = null },
-          onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error); activeAbortController = null },
-        },
-        abortController.signal
+        async () => {
+          await employeeAgent.chatStream(
+            {
+              employee_id: params.employee_id,
+              provider_id: params.provider_id,
+              model_id: params.model_id,
+              messages: params.messages,
+              use_skills: params.use_skills !== false,
+              enable_thinking: params.enable_thinking,
+            },
+            {
+              onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
+              onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thought) },
+              onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, toolCall) },
+              onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
+                if (abortController.signal.aborted) return
+                event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, toolResult)
+              },
+              onDone: () => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE); activeAbortController = null },
+              onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error); activeAbortController = null },
+            },
+            abortController.signal
+          )
+        }
       )
       return { success: true }
     } catch (error: any) {
@@ -110,6 +126,8 @@ export function registerLLMHandlers(
       event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error.message || String(error))
       activeAbortController = null
       return { success: false, error: error.message || String(error) }
+    } finally {
+      interactionService.unregisterSession(sessionId)
     }
   })
 }

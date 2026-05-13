@@ -25,6 +25,8 @@ import {
   DeleteOutlined,
   CheckCircleOutlined,
   FieldTimeOutlined,
+  BellOutlined,
+  BellFilled,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
@@ -37,6 +39,7 @@ interface ScheduleItem {
   cron_expr: string
   is_enabled: boolean
   run_mode: 'recurring' | 'once'
+  notify_on_complete: boolean
   task_ids_json: string
   last_run_at: number | null
   next_run_at: number | null
@@ -205,6 +208,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
   const [customCron, setCustomCron] = useState<string>('0 9 * * *')
   const [cronValid, setCronValid] = useState<{ valid: boolean; error?: string; nextRun?: string } | null>(null)
   const [runMode, setRunMode] = useState<'recurring' | 'once'>('recurring')
+  const [notifyOnComplete, setNotifyOnComplete] = useState<boolean>(true)
 
   useEffect(() => {
     loadData()
@@ -341,6 +345,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
     setIntervalMinutes(60)
     setCustomCron('0 9 * * *')
     setRunMode('recurring')
+    setNotifyOnComplete(true)
     form.setFieldsValue({
       is_enabled: true,
       cron_expr: '0 9 * * *',
@@ -364,6 +369,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
     setIntervalMinutes(data.intervalMinutes || 60)
     setCustomCron(data.customCron || schedule.cron_expr)
     setRunMode(schedule.run_mode || 'recurring')
+    setNotifyOnComplete(schedule.notify_on_complete !== false)
 
     form.setFieldsValue({
       name: schedule.name,
@@ -387,6 +393,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
           is_enabled: values.is_enabled,
           task_ids: values.task_ids || [],
           run_mode: runMode,
+          notify_on_complete: notifyOnComplete,
         })
         message.success(t('common.updateSuccess'))
       } else {
@@ -396,6 +403,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
           cron_expr: values.cron_expr,
           task_ids: values.task_ids || [],
           run_mode: runMode,
+          notify_on_complete: notifyOnComplete,
         })
         message.success(t('common.createSuccess'))
       }
@@ -486,6 +494,17 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
       key: 'next_run_at',
       width: 130,
       render: (v: number | null) => v ? dayjs(v * 1000).format('MM-DD HH:mm') : <Text type="secondary">-</Text>,
+    },
+    {
+      title: t('empTask.notifyLabel'),
+      dataIndex: 'notify_on_complete',
+      key: 'notify_on_complete',
+      width: 70,
+      render: (v: boolean) => (
+        <Tooltip title={v ? t('empTask.notifyEnabled') : t('empTask.notifyDisabled')}>
+          {v ? <BellFilled style={{ color: token.colorPrimary }} /> : <BellOutlined style={{ color: token.colorTextQuaternary }} />}
+        </Tooltip>
+      ),
     },
     {
       title: t('common.status'),
@@ -708,6 +727,14 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
           </Form.Item>
           <Form.Item name="is_enabled" label={t('empTask.enabledLabel')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item label={t('empTask.notifyLabel')} tooltip={t('empTask.notifyTooltip')}>
+            <Switch
+              checked={notifyOnComplete}
+              onChange={setNotifyOnComplete}
+              checkedChildren={<BellFilled />}
+              unCheckedChildren={<BellOutlined />}
+            />
           </Form.Item>
         </Form>
       </Modal>

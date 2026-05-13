@@ -27,6 +27,7 @@ export type {
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
+  EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,

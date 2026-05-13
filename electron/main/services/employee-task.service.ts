@@ -1,5 +1,8 @@
 import DatabaseService from './database.service'
 import EmployeeAgentService from './employee-agent.service'
+import TaskNotificationService, { type TaskCompletionNotification } from './task-notification.service'
+import { BrowserWindow } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { randomUUID } from 'crypto'
 
 interface EmployeeTask {
@@ -26,6 +29,7 @@ interface EmployeeSchedule {
   cron_expr: string
   is_enabled: boolean
   run_mode: 'recurring' | 'once'
+  notify_on_complete: boolean
   task_ids_json: string
   last_run_at: number | null
   next_run_at: number | null
@@ -68,6 +72,28 @@ class EmployeeTaskService {
 
   private constructor() {
     this.db = DatabaseService.getInstance()
+  }
+
+  private sendSegmentsToRenderer(executionId: string, segments: MessageSegment[], isStreaming: boolean = true): void {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, {
+        executionId,
+        segments,
+        isStreaming,
+      })
+    }
+  }
+
+  private sendStatusToRenderer(executionId: string, status: string, errorMessage?: string): void {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, {
+        executionId,
+        status,
+        errorMessage: errorMessage || null,
+      })
+    }
   }
 
   static getInstance(): EmployeeTaskService {
@@ -144,17 +170,17 @@ class EmployeeTaskService {
     ).all() as EmployeeSchedule[]
   }
 
-  createSchedule(employeeId: string, name: string, cronExpr: string, taskIds: string[], runMode: 'recurring' | 'once' = 'recurring'): EmployeeSchedule {
+  createSchedule(employeeId: string, name: string, cronExpr: string, taskIds: string[], runMode: 'recurring' | 'once' = 'recurring', notifyOnComplete: boolean = true): EmployeeSchedule {
     const id = randomUUID()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
-      `INSERT INTO employee_schedules (id, employee_id, name, cron_expr, is_enabled, run_mode, task_ids_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)`
-    ).run(id, employeeId, name, cronExpr, runMode, JSON.stringify(taskIds), now, now)
+      `INSERT INTO employee_schedules (id, employee_id, name, cron_expr, is_enabled, run_mode, notify_on_complete, task_ids_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
+    ).run(id, employeeId, name, cronExpr, runMode, notifyOnComplete ? 1 : 0, JSON.stringify(taskIds), now, now)
     return this.getSchedule(id)!
   }
 
-  updateSchedule(scheduleId: string, data: { name?: string; cron_expr?: string; is_enabled?: boolean; task_ids_json?: string; run_mode?: 'recurring' | 'once' }): EmployeeSchedule | null {
+  updateSchedule(scheduleId: string, data: { name?: string; cron_expr?: string; is_enabled?: boolean; task_ids_json?: string; run_mode?: 'recurring' | 'once'; notify_on_complete?: boolean }): EmployeeSchedule | null {
     const schedule = this.getSchedule(scheduleId)
     if (!schedule) return null
     const updates: string[] = []
@@ -163,6 +189,7 @@ class EmployeeTaskService {
     if (data.cron_expr !== undefined) { updates.push('cron_expr = ?'); values.push(data.cron_expr) }
     if (data.is_enabled !== undefined) { updates.push('is_enabled = ?'); values.push(data.is_enabled ? 1 : 0) }
     if (data.run_mode !== undefined) { updates.push('run_mode = ?'); values.push(data.run_mode) }
+    if (data.notify_on_complete !== undefined) { updates.push('notify_on_complete = ?'); values.push(data.notify_on_complete ? 1 : 0) }
     if (data.task_ids_json !== undefined) { updates.push('task_ids_json = ?'); values.push(data.task_ids_json) }
     if (updates.length === 0) return schedule
     updates.push('updated_at = ?')
@@ -212,7 +239,7 @@ class EmployeeTaskService {
     return result.changes > 0
   }
 
-  async executeTask(taskId: string, triggerType: 'manual' | 'scheduled' = 'manual', scheduleId?: string): Promise<TaskExecution> {
+  startTaskExecution(taskId: string, triggerType: 'manual' | 'scheduled' = 'manual', scheduleId?: string, scheduleName?: string, notifyOnComplete?: boolean): string {
     const task = this.getTask(taskId)
     if (!task) throw new Error(`Task ${taskId} not found`)
     if (!task.is_enabled) throw new Error(`Task ${taskId} is disabled`)
@@ -222,7 +249,6 @@ class EmployeeTaskService {
     if (employee.status !== 'active') throw new Error(`Employee ${task.employee_id} is not active (status: ${employee.status})`)
 
     const providerId = task.llm_provider_id || employee.llm_provider_id
-    const modelId = task.llm_model || employee.llm_model
     if (!providerId) throw new Error('No LLM provider configured')
 
     const executionId = randomUUID()
@@ -232,6 +258,23 @@ class EmployeeTaskService {
        VALUES (?, ?, ?, ?, ?, 'running', ?)`
     ).run(executionId, task.employee_id, taskId, scheduleId || null, triggerType, now)
 
+    this.executeTaskAsync(executionId, taskId, task, employee, providerId, task.llm_model, triggerType, scheduleId, scheduleName, notifyOnComplete)
+
+    return executionId
+  }
+
+  private async executeTaskAsync(
+    executionId: string,
+    taskId: string,
+    task: EmployeeTask,
+    employee: any,
+    providerId: string,
+    modelId: string | null,
+    triggerType: 'manual' | 'scheduled',
+    scheduleId?: string,
+    scheduleName?: string,
+    notifyOnComplete?: boolean
+  ): Promise<void> {
     const startTime = Date.now()
     const abortController = new AbortController()
     this.activeExecutions.set(executionId, abortController)
@@ -243,6 +286,16 @@ class EmployeeTaskService {
     let resultText = ''
     let errorMsg = ''
     const segments: MessageSegment[] = []
+    let lastSentTime = 0
+    const SEGMENT_SEND_INTERVAL = 200
+
+    const throttledSendSegments = (isStreaming: boolean = true) => {
+      const now = Date.now()
+      if (now - lastSentTime >= SEGMENT_SEND_INTERVAL || !isStreaming) {
+        lastSentTime = now
+        this.sendSegmentsToRenderer(executionId, segments, isStreaming)
+      }
+    }
 
     try {
       const agentService = EmployeeAgentService.getInstance()
@@ -276,6 +329,7 @@ class EmployeeTaskService {
                 }
                 segments.push(currentSegment)
               }
+              throttledSendSegments()
             },
             onThought: (thought: string) => {
               if (currentSegment && currentSegment.type === 'thinking') {
@@ -293,6 +347,7 @@ class EmployeeTaskService {
                 }
                 segments.push(currentSegment)
               }
+              throttledSendSegments()
             },
             onToolCall: (toolCall: any) => {
               if (currentSegment) {
@@ -307,6 +362,7 @@ class EmployeeTaskService {
                 isStreaming: true,
               }
               segments.push(currentSegment)
+              throttledSendSegments()
             },
             onToolResult: (result: any) => {
               if (currentSegment && currentSegment.type === 'tool_call') {
@@ -315,6 +371,7 @@ class EmployeeTaskService {
                 currentSegment.isStreaming = false
               }
               currentSegment = null
+              throttledSendSegments()
             },
             onDone: () => {
               if (currentSegment) {
@@ -325,12 +382,14 @@ class EmployeeTaskService {
                   seg.collapsed = true
                 }
               }
+              this.sendSegmentsToRenderer(executionId, segments, false)
               resolve(accumulated)
             },
             onError: (error: string) => {
               if (currentSegment) {
                 currentSegment.isStreaming = false
               }
+              this.sendSegmentsToRenderer(executionId, segments, false)
               reject(new Error(error))
             },
           },
@@ -343,6 +402,7 @@ class EmployeeTaskService {
       this.db.getDb().prepare(
         `UPDATE employee_task_executions SET status = 'completed', result_text = ?, segments_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?`
       ).run(resultText, JSON.stringify(segments), completedAt, durationMs, executionId)
+      this.sendStatusToRenderer(executionId, 'completed')
     } catch (error: any) {
       const durationMs = Date.now() - startTime
       const completedAt = Math.floor(Date.now() / 1000)
@@ -352,6 +412,7 @@ class EmployeeTaskService {
       this.db.getDb().prepare(
         `UPDATE employee_task_executions SET status = ?, error_message = ?, segments_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?`
       ).run(status, errorMsg, segments.length > 0 ? JSON.stringify(segments) : null, completedAt, durationMs, executionId)
+      this.sendStatusToRenderer(executionId, status, errorMsg)
     } finally {
       clearTimeout(timeout)
       this.activeExecutions.delete(executionId)
@@ -368,7 +429,30 @@ class EmployeeTaskService {
       this.updateTask(taskId, { is_enabled: false })
     }
 
-    return this.getExecution(executionId)!
+    const shouldNotify = notifyOnComplete !== false
+    if (shouldNotify) {
+      try {
+        const execution = this.getExecution(executionId)!
+        const notification: TaskCompletionNotification = {
+          executionId: execution.id,
+          taskId: task.id,
+          taskName: task.name,
+          employeeId: task.employee_id,
+          employeeName: employee.name || '',
+          scheduleId: scheduleId || null,
+          scheduleName: scheduleName || null,
+          status: (execution.status === 'running' ? 'completed' : execution.status) as 'completed' | 'failed' | 'timeout',
+          triggerType,
+          durationMs: execution.duration_ms,
+          resultPreview: execution.result_text ? execution.result_text.slice(0, 200) : null,
+          errorMessage: execution.error_message,
+          completedAt: execution.completed_at || Math.floor(Date.now() / 1000),
+        }
+        TaskNotificationService.getInstance().notifyTaskCompletion(notification)
+      } catch (notifyError: any) {
+        console.error('[EmployeeTaskService] Failed to send notification:', notifyError.message)
+      }
+    }
   }
 
   abortExecution(executionId: string): boolean {

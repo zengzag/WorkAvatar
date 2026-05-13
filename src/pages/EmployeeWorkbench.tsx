@@ -62,7 +62,7 @@ const EmployeeWorkbench: React.FC = () => {
   }
 
   const [employee, setEmployee] = useState<any | null>(null)
-  const [, setProjectId] = useState<string | null>(null)
+  const [currentProjectId, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
@@ -590,6 +590,7 @@ const EmployeeWorkbench: React.FC = () => {
         options: { temperature: 0.3 },
         use_skills: true,
         enable_thinking: enableThinking,
+        project_id: currentProjectId || undefined,
       })
     } catch {
       finish()

@@ -491,6 +491,7 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_tasks', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
     this.addColumnIfNotExists('employee_task_executions', 'segments_json', 'TEXT')
     this.addColumnIfNotExists('employee_schedules', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
+    this.addColumnIfNotExists('employee_schedules', 'notify_on_complete', 'BOOLEAN NOT NULL DEFAULT 1')
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')

@@ -20,6 +20,11 @@ export const EMPLOYEE_TASK_CHANNELS = {
   EMPLOYEE_EXECUTION_ALL_RECENT: 'employee-execution:all-recent',
   EMPLOYEE_EXECUTION_FAILED: 'employee-execution:failed',
   EMPLOYEE_EXECUTION_DELETE: 'employee-execution:delete',
+
+  TASK_NOTIFICATION_COMPLETION: 'task-notification:completion',
+  TASK_NOTIFICATION_CLICK: 'task-notification:click',
+  TASK_EXECUTION_SEGMENTS_UPDATE: 'task-execution:segments-update',
+  TASK_EXECUTION_STATUS_UPDATE: 'task-execution:status-update',
 } as const
 
 export interface EmployeeTaskCreateParams {
@@ -53,6 +58,7 @@ export interface EmployeeScheduleCreateParams {
   cron_expr: string
   task_ids: string[]
   run_mode?: 'recurring' | 'once'
+  notify_on_complete?: boolean
 }
 
 export interface EmployeeScheduleUpdateParams {
@@ -62,4 +68,5 @@ export interface EmployeeScheduleUpdateParams {
   is_enabled?: boolean
   task_ids?: string[]
   run_mode?: 'recurring' | 'once'
+  notify_on_complete?: boolean
 }

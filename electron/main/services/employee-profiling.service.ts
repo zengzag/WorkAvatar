@@ -75,27 +75,139 @@ class EmployeeProfilingService {
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
-  ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string }> {
+  ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string; messages?: Array<{ role: string; content: string }> }> {
     const kbContents = this.loadKBContents(kbIds)
-    if (kbContents.length === 0) {
+    const defaultProvider = providerId || this.getDefaultProviderId()
+
+    if (kbContents.length === 0 && !additionalContext) {
+      if (!defaultProvider) {
+        return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
+      }
+    }
+
+    if (!defaultProvider) {
+      if (kbContents.length > 0) {
+        return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
+      }
       return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
     }
 
-    const defaultProvider = providerId || this.getDefaultProviderId()
-    if (!defaultProvider) {
-      return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
-    }
-
     try {
-      onProgress?.({ stage: 'preparing', detail: `准备分析 ${kbContents.length} 个知识库...` })
-      const profile = await this.analyzeWithLLM(kbContents, defaultProvider, modelId, additionalContext, onProgress)
+      onProgress?.({ stage: 'preparing', detail: kbContents.length > 0 ? `准备分析 ${kbContents.length} 个知识库...` : '准备分析业务描述...' })
+      const { profile, messages } = await this.analyzeWithLLM(kbContents, defaultProvider, modelId, additionalContext, onProgress)
       onProgress?.({ stage: 'done', detail: '分析完成' })
-      return { profile, analysisMethod: 'llm' }
+      return { profile, analysisMethod: 'llm', messages }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
       console.error('LLM profiling failed, falling back to heuristic:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
-      return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
+      if (kbContents.length > 0) {
+        return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
+      }
+      return { profile: this.getDefaultProfile(), analysisMethod: 'default', error: `LLM 调用失败: ${errorMsg}` }
+    }
+  }
+
+  async refineProfileForEmployee(
+    previousMessages: Array<{ role: string; content: string }>,
+    previousProfile: EmployeeProfile,
+    feedback: string,
+    providerId: string,
+    modelId?: string,
+    onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
+  ): Promise<{ profile: EmployeeProfile; messages: Array<{ role: string; content: string }>; error?: string }> {
+    try {
+      const profileJson = JSON.stringify({
+        roleName: previousProfile.roleName,
+        roleDescription: previousProfile.roleDescription,
+        responsibilities: previousProfile.responsibilities,
+        personalityTraits: previousProfile.personalityTraits,
+        workingStyle: previousProfile.workingStyle,
+        suggestedTools: previousProfile.suggestedTools,
+      }, null, 2)
+
+      const refinePrompt = `以下是我之前的分析结果：
+
+\`\`\`json
+${profileJson}
+\`\`\`
+
+用户有以下补充修改意见：
+
+${feedback}
+
+请根据用户的补充修改意见，调整优化上述分析结果。保持用户满意的部分，修改用户不满意的部分，整合用户的补充信息。
+
+请严格按照以下JSON格式输出调整后的完整结果（只输出JSON，不要其他解释）：
+
+{"roleName": "角色名称", "roleDescription": "角色的详细描述，100字左右", "responsibilities": ["职责1", "职责2"], "personalityTraits": ["特质1", "特质2"], "workingStyle": "工作风格描述", "suggestedTools": ["tool_name_1"]}`
+
+      onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
+
+      const messages = [
+        ...previousMessages,
+        { role: 'assistant', content: profileJson },
+        { role: 'user', content: refinePrompt },
+      ]
+
+      let fullResponse = ''
+      let streamDone = false
+      let streamError: Error | null = null
+
+      await this.llmClient.chatStream(
+        providerId,
+        messages,
+        (chunk: string) => {
+          fullResponse += chunk
+          onProgress?.({ stage: 'streaming', chunk })
+        },
+        () => {
+          streamDone = true
+        },
+        (error: Error) => {
+          streamError = error
+        },
+        { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}) },
+        undefined,
+        (thoughtChunk: string) => {
+          onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
+        }
+      )
+
+      if (streamError) {
+        throw streamError
+      }
+      if (!streamDone) {
+        throw new Error('LLM 流式响应未正常完成')
+      }
+
+      onProgress?.({ stage: 'parsing', detail: '正在解析优化结果...' })
+
+      const cleaned = this.extractJsonFromResponse(fullResponse)
+      if (!cleaned) {
+        throw new Error('No JSON found in LLM response')
+      }
+
+      const result = JSON.parse(cleaned)
+
+      const profile: EmployeeProfile = {
+        roleName: result.roleName || previousProfile.roleName,
+        roleDescription: result.roleDescription || previousProfile.roleDescription,
+        responsibilities: Array.isArray(result.responsibilities) ? result.responsibilities : previousProfile.responsibilities,
+        suggestedSkills: this.normalizeSkills(result.suggestedSkills, []),
+        personalityTraits: Array.isArray(result.personalityTraits) ? result.personalityTraits : previousProfile.personalityTraits,
+        workingStyle: result.workingStyle || previousProfile.workingStyle,
+        suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : previousProfile.suggestedTools,
+      }
+
+      onProgress?.({ stage: 'done', detail: '优化完成' })
+      const updatedMessages = [...messages, { role: 'assistant', content: fullResponse }]
+      return { profile, messages: updatedMessages }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
+      console.error('LLM refine profiling failed:', error)
+      onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
+      return { profile: previousProfile, messages: previousMessages, error: `LLM 调用失败: ${errorMsg}` }
     }
   }
 
@@ -167,8 +279,9 @@ class EmployeeProfilingService {
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
-  ): Promise<EmployeeProfile> {
-    const combinedText = this.buildCombinedKBDocument(kbContents)
+  ): Promise<{ profile: EmployeeProfile; messages: Array<{ role: string; content: string }> }> {
+    const hasKB = kbContents.length > 0
+    const combinedText = hasKB ? this.buildCombinedKBDocument(kbContents) : ''
     const maxLength = 12000
     const truncatedText = combinedText.length > maxLength
       ? combinedText.substring(0, maxLength) + '\n...[内容已截断，共' + combinedText.length + '字符]'
@@ -178,7 +291,9 @@ class EmployeeProfilingService {
       ? `\n\n## 用户补充说明\n${additionalContext}\n\n请在设计数字员工角色时，优先考虑以上用户的补充说明和期望。`
       : ''
 
-    const prompt = `你是一位资深的人力资源专家和业务架构师。请仔细分析以下知识库内容，理解其业务场景，然后设计一个合适的"数字员工"角色。
+    let prompt: string
+    if (hasKB) {
+      prompt = `你是一位资深的人力资源专家和业务架构师。请仔细分析以下知识库内容，理解其业务场景，然后设计一个合适的"数字员工"角色。
 
 ## 知识库资料
 ${truncatedText}${userGuidance}
@@ -198,8 +313,36 @@ ${truncatedText}${userGuidance}
 请严格按照以下JSON格式输出（只输出JSON，不要其他解释）：
 
 {\n"roleName": "角色名称，如'合同审核专员'",\n"roleDescription": "角色的详细描述，100字左右",\n"responsibilities": ["职责1", "职责2", "职责3"],\n"personalityTraits": ["特质1", "特质2"],\n"workingStyle": "工作风格描述，如'严谨细致，注重合规性'",\n"suggestedTools": ["tool_name_1", "tool_name_2"]\n}\n\n要求：\n1. roleName 要专业且贴合业务场景\n2. 如果某类信息不存在，返回空数组或默认值`
+    } else {
+      prompt = `你是一位资深的人力资源专家和业务架构师。请根据用户提供的业务场景描述，设计一个合适的"数字员工"角色。
+${userGuidance}
+
+## 分析要求
+
+请从以下维度进行深入分析：
+
+1. **业务场景理解**：用户描述的是什么业务领域？涉及哪些工作流程？
+2. **角色定位**：基于业务场景，应该创建一个什么角色的数字员工？（如"合同审核专员"、"客服顾问"、"数据分析师"等）
+3. **职责识别**：这个员工应该承担哪些具体职责？
+4. **工作风格**：这个员工应该以什么风格与用户交互？（严谨型、亲和型、高效型等）
+5. **工具需求**：这个员工可能需要使用什么工具？（如计算器、文件搜索、数据查询、知识库检索等）
+
+## 输出格式
+
+请严格按照以下JSON格式输出（只输出JSON，不要其他解释）：
+
+{\n"roleName": "角色名称，如'合同审核专员'",\n"roleDescription": "角色的详细描述，100字左右",\n"responsibilities": ["职责1", "职责2", "职责3"],\n"personalityTraits": ["特质1", "特质2"],\n"workingStyle": "工作风格描述，如'严谨细致，注重合规性'",\n"suggestedTools": ["tool_name_1", "tool_name_2"]\n}\n\n要求：\n1. roleName 要专业且贴合业务场景\n2. 如果某类信息不存在，返回空数组或默认值`
+    }
 
     onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 进行智能分析...' })
+
+    const llmMessages: Array<{ role: string; content: string }> = [
+      {
+        role: 'system',
+        content: '你是一位资深的人力资源专家和业务架构师，擅长根据知识库内容或业务描述设计数字员工角色和能力体系。'
+      },
+      { role: 'user', content: prompt },
+    ]
 
     let fullResponse = ''
     let streamDone = false
@@ -207,13 +350,7 @@ ${truncatedText}${userGuidance}
 
     await this.llmClient.chatStream(
       providerId,
-      [
-        {
-          role: 'system',
-          content: '你是一位资深的人力资源专家和业务架构师，擅长根据知识库内容设计数字员工角色和能力体系。'
-        },
-        { role: 'user', content: prompt },
-      ],
+      llmMessages,
       (chunk: string) => {
         fullResponse += chunk
         onProgress?.({ stage: 'streaming', chunk })
@@ -247,15 +384,18 @@ ${truncatedText}${userGuidance}
 
     const result = JSON.parse(cleaned)
 
-    return {
+    const profile: EmployeeProfile = {
       roleName: result.roleName || '数字员工',
-      roleDescription: result.roleDescription || '基于知识库自动创建的数字员工',
+      roleDescription: result.roleDescription || (hasKB ? '基于知识库自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
       responsibilities: Array.isArray(result.responsibilities) ? result.responsibilities : [],
       suggestedSkills: this.normalizeSkills(result.suggestedSkills, kbContents),
       personalityTraits: Array.isArray(result.personalityTraits) ? result.personalityTraits : ['专业', '高效'],
       workingStyle: result.workingStyle || '专业严谨',
       suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : [],
     }
+
+    const messages = [...llmMessages, { role: 'assistant', content: fullResponse }]
+    return { profile, messages }
   }
 
   private extractJsonFromResponse(text: string): string | null {

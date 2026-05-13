@@ -1,15 +1,32 @@
 import type { ToolDefinition } from '../tool.types'
 import { exec as execCb } from 'child_process'
 import { promisify } from 'util'
+import UnifiedInteractionService from '../../unified-interaction.service'
+import { interactionContext } from '../../unified-interaction.service'
 
 const execAsync = promisify(execCb)
 const IS_WINDOWS = process.platform === 'win32'
+
+const dangerousPatterns = [
+  /\brm\s+-[rf]{1,2}\b/i, /\bdel\s+\/f\b/i, /\brmdir\s+\/s\b/i,
+  /\bformat\s+[a-z]:/i, /\bdiskpart\b/i, /\bdd\s+if=/i,
+  /\bshutdown\b/i, /\breboot\b/i, /:.*?\(\)\s*\{.*?\};\s*:/,
+]
+
+const fileDeletionPatterns = [
+  /\brm\s+/i, /\bdel\s+/i, /\brmdir\s+/i, /\berase\s+/i,
+  /\bRemove-Item\b/i, /\brm\s+-/i, /\brd\s+\/s/i, /\brd\s+\/q/i,
+]
+
+function isFileDeletionCommand(command: string): boolean {
+  return fileDeletionPatterns.some(p => p.test(command))
+}
 
 export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  description: `执行系统shell命令并返回输出。${IS_WINDOWS ? '当前运行在Windows环境，支持PowerShell和CMD命令。' : '当前运行在类Unix环境，支持Bash命令。'}支持常用文件操作、系统信息查询、网络测试等。禁止执行格式化磁盘、删除系统文件等危险操作。`,
+  description: `执行系统shell命令并返回输出。${IS_WINDOWS ? '当前运行在Windows环境，支持PowerShell和CMD命令。' : '当前运行在类Unix环境，支持Bash命令。'}支持常用文件操作、系统信息查询、网络测试等。禁止执行格式化磁盘、删除系统文件等危险操作。涉及文件删除的命令需要用户确认后方可执行。`,
   parameters: {
     type: 'object',
     properties: {
@@ -24,15 +41,31 @@ export const shellExecTool: ToolDefinition = {
       const command = String(args.command || '').trim()
       if (!command) return { success: false, error: '命令不能为空' }
 
-      const dangerousPatterns = [
-        /\brm\s+-[rf]{1,2}\b/i, /\bdel\s+\/f\b/i, /\brmdir\s+\/s\b/i,
-        /\bformat\s+[a-z]:/i, /\bdiskpart\b/i, /\bdd\s+if=/i,
-        /\bshutdown\b/i, /\breboot\b/i, /:.*?\(\)\s*\{.*?\};\s*:/,
-      ]
-
       for (const pattern of dangerousPatterns) {
         if (pattern.test(command)) {
           return { success: false, error: '命令被安全策略拦截：检测到潜在危险操作' }
+        }
+      }
+
+      if (isFileDeletionCommand(command)) {
+        const ctx = interactionContext.getStore()
+        if (ctx) {
+          try {
+            const interactionService = UnifiedInteractionService.getInstance()
+            const response = await interactionService.request({
+              type: 'confirm',
+              title: '确认执行删除命令',
+              message: `即将执行可能删除文件的命令：\n\n${command.length > 200 ? command.substring(0, 200) + '...' : command}\n\n此操作不可撤销，是否确认执行？`,
+              danger: true,
+              source: 'security:shell_delete',
+            })
+
+            if (response.cancelled || response.confirmed !== true) {
+              return { success: false, error: '用户取消了删除命令的执行' }
+            }
+          } catch {
+            return { success: false, error: '删除命令确认失败，操作已取消' }
+          }
         }
       }
 

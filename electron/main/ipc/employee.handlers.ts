@@ -10,6 +10,7 @@ import type {
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
+  EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -107,7 +108,28 @@ export function registerEmployeeHandlers(
           event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
         }
       )
-      return { success: true, profile: result.profile, analysisMethod: result.analysisMethod, error: result.error }
+      return { success: true, profile: result.profile, analysisMethod: result.analysisMethod, error: result.error, messages: result.messages }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, async (event, params: EmployeeProfileRefineParams) => {
+    try {
+      const result = await profilingService.refineProfileForEmployee(
+        params.previous_messages,
+        params.previous_profile as any,
+        params.feedback,
+        params.provider_id,
+        params.model_id,
+        (data) => {
+          event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
+        }
+      )
+      return { success: true, profile: result.profile, messages: result.messages, error: result.error }
     } catch (error) {
       return {
         success: false,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -65,7 +65,19 @@ const EmployeeSettings: React.FC = () => {
   const { message } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [activeTab, setActiveTab] = useState('basic')
+  const autoOpenExecutionId = (location.state as any)?.executionId || null
+
+  useEffect(() => {
+    const state = location.state as any
+    if (state?.tab) {
+      setActiveTab(state.tab)
+    }
+    if (state?.executionId) {
+      setActiveTab('tasks')
+    }
+  }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -523,7 +535,7 @@ const EmployeeSettings: React.FC = () => {
             key: 'tasks',
             label: t('employeeSettings.tabTasks'),
             children: (
-              <TaskConfigSection employeeId={id!} />
+              <TaskConfigSection employeeId={id!} autoOpenExecutionId={autoOpenExecutionId} />
             )
           },
           {

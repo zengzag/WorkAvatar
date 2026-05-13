@@ -36,8 +36,8 @@ export function registerEmployeeTaskHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, async (_, taskId: string) => {
     try {
-      const execution = await taskService.executeTask(taskId, 'manual')
-      return { success: true, execution }
+      const executionId = taskService.startTaskExecution(taskId, 'manual')
+      return { success: true, executionId }
     } catch (error: any) {
       return { success: false, error: error.message || String(error) }
     }
@@ -56,7 +56,7 @@ export function registerEmployeeTaskHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, (_, params: EmployeeScheduleCreateParams) => {
-    const schedule = taskService.createSchedule(params.employee_id, params.name, params.cron_expr, params.task_ids, params.run_mode)
+    const schedule = taskService.createSchedule(params.employee_id, params.name, params.cron_expr, params.task_ids, params.run_mode, params.notify_on_complete)
     schedulerService.updateNextRunTimes()
     return schedule
   })

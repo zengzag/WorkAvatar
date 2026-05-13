@@ -9,7 +9,6 @@ import {
   PlusOutlined,
   RobotOutlined,
   EyeOutlined,
-  SettingOutlined,
   DeleteOutlined,
   RightOutlined,
 } from '@ant-design/icons'
@@ -289,14 +288,9 @@ const Dashboard: React.FC = () => {
             id="employees"
             title={t('dashboard.employeesSection')}
             extra={
-              <Space>
-                <Button type="link" onClick={() => navigate('/employees')}>
-                  {t('dashboard.viewMore')} <RightOutlined />
-                </Button>
-                <Button type="link" onClick={() => navigate('/settings')}>
-                  <SettingOutlined /> {t('dashboard.settings')}
-                </Button>
-              </Space>
+              <Button type="link" onClick={() => navigate('/employees')}>
+                {t('dashboard.viewMore')} <RightOutlined />
+              </Button>
             }
           >
             {employees.length > 0 ? (

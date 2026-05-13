@@ -37,6 +37,7 @@ import type {
   SettingsGetParams,
   SettingsSetParams,
   EmployeeProfileAnalyzeParams,
+  EmployeeProfileRefineParams,
   ToolExecuteParams,
   ToolAssignParams,
   MCPServerCreateParams,
@@ -98,6 +99,7 @@ const electronAPI = {
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, id),
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
+    refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
       const handler = (_event: any, data: { stage: string; detail?: string; chunk?: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, handler)
@@ -323,6 +325,16 @@ const electronAPI = {
     },
   },
 
+  interaction: {
+    onRequest: (callback: (request: any) => void) => {
+      const handler = (_event: any, request: any) => callback(request)
+      ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
+    },
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
+  },
+
   employeeTask: {
     list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
     get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
@@ -343,6 +355,26 @@ const electronAPI = {
     allRecentExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_ALL_RECENT, limit),
     failedExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_FAILED, limit),
     deleteExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_DELETE, executionId),
+    onTaskCompletion: (callback: (notification: any) => void) => {
+      const handler = (_event: any, notification: any) => callback(notification)
+      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
+    },
+    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => {
+      const handler = (_event: any, data: { executionId: string; taskId: string; employeeId: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
+    },
+    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => {
+      const handler = (_event: any, data: { executionId: string; segments: any[]; isStreaming: boolean }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
+    },
+    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => {
+      const handler = (_event: any, data: { executionId: string; status: string; errorMessage: string | null }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
+    },
   },
 }
 
@@ -377,6 +409,10 @@ export type ElectronAPI = typeof electronAPI & {
     cancelAll: (type?: string) => Promise<number>
     onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
   }
+  interaction: {
+    onRequest: (callback: (request: any) => void) => () => void
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>
+  }
   employeeTask: {
     list: (employeeId: string) => Promise<any[]>
     get: (taskId: string) => Promise<any>
@@ -397,6 +433,10 @@ export type ElectronAPI = typeof electronAPI & {
     allRecentExecutions: (limit?: number) => Promise<any[]>
     failedExecutions: (limit?: number) => Promise<any[]>
     deleteExecution: (executionId: string) => Promise<boolean>
+    onTaskCompletion: (callback: (notification: any) => void) => () => void
+    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => () => void
+    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => () => void
+    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
   }
 }
 

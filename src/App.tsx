@@ -10,6 +10,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import TaskProgressPanel from './components/common/TaskProgressPanel'
+import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
+import TaskNotificationHandler from './components/common/TaskNotificationHandler'
 import { ParseDetailModal } from './components/knowledge-base'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 import { useTaskDetailStore } from './stores/task-detail.store'
@@ -127,6 +129,8 @@ const App: React.FC = () => {
         docName={taskDetailDocName}
         onClose={closeDetail}
       />
+      <UnifiedInteractionModal />
+      <TaskNotificationHandler />
     </Layout>
   )
 }

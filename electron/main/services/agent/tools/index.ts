@@ -10,6 +10,7 @@ import { webFetchTool } from './web-fetch.tool'
 import { jsonUtilsTool } from './json-utils.tool'
 import { randomUtilsTool } from './random-utils.tool'
 import { envVarsTool } from './env-vars.tool'
+import { askUserTool } from './ask-user.tool'
 import type { ToolDefinition } from '../tool.types'
 
 export const allBuiltinTools: ToolDefinition[] = [
@@ -25,6 +26,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   jsonUtilsTool,
   randomUtilsTool,
   envVarsTool,
+  askUserTool,
 ]
 
 export { createKBSearchTool } from './kb-search.tool'

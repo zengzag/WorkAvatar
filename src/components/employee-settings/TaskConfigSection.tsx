@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -15,7 +15,6 @@ import {
   Popconfirm,
   Tooltip,
   Typography,
-  Select,
 } from 'antd'
 import {
   PlusOutlined,
@@ -23,7 +22,6 @@ import {
   DeleteOutlined,
   PlayCircleOutlined,
   ClockCircleOutlined,
-  BulbOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import LLMSelector from '../llm/LLMSelector'
@@ -61,9 +59,10 @@ interface ExecutionItem {
 
 interface TaskConfigSectionProps {
   employeeId: string
+  autoOpenExecutionId?: string | null
 }
 
-const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => {
+const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoOpenExecutionId }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const [tasks, setTasks] = useState<TaskItem[]>([])
@@ -82,6 +81,24 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
 
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [detailExecution, setDetailExecution] = useState<ExecutionItem | null>(null)
+  const [liveExecutionId, setLiveExecutionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (autoOpenExecutionId) {
+      openExecutionDetail(autoOpenExecutionId)
+    }
+  }, [autoOpenExecutionId])
+
+  const openExecutionDetail = async (executionId: string) => {
+    try {
+      const exec = await window.electronAPI.employeeTask.getExecution(executionId)
+      if (exec) {
+        setDetailExecution(exec)
+        setLiveExecutionId(exec.status === 'running' ? exec.id : null)
+        setDetailModalOpen(true)
+      }
+    } catch {}
+  }
 
   useEffect(() => {
     loadTasks()
@@ -173,9 +190,14 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
     setExecutingTaskId(taskId)
     try {
       const result = await window.electronAPI.employeeTask.execute(taskId)
-      if (result.success) {
-        message.success(t('empTask.executeSuccess'))
-      } else {
+      if (result.success && result.executionId) {
+        const exec = await window.electronAPI.employeeTask.getExecution(result.executionId)
+        if (exec) {
+          setDetailExecution(exec)
+          setLiveExecutionId(result.executionId)
+          setDetailModalOpen(true)
+        }
+      } else if (!result.success) {
         message.error(result.error || t('empTask.executeFailed'))
       }
       loadTasks()
@@ -185,6 +207,28 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
       setExecutingTaskId(null)
     }
   }
+
+  const handleAbortExecution = async (executionId: string) => {
+    try {
+      await window.electronAPI.employeeTask.abortExecution(executionId)
+      message.info(t('empTask.abortSuccess'))
+    } catch {
+      message.error(t('empTask.executeFailed'))
+    }
+  }
+
+  const handleDetailClose = useCallback(async () => {
+    if (liveExecutionId) {
+      try {
+        const exec = await window.electronAPI.employeeTask.getExecution(liveExecutionId)
+        if (exec && exec.status !== 'running') {
+          setLiveExecutionId(null)
+        }
+      } catch {}
+    }
+    setDetailModalOpen(false)
+    loadTasks()
+  }, [liveExecutionId, loadTasks])
 
   const handleViewExecutions = async (task: TaskItem) => {
     try {
@@ -197,9 +241,23 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
     }
   }
 
-  const handleViewDetail = (exec: ExecutionItem) => {
-    setDetailExecution(exec)
-    setDetailModalOpen(true)
+  const handleViewDetail = async (exec: ExecutionItem) => {
+    if (exec.status === 'running') {
+      setDetailExecution(exec)
+      setLiveExecutionId(exec.id)
+      setDetailModalOpen(true)
+    } else {
+      try {
+        const freshExec = await window.electronAPI.employeeTask.getExecution(exec.id)
+        setDetailExecution(freshExec || exec)
+        setLiveExecutionId(null)
+        setDetailModalOpen(true)
+      } catch {
+        setDetailExecution(exec)
+        setLiveExecutionId(null)
+        setDetailModalOpen(true)
+      }
+    }
   }
 
   const handleDeleteExecution = async (execId: string) => {
@@ -249,7 +307,7 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
       title: t('common.action'),
       key: 'action',
       width: 180,
-      fixed: 'right',
+      fixed: 'right' as const,
       render: (_: any, record: TaskItem) => (
         <Space size="small">
           <Tooltip title={t('empTask.run')}>
@@ -430,7 +488,9 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId }) => 
       <ExecutionDetailModal
         open={detailModalOpen}
         execution={detailExecution}
-        onClose={() => setDetailModalOpen(false)}
+        liveExecutionId={liveExecutionId}
+        onClose={handleDetailClose}
+        onAbort={handleAbortExecution}
       />
     </div>
   )

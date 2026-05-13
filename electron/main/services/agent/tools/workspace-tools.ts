@@ -1,5 +1,7 @@
 import type { ToolDefinition } from '../tool.types'
 import ProjectManagerService from '../../project-manager.service'
+import UnifiedInteractionService from '../../unified-interaction.service'
+import { interactionContext } from '../../unified-interaction.service'
 
 export function createWorkspaceTools(projectId: string): ToolDefinition[] {
   const projectManager = ProjectManagerService.getInstance()
@@ -84,7 +86,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_delete_item',
     name: 'workspace_delete_item',
     title: '删除项目工作区文件或文件夹',
-    description: '删除项目工作区中的文件或文件夹。路径相对于项目工作区根目录。删除文件夹时会递归删除所有内容。',
+    description: '删除项目工作区中的文件或文件夹。路径相对于项目工作区根目录。删除文件夹时会递归删除所有内容。此操作需要用户确认后方可执行。',
     parameters: {
       type: 'object',
       properties: {
@@ -92,7 +94,30 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
       },
       required: ['item_path'],
     },
-    handler: (args: any) => {
+    handler: async (args: any) => {
+      const itemPath = String(args.item_path || '').trim()
+      if (!itemPath) return { success: false, error: '路径不能为空' }
+
+      const ctx = interactionContext.getStore()
+      if (ctx) {
+        try {
+          const interactionService = UnifiedInteractionService.getInstance()
+          const response = await interactionService.request({
+            type: 'confirm',
+            title: '确认删除',
+            message: `即将删除工作区中的 "${itemPath}"，此操作不可撤销。是否确认？`,
+            danger: true,
+            source: 'security:workspace_delete',
+          })
+
+          if (response.cancelled || response.confirmed !== true) {
+            return { success: false, error: '用户取消了删除操作' }
+          }
+        } catch {
+          return { success: false, error: '删除确认失败，操作已取消' }
+        }
+      }
+
       return projectManager.deleteWorkspaceItem(projectId, args.item_path)
     },
     source: 'workspace',
@@ -143,7 +168,7 @@ export function getWorkspacePrompt(projectId: string): string {
     `  - workspace_read_file：读取工作区中的文件内容`,
     `  - workspace_write_file：向工作区写入文件（如文档、报告、数据文件等）`,
     `  - workspace_create_folder：在工作区创建文件夹来组织文件`,
-    `  - workspace_delete_item：删除工作区中的文件或文件夹`,
+    `  - workspace_delete_item：删除工作区中的文件或文件夹（需要用户确认）`,
     `  - workspace_rename_item：重命名工作区中的文件或文件夹`,
     `- 所有路径都是相对于工作区根目录的相对路径`,
     `- 当需要生成文档、报告等产出物时，使用 workspace_write_file 将内容写入工作区`,

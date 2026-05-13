@@ -21,6 +21,7 @@ export const EMPLOYEE_CHANNELS = {
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
+  EMPLOYEE_PROFILE_REFINE: 'employee:profile-refine',
 
   EMPLOYEE_EXPORT_CONFIG: 'employee:export-config',
   EMPLOYEE_IMPORT_CONFIG: 'employee:import-config',
@@ -93,6 +94,21 @@ export interface EmployeeProfileAnalyzeParams {
   provider_id?: string
   model_id?: string
   additional_context?: string
+}
+
+export interface EmployeeProfileRefineParams {
+  previous_messages: Array<{ role: string; content: string }>
+  previous_profile: {
+    roleName: string
+    roleDescription: string
+    responsibilities: string[]
+    personalityTraits: string[]
+    workingStyle: string
+    suggestedTools: string[]
+  }
+  feedback: string
+  provider_id: string
+  model_id?: string
 }
 
 export interface EmployeeExportConfigParams {

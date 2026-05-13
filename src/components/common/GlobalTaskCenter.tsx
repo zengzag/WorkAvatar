@@ -64,6 +64,7 @@ const GlobalTaskCenter: React.FC = () => {
 
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [detailExecution, setDetailExecution] = useState<ExecutionItem | null>(null)
+  const [liveExecutionId, setLiveExecutionId] = useState<string | null>(null)
 
   const [filterStatus, setFilterStatus] = useState<string | undefined>(undefined)
   const [filterEmployee, setFilterEmployee] = useState<string | undefined>(undefined)
@@ -113,9 +114,23 @@ const GlobalTaskCenter: React.FC = () => {
     }
   }
 
-  const handleViewDetail = (exec: ExecutionItem) => {
-    setDetailExecution(exec)
-    setDetailModalOpen(true)
+  const handleViewDetail = async (exec: ExecutionItem) => {
+    if (exec.status === 'running') {
+      setDetailExecution(exec)
+      setLiveExecutionId(exec.id)
+      setDetailModalOpen(true)
+    } else {
+      try {
+        const freshExec = await window.electronAPI.employeeTask.getExecution(exec.id)
+        setDetailExecution(freshExec || exec)
+        setLiveExecutionId(null)
+        setDetailModalOpen(true)
+      } catch {
+        setDetailExecution(exec)
+        setLiveExecutionId(null)
+        setDetailModalOpen(true)
+      }
+    }
   }
 
   const handleDeleteExecution = async (execId: string) => {
@@ -316,7 +331,13 @@ const GlobalTaskCenter: React.FC = () => {
       <ExecutionDetailModal
         open={detailModalOpen}
         execution={detailExecution}
-        onClose={() => setDetailModalOpen(false)}
+        liveExecutionId={liveExecutionId}
+        onClose={() => { setDetailModalOpen(false); setLiveExecutionId(null) }}
+        onAbort={async (executionId: string) => {
+          try {
+            await window.electronAPI.employeeTask.abortExecution(executionId)
+          } catch {}
+        }}
       />
     </Card>
   )

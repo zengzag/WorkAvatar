@@ -150,7 +150,7 @@ class SchedulerService {
     }
   }
 
-  private async executeSchedule(schedule: { id: string; employee_id: string; task_ids_json: string; run_mode?: 'recurring' | 'once' }): Promise<void> {
+  private async executeSchedule(schedule: { id: string; employee_id: string; name: string; task_ids_json: string; run_mode?: 'recurring' | 'once'; notify_on_complete?: boolean }): Promise<void> {
     let taskIds: string[] = []
     try {
       taskIds = JSON.parse(schedule.task_ids_json)
@@ -161,7 +161,7 @@ class SchedulerService {
 
     for (const taskId of taskIds) {
       try {
-        await this.taskService.executeTask(taskId, 'scheduled', schedule.id)
+        this.taskService.startTaskExecution(taskId, 'scheduled', schedule.id, schedule.name, schedule.notify_on_complete)
       } catch (error: any) {
         console.error(`[Scheduler] Error executing task ${taskId} for schedule ${schedule.id}:`, error.message)
       }
