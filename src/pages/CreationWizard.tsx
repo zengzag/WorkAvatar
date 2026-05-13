@@ -40,6 +40,7 @@ import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
 import type { LLMProvider } from '../types'
 import { getProviderModels, getProviderModelOptions } from '../utils/llm'
+import { getCachedSceneDefaultModel } from '../utils/default-model'
 
 const { Text, Title, Paragraph } = Typography
 const { TextArea } = Input
@@ -68,10 +69,10 @@ const CreationWizard: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
-    return localStorage.getItem('creationWizard:selectedProviderId') || ''
+    return localStorage.getItem('creationWizard:selectedProviderId') || getCachedSceneDefaultModel('creation')?.provider_id || ''
   })
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
-    return localStorage.getItem('creationWizard:selectedModelId') || ''
+    return localStorage.getItem('creationWizard:selectedModelId') || getCachedSceneDefaultModel('creation')?.model_id || ''
   })
   const [enableThinking, setEnableThinking] = useState<boolean>(() => {
     return localStorage.getItem('creationWizard:enableThinking') === 'true'
@@ -98,6 +99,15 @@ const CreationWizard: React.FC = () => {
   const progressCleanupRef = useRef<(() => void) | null>(null)
 
   const [form] = Form.useForm()
+
+  useEffect(() => {
+    if (currentStep === 3 && profile) {
+      form.setFieldsValue({
+        name: profile.roleName,
+        description: profile.roleDescription,
+      })
+    }
+  }, [currentStep])
 
   useEffect(() => {
     if (id) {
@@ -130,9 +140,17 @@ const CreationWizard: React.FC = () => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
-      const defaultProvider = (result as LLMProvider[]).find((p) => p.is_default)
-      if (defaultProvider) {
-        setSelectedProviderId(defaultProvider.id)
+      const sceneDefault = getCachedSceneDefaultModel('creation')
+      if (sceneDefault?.provider_id && !localStorage.getItem('creationWizard:selectedProviderId')) {
+        setSelectedProviderId(sceneDefault.provider_id)
+        if (sceneDefault.model_id && !localStorage.getItem('creationWizard:selectedModelId')) {
+          setSelectedModelId(sceneDefault.model_id)
+        }
+      } else if (!selectedProviderId) {
+        const defaultProvider = (result as LLMProvider[]).find((p) => p.is_default)
+        if (defaultProvider) {
+          setSelectedProviderId(defaultProvider.id)
+        }
       }
     } catch {}
   }
@@ -186,10 +204,6 @@ const CreationWizard: React.FC = () => {
 
       if (result.success && result.profile) {
         setProfile(result.profile)
-        form.setFieldsValue({
-          name: result.profile.roleName,
-          description: result.profile.roleDescription,
-        })
 
         if (result.analysisMethod === 'llm') {
           message.success(t('creationWizard.llmAnalysisComplete'))
@@ -423,11 +437,11 @@ const CreationWizard: React.FC = () => {
             <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
             <Timeline
               items={[
-                { color: analyzeProgress >= 10 ? 'green' : 'gray', children: t('creationWizard.stepPrepare') },
-                { color: analyzeProgress >= 30 ? 'green' : 'gray', children: t('creationWizard.stepCallLlm') },
-                { color: analyzeProgress >= 45 ? 'green' : 'gray', children: t('creationWizard.stepLlmThinking') },
-                { color: analyzeProgress >= 60 ? 'green' : 'gray', children: t('creationWizard.stepReceiveStream') },
-                { color: analyzeProgress >= 90 ? 'green' : 'gray', children: t('creationWizard.stepParseResult') },
+                { color: analyzeProgress >= 10 ? 'green' : 'gray', content: t('creationWizard.stepPrepare') },
+                { color: analyzeProgress >= 30 ? 'green' : 'gray', content: t('creationWizard.stepCallLlm') },
+                { color: analyzeProgress >= 45 ? 'green' : 'gray', content: t('creationWizard.stepLlmThinking') },
+                { color: analyzeProgress >= 60 ? 'green' : 'gray', content: t('creationWizard.stepReceiveStream') },
+                { color: analyzeProgress >= 90 ? 'green' : 'gray', content: t('creationWizard.stepParseResult') },
               ]}
             />
             {analyzeDetail && (
@@ -516,7 +530,7 @@ const CreationWizard: React.FC = () => {
   const renderStep5 = () => (
     <div>
       <Alert
-        message={t('creationWizard.finalConfirm')}
+        title={t('creationWizard.finalConfirm')}
         description={t('creationWizard.finalConfirmDesc')}
         type="info"
         showIcon

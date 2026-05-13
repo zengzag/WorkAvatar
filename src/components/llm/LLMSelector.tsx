@@ -110,12 +110,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
           optionLabelProp="label"
           options={modelOptions.map((opt) => ({
             value: opt.model,
-            label: (
-              <Space size={4}>
-                <span style={ellipsisStyle}>{opt.name}</span>
-                {opt.enable_thinking && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{t('llmSelector.thinking')}</Tag>}
-              </Space>
-            ),
+            label: <span style={ellipsisStyle}>{opt.name}</span>,
           }))}
           allowClear
         />

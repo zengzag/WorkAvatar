@@ -22,6 +22,7 @@ import type {
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
+  LLMChatParams,
   LLMChatStreamParams,
   EmployeeChatStreamParams,
   SettingsGetParams,
@@ -44,6 +45,10 @@ import type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
+  EmployeeTaskCreateParams,
+  EmployeeTaskUpdateParams,
+  EmployeeScheduleCreateParams,
+  EmployeeScheduleUpdateParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -118,6 +123,7 @@ const electronAPI = {
     updateProvider: (params: LLMProviderUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_UPDATE, params),
     deleteProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_DELETE, id),
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
+    chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
     abortChat: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT),
@@ -284,6 +290,7 @@ const electronAPI = {
     exportDocuments: (params: KBExportDocumentsParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_DOCUMENTS, params),
     importFull: (params: KBImportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_FULL, params),
     importGraph: (params: KBImportGraphParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_GRAPH, params),
+    scanFolder: (params: { folder_path: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SCAN_FOLDER, params),
     onExportProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KB_EXPORT_PROGRESS, handler)
@@ -294,6 +301,28 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
     },
+  },
+
+  employeeTask: {
+    list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
+    get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
+    create: (params: EmployeeTaskCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_CREATE, params),
+    update: (params: EmployeeTaskUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_UPDATE, params),
+    delete: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_DELETE, taskId),
+    execute: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, taskId),
+    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_ABORT_EXECUTION, executionId),
+    listSchedules: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, employeeId),
+    getSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_GET, scheduleId),
+    createSchedule: (params: EmployeeScheduleCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, params),
+    updateSchedule: (params: EmployeeScheduleUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_UPDATE, params),
+    deleteSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_DELETE, scheduleId),
+    validateCron: (cronExpr: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, cronExpr),
+    listExecutions: (params: { employee_id: string; limit?: number; offset?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST, params),
+    listExecutionsForTask: (params: { task_id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, params),
+    getExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_GET, executionId),
+    allRecentExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_ALL_RECENT, limit),
+    failedExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_FAILED, limit),
+    deleteExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_DELETE, executionId),
   },
 }
 
@@ -327,6 +356,27 @@ export type ElectronAPI = typeof electronAPI & {
     resumeAll: (type?: string) => Promise<number>
     cancelAll: (type?: string) => Promise<number>
     onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
+  }
+  employeeTask: {
+    list: (employeeId: string) => Promise<any[]>
+    get: (taskId: string) => Promise<any>
+    create: (params: any) => Promise<any>
+    update: (params: any) => Promise<any>
+    delete: (taskId: string) => Promise<boolean>
+    execute: (taskId: string) => Promise<{ success: boolean; execution?: any; error?: string }>
+    abortExecution: (executionId: string) => Promise<boolean>
+    listSchedules: (employeeId: string) => Promise<any[]>
+    getSchedule: (scheduleId: string) => Promise<any>
+    createSchedule: (params: any) => Promise<any>
+    updateSchedule: (params: any) => Promise<any>
+    deleteSchedule: (scheduleId: string) => Promise<boolean>
+    validateCron: (cronExpr: string) => Promise<{ valid: boolean; error?: string; nextRun?: string }>
+    listExecutions: (params: { employee_id: string; limit?: number; offset?: number }) => Promise<any[]>
+    listExecutionsForTask: (params: { task_id: string; limit?: number }) => Promise<any[]>
+    getExecution: (executionId: string) => Promise<any>
+    allRecentExecutions: (limit?: number) => Promise<any[]>
+    failedExecutions: (limit?: number) => Promise<any[]>
+    deleteExecution: (executionId: string) => Promise<boolean>
   }
 }
 

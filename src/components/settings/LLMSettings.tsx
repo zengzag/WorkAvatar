@@ -16,7 +16,6 @@ import {
   Collapse,
   Tooltip,
   App,
-  theme,
 } from 'antd'
 import {
   PlusOutlined,
@@ -27,7 +26,6 @@ import {
   SyncOutlined,
   SettingOutlined,
   QuestionCircleOutlined,
-  BulbOutlined,
   GlobalOutlined,
 } from '@ant-design/icons'
 import type { LLMProvider, LLMModelConfig, LLMProviderType } from '../../types'
@@ -90,7 +88,6 @@ const GROUP_COLOR_MAP: Record<string, string> = {
 const LLMSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modalVisible, setModalVisible] = useState(false)
   const [editingProvider, setEditingProvider] = useState<LLMProvider | null>(null)
@@ -223,7 +220,6 @@ const LLMSettings: React.FC = () => {
       max_tokens: 4096,
       max_retry: 100,
       is_default: false,
-      enable_thinking: false,
     })
     setModelModalVisible(true)
   }
@@ -238,8 +234,6 @@ const LLMSettings: React.FC = () => {
       top_p: model.top_p,
       frequency_penalty: model.frequency_penalty,
       presence_penalty: model.presence_penalty,
-      enable_thinking: model.enable_thinking || false,
-      thinking_budget: model.thinking_budget,
       max_retry: model.max_retry ?? 100,
       is_default: model.is_default,
     })
@@ -258,8 +252,6 @@ const LLMSettings: React.FC = () => {
         top_p: values.top_p,
         frequency_penalty: values.frequency_penalty,
         presence_penalty: values.presence_penalty,
-        enable_thinking: values.enable_thinking,
-        thinking_budget: values.thinking_budget,
         max_retry: values.max_retry,
         is_default: values.is_default,
       }
@@ -292,13 +284,6 @@ const LLMSettings: React.FC = () => {
     { title: t('settings.maxToken'), dataIndex: 'max_tokens', key: 'max_tokens', width: 90 },
     { title: t('settings.maxRetry'), dataIndex: 'max_retry', key: 'max_retry', width: 80,
       render: (r: number | undefined) => r ?? 100 },
-    {
-      title: t('settings.thinkingMode'),
-      key: 'thinking',
-      width: 80,
-      render: (_: any, record: LLMModelConfig) =>
-        record.enable_thinking ? <Tag color="blue" icon={<BulbOutlined />}>{t('common.on')}</Tag> : <Tag>{t('common.off')}</Tag>,
-    },
     {
       title: t('settings.defaultModel'),
       dataIndex: 'is_default',
@@ -609,32 +594,6 @@ const LLMSettings: React.FC = () => {
             }>
               <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
             </Form.Item>
-          </div>
-
-          <Divider plain>
-            <BulbOutlined /> {t('settings.thinkingMode')}
-          </Divider>
-
-          <div style={{ background: token.colorBgContainerDisabled, padding: 16, borderRadius: 8, marginBottom: 16 }}>
-            <Form.Item name="enable_thinking" valuePropName="checked" label={
-              <span>{t('settings.enableThinking')} <Tooltip title={t('settings.enableThinkingTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-            } style={{ marginBottom: 8 }}>
-              <Switch />
-            </Form.Item>
-            <Form.Item noStyle shouldUpdate={(prev, cur) => prev.enable_thinking !== cur.enable_thinking}>
-              {({ getFieldValue }) =>
-                getFieldValue('enable_thinking') ? (
-                  <Form.Item name="thinking_budget" label={
-                    <span>{t('settings.thinkingBudget')} <Tooltip title={t('settings.thinkingBudgetTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                  }>
-                    <InputNumber min={0} max={32768} step={1024} style={{ width: 180 }} placeholder={t('settings.thinkingBudgetPlaceholder')} />
-                  </Form.Item>
-                ) : null
-              }
-            </Form.Item>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('settings.thinkingSupportDesc')}
-            </Text>
           </div>
 
           <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefaultModel')}>

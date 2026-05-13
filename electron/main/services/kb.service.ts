@@ -143,6 +143,44 @@ class KnowledgeBaseService {
     ).get(kbId, originalName) || null
   }
 
+  private readonly SUPPORTED_EXTENSIONS = new Set([
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv',
+    'txt', 'md', 'html', 'htm',
+    'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp',
+  ])
+
+  async scanFolder(folderPath: string): Promise<{
+    supported: Array<{ path: string; name: string; ext: string; size: number }>;
+    unsupported: Array<{ path: string; name: string; ext: string }>;
+    total: number;
+  }> {
+    const supported: Array<{ path: string; name: string; ext: string; size: number }> = []
+    const unsupported: Array<{ path: string; name: string; ext: string }> = []
+
+    const scanDir = async (dirPath: string) => {
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name)
+        if (entry.isDirectory()) {
+          await scanDir(fullPath)
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase().slice(1)
+          if (this.SUPPORTED_EXTENSIONS.has(ext)) {
+            try {
+              const stats = await fs.promises.stat(fullPath)
+              supported.push({ path: fullPath, name: entry.name, ext, size: stats.size })
+            } catch {}
+          } else if (ext) {
+            unsupported.push({ path: fullPath, name: entry.name, ext })
+          }
+        }
+      }
+    }
+
+    await scanDir(folderPath)
+    return { supported, unsupported, total: supported.length + unsupported.length }
+  }
+
   async uploadDocuments(
     kbId: string,
     filePaths: string[],

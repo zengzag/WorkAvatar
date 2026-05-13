@@ -24,6 +24,8 @@ import {
   MCPServersSection,
   KnowledgeBaseSection,
   ExportImportSection,
+  TaskConfigSection,
+  ScheduleSection,
 } from '../components/employee-settings'
 import type { Employee, LLMProvider } from '../types'
 import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
@@ -515,6 +517,20 @@ const EmployeeSettings: React.FC = () => {
                 linkedKBs={linkedKBs}
                 projectId={employee.project_id}
               />
+            )
+          },
+          {
+            key: 'tasks',
+            label: t('employeeSettings.tabTasks'),
+            children: (
+              <TaskConfigSection employeeId={id!} />
+            )
+          },
+          {
+            key: 'schedules',
+            label: t('employeeSettings.tabSchedules'),
+            children: (
+              <ScheduleSection employeeId={id!} />
             )
           },
           {

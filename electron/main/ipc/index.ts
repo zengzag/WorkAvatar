@@ -5,6 +5,7 @@ import { registerAppHandlers } from './app.handlers'
 import { registerToolHandlers } from './tool.handlers'
 import { registerKBHandlers } from './kb.handlers'
 import { registerTaskHandlers } from './task.handlers'
+import { registerEmployeeTaskHandlers } from './employee-task.handlers'
 import ProjectManagerService from '../services/project-manager.service'
 import FileParserService from '../services/file-parser.service'
 import LLMClientService from '../services/llm-client.service'
@@ -18,6 +19,8 @@ import SkillRegistryService from '../services/skill-registry.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import KnowledgeBaseService from '../services/kb.service'
 import EmployeeExportService from '../services/employee-export.service'
+import EmployeeTaskService from '../services/employee-task.service'
+import SchedulerService from '../services/scheduler.service'
 
 export function registerIpcHandlers() {
   const projectManager = ProjectManagerService.getInstance()
@@ -32,6 +35,8 @@ export function registerIpcHandlers() {
   const employeeAgent = EmployeeAgentService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
   const employeeExportService = EmployeeExportService.getInstance()
+  const employeeTaskService = EmployeeTaskService.getInstance()
+  const schedulerService = SchedulerService.getInstance()
   const db = DatabaseService.getInstance().getDb()
 
   registerProjectHandlers(projectManager, fileParser, kbService)
@@ -41,4 +46,7 @@ export function registerIpcHandlers() {
   registerToolHandlers(db, toolEngine, skillRegistry)
   registerKBHandlers(kbService)
   registerTaskHandlers()
+  registerEmployeeTaskHandlers(employeeTaskService, schedulerService)
+
+  schedulerService.start()
 }

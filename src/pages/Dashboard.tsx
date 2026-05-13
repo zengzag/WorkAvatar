@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme } from 'antd'
+import { Card, Button, Tag, Statistic, Row, Col, Typography, message, Space, Popconfirm, Tooltip, theme, Modal, Input } from 'antd'
 import {
   RocketOutlined,
   FolderOpenOutlined,
@@ -30,6 +30,9 @@ const Dashboard: React.FC = () => {
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [kbList, setKBList] = useState<any[]>([])
+  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [newProjectName, setNewProjectName] = useState('')
+  const [newProjectDesc, setNewProjectDesc] = useState('')
 
   useEffect(() => {
     loadProjects()
@@ -79,16 +82,23 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const handleCreateProject = async () => {
+  const handleCreateProject = () => {
+    setNewProjectName(t('dashboard.defaultProjectName', { date: dayjs().format('MMDDHHmm') }))
+    setNewProjectDesc('')
+    setCreateModalOpen(true)
+  }
+
+  const confirmCreateProject = async () => {
     try {
       const documentsPath = await window.electronAPI.app.getPath({ name: 'documents' })
       const project = await window.electronAPI.project.create({
-        name: t('dashboard.defaultProjectName', { date: dayjs().format('MMDDHHmm') }),
-        description: t('dashboard.defaultProjectDesc'),
+        name: newProjectName,
+        description: newProjectDesc,
         root_path: documentsPath,
       })
       addProject(project as Project)
       message.success(t('dashboard.projectCreated'))
+      setCreateModalOpen(false)
       navigate(`/project/${project.id}`)
     } catch (error) {
       console.error('创建项目失败:', error)
@@ -349,6 +359,35 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        open={createModalOpen}
+        title={t('dashboard.createProject')}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        onOk={confirmCreateProject}
+        onCancel={() => setCreateModalOpen(false)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('dashboard.projectName')}</div>
+            <Input
+              value={newProjectName}
+              onChange={e => setNewProjectName(e.target.value)}
+              placeholder={t('dashboard.defaultProjectName', { date: dayjs().format('MMDDHHmm') })}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('dashboard.projectDesc')}</div>
+            <Input.TextArea
+              value={newProjectDesc}
+              onChange={e => setNewProjectDesc(e.target.value)}
+              rows={3}
+              placeholder={t('dashboard.defaultProjectDesc')}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

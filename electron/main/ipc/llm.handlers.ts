@@ -4,6 +4,7 @@ import type {
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
+  LLMChatParams,
   LLMChatStreamParams,
 } from '../../shared/ipc-channels'
 import type LLMClientService from '../services/llm-client.service'
@@ -45,6 +46,19 @@ export function registerLLMHandlers(
 
   ipcMain.handle(IPC_CHANNELS.LLM_TEST_CONNECTION, async (_, params: LLMTestConnectionParams) => {
     return llmClient.testConnection(params.provider_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.LLM_CHAT, async (_, params: LLMChatParams) => {
+    try {
+      const result = await llmClient.chat(
+        params.provider_id,
+        params.messages,
+        params.model_id ? { ...params.options, model: params.model_id } : params.options
+      )
+      return { success: true, content: result }
+    } catch (error: any) {
+      return { success: false, error: error.message || String(error) }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.LLM_CHAT_STREAM, async (event, params: LLMChatStreamParams) => {

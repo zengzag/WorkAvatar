@@ -435,7 +435,62 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
       CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
+
+      CREATE TABLE IF NOT EXISTS employee_tasks (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        prompt TEXT NOT NULL,
+        is_enabled BOOLEAN NOT NULL DEFAULT 1,
+        timeout_ms INTEGER DEFAULT 300000,
+        extra_config_json TEXT DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_tasks_employee ON employee_tasks(employee_id);
+
+      CREATE TABLE IF NOT EXISTS employee_schedules (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        cron_expr TEXT NOT NULL,
+        is_enabled BOOLEAN NOT NULL DEFAULT 1,
+        task_ids_json TEXT NOT NULL DEFAULT '[]',
+        last_run_at INTEGER,
+        next_run_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_schedules_employee ON employee_schedules(employee_id);
+
+      CREATE TABLE IF NOT EXISTS employee_task_executions (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        task_id TEXT NOT NULL REFERENCES employee_tasks(id) ON DELETE CASCADE,
+        schedule_id TEXT REFERENCES employee_schedules(id) ON DELETE SET NULL,
+        trigger_type TEXT NOT NULL DEFAULT 'manual',
+        status TEXT NOT NULL DEFAULT 'running',
+        result_text TEXT,
+        error_message TEXT,
+        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        completed_at INTEGER,
+        duration_ms INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_employee ON employee_task_executions(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_task ON employee_task_executions(task_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_status ON employee_task_executions(status);
     `)
+
+    this.addColumnIfNotExists('employee_tasks', 'llm_provider_id', 'TEXT')
+    this.addColumnIfNotExists('employee_tasks', 'llm_model', 'TEXT')
+    this.addColumnIfNotExists('employee_tasks', 'enable_thinking', 'BOOLEAN NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('employee_tasks', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
+    this.addColumnIfNotExists('employee_task_executions', 'segments_json', 'TEXT')
+    this.addColumnIfNotExists('employee_schedules', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')

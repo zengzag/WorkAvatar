@@ -10,6 +10,7 @@ import {
   Progress,
   Alert,
   Typography,
+  App,
 } from 'antd'
 import {
   ExportOutlined,
@@ -32,6 +33,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
   projectId,
 }) => {
   const { t } = useTranslation()
+  const { modal } = App.useApp()
   const [importConfigModalOpen, setImportConfigModalOpen] = useState(false)
   const [importPackageModalOpen, setImportPackageModalOpen] = useState(false)
 
@@ -60,18 +62,18 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setProgress({ percent: 100, stage: 'complete', detail: '' })
 
       if (exportResult.success) {
-        Modal.success({
+        modal.success({
           title: t('employeeExport.exportSuccess'),
           content: t('employeeExport.exportConfigSuccessDesc', { path: result.filePath }),
         })
       } else {
-        Modal.error({
+        modal.error({
           title: t('employeeExport.exportFailed'),
           content: exportResult.error,
         })
       }
     } catch (error: any) {
-      Modal.error({
+      modal.error({
         title: t('employeeExport.exportFailed'),
         content: error.message || t('common.failed'),
       })
@@ -105,7 +107,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
 
       if (importResult.success) {
         const warnings = importResult.warnings || []
-        Modal.success({
+        modal.success({
           title: t('employeeExport.importSuccess'),
           content: (
             <div>
@@ -124,13 +126,13 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
           ),
         })
       } else {
-        Modal.error({
+        modal.error({
           title: t('employeeExport.importFailed'),
           content: importResult.error,
         })
       }
     } catch (error: any) {
-      Modal.error({
+      modal.error({
         title: t('employeeExport.importFailed'),
         content: error.message || t('common.failed'),
       })
@@ -176,12 +178,12 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         })
 
         if (exportResult.success) {
-          Modal.success({
+          modal.success({
             title: t('employeeExport.exportSuccess'),
             content: t('employeeExport.exportPackageSuccessDesc', { path: result.filePath }),
           })
         } else {
-          Modal.error({
+          modal.error({
             title: t('employeeExport.exportFailed'),
             content: exportResult.error,
           })
@@ -190,7 +192,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         cleanup()
       }
     } catch (error: any) {
-      Modal.error({
+      modal.error({
         title: t('employeeExport.exportFailed'),
         content: error.message || t('common.failed'),
       })
@@ -238,7 +240,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
 
         if (importResult.success) {
           const warnings = importResult.warnings || []
-          Modal.success({
+          modal.success({
             title: t('employeeExport.importSuccess'),
             content: (
               <div>
@@ -257,7 +259,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
             ),
           })
         } else {
-          Modal.error({
+          modal.error({
             title: t('employeeExport.importFailed'),
             content: importResult.error,
           })
@@ -266,7 +268,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         cleanup()
       }
     } catch (error: any) {
-      Modal.error({
+      modal.error({
         title: t('employeeExport.importFailed'),
         content: error.message || t('common.failed'),
       })
@@ -292,7 +294,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
           type="info"
           showIcon
           icon={<InfoCircleOutlined />}
-          message={t('employeeExport.configExportDesc')}
+          title={t('employeeExport.configExportDesc')}
           style={{ marginBottom: 16 }}
         />
         <Space>
@@ -319,7 +321,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
           type="info"
           showIcon
           icon={<InfoCircleOutlined />}
-          message={t('employeeExport.packageExportDesc')}
+          title={t('employeeExport.packageExportDesc')}
           style={{ marginBottom: 16 }}
         />
         <Space>
@@ -369,7 +371,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         </Form>
         <Alert
           type="warning"
-          message={t('employeeExport.importConfigWarning')}
+          title={t('employeeExport.importConfigWarning')}
           style={{ marginTop: 8 }}
         />
       </Modal>
@@ -395,7 +397,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         </Form>
         <Alert
           type="warning"
-          message={t('employeeExport.importPackageWarning')}
+          title={t('employeeExport.importPackageWarning')}
           style={{ marginTop: 8 }}
         />
       </Modal>

@@ -34,9 +34,11 @@ const ProjectManager: React.FC = () => {
   const { t } = useTranslation()
   const { projects, setProjects, addProject, setLoading } = useAppStore()
   const [loadingTable, setLoadingTable] = useState(false)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [currentProject, setCurrentProject] = useState<any>(null)
   const [newProjectName, setNewProjectName] = useState('')
+  const [newProjectDesc, setNewProjectDesc] = useState('')
 
   useEffect(() => {
     loadProjects()
@@ -57,16 +59,27 @@ const ProjectManager: React.FC = () => {
     }
   }
 
-  const handleCreateProject = async () => {
+  const handleCreateProject = () => {
+    setNewProjectName(t('projectManager.defaultProjectName', { date: dayjs().format('MMDDHHmm') }))
+    setNewProjectDesc(t('projectManager.defaultProjectDesc'))
+    setCreateModalOpen(true)
+  }
+
+  const confirmCreateProject = async () => {
+    if (!newProjectName.trim()) {
+      message.error(t('projectManager.nameRequired'))
+      return
+    }
     try {
       const documentsPath = await window.electronAPI.app.getPath({ name: 'documents' })
       const project = await window.electronAPI.project.create({
-        name: t('projectManager.defaultProjectName', { date: dayjs().format('MMDDHHmm') }),
-        description: t('projectManager.defaultProjectDesc'),
+        name: newProjectName,
+        description: newProjectDesc,
         root_path: documentsPath,
       })
       addProject(project as Project)
       message.success(t('projectManager.createSuccess'))
+      setCreateModalOpen(false)
       navigate(`/project/${project.id}`)
     } catch (error) {
       console.error('创建项目失败:', error)
@@ -88,6 +101,7 @@ const ProjectManager: React.FC = () => {
   const handleRenameProject = (project: any) => {
     setCurrentProject(project)
     setNewProjectName(project.name)
+    setNewProjectDesc(project.description || '')
     setRenameModalOpen(true)
   }
 
@@ -100,8 +114,9 @@ const ProjectManager: React.FC = () => {
       await window.electronAPI.project.update({
         id: currentProject.id,
         name: newProjectName,
+        description: newProjectDesc,
       })
-      setProjects(projects.map(p => p.id === currentProject.id ? { ...p, name: newProjectName } : p))
+      setProjects(projects.map(p => p.id === currentProject.id ? { ...p, name: newProjectName, description: newProjectDesc } : p))
       message.success(t('projectManager.renameSuccess'))
       setRenameModalOpen(false)
     } catch (error) {
@@ -218,6 +233,33 @@ const ProjectManager: React.FC = () => {
       </Card>
 
       <Modal
+        title={t('projectManager.createProject')}
+        open={createModalOpen}
+        onOk={confirmCreateProject}
+        onCancel={() => setCreateModalOpen(false)}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 4 }}>{t('projectManager.projectName')}</div>
+          <Input
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            onPressEnter={confirmCreateProject}
+          />
+        </div>
+        <div>
+          <div style={{ marginBottom: 4 }}>{t('projectManager.projectDesc')}</div>
+          <Input.TextArea
+            rows={3}
+            placeholder={t('projectManager.descPlaceholder')}
+            value={newProjectDesc}
+            onChange={(e) => setNewProjectDesc(e.target.value)}
+          />
+        </div>
+      </Modal>
+
+      <Modal
         title={t('projectManager.renameProject')}
         open={renameModalOpen}
         onOk={confirmRenameProject}
@@ -225,12 +267,24 @@ const ProjectManager: React.FC = () => {
         okText={t('common.confirm')}
         cancelText={t('common.cancel')}
       >
-        <Input
-          placeholder={t('projectManager.renamePlaceholder')}
-          value={newProjectName}
-          onChange={(e) => setNewProjectName(e.target.value)}
-          onPressEnter={confirmRenameProject}
-        />
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 4 }}>{t('projectManager.projectName')}</div>
+          <Input
+            placeholder={t('projectManager.renamePlaceholder')}
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            onPressEnter={confirmRenameProject}
+          />
+        </div>
+        <div>
+          <div style={{ marginBottom: 4 }}>{t('projectManager.projectDesc')}</div>
+          <Input.TextArea
+            rows={3}
+            placeholder={t('projectManager.descPlaceholder')}
+            value={newProjectDesc}
+            onChange={(e) => setNewProjectDesc(e.target.value)}
+          />
+        </div>
       </Modal>
     </div>
   )

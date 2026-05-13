@@ -272,4 +272,8 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       }
     )
   })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SCAN_FOLDER, async (_, params: { folder_path: string }) => {
+    return kbService.scanFolder(params.folder_path)
+  })
 }

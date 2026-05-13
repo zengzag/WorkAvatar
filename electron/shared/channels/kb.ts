@@ -47,6 +47,7 @@ export const KB_CHANNELS = {
   KB_EXPORT_FULL: 'kb:export-full',
   KB_EXPORT_SUMMARY: 'kb:export-summary',
   KB_EXPORT_DOCUMENTS: 'kb:export-documents',
+  KB_SCAN_FOLDER: 'kb:scan-folder',
   KB_IMPORT_FULL: 'kb:import-full',
   KB_IMPORT_GRAPH: 'kb:import-graph',
   KB_EXPORT_PROGRESS: 'kb:export-progress',

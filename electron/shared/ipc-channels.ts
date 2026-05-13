@@ -27,6 +27,7 @@ export type {
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
+  LLMChatParams,
   LLMChatStreamParams,
   EmployeeChatStreamParams,
 } from './channels/llm'
@@ -57,3 +58,9 @@ export type {
   KBImportFullParams,
   KBImportGraphParams,
 } from './channels/kb'
+export type {
+  EmployeeTaskCreateParams,
+  EmployeeTaskUpdateParams,
+  EmployeeScheduleCreateParams,
+  EmployeeScheduleUpdateParams,
+} from './channels/employee-task'

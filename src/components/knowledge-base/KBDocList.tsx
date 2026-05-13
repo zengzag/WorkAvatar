@@ -166,7 +166,7 @@ const KBDocList: React.FC<KBDocListProps> = ({
                 const isProcessed = status === 'completed' && processedDocIds.has(record.id)
                 const isUpToDate = status === 'completed' && !!record.is_reused
                 return (
-                  <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                  <Space orientation="vertical" size={2} style={{ width: '100%' }}>
                     <Space size={4}>
                       <Tag color={c.color} icon={c.icon}>{t(c.textKey)}</Tag>
                       {isUpToDate && <Tag color="cyan" style={{ fontSize: 10 }}>{t('parseProgress.upToDate')}</Tag>}

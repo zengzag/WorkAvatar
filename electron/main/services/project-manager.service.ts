@@ -132,20 +132,20 @@ class ProjectManagerService {
   }
 
   getEmployeeList(projectId?: string, status?: string): Employee[] {
-    let query = 'SELECT * FROM employees'
+    let query = 'SELECT e.*, p.name as project_name FROM employees e LEFT JOIN projects p ON e.project_id = p.id'
     const params: any[] = []
 
     if (projectId) {
-      query += ' WHERE project_id = ?'
+      query += ' WHERE e.project_id = ?'
       params.push(projectId)
     }
 
     if (status) {
-      query += projectId ? ' AND status = ?' : ' WHERE status = ?'
+      query += projectId ? ' AND e.status = ?' : ' WHERE e.status = ?'
       params.push(status)
     }
 
-    query += ' ORDER BY updated_at DESC'
+    query += ' ORDER BY e.updated_at DESC'
 
     return this.db.getDb().prepare(query).all(...params) as Employee[]
   }

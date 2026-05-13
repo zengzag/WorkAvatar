@@ -7,6 +7,7 @@ export const LLM_CHANNELS = {
   LLM_PROVIDER_UPDATE: 'llm:provider-update',
   LLM_PROVIDER_DELETE: 'llm:provider-delete',
   LLM_TEST_CONNECTION: 'llm:test-connection',
+  LLM_CHAT: 'llm:chat',
   LLM_CHAT_STREAM: 'llm:chat-stream',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
   LLM_ABORT_CHAT: 'llm:abort-chat',
@@ -45,6 +46,16 @@ export interface LLMProviderUpdateParams {
 
 export interface LLMTestConnectionParams {
   provider_id: string
+}
+
+export interface LLMChatParams {
+  provider_id: string
+  model_id?: string
+  messages: Array<{ role: string; content: string }>
+  options?: {
+    temperature?: number
+    max_tokens?: number
+  }
 }
 
 export interface LLMChatStreamParams {

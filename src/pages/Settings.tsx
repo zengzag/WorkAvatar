@@ -3,6 +3,7 @@ import {
   ApiOutlined,
   SaveOutlined,
   SettingOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +12,7 @@ import {
   AppearanceSettings,
   StorageSettings,
   AboutSection,
+  DefaultModelSettings,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -25,6 +27,15 @@ const Settings: React.FC = () => {
         </span>
       ),
       children: <LLMSettings />,
+    },
+    {
+      key: 'defaultModel',
+      label: (
+        <span>
+          <RobotOutlined /> {t('settings.tabDefaultModel')}
+        </span>
+      ),
+      children: <DefaultModelSettings />,
     },
     {
       key: 'storage',

@@ -21,6 +21,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
+import GlobalTaskCenter from '../components/common/GlobalTaskCenter'
 import dayjs from 'dayjs'
 import type { Employee } from '../types'
 import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
@@ -132,10 +133,10 @@ const EmployeeManager: React.FC = () => {
     },
     {
       title: t('employeeManager.project'),
-      dataIndex: 'project_id',
-      key: 'project_id',
+      key: 'project_name',
       width: 180,
       ellipsis: true,
+      render: (_: any, record: Employee) => record.project_name || record.project_id,
     },
     {
       title: t('employeeManager.tasksApprovals'),
@@ -184,6 +185,10 @@ const EmployeeManager: React.FC = () => {
           />
         )}
       </Card>
+
+      <div style={{ marginTop: 16 }}>
+        <GlobalTaskCenter />
+      </div>
     </div>
   )
 }

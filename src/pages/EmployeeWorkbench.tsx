@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next'
 import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
 import type { MessageWithThought } from '../components/workbench'
 import { ensureSegments } from '../components/workbench'
+import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 
 const { Text, Paragraph } = Typography
 
@@ -72,10 +73,10 @@ const EmployeeWorkbench: React.FC = () => {
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(false)
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedProviderId') || ''
+    return localStorage.getItem('employeeWorkbench:selectedProviderId') || getCachedSceneDefaultModel('workbench')?.provider_id || ''
   })
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedModelId') || ''
+    return localStorage.getItem('employeeWorkbench:selectedModelId') || getCachedSceneDefaultModel('workbench')?.model_id || ''
   })
   const [enableThinking, setEnableThinking] = useState<boolean>(() => {
     return localStorage.getItem('employeeWorkbench:enableThinking') === 'true'
@@ -313,6 +314,47 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }
 
+  const generateConversationTitle = async (conversationId: string, userContent: string) => {
+    try {
+      const quickModel = await getSceneDefaultModel('quick')
+      const providerId = quickModel?.provider_id || providers.find((p: any) => p.is_default)?.id
+      if (!providerId) return
+
+      const modelId = quickModel?.model_id || undefined
+      const result = await window.electronAPI.llm.chat({
+        provider_id: providerId,
+        model_id: modelId,
+        messages: [
+          {
+            role: 'system',
+            content: t('workbench.titleGenSystemPrompt'),
+          },
+          {
+            role: 'user',
+            content: userContent,
+          },
+        ],
+        options: { temperature: 0.3, max_tokens: 50 },
+      })
+
+      if (result.success && result.content) {
+        const title = result.content.trim().replace(/["""'']/g, '').substring(0, 20)
+        if (title) {
+          await window.electronAPI.conversation.update({
+            id: conversationId,
+            title,
+          })
+          setAllConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
+          )
+          setConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
+          )
+        }
+      }
+    } catch {}
+  }
+
   const handleSend = async () => {
     const content = inputValue.trim()
     if (!content || isStreaming) return
@@ -341,6 +383,10 @@ const EmployeeWorkbench: React.FC = () => {
     if (!activeConversationId) return
 
     setInputValue('')
+
+    if (messages.length === 0) {
+      generateConversationTitle(activeConversationId, content)
+    }
 
     const userMessage: MessageWithThought = {
       id: `msg_${Date.now()}`,
