@@ -1,9 +1,9 @@
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
+import PathService from './path.service'
 
 const EXPORT_CONFIG_VERSION = '1.0.0'
 const EXPORT_PACKAGE_VERSION = '1.0.0'
@@ -457,18 +457,28 @@ class EmployeeExportService {
           id: kb.id,
           name: kb.name,
           description: kb.description,
-          documents: kbDocuments.map(d => ({
-            id: d.id,
-            original_name: d.original_name,
-            type: d.type,
-            size: d.size,
-            hash: d.hash,
-            content_text: d.content_text,
-            parsed_json: d.parsed_json,
-            parse_status: d.parse_status,
-            created_at: d.created_at,
-            updated_at: d.updated_at,
-          })),
+          documents: kbDocuments.map(d => {
+            let contentText: string | null = null
+            let parsedJson: string | null = null
+            if (d.content_path && fs.existsSync(d.content_path)) {
+              try { contentText = fs.readFileSync(d.content_path, 'utf-8') } catch {}
+            }
+            if (d.parsed_json_path && fs.existsSync(d.parsed_json_path)) {
+              try { parsedJson = fs.readFileSync(d.parsed_json_path, 'utf-8') } catch {}
+            }
+            return {
+              id: d.id,
+              original_name: d.original_name,
+              type: d.type,
+              size: d.size,
+              hash: d.hash,
+              content_text: contentText,
+              parsed_json: parsedJson,
+              parse_status: d.parse_status,
+              created_at: d.created_at,
+              updated_at: d.updated_at,
+            }
+          }),
           chapters: kbChapters,
           docSummaries: kbDocSummaries,
           globalSummary: kbGlobalSummary || null,
@@ -482,10 +492,7 @@ class EmployeeExportService {
           Buffer.from(JSON.stringify(kbData, null, 2))
         )
 
-        const isDev = !app.isPackaged
-        const kbBasePath = isDev
-          ? path.join(process.cwd(), '.workavatar-data', 'knowledge_bases', kb.id)
-          : path.join(app.getPath('userData'), 'knowledge_bases', kb.id)
+        const kbBasePath = PathService.getInstance().getKBBasePath(kb.id)
 
         for (const doc of kbDocuments) {
           const filePath = path.join(kbBasePath, doc.original_name)
@@ -621,11 +628,7 @@ class EmployeeExportService {
             }
           }
 
-          const isDev = !app.isPackaged
-          const basePath = isDev
-            ? path.join(process.cwd(), '.workavatar-data')
-            : app.getPath('userData')
-          const skillInstallPath = path.join(basePath, 'skills', skillDir)
+          const skillInstallPath = path.join(PathService.getInstance().getSkillsDir(), skillDir)
 
           if (!fs.existsSync(skillInstallPath)) {
             fs.mkdirSync(skillInstallPath, { recursive: true })
@@ -712,14 +715,7 @@ class EmployeeExportService {
           `).run(linkId, targetKBId, projectId, now)
         }
 
-        const isDev = !app.isPackaged
-        const kbBasePath = isDev
-          ? path.join(process.cwd(), '.workavatar-data', 'knowledge_bases', targetKBId)
-          : path.join(app.getPath('userData'), 'knowledge_bases', targetKBId)
-
-        if (!fs.existsSync(kbBasePath)) {
-          fs.mkdirSync(kbBasePath, { recursive: true })
-        }
+        const kbBasePath = PathService.getInstance().getKBBasePath(targetKBId)
 
         const safeKbName = kbData.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')
         const docFiles = zip.getEntries().filter(e =>
@@ -832,14 +828,7 @@ class EmployeeExportService {
     const kbId = crypto.randomUUID()
     const now = Math.floor(Date.now() / 1000)
 
-    const isDev = !app.isPackaged
-    const kbPath = isDev
-      ? path.join(process.cwd(), '.workavatar-data', 'knowledge_bases', kbId)
-      : path.join(app.getPath('userData'), 'knowledge_bases', kbId)
-
-    if (!fs.existsSync(kbPath)) {
-      fs.mkdirSync(kbPath, { recursive: true })
-    }
+    const kbPath = PathService.getInstance().getKBBasePath(kbId)
 
     this.db.getDb().prepare(`
       INSERT INTO knowledge_bases (id, name, description, root_path, created_at, updated_at)
@@ -851,12 +840,25 @@ class EmployeeExportService {
       const newDocId = crypto.randomUUID()
       docIdMap.set(doc.id, newDocId)
 
+      let contentPath: string | null = null
+      let parsedJsonPath: string | null = null
+      if (doc.content_text || doc.parsed_json) {
+        const parseDir = path.join(kbPath, '_parsed', newDocId)
+        if (!fs.existsSync(parseDir)) {
+          fs.mkdirSync(parseDir, { recursive: true })
+        }
+        contentPath = path.join(parseDir, 'content.txt')
+        parsedJsonPath = path.join(parseDir, 'parsed.json')
+        if (doc.content_text) fs.writeFileSync(contentPath, doc.content_text, 'utf-8')
+        if (doc.parsed_json) fs.writeFileSync(parsedJsonPath, doc.parsed_json, 'utf-8')
+      }
+
       this.db.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_text, parsed_json, parse_status, created_at, updated_at)
+        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         newDocId, kbId, doc.original_name, doc.type, doc.size, doc.hash,
-        doc.content_text || null, doc.parsed_json || null, doc.parse_status || 'pending',
+        contentPath, parsedJsonPath, doc.parse_status || 'pending',
         doc.created_at || now, doc.updated_at || now
       )
     }

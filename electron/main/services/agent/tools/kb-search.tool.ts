@@ -1,3 +1,4 @@
+import fs from 'fs'
 import type { ToolDefinition } from '../tool.types'
 import DatabaseService from '../../database.service'
 
@@ -88,7 +89,7 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
 
         // 1. 搜索文档标题
         const docs = db.getDb().prepare(
-          `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
+          `SELECT id, original_name, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
         ).all(targetKbId, ...docFilterParams) as any[]
 
         for (const doc of docs) {
@@ -219,11 +220,14 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
 
         // 5. 搜索原始内容片段（带行号和偏移量）
         const contentDocs = db.getDb().prepare(
-          `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND content_text IS NOT NULL${docFilter}`
+          `SELECT id, original_name, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND (content_text IS NOT NULL OR content_path IS NOT NULL)${docFilter}`
         ).all(targetKbId, ...docFilterParams) as any[]
 
         for (const doc of contentDocs) {
-          const content = doc.content_text || ''
+          const content = doc.content_path && fs.existsSync(doc.content_path)
+            ? fs.readFileSync(doc.content_path, 'utf-8')
+            : ''
+          if (!content) continue
           const lines = content.split('\n')
           const paragraphs = content.split(/\n\n+/).filter((p: string) => p.trim().length > 30)
 

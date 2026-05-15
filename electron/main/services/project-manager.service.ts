@@ -1,9 +1,9 @@
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import type { Project, File, Employee, Skill, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
+import PathService from './path.service'
 
 class ProjectManagerService {
   private db: DatabaseService
@@ -48,7 +48,7 @@ class ProjectManagerService {
   createProject(name: string, description: string = '', rootPath?: string): Project {
     const projectId = crypto.randomUUID()
     const shortId = crypto.randomBytes(4).toString('hex')
-    const basePath = rootPath || path.join(app.getPath('documents'))
+    const basePath = rootPath || PathService.getInstance().getDataDir()
     const projectRoot = path.join(basePath, 'WorkAvatar', 'projects', shortId)
 
     if (!fs.existsSync(projectRoot)) {

@@ -47,6 +47,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [docContentLoading, setDocContentLoading] = useState(false)
   const [docContentModalOpen, setDocContentModalOpen] = useState(false)
   const [docContentTitle, setDocContentTitle] = useState('')
+  const [docContentOffset, setDocContentOffset] = useState<{ start: number; end: number } | null>(null)
   const [searched, setSearched] = useState(false)
 
   const inputRef = useRef<any>(null)
@@ -165,10 +166,11 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
   }, [selectedKbId, query, searchMode, topK, advancedDocType, entitySearchType, resetResults])
 
-  const handleViewDocContent = useCallback(async (docId: string, docName: string) => {
+  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }) => {
     setDocContentLoading(true)
     setDocContent(null)
     setDocContentTitle(docName)
+    setDocContentOffset(offset || null)
     setDocContentModalOpen(true)
     try {
       const content = await window.electronAPI.kb.getDocContent(docId)
@@ -349,7 +351,11 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 type="link"
                 size="small"
                 icon={<EyeOutlined />}
-                onClick={() => handleViewDocContent(item.document_id, item.document_name)}
+                onClick={() => handleViewDocContent(item.document_id, item.document_name,
+                  item.start_offset !== undefined && item.end_offset !== undefined
+                    ? { start: item.start_offset, end: item.end_offset }
+                    : undefined
+                )}
                 loading={docContentLoading}
               />
             </Tooltip>
@@ -561,8 +567,29 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           </div>
         ) : docContent ? (
           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 13, backgroundColor: token.colorBgLayout, padding: 16, borderRadius: 8 }}>
-            {docContent.content.substring(0, 5000)}
-            {docContent.content.length > 5000 && (
+            {docContentOffset
+              ? (() => {
+                  const content = docContent.content
+                  const contextChars = 500
+                  const start = Math.max(0, docContentOffset.start - contextChars)
+                  const end = Math.min(content.length, docContentOffset.end + contextChars)
+                  const displayText = content.substring(start, end)
+                  return (
+                    <>
+                      {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
+                      {displayText.substring(0, 5000)}
+                      {displayText.length > 5000 && (
+                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                          ...({t('kbSearch.contentTruncated')})
+                        </Text>
+                      )}
+                      {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
+                    </>
+                  )
+                })()
+              : docContent.content.substring(0, 5000)
+            }
+            {!docContentOffset && docContent.content.length > 5000 && (
               <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
                 ...({t('kbSearch.contentTruncated')})
               </Text>

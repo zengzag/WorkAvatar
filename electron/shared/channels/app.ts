@@ -10,6 +10,9 @@ export const APP_CHANNELS = {
   APP_SHOW_OPEN_DIALOG: 'app:show-open-dialog',
   APP_SHOW_SAVE_DIALOG: 'app:show-save-dialog',
   APP_SHOW_MESSAGE_BOX: 'app:show-message-box',
+
+  PATH_GET_DATA_DIR: 'path:get-data-dir',
+  PATH_SET_DATA_DIR: 'path:set-data-dir',
 } as const
 
 export interface SettingsGetParams {

@@ -1,3 +1,4 @@
+import fs from 'fs'
 import type { ToolDefinition } from '../tool.types'
 import DatabaseService from '../../database.service'
 
@@ -92,7 +93,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
         const excluded = excludedWords
 
         // 构建文档查询
-        let docSql = 'SELECT id, original_name, type, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = \'completed\''
+        let docSql = 'SELECT id, original_name, type, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = \'completed\''
         const docParams: any[] = [targetKbId]
 
         if (args.document_type) {
@@ -118,7 +119,11 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
         const results: AdvancedResult[] = []
 
         for (const doc of docs) {
-          const content = (doc.content_text || '').toLowerCase()
+          const fullContent = doc.content_path && fs.existsSync(doc.content_path)
+            ? fs.readFileSync(doc.content_path, 'utf-8')
+            : ''
+          if (!fullContent) continue
+          const content = fullContent.toLowerCase()
           const nameLower = doc.original_name.toLowerCase()
           let score = 0
           const matchDetails: string[] = []
@@ -171,8 +176,6 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
           }
 
           if (score > 0) {
-            // 提取最佳匹配片段，同时计算行号和偏移量
-            const fullContent = doc.content_text || ''
             const lines = fullContent.split('\n')
             const paragraphs = fullContent.split(/\n\n+/).filter((p: string) => p.trim().length > 20)
 

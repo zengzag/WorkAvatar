@@ -9,6 +9,7 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type OCRService from '../services/ocr.service'
+import PathService from '../services/path.service'
 export function registerAppHandlers(
   db: ReturnType<DatabaseService['getDb']>,
   ocrService: OCRService
@@ -92,6 +93,14 @@ export function registerAppHandlers(
       rapidocr_available: ocrService.isRapidOCRAvailable(),
       tesseract_available: true,
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PATH_GET_DATA_DIR, () => {
+    return PathService.getInstance().getDataDir()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PATH_SET_DATA_DIR, (_, newDir: string) => {
+    return PathService.getInstance().setDataDir(newDir)
   })
 
 }

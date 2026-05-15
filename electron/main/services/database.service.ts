@@ -1,21 +1,18 @@
 import Database from 'better-sqlite3'
-import path from 'path'
 import fs from 'fs'
-import { app } from 'electron'
+import PathService from './path.service'
 
 class DatabaseService {
   private db: Database.Database
   private static instance: DatabaseService
 
   private constructor() {
-    const isDev = !app.isPackaged
-    const basePath = isDev
-      ? path.join(process.cwd(), '.workavatar-data')
-      : app.getPath('userData')
+    const pathService = PathService.getInstance()
+    const basePath = pathService.getDataDir()
     if (!fs.existsSync(basePath)) {
       fs.mkdirSync(basePath, { recursive: true })
     }
-    const dbPath = path.join(basePath, 'workavatar.db')
+    const dbPath = pathService.getDbPath()
     this.db = new Database(dbPath, {
       readonly: false,
       timeout: 5000
@@ -508,6 +505,8 @@ class DatabaseService {
     this.addColumnIfNotExists('kb_documents', 'parse_eta', 'INTEGER DEFAULT 0')
     this.addColumnIfNotExists('kb_documents', 'parse_state_json', 'TEXT')
     this.addColumnIfNotExists('kb_documents', 'is_reused', 'INTEGER NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('kb_documents', 'content_path', 'TEXT')
+    this.addColumnIfNotExists('kb_documents', 'parsed_json_path', 'TEXT')
     this.addColumnIfNotExists('kb_processing_jobs', 'paused_at', 'INTEGER')
     this.addColumnIfNotExists('kb_processing_jobs', 'resume_state_json', 'TEXT')
 

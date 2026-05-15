@@ -1,12 +1,12 @@
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import FileParserService from './file-parser.service'
 import KnowledgeProcessorService from './knowledge-processor.service'
 import ParseTaskManager from './parse-task-manager.service'
 import TaskQueueService from './task-queue.service'
+import PathService from './path.service'
 import { calculateFileHash, getDefaultProviderId } from './common-utils'
 
 class KnowledgeBaseService {
@@ -55,14 +55,40 @@ class KnowledgeBaseService {
   }
 
   private getKBBasePath(kbId: string): string {
-    const isDev = !app.isPackaged
-    const basePath = isDev
-      ? path.join(process.cwd(), '.workavatar-data', 'knowledge_bases', kbId)
-      : path.join(app.getPath('userData'), 'knowledge_bases', kbId)
-    if (!fs.existsSync(basePath)) {
-      fs.mkdirSync(basePath, { recursive: true })
+    return PathService.getInstance().getKBBasePath(kbId)
+  }
+
+  private getDocParseDir(docId: string, kbId: string): string {
+    const dir = path.join(this.getKBBasePath(kbId), '_parsed', docId)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
     }
-    return basePath
+    return dir
+  }
+
+  private saveDocContentToFile(docId: string, kbId: string, contentText: string, parsedJson: string): { content_path: string; parsed_json_path: string } {
+    const dir = this.getDocParseDir(docId, kbId)
+    const contentPath = path.join(dir, 'content.txt')
+    const parsedJsonPath = path.join(dir, 'parsed.json')
+    fs.writeFileSync(contentPath, contentText, 'utf-8')
+    fs.writeFileSync(parsedJsonPath, parsedJson, 'utf-8')
+    return { content_path: contentPath, parsed_json_path: parsedJsonPath }
+  }
+
+  private readDocContentFromFile(contentPath: string): string | null {
+    if (!contentPath || !fs.existsSync(contentPath)) return null
+    try {
+      return fs.readFileSync(contentPath, 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  private deleteDocParseDir(docId: string, kbId: string): void {
+    const dir = path.join(this.getKBBasePath(kbId), '_parsed', docId)
+    if (fs.existsSync(dir)) {
+      try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+    }
   }
 
   listKBs(): any[] {
@@ -112,13 +138,19 @@ class KnowledgeBaseService {
   deleteKB(id: string): boolean {
     this.processor.deleteKnowledgeData(id)
 
-    const docs = this.db.getDb().prepare('SELECT original_name FROM kb_documents WHERE kb_id = ?').all(id) as any[]
+    const docs = this.db.getDb().prepare('SELECT id, original_name FROM kb_documents WHERE kb_id = ?').all(id) as any[]
     const kbBasePath = this.getKBBasePath(id)
     for (const doc of docs) {
+      this.deleteDocParseDir(doc.id, id)
       try {
         const filePath = path.join(kbBasePath, doc.original_name)
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
       } catch {}
+    }
+
+    const parsedDir = path.join(kbBasePath, '_parsed')
+    if (fs.existsSync(parsedDir)) {
+      try { fs.rmSync(parsedDir, { recursive: true, force: true }) } catch {}
     }
 
     const result = this.db.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id)
@@ -221,10 +253,14 @@ class KnowledgeBaseService {
 
           const existingByName = await this.getExistingDocByName(kbId, originalName)
           if (existingByName) {
+            const contentPath = existingDoc.content_path || null
+            const parsedJsonPath = existingDoc.parsed_json_path || null
             this.db.getDb().prepare(`
-              UPDATE kb_documents SET hash = ?, size = ?, content_text = ?, parsed_json = ?, parse_status = 'completed', is_reused = 1, updated_at = unixepoch()
+              UPDATE kb_documents SET hash = ?, size = ?,
+                  content_path = ?, parsed_json_path = ?,
+                  parse_status = 'completed', is_reused = 1, updated_at = unixepoch()
               WHERE id = ?
-            `).run(fileHash, stats.size, existingDoc.content_text, existingDoc.parsed_json, existingByName.id)
+            `).run(fileHash, stats.size, contentPath, parsedJsonPath, existingByName.id)
             imported.push({
               id: existingByName.id,
               original_name: originalName,
@@ -239,11 +275,13 @@ class KnowledgeBaseService {
           }
           const docId = crypto.randomUUID()
           const now = Math.floor(Date.now() / 1000)
+          const contentPath = existingDoc.content_path || null
+          const parsedJsonPath = existingDoc.parsed_json_path || null
           this.db.getDb().prepare(`
-            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, content_text, parsed_json, parse_status, is_reused, created_at, updated_at)
+            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, is_reused, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(docId, kbId, existingDoc.file_id, originalName, fileType, stats.size, fileHash,
-            existingDoc.content_text, existingDoc.parsed_json, 'completed', 1, now, now)
+            contentPath, parsedJsonPath, 'completed', 1, now, now)
 
           imported.push({
             id: docId,
@@ -368,16 +406,19 @@ class KnowledgeBaseService {
       onProgress?.('saving', 'Saving parse results...')
 
       const parsedJson = JSON.stringify(parseResult)
-      const contentText = parseResult.fullText.substring(0, 500000)
+      const contentText = parseResult.fullText
+
+      const { content_path, parsed_json_path } = this.saveDocContentToFile(docId, doc.kb_id, contentText, parsedJson)
 
       this.db.getDb().prepare(`
         UPDATE kb_documents 
-        SET parse_status = 'completed', parsed_json = ?, content_text = ?,
+        SET parse_status = 'completed',
+            content_path = ?, parsed_json_path = ?,
             parse_progress = 100, parse_stage = 'done', parse_detail = 'Parse completed',
             processed_pages = ?, total_pages = ?, processed_chunks = ?, total_chunks = ?,
             updated_at = unixepoch()
         WHERE id = ?
-      `).run(parsedJson, contentText, processedPages, totalPages, processedChunks, totalChunks, docId)
+      `).run(content_path, parsed_json_path, processedPages, totalPages, processedChunks, totalChunks, docId)
 
       this.parseTaskManager.completeTask(docId)
       onProgress?.('done', 'Parse completed')
@@ -466,7 +507,7 @@ class KnowledgeBaseService {
       onProgress?.('chapter_identify', `Identifying document structure: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Chapter identify: ${doc.original_name}` })
 
-      const text = doc.content_text || ''
+      const text = this.getDocumentContent(docId) || ''
       const chapters = this.processor.identifyChapters(text)
 
       this.processor.updateProcessingJob(jobId, 'running', 1, 'chapter_summary')
@@ -640,6 +681,7 @@ class KnowledgeBaseService {
     const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (doc) {
       this.processor.deleteKnowledgeData(doc.kb_id, docId)
+      this.deleteDocParseDir(docId, doc.kb_id)
       const kbBasePath = this.getKBBasePath(doc.kb_id)
       const filePath = path.join(kbBasePath, doc.original_name)
       try { fs.unlinkSync(filePath) } catch {}
@@ -700,13 +742,15 @@ class KnowledgeBaseService {
   }
 
   getDocumentContent(docId: string): string | null {
-    const doc = this.db.getDb().prepare('SELECT content_text FROM kb_documents WHERE id = ?').get(docId) as any
-    return doc?.content_text || null
+    const doc = this.db.getDb().prepare('SELECT content_path FROM kb_documents WHERE id = ?').get(docId) as any
+    if (!doc?.content_path) return null
+    return this.readDocContentFromFile(doc.content_path)
   }
 
   getParsedJson(docId: string): string | null {
-    const doc = this.db.getDb().prepare('SELECT parsed_json FROM kb_documents WHERE id = ?').get(docId) as any
-    return doc?.parsed_json || null
+    const doc = this.db.getDb().prepare('SELECT parsed_json_path FROM kb_documents WHERE id = ?').get(docId) as any
+    if (!doc?.parsed_json_path) return null
+    return this.readDocContentFromFile(doc.parsed_json_path)
   }
 
   async importOrSyncToKB(
@@ -733,10 +777,14 @@ class KnowledgeBaseService {
 
         const existingByName = await this.getExistingDocByName(kbId, originalName)
         if (existingByName) {
+          const contentPath = existingDoc.content_path || null
+          const parsedJsonPath = existingDoc.parsed_json_path || null
           this.db.getDb().prepare(`
-            UPDATE kb_documents SET hash = ?, size = ?, content_text = ?, parsed_json = ?, parse_status = 'completed', updated_at = unixepoch()
+            UPDATE kb_documents SET hash = ?, size = ?,
+                content_path = ?, parsed_json_path = ?,
+                parse_status = 'completed', updated_at = unixepoch()
             WHERE id = ?
-          `).run(fileHash, stats.size, existingDoc.content_text, existingDoc.parsed_json, existingByName.id)
+          `).run(fileHash, stats.size, contentPath, parsedJsonPath, existingByName.id)
           return { kbDocId: existingByName.id, reused: true, kbId }
         }
       }
@@ -752,11 +800,19 @@ class KnowledgeBaseService {
       const now = Math.floor(Date.now() / 1000)
       const parseStatus = options?.contentText ? 'completed' : 'pending'
 
+      let contentPath: string | null = null
+      let parsedJsonPath: string | null = null
+      if (options?.contentText) {
+        const saved = this.saveDocContentToFile(docId, kbId, options.contentText, options.parsedJson || '{}')
+        contentPath = saved.content_path
+        parsedJsonPath = saved.parsed_json_path
+      }
+
       this.db.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_text, parsed_json, parse_status, created_at, updated_at)
+        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(docId, kbId, originalName, fileType, stats.size, fileHash,
-        options?.contentText || null, options?.parsedJson || null, parseStatus, now, now)
+        contentPath, parsedJsonPath, parseStatus, now, now)
 
       return { kbDocId: docId, reused: !!options?.contentText, kbId }
     } catch (err) {
@@ -818,8 +874,10 @@ class KnowledgeBaseService {
         const fileParser = FileParserService.getInstance()
         const result = await fileParser.importFile(projectId, filePath)
 
-        if (doc.content_text && doc.parsed_json) {
-          fileParser.updateFileFromKB(result.id, doc.content_text, doc.parsed_json)
+        const contentText = this.getDocumentContent(docId)
+        const parsedJson = this.getParsedJson(docId)
+        if (contentText && parsedJson) {
+          fileParser.updateFileFromKB(result.id, contentText, parsedJson)
         }
 
         imported.push({
@@ -828,7 +886,7 @@ class KnowledgeBaseService {
           type: doc.type,
           size: doc.size,
           hash: doc.hash,
-          status: doc.content_text ? 'completed' : 'pending',
+          status: contentText ? 'completed' : 'pending',
         })
       } catch (error) {
         errors.push({
@@ -899,7 +957,7 @@ class KnowledgeBaseService {
     const results: any[] = []
 
     const docs = this.db.getDb().prepare(
-      `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
+      `SELECT id, original_name FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
     ).all(kbId, ...docFilterParams) as any[]
 
     for (const doc of docs) {
@@ -1029,11 +1087,12 @@ class KnowledgeBaseService {
     }
 
     const contentDocs = this.db.getDb().prepare(
-      `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND content_text IS NOT NULL${docFilter}`
+      `SELECT id, original_name, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND (content_text IS NOT NULL OR content_path IS NOT NULL)${docFilter}`
     ).all(kbId, ...docFilterParams) as any[]
 
     for (const doc of contentDocs) {
-      const content = doc.content_text || ''
+      const content = doc.content_path ? this.readDocContentFromFile(doc.content_path) : ''
+      if (!content) continue
       const lines = content.split('\n')
       const paragraphs = content.split(/\n\n+/).filter((p: string) => p.trim().length > 30)
 
@@ -1140,7 +1199,7 @@ class KnowledgeBaseService {
 
     if (phrases.length === 0 && required.length === 0 && optional.length === 0) return []
 
-    let docSql = "SELECT id, original_name, type, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
+    let docSql = "SELECT id, original_name, type, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
     const docParams: any[] = [kbId]
 
     if (documentType) {
@@ -1152,7 +1211,9 @@ class KnowledgeBaseService {
     const results: any[] = []
 
     for (const doc of docs) {
-      const content = (doc.content_text || '').toLowerCase()
+      const fullContent = doc.content_path ? this.readDocContentFromFile(doc.content_path) : ''
+      if (!fullContent) continue
+      const content = fullContent.toLowerCase()
       const nameLower = doc.original_name.toLowerCase()
       let score = 0
       const matchDetails: string[] = []
@@ -1201,7 +1262,6 @@ class KnowledgeBaseService {
       }
 
       if (score > 0) {
-        const fullContent = doc.content_text || ''
         const lines = fullContent.split('\n')
         const paragraphs = fullContent.split(/\n\n+/).filter((p: string) => p.trim().length > 20)
 
@@ -1423,8 +1483,8 @@ class KnowledgeBaseService {
           type: d.type,
           size: d.size,
           hash: d.hash,
-          content_text: d.content_text,
-          parsed_json: d.parsed_json,
+          content_text: d.content_path ? this.readDocContentFromFile(d.content_path) : null,
+          parsed_json: d.parsed_json_path ? this.readDocContentFromFile(d.parsed_json_path) : null,
           parse_status: d.parse_status,
           created_at: d.created_at,
           updated_at: d.updated_at,
@@ -1746,11 +1806,19 @@ class KnowledgeBaseService {
         }
 
         const now = Math.floor(Date.now() / 1000)
+        let contentPath: string | null = null
+        let parsedJsonPath: string | null = null
+        if (doc.content_text || doc.parsed_json) {
+          const saved = this.saveDocContentToFile(newDocId, newKBId, doc.content_text || '', doc.parsed_json || '{}')
+          contentPath = saved.content_path
+          parsedJsonPath = saved.parsed_json_path
+        }
+
         this.db.getDb().prepare(`
-          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_text, parsed_json, parse_status, created_at, updated_at)
+          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(newDocId, newKBId, doc.original_name, doc.type, doc.size, doc.hash,
-          doc.content_text || null, doc.parsed_json || null, doc.parse_status || 'pending',
+          contentPath, parsedJsonPath, doc.parse_status || 'pending',
           doc.created_at || now, doc.updated_at || now)
 
         if ((i + 1) % 5 === 0 || i === documents.length - 1) {

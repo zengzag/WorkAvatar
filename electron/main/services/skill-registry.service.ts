@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import DatabaseService from './database.service'
+import PathService from './path.service'
 
 export interface ClaudeSkillManifest {
   name: string
@@ -47,11 +48,7 @@ class SkillRegistryService {
 
   private constructor() {
     this.db = DatabaseService.getInstance()
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === 'development'
-    const basePath = isDev
-      ? path.join(process.cwd(), '.workavatar-data')
-      : require('electron').app.getPath('userData')
-    this.skillsDir = path.join(basePath, 'skills')
+    this.skillsDir = PathService.getInstance().getSkillsDir()
     if (!fs.existsSync(this.skillsDir)) {
       fs.mkdirSync(this.skillsDir, { recursive: true })
     }
