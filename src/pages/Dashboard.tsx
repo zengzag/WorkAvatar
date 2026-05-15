@@ -11,10 +11,12 @@ import {
   EyeOutlined,
   DeleteOutlined,
   RightOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAppStore } from '../stores/app.store'
 import EmptyState from '../components/common/EmptyState'
+import { KBSearchPanel } from '../components/knowledge-base'
 import dayjs from 'dayjs'
 import type { Project, Employee } from '../types'
 import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
@@ -35,6 +37,7 @@ const Dashboard: React.FC = () => {
   const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
   const [newProjectDesc, setNewProjectDesc] = useState('')
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false)
 
   useEffect(() => {
     loadProjects()
@@ -161,6 +164,9 @@ const Dashboard: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginBottom: 32 }}>
           <Button type="primary" size="large" icon={<PlusOutlined />} onClick={handleCreateProject}>
             {t('dashboard.createProject')}
+          </Button>
+          <Button size="large" icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbList.length === 0}>
+            {t('dashboard.kbSearch')}
           </Button>
           <Button size="large" icon={<RobotOutlined />} onClick={() => navigate('/settings')}>
             {t('dashboard.configureLlm')}
@@ -416,6 +422,12 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      <KBSearchPanel
+        open={searchPanelOpen}
+        onClose={() => setSearchPanelOpen(false)}
+        kbList={kbList}
+      />
     </div>
   )
 }

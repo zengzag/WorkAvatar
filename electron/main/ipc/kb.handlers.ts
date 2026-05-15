@@ -276,4 +276,12 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
   ipcMain.handle(IPC_CHANNELS.KB_SCAN_FOLDER, async (_, params: { folder_path: string }) => {
     return kbService.scanFolder(params.folder_path)
   })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SEARCH, (_, params: { kb_id: string; query: string; top_k?: number; document_ids?: string[] }) => {
+    return kbService.search(params.kb_id, params.query, params.top_k, params.document_ids)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_ADVANCED_SEARCH, (_, params: { kb_id: string; query: string; top_k?: number; document_type?: string }) => {
+    return kbService.advancedSearch(params.kb_id, params.query, params.top_k, params.document_type)
+  })
 }

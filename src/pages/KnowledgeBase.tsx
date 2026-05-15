@@ -9,10 +9,10 @@ import {
   PlusOutlined, FileTextOutlined, UploadOutlined,
   LinkOutlined, BookOutlined, EditOutlined, FolderOpenOutlined,
   ThunderboltOutlined, NodeIndexOutlined, ExportOutlined, ImportOutlined,
-  FolderAddOutlined, MoreOutlined,
+  FolderAddOutlined, MoreOutlined, SearchOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
-import { KBListPanel, KBDocList, KBKnowledgeView, KBEntityGraph } from '../components/knowledge-base'
+import { KBListPanel, KBDocList, KBKnowledgeView, KBEntityGraph, KBSearchPanel } from '../components/knowledge-base'
 import LLMSelector from '../components/llm/LLMSelector'
 import { BulbOutlined } from '@ant-design/icons'
 import { useTaskDetailStore } from '../stores/task-detail.store'
@@ -112,6 +112,7 @@ const KnowledgeBasePage: React.FC = () => {
   const [docContentModalOpen, setDocContentModalOpen] = useState(false)
   const [docContent, setDocContent] = useState<string>('')
   const [docContentTitle, setDocContentTitle] = useState<string>('')
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false)
   const [editKBModalOpen, setEditKBModalOpen] = useState(false)
   const [editKBName, setEditKBName] = useState('')
   const [editKBDesc, setEditKBDesc] = useState('')
@@ -718,12 +719,6 @@ const KnowledgeBasePage: React.FC = () => {
     catch { message.error(t('knowledgeBase.linkFailed')) }
   }
 
-  const handleUnlinkProject = async (projectId: string) => {
-    if (!selectedKB) return
-    try { await window.electronAPI.kb.unlinkProject({ kb_id: selectedKB.id, project_id: projectId }); message.success(t('knowledgeBase.unlinkSuccess')); loadLinkedProjects(selectedKB.id) }
-    catch { message.error(t('knowledgeBase.unlinkFailed')) }
-  }
-
   const handleEditKB = () => {
     if (!selectedKB) return
     setEditKBName(selectedKB.name)
@@ -862,6 +857,7 @@ const KnowledgeBasePage: React.FC = () => {
         subTitle={t('knowledgeBase.subtitle')}
         extra={
           <Space>
+            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('dashboard.kbSearch')}</Button>
             <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>{t('knowledgeBase.createKb')}</Button>
           </Space>
         }
@@ -1396,6 +1392,12 @@ const KnowledgeBasePage: React.FC = () => {
           </div>
         )}
       </Modal>
+
+      <KBSearchPanel
+        open={searchPanelOpen}
+        onClose={() => setSearchPanelOpen(false)}
+        kbList={kbs}
+      />
     </div>
   )
 }

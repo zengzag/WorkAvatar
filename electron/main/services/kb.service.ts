@@ -885,6 +885,383 @@ class KnowledgeBaseService {
     return this.processor.searchDocumentSummaries(kbId, query, topK)
   }
 
+  search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): any[] {
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 1)
+    if (queryWords.length === 0) return []
+
+    let docFilter = ''
+    const docFilterParams: any[] = []
+    if (documentIds && documentIds.length > 0) {
+      docFilter = ' AND d.id IN (' + documentIds.map(() => '?').join(',') + ')'
+      docFilterParams.push(...documentIds)
+    }
+
+    const results: any[] = []
+
+    const docs = this.db.getDb().prepare(
+      `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
+    ).all(kbId, ...docFilterParams) as any[]
+
+    for (const doc of docs) {
+      const nameLower = doc.original_name.toLowerCase()
+      let titleScore = 0
+      for (const word of queryWords) {
+        if (nameLower.includes(word)) titleScore += 10
+      }
+      if (titleScore > 0) {
+        results.push({
+          document_id: doc.id,
+          document_name: doc.original_name,
+          text: `文档标题匹配: ${doc.original_name}`,
+          score: titleScore,
+          match_type: 'title'
+        })
+      }
+    }
+
+    const summaries = this.db.getDb().prepare(
+      `SELECT ds.*, d.original_name as document_name, d.id as document_id
+       FROM kb_document_summaries ds
+       JOIN kb_documents d ON ds.document_id = d.id
+       WHERE ds.kb_id = ?${docFilter.replace(/d\.id/g, 'd.id')}`
+    ).all(kbId, ...docFilterParams) as any[]
+
+    for (const ds of summaries) {
+      const summaryLower = (ds.summary || '').toLowerCase()
+      const keywords: string[] = JSON.parse(ds.keywords_json || '[]')
+      const topics: string[] = JSON.parse(ds.main_topics_json || '[]')
+
+      let summaryScore = 0
+      for (const word of queryWords) {
+        if (summaryLower.includes(word)) summaryScore += 4
+        for (const kw of keywords) {
+          if (kw.toLowerCase().includes(word)) summaryScore += 5
+        }
+        for (const topic of topics) {
+          if (topic.toLowerCase().includes(word)) summaryScore += 6
+        }
+      }
+
+      if (summaryScore > 0) {
+        const snippet = (ds.summary || '').substring(0, 300)
+        results.push({
+          document_id: ds.document_id,
+          document_name: ds.document_name,
+          text: `文档摘要: ${snippet}${(ds.summary || '').length > 300 ? '...' : ''}`,
+          score: summaryScore,
+          match_type: 'summary'
+        })
+      }
+    }
+
+    const chapters = this.db.getDb().prepare(
+      `SELECT c.*, d.original_name as document_name
+       FROM kb_chapters c
+       JOIN kb_documents d ON c.document_id = d.id
+       WHERE c.kb_id = ? AND c.summary IS NOT NULL${docFilter.replace(/d\.id/g, 'c.document_id')}`
+    ).all(kbId, ...docFilterParams) as any[]
+
+    for (const ch of chapters) {
+      const titleLower = ch.title.toLowerCase()
+      const summaryLower = (ch.summary || '').toLowerCase()
+      const keywords: string[] = JSON.parse(ch.keywords_json || '[]')
+      const entities: any[] = JSON.parse(ch.entities_json || '[]')
+
+      let chapterScore = 0
+      for (const word of queryWords) {
+        if (titleLower.includes(word)) chapterScore += 8
+        if (summaryLower.includes(word)) chapterScore += 3
+        for (const kw of keywords) {
+          if (kw.toLowerCase().includes(word)) chapterScore += 4
+        }
+        for (const e of entities) {
+          if (e.name && e.name.toLowerCase().includes(word)) chapterScore += 5
+        }
+      }
+
+      if (chapterScore > 0) {
+        const snippet = (ch.summary || ch.content || '').substring(0, 300)
+        results.push({
+          document_id: ch.document_id,
+          document_name: ch.document_name,
+          chapter_id: ch.id,
+          chapter_title: ch.title,
+          text: `章节「${ch.title}」: ${snippet}${snippet.length > 300 ? '...' : ''}`,
+          score: chapterScore,
+          match_type: 'keywords',
+          start_offset: ch.start_offset,
+          end_offset: ch.end_offset
+        })
+      }
+    }
+
+    const entities = this.db.getDb().prepare(
+      `SELECT * FROM kb_entities WHERE kb_id = ? ORDER BY mention_count DESC`
+    ).all(kbId) as any[]
+
+    for (const entity of entities) {
+      const nameLower = entity.name.toLowerCase()
+      const descLower = (entity.description || '').toLowerCase()
+      const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
+
+      let entityScore = 0
+      for (const word of queryWords) {
+        if (nameLower === word) entityScore += 15
+        else if (nameLower.includes(word)) entityScore += 10
+        if (descLower.includes(word)) entityScore += 3
+        for (const alias of aliases) {
+          if (alias.toLowerCase().includes(word)) entityScore += 8
+        }
+      }
+
+      if (entityScore > 0) {
+        results.push({
+          document_id: entity.first_seen_doc_id || '',
+          document_name: '知识图谱实体',
+          text: `实体「${entity.name}」(${entity.type}): ${entity.description || '无描述'} | 提及次数: ${entity.mention_count}`,
+          score: entityScore,
+          match_type: 'entity',
+          entity_id: entity.id,
+          entity_name: entity.name,
+          entity_type: entity.type
+        })
+      }
+    }
+
+    const contentDocs = this.db.getDb().prepare(
+      `SELECT id, original_name, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND content_text IS NOT NULL${docFilter}`
+    ).all(kbId, ...docFilterParams) as any[]
+
+    for (const doc of contentDocs) {
+      const content = doc.content_text || ''
+      const lines = content.split('\n')
+      const paragraphs = content.split(/\n\n+/).filter((p: string) => p.trim().length > 30)
+
+      let currentOffset = 0
+      const lineRanges: { startLine: number; endLine: number; startOffset: number; endOffset: number }[] = []
+      for (const para of paragraphs) {
+        const paraStartOffset = content.indexOf(para, currentOffset)
+        const paraEndOffset = paraStartOffset + para.length
+        let startLine = 1
+        let endLine = 1
+        let offset = 0
+        for (let i = 0; i < lines.length; i++) {
+          if (offset <= paraStartOffset && paraStartOffset < offset + lines[i].length + 1) {
+            startLine = i + 1
+          }
+          if (offset < paraEndOffset && paraEndOffset <= offset + lines[i].length + 1) {
+            endLine = i + 1
+            break
+          }
+          offset += lines[i].length + 1
+        }
+        lineRanges.push({ startLine, endLine, startOffset: paraStartOffset, endOffset: paraEndOffset })
+        currentOffset = paraEndOffset
+      }
+
+      for (let pi = 0; pi < paragraphs.length; pi++) {
+        const para = paragraphs[pi]
+        const paraLower = para.toLowerCase()
+        let contentScore = 0
+        let matchedWords = 0
+        for (const word of queryWords) {
+          if (paraLower.includes(word)) {
+            contentScore += 2
+            matchedWords++
+          }
+        }
+        if (matchedWords > 1) contentScore += matchedWords * 2
+
+        if (contentScore > 0) {
+          const firstMatchWord = queryWords.find(w => paraLower.includes(w)) || queryWords[0]
+          const matchIndex = paraLower.indexOf(firstMatchWord)
+          const startIdx = Math.max(0, matchIndex - 80)
+          const endIdx = Math.min(para.length, matchIndex + firstMatchWord.length + 200)
+          let snippet = para.substring(startIdx, endIdx).trim()
+          if (startIdx > 0) snippet = '...' + snippet
+          if (endIdx < para.length) snippet = snippet + '...'
+
+          const range = lineRanges[pi]
+          results.push({
+            document_id: doc.id,
+            document_name: doc.original_name,
+            text: snippet,
+            score: contentScore,
+            match_type: 'content',
+            start_offset: range.startOffset,
+            end_offset: range.endOffset,
+            start_line: range.startLine,
+            end_line: range.endLine
+          })
+        }
+      }
+    }
+
+    const seen = new Set<string>()
+    const uniqueResults: any[] = []
+    for (const r of results) {
+      const key = r.chapter_id
+        ? `${r.document_id}-${r.chapter_id}-${r.match_type}`
+        : `${r.document_id}-${r.text.substring(0, 100)}-${r.match_type}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        uniqueResults.push(r)
+      }
+    }
+
+    uniqueResults.sort((a, b) => b.score - a.score)
+    return uniqueResults.slice(0, topK)
+  }
+
+  advancedSearch(kbId: string, query: string, topK: number = 10, documentType?: string): any[] {
+    const phrases: string[] = []
+    const required: string[] = []
+    const excludedWords: string[] = []
+    const optional: string[] = []
+
+    const phraseRegex = /"([^"]+)"/g
+    let match
+    let queryWithoutPhrases = query
+    while ((match = phraseRegex.exec(query)) !== null) {
+      phrases.push(match[1].toLowerCase())
+      queryWithoutPhrases = queryWithoutPhrases.replace(match[0], ' ')
+    }
+
+    const words = queryWithoutPhrases.toLowerCase().split(/\s+/).filter((w: string) => w.length > 0)
+    for (const word of words) {
+      if (word.startsWith('+') && word.length > 1) {
+        required.push(word.slice(1))
+      } else if (word.startsWith('-') && word.length > 1) {
+        excludedWords.push(word.slice(1))
+      } else if (word.length > 1) {
+        optional.push(word)
+      }
+    }
+
+    if (phrases.length === 0 && required.length === 0 && optional.length === 0) return []
+
+    let docSql = "SELECT id, original_name, type, content_text FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
+    const docParams: any[] = [kbId]
+
+    if (documentType) {
+      docSql += ' AND type = ?'
+      docParams.push(documentType.toLowerCase())
+    }
+
+    const docs = this.db.getDb().prepare(docSql).all(...docParams) as any[]
+    const results: any[] = []
+
+    for (const doc of docs) {
+      const content = (doc.content_text || '').toLowerCase()
+      const nameLower = doc.original_name.toLowerCase()
+      let score = 0
+      const matchDetails: string[] = []
+
+      let isExcluded = false
+      for (const exWord of excludedWords) {
+        if (content.includes(exWord) || nameLower.includes(exWord)) {
+          isExcluded = true
+          break
+        }
+      }
+      if (isExcluded) continue
+
+      for (const phrase of phrases) {
+        const pRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+        const pMatches = (content.match(pRegex) || []).length
+        if (pMatches > 0) {
+          score += pMatches * 15
+          matchDetails.push(`精确短语"${phrase}"匹配${pMatches}次`)
+        } else if (nameLower.includes(phrase)) {
+          score += 12
+          matchDetails.push(`标题包含精确短语"${phrase}"`)
+        }
+      }
+
+      let allRequired = true
+      for (const req of required) {
+        if (content.includes(req) || nameLower.includes(req)) {
+          score += 8
+          matchDetails.push(`必须词"${req}"匹配`)
+        } else {
+          allRequired = false
+        }
+      }
+      if (required.length > 0 && !allRequired) continue
+
+      for (const opt of optional) {
+        const optMatches = (content.match(new RegExp(opt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length
+        if (optMatches > 0) {
+          score += optMatches * 3
+          matchDetails.push(`可选词"${opt}"匹配${optMatches}次`)
+        } else if (nameLower.includes(opt)) {
+          score += 5
+          matchDetails.push(`标题包含"${opt}"`)
+        }
+      }
+
+      if (score > 0) {
+        const fullContent = doc.content_text || ''
+        const lines = fullContent.split('\n')
+        const paragraphs = fullContent.split(/\n\n+/).filter((p: string) => p.trim().length > 20)
+
+        let bestSnippet = ''
+        let bestStartOffset = 0
+        let bestEndOffset = 0
+        let bestStartLine = 1
+        let bestEndLine = 1
+
+        for (const para of paragraphs) {
+          const paraLower = para.toLowerCase()
+          let paraScore = 0
+          for (const phrase of phrases) {
+            if (paraLower.includes(phrase)) paraScore += 10
+          }
+          for (const req of required) {
+            if (paraLower.includes(req)) paraScore += 5
+          }
+          for (const opt of optional) {
+            if (paraLower.includes(opt)) paraScore += 2
+          }
+          if (paraScore > 0 && para.length > bestSnippet.length) {
+            bestSnippet = para.substring(0, 400)
+            if (para.length > 400) bestSnippet += '...'
+
+            bestStartOffset = fullContent.indexOf(para)
+            bestEndOffset = bestStartOffset + para.length
+            let offset = 0
+            for (let i = 0; i < lines.length; i++) {
+              if (offset <= bestStartOffset && bestStartOffset < offset + lines[i].length + 1) {
+                bestStartLine = i + 1
+              }
+              if (offset < bestEndOffset && bestEndOffset <= offset + lines[i].length + 1) {
+                bestEndLine = i + 1
+                break
+              }
+              offset += lines[i].length + 1
+            }
+          }
+        }
+
+        results.push({
+          document_id: doc.id,
+          document_name: doc.original_name,
+          document_type: doc.type,
+          text: bestSnippet || doc.original_name,
+          score,
+          match_details: matchDetails,
+          start_offset: bestStartOffset,
+          end_offset: bestEndOffset,
+          start_line: bestStartLine,
+          end_line: bestEndLine
+        })
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score)
+    return results.slice(0, topK)
+  }
+
   generateTimeline(kbId: string, topic?: string): any[] {
     return this.processor.generateTimeline(kbId, topic)
   }

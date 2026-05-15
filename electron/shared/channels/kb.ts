@@ -52,6 +52,8 @@ export const KB_CHANNELS = {
   KB_IMPORT_GRAPH: 'kb:import-graph',
   KB_EXPORT_PROGRESS: 'kb:export-progress',
   KB_IMPORT_PROGRESS: 'kb:import-progress',
+  KB_SEARCH: 'kb:search',
+  KB_ADVANCED_SEARCH: 'kb:advanced-search',
 } as const
 
 export interface KBCreateParams {
