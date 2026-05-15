@@ -18,13 +18,11 @@ import type {
 } from '../../shared/ipc-channels'
 import type ProjectManagerService from '../services/project-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
-import type SandboxTesterService from '../services/sandbox-tester.service'
 import type EmployeeExportService from '../services/employee-export.service'
 
 export function registerEmployeeHandlers(
   projectManager: ProjectManagerService,
   profilingService: EmployeeProfilingService,
-  sandboxTester: SandboxTesterService,
   employeeExportService: EmployeeExportService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
@@ -135,33 +133,6 @@ export function registerEmployeeHandlers(
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       }
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SANDBOX_TEST_SKILL, async (_, params: { skill_id: string; provider_id?: string; model_id?: string }) => {
-    try {
-      const report = await sandboxTester.runSkillTests(params.skill_id, params.provider_id, params.model_id)
-      return { success: true, report }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SANDBOX_TEST_EMPLOYEE, async (_, params: { employee_id: string; provider_id?: string; model_id?: string }) => {
-    try {
-      const report = await sandboxTester.runEmployeeTests(params.employee_id, params.provider_id, params.model_id)
-      return { success: true, report }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SANDBOX_GENERATE_CASES, (_, params: { skill_id: string }) => {
-    try {
-      const cases = sandboxTester.generateTestCasesFromRules(params.skill_id)
-      return { success: true, cases }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   })
 

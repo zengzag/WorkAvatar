@@ -198,17 +198,6 @@ const electronAPI = {
     status: () => ipcRenderer.invoke(IPC_CHANNELS.OCR_STATUS),
   },
 
-  rule: {
-    extractFile: (params: { file_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.RULE_EXTRACT_FILE, params),
-    extractProject: (params: { project_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.RULE_EXTRACT_PROJECT, params),
-  },
-
-  sandbox: {
-    testSkill: (params: { skill_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_TEST_SKILL, params),
-    testEmployee: (params: { employee_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_TEST_EMPLOYEE, params),
-    generateCases: (params: { skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_GENERATE_CASES, params),
-  },
-
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     execute: (params: ToolExecuteParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_EXECUTE, params),
