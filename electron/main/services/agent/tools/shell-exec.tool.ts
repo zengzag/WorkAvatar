@@ -26,11 +26,11 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  description: `执行系统shell命令并返回输出。${IS_WINDOWS ? '当前运行在Windows环境，支持PowerShell和CMD命令。' : '当前运行在类Unix环境，支持Bash命令。'}支持常用文件操作、系统信息查询、网络测试等。禁止执行格式化磁盘、删除系统文件等危险操作。涉及文件删除的命令需要用户确认后方可执行。`,
+  description: `执行系统shell命令。${IS_WINDOWS ? 'Windows环境，支持PowerShell/CMD。' : '类Unix环境，支持Bash。'}`,
   parameters: {
     type: 'object',
     properties: {
-      command: { type: 'string', description: '要执行的shell命令。Windows下可用dir、type、findstr、ipconfig等；避免使用rm -rf、format等危险命令' },
+      command: { type: 'string', description: '要执行的shell命令' },
       working_dir: { type: 'string', description: '可选的工作目录' },
       timeout: { type: 'number', description: '超时时间（秒），默认30秒，最大300秒', minimum: 1, maximum: 300 }
     },

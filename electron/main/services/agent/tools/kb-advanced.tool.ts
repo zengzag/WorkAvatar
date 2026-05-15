@@ -18,7 +18,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
     id: 'kb_advanced_search',
     name: 'kb_advanced_search',
     title: '高级知识库检索',
-    description: `对知识库进行高级检索，支持精确短语匹配、排除词、文档类型过滤等语法。`,
+    description: `高级知识库检索，支持精确短语、排除词、文档类型过滤。`,
     parameters: {
       type: 'object',
       properties: {

@@ -106,53 +106,32 @@ class RuleExtractionService {
     const maxLength = 8000
     const truncatedText = text.length > maxLength ? text.substring(0, maxLength) + '\n...[内容已截断]' : text
 
-    const prompt = '你是一位专业的业务规则抽取专家。请仔细分析以下文档内容，从中提取结构化信息。\n\n' +
-      `文档名称: ${fileName}\n\n` +
-      `文档内容:\n${truncatedText}\n\n` +
-      '请严格按照以下 JSON 格式输出抽取结果（只输出 JSON，不要其他解释）:\n\n' +
-      '{\n' +
-      '  "rules": [\n' +
-      '    {\n' +
-      '      "ruleId": "r001",\n' +
-      '      "type": "condition_action",\n' +
-      '      "description": "规则的自然语言描述",\n' +
-      '      "conditions": [\n' +
-      '        { "field": "字段名", "operator": ">", "value": "值" }\n' +
-      '      ],\n' +
-      '      "actions": [\n' +
-      '        { "type": "require_approval", "role": "审批角色" }\n' +
-      '      ],\n' +
-      '      "priority": 1,\n' +
-      '      "exceptions": ["例外情况1"]\n' +
-      '    }\n' +
-      '  ],\n' +
-      '  "qaPairs": [\n' +
-      '    {\n' +
-      '      "question": "问题",\n' +
-      '      "answer": "答案",\n' +
-      '      "confidence": 0.95\n' +
-      '    }\n' +
-      '  ],\n' +
-      '  "templates": [\n' +
-      '    {\n' +
-      '      "name": "模板名称",\n' +
-      '      "description": "模板描述",\n' +
-      '      "content": "模板内容，包含 {{变量}}",\n' +
-      '      "variables": ["变量1", "变量2"]\n' +
-      '    }\n' +
-      '  ],\n' +
-      '  "knowledge": ["知识片段1", "知识片段2"],\n' +
-      '  "summary": "文档整体摘要"\n' +
-      '}\n\n' +
-      '抽取要求:\n' +
-      '1. 规则：提取所有条件判断类的业务规则，如"如果...则..."、"超过X需要..."等\n' +
-      '2. 问答对：从FAQ格式的内容中提取问题-答案对\n' +
-      '3. 模板：识别文档中的固定格式文本，标注变量占位符\n' +
-      '4. 知识：提取重要的参考知识点\n' +
-      '5. 如果某类信息不存在，返回空数组'
+    const prompt = `分析文档并提取结构化信息，JSON格式返回。
+
+文档名称: ${fileName}
+文档内容:
+${truncatedText}
+
+返回结构:
+{
+  "rules": [{"ruleId": "r001", "type": "condition_action", "description": "...", "conditions": [{"field": "...", "operator": ">", "value": "..."}], "actions": [{"type": "...", "role": "..."}], "priority": 1, "exceptions": []}],
+  "qaPairs": [{"question": "...", "answer": "...", "confidence": 0.95}],
+  "templates": [{"name": "...", "description": "...", "content": "...", "variables": []}],
+  "knowledge": ["..."],
+  "summary": "..."
+}
+
+抽取要求:
+1. 规则：条件判断类业务规则（如"如果...则..."）
+2. 问答对：FAQ格式的问题-答案对
+3. 模板：固定格式文本，标注{{变量}}
+4. 知识：重要参考知识点
+5. 不存在的类型返回空数组
+
+只返回JSON。`
 
     const response = await this.llmClient.chat(providerId, [
-      { role: 'system', content: '你是一个专业的业务规则抽取助手，擅长从文档中提取结构化规则、问答对和模板。' },
+      { role: 'system', content: '从文档中提取结构化规则、问答对和模板，JSON格式输出。' },
       { role: 'user', content: prompt },
     ], { temperature: 0.1, max_tokens: 4096, ...(modelId ? { model: modelId } : {}) })
 

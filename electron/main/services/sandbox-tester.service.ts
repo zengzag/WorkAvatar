@@ -146,7 +146,7 @@ class SandboxTesterService {
 
     try {
       const actualOutput = await this.llmClient.chat(providerId, [
-        { role: 'system', content: skill.prompt_template || '你是一个智能助手。' },
+        { role: 'system', content: skill.prompt_template || '专业回答用户问题。' },
         { role: 'user', content: prompt },
       ], { temperature: 0.3, max_tokens: 2048, ...(modelId ? { model: modelId } : {}) })
 

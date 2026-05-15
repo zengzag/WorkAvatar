@@ -19,7 +19,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_list_entities',
     name: 'kb_list_entities',
     title: '浏览知识库实体',
-    description: `浏览知识库中的实体列表，支持按类型筛选和搜索。`,
+    description: `浏览知识库实体列表，支持按类型筛选和搜索。`,
     parameters: {
       type: 'object',
       properties: {
@@ -123,7 +123,7 @@ export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition
     id: 'kb_entity_detail',
     name: 'kb_entity_detail',
     title: '获取实体详情',
-    description: `获取某个实体的详细信息，包括描述、属性、关系和提及记录。`,
+    description: `获取实体详情，包括描述、属性、关系和提及记录。`,
     parameters: {
       type: 'object',
       properties: {

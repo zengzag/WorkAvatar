@@ -24,7 +24,7 @@ export function createKBAgentTools(
     id: 'kb_overview',
     name: 'kb_overview',
     title: '知识库概览',
-    description: `获取知识库的整体概览，了解有哪些文档和内容。不传 kb_id 返回所有知识库列表，传入则返回该知识库的文档详情。`,
+    description: `获取知识库概览。不传kb_id返回知识库列表，传入则返回该知识库文档详情。`,
     parameters: {
       type: 'object',
       properties: {
@@ -140,7 +140,7 @@ export function createKBAgentTools(
     id: 'query_global_summary',
     name: 'query_global_summary',
     title: '查询全局知识摘要',
-    description: '查询知识库的全局摘要、核心主题和关键实体。',
+    description: '查询知识库全局摘要、核心主题和关键实体。',
     parameters: {
       type: 'object',
       properties: {
@@ -177,7 +177,7 @@ export function createKBAgentTools(
     id: 'query_knowledge_graph',
     name: 'query_knowledge_graph',
     title: '查询知识图谱',
-    description: '查询特定实体的信息和关系网络，支持1-3度深度查询。',
+    description: '查询实体信息及关系网络，支持1-3度深度。',
     parameters: {
       type: 'object',
       properties: {
@@ -255,7 +255,7 @@ export function createKBAgentTools(
     id: 'query_chapters',
     name: 'query_chapters',
     title: '检索章节摘要',
-    description: '根据查询关键词检索相关的章节摘要，定位问题相关的文档部分。',
+    description: '按关键词检索相关章节摘要，定位文档内容。',
     parameters: {
       type: 'object',
       properties: {
@@ -304,7 +304,7 @@ export function createKBAgentTools(
     id: 'query_fulltext',
     name: 'query_fulltext',
     title: '全文关键词检索',
-    description: '在文档内容中进行关键词检索，获取包含关键词的文本片段。',
+    description: '在文档内容中检索关键词，返回匹配的文本片段。',
     parameters: {
       type: 'object',
       properties: {

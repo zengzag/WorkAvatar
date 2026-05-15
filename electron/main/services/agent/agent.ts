@@ -203,8 +203,8 @@ export class LightAgent {
     }
 
     systemPrompt.push(
-      '请一步一步思考来完成用户的要求。尽可能完成用户的回答，如果有补充信息，请参考补充信息来调用工具，直到获取所有满足用户的提问所需的答案。',
-      '你可以使用知识库工具查询知识。'
+      '逐步分析问题，按需调用工具获取信息，直至完整回答用户问题。',
+      '可调用知识库工具查询相关知识。'
     )
 
     if (useSkills) {
@@ -423,11 +423,8 @@ export class LightAgent {
       : this.toolRegistry.getOpenAISchemas()
 
     const toolsStr = JSON.stringify(availableTools, null, 2)
-    const now = new Date()
 
-    const systemPrompt = `你是一个智能助手，请根据用户输入的问题，结合工具使用计划，生成一个思维树，并按照思维树依次调用工具步骤，最终生成一个最终回答。
-今日的日期：${now.toISOString().split('T')[0]}
-当前时间：${now.toTimeString().split(' ')[0]}
+    const systemPrompt = `分析用户问题，从以下工具列表中选择必要工具进行调用，生成最终回答。
 工具列表：${toolsStr}`
 
     this.log('debug', 'run_thought', { systemPrompt })
@@ -449,7 +446,7 @@ export class LightAgent {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query },
           { role: 'assistant', content: thought1 },
-          { role: 'user', content: '请反思你的回答，请严格按照<工具列表>中的工具来规划，不可以创造其他新的工具。请输出新的任务规划，不要输出其他分析和回答。' }
+          { role: 'user', content: '反思上述规划，仅使用<工具列表>中的工具，输出修正后的任务规划，不含其他分析。' }
         ],
         []
       )
@@ -462,7 +459,7 @@ export class LightAgent {
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query },
           { role: 'assistant', content: refinedThought },
-          { role: 'user', content: '请严格按以下要求执行：\n1. 分析问题需求并规划需要使用的工具\n2. 仅输出包含工具名称的JSON格式结果\n3. 使用以下结构（示例）：\n{"tools": [{"name": "工具名称1"}, {"name": "工具名称2"}]}\n4. 不要包含任何解释性内容' }
+          { role: 'user', content: '输出JSON格式的工具选择结果，格式：{"tools": [{"name": "工具名"}]}，仅输出JSON，不含解释。' }
         ],
         []
       )

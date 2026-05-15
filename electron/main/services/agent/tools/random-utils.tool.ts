@@ -5,7 +5,7 @@ export const randomUtilsTool: ToolDefinition = {
   id: 'random_utils',
   name: 'random_utils',
   title: '随机工具',
-  description: '生成随机数、UUID、随机选择等工具',
+  description: '生成随机数、UUID、随机选择、打乱顺序、随机布尔值。',
   parameters: {
     type: 'object',
     properties: {

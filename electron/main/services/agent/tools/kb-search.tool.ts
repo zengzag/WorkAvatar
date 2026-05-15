@@ -32,7 +32,7 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_search',
     name: 'kb_search',
     title: '智能知识库检索',
-    description: `对知识库进行智能检索，同时搜索文档标题、摘要、章节、关键词、实体和内容，返回最相关的结果。`,
+    description: `对知识库进行智能检索，搜索标题、摘要、章节、关键词、实体和内容。`,
     parameters: {
       type: 'object',
       properties: {

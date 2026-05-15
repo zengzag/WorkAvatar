@@ -4,7 +4,7 @@ export const envVarsTool: ToolDefinition = {
   id: 'env_vars',
   name: 'env_vars',
   title: '环境变量',
-  description: '读取系统环境变量。出于安全考虑，只能读取允许列表中的环境变量。',
+  description: '读取允许列表内的系统环境变量。',
   parameters: {
     type: 'object',
     properties: {

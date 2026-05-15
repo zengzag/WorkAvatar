@@ -9,7 +9,7 @@ export const systemInfoTool: ToolDefinition = {
   id: 'system_info',
   name: 'system_info',
   title: '系统信息',
-  description: '获取当前操作系统的基本信息，包括平台、CPU、内存、磁盘等。',
+  description: '获取操作系统信息：平台、CPU、内存、磁盘、网络。',
   parameters: {
     type: 'object',
     properties: {

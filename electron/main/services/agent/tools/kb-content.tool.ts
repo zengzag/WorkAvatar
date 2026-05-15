@@ -10,7 +10,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_get_content',
     name: 'kb_get_content',
     title: '获取文档内容',
-    description: `获取文档的完整内容或指定文本区间，支持通过章节ID、字符偏移量或行号定位。`,
+    description: `获取文档内容，支持通过章节ID、字符偏移量或行号定位。`,
     parameters: {
       type: 'object',
       properties: {

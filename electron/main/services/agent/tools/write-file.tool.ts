@@ -26,7 +26,7 @@ export const writeFileTool: ToolDefinition = {
   id: 'write_file',
   name: 'write_file',
   title: '写入文件',
-  description: '将内容写入到本地文件。如果文件已存在则覆盖，会自动创建父目录。写入项目工作区外的文件需要用户确认。',
+  description: '将内容写入本地文件，自动创建父目录。写入工作区外需用户确认。',
   parameters: {
     type: 'object',
     properties: {

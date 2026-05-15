@@ -4,7 +4,7 @@ export const webSearchTool: ToolDefinition = {
   id: 'web_search',
   name: 'web_search',
   title: '网络搜索',
-  description: '使用DuckDuckGo进行网络搜索，返回搜索结果的标题、链接和摘要。',
+  description: '使用DuckDuckGo搜索网络，返回标题、链接和摘要。',
   parameters: {
     type: 'object',
     properties: {

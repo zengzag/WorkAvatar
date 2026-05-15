@@ -71,7 +71,7 @@ class EmployeeAgentService {
       throw new Error(`Provider ${providerId} not found`)
     }
 
-    let instructions = '你是专业的数字员工助手。'
+    let instructions = '你是专业数字员工，基于知识库和工具为用户提供服务。'
     let role: string | undefined
     if (employee.profile_json) {
       try {
@@ -98,7 +98,7 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const knowledgeGuidance = `\n\n当用户提出知识相关问题时，使用知识库工具渐进式查询知识，先了解概述再检索再精准定位。`
+    const knowledgeGuidance = `\n\n查询知识时遵循：先概览 → 再检索 → 最后精准定位。`
 
     instructions += knowledgeGuidance
 
