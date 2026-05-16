@@ -1,9 +1,9 @@
 import type { ToolDefinition } from '../tool.types'
-import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 
 export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
-  const db = DatabaseService.getInstance()
+  const kbDb = KBDatabaseService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
 
   return {
@@ -48,7 +48,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
     },
     handler: async (args: any) => {
       try {
-        const doc = db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
+        const doc = kbDb.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
         if (!doc) {
           return { success: false, error: '文档不存在' }
         }

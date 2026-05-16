@@ -494,6 +494,11 @@ const LLMSettings: React.FC = () => {
                     <Form.Item name="model" label={t('settings.defaultModel')} rules={[{ required: true, message: t('settings.enterModelName') }]}>
                       <Input placeholder="gpt-4o-mini" style={{ width: 180 }} />
                     </Form.Item>
+                    <Form.Item name="embedding_model" label={
+                      <span>{t('settings.embeddingModel')} <Tooltip title={t('settings.embeddingModelTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                    }>
+                      <Input placeholder="text-embedding-3-small" style={{ width: 200 }} />
+                    </Form.Item>
                     <Form.Item name="temperature" label={
                       <span>{t('settings.temperature')} <Tooltip title={t('settings.temperatureTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>

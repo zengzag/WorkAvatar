@@ -1,12 +1,13 @@
+import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Table, Tag, Button, Modal,
-  Empty, Statistic, Row, Col, Alert, theme,
+  Empty, Statistic, Row, Col, Alert, theme, Tooltip, message,
 } from 'antd'
 import {
   FileTextOutlined, ThunderboltOutlined, ApartmentOutlined,
   NodeIndexOutlined, ReadOutlined, RedoOutlined, EyeOutlined,
-  InfoCircleOutlined,
+  InfoCircleOutlined, DatabaseOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 
 
@@ -21,6 +22,7 @@ interface KBKnowledgeViewProps {
   processingAll: boolean
   buildingGlobal: boolean
   processProgress: { stage: string; detail: string }
+  selectedKbId: string
 
   onProcessAll: () => void
   onBuildGlobal: () => void
@@ -41,6 +43,7 @@ interface KBKnowledgeViewProps {
 const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
   knowledgeStats, globalSummary, docSummaries, allRelations,
   processingDocId, processingAll, buildingGlobal, processProgress,
+  selectedKbId,
   onProcessAll, onBuildGlobal, onProcessDocument,
   onViewChapters, onViewDocContent,
   docChapters, chapterModalOpen, selectedDocSummary, onCloseChapterModal,
@@ -49,6 +52,31 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const [searchIndexStats, setSearchIndexStats] = React.useState<any>(null)
+  const [rebuildingIndex, setRebuildingIndex] = React.useState(false)
+
+  React.useEffect(() => {
+    if (selectedKbId) {
+      window.electronAPI.kb.searchIndexStats(selectedKbId).then((stats: any) => {
+        setSearchIndexStats(stats)
+      }).catch(() => {})
+    }
+  }, [selectedKbId, knowledgeStats])
+
+  const handleRebuildIndex = async () => {
+    if (!selectedKbId) return
+    setRebuildingIndex(true)
+    try {
+      await window.electronAPI.kb.rebuildSearchIndex(selectedKbId)
+      const stats = await window.electronAPI.kb.searchIndexStats(selectedKbId)
+      setSearchIndexStats(stats)
+      message.success(t('knowledgeBase.rebuildIndexSuccess'))
+    } catch {
+      message.error(t('knowledgeBase.rebuildIndexFailed'))
+    } finally {
+      setRebuildingIndex(false)
+    }
+  }
 
   return (
     <div>
@@ -92,6 +120,59 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
             <Col span={4}><Statistic title={t('knowledgeBase.entities')} value={knowledgeStats.entityCount} prefix={<NodeIndexOutlined />} styles={{ content: { color: token.colorPrimary } }} /></Col>
             <Col span={4}><Statistic title={t('knowledgeBase.relations')} value={knowledgeStats.relationCount} prefix={<ApartmentOutlined />} styles={{ content: { color: token.colorWarning } }} /></Col>
           </Row>
+        )}
+
+        {searchIndexStats && (
+          <Card size="small" style={{ marginBottom: 16 }} title={
+            <Space>
+              <DatabaseOutlined style={{ color: token.colorPrimary }} />
+              <span>{t('knowledgeBase.searchIndexTitle')}</span>
+            </Space>
+          } extra={
+            <Tooltip title={t('knowledgeBase.rebuildIndexTip')}>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={handleRebuildIndex}
+                loading={rebuildingIndex}
+              >
+                {t('knowledgeBase.rebuildIndex')}
+              </Button>
+            </Tooltip>
+          }>
+            <Row gutter={16}>
+              <Col span={6}>
+                <Statistic
+                  title={t('knowledgeBase.indexEntries')}
+                  value={searchIndexStats.totalEntries}
+                  prefix={<DatabaseOutlined />}
+                  styles={{ content: { color: token.colorPrimary, fontSize: 20 } }}
+                />
+              </Col>
+              <Col span={6}>
+                <Statistic
+                  title={t('knowledgeBase.embeddingCount')}
+                  value={searchIndexStats.embeddingCount}
+                  prefix={<ApartmentOutlined />}
+                  styles={{ content: { color: '#722ed1', fontSize: 20 } }}
+                />
+              </Col>
+              <Col span={12}>
+                <Space size={4} wrap>
+                  {Object.entries(searchIndexStats.byType || {}).map(([type, count]: [string, any]) => {
+                    const labelMap: Record<string, string> = {
+                      document_title: t('knowledgeBase.indexTypeDocTitle'),
+                      document_summary: t('knowledgeBase.indexTypeDocSummary'),
+                      chapter: t('knowledgeBase.indexTypeChapter'),
+                      entity: t('knowledgeBase.indexTypeEntity'),
+                      content_paragraph: t('knowledgeBase.indexTypeContent'),
+                    }
+                    return <Tag key={type} color="blue">{labelMap[type] || type}: {count}</Tag>
+                  })}
+                </Space>
+              </Col>
+            </Row>
+          </Card>
         )}
 
         {globalSummary && (

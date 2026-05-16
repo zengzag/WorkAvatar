@@ -1,4 +1,5 @@
 import DatabaseService from './database.service'
+import KBDatabaseService from './kb-database.service'
 import LLMClientService from './llm-client.service'
 import { getDefaultProviderId } from './common-utils'
 
@@ -52,11 +53,13 @@ interface KBContent {
 }
 
 class EmployeeProfilingService {
+  private kbDb: KBDatabaseService
   private db: DatabaseService
   private llmClient: LLMClientService
   private static instance: EmployeeProfilingService
 
   private constructor() {
+    this.kbDb = KBDatabaseService.getInstance()
     this.db = DatabaseService.getInstance()
     this.llmClient = LLMClientService.getInstance()
   }
@@ -213,7 +216,7 @@ ${feedback}
     const results: KBContent[] = []
 
     for (const kbId of kbIds) {
-      const kb = this.db.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
+      const kb = this.kbDb.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
       if (!kb) continue
 
       const content: KBContent = {
@@ -227,7 +230,7 @@ ${feedback}
         chapterSamples: [],
       }
 
-      const globalSummary = this.db.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
+      const globalSummary = this.kbDb.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
       if (globalSummary) {
         content.globalSummary = globalSummary.summary || ''
         try { content.keyTopics = JSON.parse(globalSummary.key_topics_json || '[]') } catch {}
@@ -241,7 +244,7 @@ ${feedback}
         } catch {}
       }
 
-      const docSummaries = this.db.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
+      const docSummaries = this.kbDb.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
       for (const ds of docSummaries) {
         const docSummary: KBContent['documentSummaries'][0] = {
           docName: ds.original_name,
@@ -252,7 +255,7 @@ ${feedback}
         content.documentSummaries.push(docSummary)
       }
 
-      const chapters = this.db.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
+      const chapters = this.kbDb.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
       for (const ch of chapters) {
         content.chapterSamples.push({
           docName: ch.original_name,

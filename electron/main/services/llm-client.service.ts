@@ -654,6 +654,99 @@ class LLMClientService {
     const result = this.db.getDb().prepare('DELETE FROM llm_providers WHERE id = ?').run(id)
     return result.changes > 0
   }
+
+  private async callEmbeddingAPI(config: any, input: string | string[], timeoutMs?: number): Promise<any> {
+    const baseURL = this.getBaseURL(config)
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+
+    if (config.api_key) {
+      headers['Authorization'] = `Bearer ${config.api_key}`
+    }
+
+    if (config.extra_headers_json) {
+      try {
+        const extra = JSON.parse(config.extra_headers_json)
+        Object.assign(headers, extra)
+      } catch {}
+    }
+
+    const embeddingModel = config.embedding_model || 'text-embedding-3-small'
+    const body = {
+      model: embeddingModel,
+      input,
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs || config.timeout_ms || 60000)
+
+    try {
+      const response = await fetch(`${baseURL}/embeddings`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeout)
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(`Embedding API error (${response.status}): ${errorText}`)
+      }
+
+      return await response.json()
+    } catch (err: any) {
+      clearTimeout(timeout)
+      if (err.name === 'AbortError') {
+        throw new Error('Embedding API request timed out')
+      }
+      throw err
+    }
+  }
+
+  async createEmbedding(providerId: string, text: string): Promise<Float32Array> {
+    const config = await this.getProviderConfig(providerId)
+    if (!config) {
+      throw new Error('LLM Provider not found')
+    }
+
+    const data = await this.callEmbeddingAPI(config, text)
+    const embeddingData = data.data?.[0]?.embedding
+    if (!embeddingData || !Array.isArray(embeddingData)) {
+      throw new Error('Invalid embedding response format')
+    }
+
+    return new Float32Array(embeddingData)
+  }
+
+  async createEmbeddings(providerId: string, texts: string[]): Promise<Float32Array[]> {
+    const config = await this.getProviderConfig(providerId)
+    if (!config) {
+      throw new Error('LLM Provider not found')
+    }
+
+    const batchSize = 20
+    const allEmbeddings: Float32Array[] = []
+
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize)
+
+      const data = await this.callEmbeddingAPI(config, batch, config.timeout_ms || 120000)
+      const embeddings = data.data as Array<{ embedding: number[]; index: number }>
+      if (!embeddings || !Array.isArray(embeddings)) {
+        throw new Error('Invalid embedding response format')
+      }
+
+      embeddings.sort((a, b) => a.index - b.index)
+      for (const emb of embeddings) {
+        allEmbeddings.push(new Float32Array(emb.embedding))
+      }
+    }
+
+    return allEmbeddings
+  }
 }
 
 export default LLMClientService

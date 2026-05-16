@@ -997,6 +997,7 @@ const KnowledgeBasePage: React.FC = () => {
                   label: <Space><ThunderboltOutlined />{t('knowledgeBase.tabKnowledge')}</Space>,
                   children: (
                     <KBKnowledgeView
+                      selectedKbId={selectedKB?.id || ''}
                       knowledgeStats={knowledgeStats}
                       globalSummary={globalSummary}
                       docSummaries={docSummaries}

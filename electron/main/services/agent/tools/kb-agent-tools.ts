@@ -1,11 +1,12 @@
 import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
+import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from '../tool.types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
 
 export function createKBAgentTools(
   kbService: KnowledgeBaseService,
-  db: DatabaseService,
+  _db: DatabaseService,
   projectId: string
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = []
@@ -304,7 +305,7 @@ export function createKBAgentTools(
     id: 'query_fulltext',
     name: 'query_fulltext',
     title: '全文关键词检索',
-    description: '在文档内容中检索关键词，返回匹配的文本片段。',
+    description: '在文档内容中检索关键词，返回匹配的文本片段。基于FTS5全文索引，支持大规模数据毫秒级检索。',
     parameters: {
       type: 'object',
       properties: {
@@ -316,7 +317,8 @@ export function createKBAgentTools(
           type: 'number',
           description: '返回结果数量（1-10，默认5）',
           minimum: 1,
-          maximum: 10
+          maximum: 10,
+          default: 5
         },
         document_ids: {
           type: 'array',
@@ -337,72 +339,34 @@ export function createKBAgentTools(
           return { success: true, output: '未关联知识库，无法进行全文检索。' }
         }
 
-        const queryWords = args.query.toLowerCase().split(/\s+/).filter((w: string) => w.length > 1)
-        if (queryWords.length === 0) {
+        const query = String(args.query || '').trim()
+        if (!query || query.length < 2) {
           return { success: true, output: '请输入有效的查询关键词（至少2个字符）。' }
         }
 
-        let docsSql = 'SELECT id, original_name as document_name FROM kb_documents WHERE kb_id = ? AND parse_status = "completed"'
-        const params: any[] = [targetKbId]
+        const topK = Math.min(Math.max(args.top_k || 5, 1), 10)
+        const searchEngine = SearchEngineService.getInstance()
 
-        if (args.document_ids && args.document_ids.length > 0) {
-          docsSql += ' AND id IN (' + args.document_ids.map(() => '?').join(',') + ')'
-          params.push(...args.document_ids)
-        }
+        const results = searchEngine.ftsSearch(targetKbId, query, topK, {
+          documentIds: args.document_ids,
+          sourceTypes: ['content_paragraph']
+        })
 
-        const docs = db.getDb().prepare(docsSql).all(...params) as any[]
-        if (docs.length === 0) {
-          return { success: true, output: '未找到符合条件的文档。' }
-        }
-
-        interface MatchResult {
-          document_id: string
-          document_name: string
-          text: string
-          score: number
-        }
-        const results: MatchResult[] = []
-
-        for (const doc of docs) {
-          const content = kbService.getDocumentContent(doc.id)
-          if (!content) continue
-
-          const paragraphs = content.split(/\n\n+/).filter(p => p.trim().length > 20)
-          for (const para of paragraphs) {
-            const paraLower = para.toLowerCase()
-            let score = 0
-            for (const word of queryWords) {
-              if (paraLower.includes(word)) {
-                score += 1
-              }
-            }
-            if (score > 0) {
-              const startIdx = Math.max(0, paraLower.indexOf(queryWords[0]) - 100)
-              const endIdx = Math.min(para.length, startIdx + 200)
-              let snippet = para.substring(startIdx, endIdx)
-              if (startIdx > 0) snippet = '...' + snippet
-              if (endIdx < para.length) snippet = snippet + '...'
-
-              results.push({
-                document_id: doc.id,
-                document_name: doc.document_name,
-                text: snippet,
-                score
-              })
-            }
-          }
-        }
-
-        results.sort((a, b) => b.score - a.score)
-        const topResults = results.slice(0, args.top_k || 5)
-
-        if (topResults.length === 0) {
+        if (results.length === 0) {
           return { success: true, output: '全文检索未找到相关内容。' }
         }
 
-        const output = topResults.map((r, i) =>
-          `[${i + 1}] ${r.document_name} (匹配关键词数: ${r.score})\n${r.text}\n[document_id: ${r.document_id}]`
-        ).join('\n\n---\n\n')
+        const output = results.map((r, i) => {
+          const locParts: string[] = []
+          if (r.start_line !== undefined && r.end_line !== undefined) {
+            locParts.push(`line: ${r.start_line}-${r.end_line}`)
+          }
+          if (r.start_offset !== undefined && r.end_offset !== undefined) {
+            locParts.push(`offset: ${r.start_offset}-${r.end_offset}`)
+          }
+          const locStr = locParts.length > 0 ? ` [${locParts.join(', ')}]` : ''
+          return `[${i + 1}] ${r.document_name}\n${r.text}\n[document_id: ${r.document_id}]${locStr}`
+        }).join('\n\n---\n\n')
 
         return { success: true, output: output + '\n\n提示: 使用 kb_get_content 并传入 document_id 可获取完整文档；传入 start_offset/end_offset 或 start_line/end_line 可获取指定文本区间。' }
       } catch (error: any) {

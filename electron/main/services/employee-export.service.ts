@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
+import KBDatabaseService from './kb-database.service'
 import PathService from './path.service'
 
 const EXPORT_CONFIG_VERSION = '1.0.0'
@@ -73,10 +74,12 @@ interface PackageManifest {
 }
 
 class EmployeeExportService {
+  private kbDb: KBDatabaseService
   private db: DatabaseService
   private static instance: EmployeeExportService
 
   private constructor() {
+    this.kbDb = KBDatabaseService.getInstance()
     this.db = DatabaseService.getInstance()
   }
 
@@ -271,18 +274,18 @@ class EmployeeExportService {
       }
 
       for (const kbRef of importData.knowledgeBases || []) {
-        const kbExists = this.db.getDb().prepare(
+        const kbExists = this.kbDb.getDb().prepare(
           'SELECT id FROM knowledge_bases WHERE id = ?'
         ).get(kbRef.kb_id) as any
 
         if (kbExists) {
-          const linkExists = this.db.getDb().prepare(
+          const linkExists = this.kbDb.getDb().prepare(
             'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
           ).get(kbRef.kb_id, projectId) as any
 
           if (!linkExists) {
             const linkId = generateId()
-            this.db.getDb().prepare(`
+            this.kbDb.getDb().prepare(`
               INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
               VALUES (?, ?, ?, ?)
             `).run(linkId, kbRef.kb_id, projectId, now)
@@ -427,30 +430,30 @@ class EmployeeExportService {
       onProgress?.('adding_knowledge', 'Adding knowledge base data...')
       let docCount = 0
       for (const kbRef of linkedKBs) {
-        const kb = this.db.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
+        const kb = this.kbDb.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
         if (!kb) continue
 
-        const kbDocuments = this.db.getDb().prepare(
+        const kbDocuments = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_documents WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
-        const kbChapters = this.db.getDb().prepare(
+        const kbChapters = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_chapters WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
-        const kbDocSummaries = this.db.getDb().prepare(
+        const kbDocSummaries = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
-        const kbGlobalSummary = this.db.getDb().prepare(
+        const kbGlobalSummary = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
         ).get(kbRef.kb_id) as any
 
-        const kbEntities = this.db.getDb().prepare(
+        const kbEntities = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_entities WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
-        const kbEntityRelations = this.db.getDb().prepare(
+        const kbEntityRelations = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
@@ -459,11 +462,7 @@ class EmployeeExportService {
           name: kb.name,
           description: kb.description,
           documents: kbDocuments.map(d => {
-            let contentText: string | null = null
             let parsedJson: string | null = null
-            if (d.content_path && fs.existsSync(d.content_path)) {
-              try { contentText = fs.readFileSync(d.content_path, 'utf-8') } catch {}
-            }
             if (d.parsed_json_path && fs.existsSync(d.parsed_json_path)) {
               try { parsedJson = fs.readFileSync(d.parsed_json_path, 'utf-8') } catch {}
             }
@@ -473,7 +472,6 @@ class EmployeeExportService {
               type: d.type,
               size: d.size,
               hash: d.hash,
-              content_text: contentText,
               parsed_json: parsedJson,
               parse_status: d.parse_status,
               created_at: d.created_at,
@@ -683,7 +681,7 @@ class EmployeeExportService {
       for (const kbEntry of kbEntries) {
         const kbData = JSON.parse(kbEntry.getData().toString('utf-8'))
 
-        const existingKB = this.db.getDb().prepare(
+        const existingKB = this.kbDb.getDb().prepare(
           'SELECT id FROM knowledge_bases WHERE name = ?'
         ).get(kbData.name) as any
 
@@ -694,7 +692,7 @@ class EmployeeExportService {
             warnings.push(`Knowledge base "${kbData.name}" already exists, skipped`)
             targetKBId = existingKB.id
           } else if (conflictStrategy === 'overwrite') {
-            this.db.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(existingKB.id)
+            this.kbDb.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(existingKB.id)
             targetKBId = this.createKBFromData(kbData)
           } else {
             targetKBId = existingKB.id
@@ -703,14 +701,14 @@ class EmployeeExportService {
           targetKBId = this.createKBFromData(kbData)
         }
 
-        const linkExists = this.db.getDb().prepare(
+        const linkExists = this.kbDb.getDb().prepare(
           'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
         ).get(targetKBId, projectId) as any
 
         if (!linkExists) {
           const linkId = generateId()
           const now = Math.floor(Date.now() / 1000)
-          this.db.getDb().prepare(`
+          this.kbDb.getDb().prepare(`
             INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
             VALUES (?, ?, ?, ?)
           `).run(linkId, targetKBId, projectId, now)
@@ -792,14 +790,14 @@ class EmployeeExportService {
     }
 
     for (const kbRef of importData.knowledgeBases || []) {
-      const kbExists = this.db.getDb().prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
+      const kbExists = this.kbDb.getDb().prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
       if (kbExists) {
-        const linkExists = this.db.getDb().prepare(
+        const linkExists = this.kbDb.getDb().prepare(
           'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
         ).get(kbRef.kb_id, projectId) as any
         if (!linkExists) {
           const linkId = generateId()
-          this.db.getDb().prepare(`
+          this.kbDb.getDb().prepare(`
             INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
             VALUES (?, ?, ?, ?)
           `).run(linkId, kbRef.kb_id, projectId, now)
@@ -831,7 +829,7 @@ class EmployeeExportService {
 
     const kbPath = PathService.getInstance().getKBBasePath(kbId)
 
-    this.db.getDb().prepare(`
+    this.kbDb.getDb().prepare(`
       INSERT INTO knowledge_bases (id, name, description, root_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(kbId, kbData.name, kbData.description || '', kbPath, now, now)
@@ -841,25 +839,22 @@ class EmployeeExportService {
       const newDocId = generateId()
       docIdMap.set(doc.id, newDocId)
 
-      let contentPath: string | null = null
       let parsedJsonPath: string | null = null
-      if (doc.content_text || doc.parsed_json) {
+      if (doc.parsed_json) {
         const parseDir = path.join(kbPath, '_parsed', newDocId)
         if (!fs.existsSync(parseDir)) {
           fs.mkdirSync(parseDir, { recursive: true })
         }
-        contentPath = path.join(parseDir, 'content.txt')
         parsedJsonPath = path.join(parseDir, 'parsed.json')
-        if (doc.content_text) fs.writeFileSync(contentPath, doc.content_text, 'utf-8')
-        if (doc.parsed_json) fs.writeFileSync(parsedJsonPath, doc.parsed_json, 'utf-8')
+        fs.writeFileSync(parsedJsonPath, doc.parsed_json, 'utf-8')
       }
 
-      this.db.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.kbDb.getDb().prepare(`
+        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parsed_json_path, parse_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         newDocId, kbId, doc.original_name, doc.type, doc.size, doc.hash,
-        contentPath, parsedJsonPath, doc.parse_status || 'pending',
+        parsedJsonPath, doc.parse_status || 'pending',
         doc.created_at || now, doc.updated_at || now
       )
     }
@@ -869,7 +864,7 @@ class EmployeeExportService {
       if (!newDocId) continue
 
       const chId = generateId()
-      this.db.getDb().prepare(`
+      this.kbDb.getDb().prepare(`
         INSERT INTO kb_chapters (id, kb_id, document_id, title, chapter_index, start_offset, end_offset, content, summary, keywords_json, entities_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
@@ -884,7 +879,7 @@ class EmployeeExportService {
       if (!newDocId) continue
 
       const id = generateId()
-      this.db.getDb().prepare(`
+      this.kbDb.getDb().prepare(`
         INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
@@ -897,7 +892,7 @@ class EmployeeExportService {
     if (kbData.globalSummary) {
       const gs = kbData.globalSummary
       const id = generateId()
-      this.db.getDb().prepare(`
+      this.kbDb.getDb().prepare(`
         INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
@@ -911,7 +906,7 @@ class EmployeeExportService {
       const newEntityId = generateId()
       entityIdMap.set(entity.id, newEntityId)
 
-      this.db.getDb().prepare(`
+      this.kbDb.getDb().prepare(`
         INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, first_seen_doc_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
@@ -927,7 +922,7 @@ class EmployeeExportService {
       if (!newSourceId || !newTargetId) continue
 
       const id = generateId()
-      this.db.getDb().prepare(`
+      this.kbDb.getDb().prepare(`
         INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
       `).run(
@@ -941,7 +936,7 @@ class EmployeeExportService {
   }
 
   private getEmployeeKnowledgeBases(projectId: string): Array<{ kb_id: string; kb_name: string }> {
-    return this.db.getDb().prepare(`
+    return this.kbDb.getDb().prepare(`
       SELECT kb.id as kb_id, kb.name as kb_name
       FROM knowledge_bases kb
       INNER JOIN kb_project_links kpl ON kb.id = kpl.kb_id

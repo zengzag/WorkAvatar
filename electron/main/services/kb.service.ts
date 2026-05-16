@@ -2,25 +2,35 @@ import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
+import KBDatabaseService from './kb-database.service'
 import FileParserService from './file-parser.service'
 import KnowledgeProcessorService from './knowledge-processor.service'
 import ParseTaskManager from './parse-task-manager.service'
 import TaskQueueService from './task-queue.service'
 import PathService from './path.service'
+import SearchEngineService from './search-engine.service'
+import LLMClientService from './llm-client.service'
+import type { SearchResult } from './search-engine.service'
 import { calculateFileHash, getDefaultProviderId, generateId } from './common-utils'
 
 class KnowledgeBaseService {
-  private db: DatabaseService
+  private mainDb: DatabaseService
+  private kbDb: KBDatabaseService
   private fileParser: FileParserService
   private processor: KnowledgeProcessorService
   private parseTaskManager: ParseTaskManager
   private taskQueue: TaskQueueService
+  private searchEngine: SearchEngineService
+  private llmClient: LLMClientService
   private static instance: KnowledgeBaseService
   private defaultKBId: string | null = null
 
   private constructor() {
-    this.db = DatabaseService.getInstance()
+    this.mainDb = DatabaseService.getInstance()
+    this.kbDb = KBDatabaseService.getInstance()
     this.fileParser = FileParserService.getInstance()
+    this.searchEngine = SearchEngineService.getInstance()
+    this.llmClient = LLMClientService.getInstance()
     this.processor = KnowledgeProcessorService.getInstance()
     this.parseTaskManager = ParseTaskManager.getInstance()
     this.taskQueue = TaskQueueService.getInstance()
@@ -33,10 +43,14 @@ class KnowledgeBaseService {
     return KnowledgeBaseService.instance
   }
 
+  private get db() {
+    return this.kbDb.getDb()
+  }
+
   ensureDefaultKB(): string {
     if (this.defaultKBId) return this.defaultKBId
 
-    const existing = this.db.getDb().prepare(
+    const existing = this.db.prepare(
       "SELECT id FROM knowledge_bases ORDER BY created_at ASC LIMIT 1"
     ).get() as any
 
@@ -66,19 +80,28 @@ class KnowledgeBaseService {
     return dir
   }
 
-  private saveDocContentToFile(docId: string, kbId: string, contentText: string, parsedJson: string): { content_path: string; parsed_json_path: string } {
+  private saveDocParsedJson(docId: string, kbId: string, parsedJson: string): string {
     const dir = this.getDocParseDir(docId, kbId)
-    const contentPath = path.join(dir, 'content.txt')
     const parsedJsonPath = path.join(dir, 'parsed.json')
-    fs.writeFileSync(contentPath, contentText, 'utf-8')
     fs.writeFileSync(parsedJsonPath, parsedJson, 'utf-8')
-    return { content_path: contentPath, parsed_json_path: parsedJsonPath }
+    return parsedJsonPath
   }
 
-  private readDocContentFromFile(contentPath: string): string | null {
-    if (!contentPath || !fs.existsSync(contentPath)) return null
+  private readDocContentFromParsedJson(parsedJsonPath: string): string | null {
+    if (!parsedJsonPath || !fs.existsSync(parsedJsonPath)) return null
     try {
-      return fs.readFileSync(contentPath, 'utf-8')
+      const raw = fs.readFileSync(parsedJsonPath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      return parsed.fullText || null
+    } catch {
+      return null
+    }
+  }
+
+  private readDocParsedJson(parsedJsonPath: string): string | null {
+    if (!parsedJsonPath || !fs.existsSync(parsedJsonPath)) return null
+    try {
+      return fs.readFileSync(parsedJsonPath, 'utf-8')
     } catch {
       return null
     }
@@ -92,13 +115,13 @@ class KnowledgeBaseService {
   }
 
   listKBs(): any[] {
-    return this.db.getDb().prepare(
+    return this.db.prepare(
       'SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count FROM knowledge_bases kb ORDER BY kb.updated_at DESC'
     ).all()
   }
 
   getKB(id: string): any | null {
-    return this.db.getDb().prepare(
+    return this.db.prepare(
       'SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count FROM knowledge_bases kb WHERE kb.id = ?'
     ).get(id) || null
   }
@@ -108,7 +131,7 @@ class KnowledgeBaseService {
     const kbPath = this.getKBBasePath(kbId)
     const now = Math.floor(Date.now() / 1000)
 
-    this.db.getDb().prepare(`
+    this.db.prepare(`
       INSERT INTO knowledge_bases (id, name, description, root_path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(kbId, name, description, kbPath, now, now)
@@ -129,16 +152,17 @@ class KnowledgeBaseService {
     if (updates.length > 0) {
       updates.push('updated_at = unixepoch()')
       values.push(id)
-      this.db.getDb().prepare(`UPDATE knowledge_bases SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+      this.db.prepare(`UPDATE knowledge_bases SET ${updates.join(', ')} WHERE id = ?`).run(...values)
     }
 
     return this.getKB(id)
   }
 
   deleteKB(id: string): boolean {
+    this.searchEngine.deleteIndexByKb(id)
     this.processor.deleteKnowledgeData(id)
 
-    const docs = this.db.getDb().prepare('SELECT id, original_name FROM kb_documents WHERE kb_id = ?').all(id) as any[]
+    const docs = this.db.prepare('SELECT id, original_name FROM kb_documents WHERE kb_id = ?').all(id) as any[]
     const kbBasePath = this.getKBBasePath(id)
     for (const doc of docs) {
       this.deleteDocParseDir(doc.id, id)
@@ -153,24 +177,24 @@ class KnowledgeBaseService {
       try { fs.rmSync(parsedDir, { recursive: true, force: true }) } catch {}
     }
 
-    const result = this.db.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id)
+    const result = this.db.prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id)
     return result.changes > 0
   }
 
   async getExistingDocByHash(hash: string, kbId?: string): Promise<any | null> {
     if (kbId) {
-      const sameKB = this.db.getDb().prepare(
+      const sameKB = this.db.prepare(
         'SELECT * FROM kb_documents WHERE hash = ? AND kb_id = ? LIMIT 1'
       ).get(hash, kbId) as any
       if (sameKB) return sameKB
     }
-    return this.db.getDb().prepare(
+    return this.db.prepare(
       'SELECT * FROM kb_documents WHERE hash = ? AND parse_status = ? LIMIT 1'
     ).get(hash, 'completed') || null
   }
 
   async getExistingDocByName(kbId: string, originalName: string): Promise<any | null> {
-    return this.db.getDb().prepare(
+    return this.db.prepare(
       'SELECT * FROM kb_documents WHERE kb_id = ? AND original_name = ? LIMIT 1'
     ).get(kbId, originalName) || null
   }
@@ -236,7 +260,7 @@ class KnowledgeBaseService {
         const existingDoc = await this.getExistingDocByHash(fileHash, kbId)
         if (existingDoc) {
           if (existingDoc.kb_id === kbId) {
-            this.db.getDb().prepare(
+            this.db.prepare(
               "UPDATE kb_documents SET is_reused = 1, updated_at = unixepoch() WHERE id = ?"
             ).run(existingDoc.id)
             imported.push({
@@ -253,14 +277,22 @@ class KnowledgeBaseService {
 
           const existingByName = await this.getExistingDocByName(kbId, originalName)
           if (existingByName) {
-            const contentPath = existingDoc.content_path || null
             const parsedJsonPath = existingDoc.parsed_json_path || null
-            this.db.getDb().prepare(`
+            this.db.prepare(`
               UPDATE kb_documents SET hash = ?, size = ?,
-                  content_path = ?, parsed_json_path = ?,
+                  parsed_json_path = ?,
                   parse_status = 'completed', is_reused = 1, updated_at = unixepoch()
               WHERE id = ?
-            `).run(fileHash, stats.size, contentPath, parsedJsonPath, existingByName.id)
+            `).run(fileHash, stats.size, parsedJsonPath, existingByName.id)
+
+            this.searchEngine.indexDocumentTitle(kbId, existingByName.id, originalName)
+            if (parsedJsonPath) {
+              const content = this.readDocContentFromParsedJson(parsedJsonPath)
+              if (content) {
+                this.searchEngine.indexContentParagraphs(kbId, existingByName.id, content, originalName)
+              }
+            }
+
             imported.push({
               id: existingByName.id,
               original_name: originalName,
@@ -275,13 +307,20 @@ class KnowledgeBaseService {
           }
           const docId = generateId()
           const now = Math.floor(Date.now() / 1000)
-          const contentPath = existingDoc.content_path || null
           const parsedJsonPath = existingDoc.parsed_json_path || null
-          this.db.getDb().prepare(`
-            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, is_reused, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          this.db.prepare(`
+            INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, parsed_json_path, parse_status, is_reused, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(docId, kbId, existingDoc.file_id, originalName, fileType, stats.size, fileHash,
-            contentPath, parsedJsonPath, 'completed', 1, now, now)
+            parsedJsonPath, 'completed', 1, now, now)
+
+          this.searchEngine.indexDocumentTitle(kbId, docId, originalName)
+          if (parsedJsonPath) {
+            const content = this.readDocContentFromParsedJson(parsedJsonPath)
+            if (content) {
+              this.searchEngine.indexContentParagraphs(kbId, docId, content, originalName)
+            }
+          }
 
           imported.push({
             id: docId,
@@ -301,10 +340,12 @@ class KnowledgeBaseService {
         const docId = generateId()
         const now = Math.floor(Date.now() / 1000)
 
-        this.db.getDb().prepare(`
-          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_text, parsed_json, parse_status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'pending', ?, ?)
+        this.db.prepare(`
+          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parse_status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         `).run(docId, kbId, originalName, fileType, stats.size, fileHash, now, now)
+
+        this.searchEngine.indexDocumentTitle(kbId, docId, originalName)
 
         imported.push({
           id: docId,
@@ -331,7 +372,7 @@ class KnowledgeBaseService {
     isResume: boolean = false,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
-    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc) {
       return { success: false, error: 'Document not found' }
     }
@@ -406,19 +447,24 @@ class KnowledgeBaseService {
       onProgress?.('saving', 'Saving parse results...')
 
       const parsedJson = JSON.stringify(parseResult)
-      const contentText = parseResult.fullText
 
-      const { content_path, parsed_json_path } = this.saveDocContentToFile(docId, doc.kb_id, contentText, parsedJson)
+      const parsedJsonPath = this.saveDocParsedJson(docId, doc.kb_id, parsedJson)
 
-      this.db.getDb().prepare(`
+      this.db.prepare(`
         UPDATE kb_documents 
         SET parse_status = 'completed',
-            content_path = ?, parsed_json_path = ?,
+            parsed_json_path = ?,
             parse_progress = 100, parse_stage = 'done', parse_detail = 'Parse completed',
             processed_pages = ?, total_pages = ?, processed_chunks = ?, total_chunks = ?,
             updated_at = unixepoch()
         WHERE id = ?
-      `).run(content_path, parsed_json_path, processedPages, totalPages, processedChunks, totalChunks, docId)
+      `).run(parsedJsonPath, processedPages, totalPages, processedChunks, totalChunks, docId)
+
+      this.searchEngine.indexDocumentTitle(doc.kb_id, docId, doc.original_name)
+      const content = this.readDocContentFromParsedJson(parsedJsonPath)
+      if (content) {
+        this.searchEngine.indexContentParagraphs(doc.kb_id, docId, content, doc.original_name)
+      }
 
       this.parseTaskManager.completeTask(docId)
       onProgress?.('done', 'Parse completed')
@@ -434,7 +480,7 @@ class KnowledgeBaseService {
     kbId: string,
     onProgress?: (current: number, total: number, docName: string) => void
   ): Promise<{ success: number; failed: number }> {
-    const docs = this.db.getDb().prepare(
+    const docs = this.db.prepare(
       "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status IN ('pending', 'failed')"
     ).all(kbId) as any[]
 
@@ -473,7 +519,7 @@ class KnowledgeBaseService {
     enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
-    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc) {
       return { success: false, error: '文档不存在' }
     }
@@ -562,7 +608,7 @@ class KnowledgeBaseService {
     enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: number; failed: number; skipped: number }> {
-    const docs = this.db.getDb().prepare(
+    const docs = this.db.prepare(
       "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
     ).all(kbId) as any[]
 
@@ -641,7 +687,7 @@ class KnowledgeBaseService {
       onProgress?.('global_summary', 'Generating global knowledge summary...')
       this.taskQueue.updateTask(taskId, { progress: 20, progressText: 'Generating global summary...' })
 
-      const docSummaries = this.db.getDb().prepare(
+      const docSummaries = this.db.prepare(
         'SELECT ds.*, d.original_name as title FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?'
       ).all(kbId) as any[]
 
@@ -678,15 +724,16 @@ class KnowledgeBaseService {
   }
 
   deleteDocument(docId: string): boolean {
-    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (doc) {
+      this.searchEngine.deleteIndexByDocument(docId)
       this.processor.deleteKnowledgeData(doc.kb_id, docId)
       this.deleteDocParseDir(docId, doc.kb_id)
       const kbBasePath = this.getKBBasePath(doc.kb_id)
       const filePath = path.join(kbBasePath, doc.original_name)
       try { fs.unlinkSync(filePath) } catch {}
     }
-    const result = this.db.getDb().prepare('DELETE FROM kb_documents WHERE id = ?').run(docId)
+    const result = this.db.prepare('DELETE FROM kb_documents WHERE id = ?').run(docId)
     return result.changes > 0
   }
 
@@ -698,11 +745,11 @@ class KnowledgeBaseService {
       params.push(status)
     }
     query += ' ORDER BY created_at DESC'
-    return this.db.getDb().prepare(query).all(...params)
+    return this.db.prepare(query).all(...params)
   }
 
   linkProject(kbId: string, projectId: string): boolean {
-    const existing = this.db.getDb().prepare(
+    const existing = this.db.prepare(
       'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
     ).get(kbId, projectId)
 
@@ -710,29 +757,33 @@ class KnowledgeBaseService {
 
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
-    this.db.getDb().prepare(
+    this.db.prepare(
       'INSERT INTO kb_project_links (id, kb_id, project_id, created_at) VALUES (?, ?, ?, ?)'
     ).run(id, kbId, projectId, now)
     return true
   }
 
   unlinkProject(kbId: string, projectId: string): boolean {
-    const result = this.db.getDb().prepare(
+    const result = this.db.prepare(
       'DELETE FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
     ).run(kbId, projectId)
     return result.changes > 0
   }
 
   getLinkedProjects(kbId: string): any[] {
-    return this.db.getDb().prepare(`
-      SELECT p.* FROM projects p
-      INNER JOIN kb_project_links l ON p.id = l.project_id
-      WHERE l.kb_id = ?
-    `).all(kbId)
+    const links = this.db.prepare(
+      'SELECT project_id FROM kb_project_links WHERE kb_id = ?'
+    ).all(kbId) as any[]
+    if (links.length === 0) return []
+    const projectIds = links.map(l => l.project_id)
+    const placeholders = projectIds.map(() => '?').join(',')
+    return this.mainDb.getDb().prepare(
+      `SELECT * FROM projects WHERE id IN (${placeholders})`
+    ).all(...projectIds)
   }
 
   getKBsForProject(projectId: string): any[] {
-    return this.db.getDb().prepare(`
+    return this.db.prepare(`
       SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
       FROM knowledge_bases kb
       INNER JOIN kb_project_links l ON kb.id = l.kb_id
@@ -742,15 +793,15 @@ class KnowledgeBaseService {
   }
 
   getDocumentContent(docId: string): string | null {
-    const doc = this.db.getDb().prepare('SELECT content_path FROM kb_documents WHERE id = ?').get(docId) as any
-    if (!doc?.content_path) return null
-    return this.readDocContentFromFile(doc.content_path)
+    const doc = this.db.prepare('SELECT parsed_json_path FROM kb_documents WHERE id = ?').get(docId) as any
+    if (!doc?.parsed_json_path) return null
+    return this.readDocContentFromParsedJson(doc.parsed_json_path)
   }
 
   getParsedJson(docId: string): string | null {
-    const doc = this.db.getDb().prepare('SELECT parsed_json_path FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT parsed_json_path FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc?.parsed_json_path) return null
-    return this.readDocContentFromFile(doc.parsed_json_path)
+    return this.readDocParsedJson(doc.parsed_json_path)
   }
 
   async importOrSyncToKB(
@@ -777,14 +828,13 @@ class KnowledgeBaseService {
 
         const existingByName = await this.getExistingDocByName(kbId, originalName)
         if (existingByName) {
-          const contentPath = existingDoc.content_path || null
           const parsedJsonPath = existingDoc.parsed_json_path || null
-          this.db.getDb().prepare(`
+          this.db.prepare(`
             UPDATE kb_documents SET hash = ?, size = ?,
-                content_path = ?, parsed_json_path = ?,
+                parsed_json_path = ?,
                 parse_status = 'completed', updated_at = unixepoch()
             WHERE id = ?
-          `).run(fileHash, stats.size, contentPath, parsedJsonPath, existingByName.id)
+          `).run(fileHash, stats.size, parsedJsonPath, existingByName.id)
           return { kbDocId: existingByName.id, reused: true, kbId }
         }
       }
@@ -800,19 +850,24 @@ class KnowledgeBaseService {
       const now = Math.floor(Date.now() / 1000)
       const parseStatus = options?.contentText ? 'completed' : 'pending'
 
-      let contentPath: string | null = null
       let parsedJsonPath: string | null = null
       if (options?.contentText) {
-        const saved = this.saveDocContentToFile(docId, kbId, options.contentText, options.parsedJson || '{}')
-        contentPath = saved.content_path
-        parsedJsonPath = saved.parsed_json_path
+        parsedJsonPath = this.saveDocParsedJson(docId, kbId, options.parsedJson || '{}')
       }
 
-      this.db.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      this.db.prepare(`
+        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parsed_json_path, parse_status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(docId, kbId, originalName, fileType, stats.size, fileHash,
-        contentPath, parsedJsonPath, parseStatus, now, now)
+        parsedJsonPath, parseStatus, now, now)
+
+      this.searchEngine.indexDocumentTitle(kbId, docId, originalName)
+      if (parsedJsonPath) {
+        const content = this.readDocContentFromParsedJson(parsedJsonPath)
+        if (content) {
+          this.searchEngine.indexContentParagraphs(kbId, docId, content, originalName)
+        }
+      }
 
       return { kbDocId: docId, reused: !!options?.contentText, kbId }
     } catch (err) {
@@ -835,7 +890,7 @@ class KnowledgeBaseService {
 
     for (const docId of docIds) {
       try {
-        const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+        const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
         if (!doc) {
           errors.push({ docId, error: 'Document not found' })
           continue
@@ -853,7 +908,7 @@ class KnowledgeBaseService {
           continue
         }
 
-        const existingFile = this.db.getDb().prepare(
+        const existingFile = this.mainDb.getDb().prepare(
           'SELECT id FROM files WHERE project_id = ? AND hash = ? LIMIT 1'
         ).get(projectId, doc.hash) as any
 
@@ -874,19 +929,13 @@ class KnowledgeBaseService {
         const fileParser = FileParserService.getInstance()
         const result = await fileParser.importFile(projectId, filePath)
 
-        const contentText = this.getDocumentContent(docId)
-        const parsedJson = this.getParsedJson(docId)
-        if (contentText && parsedJson) {
-          fileParser.updateFileFromKB(result.id, contentText, parsedJson)
-        }
-
         imported.push({
           id: result.id,
           original_name: doc.original_name,
           type: doc.type,
           size: doc.size,
           hash: doc.hash,
-          status: contentText ? 'completed' : 'pending',
+          status: 'pending',
         })
       } catch (error) {
         errors.push({
@@ -936,390 +985,159 @@ class KnowledgeBaseService {
   }
 
   searchChapters(kbId: string, query: string, topK: number = 5): any[] {
-    return this.processor.searchChapters(kbId, query, topK)
+    return this.searchEngine.ftsSearch(kbId, query, topK, {
+      sourceTypes: ['chapter']
+    })
   }
 
   searchDocumentSummaries(kbId: string, query: string, topK: number = 5): any[] {
-    return this.processor.searchDocumentSummaries(kbId, query, topK)
+    return this.searchEngine.ftsSearch(kbId, query, topK, {
+      sourceTypes: ['document_summary']
+    })
   }
 
-  search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): any[] {
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 1)
-    if (queryWords.length === 0) return []
+  search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] {
+    return this.searchEngine.search(kbId, query, topK, documentIds)
+  }
 
-    let docFilter = ''
-    const docFilterParams: any[] = []
-    if (documentIds && documentIds.length > 0) {
-      docFilter = ' AND d.id IN (' + documentIds.map(() => '?').join(',') + ')'
-      docFilterParams.push(...documentIds)
+  async searchWithEmbedding(kbId: string, query: string, topK: number = 10, documentIds?: string[], providerId?: string): Promise<SearchResult[]> {
+    const stats = this.searchEngine.getIndexStats(kbId)
+    const hasEmbeddings = stats.embeddingCount > 0
+
+    if (!hasEmbeddings) {
+      return this.searchEngine.ftsSearch(kbId, query, topK, { documentIds })
     }
 
-    const results: any[] = []
+    let queryEmbedding: Float32Array | null = null
+    try {
+      const provider = providerId || this.getDefaultProviderId()
+      if (provider) {
+        queryEmbedding = await this.llmClient.createEmbedding(provider, query)
+      }
+    } catch (err) {
+      console.warn('[KB] Failed to generate query embedding, falling back to keyword search:', err)
+    }
 
-    const docs = this.db.getDb().prepare(
-      `SELECT id, original_name FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'${docFilter}`
-    ).all(kbId, ...docFilterParams) as any[]
+    return this.searchEngine.search(kbId, query, topK, documentIds, queryEmbedding || undefined)
+  }
+
+  advancedSearch(kbId: string, query: string, topK: number = 10, documentType?: string): SearchResult[] {
+    return this.searchEngine.advancedFtsSearch(kbId, query, topK, {
+      documentType
+    })
+  }
+
+  getSearchIndexStats(kbId: string): any {
+    return this.searchEngine.getIndexStats(kbId)
+  }
+
+  async rebuildSearchIndex(kbId: string): Promise<void> {
+    this.searchEngine.rebuildIndexForKb(kbId)
+
+    const docs = this.db.prepare(
+      "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
+    ).all(kbId) as any[]
 
     for (const doc of docs) {
-      const nameLower = doc.original_name.toLowerCase()
-      let titleScore = 0
-      for (const word of queryWords) {
-        if (nameLower.includes(word)) titleScore += 10
-      }
-      if (titleScore > 0) {
-        results.push({
-          document_id: doc.id,
-          document_name: doc.original_name,
-          text: `文档标题匹配: ${doc.original_name}`,
-          score: titleScore,
-          match_type: 'title'
-        })
+      this.searchEngine.indexDocumentTitle(kbId, doc.id, doc.original_name)
+
+      const content = doc.parsed_json_path ? this.readDocContentFromParsedJson(doc.parsed_json_path) : ''
+      if (content) {
+        this.searchEngine.indexContentParagraphs(kbId, doc.id, content, doc.original_name)
       }
     }
 
-    const summaries = this.db.getDb().prepare(
-      `SELECT ds.*, d.original_name as document_name, d.id as document_id
-       FROM kb_document_summaries ds
-       JOIN kb_documents d ON ds.document_id = d.id
-       WHERE ds.kb_id = ?${docFilter.replace(/d\.id/g, 'd.id')}`
-    ).all(kbId, ...docFilterParams) as any[]
+    const summaries = this.db.prepare(
+      'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
+    ).all(kbId) as any[]
 
     for (const ds of summaries) {
-      const summaryLower = (ds.summary || '').toLowerCase()
-      const keywords: string[] = JSON.parse(ds.keywords_json || '[]')
-      const topics: string[] = JSON.parse(ds.main_topics_json || '[]')
-
-      let summaryScore = 0
-      for (const word of queryWords) {
-        if (summaryLower.includes(word)) summaryScore += 4
-        for (const kw of keywords) {
-          if (kw.toLowerCase().includes(word)) summaryScore += 5
-        }
-        for (const topic of topics) {
-          if (topic.toLowerCase().includes(word)) summaryScore += 6
-        }
-      }
-
-      if (summaryScore > 0) {
-        const snippet = (ds.summary || '').substring(0, 300)
-        results.push({
-          document_id: ds.document_id,
-          document_name: ds.document_name,
-          text: `文档摘要: ${snippet}${(ds.summary || '').length > 300 ? '...' : ''}`,
-          score: summaryScore,
-          match_type: 'summary'
-        })
-      }
+      this.searchEngine.indexDocumentSummary(
+        kbId,
+        ds.document_id,
+        ds.summary,
+        JSON.parse(ds.keywords_json || '[]'),
+        JSON.parse(ds.main_topics_json || '[]')
+      )
     }
 
-    const chapters = this.db.getDb().prepare(
-      `SELECT c.*, d.original_name as document_name
-       FROM kb_chapters c
-       JOIN kb_documents d ON c.document_id = d.id
-       WHERE c.kb_id = ? AND c.summary IS NOT NULL${docFilter.replace(/d\.id/g, 'c.document_id')}`
-    ).all(kbId, ...docFilterParams) as any[]
+    const chapters = this.db.prepare(
+      'SELECT * FROM kb_chapters WHERE kb_id = ?'
+    ).all(kbId) as any[]
 
     for (const ch of chapters) {
-      const titleLower = ch.title.toLowerCase()
-      const summaryLower = (ch.summary || '').toLowerCase()
-      const keywords: string[] = JSON.parse(ch.keywords_json || '[]')
-      const entities: any[] = JSON.parse(ch.entities_json || '[]')
-
-      let chapterScore = 0
-      for (const word of queryWords) {
-        if (titleLower.includes(word)) chapterScore += 8
-        if (summaryLower.includes(word)) chapterScore += 3
-        for (const kw of keywords) {
-          if (kw.toLowerCase().includes(word)) chapterScore += 4
-        }
-        for (const e of entities) {
-          if (e.name && e.name.toLowerCase().includes(word)) chapterScore += 5
-        }
-      }
-
-      if (chapterScore > 0) {
-        const snippet = (ch.summary || ch.content || '').substring(0, 300)
-        results.push({
-          document_id: ch.document_id,
-          document_name: ch.document_name,
-          chapter_id: ch.id,
-          chapter_title: ch.title,
-          text: `章节「${ch.title}」: ${snippet}${snippet.length > 300 ? '...' : ''}`,
-          score: chapterScore,
-          match_type: 'keywords',
-          start_offset: ch.start_offset,
-          end_offset: ch.end_offset
-        })
-      }
+      this.searchEngine.indexChapter(
+        kbId,
+        ch.document_id,
+        ch.id,
+        ch.title,
+        ch.summary || '',
+        JSON.parse(ch.keywords_json || '[]'),
+        JSON.parse(ch.entities_json || '[]'),
+        ch.start_offset,
+        ch.end_offset
+      )
     }
 
-    const entities = this.db.getDb().prepare(
-      `SELECT * FROM kb_entities WHERE kb_id = ? ORDER BY mention_count DESC`
+    const entities = this.db.prepare(
+      'SELECT * FROM kb_entities WHERE kb_id = ?'
     ).all(kbId) as any[]
 
     for (const entity of entities) {
-      const nameLower = entity.name.toLowerCase()
-      const descLower = (entity.description || '').toLowerCase()
-      const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
-
-      let entityScore = 0
-      for (const word of queryWords) {
-        if (nameLower === word) entityScore += 15
-        else if (nameLower.includes(word)) entityScore += 10
-        if (descLower.includes(word)) entityScore += 3
-        for (const alias of aliases) {
-          if (alias.toLowerCase().includes(word)) entityScore += 8
-        }
-      }
-
-      if (entityScore > 0) {
-        results.push({
-          document_id: entity.first_seen_doc_id || '',
-          document_name: '知识图谱实体',
-          text: `实体「${entity.name}」(${entity.type}): ${entity.description || '无描述'} | 提及次数: ${entity.mention_count}`,
-          score: entityScore,
-          match_type: 'entity',
-          entity_id: entity.id,
-          entity_name: entity.name,
-          entity_type: entity.type
-        })
-      }
+      this.searchEngine.indexEntity(
+        kbId,
+        entity.id,
+        entity.name,
+        entity.type,
+        entity.description || '',
+        JSON.parse(entity.aliases_json || '[]'),
+        entity.first_seen_doc_id || ''
+      )
     }
 
-    const contentDocs = this.db.getDb().prepare(
-      `SELECT id, original_name, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed' AND (content_text IS NOT NULL OR content_path IS NOT NULL)${docFilter}`
-    ).all(kbId, ...docFilterParams) as any[]
+    await this.rebuildEmbeddings(kbId)
 
-    for (const doc of contentDocs) {
-      const content = doc.content_path ? this.readDocContentFromFile(doc.content_path) : ''
-      if (!content) continue
-      const lines = content.split('\n')
-      const paragraphs = content.split(/\n\n+/).filter((p: string) => p.trim().length > 30)
-
-      let currentOffset = 0
-      const lineRanges: { startLine: number; endLine: number; startOffset: number; endOffset: number }[] = []
-      for (const para of paragraphs) {
-        const paraStartOffset = content.indexOf(para, currentOffset)
-        const paraEndOffset = paraStartOffset + para.length
-        let startLine = 1
-        let endLine = 1
-        let offset = 0
-        for (let i = 0; i < lines.length; i++) {
-          if (offset <= paraStartOffset && paraStartOffset < offset + lines[i].length + 1) {
-            startLine = i + 1
-          }
-          if (offset < paraEndOffset && paraEndOffset <= offset + lines[i].length + 1) {
-            endLine = i + 1
-            break
-          }
-          offset += lines[i].length + 1
-        }
-        lineRanges.push({ startLine, endLine, startOffset: paraStartOffset, endOffset: paraEndOffset })
-        currentOffset = paraEndOffset
-      }
-
-      for (let pi = 0; pi < paragraphs.length; pi++) {
-        const para = paragraphs[pi]
-        const paraLower = para.toLowerCase()
-        let contentScore = 0
-        let matchedWords = 0
-        for (const word of queryWords) {
-          if (paraLower.includes(word)) {
-            contentScore += 2
-            matchedWords++
-          }
-        }
-        if (matchedWords > 1) contentScore += matchedWords * 2
-
-        if (contentScore > 0) {
-          const firstMatchWord = queryWords.find(w => paraLower.includes(w)) || queryWords[0]
-          const matchIndex = paraLower.indexOf(firstMatchWord)
-          const startIdx = Math.max(0, matchIndex - 80)
-          const endIdx = Math.min(para.length, matchIndex + firstMatchWord.length + 200)
-          let snippet = para.substring(startIdx, endIdx).trim()
-          if (startIdx > 0) snippet = '...' + snippet
-          if (endIdx < para.length) snippet = snippet + '...'
-
-          const range = lineRanges[pi]
-          results.push({
-            document_id: doc.id,
-            document_name: doc.original_name,
-            text: snippet,
-            score: contentScore,
-            match_type: 'content',
-            start_offset: range.startOffset,
-            end_offset: range.endOffset,
-            start_line: range.startLine,
-            end_line: range.endLine
-          })
-        }
-      }
-    }
-
-    const seen = new Set<string>()
-    const uniqueResults: any[] = []
-    for (const r of results) {
-      const key = r.chapter_id
-        ? `${r.document_id}-${r.chapter_id}-${r.match_type}`
-        : `${r.document_id}-${r.text.substring(0, 100)}-${r.match_type}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        uniqueResults.push(r)
-      }
-    }
-
-    uniqueResults.sort((a, b) => b.score - a.score)
-    return uniqueResults.slice(0, topK)
+    this.searchEngine.invalidateKbCache(kbId)
   }
 
-  advancedSearch(kbId: string, query: string, topK: number = 10, documentType?: string): any[] {
-    const phrases: string[] = []
-    const required: string[] = []
-    const excludedWords: string[] = []
-    const optional: string[] = []
+  async rebuildEmbeddings(kbId: string): Promise<void> {
+    const provider = this.getDefaultProviderId()
+    if (!provider) return
 
-    const phraseRegex = /"([^"]+)"/g
-    let match
-    let queryWithoutPhrases = query
-    while ((match = phraseRegex.exec(query)) !== null) {
-      phrases.push(match[1].toLowerCase())
-      queryWithoutPhrases = queryWithoutPhrases.replace(match[0], ' ')
-    }
+    const indexEntries = this.db.prepare(
+      'SELECT id, source_type, source_id, document_id, title, content FROM kb_search_index WHERE kb_id = ?'
+    ).all(kbId) as any[]
 
-    const words = queryWithoutPhrases.toLowerCase().split(/\s+/).filter((w: string) => w.length > 0)
-    for (const word of words) {
-      if (word.startsWith('+') && word.length > 1) {
-        required.push(word.slice(1))
-      } else if (word.startsWith('-') && word.length > 1) {
-        excludedWords.push(word.slice(1))
-      } else if (word.length > 1) {
-        optional.push(word)
+    if (indexEntries.length === 0) return
+
+    const texts: string[] = []
+    const meta: Array<{ sourceType: string; sourceId: string; documentId: string }> = []
+
+    for (const entry of indexEntries) {
+      const text = [entry.title, entry.content].filter(Boolean).join(' ').trim()
+      if (text.length > 10) {
+        texts.push(text.substring(0, 2000))
+        meta.push({ sourceType: entry.source_type, sourceId: entry.source_id, documentId: entry.document_id })
       }
     }
 
-    if (phrases.length === 0 && required.length === 0 && optional.length === 0) return []
+    if (texts.length === 0) return
 
-    let docSql = "SELECT id, original_name, type, content_text, content_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
-    const docParams: any[] = [kbId]
-
-    if (documentType) {
-      docSql += ' AND type = ?'
-      docParams.push(documentType.toLowerCase())
+    try {
+      const embeddings = await this.llmClient.createEmbeddings(provider, texts)
+      for (let i = 0; i < embeddings.length && i < meta.length; i++) {
+        this.searchEngine.storeEmbedding(
+          kbId,
+          meta[i].sourceType,
+          meta[i].sourceId,
+          meta[i].documentId,
+          embeddings[i],
+          'rebuild'
+        )
+      }
+    } catch (err) {
+      console.warn('[KB] Failed to rebuild embeddings:', err)
     }
-
-    const docs = this.db.getDb().prepare(docSql).all(...docParams) as any[]
-    const results: any[] = []
-
-    for (const doc of docs) {
-      const fullContent = doc.content_path ? this.readDocContentFromFile(doc.content_path) : ''
-      if (!fullContent) continue
-      const content = fullContent.toLowerCase()
-      const nameLower = doc.original_name.toLowerCase()
-      let score = 0
-      const matchDetails: string[] = []
-
-      let isExcluded = false
-      for (const exWord of excludedWords) {
-        if (content.includes(exWord) || nameLower.includes(exWord)) {
-          isExcluded = true
-          break
-        }
-      }
-      if (isExcluded) continue
-
-      for (const phrase of phrases) {
-        const pRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
-        const pMatches = (content.match(pRegex) || []).length
-        if (pMatches > 0) {
-          score += pMatches * 15
-          matchDetails.push(`精确短语"${phrase}"匹配${pMatches}次`)
-        } else if (nameLower.includes(phrase)) {
-          score += 12
-          matchDetails.push(`标题包含精确短语"${phrase}"`)
-        }
-      }
-
-      let allRequired = true
-      for (const req of required) {
-        if (content.includes(req) || nameLower.includes(req)) {
-          score += 8
-          matchDetails.push(`必须词"${req}"匹配`)
-        } else {
-          allRequired = false
-        }
-      }
-      if (required.length > 0 && !allRequired) continue
-
-      for (const opt of optional) {
-        const optMatches = (content.match(new RegExp(opt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length
-        if (optMatches > 0) {
-          score += optMatches * 3
-          matchDetails.push(`可选词"${opt}"匹配${optMatches}次`)
-        } else if (nameLower.includes(opt)) {
-          score += 5
-          matchDetails.push(`标题包含"${opt}"`)
-        }
-      }
-
-      if (score > 0) {
-        const lines = fullContent.split('\n')
-        const paragraphs = fullContent.split(/\n\n+/).filter((p: string) => p.trim().length > 20)
-
-        let bestSnippet = ''
-        let bestStartOffset = 0
-        let bestEndOffset = 0
-        let bestStartLine = 1
-        let bestEndLine = 1
-
-        for (const para of paragraphs) {
-          const paraLower = para.toLowerCase()
-          let paraScore = 0
-          for (const phrase of phrases) {
-            if (paraLower.includes(phrase)) paraScore += 10
-          }
-          for (const req of required) {
-            if (paraLower.includes(req)) paraScore += 5
-          }
-          for (const opt of optional) {
-            if (paraLower.includes(opt)) paraScore += 2
-          }
-          if (paraScore > 0 && para.length > bestSnippet.length) {
-            bestSnippet = para.substring(0, 400)
-            if (para.length > 400) bestSnippet += '...'
-
-            bestStartOffset = fullContent.indexOf(para)
-            bestEndOffset = bestStartOffset + para.length
-            let offset = 0
-            for (let i = 0; i < lines.length; i++) {
-              if (offset <= bestStartOffset && bestStartOffset < offset + lines[i].length + 1) {
-                bestStartLine = i + 1
-              }
-              if (offset < bestEndOffset && bestEndOffset <= offset + lines[i].length + 1) {
-                bestEndLine = i + 1
-                break
-              }
-              offset += lines[i].length + 1
-            }
-          }
-        }
-
-        results.push({
-          document_id: doc.id,
-          document_name: doc.original_name,
-          document_type: doc.type,
-          text: bestSnippet || doc.original_name,
-          score,
-          match_details: matchDetails,
-          start_offset: bestStartOffset,
-          end_offset: bestEndOffset,
-          start_line: bestStartLine,
-          end_line: bestEndLine
-        })
-      }
-    }
-
-    results.sort((a, b) => b.score - a.score)
-    return results.slice(0, topK)
   }
 
   generateTimeline(kbId: string, topic?: string): any[] {
@@ -1335,7 +1153,7 @@ class KnowledgeBaseService {
   }
 
   resumeParse(docId: string): boolean {
-    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc) return false
 
     const hasActiveTask = this.parseTaskManager.hasActiveTask(docId)
@@ -1348,10 +1166,10 @@ class KnowledgeBaseService {
   }
 
   retryParse(docId: string): boolean {
-    const doc = this.db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
+    const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as any
     if (!doc) return false
 
-    this.db.getDb().prepare(
+    this.db.prepare(
       "UPDATE kb_documents SET parse_status = 'pending', parse_error = NULL, parse_progress = 0, parse_stage = '', parse_detail = '', updated_at = unixepoch() WHERE id = ?"
     ).run(docId)
 
@@ -1364,7 +1182,7 @@ class KnowledgeBaseService {
   }
 
   getDocParseDetail(docId: string): any {
-    const doc = this.db.getDb().prepare(
+    const doc = this.db.prepare(
       'SELECT id, original_name, parse_status, parse_progress, parse_stage, parse_detail, processed_pages, total_pages, processed_chunks, total_chunks, parse_speed, parse_eta, parse_error FROM kb_documents WHERE id = ?'
     ).get(docId) as any
     
@@ -1397,7 +1215,7 @@ class KnowledgeBaseService {
     for (const docId of activeDocIds) {
       if (this.parseTaskManager.resumeTask(docId)) count++
     }
-    const pausedDocs = this.db.getDb().prepare(
+    const pausedDocs = this.db.prepare(
       "SELECT id FROM kb_documents WHERE parse_status = 'paused'"
     ).all() as any[]
     for (const doc of pausedDocs) {
@@ -1418,7 +1236,7 @@ class KnowledgeBaseService {
   }
 
   private getDefaultProviderId(): string | null {
-    return getDefaultProviderId(this.db)
+    return getDefaultProviderId(this.mainDb)
   }
 
   async exportKBFull(
@@ -1444,31 +1262,31 @@ class KnowledgeBaseService {
         },
       }
 
-      const documents = this.db.getDb().prepare(
+      const documents = this.db.prepare(
         'SELECT * FROM kb_documents WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const chapters = this.db.getDb().prepare(
+      const chapters = this.db.prepare(
         'SELECT * FROM kb_chapters WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const docSummaries = this.db.getDb().prepare(
+      const docSummaries = this.db.prepare(
         'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const globalSummary = this.db.getDb().prepare(
+      const globalSummary = this.db.prepare(
         'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
       ).get(kbId) as any
 
-      const entities = this.db.getDb().prepare(
+      const entities = this.db.prepare(
         'SELECT * FROM kb_entities WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const entityRelations = this.db.getDb().prepare(
+      const entityRelations = this.db.prepare(
         'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const entityMentions = this.db.getDb().prepare(
+      const entityMentions = this.db.prepare(
         `SELECT m.* FROM kb_entity_mentions m
          INNER JOIN kb_entities e ON m.entity_id = e.id
          WHERE e.kb_id = ?`
@@ -1483,8 +1301,7 @@ class KnowledgeBaseService {
           type: d.type,
           size: d.size,
           hash: d.hash,
-          content_text: d.content_path ? this.readDocContentFromFile(d.content_path) : null,
-          parsed_json: d.parsed_json_path ? this.readDocContentFromFile(d.parsed_json_path) : null,
+          parsed_json: d.parsed_json_path ? this.readDocParsedJson(d.parsed_json_path) : null,
           parse_status: d.parse_status,
           created_at: d.created_at,
           updated_at: d.updated_at,
@@ -1539,23 +1356,23 @@ class KnowledgeBaseService {
     try {
       onProgress?.('preparing', 'Preparing summary export...')
 
-      const globalSummary = this.db.getDb().prepare(
+      const globalSummary = this.db.prepare(
         'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
       ).get(kbId) as any
 
-      const docSummaries = this.db.getDb().prepare(
+      const docSummaries = this.db.prepare(
         'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const entities = this.db.getDb().prepare(
+      const entities = this.db.prepare(
         'SELECT * FROM kb_entities WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const entityRelations = this.db.getDb().prepare(
+      const entityRelations = this.db.prepare(
         'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const chapters = this.db.getDb().prepare(
+      const chapters = this.db.prepare(
         'SELECT id, kb_id, document_id, title, chapter_index, summary, keywords_json, entities_json FROM kb_chapters WHERE kb_id = ?'
       ).all(kbId) as any[]
 
@@ -1711,11 +1528,11 @@ class KnowledgeBaseService {
       let docs: any[]
       if (docIds && docIds.length > 0) {
         const placeholders = docIds.map(() => '?').join(',')
-        docs = this.db.getDb().prepare(
+        docs = this.db.prepare(
           `SELECT * FROM kb_documents WHERE kb_id = ? AND id IN (${placeholders})`
         ).all(kbId, ...docIds) as any[]
       } else {
-        docs = this.db.getDb().prepare(
+        docs = this.db.prepare(
           'SELECT * FROM kb_documents WHERE kb_id = ?'
         ).all(kbId) as any[]
       }
@@ -1806,19 +1623,16 @@ class KnowledgeBaseService {
         }
 
         const now = Math.floor(Date.now() / 1000)
-        let contentPath: string | null = null
         let parsedJsonPath: string | null = null
-        if (doc.content_text || doc.parsed_json) {
-          const saved = this.saveDocContentToFile(newDocId, newKBId, doc.content_text || '', doc.parsed_json || '{}')
-          contentPath = saved.content_path
-          parsedJsonPath = saved.parsed_json_path
+        if (doc.parsed_json) {
+          parsedJsonPath = this.saveDocParsedJson(newDocId, newKBId, doc.parsed_json)
         }
 
-        this.db.getDb().prepare(`
-          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, content_path, parsed_json_path, parse_status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        this.db.prepare(`
+          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parsed_json_path, parse_status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(newDocId, newKBId, doc.original_name, doc.type, doc.size, doc.hash,
-          contentPath, parsedJsonPath, doc.parse_status || 'pending',
+          parsedJsonPath, doc.parse_status || 'pending',
           doc.created_at || now, doc.updated_at || now)
 
         if ((i + 1) % 5 === 0 || i === documents.length - 1) {
@@ -1837,7 +1651,7 @@ class KnowledgeBaseService {
         const newChapterId = generateId()
         chapterIdMap.set(ch.id, newChapterId)
 
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_chapters (id, kb_id, document_id, title, chapter_index, start_offset, end_offset, content, summary, keywords_json, entities_json, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(newChapterId, newKBId, newDocId, ch.title, ch.chapter_index,
@@ -1852,7 +1666,7 @@ class KnowledgeBaseService {
         if (!newDocId) continue
 
         const id = generateId()
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(id, newKBId, newDocId, ds.summary || '',
@@ -1864,7 +1678,7 @@ class KnowledgeBaseService {
         onProgress?.('importing_global', 'Importing global summary...')
         const gs = knowledgeData.globalSummary
         const id = generateId()
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(id, newKBId, gs.summary || '',
@@ -1879,7 +1693,7 @@ class KnowledgeBaseService {
         const newEntityId = generateId()
         entityIdMap.set(entity.id, newEntityId)
 
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, first_seen_doc_id, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(newEntityId, newKBId, entity.name, entity.type, entity.description,
@@ -1899,7 +1713,7 @@ class KnowledgeBaseService {
         if (!newSourceId || !newTargetId) continue
 
         const id = generateId()
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
         `).run(id, newKBId, newSourceId, newTargetId, rel.relation_type,
@@ -1916,12 +1730,15 @@ class KnowledgeBaseService {
         if (!newEntityId) continue
 
         const id = generateId()
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_entity_mentions (id, entity_id, document_id, chapter_id, context_text, start_offset, end_offset, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
         `).run(id, newEntityId, newDocId || null, newChapterId || null,
           m.context_text || null, m.start_offset, m.end_offset)
       }
+
+      onProgress?.('building_index', 'Building search index...')
+      await this.rebuildSearchIndex(newKBId)
 
       onProgress?.('complete', `Import complete: ${documents.length} documents, ${entities.length} entities`)
       return { success: true, kbId: newKBId }
@@ -2002,7 +1819,7 @@ class KnowledgeBaseService {
       onProgress?.('importing_entities', `Importing ${importedEntities.length} entities...`)
 
       const entityNameToId = new Map<string, string>()
-      const existingEntities = this.db.getDb().prepare(
+      const existingEntities = this.db.prepare(
         'SELECT id, name FROM kb_entities WHERE kb_id = ?'
       ).all(kbId) as any[]
       for (const e of existingEntities) {
@@ -2015,16 +1832,16 @@ class KnowledgeBaseService {
 
         if (existingId) {
           if (conflictStrategy === 'overwrite') {
-            this.db.getDb().prepare(`
+            this.db.prepare(`
               UPDATE kb_entities SET type = ?, description = ?, aliases_json = ?, attributes_json = ?, updated_at = unixepoch()
               WHERE id = ?
             `).run(entity.type, entity.description, JSON.stringify(entity.aliases), JSON.stringify(entity.attributes), existingId)
           } else if (conflictStrategy === 'merge') {
-            const existing = this.db.getDb().prepare('SELECT * FROM kb_entities WHERE id = ?').get(existingId) as any
+            const existing = this.db.prepare('SELECT * FROM kb_entities WHERE id = ?').get(existingId) as any
             if (existing) {
               const existingAliases: string[] = JSON.parse(existing.aliases_json || '[]')
               const newAliases = entity.aliases.filter(a => !existingAliases.includes(a))
-              this.db.getDb().prepare(`
+              this.db.prepare(`
                 UPDATE kb_entities SET aliases_json = ?, mention_count = mention_count + 1, updated_at = unixepoch()
                 WHERE id = ?
               `).run(JSON.stringify([...existingAliases, ...newAliases]), existingId)
@@ -2032,7 +1849,7 @@ class KnowledgeBaseService {
           }
         } else {
           const id = generateId()
-          this.db.getDb().prepare(`
+          this.db.prepare(`
             INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 1, unixepoch(), unixepoch())
           `).run(id, kbId, entity.name, entity.type, entity.description,
@@ -2058,13 +1875,13 @@ class KnowledgeBaseService {
         const finalSourceId = sourceId || entityNameToId.get(relation.source.toLowerCase())!
         const finalTargetId = targetId || entityNameToId.get(relation.target.toLowerCase())!
 
-        const existingRelation = this.db.getDb().prepare(
+        const existingRelation = this.db.prepare(
           'SELECT id FROM kb_entity_relations WHERE source_entity_id = ? AND target_entity_id = ? AND relation_type = ?'
         ).get(finalSourceId, finalTargetId, relation.relationType) as any
 
         if (existingRelation) {
           if (conflictStrategy === 'overwrite') {
-            this.db.getDb().prepare(`
+            this.db.prepare(`
               UPDATE kb_entity_relations SET description = ?, created_at = unixepoch()
               WHERE id = ?
             `).run(relation.description, existingRelation.id)
@@ -2073,7 +1890,7 @@ class KnowledgeBaseService {
         }
 
         const id = generateId()
-        this.db.getDb().prepare(`
+        this.db.prepare(`
           INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, created_at)
           VALUES (?, ?, ?, ?, ?, ?, unixepoch())
         `).run(id, kbId, finalSourceId, finalTargetId, relation.relationType, relation.description)

@@ -54,6 +54,9 @@ export const KB_CHANNELS = {
   KB_IMPORT_PROGRESS: 'kb:import-progress',
   KB_SEARCH: 'kb:search',
   KB_ADVANCED_SEARCH: 'kb:advanced-search',
+  KB_SEARCH_WITH_EMBEDDING: 'kb:search-with-embedding',
+  KB_SEARCH_INDEX_STATS: 'kb:search-index-stats',
+  KB_REBUILD_SEARCH_INDEX: 'kb:rebuild-search-index',
 } as const
 
 export interface KBCreateParams {

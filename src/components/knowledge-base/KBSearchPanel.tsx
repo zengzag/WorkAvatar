@@ -8,11 +8,12 @@ import {
   SearchOutlined, FileTextOutlined, NodeIndexOutlined,
   ApartmentOutlined, GlobalOutlined, BookOutlined,
   FilterOutlined, CopyOutlined, EyeOutlined, DatabaseOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
-type SearchMode = 'smart' | 'advanced' | 'chapters' | 'fulltext' | 'entity' | 'graph' | 'globalSummary'
+type SearchMode = 'smart' | 'semantic' | 'advanced' | 'chapters' | 'fulltext' | 'entity' | 'graph' | 'globalSummary'
 
 interface KBSearchPanelProps {
   open: boolean
@@ -22,10 +23,15 @@ interface KBSearchPanelProps {
 
 const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
   title: { color: 'blue', labelKey: 'kbSearch.matchTypeTitle' },
+  document_title: { color: 'blue', labelKey: 'kbSearch.matchTypeTitle' },
   summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
+  document_summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
   keywords: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
+  chapter: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
   content: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
+  content_paragraph: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
   entity: { color: 'red', labelKey: 'kbSearch.matchTypeEntity' },
+  hybrid: { color: 'cyan', labelKey: 'kbSearch.matchTypeHybrid' },
 }
 
 const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) => {
@@ -49,6 +55,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [docContentTitle, setDocContentTitle] = useState('')
   const [docContentOffset, setDocContentOffset] = useState<{ start: number; end: number } | null>(null)
   const [searched, setSearched] = useState(false)
+  const [semanticDegraded, setSemanticDegraded] = useState(false)
 
   const inputRef = useRef<any>(null)
 
@@ -92,6 +99,18 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           setResults(data || [])
           break
         }
+        case 'semantic': {
+          const stats = await window.electronAPI.kb.searchIndexStats(selectedKbId)
+          const hasEmbeddings = (stats as any)?.embeddingCount > 0
+          setSemanticDegraded(!hasEmbeddings)
+          const data = await window.electronAPI.kb.searchWithEmbedding({
+            kb_id: selectedKbId,
+            query: query.trim(),
+            top_k: topK,
+          })
+          setResults(data || [])
+          break
+        }
         case 'advanced': {
           const data = await window.electronAPI.kb.advancedSearch({
             kb_id: selectedKbId,
@@ -117,7 +136,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             query: query.trim(),
             top_k: topK,
           })
-          setResults((data || []).filter((r: any) => r.match_type === 'content'))
+          setResults((data || []).filter((r: any) => r.match_type === 'content' || r.match_type === 'content_paragraph'))
           break
         }
         case 'entity': {
@@ -205,6 +224,15 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       ),
     },
     {
+      key: 'semantic',
+      label: (
+        <Space>
+          <RobotOutlined />
+          <span>{t('kbSearch.modeSemantic')}</span>
+        </Space>
+      ),
+    },
+    {
       key: 'advanced',
       label: (
         <Space>
@@ -275,7 +303,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
           <Space wrap>
             <Tag color={matchConfig.color}>{t(matchConfig.labelKey)}</Tag>
-            <Tag color="default">Score: {item.score}</Tag>
           </Space>
           <Tooltip title={t('kbSearch.copyResult')}>
             <Button
@@ -633,6 +660,14 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         }
         return (
           <div>
+            {semanticDegraded && searchMode === 'semantic' && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={t('kbSearch.semanticDegraded')}
+              />
+            )}
             <div style={{ marginBottom: 8 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('kbSearch.resultCount', { count: results.length })}

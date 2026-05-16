@@ -1,9 +1,9 @@
 import type { ToolDefinition } from '../tool.types'
-import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 
 export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
-  const db = DatabaseService.getInstance()
+  const kbDb = KBDatabaseService.getInstance()
 
   const validateKbId = (kbId: string | undefined): string | null => {
     if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
@@ -71,7 +71,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
         sql += ' ORDER BY mention_count DESC LIMIT ?'
         params.push(topK)
 
-        const entities = db.getDb().prepare(sql).all(...params) as any[]
+        const entities = kbDb.getDb().prepare(sql).all(...params) as any[]
 
         if (entities.length === 0) {
           return {
