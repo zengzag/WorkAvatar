@@ -1,16 +1,17 @@
 import type { ToolDefinition } from '../tool.types'
-import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
+import { formatEntityList } from './utils'
 
 export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
-  const db = DatabaseService.getInstance()
+  const kbDb = KBDatabaseService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
 
   return {
     id: 'kb_get_content',
     name: 'kb_get_content',
     title: '获取文档内容',
-    description: `获取文档的完整内容或指定文本区间，支持通过章节ID、字符偏移量或行号定位。`,
+    description: `获取文档内容，支持通过章节ID、字符偏移量或行号定位。`,
     parameters: {
       type: 'object',
       properties: {
@@ -48,7 +49,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
     },
     handler: async (args: any) => {
       try {
-        const doc = db.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
+        const doc = kbDb.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
         if (!doc) {
           return { success: false, error: '文档不存在' }
         }
@@ -80,7 +81,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
 
           const entities: any[] = JSON.parse(chapter.entities_json || '[]')
           if (entities.length > 0) {
-            output += `\n\n### 本章实体\n${entities.map((e: any) => `- ${e.name}(${e.type})`).join('\n')}`
+            output += `\n\n### 本章实体\n${formatEntityList(entities)}`
           }
 
           // 添加章节导航

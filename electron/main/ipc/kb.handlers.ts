@@ -284,4 +284,17 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
   ipcMain.handle(IPC_CHANNELS.KB_ADVANCED_SEARCH, (_, params: { kb_id: string; query: string; top_k?: number; document_type?: string }) => {
     return kbService.advancedSearch(params.kb_id, params.query, params.top_k, params.document_type)
   })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, async (_, params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => {
+    return await kbService.searchWithEmbedding(params.kb_id, params.query, params.top_k, params.document_ids, params.provider_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, (_, kbId: string) => {
+    return kbService.getSearchIndexStats(kbId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, async (_, kbId: string) => {
+    await kbService.rebuildSearchIndex(kbId)
+    return { success: true }
+  })
 }

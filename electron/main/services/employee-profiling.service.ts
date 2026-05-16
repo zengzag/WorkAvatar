@@ -1,4 +1,5 @@
 import DatabaseService from './database.service'
+import KBDatabaseService from './kb-database.service'
 import LLMClientService from './llm-client.service'
 import { getDefaultProviderId } from './common-utils'
 
@@ -52,11 +53,13 @@ interface KBContent {
 }
 
 class EmployeeProfilingService {
+  private kbDb: KBDatabaseService
   private db: DatabaseService
   private llmClient: LLMClientService
   private static instance: EmployeeProfilingService
 
   private constructor() {
+    this.kbDb = KBDatabaseService.getInstance()
     this.db = DatabaseService.getInstance()
     this.llmClient = LLMClientService.getInstance()
   }
@@ -126,21 +129,19 @@ class EmployeeProfilingService {
         suggestedTools: previousProfile.suggestedTools,
       }, null, 2)
 
-      const refinePrompt = `以下是我之前的分析结果：
+      const refinePrompt = `基于以下分析结果和用户反馈进行调整，JSON格式输出。
 
+当前结果：
 \`\`\`json
 ${profileJson}
 \`\`\`
 
-用户有以下补充修改意见：
-
+用户反馈：
 ${feedback}
 
-请根据用户的补充修改意见，调整优化上述分析结果。保持用户满意的部分，修改用户不满意的部分，整合用户的补充信息。
+输出字段：roleName、roleDescription、responsibilities、personalityTraits、workingStyle、suggestedTools
 
-请严格按照以下JSON格式输出调整后的完整结果（只输出JSON，不要其他解释）：
-
-{"roleName": "角色名称", "roleDescription": "角色的详细描述，100字左右", "responsibilities": ["职责1", "职责2"], "personalityTraits": ["特质1", "特质2"], "workingStyle": "工作风格描述", "suggestedTools": ["tool_name_1"]}`
+只输出JSON。`
 
       onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
 
@@ -215,7 +216,7 @@ ${feedback}
     const results: KBContent[] = []
 
     for (const kbId of kbIds) {
-      const kb = this.db.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
+      const kb = this.kbDb.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
       if (!kb) continue
 
       const content: KBContent = {
@@ -229,7 +230,7 @@ ${feedback}
         chapterSamples: [],
       }
 
-      const globalSummary = this.db.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
+      const globalSummary = this.kbDb.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
       if (globalSummary) {
         content.globalSummary = globalSummary.summary || ''
         try { content.keyTopics = JSON.parse(globalSummary.key_topics_json || '[]') } catch {}
@@ -243,7 +244,7 @@ ${feedback}
         } catch {}
       }
 
-      const docSummaries = this.db.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
+      const docSummaries = this.kbDb.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
       for (const ds of docSummaries) {
         const docSummary: KBContent['documentSummaries'][0] = {
           docName: ds.original_name,
@@ -254,7 +255,7 @@ ${feedback}
         content.documentSummaries.push(docSummary)
       }
 
-      const chapters = this.db.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
+      const chapters = this.kbDb.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
       for (const ch of chapters) {
         content.chapterSamples.push({
           docName: ch.original_name,
@@ -293,45 +294,48 @@ ${feedback}
 
     let prompt: string
     if (hasKB) {
-      prompt = `你是一位资深的人力资源专家和业务架构师。请仔细分析以下知识库内容，理解其业务场景，然后设计一个合适的"数字员工"角色。
+      prompt = `分析知识库内容，设计数字员工角色，JSON格式输出。
 
-## 知识库资料
+知识库资料：
 ${truncatedText}${userGuidance}
 
-## 分析要求
+分析维度：
+1. 业务场景：领域和工作流程
+2. 角色定位：如合同审核专员、客服顾问
+3. 职责：具体承担的任务
+4. 工作风格：严谨型、亲和型等
+5. 工具需求：计算器、知识库检索等
 
-请从以下维度进行深入分析：
+输出字段：
+- roleName: 角色名称
+- roleDescription: 角色描述（100字左右）
+- responsibilities: 职责列表
+- personalityTraits: 特质列表
+- workingStyle: 工作风格
+- suggestedTools: 工具列表
 
-1. **业务场景理解**：这些知识库描述的是什么业务领域？涉及哪些工作流程？
-2. **角色定位**：基于知识库内容，应该创建一个什么角色的数字员工？（如"合同审核专员"、"客服顾问"、"数据分析师"等）
-3. **职责识别**：这个员工应该承担哪些具体职责？
-4. **工作风格**：这个员工应该以什么风格与用户交互？（严谨型、亲和型、高效型等）
-5. **工具需求**：这个员工可能需要使用什么工具？（如计算器、文件搜索、数据查询、知识库检索等）
-
-## 输出格式
-
-请严格按照以下JSON格式输出（只输出JSON，不要其他解释）：
-
-{\n"roleName": "角色名称，如'合同审核专员'",\n"roleDescription": "角色的详细描述，100字左右",\n"responsibilities": ["职责1", "职责2", "职责3"],\n"personalityTraits": ["特质1", "特质2"],\n"workingStyle": "工作风格描述，如'严谨细致，注重合规性'",\n"suggestedTools": ["tool_name_1", "tool_name_2"]\n}\n\n要求：\n1. roleName 要专业且贴合业务场景\n2. 如果某类信息不存在，返回空数组或默认值`
+只输出JSON。`
     } else {
-      prompt = `你是一位资深的人力资源专家和业务架构师。请根据用户提供的业务场景描述，设计一个合适的"数字员工"角色。
+      prompt = `根据业务描述设计数字员工角色，JSON格式输出。
+
 ${userGuidance}
 
-## 分析要求
+分析维度：
+1. 业务场景：领域和工作流程
+2. 角色定位：如合同审核专员、客服顾问
+3. 职责：具体承担的任务
+4. 工作风格：严谨型、亲和型等
+5. 工具需求：计算器、知识库检索等
 
-请从以下维度进行深入分析：
+输出字段：
+- roleName: 角色名称
+- roleDescription: 角色描述（100字左右）
+- responsibilities: 职责列表
+- personalityTraits: 特质列表
+- workingStyle: 工作风格
+- suggestedTools: 工具列表
 
-1. **业务场景理解**：用户描述的是什么业务领域？涉及哪些工作流程？
-2. **角色定位**：基于业务场景，应该创建一个什么角色的数字员工？（如"合同审核专员"、"客服顾问"、"数据分析师"等）
-3. **职责识别**：这个员工应该承担哪些具体职责？
-4. **工作风格**：这个员工应该以什么风格与用户交互？（严谨型、亲和型、高效型等）
-5. **工具需求**：这个员工可能需要使用什么工具？（如计算器、文件搜索、数据查询、知识库检索等）
-
-## 输出格式
-
-请严格按照以下JSON格式输出（只输出JSON，不要其他解释）：
-
-{\n"roleName": "角色名称，如'合同审核专员'",\n"roleDescription": "角色的详细描述，100字左右",\n"responsibilities": ["职责1", "职责2", "职责3"],\n"personalityTraits": ["特质1", "特质2"],\n"workingStyle": "工作风格描述，如'严谨细致，注重合规性'",\n"suggestedTools": ["tool_name_1", "tool_name_2"]\n}\n\n要求：\n1. roleName 要专业且贴合业务场景\n2. 如果某类信息不存在，返回空数组或默认值`
+只输出JSON。`
     }
 
     onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 进行智能分析...' })
@@ -339,7 +343,7 @@ ${userGuidance}
     const llmMessages: Array<{ role: string; content: string }> = [
       {
         role: 'system',
-        content: '你是一位资深的人力资源专家和业务架构师，擅长根据知识库内容或业务描述设计数字员工角色和能力体系。'
+        content: '根据知识库或业务描述设计数字员工角色，JSON格式输出。'
       },
       { role: 'user', content: prompt },
     ]
@@ -505,19 +509,15 @@ ${userGuidance}
   }
 
   private buildDefaultPrompt(skillName: string, description: string): string {
-    return `你是专业的数字员工，擅长【${skillName}】。
+    return `你是${skillName}专家。
 
-## 能力描述
 ${description || '根据用户需求提供专业服务'}
 
-## 工作原则
-1. 仔细分析用户输入，理解真实需求
-2. 基于专业知识和规则进行处理
-3. 输出结果要准确、完整、有条理
-4. 如有不确定之处，明确说明
-
-## 输出格式
-请根据具体任务类型，提供结构化、专业的输出。`
+原则：
+1. 分析需求，理解意图
+2. 基于专业知识处理
+3. 输出准确、完整、有条理
+4. 不确定时明确说明`
   }
 
   private getHeuristicProfile(kbContents: KBContent[]): EmployeeProfile {
@@ -531,21 +531,16 @@ ${description || '根据用户需求提供专业服务'}
         type: 'extraction',
         name: '合同审核',
         description: '审核合同条款，识别风险点和缺失项',
-        promptTemplate: `你是专业的合同审核专员。
+        promptTemplate: `你是合同审核专员。
 
-## 审核要点
-1. 检查合同主体信息完整性
-2. 审核付款条款是否合理
-3. 识别违约责任和争议解决条款
-4. 检查保密条款和知识产权归属
-5. 标注风险等级（高/中/低）
+审核要点：
+1. 主体信息完整性
+2. 付款条款合理性
+3. 违约责任和争议解决
+4. 保密条款和知识产权
+5. 风险等级标注（高/中/低）
 
-## 输出格式
-对每份合同输出：
-- 基本信息摘要
-- 风险点列表（含等级和建议）
-- 缺失条款提醒
-- 总体评估意见`,
+输出：基本信息摘要、风险点列表（含等级和建议）、缺失条款提醒、总体评估。`,
         rules: [
           { description: '付款条款必须明确金额、时间和方式', condition: '遇到付款相关条款', action: '详细审核并标注风险' },
           { description: '违约责任必须对等', condition: '遇到违约责任条款', action: '检查双方责任是否平衡' },
@@ -563,13 +558,13 @@ ${description || '根据用户需求提供专业服务'}
         type: 'qa',
         name: '知识问答',
         description: '基于知识库回答用户问题',
-        promptTemplate: `你是专业的知识顾问。请基于以下知识库回答用户问题。
+        promptTemplate: `你是知识顾问，基于知识库回答问题。
 
-## 回答原则
-1. 只基于提供的知识库回答，不编造信息
-2. 如果知识库中没有相关信息，明确说明
-3. 引用来源文件和具体章节
-4. 保持专业、简洁、准确`,
+原则：
+1. 只基于知识库回答，不编造
+2. 无相关信息时明确说明
+3. 引用来源文件和章节
+4. 专业、简洁、准确`,
         rules: [
           { description: '必须引用知识来源', condition: '回答问题时', action: '标注信息来源文件' },
           { description: '不确定时明确告知', condition: '知识库中无相关信息', action: '说明无法回答，不编造' },
@@ -587,18 +582,15 @@ ${description || '根据用户需求提供专业服务'}
         type: 'query',
         name: '数据分析',
         description: '查询和分析数据，生成统计结果',
-        promptTemplate: `你是数据分析师。请根据用户请求查询和分析数据。
+        promptTemplate: `你是数据分析师。
 
-## 工作步骤
-1. 理解用户的分析需求
-2. 确定需要查询的数据维度
-3. 进行数据汇总和计算
-4. 生成清晰的分析结果
+步骤：
+1. 理解分析需求
+2. 确定数据维度
+3. 汇总计算
+4. 生成分析结果
 
-## 输出格式
-- 查询条件说明
-- 数据统计结果
-- 关键发现和建议`,
+输出：查询条件、统计结果、关键发现和建议。`,
         rules: [
           { description: '数据必须准确', condition: '涉及数值计算', action: '仔细核对计算过程' },
         ],
@@ -615,12 +607,12 @@ ${description || '根据用户需求提供专业服务'}
         type: 'qa',
         name: '通用问答',
         description: '基于知识库回答各类问题',
-        promptTemplate: `你是专业的数字员工助手。请基于知识库内容回答用户问题。
+        promptTemplate: `基于知识库回答用户问题。
 
-## 回答原则
-1. 基于知识库内容回答
-2. 保持专业、准确
-3. 引用来源信息
+原则：
+1. 基于知识库内容
+2. 专业、准确
+3. 引用来源
 4. 不确定时明确说明`,
         rules: [],
         testCases: [
@@ -651,7 +643,7 @@ ${description || '根据用户需求提供专业服务'}
         type: 'qa',
         name: '通用问答',
         description: '回答用户的各类问题',
-        promptTemplate: '你是智能助手，请专业、准确地回答用户问题。',
+        promptTemplate: '专业、准确地回答用户问题。',
         rules: [],
         testCases: [],
         sourceFiles: [],

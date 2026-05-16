@@ -5,7 +5,7 @@ export const dateTimeTool: ToolDefinition = {
   id: 'date_time',
   name: 'date_time',
   title: '日期时间',
-  description: '获取当前日期和时间，或进行日期计算',
+  description: '获取当前日期时间，或进行日期计算（add_days需传入days参数）',
   parameters: {
     type: 'object',
     properties: {

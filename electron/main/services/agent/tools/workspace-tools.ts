@@ -12,7 +12,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_list_files',
     name: 'workspace_list_files',
     title: '列出项目工作区文件',
-    description: '列出项目工作区目录中的文件和文件夹。可指定子目录路径，支持递归列出。',
+    description: '列出工作区文件和文件夹，支持子目录和递归。',
     parameters: {
       type: 'object',
       properties: {
@@ -31,7 +31,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_read_file',
     name: 'workspace_read_file',
     title: '读取项目工作区文件',
-    description: '读取项目工作区中指定文件的内容。路径相对于项目工作区根目录。',
+    description: '读取工作区指定文件内容，路径为工作区相对路径。',
     parameters: {
       type: 'object',
       properties: {
@@ -49,7 +49,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_write_file',
     name: 'workspace_write_file',
     title: '写入项目工作区文件',
-    description: '将内容写入项目工作区中的指定文件。如果文件已存在则覆盖，路径中不存在的目录会自动创建。',
+    description: '向工作区文件写入内容，自动创建父目录，已存在则覆盖。',
     parameters: {
       type: 'object',
       properties: {
@@ -68,7 +68,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_create_folder',
     name: 'workspace_create_folder',
     title: '创建项目工作区文件夹',
-    description: '在项目工作区中创建新文件夹。路径相对于项目工作区根目录，父目录会自动创建。',
+    description: '在工作区创建文件夹，自动创建父目录。',
     parameters: {
       type: 'object',
       properties: {
@@ -86,7 +86,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_delete_item',
     name: 'workspace_delete_item',
     title: '删除项目工作区文件或文件夹',
-    description: '删除项目工作区中的文件或文件夹。路径相对于项目工作区根目录。删除文件夹时会递归删除所有内容。此操作需要用户确认后方可执行。',
+    description: '删除工作区文件或文件夹，需用户确认。',
     parameters: {
       type: 'object',
       properties: {
@@ -127,7 +127,7 @@ export function createWorkspaceTools(projectId: string): ToolDefinition[] {
     id: 'workspace_rename_item',
     name: 'workspace_rename_item',
     title: '重命名项目工作区文件或文件夹',
-    description: '重命名项目工作区中的文件或文件夹。路径相对于项目工作区根目录。',
+    description: '重命名工作区文件或文件夹。',
     parameters: {
       type: 'object',
       properties: {
@@ -161,17 +161,14 @@ export function getWorkspacePrompt(projectId: string): string {
 
   return [
     `\n## 项目工作区`,
-    `你拥有一个项目工作区（Project Workspace），这是你的专属工作目录，用于存放和管理项目相关的文件。`,
-    `- 工作区根目录：${workspacePath}`,
-    `- 你可以使用 workspace_* 系列工具来操作工作区中的文件：`,
-    `  - workspace_list_files：列出工作区中的文件和文件夹`,
-    `  - workspace_read_file：读取工作区中的文件内容`,
-    `  - workspace_write_file：向工作区写入文件（如文档、报告、数据文件等）`,
-    `  - workspace_create_folder：在工作区创建文件夹来组织文件`,
-    `  - workspace_delete_item：删除工作区中的文件或文件夹（需要用户确认）`,
-    `  - workspace_rename_item：重命名工作区中的文件或文件夹`,
-    `- 所有路径都是相对于工作区根目录的相对路径`,
-    `- 当需要生成文档、报告等产出物时，使用 workspace_write_file 将内容写入工作区`,
-    `- 建议用合理的目录结构组织文件，如：docs/ 放文档、reports/ 放报告、data/ 放数据`,
+    `工作区根目录：${workspacePath}`,
+    `可用工具：`,
+    `  - workspace_list_files：列出文件`,
+    `  - workspace_read_file：读取文件`,
+    `  - workspace_write_file：写入文件`,
+    `  - workspace_create_folder：创建文件夹`,
+    `  - workspace_delete_item：删除（需确认）`,
+    `  - workspace_rename_item：重命名`,
+    `所有路径均为工作区相对路径。`,
   ].join('\n')
 }

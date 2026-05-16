@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Select, Space, Tag, Input, theme } from 'antd'
-import { RobotOutlined } from '@ant-design/icons'
+import { RobotOutlined, CloudServerOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { LLMProvider } from '../../types'
 import { getProviderModels } from '../../utils/llm'
@@ -14,6 +14,8 @@ interface LLMSelectorProps {
   onProviderChange: (providerId: string) => void
   onModelChange: (modelId: string) => void
   style?: React.CSSProperties
+  modelCategory?: 'chat' | 'embedding'
+  providers?: LLMProvider[]
 }
 
 const ellipsisStyle: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 120 }
@@ -24,22 +26,37 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   onProviderChange,
   onModelChange,
   style,
+  modelCategory,
+  providers: externalProviders,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const [providers, setProviders] = useState<LLMProvider[]>([])
+  const [internalProviders, setInternalProviders] = useState<LLMProvider[]>([])
+  const [customProviderId, setCustomProviderId] = useState(providerId || '')
   const [customModel, setCustomModel] = useState(modelId || '')
 
-  useEffect(() => {
-    window.electronAPI.llm.getProviders().then((result: any) => {
-      setProviders(result as LLMProvider[])
-    }).catch(() => {})
-  }, [])
+  const providers = externalProviders ?? internalProviders
 
-  const selectedProvider = providerId ? providers.find(p => p.id === providerId) : null
-  const modelOptions = selectedProvider
-    ? getProviderModels(selectedProvider)
-    : []
+  useEffect(() => {
+    if (externalProviders) return
+    window.electronAPI.llm.getProviders().then((result: any) => {
+      setInternalProviders(result as LLMProvider[])
+    }).catch(() => {})
+  }, [externalProviders])
+
+  useEffect(() => {
+    setCustomProviderId(providerId || '')
+  }, [providerId])
+
+  useEffect(() => {
+    setCustomModel(modelId || '')
+  }, [modelId])
+
+  const selectedProvider = customProviderId ? providers.find(p => p.id === customProviderId) : null
+  const allModels = selectedProvider ? getProviderModels(selectedProvider) : []
+  const modelOptions = modelCategory
+    ? allModels.filter(m => (m.category || 'chat') === modelCategory)
+    : allModels
 
   const hasModelOptions = modelOptions.length > 0
 
@@ -62,9 +79,9 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
   const selectMaxWidth = 160
 
   const handleProviderChange = (value: string) => {
-    onProviderChange(value)
-    onModelChange('')
+    setCustomProviderId(value)
     setCustomModel('')
+    onProviderChange(value)
   }
 
   const handleModelSelect = (value: string) => {
@@ -80,12 +97,16 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
 
   return (
     <Space size={8} style={style}>
-      <RobotOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+      {modelCategory === 'embedding' ? (
+        <CloudServerOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+      ) : (
+        <RobotOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+      )}
       <Select
         size="small"
         placeholder={t('llmSelector.selectProvider')}
         style={{ minWidth: 100, maxWidth: selectMaxWidth }}
-        value={providerId || undefined}
+        value={customProviderId || undefined}
         onChange={handleProviderChange}
         optionLabelProp="label"
         showSearch
@@ -100,12 +121,12 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
         }))}
         allowClear
       />
-      {providerId && hasModelOptions && (
+      {customProviderId && hasModelOptions && (
         <Select
           size="small"
           placeholder={t('llmSelector.selectModel')}
           style={{ minWidth: 90, maxWidth: selectMaxWidth }}
-          value={modelId || undefined}
+          value={customModel || undefined}
           onChange={handleModelSelect}
           optionLabelProp="label"
           options={modelOptions.map((opt) => ({
@@ -115,10 +136,10 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
           allowClear
         />
       )}
-      {providerId && !hasModelOptions && (
+      {customProviderId && !hasModelOptions && (
         <Input
           size="small"
-          placeholder={selectedProvider?.model || t('llmSelector.inputModel')}
+          placeholder={modelCategory === 'embedding' ? (selectedProvider?.embedding_model || t('llmSelector.inputModel')) : (selectedProvider?.model || t('llmSelector.inputModel'))}
           value={customModel}
           onChange={e => setCustomModel(e.target.value)}
           onPressEnter={handleCustomModelConfirm}

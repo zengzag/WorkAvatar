@@ -71,9 +71,18 @@ const GlobalTaskCenter: React.FC = () => {
   const [filterTrigger, setFilterTrigger] = useState<string | undefined>(undefined)
 
   useEffect(() => {
-    loadData()
-    const interval = setInterval(loadData, 30000)
-    return () => clearInterval(interval)
+    let cancelled = false
+    const loadDataAsync = async () => {
+      if (cancelled) return
+      try {
+        await loadData()
+      } catch {}
+      if (!cancelled) {
+        setTimeout(loadDataAsync, 30000)
+      }
+    }
+    loadDataAsync()
+    return () => { cancelled = true }
   }, [])
 
   const loadData = async () => {

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from './tool.types'
+import type { ToolDefinition } from './tools/types'
 import { allBuiltinTools } from './tools'
 
 export function createBuiltinTools(): ToolDefinition[] {

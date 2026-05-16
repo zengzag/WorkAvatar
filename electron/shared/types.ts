@@ -77,10 +77,13 @@ export interface Conversation {
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
 
+export type LLMModelCategory = 'chat' | 'embedding'
+
 export interface LLMModelConfig {
   id: string
   name: string
   model: string
+  category: LLMModelCategory
   temperature: number
   max_tokens: number
   top_p?: number

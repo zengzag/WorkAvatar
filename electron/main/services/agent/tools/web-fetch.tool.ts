@@ -4,7 +4,7 @@ export const webFetchTool: ToolDefinition = {
   id: 'web_fetch',
   name: 'web_fetch',
   title: '网页获取',
-  description: '获取指定URL的网页内容，提取为纯文本或Markdown格式。支持设置最大字符数限制。',
+  description: '获取指定URL的网页内容，提取为纯文本。支持限制最大字符数。',
   parameters: {
     type: 'object',
     properties: {

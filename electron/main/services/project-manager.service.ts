@@ -1,9 +1,9 @@
-import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import type { Project, File, Employee, Skill, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
+import PathService from './path.service'
+import { generateId } from './common-utils'
 
 class ProjectManagerService {
   private db: DatabaseService
@@ -33,9 +33,9 @@ class ProjectManagerService {
 
     let projects: (Project & { file_count: number })[]
     if (limit !== undefined) {
-      projects = this.db.getDb().prepare(query + ' LIMIT ? OFFSET ?').all(limit, offset || 0) as any
+      projects = this.db.getDb().prepare(query + ' LIMIT ? OFFSET ?').all(limit, offset || 0) as (Project & { file_count: number })[]
     } else {
-      projects = this.db.getDb().prepare(query).all() as any
+      projects = this.db.getDb().prepare(query).all() as (Project & { file_count: number })[]
     }
 
     return { projects, total }
@@ -46,10 +46,9 @@ class ProjectManagerService {
   }
 
   createProject(name: string, description: string = '', rootPath?: string): Project {
-    const projectId = crypto.randomUUID()
-    const shortId = crypto.randomBytes(4).toString('hex')
-    const basePath = rootPath || path.join(app.getPath('documents'))
-    const projectRoot = path.join(basePath, 'WorkAvatar', 'projects', shortId)
+    const projectId = generateId()
+    const basePath = rootPath || PathService.getInstance().getDataDir()
+    const projectRoot = path.join(basePath, 'WorkAvatar', 'projects', projectId)
 
     if (!fs.existsSync(projectRoot)) {
       fs.mkdirSync(projectRoot, { recursive: true })
@@ -166,7 +165,7 @@ class ProjectManagerService {
   }
 
   createEmployee(projectId: string, name: string, description: string = '', profileJson: string = ''): Employee {
-    const employeeId = crypto.randomUUID()
+    const employeeId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().prepare(`
@@ -229,7 +228,7 @@ class ProjectManagerService {
   }
 
   createSkill(employeeId: string, type: Skill['type'], name: string, description: string = '', promptTemplate?: string): Skill {
-    const skillId = crypto.randomUUID()
+    const skillId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().prepare(`
@@ -289,7 +288,7 @@ class ProjectManagerService {
   }
 
   createConversation(employeeId: string, skillId?: string, title: string = ''): Conversation {
-    const conversationId = crypto.randomUUID()
+    const conversationId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().prepare(`

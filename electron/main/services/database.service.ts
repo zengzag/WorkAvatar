@@ -1,21 +1,21 @@
 import Database from 'better-sqlite3'
-import path from 'path'
 import fs from 'fs'
-import { app } from 'electron'
+import PathService from './path.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('DB')
 
 class DatabaseService {
   private db: Database.Database
   private static instance: DatabaseService
 
   private constructor() {
-    const isDev = !app.isPackaged
-    const basePath = isDev
-      ? path.join(process.cwd(), '.workavatar-data')
-      : app.getPath('userData')
+    const pathService = PathService.getInstance()
+    const basePath = pathService.getDataDir()
     if (!fs.existsSync(basePath)) {
       fs.mkdirSync(basePath, { recursive: true })
     }
-    const dbPath = path.join(basePath, 'workavatar.db')
+    const dbPath = pathService.getDbPath()
     this.db = new Database(dbPath, {
       readonly: false,
       timeout: 5000
@@ -238,183 +238,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_skills_employee ON employee_skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_skills_skill ON employee_skills(skill_id);
 
-      CREATE TABLE IF NOT EXISTS knowledge_bases (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        root_path TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE TABLE IF NOT EXISTS kb_documents (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        file_id TEXT REFERENCES files(id) ON DELETE SET NULL,
-        original_name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        size INTEGER NOT NULL DEFAULT 0,
-        hash TEXT NOT NULL,
-        content_text TEXT,
-        parsed_json TEXT,
-        parse_status TEXT NOT NULL DEFAULT 'pending',
-        parse_error TEXT,
-        parse_progress REAL NOT NULL DEFAULT 0,
-        parse_stage TEXT DEFAULT '',
-        parse_detail TEXT DEFAULT '',
-        processed_pages INTEGER DEFAULT 0,
-        total_pages INTEGER DEFAULT 0,
-        processed_chunks INTEGER DEFAULT 0,
-        total_chunks INTEGER DEFAULT 0,
-        parse_speed REAL DEFAULT 0,
-        parse_eta INTEGER DEFAULT 0,
-        parse_state_json TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE TABLE IF NOT EXISTS kb_project_links (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(hash);
-      CREATE INDEX IF NOT EXISTS idx_kb_project_links_kb ON kb_project_links(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_project_links_project ON kb_project_links(project_id);
-
-      CREATE TABLE IF NOT EXISTS wiki_compile_cache (
-        id TEXT PRIMARY KEY,
-        source_hash TEXT NOT NULL,
-        source_slug TEXT NOT NULL,
-        analysis_json TEXT NOT NULL,
-        kb_id TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_wiki_compile_cache_hash ON wiki_compile_cache(source_hash);
-
-      CREATE TABLE IF NOT EXISTS kb_chapters (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
-        title TEXT NOT NULL,
-        chapter_index INTEGER NOT NULL DEFAULT 0,
-        start_offset INTEGER NOT NULL DEFAULT 0,
-        end_offset INTEGER NOT NULL DEFAULT 0,
-        content TEXT NOT NULL DEFAULT '',
-        summary TEXT,
-        keywords_json TEXT DEFAULT '[]',
-        entities_json TEXT DEFAULT '[]',
-        vector_id TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_chapters_document ON kb_chapters(document_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_chapters_kb ON kb_chapters(kb_id);
-
-      CREATE TABLE IF NOT EXISTS kb_document_summaries (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        document_id TEXT NOT NULL UNIQUE REFERENCES kb_documents(id) ON DELETE CASCADE,
-        summary TEXT NOT NULL DEFAULT '',
-        key_entities_json TEXT DEFAULT '[]',
-        timeline_json TEXT DEFAULT '[]',
-        keywords_json TEXT DEFAULT '[]',
-        main_topics_json TEXT DEFAULT '[]',
-        vector_id TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_document_summaries_kb ON kb_document_summaries(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_document_summaries_doc ON kb_document_summaries(document_id);
-
-      CREATE TABLE IF NOT EXISTS kb_global_summaries (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL UNIQUE REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        summary TEXT NOT NULL DEFAULT '',
-        key_topics_json TEXT DEFAULT '[]',
-        key_entities_json TEXT DEFAULT '[]',
-        global_timeline_json TEXT DEFAULT '[]',
-        vector_id TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_global_summaries_kb ON kb_global_summaries(kb_id);
-
-      CREATE TABLE IF NOT EXISTS kb_entities (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL DEFAULT 'other',
-        description TEXT DEFAULT '',
-        aliases_json TEXT DEFAULT '[]',
-        attributes_json TEXT DEFAULT '{}',
-        mention_count INTEGER NOT NULL DEFAULT 0,
-        first_seen_doc_id TEXT REFERENCES kb_documents(id) ON DELETE SET NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entities_kb ON kb_entities(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entities_name ON kb_entities(kb_id, name);
-
-      CREATE TABLE IF NOT EXISTS kb_entity_relations (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        source_entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        target_entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        relation_type TEXT NOT NULL DEFAULT 'related_to',
-        description TEXT DEFAULT '',
-        source_document_id TEXT REFERENCES kb_documents(id) ON DELETE SET NULL,
-        confidence REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_source ON kb_entity_relations(source_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_target ON kb_entity_relations(target_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_kb ON kb_entity_relations(kb_id);
-
-      CREATE TABLE IF NOT EXISTS kb_entity_mentions (
-        id TEXT PRIMARY KEY,
-        entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
-        chapter_id TEXT REFERENCES kb_chapters(id) ON DELETE SET NULL,
-        context_text TEXT DEFAULT '',
-        start_offset INTEGER NOT NULL DEFAULT 0,
-        end_offset INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_entity ON kb_entity_mentions(entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_document ON kb_entity_mentions(document_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_chapter ON kb_entity_mentions(chapter_id);
-
-      CREATE TABLE IF NOT EXISTS kb_processing_jobs (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        document_id TEXT REFERENCES kb_documents(id) ON DELETE CASCADE,
-        job_type TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        progress INTEGER NOT NULL DEFAULT 0,
-        total_steps INTEGER NOT NULL DEFAULT 0,
-        current_step TEXT DEFAULT '',
-        error_message TEXT,
-        started_at INTEGER,
-        completed_at INTEGER,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_kb ON kb_processing_jobs(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_status ON kb_processing_jobs(status);
-
       CREATE TABLE IF NOT EXISTS background_tasks (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -497,46 +320,18 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
     this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'\'')
-    this.addColumnIfNotExists('kb_documents', 'parse_progress', 'REAL NOT NULL DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'parse_stage', 'TEXT DEFAULT \'\'')
-    this.addColumnIfNotExists('kb_documents', 'parse_detail', 'TEXT DEFAULT \'\'')
-    this.addColumnIfNotExists('kb_documents', 'processed_pages', 'INTEGER DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'total_pages', 'INTEGER DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'processed_chunks', 'INTEGER DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'total_chunks', 'INTEGER DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'parse_speed', 'REAL DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'parse_eta', 'INTEGER DEFAULT 0')
-    this.addColumnIfNotExists('kb_documents', 'parse_state_json', 'TEXT')
-    this.addColumnIfNotExists('kb_documents', 'is_reused', 'INTEGER NOT NULL DEFAULT 0')
-    this.addColumnIfNotExists('kb_processing_jobs', 'paused_at', 'INTEGER')
-    this.addColumnIfNotExists('kb_processing_jobs', 'resume_state_json', 'TEXT')
 
     this.recoverStuckDocs()
   }
 
   private recoverStuckDocs(): void {
-    const parsingResult = this.db.prepare(`
-      UPDATE kb_documents 
-      SET parse_status = 'paused'
-      WHERE parse_status = 'parsing'
-    `).run()
-    if (parsingResult.changes > 0) {
-      console.log(`[DB] Recovered ${parsingResult.changes} document(s) from parsing to paused status`)
-    }
-
-    this.db.prepare(`
-      UPDATE kb_processing_jobs 
-      SET status = 'paused'
-      WHERE status = 'running'
-    `).run()
-
     const runningTasksResult = this.db.prepare(`
       UPDATE background_tasks
       SET status = 'paused'
       WHERE status IN ('running', 'pending')
     `).run()
     if (runningTasksResult.changes > 0) {
-      console.log(`[DB] Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
+      logger.info(`Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
     }
   }
 

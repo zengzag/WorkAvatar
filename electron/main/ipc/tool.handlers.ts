@@ -10,6 +10,7 @@ import type DatabaseService from '../services/database.service'
 import type ToolEngineService from '../services/tool-engine.service'
 import type SkillRegistryService from '../services/skill-registry.service'
 import { allBuiltinTools } from '../services/agent/builtin-tools'
+import { generateId } from '../services/common-utils'
 
 function getUnifiedBuiltinToolCatalog() {
   const agentTools = allBuiltinTools.map(t => ({
@@ -85,10 +86,9 @@ export function registerToolHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (_, params: ToolAssignParams) => {
-    const crypto = require('crypto')
     db.prepare(
       'INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = ?'
-    ).run(crypto.randomUUID(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
+    ).run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
     return { success: true }
   })
 
@@ -102,8 +102,7 @@ export function registerToolHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.MCP_SERVER_CREATE, (_, params: MCPServerCreateParams) => {
-    const crypto = require('crypto')
-    const id = crypto.randomUUID()
+    const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     db.prepare(
       'INSERT INTO mcp_servers (id, name, command, args_json, env_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'

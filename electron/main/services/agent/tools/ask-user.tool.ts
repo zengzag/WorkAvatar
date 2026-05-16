@@ -5,7 +5,7 @@ export const askUserTool: ToolDefinition = {
   id: 'ask_user',
   name: 'ask_user',
   title: '询问用户',
-  description: '向用户提问并获取回复。支持三种交互类型：1) confirm - 确认对话框，获取用户的是/否选择；2) select - 选项列表，让用户从多个选项中选择一个；3) input - 文本输入，收集用户的文字输入。当需要用户决策、确认操作或获取信息时使用此工具。',
+  description: '向用户发起交互：confirm(确认)、select(选择)、input(文本输入)。',
   parameters: {
     type: 'object',
     properties: {

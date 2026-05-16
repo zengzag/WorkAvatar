@@ -5,7 +5,7 @@ export const randomUtilsTool: ToolDefinition = {
   id: 'random_utils',
   name: 'random_utils',
   title: '随机工具',
-  description: '生成随机数、UUID、随机选择等工具',
+  description: '生成随机数、UUID、随机选择、打乱顺序、随机布尔值。',
   parameters: {
     type: 'object',
     properties: {
@@ -35,7 +35,7 @@ export const randomUtilsTool: ToolDefinition = {
           }
           return { success: true, result: count === 1 ? results[0] : results }
         }
-        case 'uuid': {
+        case 'uid': {
           const count = Math.min(Math.max(args.count || 1, 1), 100)
           const results: string[] = []
           for (let i = 0; i < count; i++) {

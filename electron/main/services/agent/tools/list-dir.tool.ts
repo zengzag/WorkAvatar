@@ -14,7 +14,7 @@ export const listDirTool: ToolDefinition = {
   id: 'list_dir',
   name: 'list_dir',
   title: '列出目录',
-  description: '列出指定目录下的文件和子目录。支持递归列出，自动忽略常见的临时目录。',
+  description: '列出目录下的文件和子目录，支持递归，自动忽略临时目录。',
   parameters: {
     type: 'object',
     properties: {

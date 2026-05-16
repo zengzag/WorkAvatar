@@ -1,9 +1,9 @@
 import type { ToolDefinition } from '../tool.types'
-import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 
 export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
-  const db = DatabaseService.getInstance()
+  const kbDb = KBDatabaseService.getInstance()
 
   const validateKbId = (kbId: string | undefined): string | null => {
     if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
@@ -19,7 +19,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_list_entities',
     name: 'kb_list_entities',
     title: '浏览知识库实体',
-    description: `浏览知识库中的实体列表，支持按类型筛选和搜索。`,
+    description: `浏览知识库实体列表，支持按类型筛选和搜索。`,
     parameters: {
       type: 'object',
       properties: {
@@ -71,7 +71,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
         sql += ' ORDER BY mention_count DESC LIMIT ?'
         params.push(topK)
 
-        const entities = db.getDb().prepare(sql).all(...params) as any[]
+        const entities = kbDb.getDb().prepare(sql).all(...params) as any[]
 
         if (entities.length === 0) {
           return {
@@ -123,7 +123,7 @@ export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition
     id: 'kb_entity_detail',
     name: 'kb_entity_detail',
     title: '获取实体详情',
-    description: `获取某个实体的详细信息，包括描述、属性、关系和提及记录。`,
+    description: `获取实体详情，包括描述、属性、关系和提及记录。`,
     parameters: {
       type: 'object',
       properties: {

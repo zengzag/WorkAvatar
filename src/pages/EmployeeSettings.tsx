@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -98,17 +98,6 @@ const EmployeeSettings: React.FC = () => {
   const [formLlmProviderId, setFormLlmProviderId] = useState<string>('')
 
   useEffect(() => {
-    if (id) {
-      loadEmployee()
-      loadProviders()
-      loadTools()
-      loadMCPServers()
-      loadInstalledSkills()
-      loadEmployeeSkills()
-    }
-  }, [id])
-
-  useEffect(() => {
     if (employee) {
       form.setFieldsValue({
         name: employee.name,
@@ -124,57 +113,57 @@ const EmployeeSettings: React.FC = () => {
     }
   }, [employee])
 
-  const loadEmployee = async () => {
+  const loadEmployee = useCallback(async () => {
     try {
       const result = await window.electronAPI.employee.get(id!)
       setEmployee(result)
     } catch {
       message.error(t('employeeSettings.loadFailed'))
     }
-  }
+  }, [id, message, t])
 
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
     } catch {}
-  }
+  }, [])
 
-  const loadLinkedKBs = async (projectId: string) => {
+  const loadLinkedKBs = useCallback(async (projectId: string) => {
     try {
       const result = await window.electronAPI.kb.getKBsForProject(projectId)
       setLinkedKBs(result)
     } catch {}
-  }
+  }, [])
 
-  const loadTools = async () => {
+  const loadTools = useCallback(async () => {
     try {
       const result = await window.electronAPI.tool.getEmployeeTools({ employee_id: id! })
       setEmployeeTools(result || [])
     } catch {
       console.error('加载工具失败')
     }
-  }
+  }, [id])
 
-  const loadMCPServers = async () => {
+  const loadMCPServers = useCallback(async () => {
     try {
       const result = await window.electronAPI.mcp.listServers()
       setMcpServers(result || [])
     } catch {
       console.error('加载 MCP 服务器失败')
     }
-  }
+  }, [])
 
-  const loadInstalledSkills = async () => {
+  const loadInstalledSkills = useCallback(async () => {
     try {
       const result = await window.electronAPI.skillRegistry.list()
       setInstalledSkills(result || [])
     } catch {
       console.error('加载已安装 Skills 失败')
     }
-  }
+  }, [])
 
-  const loadEmployeeSkills = async () => {
+  const loadEmployeeSkills = useCallback(async () => {
     try {
       const result = await window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: id! })
       setEmployeeSkills(result.assigned || [])
@@ -182,7 +171,18 @@ const EmployeeSettings: React.FC = () => {
     } catch {
       console.error('加载员工 Skills 失败')
     }
-  }
+  }, [id])
+
+  useEffect(() => {
+    if (id) {
+      loadEmployee()
+      loadProviders()
+      loadTools()
+      loadMCPServers()
+      loadInstalledSkills()
+      loadEmployeeSkills()
+    }
+  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -350,7 +350,7 @@ const EmployeeSettings: React.FC = () => {
           name: values.name,
           command: values.command,
           args: values.args ? values.args.split('\n').filter((s: string) => s.trim()) : [],
-          env: values.env ? JSON.parse(values.env) : {},
+          env: values.env ? (() => { try { return JSON.parse(values.env) } catch { message.error(t('employeeSettings.invalidJson')); throw new Error('invalid_json') } })() : {},
         })
         message.success(t('employeeSettings.mcpCreated'))
       }

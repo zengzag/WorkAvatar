@@ -191,22 +191,13 @@ const electronAPI = {
     showOpenDialog: (params: AppShowOpenDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, params),
     showSaveDialog: (params: AppShowSaveDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, params),
     showMessageBox: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_MESSAGE_BOX, params),
+    getDataDir: () => ipcRenderer.invoke(IPC_CHANNELS.PATH_GET_DATA_DIR),
+    setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
   },
 
   ocr: {
     recognize: (params: { image_path: string; language?: string }) => ipcRenderer.invoke(IPC_CHANNELS.OCR_RECOGNIZE, params),
     status: () => ipcRenderer.invoke(IPC_CHANNELS.OCR_STATUS),
-  },
-
-  rule: {
-    extractFile: (params: { file_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.RULE_EXTRACT_FILE, params),
-    extractProject: (params: { project_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.RULE_EXTRACT_PROJECT, params),
-  },
-
-  sandbox: {
-    testSkill: (params: { skill_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_TEST_SKILL, params),
-    testEmployee: (params: { employee_id: string; provider_id?: string; model_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_TEST_EMPLOYEE, params),
-    generateCases: (params: { skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SANDBOX_GENERATE_CASES, params),
   },
 
   tool: {
@@ -325,6 +316,9 @@ const electronAPI = {
     },
     search: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH, params),
     advancedSearch: (params: { kb_id: string; query: string; top_k?: number; document_type?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_ADVANCED_SEARCH, params),
+    searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
+    searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
+    rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),
   },
 
   interaction: {

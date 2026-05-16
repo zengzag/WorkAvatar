@@ -6,7 +6,7 @@ export const readFileTool: ToolDefinition = {
   id: 'read_file',
   name: 'read_file',
   title: '读取文件',
-  description: '读取本地文件的内容。支持文本文件，可指定读取的起始行和最大行数。',
+  description: '读取本地文本文件，支持指定起始行和最大行数。',
   parameters: {
     type: 'object',
     properties: {

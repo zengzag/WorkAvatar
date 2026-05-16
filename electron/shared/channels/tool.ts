@@ -23,13 +23,6 @@ export const TOOL_CHANNELS = {
 
   OCR_RECOGNIZE: 'ocr:recognize',
   OCR_STATUS: 'ocr:status',
-
-  RULE_EXTRACT_FILE: 'rule:extract-file',
-  RULE_EXTRACT_PROJECT: 'rule:extract-project',
-
-  SANDBOX_TEST_SKILL: 'sandbox:test-skill',
-  SANDBOX_TEST_EMPLOYEE: 'sandbox:test-employee',
-  SANDBOX_GENERATE_CASES: 'sandbox:generate-cases',
 } as const
 
 export interface ToolExecuteParams {

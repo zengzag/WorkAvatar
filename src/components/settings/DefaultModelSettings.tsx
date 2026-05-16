@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, Space, Typography, App, theme, Alert } from 'antd'
-import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined } from '@ant-design/icons'
+import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
-import { getAllSceneDefaultModels, setSceneDefaultModel } from '../../utils/default-model'
+import { getAllSceneDefaultModels, getSceneDefaultModel, setSceneDefaultModel } from '../../utils/default-model'
 import type { SceneKey, SceneDefaultModel } from '../../utils/default-model'
+import type { LLMProvider } from '../../types'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -23,11 +24,21 @@ const DefaultModelSettings: React.FC = () => {
     workbench: null,
     knowledge: null,
     quick: null,
+    embedding: null,
   })
+  const [providers, setProviders] = useState<LLMProvider[]>([])
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.llm.getProviders()
+      setProviders(result as LLMProvider[])
+    } catch {}
+  }, [])
 
   useEffect(() => {
+    loadProviders()
     loadConfigs()
-  }, [])
+  }, [loadProviders])
 
   const loadConfigs = async () => {
     try {
@@ -41,6 +52,7 @@ const DefaultModelSettings: React.FC = () => {
     { key: 'workbench', icon: <UserOutlined style={{ fontSize: 20, color: '#52c41a' }} /> },
     { key: 'knowledge', icon: <ThunderboltOutlined style={{ fontSize: 20, color: '#722ed1' }} /> },
     { key: 'quick', icon: <BugOutlined style={{ fontSize: 20, color: '#fa8c16' }} /> },
+    { key: 'embedding', icon: <CloudServerOutlined style={{ fontSize: 20, color: '#eb2f96' }} /> },
   ]
 
   const handleProviderChange = (scene: SceneKey) => async (providerId: string) => {
@@ -59,7 +71,22 @@ const DefaultModelSettings: React.FC = () => {
 
   const handleModelChange = (scene: SceneKey) => async (modelId: string) => {
     const current = configs[scene]
-    if (!current) return
+    if (!current) {
+      const cached = await getSceneDefaultModel(scene)
+      if (!cached) return
+      const newConfig: SceneDefaultModel = {
+        ...cached,
+        model_id: modelId,
+      }
+      try {
+        await setSceneDefaultModel(scene, newConfig)
+        setConfigs(prev => ({ ...prev, [scene]: newConfig }))
+        message.success(t('settings.defaultModelSaved'))
+      } catch {
+        message.error(t('settings.defaultModelSaveFailed'))
+      }
+      return
+    }
     const newConfig: SceneDefaultModel = {
       ...current,
       model_id: modelId,
@@ -132,6 +159,8 @@ const DefaultModelSettings: React.FC = () => {
                     modelId={config?.model_id || ''}
                     onProviderChange={handleProviderChange(scene.key)}
                     onModelChange={handleModelChange(scene.key)}
+                    modelCategory={scene.key === 'embedding' ? 'embedding' : 'chat'}
+                    providers={providers}
                     style={{ flexShrink: 0 }}
                   />
                   {config?.provider_id && (

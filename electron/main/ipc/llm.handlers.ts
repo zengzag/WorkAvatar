@@ -10,7 +10,7 @@ import type {
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
-import { randomUUID } from 'crypto'
+import { generateId } from '../services/common-utils'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -82,7 +82,7 @@ export function registerLLMHandlers(
     const abortController = new AbortController()
     activeAbortController = abortController
 
-    const sessionId = randomUUID()
+    const sessionId = generateId()
     interactionService.registerSession(sessionId, event.sender)
 
     try {

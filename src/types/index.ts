@@ -6,6 +6,7 @@ export type {
   Conversation,
   ParseResult,
   LLMProviderType,
+  LLMModelCategory,
   LLMModelConfig,
   LLMProvider,
 } from '../../electron/shared/types'

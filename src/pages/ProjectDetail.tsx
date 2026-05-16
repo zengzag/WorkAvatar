@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
+import KBListItem from '../components/common/KBListItem'
 import ProjectWorkspace from '../components/project/ProjectWorkspace'
 import type { Employee } from '../types'
 import type { TabsProps } from 'antd'
@@ -183,60 +184,31 @@ const ProjectDetail: React.FC = () => {
                   {linkedKBs.length > 0 ? (
                     <div>
                       {linkedKBs.map((kb: any) => (
-                        <div
+                        <KBListItem
                           key={kb.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '12px 0',
-                            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                            <div
-                              style={{
-                                width: 48,
-                                height: 48,
-                                borderRadius: 8,
-                                background: token.colorPrimaryBg,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                flexShrink: 0,
-                              }}
-                            >
-                              <DatabaseOutlined style={{ fontSize: 24, color: '#722ed1' }} />
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                              <Tooltip title={kb.name}>
-                                <Text strong ellipsis style={{ display: 'block' }}>{kb.name}</Text>
-                              </Tooltip>
-                              <Tooltip title={kb.description || t('common.noDescription')}>
-                                <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || t('common.noDescription')}</Text>
-                              </Tooltip>
-                              <Tag style={{ marginTop: 4 }}>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
-                            </div>
-                          </div>
-                          <Space>
-                            <Button
-                              type="link"
-                              icon={<EyeOutlined />}
-                              onClick={() => navigate('/knowledge-base')}
-                            >
-                              {t('projectManager.view')}
-                            </Button>
-                            <Popconfirm
-                              title={t('projectDetail.confirmUnlink')}
-                              description={t('projectDetail.unlinkDesc')}
-                              onConfirm={() => handleUnlinkKB(kb.id)}
-                            >
-                              <Button type="link" danger icon={<DisconnectOutlined />}>
-                                {t('projectDetail.unlink')}
+                          kb={kb}
+                          iconSize={48}
+                          actions={
+                            <>
+                              <Button
+                                type="link"
+                                icon={<EyeOutlined />}
+                                onClick={() => navigate('/knowledge-base')}
+                              >
+                                {t('projectManager.view')}
                               </Button>
-                            </Popconfirm>
-                          </Space>
-                        </div>
+                              <Popconfirm
+                                title={t('projectDetail.confirmUnlink')}
+                                description={t('projectDetail.unlinkDesc')}
+                                onConfirm={() => handleUnlinkKB(kb.id)}
+                              >
+                                <Button type="link" danger icon={<DisconnectOutlined />}>
+                                  {t('projectDetail.unlink')}
+                                </Button>
+                              </Popconfirm>
+                            </>
+                          }
+                        />
                       ))}
                     </div>
                   ) : (
@@ -386,49 +358,19 @@ const ProjectDetail: React.FC = () => {
             {allKBs.map((kb: any) => {
               const isLinked = linkedKBs.some((lkb: any) => lkb.id === kb.id)
               return (
-                <div
+                <KBListItem
                   key={kb.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '12px 0',
-                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 8,
-                        background: token.colorPrimaryBg,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <DatabaseOutlined style={{ fontSize: 20, color: '#722ed1' }} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                      <Tooltip title={kb.name}>
-                        <Text ellipsis style={{ display: 'block' }}>{kb.name}</Text>
-                      </Tooltip>
-                      <Tooltip title={kb.description || t('common.noDescription')}>
-                        <Text type="secondary" ellipsis style={{ display: 'block' }}>{kb.description || t('common.noDescription')}</Text>
-                      </Tooltip>
-                      <Tag style={{ marginTop: 4 }}>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
-                    </div>
-                  </div>
-                  {isLinked ? (
-                    <Tag color="green">{t('projectDetail.linked')}</Tag>
-                  ) : (
-                    <Button type="primary" size="small" icon={<LinkOutlined />} onClick={() => handleLinkKB(kb.id)}>
-                      {t('knowledgeBase.link')}
-                    </Button>
-                  )}
-                </div>
+                  kb={kb}
+                  actions={
+                    isLinked ? (
+                      <Tag color="green">{t('projectDetail.linked')}</Tag>
+                    ) : (
+                      <Button type="primary" size="small" icon={<LinkOutlined />} onClick={() => handleLinkKB(kb.id)}>
+                        {t('knowledgeBase.link')}
+                      </Button>
+                    )
+                  }
+                />
               )
             })}
           </div>

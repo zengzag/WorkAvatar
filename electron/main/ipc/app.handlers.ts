@@ -9,12 +9,10 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type OCRService from '../services/ocr.service'
-import type RuleExtractionService from '../services/rule-extraction.service'
-
+import PathService from '../services/path.service'
 export function registerAppHandlers(
   db: ReturnType<DatabaseService['getDb']>,
-  ocrService: OCRService,
-  ruleExtractor: RuleExtractionService
+  ocrService: OCRService
 ) {
   ipcMain.handle(IPC_CHANNELS.PING, () => {
     return 'pong from main process'
@@ -97,21 +95,12 @@ export function registerAppHandlers(
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.RULE_EXTRACT_FILE, async (_, params: { file_id: string; provider_id?: string; model_id?: string }) => {
-    try {
-      const result = await ruleExtractor.extractFromFile(params.file_id, params.provider_id, params.model_id)
-      return { success: true, result }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    }
+  ipcMain.handle(IPC_CHANNELS.PATH_GET_DATA_DIR, () => {
+    return PathService.getInstance().getDataDir()
   })
 
-  ipcMain.handle(IPC_CHANNELS.RULE_EXTRACT_PROJECT, async (_, params: { project_id: string; provider_id?: string; model_id?: string }) => {
-    try {
-      const result = await ruleExtractor.extractFromProject(params.project_id, params.provider_id, params.model_id)
-      return { success: true, result }
-    } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    }
+  ipcMain.handle(IPC_CHANNELS.PATH_SET_DATA_DIR, (_, newDir: string) => {
+    return PathService.getInstance().setDataDir(newDir)
   })
+
 }

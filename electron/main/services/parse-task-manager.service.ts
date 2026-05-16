@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
-import DatabaseService from './database.service'
+import KBDatabaseService from './kb-database.service'
 import TaskQueueService, { type BackgroundTask } from './task-queue.service'
 
 export interface ParseProgress {
@@ -32,12 +32,14 @@ export interface ActiveParseTask {
 
 class ParseTaskManager {
   private activeTasks: Map<string, ActiveParseTask> = new Map()
-  private db: DatabaseService
+  private kbDb: KBDatabaseService
   private taskQueue: TaskQueueService
   private static instance: ParseTaskManager
 
+  private get db() { return this.kbDb.getDb() }
+
   private constructor() {
-    this.db = DatabaseService.getInstance()
+    this.kbDb = KBDatabaseService.getInstance()
     this.taskQueue = TaskQueueService.getInstance()
   }
 
@@ -289,7 +291,7 @@ class ParseTaskManager {
     })
 
     this.updateDocParseStatus(docId, 'failed', task.progress.progress, task.progress.stage, error)
-    this.db.getDb().prepare(
+    this.db.prepare(
       "UPDATE kb_documents SET parse_error = ?, updated_at = unixepoch() WHERE id = ?"
     ).run(error, docId)
     this.activeTasks.delete(docId)
@@ -337,13 +339,13 @@ class ParseTaskManager {
       pausedTime: task.pausedTime,
       startTime: task.startTime,
     }
-    this.db.getDb().prepare(
+    this.db.prepare(
       "UPDATE kb_documents SET parse_state_json = ?, updated_at = unixepoch() WHERE id = ?"
     ).run(JSON.stringify(state), docId)
   }
 
   private loadSavedProgress(docId: string): ParseProgress | null {
-    const row = this.db.getDb().prepare(
+    const row = this.db.prepare(
       "SELECT parse_state_json FROM kb_documents WHERE id = ?"
     ).get(docId) as any
 
@@ -358,7 +360,7 @@ class ParseTaskManager {
   }
 
   private async restoreParseState(docId: string) {
-    const row = this.db.getDb().prepare(
+    const row = this.db.prepare(
       "SELECT parse_state_json FROM kb_documents WHERE id = ?"
     ).get(docId) as any
 
@@ -382,7 +384,7 @@ class ParseTaskManager {
     stage: string,
     detail: string
   ) {
-    this.db.getDb().prepare(`
+    this.db.prepare(`
       UPDATE kb_documents 
       SET parse_status = ?, parse_progress = ?, parse_stage = ?, parse_detail = ?, updated_at = unixepoch()
       WHERE id = ?
@@ -390,7 +392,7 @@ class ParseTaskManager {
   }
 
   private updateDocParseProgress(docId: string, progress: ParseProgress) {
-    this.db.getDb().prepare(`
+    this.db.prepare(`
       UPDATE kb_documents 
       SET parse_progress = ?, parse_stage = ?, parse_detail = ?,
           processed_pages = ?, total_pages = ?, processed_chunks = ?, total_chunks = ?,
@@ -424,7 +426,7 @@ class ParseTaskManager {
   }
 
   getPausedDocIds(): string[] {
-    const rows = this.db.getDb().prepare(
+    const rows = this.db.prepare(
       "SELECT id FROM kb_documents WHERE parse_status = 'paused'"
     ).all() as any[]
     return rows.map(r => r.id)

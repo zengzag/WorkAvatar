@@ -4,7 +4,7 @@ export const jsonUtilsTool: ToolDefinition = {
   id: 'json_utils',
   name: 'json_utils',
   title: 'JSON工具',
-  description: 'JSON数据处理工具：解析、格式化、查询、验证等',
+  description: 'JSON解析、序列化、路径查询、验证、格式化、压缩。',
   parameters: {
     type: 'object',
     properties: {

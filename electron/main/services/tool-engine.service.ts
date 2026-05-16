@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import DatabaseService from './database.service'
 import { safeCalculate, formatDate } from './common-utils'
+import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 
 export interface ToolDefinition {
   id: string
@@ -130,12 +131,12 @@ class ToolEngineService {
   }
 
   getToolsForEmployee(employeeId: string): ToolDefinition[] {
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
     if (!employee) return []
 
     const enabledToolIds = this.db.getDb().prepare(
       'SELECT tool_id FROM employee_tools WHERE employee_id = ? AND is_enabled = 1'
-    ).all(employeeId) as any[]
+    ).all(employeeId) as DBEmployeeTool[]
 
     const toolIds = enabledToolIds.map((r) => r.tool_id)
     return this.getAllTools().filter((t) => toolIds.includes(t.id))

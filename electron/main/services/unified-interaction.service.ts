@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import { ipcMain } from 'electron'
-import { randomUUID } from 'crypto'
+import { generateId } from './common-utils'
 
 export interface InteractionOption {
   label: string
@@ -90,7 +90,7 @@ class UnifiedInteractionService {
       return this.createDeniedResponse(request, 'Session not found or window closed')
     }
 
-    const id = randomUUID()
+    const id = generateId()
     const fullRequest: InteractionRequest = { ...request, id }
     const timeout = request.timeout || 300000
 

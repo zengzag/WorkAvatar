@@ -103,6 +103,15 @@ const CreationWizard: React.FC = () => {
   const [analyzeProgress, setAnalyzeProgress] = useState<number>(0)
   const progressCleanupRef = useRef<(() => void) | null>(null)
 
+  useEffect(() => {
+    return () => {
+      if (progressCleanupRef.current) {
+        progressCleanupRef.current()
+        progressCleanupRef.current = null
+      }
+    }
+  }, [])
+
   const [form] = Form.useForm()
 
   useEffect(() => {
@@ -112,7 +121,7 @@ const CreationWizard: React.FC = () => {
         description: profile.roleDescription,
       })
     }
-  }, [currentStep])
+  }, [currentStep, profile, form])
 
   useEffect(() => {
     if (id) {
@@ -326,7 +335,12 @@ const CreationWizard: React.FC = () => {
   }
 
   const handleCreateEmployee = async () => {
-    const values = await form.validateFields()
+    let values
+    try {
+      values = await form.validateFields()
+    } catch {
+      return
+    }
     setCreating(true)
 
     try {
@@ -680,11 +694,11 @@ const CreationWizard: React.FC = () => {
         </Form.Item>
 
         <Form.Item name="llm_model" label={t('creationWizard.modelName')}>
-          {step5ProviderId && getProviderModels(providers.find(p => p.id === step5ProviderId)!).length > 0 ? (
+          {step5ProviderId && getProviderModels(providers.find(p => p.id === step5ProviderId) || {}).length > 0 ? (
             <Select
               placeholder={t('creationWizard.selectModel')}
               allowClear
-              options={getProviderModelOptions(providers.find(p => p.id === step5ProviderId)!)}
+              options={getProviderModelOptions(providers.find(p => p.id === step5ProviderId) || {})}
             />
           ) : (
             <Input placeholder={t('creationWizard.modelPlaceholder')} />

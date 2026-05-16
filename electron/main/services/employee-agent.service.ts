@@ -3,13 +3,20 @@ import LLMClientService from './llm-client.service'
 import ToolEngineService from './tool-engine.service'
 import SkillRegistryService from './skill-registry.service'
 import KnowledgeBaseService from './kb.service'
-import { LightAgent } from './agent/agent'
+import { EmployeeAgent } from './agent/business/employee-agent'
+import type { EmployeeAgentConfig } from './agent/business/employee-agent'
+import type { BaseAgentOptions } from './agent/core/base-agent'
 import { createBuiltinTools } from './agent/builtin-tools'
 import { createKBAgentTools } from './agent/tools/kb-agent-tools'
 import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
-import { ToolDefinition } from './agent/tool.types'
-import { Message } from './agent/agent.types'
+import type { ToolDefinition } from './agent/tools/types'
+import type { Message } from './agent/core/types'
+import { KNOWLEDGE_QUERY_GUIDANCE } from './agent/business/prompts'
 import type { LLMModelConfig } from '../../shared/types'
+import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
+import { createLogger } from './logger'
+
+const logger = createLogger('AgentEvent')
 
 interface EmployeeChatStreamParams {
   employee_id: string
@@ -38,7 +45,7 @@ class EmployeeAgentService {
   private llmClient: LLMClientService
   private skillRegistry: SkillRegistryService
   private kbService: KnowledgeBaseService
-  private agents: Map<string, LightAgent> = new Map()
+  private agents: Map<string, EmployeeAgent> = new Map()
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -55,13 +62,13 @@ class EmployeeAgentService {
     return EmployeeAgentService.instance
   }
 
-  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean): Promise<LightAgent> {
+  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean): Promise<EmployeeAgent> {
     const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
     if (this.agents.has(cacheKey)) {
       return this.agents.get(cacheKey)!
     }
 
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
     if (!employee) {
       throw new Error(`Employee ${employeeId} not found`)
     }
@@ -71,7 +78,7 @@ class EmployeeAgentService {
       throw new Error(`Provider ${providerId} not found`)
     }
 
-    let instructions = '你是专业的数字员工助手。'
+    let instructions = '你是专业数字员工，基于知识库和工具为用户提供服务。'
     let role: string | undefined
     if (employee.profile_json) {
       try {
@@ -98,35 +105,55 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const knowledgeGuidance = `\n\n当用户提出知识相关问题时，使用知识库工具渐进式查询知识，先了解概述再检索再精准定位。`
-
-    instructions += knowledgeGuidance
-
     const workspaceGuidance = getWorkspacePrompt(employee.project_id)
-    if (workspaceGuidance) {
-      instructions += '\n' + workspaceGuidance
-    }
 
     const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
-    
-    // 只收集已分配技能的安装路径
+
     const assignedSkillPaths = employeeSkills.assigned.map(skill => skill.installPath)
 
-    const agent = new LightAgent({
+    const modelConfig = this.getModelConfig(config, modelId)
+
+    const resolvedModelName = modelConfig?.model || modelId || config.model
+
+    const agentConfig: EmployeeAgentConfig = {
       name: employee.name,
       instructions,
       role,
-      model: modelId || config.model,
+      model: resolvedModelName,
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
-      enableThinking: enableThinking ?? this.getModelThinkingConfig(config, modelId),
+      enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
+      treeOfThought: modelConfig?.tree_of_thought ?? false,
+      totModel: modelConfig?.tot_model,
+      totApiKey: modelConfig?.tot_api_key ?? config.api_key,
+      totBaseUrl: modelConfig?.tot_base_url ?? (config.base_url || this.llmClient.getBaseURL(config)),
+      totProviderType: modelConfig?.tot_provider_type ?? config.provider_type,
+      planningStrategy: modelConfig?.planning_strategy,
       skillsDirectories: [skillsDir],
       allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
-      debug: false,
-    })
+      debug: modelConfig?.debug ?? false,
+      knowledgeGuidance: `\n\n${KNOWLEDGE_QUERY_GUIDANCE}`,
+      workspaceGuidance: workspaceGuidance || undefined,
+    }
+
+    const agentOptions: BaseAgentOptions = {
+      memoryConfig: {
+        maxTokens: modelConfig?.context_window ?? (modelConfig?.max_tokens ? modelConfig.max_tokens * 4 : 128000),
+        strategy: modelConfig?.memory_strategy ?? 'sliding_window_with_summary',
+        recentTurnsToKeep: modelConfig?.recent_turns_to_keep ?? 10,
+      },
+      toolTimeoutMs: modelConfig?.tool_timeout_ms ?? 30000,
+      toolMaxRetries: modelConfig?.tool_max_retries ?? 2,
+      toolMaxResultSize: modelConfig?.tool_max_result_size ?? 50000,
+      onEvent: (event, data) => {
+        logger.info(`${event}`, data)
+      },
+    }
+
+    const agent = new EmployeeAgent(agentConfig, agentOptions)
 
     for (const skill of employeeSkills.assigned) {
       const skillDef: ToolDefinition = {
@@ -151,9 +178,6 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    const skillTools = agent.createSkillTools()
-    agent.registerTools(skillTools)
-
     const employeeTools = this.getEmployeeTools(employeeId)
     agent.registerTools(employeeTools)
 
@@ -175,7 +199,6 @@ class EmployeeAgentService {
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
     const allBuiltinToolIds = new Set(createBuiltinTools().map(t => t.id))
-    // 添加知识库工具ID（这些工具由 getKnowledgeTools 动态创建）
     const kbToolIds = [
       'kb_search',
       'kb_advanced_search',
@@ -192,7 +215,6 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    // 添加工作区工具ID（这些工具由 createWorkspaceTools 动态创建）
     const workspaceToolIds = [
       'workspace_list_files',
       'workspace_read_file',
@@ -207,7 +229,7 @@ class EmployeeAgentService {
 
     const enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
-    ).all(employeeId) as any[]
+    ).all(employeeId) as DBEmployeeTool[]
 
     if (enabledRows.length === 0) {
       return allBuiltinToolIds
@@ -256,23 +278,23 @@ class EmployeeAgentService {
     }))
   }
 
-  private getModelThinkingConfig(config: any, modelId?: string): boolean {
-    if (!config?.models_json) return false
+  private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
+    if (!config?.models_json) return null
     try {
-      const models: LLMModelConfig[] = JSON.parse(config.models_json)
+      const models: Array<LLMModelConfig & Record<string, any>> = JSON.parse(config.models_json)
       const matched = modelId
-        ? models.find(m => m.model === modelId)
+        ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
         : models.find(m => m.is_default)
-      return matched?.enable_thinking ?? false
+      return matched ?? null
     } catch {
-      return false
+      return null
     }
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
     const { employee_id, provider_id, model_id, messages, use_skills = true, enable_thinking } = params
 
-    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as any
+    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'status'> | undefined
     if (employeeRow && employeeRow.status !== 'active') {
       throw new Error(`Employee is not active (status: ${employeeRow.status})`)
     }
@@ -286,18 +308,18 @@ class EmployeeAgentService {
 
     const query = messages[messages.length - 1]?.content || ''
 
-    let maxRetry = 100
-    if (model_id) {
-      const config = await this.llmClient.getProviderConfig(provider_id)
-      if (config?.models_json) {
-        try {
-          const models: LLMModelConfig[] = JSON.parse(config.models_json)
-          const matched = models.find(m => m.model === model_id)
-          if (matched?.max_retry !== undefined) {
-            maxRetry = matched.max_retry
-          }
-        } catch {}
-      }
+    const config = await this.llmClient.getProviderConfig(provider_id)
+    let maxIterations = 100
+    if (config?.models_json) {
+      try {
+        const models: LLMModelConfig[] = JSON.parse(config.models_json)
+        const matched = model_id
+          ? models.find(m => m.id === model_id) || models.find(m => m.model === model_id)
+          : models.find(m => m.is_default)
+        if (matched?.max_retry !== undefined) {
+          maxIterations = matched.max_retry
+        }
+      } catch {}
     }
 
     await agent.runStream(
@@ -305,7 +327,7 @@ class EmployeeAgentService {
         query,
         history,
         useSkills: use_skills,
-        maxRetry,
+        maxIterations,
       },
       {
         onChunk: callbacks.onChunk,

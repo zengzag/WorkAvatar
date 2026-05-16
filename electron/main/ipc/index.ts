@@ -10,8 +10,6 @@ import ProjectManagerService from '../services/project-manager.service'
 import FileParserService from '../services/file-parser.service'
 import LLMClientService from '../services/llm-client.service'
 import OCRService from '../services/ocr.service'
-import RuleExtractionService from '../services/rule-extraction.service'
-import SandboxTesterService from '../services/sandbox-tester.service'
 import DatabaseService from '../services/database.service'
 import EmployeeProfilingService from '../services/employee-profiling.service'
 import ToolEngineService from '../services/tool-engine.service'
@@ -27,8 +25,6 @@ export function registerIpcHandlers() {
   const fileParser = FileParserService.getInstance()
   const llmClient = LLMClientService.getInstance()
   const ocrService = OCRService.getInstance()
-  const ruleExtractor = RuleExtractionService.getInstance()
-  const sandboxTester = SandboxTesterService.getInstance()
   const profilingService = EmployeeProfilingService.getInstance()
   const toolEngine = ToolEngineService.getInstance()
   const skillRegistry = SkillRegistryService.getInstance()
@@ -40,9 +36,9 @@ export function registerIpcHandlers() {
   const db = DatabaseService.getInstance().getDb()
 
   registerProjectHandlers(projectManager, fileParser, kbService)
-  registerEmployeeHandlers(projectManager, profilingService, sandboxTester, employeeExportService)
+  registerEmployeeHandlers(projectManager, profilingService, employeeExportService)
   registerLLMHandlers(llmClient, employeeAgent)
-  registerAppHandlers(db, ocrService, ruleExtractor)
+  registerAppHandlers(db, ocrService)
   registerToolHandlers(db, toolEngine, skillRegistry)
   registerKBHandlers(kbService)
   registerTaskHandlers()

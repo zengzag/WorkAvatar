@@ -1,6 +1,10 @@
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 
+export function generateId(): string {
+  return crypto.randomBytes(4).toString('hex')
+}
+
 export async function calculateFileHash(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256')
   const stream = fs.createReadStream(filePath)

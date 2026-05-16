@@ -1,5 +1,8 @@
 import EmployeeTaskService from './employee-task.service'
 import DatabaseService from './database.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('Scheduler')
 
 interface ParsedCron {
   minute: number[] | '*'
@@ -108,7 +111,7 @@ class SchedulerService {
 
   start(): void {
     if (this.timer) return
-    console.log('[Scheduler] Starting scheduler service...')
+    logger.info('Starting scheduler service...')
     this.timer = setInterval(() => this.tick(), 1000)
     this.updateNextRunTimes()
   }
@@ -117,7 +120,7 @@ class SchedulerService {
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
-      console.log('[Scheduler] Stopped scheduler service')
+      logger.info('Stopped scheduler service')
     }
   }
 
@@ -145,7 +148,7 @@ class SchedulerService {
           await this.executeSchedule(schedule)
         }
       } catch (error) {
-        console.error(`[Scheduler] Error checking schedule ${schedule.id}:`, error)
+        logger.error(`Error checking schedule ${schedule.id}:`, error)
       }
     }
   }
@@ -155,7 +158,7 @@ class SchedulerService {
     try {
       taskIds = JSON.parse(schedule.task_ids_json)
     } catch {
-      console.error(`[Scheduler] Invalid task_ids_json for schedule ${schedule.id}`)
+      logger.error(`Invalid task_ids_json for schedule ${schedule.id}`)
       return
     }
 
@@ -163,7 +166,7 @@ class SchedulerService {
       try {
         this.taskService.startTaskExecution(taskId, 'scheduled', schedule.id, schedule.name, schedule.notify_on_complete)
       } catch (error: any) {
-        console.error(`[Scheduler] Error executing task ${taskId} for schedule ${schedule.id}:`, error.message)
+        logger.error(`Error executing task ${taskId} for schedule ${schedule.id}:`, error.message)
       }
     }
 
@@ -173,7 +176,7 @@ class SchedulerService {
         this.taskService.updateSchedule(schedule.id, { is_enabled: false })
         this.updateNextRunTimes()
       } catch (error: any) {
-        console.error(`[Scheduler] Error disabling one-time schedule ${schedule.id}:`, error.message)
+        logger.error(`Error disabling one-time schedule ${schedule.id}:`, error.message)
       }
     }
   }

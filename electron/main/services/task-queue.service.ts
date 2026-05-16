@@ -1,6 +1,9 @@
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import DatabaseService from './database.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('TaskQueue')
 
 export interface BackgroundTask {
   id: string
@@ -71,10 +74,10 @@ class TaskQueueService {
       }
 
       if (rows.length > 0) {
-        console.log(`[TaskQueue] Loaded ${rows.length} task(s) from database`)
+        logger.info(`Loaded ${rows.length} task(s) from database`)
       }
     } catch (err) {
-      console.error('[TaskQueue] Failed to load tasks from database:', err)
+      logger.error('Failed to load tasks from database:', err)
     }
   }
 
@@ -102,7 +105,7 @@ class TaskQueueService {
         task.detail || null,
       )
     } catch (err) {
-      console.error('[TaskQueue] Failed to save task to database:', err)
+      logger.error('Failed to save task to database:', err)
     }
   }
 
@@ -110,7 +113,7 @@ class TaskQueueService {
     try {
       this.db.getDb().prepare('DELETE FROM background_tasks WHERE id = ?').run(taskId)
     } catch (err) {
-      console.error('[TaskQueue] Failed to delete task from database:', err)
+      logger.error('Failed to delete task from database:', err)
     }
   }
 

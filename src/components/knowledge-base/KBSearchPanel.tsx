@@ -8,11 +8,12 @@ import {
   SearchOutlined, FileTextOutlined, NodeIndexOutlined,
   ApartmentOutlined, GlobalOutlined, BookOutlined,
   FilterOutlined, CopyOutlined, EyeOutlined, DatabaseOutlined,
+  RobotOutlined,
 } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
-type SearchMode = 'smart' | 'advanced' | 'chapters' | 'fulltext' | 'entity' | 'graph' | 'globalSummary'
+type SearchMode = 'smart' | 'semantic' | 'advanced' | 'chapters' | 'fulltext' | 'entity' | 'graph' | 'globalSummary'
 
 interface KBSearchPanelProps {
   open: boolean
@@ -22,10 +23,15 @@ interface KBSearchPanelProps {
 
 const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
   title: { color: 'blue', labelKey: 'kbSearch.matchTypeTitle' },
+  document_title: { color: 'blue', labelKey: 'kbSearch.matchTypeTitle' },
   summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
+  document_summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
   keywords: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
+  chapter: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
   content: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
+  content_paragraph: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
   entity: { color: 'red', labelKey: 'kbSearch.matchTypeEntity' },
+  hybrid: { color: 'cyan', labelKey: 'kbSearch.matchTypeHybrid' },
 }
 
 const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) => {
@@ -47,7 +53,9 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [docContentLoading, setDocContentLoading] = useState(false)
   const [docContentModalOpen, setDocContentModalOpen] = useState(false)
   const [docContentTitle, setDocContentTitle] = useState('')
+  const [docContentOffset, setDocContentOffset] = useState<{ start: number; end: number } | null>(null)
   const [searched, setSearched] = useState(false)
+  const [semanticDegraded, setSemanticDegraded] = useState(false)
 
   const inputRef = useRef<any>(null)
 
@@ -91,6 +99,18 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           setResults(data || [])
           break
         }
+        case 'semantic': {
+          const stats = await window.electronAPI.kb.searchIndexStats(selectedKbId)
+          const hasEmbeddings = (stats as any)?.embeddingCount > 0
+          setSemanticDegraded(!hasEmbeddings)
+          const data = await window.electronAPI.kb.searchWithEmbedding({
+            kb_id: selectedKbId,
+            query: query.trim(),
+            top_k: topK,
+          })
+          setResults(data || [])
+          break
+        }
         case 'advanced': {
           const data = await window.electronAPI.kb.advancedSearch({
             kb_id: selectedKbId,
@@ -116,7 +136,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             query: query.trim(),
             top_k: topK,
           })
-          setResults((data || []).filter((r: any) => r.match_type === 'content'))
+          setResults((data || []).filter((r: any) => r.match_type === 'content' || r.match_type === 'content_paragraph'))
           break
         }
         case 'entity': {
@@ -124,14 +144,16 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             kb_id: selectedKbId,
             type: entitySearchType,
           })
-          const filtered = (data || []).filter((e: any) =>
-            !query.trim() ||
-            e.name.toLowerCase().includes(query.toLowerCase()) ||
-            (e.description || '').toLowerCase().includes(query.toLowerCase()) ||
-            (JSON.parse(e.aliases_json || '[]') as string[]).some((a: string) =>
-              a.toLowerCase().includes(query.toLowerCase())
-            )
-          )
+          const filtered = (data || []).filter((e: any) => {
+            if (!query.trim()) return true
+            const q = query.toLowerCase()
+            if (e.name?.toLowerCase().includes(q)) return true
+            if ((e.description || '').toLowerCase().includes(q)) return true
+            try {
+              const aliases: string[] = JSON.parse(e.aliases_json || '[]')
+              return aliases.some((a: string) => a.toLowerCase().includes(q))
+            } catch { return false }
+          })
           setEntityResults(filtered.slice(0, topK))
           break
         }
@@ -165,10 +187,11 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
   }, [selectedKbId, query, searchMode, topK, advancedDocType, entitySearchType, resetResults])
 
-  const handleViewDocContent = useCallback(async (docId: string, docName: string) => {
+  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }) => {
     setDocContentLoading(true)
     setDocContent(null)
     setDocContentTitle(docName)
+    setDocContentOffset(offset || null)
     setDocContentModalOpen(true)
     try {
       const content = await window.electronAPI.kb.getDocContent(docId)
@@ -187,7 +210,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   }, [handleSearch, loading])
 
   const handleCopyResult = useCallback((text: string) => {
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(text).catch(() => {})
   }, [])
 
   const selectedKb = kbList.find(kb => kb.id === selectedKbId)
@@ -199,6 +222,15 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         <Space>
           <SearchOutlined />
           <span>{t('kbSearch.modeSmart')}</span>
+        </Space>
+      ),
+    },
+    {
+      key: 'semantic',
+      label: (
+        <Space>
+          <RobotOutlined />
+          <span>{t('kbSearch.modeSemantic')}</span>
         </Space>
       ),
     },
@@ -273,7 +305,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
           <Space wrap>
             <Tag color={matchConfig.color}>{t(matchConfig.labelKey)}</Tag>
-            <Tag color="default">Score: {item.score}</Tag>
           </Space>
           <Tooltip title={t('kbSearch.copyResult')}>
             <Button
@@ -349,7 +380,11 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 type="link"
                 size="small"
                 icon={<EyeOutlined />}
-                onClick={() => handleViewDocContent(item.document_id, item.document_name)}
+                onClick={() => handleViewDocContent(item.document_id, item.document_name,
+                  item.start_offset !== undefined && item.end_offset !== undefined
+                    ? { start: item.start_offset, end: item.end_offset }
+                    : undefined
+                )}
                 loading={docContentLoading}
               />
             </Tooltip>
@@ -367,7 +402,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     return (
       <div>
         {entityResults.map((entity: any, index: number) => {
-          const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
+          const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
           return (
             <Card
               key={index}
@@ -430,7 +465,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
 
     const { entity, relations, mentions } = graphResult
-    const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
+    const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
 
     return (
       <div>
@@ -497,8 +532,8 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       return <Empty description={t('kbSearch.noGlobalSummary')} />
     }
 
-    const keyTopics: string[] = JSON.parse(globalSummaryResult.key_topics_json || '[]')
-    const keyEntities: any[] = JSON.parse(globalSummaryResult.key_entities_json || '[]')
+    const keyTopics: string[] = (() => { try { return JSON.parse(globalSummaryResult.key_topics_json || '[]') } catch { return [] } })()
+    const keyEntities: any[] = (() => { try { return JSON.parse(globalSummaryResult.key_entities_json || '[]') } catch { return [] } })()
 
     return (
       <div>
@@ -561,8 +596,29 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           </div>
         ) : docContent ? (
           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 13, backgroundColor: token.colorBgLayout, padding: 16, borderRadius: 8 }}>
-            {docContent.content.substring(0, 5000)}
-            {docContent.content.length > 5000 && (
+            {docContentOffset
+              ? (() => {
+                  const content = docContent.content
+                  const contextChars = 500
+                  const start = Math.max(0, docContentOffset.start - contextChars)
+                  const end = Math.min(content.length, docContentOffset.end + contextChars)
+                  const displayText = content.substring(start, end)
+                  return (
+                    <>
+                      {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
+                      {displayText.substring(0, 5000)}
+                      {displayText.length > 5000 && (
+                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+                          ...({t('kbSearch.contentTruncated')})
+                        </Text>
+                      )}
+                      {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
+                    </>
+                  )
+                })()
+              : docContent.content.substring(0, 5000)
+            }
+            {!docContentOffset && docContent.content.length > 5000 && (
               <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
                 ...({t('kbSearch.contentTruncated')})
               </Text>
@@ -606,6 +662,14 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         }
         return (
           <div>
+            {semanticDegraded && searchMode === 'semantic' && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title={t('kbSearch.semanticDegraded')}
+              />
+            )}
             <div style={{ marginBottom: 8 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('kbSearch.resultCount', { count: results.length })}

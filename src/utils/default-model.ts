@@ -1,4 +1,4 @@
-export type SceneKey = 'creation' | 'workbench' | 'knowledge' | 'quick'
+export type SceneKey = 'creation' | 'workbench' | 'knowledge' | 'quick' | 'embedding'
 
 export interface SceneDefaultModel {
   provider_id: string
@@ -10,6 +10,7 @@ const STORAGE_KEYS: Record<SceneKey, string> = {
   workbench: 'default_model_workbench',
   knowledge: 'default_model_knowledge',
   quick: 'default_model_quick',
+  embedding: 'default_model_embedding',
 }
 
 const localStorageKeys: Record<SceneKey, string> = {
@@ -17,6 +18,7 @@ const localStorageKeys: Record<SceneKey, string> = {
   workbench: 'defaultModel:workbench',
   knowledge: 'defaultModel:knowledge',
   quick: 'defaultModel:quick',
+  embedding: 'defaultModel:embedding',
 }
 
 export async function getSceneDefaultModel(scene: SceneKey): Promise<SceneDefaultModel | null> {
@@ -38,13 +40,14 @@ export async function setSceneDefaultModel(scene: SceneKey, config: SceneDefault
 }
 
 export async function getAllSceneDefaultModels(): Promise<Record<SceneKey, SceneDefaultModel | null>> {
-  const [creation, workbench, knowledge, quick] = await Promise.all([
+  const [creation, workbench, knowledge, quick, embedding] = await Promise.all([
     getSceneDefaultModel('creation'),
     getSceneDefaultModel('workbench'),
     getSceneDefaultModel('knowledge'),
     getSceneDefaultModel('quick'),
+    getSceneDefaultModel('embedding'),
   ])
-  return { creation, workbench, knowledge, quick }
+  return { creation, workbench, knowledge, quick, embedding }
 }
 
 export function getCachedSceneDefaultModel(scene: SceneKey): SceneDefaultModel | null {
