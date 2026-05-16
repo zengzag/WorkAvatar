@@ -3,7 +3,7 @@ import EmployeeAgentService from './employee-agent.service'
 import TaskNotificationService, { type TaskCompletionNotification } from './task-notification.service'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
-import { randomUUID } from 'crypto'
+import { generateId } from './common-utils'
 
 interface EmployeeTask {
   id: string
@@ -116,7 +116,7 @@ class EmployeeTaskService {
   }
 
   createTask(employeeId: string, name: string, description: string, prompt: string, timeoutMs: number = 300000, llmProviderId?: string, llmModel?: string, enableThinking: boolean = false, runMode: 'recurring' | 'once' = 'recurring'): EmployeeTask {
-    const id = randomUUID()
+    const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       `INSERT INTO employee_tasks (id, employee_id, name, description, prompt, is_enabled, run_mode, timeout_ms, llm_provider_id, llm_model, enable_thinking, extra_config_json, created_at, updated_at)
@@ -171,7 +171,7 @@ class EmployeeTaskService {
   }
 
   createSchedule(employeeId: string, name: string, cronExpr: string, taskIds: string[], runMode: 'recurring' | 'once' = 'recurring', notifyOnComplete: boolean = true): EmployeeSchedule {
-    const id = randomUUID()
+    const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       `INSERT INTO employee_schedules (id, employee_id, name, cron_expr, is_enabled, run_mode, notify_on_complete, task_ids_json, created_at, updated_at)
@@ -251,7 +251,7 @@ class EmployeeTaskService {
     const providerId = task.llm_provider_id || employee.llm_provider_id
     if (!providerId) throw new Error('No LLM provider configured')
 
-    const executionId = randomUUID()
+    const executionId = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       `INSERT INTO employee_task_executions (id, employee_id, task_id, schedule_id, trigger_type, status, started_at)
@@ -323,7 +323,7 @@ class EmployeeTaskService {
                 }
                 currentSegment = {
                   type: 'answer',
-                  id: randomUUID(),
+                  id: generateId(),
                   content: chunk,
                   isStreaming: true,
                 }
@@ -340,7 +340,7 @@ class EmployeeTaskService {
                 }
                 currentSegment = {
                   type: 'thinking',
-                  id: randomUUID(),
+                  id: generateId(),
                   content: thought,
                   isStreaming: true,
                   collapsed: false,
@@ -355,7 +355,7 @@ class EmployeeTaskService {
               }
               currentSegment = {
                 type: 'tool_call',
-                id: randomUUID(),
+                id: generateId(),
                 toolName: toolCall.name || toolCall.function?.name,
                 toolArgs: toolCall.arguments || toolCall.function?.arguments,
                 isToolComplete: false,

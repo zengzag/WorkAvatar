@@ -28,6 +28,7 @@ import { ConversationSidebar, MessageBubble, ChatInput } from '../components/wor
 import type { MessageWithThought } from '../components/workbench'
 import { ensureSegments } from '../components/workbench'
 import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
+import { generateId } from '../utils/format'
 
 const { Text, Paragraph } = Typography
 
@@ -389,7 +390,7 @@ const EmployeeWorkbench: React.FC = () => {
     }
 
     const userMessage: MessageWithThought = {
-      id: `msg_${Date.now()}`,
+      id: `msg_${generateId()}`,
       role: 'user',
       content,
       timestamp: Date.now(),
@@ -398,7 +399,7 @@ const EmployeeWorkbench: React.FC = () => {
     const updatedMessages = [...messages, userMessage]
     setMessages(updatedMessages)
 
-    const assistantMessageId = `msg_${Date.now() + 1}`
+    const assistantMessageId = `msg_${generateId()}`
     const assistantMessage: MessageWithThought = {
       id: assistantMessageId,
       role: 'assistant',

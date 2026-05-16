@@ -35,7 +35,7 @@ export const randomUtilsTool: ToolDefinition = {
           }
           return { success: true, result: count === 1 ? results[0] : results }
         }
-        case 'uuid': {
+        case 'uid': {
           const count = Math.min(Math.max(args.count || 1, 1), 100)
           const results: string[] = []
           for (let i = 0; i < count; i++) {

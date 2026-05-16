@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { generateId } from './common-utils'
 import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
@@ -212,7 +213,7 @@ class EmployeeExportService {
         return { success: false, error: 'Target project not found' }
       }
 
-      const employeeId = crypto.randomUUID()
+      const employeeId = generateId()
       const now = Math.floor(Date.now() / 1000)
 
       this.db.getDb().prepare(`
@@ -232,7 +233,7 @@ class EmployeeExportService {
       )
 
       for (const skill of importData.skills || []) {
-        const skillId = crypto.randomUUID()
+        const skillId = generateId()
         this.db.getDb().prepare(`
           INSERT INTO skills (id, employee_id, type, name, description, config_json, prompt_template, rules_json, test_cases_json, input_schema_json, output_schema_json, priority, is_enabled, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -261,7 +262,7 @@ class EmployeeExportService {
             ).run(tool.is_enabled ? 1 : 0, employeeId, tool.tool_id)
           }
         } else {
-          const etId = crypto.randomUUID()
+          const etId = generateId()
           this.db.getDb().prepare(`
             INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled, config_json, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -280,7 +281,7 @@ class EmployeeExportService {
           ).get(kbRef.kb_id, projectId) as any
 
           if (!linkExists) {
-            const linkId = crypto.randomUUID()
+            const linkId = generateId()
             this.db.getDb().prepare(`
               INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
               VALUES (?, ?, ?, ?)
@@ -312,7 +313,7 @@ class EmployeeExportService {
           ).get(employeeId, skillRef.skill_id) as any
 
           if (!existingAssign) {
-            const esId = crypto.randomUUID()
+            const esId = generateId()
             this.db.getDb().prepare(`
               INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled, config_json, created_at)
               VALUES (?, ?, ?, ?, '{}', ?)
@@ -649,7 +650,7 @@ class EmployeeExportService {
           }
 
           if (!existingSkill) {
-            const skillId = crypto.randomUUID()
+            const skillId = generateId()
             const now = Math.floor(Date.now() / 1000)
             const manifest2 = this.parseSkillMdManifest(skillMdContent)
 
@@ -665,7 +666,7 @@ class EmployeeExportService {
               skillMdContent, now
             )
 
-            const esId = crypto.randomUUID()
+            const esId = generateId()
             this.db.getDb().prepare(`
               INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled, config_json, created_at)
               VALUES (?, ?, ?, 1, '{}', ?)
@@ -707,7 +708,7 @@ class EmployeeExportService {
         ).get(targetKBId, projectId) as any
 
         if (!linkExists) {
-          const linkId = crypto.randomUUID()
+          const linkId = generateId()
           const now = Math.floor(Date.now() / 1000)
           this.db.getDb().prepare(`
             INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
@@ -751,7 +752,7 @@ class EmployeeExportService {
     const warnings: string[] = []
     const now = Math.floor(Date.now() / 1000)
 
-    const employeeId = crypto.randomUUID()
+    const employeeId = generateId()
 
     this.db.getDb().prepare(`
       INSERT INTO employees (id, project_id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
@@ -769,7 +770,7 @@ class EmployeeExportService {
     )
 
     for (const skill of importData.skills || []) {
-      const skillId = crypto.randomUUID()
+      const skillId = generateId()
       this.db.getDb().prepare(`
         INSERT INTO skills (id, employee_id, type, name, description, config_json, prompt_template, rules_json, test_cases_json, input_schema_json, output_schema_json, priority, is_enabled, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -783,7 +784,7 @@ class EmployeeExportService {
     }
 
     for (const tool of importData.tools || []) {
-      const etId = crypto.randomUUID()
+      const etId = generateId()
       this.db.getDb().prepare(`
         INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled, config_json, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -797,7 +798,7 @@ class EmployeeExportService {
           'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
         ).get(kbRef.kb_id, projectId) as any
         if (!linkExists) {
-          const linkId = crypto.randomUUID()
+          const linkId = generateId()
           this.db.getDb().prepare(`
             INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
             VALUES (?, ?, ?, ?)
@@ -811,7 +812,7 @@ class EmployeeExportService {
     for (const skillRef of importData.installedSkills || []) {
       const skillExists = this.db.getDb().prepare('SELECT id FROM installed_skills WHERE id = ?').get(skillRef.skill_id) as any
       if (skillExists) {
-        const esId = crypto.randomUUID()
+        const esId = generateId()
         this.db.getDb().prepare(`
           INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled, config_json, created_at)
           VALUES (?, ?, ?, ?, '{}', ?)
@@ -825,7 +826,7 @@ class EmployeeExportService {
   }
 
   private createKBFromData(kbData: any): string {
-    const kbId = crypto.randomUUID()
+    const kbId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
     const kbPath = PathService.getInstance().getKBBasePath(kbId)
@@ -837,7 +838,7 @@ class EmployeeExportService {
 
     const docIdMap = new Map<string, string>()
     for (const doc of kbData.documents || []) {
-      const newDocId = crypto.randomUUID()
+      const newDocId = generateId()
       docIdMap.set(doc.id, newDocId)
 
       let contentPath: string | null = null
@@ -867,7 +868,7 @@ class EmployeeExportService {
       const newDocId = docIdMap.get(ch.document_id)
       if (!newDocId) continue
 
-      const chId = crypto.randomUUID()
+      const chId = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_chapters (id, kb_id, document_id, title, chapter_index, start_offset, end_offset, content, summary, keywords_json, entities_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -882,7 +883,7 @@ class EmployeeExportService {
       const newDocId = docIdMap.get(ds.document_id)
       if (!newDocId) continue
 
-      const id = crypto.randomUUID()
+      const id = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -895,7 +896,7 @@ class EmployeeExportService {
 
     if (kbData.globalSummary) {
       const gs = kbData.globalSummary
-      const id = crypto.randomUUID()
+      const id = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -907,7 +908,7 @@ class EmployeeExportService {
 
     const entityIdMap = new Map<string, string>()
     for (const entity of kbData.entities || []) {
-      const newEntityId = crypto.randomUUID()
+      const newEntityId = generateId()
       entityIdMap.set(entity.id, newEntityId)
 
       this.db.getDb().prepare(`
@@ -925,7 +926,7 @@ class EmployeeExportService {
       const newTargetId = entityIdMap.get(rel.target_entity_id)
       if (!newSourceId || !newTargetId) continue
 
-      const id = crypto.randomUUID()
+      const id = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())

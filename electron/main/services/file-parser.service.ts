@@ -6,7 +6,7 @@ import XLSX from 'xlsx'
 import type { ParseResult } from '../../shared/types'
 import DatabaseService from './database.service'
 import OCRService from './ocr.service'
-import { calculateFileHash } from './common-utils'
+import { calculateFileHash, generateId } from './common-utils'
 
 class FileParserService {
   private db: DatabaseService
@@ -31,7 +31,7 @@ class FileParserService {
     const fileHash = await this.calculateFileHash(filePath)
     const originalName = path.basename(filePath)
     const fileType = this.getFileType(filePath)
-    const fileId = crypto.randomUUID()
+    const fileId = generateId()
 
     this.db.getDb().prepare(`
       INSERT INTO files (id, project_id, path, original_name, type, size, hash, status, created_at, updated_at)

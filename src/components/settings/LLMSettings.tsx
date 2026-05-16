@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { generateId } from '../../utils/format'
 import {
   Form,
   Input,
@@ -244,7 +245,7 @@ const LLMSettings: React.FC = () => {
     try {
       const values = await modelForm.validateFields()
       const newModel: LLMModelConfig = {
-        id: editingModel ? editingModel.id : `model_${Date.now()}`,
+        id: editingModel ? editingModel.id : `model_${generateId()}`,
         name: values.name,
         model: values.model,
         temperature: values.temperature,

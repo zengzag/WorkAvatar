@@ -7,7 +7,7 @@ import KnowledgeProcessorService from './knowledge-processor.service'
 import ParseTaskManager from './parse-task-manager.service'
 import TaskQueueService from './task-queue.service'
 import PathService from './path.service'
-import { calculateFileHash, getDefaultProviderId } from './common-utils'
+import { calculateFileHash, getDefaultProviderId, generateId } from './common-utils'
 
 class KnowledgeBaseService {
   private db: DatabaseService
@@ -104,7 +104,7 @@ class KnowledgeBaseService {
   }
 
   createKB(name: string, description: string = ''): any {
-    const kbId = crypto.randomUUID()
+    const kbId = generateId()
     const kbPath = this.getKBBasePath(kbId)
     const now = Math.floor(Date.now() / 1000)
 
@@ -273,7 +273,7 @@ class KnowledgeBaseService {
             })
             continue
           }
-          const docId = crypto.randomUUID()
+          const docId = generateId()
           const now = Math.floor(Date.now() / 1000)
           const contentPath = existingDoc.content_path || null
           const parsedJsonPath = existingDoc.parsed_json_path || null
@@ -298,7 +298,7 @@ class KnowledgeBaseService {
         const destPath = path.join(kbBasePath, originalName)
         await fs.promises.copyFile(filePath, destPath)
 
-        const docId = crypto.randomUUID()
+        const docId = generateId()
         const now = Math.floor(Date.now() / 1000)
 
         this.db.getDb().prepare(`
@@ -708,7 +708,7 @@ class KnowledgeBaseService {
 
     if (existing) return true
 
-    const id = crypto.randomUUID()
+    const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       'INSERT INTO kb_project_links (id, kb_id, project_id, created_at) VALUES (?, ?, ?, ?)'
@@ -796,7 +796,7 @@ class KnowledgeBaseService {
         await fs.promises.copyFile(filePath, destPath)
       }
 
-      const docId = crypto.randomUUID()
+      const docId = generateId()
       const now = Math.floor(Date.now() / 1000)
       const parseStatus = options?.contentText ? 'completed' : 'pending'
 
@@ -1796,7 +1796,7 @@ class KnowledgeBaseService {
       const documents = knowledgeData.documents || []
       for (let i = 0; i < documents.length; i++) {
         const doc = documents[i]
-        const newDocId = crypto.randomUUID()
+        const newDocId = generateId()
         docIdMap.set(doc.id, newDocId)
 
         const docEntry = zip.getEntry(`documents/${doc.original_name}`)
@@ -1834,7 +1834,7 @@ class KnowledgeBaseService {
         const newDocId = docIdMap.get(ch.document_id)
         if (!newDocId) continue
 
-        const newChapterId = crypto.randomUUID()
+        const newChapterId = generateId()
         chapterIdMap.set(ch.id, newChapterId)
 
         this.db.getDb().prepare(`
@@ -1851,7 +1851,7 @@ class KnowledgeBaseService {
         const newDocId = docIdMap.get(ds.document_id)
         if (!newDocId) continue
 
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -1863,7 +1863,7 @@ class KnowledgeBaseService {
       if (knowledgeData.globalSummary) {
         onProgress?.('importing_global', 'Importing global summary...')
         const gs = knowledgeData.globalSummary
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -1876,7 +1876,7 @@ class KnowledgeBaseService {
       const entityIdMap = new Map<string, string>()
       for (let i = 0; i < entities.length; i++) {
         const entity = entities[i]
-        const newEntityId = crypto.randomUUID()
+        const newEntityId = generateId()
         entityIdMap.set(entity.id, newEntityId)
 
         this.db.getDb().prepare(`
@@ -1898,7 +1898,7 @@ class KnowledgeBaseService {
         const newTargetId = entityIdMap.get(rel.target_entity_id)
         if (!newSourceId || !newTargetId) continue
 
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
@@ -1915,7 +1915,7 @@ class KnowledgeBaseService {
         const newChapterId = chapterIdMap.get(m.chapter_id)
         if (!newEntityId) continue
 
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_entity_mentions (id, entity_id, document_id, chapter_id, context_text, start_offset, end_offset, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
@@ -2031,7 +2031,7 @@ class KnowledgeBaseService {
             }
           }
         } else {
-          const id = crypto.randomUUID()
+          const id = generateId()
           this.db.getDb().prepare(`
             INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 1, unixepoch(), unixepoch())
@@ -2072,7 +2072,7 @@ class KnowledgeBaseService {
           continue
         }
 
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, created_at)
           VALUES (?, ?, ?, ?, ?, ?, unixepoch())

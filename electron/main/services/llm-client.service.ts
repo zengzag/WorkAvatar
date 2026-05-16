@@ -1,6 +1,7 @@
 import DatabaseService from './database.service'
 import { safeStorage } from 'electron'
 import type { LLMModelConfig } from '../../shared/types'
+import { generateId } from './common-utils'
 
 interface LLMProviderConfig {
   id: string
@@ -570,7 +571,7 @@ class LLMClientService {
     extra_body_json?: string
     models_json?: string
   }) {
-    const id = require('crypto').randomUUID()
+    const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     const apiKeyValue = params.api_key
 

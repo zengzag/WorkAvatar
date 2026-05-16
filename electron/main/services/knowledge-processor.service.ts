@@ -1,5 +1,5 @@
-import crypto from 'crypto'
 import DatabaseService from './database.service'
+import { generateId } from './common-utils'
 import LLMClientService from './llm-client.service'
 
 interface ChapterInfo {
@@ -341,7 +341,7 @@ ${docsText.substring(0, 20000)}
     for (let i = 0; i < chapters.length; i++) {
       const chapter = chapters[i]
       const summary = summaries[i]
-      const id = crypto.randomUUID()
+      const id = generateId()
 
       insertStmt.run(
         id,
@@ -378,7 +378,7 @@ ${docsText.substring(0, 20000)}
         WHERE document_id = ?
       `).run(data.summary, data.key_entities_json, data.timeline_json, data.keywords_json, data.main_topics_json, documentId)
     } else {
-      const id = crypto.randomUUID()
+      const id = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -409,7 +409,7 @@ ${docsText.substring(0, 20000)}
         WHERE kb_id = ?
       `).run(data.summary, data.key_topics_json, data.key_entities_json, data.global_timeline_json, kbId)
     } else {
-      const id = crypto.randomUUID()
+      const id = generateId()
       this.db.getDb().prepare(`
         INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
@@ -445,7 +445,7 @@ ${docsText.substring(0, 20000)}
           existingId,
         )
       } else {
-        const id = crypto.randomUUID()
+        const id = generateId()
         this.db.getDb().prepare(`
           INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, first_seen_doc_id, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, unixepoch(), unixepoch())
@@ -477,7 +477,7 @@ ${docsText.substring(0, 20000)}
         ).get(sourceId, targetId, relation.relationType) as any
 
         if (!existingRelation) {
-          const id = crypto.randomUUID()
+          const id = generateId()
           this.db.getDb().prepare(`
             INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
@@ -693,7 +693,7 @@ ${docsText.substring(0, 20000)}
   }
 
   createProcessingJob(kbId: string, documentId: string | null, jobType: string, totalSteps: number): string {
-    const id = crypto.randomUUID()
+    const id = generateId()
     this.db.getDb().prepare(`
       INSERT INTO kb_processing_jobs (id, kb_id, document_id, job_type, status, total_steps, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'pending', ?, unixepoch(), unixepoch())
