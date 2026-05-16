@@ -160,11 +160,11 @@ function createThinkProcessor() {
   return { reset, processChunk, finalize }
 }
 
-function getModelConfig(provider: LLMProviderConfig, modelName: string): LLMModelConfig | null {
+function getModelConfig(provider: LLMProviderConfig, modelIdentifier: string): LLMModelConfig | null {
   if (!provider.models_json) return null
   try {
     const models: LLMModelConfig[] = JSON.parse(provider.models_json)
-    return models.find(m => m.model === modelName) || null
+    return models.find(m => m.id === modelIdentifier) || models.find(m => m.model === modelIdentifier) || null
   } catch {
     return null
   }
@@ -387,6 +387,17 @@ class LLMClientService {
     }
   }
 
+  private resolveModelName(config: LLMProviderConfig, modelIdentifier: string): string {
+    if (config.models_json) {
+      try {
+        const models: LLMModelConfig[] = JSON.parse(config.models_json)
+        const matched = models.find(m => m.id === modelIdentifier)
+        if (matched) return matched.model
+      } catch {}
+    }
+    return modelIdentifier
+  }
+
   async chat(
     providerId: string,
     messages: ChatMessage[],
@@ -413,7 +424,7 @@ class LLMClientService {
       } catch {}
     }
 
-    const modelName = options?.model || config.model
+    const modelName = this.resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, false, options)
 
     const response = await fetch(`${baseURL}/chat/completions`, {
@@ -464,7 +475,7 @@ class LLMClientService {
       } catch {}
     }
 
-    const modelName = options?.model || config.model
+    const modelName = this.resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, true, options)
 
     try {
@@ -655,7 +666,7 @@ class LLMClientService {
     return result.changes > 0
   }
 
-  private async callEmbeddingAPI(config: any, input: string | string[], timeoutMs?: number): Promise<any> {
+  private async callEmbeddingAPI(config: any, input: string | string[], timeoutMs?: number, modelName?: string): Promise<any> {
     const baseURL = this.getBaseURL(config)
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -672,7 +683,7 @@ class LLMClientService {
       } catch {}
     }
 
-    const embeddingModel = config.embedding_model || 'text-embedding-3-small'
+    const embeddingModel = modelName || config.embedding_model || 'text-embedding-3-small'
     const body = {
       model: embeddingModel,
       input,
@@ -706,13 +717,13 @@ class LLMClientService {
     }
   }
 
-  async createEmbedding(providerId: string, text: string): Promise<Float32Array> {
+  async createEmbedding(providerId: string, text: string, modelName?: string): Promise<Float32Array> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
       throw new Error('LLM Provider not found')
     }
 
-    const data = await this.callEmbeddingAPI(config, text)
+    const data = await this.callEmbeddingAPI(config, text, undefined, modelName)
     const embeddingData = data.data?.[0]?.embedding
     if (!embeddingData || !Array.isArray(embeddingData)) {
       throw new Error('Invalid embedding response format')
@@ -721,7 +732,7 @@ class LLMClientService {
     return new Float32Array(embeddingData)
   }
 
-  async createEmbeddings(providerId: string, texts: string[]): Promise<Float32Array[]> {
+  async createEmbeddings(providerId: string, texts: string[], modelName?: string): Promise<Float32Array[]> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
       throw new Error('LLM Provider not found')
@@ -733,7 +744,7 @@ class LLMClientService {
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize)
 
-      const data = await this.callEmbeddingAPI(config, batch, config.timeout_ms || 120000)
+      const data = await this.callEmbeddingAPI(config, batch, config.timeout_ms || 120000, modelName)
       const embeddings = data.data as Array<{ embedding: number[]; index: number }>
       if (!embeddings || !Array.isArray(embeddings)) {
         throw new Error('Invalid embedding response format')
@@ -746,6 +757,38 @@ class LLMClientService {
     }
 
     return allEmbeddings
+  }
+
+  getDefaultEmbeddingConfig(): { providerId: string; modelName: string } | null {
+    const row = this.db.getDb().prepare(
+      "SELECT value FROM settings WHERE key = 'default_model_embedding'"
+    ).get() as any
+    if (!row?.value) return null
+
+    try {
+      const config = JSON.parse(row.value)
+      if (!config.provider_id) return null
+
+      const provider = this.getProvider(config.provider_id) as any
+      if (!provider) return null
+
+      let modelName = ''
+      if (config.model_id && provider.models_json) {
+        const models = JSON.parse(provider.models_json)
+        const model = models.find((m: any) => m.id === config.model_id)
+        if (model) {
+          modelName = model.model
+        }
+      }
+
+      if (!modelName) {
+        modelName = provider.embedding_model || 'text-embedding-3-small'
+      }
+
+      return { providerId: config.provider_id, modelName }
+    } catch {
+      return null
+    }
   }
 }
 

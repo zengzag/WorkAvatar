@@ -29,7 +29,7 @@ import {
   QuestionCircleOutlined,
   GlobalOutlined,
 } from '@ant-design/icons'
-import type { LLMProvider, LLMModelConfig, LLMProviderType } from '../../types'
+import type { LLMProvider, LLMModelConfig, LLMModelCategory, LLMProviderType } from '../../types'
 import { useTranslation } from 'react-i18next'
 
 const { Text, Title } = Typography
@@ -52,22 +52,22 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; ic
   { value: 'lmstudio', label: 'LM Studio', group: 'local' },
 ]
 
-const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string }> = {
-  openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini' },
-  'openai-compatible': { baseURL: '', defaultModel: '' },
-  lmstudio: { baseURL: 'http://localhost:1234/v1', defaultModel: '' },
-  deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat' },
-  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus' },
-  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash' },
-  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k' },
-  moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k' },
-  yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning' },
-  groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile' },
-  mistral: { baseURL: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest' },
-  azure: { baseURL: '', defaultModel: 'gpt-4o-mini' },
-  vertex: { baseURL: '', defaultModel: 'gpt-4o-mini' },
-  bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini' },
-  xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini' },
+const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
+  openai: { baseURL: 'https://api.openai.com/v1' },
+  'openai-compatible': { baseURL: '' },
+  lmstudio: { baseURL: 'http://localhost:1234/v1' },
+  deepseek: { baseURL: 'https://api.deepseek.com/v1' },
+  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
+  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3' },
+  moonshot: { baseURL: 'https://api.moonshot.cn/v1' },
+  yi: { baseURL: 'https://api.lingyiwanwu.com/v1' },
+  groq: { baseURL: 'https://api.groq.com/openai/v1' },
+  mistral: { baseURL: 'https://api.mistral.ai/v1' },
+  azure: { baseURL: '' },
+  vertex: { baseURL: '' },
+  bedrock: { baseURL: '' },
+  xai: { baseURL: 'https://api.x.ai/v1' },
 }
 
 const getProviderTypeLabel = (type: string): string => {
@@ -86,6 +86,11 @@ const GROUP_COLOR_MAP: Record<string, string> = {
   international: 'blue',
 }
 
+const CATEGORY_TAG_MAP: Record<LLMModelCategory, { color: string }> = {
+  chat: { color: 'blue' },
+  embedding: { color: 'purple' },
+}
+
 const LLMSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -97,6 +102,7 @@ const LLMSettings: React.FC = () => {
   const [models, setModels] = useState<LLMModelConfig[]>([])
   const [modelModalVisible, setModelModalVisible] = useState(false)
   const [editingModel, setEditingModel] = useState<LLMModelConfig | null>(null)
+  const [modelCategory, setModelCategory] = useState<LLMModelCategory>('chat')
   const [modelForm] = Form.useForm()
 
   useEffect(() => {
@@ -118,9 +124,8 @@ const LLMSettings: React.FC = () => {
     form.resetFields()
     form.setFieldsValue({
       provider_type: 'openai-compatible',
-      temperature: 0.3,
-      max_tokens: 4096,
       timeout_ms: 60000,
+      api_key: '',
     })
     setModalVisible(true)
   }
@@ -129,35 +134,31 @@ const LLMSettings: React.FC = () => {
     const defaults = PROVIDER_DEFAULTS[type]
     if (defaults) {
       const currentBaseUrl = form.getFieldValue('base_url')
-      const currentModel = form.getFieldValue('model')
-
       if (!currentBaseUrl && defaults.baseURL) {
         form.setFieldsValue({ base_url: defaults.baseURL })
-      }
-      if (!currentModel && defaults.defaultModel) {
-        form.setFieldsValue({ model: defaults.defaultModel })
       }
     }
   }
 
   const handleEdit = (provider: LLMProvider) => {
     setEditingProvider(provider)
-    const loadedModels = provider.models_json
-      ? JSON.parse(provider.models_json)
+    const loadedModels: LLMModelConfig[] = provider.models_json
+      ? JSON.parse(provider.models_json).map((m: any) => ({
+          ...m,
+          category: m.category || 'chat',
+        }))
       : []
     setModels(loadedModels)
+    form.resetFields()
     form.setFieldsValue({
       name: provider.name,
       provider_type: provider.provider_type,
       base_url: provider.base_url,
-      model: provider.model,
-      embedding_model: provider.embedding_model || 'text-embedding-3-small',
-      temperature: provider.temperature,
-      max_tokens: provider.max_tokens,
       timeout_ms: provider.timeout_ms,
       extra_headers_json: provider.extra_headers_json || '',
       extra_body_json: (provider as any).extra_body_json || '',
       is_default: provider.is_default,
+      api_key: '',
     })
     setModalVisible(true)
   }
@@ -175,11 +176,20 @@ const LLMSettings: React.FC = () => {
   const handleSave = async () => {
     try {
       const values = await form.validateFields()
+      const defaultChatModel = models.find(m => m.category === 'chat' && m.is_default)
+      const defaultEmbeddingModel = models.find(m => m.category === 'embedding')
       const providerData = {
         ...values,
+        model: defaultChatModel?.model || '',
+        embedding_model: defaultEmbeddingModel?.model || '',
+        temperature: defaultChatModel?.temperature ?? 0.3,
+        max_tokens: defaultChatModel?.max_tokens ?? 4096,
         models_json: JSON.stringify(models),
         extra_headers_json: values.extra_headers_json || null,
         extra_body_json: values.extra_body_json || null,
+      }
+      if (!providerData.api_key) {
+        delete (providerData as any).api_key
       }
       if (editingProvider) {
         await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
@@ -215,8 +225,10 @@ const LLMSettings: React.FC = () => {
 
   const handleAddModel = () => {
     setEditingModel(null)
+    setModelCategory('chat')
     modelForm.resetFields()
     modelForm.setFieldsValue({
+      category: 'chat',
       temperature: 0.3,
       max_tokens: 4096,
       max_retry: 100,
@@ -227,7 +239,9 @@ const LLMSettings: React.FC = () => {
 
   const handleEditModel = (model: LLMModelConfig) => {
     setEditingModel(model)
+    setModelCategory(model.category || 'chat')
     modelForm.setFieldsValue({
+      category: model.category || 'chat',
       name: model.name,
       model: model.model,
       temperature: model.temperature,
@@ -241,30 +255,43 @@ const LLMSettings: React.FC = () => {
     setModelModalVisible(true)
   }
 
+  const handleModelCategoryChange = (category: LLMModelCategory) => {
+    setModelCategory(category)
+    if (category === 'embedding') {
+      modelForm.setFieldsValue({
+        is_default: false,
+      })
+    }
+  }
+
   const handleSaveModel = async () => {
     try {
       const values = await modelForm.validateFields()
+      const category = values.category || 'chat'
       const newModel: LLMModelConfig = {
         id: editingModel ? editingModel.id : `model_${generateId()}`,
         name: values.name,
         model: values.model,
-        temperature: values.temperature,
-        max_tokens: values.max_tokens,
-        top_p: values.top_p,
-        frequency_penalty: values.frequency_penalty,
-        presence_penalty: values.presence_penalty,
-        max_retry: values.max_retry,
-        is_default: values.is_default,
+        category,
+        temperature: category === 'embedding' ? 0 : (values.temperature ?? 0.3),
+        max_tokens: category === 'embedding' ? 0 : (values.max_tokens ?? 4096),
+        ...(category === 'chat' ? {
+          top_p: values.top_p,
+          frequency_penalty: values.frequency_penalty,
+          presence_penalty: values.presence_penalty,
+          max_retry: values.max_retry,
+        } : {}),
+        is_default: category === 'chat' ? values.is_default : false,
       }
 
-      if (values.is_default) {
-        setModels(models.map(m => ({ ...m, is_default: false })))
+      if (values.is_default && category === 'chat') {
+        setModels(prev => prev.map(m => m.category === 'chat' ? { ...m, is_default: false } : m))
       }
 
       if (editingModel) {
-        setModels(models.map(m => m.id === editingModel.id ? newModel : m))
+        setModels(prev => prev.map(m => m.id === editingModel.id ? newModel : m))
       } else {
-        setModels([...models, newModel])
+        setModels(prev => [...prev, newModel])
       }
       setModelModalVisible(false)
     } catch (error: any) {
@@ -275,21 +302,27 @@ const LLMSettings: React.FC = () => {
   }
 
   const handleDeleteModel = (modelId: string) => {
-    setModels(models.filter(m => m.id !== modelId))
+    setModels(prev => prev.filter(m => m.id !== modelId))
   }
 
   const modelColumns = [
-    { title: t('settings.providerName'), dataIndex: 'name', key: 'name', width: 120 },
-    { title: t('settings.modelId'), dataIndex: 'model', key: 'model', width: 160 },
-    { title: t('settings.temperature'), dataIndex: 'temperature', key: 'temperature', width: 60 },
-    { title: t('settings.maxToken'), dataIndex: 'max_tokens', key: 'max_tokens', width: 90 },
-    { title: t('settings.maxRetry'), dataIndex: 'max_retry', key: 'max_retry', width: 80,
-      render: (r: number | undefined) => r ?? 100 },
+    {
+      title: t('settings.modelCategory'),
+      dataIndex: 'category',
+      key: 'category',
+      width: 80,
+      render: (category: LLMModelCategory) => {
+        const cfg = CATEGORY_TAG_MAP[category] || CATEGORY_TAG_MAP.chat
+        return <Tag color={cfg.color} style={{ fontSize: 11 }}>{t(`settings.modelCategory_${category}`)}</Tag>
+      },
+    },
+    { title: t('settings.providerName'), dataIndex: 'name', key: 'name', width: 110 },
+    { title: t('settings.modelId'), dataIndex: 'model', key: 'model', width: 150 },
     {
       title: t('settings.defaultModel'),
       dataIndex: 'is_default',
       key: 'is_default',
-      width: 60,
+      width: 50,
       render: (isDefault: boolean) => isDefault ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null,
     },
     {
@@ -340,11 +373,14 @@ const LLMSettings: React.FC = () => {
       title: t('settings.modelConfig'),
       key: 'model_info',
       render: (_: any, record: LLMProvider) => {
-        const modelCount = record.models_json ? JSON.parse(record.models_json).length : 0
+        const allModels: LLMModelConfig[] = record.models_json ? JSON.parse(record.models_json) : []
+        const chatCount = allModels.filter((m: any) => (m.category || 'chat') === 'chat').length
+        const embeddingCount = allModels.filter((m: any) => m.category === 'embedding').length
         return (
           <Space size={4} orientation="vertical" style={{ lineHeight: 1.4 }}>
-            <Text style={{ fontSize: 12 }}>{record.model}</Text>
-            {modelCount > 0 && <Text type="secondary" style={{ fontSize: 11 }}>{t('settings.modelCount', { count: modelCount })}</Text>}
+            {chatCount > 0 && <Text style={{ fontSize: 12 }}>{t('settings.modelCategory_chat')} {chatCount}</Text>}
+            {embeddingCount > 0 && <Text type="secondary" style={{ fontSize: 11 }}>{t('settings.modelCategory_embedding')} {embeddingCount}</Text>}
+            {chatCount === 0 && embeddingCount === 0 && <Text type="secondary" style={{ fontSize: 11 }}>{t('settings.noModels')}</Text>}
           </Space>
         )
       },
@@ -474,43 +510,9 @@ const LLMSettings: React.FC = () => {
                       size="small"
                       pagination={false}
                       locale={{ emptyText: t('settings.noModels') }}
-                      scroll={{ x: 650 }}
+                      scroll={{ x: 500 }}
                     />
                   </>
-                ),
-              },
-            ]}
-          />
-
-          <Collapse
-            size="small"
-            style={{ marginBottom: 16 }}
-            items={[
-              {
-                key: 'defaults',
-                label: <span><SettingOutlined /> {t('settings.defaultParams')}</span>,
-                children: (
-                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                    <Form.Item name="model" label={t('settings.defaultModel')} rules={[{ required: true, message: t('settings.enterModelName') }]}>
-                      <Input placeholder="gpt-4o-mini" style={{ width: 180 }} />
-                    </Form.Item>
-                    <Form.Item name="embedding_model" label={
-                      <span>{t('settings.embeddingModel')} <Tooltip title={t('settings.embeddingModelTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                    }>
-                      <Input placeholder="text-embedding-3-small" style={{ width: 200 }} />
-                    </Form.Item>
-                    <Form.Item name="temperature" label={
-                      <span>{t('settings.temperature')} <Tooltip title={t('settings.temperatureTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                    }>
-                      <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
-                    </Form.Item>
-                    <Form.Item name="max_tokens" label={t('settings.maxToken')}>
-                      <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
-                    </Form.Item>
-                    <Form.Item name="timeout_ms" label={t('settings.timeout')}>
-                      <InputNumber min={1000} max={300000} step={1000} style={{ width: 140 }} />
-                    </Form.Item>
-                  </div>
                 ),
               },
             ]}
@@ -525,6 +527,9 @@ const LLMSettings: React.FC = () => {
                 label: <span><GlobalOutlined /> {t('settings.advancedConfig')}</span>,
                 children: (
                   <>
+                    <Form.Item name="timeout_ms" label={t('settings.timeout')}>
+                      <InputNumber min={1000} max={300000} step={1000} style={{ width: 180 }} />
+                    </Form.Item>
                     <Form.Item name="extra_headers_json" label={
                       <span>{t('settings.extraHeaders')} <Tooltip title={t('settings.extraHeadersTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
                     }>
@@ -558,53 +563,72 @@ const LLMSettings: React.FC = () => {
       >
         <Form form={modelForm} layout="vertical" style={{ marginTop: 16 }}>
           <div style={{ display: 'flex', gap: 16 }}>
-            <Form.Item name="name" label={t('settings.displayName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
-              <Input placeholder="DeepSeek-V3" />
-            </Form.Item>
-            <Form.Item name="model" label={t('settings.modelId')} rules={[{ required: true, message: t('settings.enterModelId') }]} style={{ flex: 1 }}>
-              <Input placeholder="deepseek-chat" />
-            </Form.Item>
-          </div>
-
-          <Divider plain>{t('settings.generateParams')}</Divider>
-
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <Form.Item name="temperature" label={
-              <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
-            }>
-              <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
-            </Form.Item>
-            <Form.Item name="max_tokens" label={t('settings.maxToken')}>
-              <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
-            </Form.Item>
-            <Form.Item name="max_retry" label={
-              <span>{t('settings.maxRetry')} <Tooltip title={t('settings.maxRetryTooltip')}><QuestionCircleOutlined /></Tooltip></span>
-            }>
-              <InputNumber min={1} max={1000} step={10} style={{ width: 140 }} />
-            </Form.Item>
-            <Form.Item name="top_p" label={
-              <span>{t('settings.topP')} <Tooltip title={t('settings.topPTooltip')}><QuestionCircleOutlined /></Tooltip></span>
-            }>
-              <InputNumber min={0} max={1} step={0.05} style={{ width: 120 }} />
+            <Form.Item name="category" label={t('settings.modelCategory')} rules={[{ required: true }]} style={{ flex: 1 }}>
+              <Select onChange={handleModelCategoryChange}>
+                <Select.Option value="chat">{t('settings.modelCategory_chat')}</Select.Option>
+                <Select.Option value="embedding">{t('settings.modelCategory_embedding')}</Select.Option>
+              </Select>
             </Form.Item>
           </div>
 
           <div style={{ display: 'flex', gap: 16 }}>
-            <Form.Item name="frequency_penalty" label={
-              <span>{t('settings.frequencyPenalty')} <Tooltip title={t('settings.frequencyPenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
-            }>
-              <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+            <Form.Item name="name" label={t('settings.displayName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
+              <Input placeholder="DeepSeek-V3" />
             </Form.Item>
-            <Form.Item name="presence_penalty" label={
-              <span>{t('settings.presencePenalty')} <Tooltip title={t('settings.presencePenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
-            }>
-              <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+            <Form.Item name="model" label={t('settings.modelId')} rules={[{ required: true, message: t('settings.enterModelId') }]} style={{ flex: 1 }}>
+              <Input placeholder={modelCategory === 'embedding' ? 'text-embedding-3-small' : 'deepseek-chat'} />
             </Form.Item>
           </div>
 
-          <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefaultModel')}>
-            <Switch />
-          </Form.Item>
+          {modelCategory === 'chat' && (
+            <>
+              <Divider plain>{t('settings.generateParams')}</Divider>
+
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                <Form.Item name="temperature" label={
+                  <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item name="max_tokens" label={t('settings.maxToken')}>
+                  <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item name="max_retry" label={
+                  <span>{t('settings.maxRetry')} <Tooltip title={t('settings.maxRetryTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={1} max={1000} step={10} style={{ width: 140 }} />
+                </Form.Item>
+                <Form.Item name="top_p" label={
+                  <span>{t('settings.topP')} <Tooltip title={t('settings.topPTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={0} max={1} step={0.05} style={{ width: 120 }} />
+                </Form.Item>
+              </div>
+
+              <div style={{ display: 'flex', gap: 16 }}>
+                <Form.Item name="frequency_penalty" label={
+                  <span>{t('settings.frequencyPenalty')} <Tooltip title={t('settings.frequencyPenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item name="presence_penalty" label={
+                  <span>{t('settings.presencePenalty')} <Tooltip title={t('settings.presencePenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+                </Form.Item>
+              </div>
+
+              <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefaultModel')}>
+                <Switch />
+              </Form.Item>
+            </>
+          )}
+
+          {modelCategory === 'embedding' && (
+            <div style={{ padding: '12px 0' }}>
+              <Text type="secondary">{t('settings.embeddingModelHint')}</Text>
+            </div>
+          )}
         </Form>
       </Modal>
     </>

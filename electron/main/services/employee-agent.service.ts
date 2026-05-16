@@ -110,11 +110,13 @@ class EmployeeAgentService {
 
     const modelConfig = this.getModelConfig(config, modelId)
 
+    const resolvedModelName = modelConfig?.model || modelId || config.model
+
     const agentConfig: EmployeeAgentConfig = {
       name: employee.name,
       instructions,
       role,
-      model: modelId || config.model,
+      model: resolvedModelName,
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
@@ -277,7 +279,7 @@ class EmployeeAgentService {
     try {
       const models: Array<LLMModelConfig & Record<string, any>> = JSON.parse(config.models_json)
       const matched = modelId
-        ? models.find(m => m.model === modelId)
+        ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
         : models.find(m => m.is_default)
       return matched ?? null
     } catch {
@@ -308,7 +310,7 @@ class EmployeeAgentService {
       try {
         const models: LLMModelConfig[] = JSON.parse(config.models_json)
         const matched = model_id
-          ? models.find(m => m.model === model_id)
+          ? models.find(m => m.id === model_id) || models.find(m => m.model === model_id)
           : models.find(m => m.is_default)
         if (matched?.max_retry !== undefined) {
           maxIterations = matched.max_retry

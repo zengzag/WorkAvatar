@@ -1014,9 +1014,14 @@ class KnowledgeBaseService {
 
     let queryEmbedding: Float32Array | null = null
     try {
-      const provider = providerId || this.getDefaultProviderId()
-      if (provider) {
-        queryEmbedding = await this.llmClient.createEmbedding(provider, query)
+      const embeddingConfig = this.llmClient.getDefaultEmbeddingConfig()
+      if (embeddingConfig) {
+        queryEmbedding = await this.llmClient.createEmbedding(embeddingConfig.providerId, query, embeddingConfig.modelName)
+      } else {
+        const provider = providerId || this.getDefaultProviderId()
+        if (provider) {
+          queryEmbedding = await this.llmClient.createEmbedding(provider, query)
+        }
       }
     } catch (err) {
       console.warn('[KB] Failed to generate query embedding, falling back to keyword search:', err)
@@ -1105,8 +1110,11 @@ class KnowledgeBaseService {
   }
 
   async rebuildEmbeddings(kbId: string): Promise<void> {
-    const provider = this.getDefaultProviderId()
+    const embeddingConfig = this.llmClient.getDefaultEmbeddingConfig()
+    const provider = embeddingConfig?.providerId || this.getDefaultProviderId()
     if (!provider) return
+
+    const modelName = embeddingConfig?.modelName
 
     const indexEntries = this.db.prepare(
       'SELECT id, source_type, source_id, document_id, title, content FROM kb_search_index WHERE kb_id = ?'
@@ -1128,7 +1136,7 @@ class KnowledgeBaseService {
     if (texts.length === 0) return
 
     try {
-      const embeddings = await this.llmClient.createEmbeddings(provider, texts)
+      const embeddings = await this.llmClient.createEmbeddings(provider, texts, modelName)
       for (let i = 0; i < embeddings.length && i < meta.length; i++) {
         this.searchEngine.storeEmbedding(
           kbId,
@@ -1136,7 +1144,7 @@ class KnowledgeBaseService {
           meta[i].sourceId,
           meta[i].documentId,
           embeddings[i],
-          'rebuild'
+          modelName || 'rebuild'
         )
       }
     } catch (err) {
