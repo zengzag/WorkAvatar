@@ -33,9 +33,9 @@ class ProjectManagerService {
 
     let projects: (Project & { file_count: number })[]
     if (limit !== undefined) {
-      projects = this.db.getDb().prepare(query + ' LIMIT ? OFFSET ?').all(limit, offset || 0) as any
+      projects = this.db.getDb().prepare(query + ' LIMIT ? OFFSET ?').all(limit, offset || 0) as (Project & { file_count: number })[]
     } else {
-      projects = this.db.getDb().prepare(query).all() as any
+      projects = this.db.getDb().prepare(query).all() as (Project & { file_count: number })[]
     }
 
     return { projects, total }

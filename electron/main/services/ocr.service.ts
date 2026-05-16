@@ -1,6 +1,9 @@
 import fs from 'fs'
 import path from 'path'
 import { createWorker } from 'tesseract.js'
+import { createLogger } from './logger'
+
+const logger = createLogger('OCR')
 
 interface OCROptions {
   language?: string
@@ -52,12 +55,12 @@ class OCRService {
       if (fs.existsSync(rapidOCRExe)) {
         this.rapidOCRPath = rapidOCRExe
         this.rapidOCRAvailable = true
-        console.log('[OCR] RapidOCR found at:', rapidOCRExe)
+        logger.info('RapidOCR found at:', rapidOCRExe)
       } else {
-        console.log('[OCR] RapidOCR not found, will use Tesseract.js')
+        logger.info('RapidOCR not found, will use Tesseract.js')
       }
     } catch {
-      console.log('[OCR] RapidOCR check failed, will use Tesseract.js')
+      logger.info('RapidOCR check failed, will use Tesseract.js')
     }
   }
 
@@ -139,7 +142,7 @@ class OCRService {
       try {
         return await this.runRapidOCR(imagePath, language)
       } catch (err) {
-        console.warn('[OCR] RapidOCR failed, falling back to Tesseract.js:', err)
+        logger.warn('RapidOCR failed, falling back to Tesseract.js:', err)
         return await this.runTesseract(imagePath, language)
       }
     }

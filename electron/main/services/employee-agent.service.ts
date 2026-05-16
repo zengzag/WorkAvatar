@@ -13,6 +13,10 @@ import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import { KNOWLEDGE_QUERY_GUIDANCE } from './agent/business/prompts'
 import type { LLMModelConfig } from '../../shared/types'
+import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
+import { createLogger } from './logger'
+
+const logger = createLogger('AgentEvent')
 
 interface EmployeeChatStreamParams {
   employee_id: string
@@ -64,7 +68,7 @@ class EmployeeAgentService {
       return this.agents.get(cacheKey)!
     }
 
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
     if (!employee) {
       throw new Error(`Employee ${employeeId} not found`)
     }
@@ -145,7 +149,7 @@ class EmployeeAgentService {
       toolMaxRetries: modelConfig?.tool_max_retries ?? 2,
       toolMaxResultSize: modelConfig?.tool_max_result_size ?? 50000,
       onEvent: (event, data) => {
-        console.log(`[AgentEvent] ${event}`, data)
+        logger.info(`${event}`, data)
       },
     }
 
@@ -225,7 +229,7 @@ class EmployeeAgentService {
 
     const enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
-    ).all(employeeId) as any[]
+    ).all(employeeId) as DBEmployeeTool[]
 
     if (enabledRows.length === 0) {
       return allBuiltinToolIds
@@ -290,7 +294,7 @@ class EmployeeAgentService {
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
     const { employee_id, provider_id, model_id, messages, use_skills = true, enable_thinking } = params
 
-    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as any
+    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'status'> | undefined
     if (employeeRow && employeeRow.status !== 'active') {
       throw new Error(`Employee is not active (status: ${employeeRow.status})`)
     }

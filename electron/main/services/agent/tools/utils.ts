@@ -13,3 +13,7 @@ export function formatFileSize(bytes: number): string {
 export function generateUUID(): string {
   return generateId()
 }
+
+export function formatEntityList(entities: any[], separator: string = '\n', prefix: string = '- '): string {
+  return entities.map(e => `${prefix}${e.name}(${e.type})`).join(separator)
+}

@@ -3,6 +3,9 @@ import fs from 'fs'
 import path from 'path'
 import PathService from './path.service'
 import DatabaseService from './database.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('KB-DB')
 
 class KBDatabaseService {
   private db: Database.Database
@@ -288,7 +291,7 @@ class KBDatabaseService {
       WHERE parse_status = 'parsing'
     `).run()
     if (parsingResult.changes > 0) {
-      console.log(`[KB-DB] Recovered ${parsingResult.changes} document(s) from parsing to paused status`)
+      logger.info(`Recovered ${parsingResult.changes} document(s) from parsing to paused status`)
     }
 
     this.db.prepare(`
@@ -314,7 +317,7 @@ class KBDatabaseService {
       const kbCount = (this.db.prepare('SELECT COUNT(*) as count FROM knowledge_bases').get() as any)?.count || 0
       if (kbCount > 0) return
 
-      console.log(`[KB-DB] Migrating ${mainKBCount} knowledge bases from main database...`)
+      logger.info(`Migrating ${mainKBCount} knowledge bases from main database...`)
 
       const KB_TABLES = [
         'knowledge_bases',
@@ -358,9 +361,9 @@ class KBDatabaseService {
               insertStmt.run(...columns.map(c => row[c]))
             }
 
-            console.log(`[KB-DB] Migrated ${rows.length} rows from ${table}`)
+            logger.info(`Migrated ${rows.length} rows from ${table}`)
           } catch (err) {
-            console.warn(`[KB-DB] Failed to migrate table ${table}:`, err)
+            logger.warn(`Failed to migrate table ${table}:`, err)
           }
         }
 
@@ -374,17 +377,17 @@ class KBDatabaseService {
             for (const row of ftsRows) {
               ftsInsertStmt.run(...ftsCols.map(c => row[c]))
             }
-            console.log(`[KB-DB] Migrated ${ftsRows.length} rows from kb_fts`)
+            logger.info(`Migrated ${ftsRows.length} rows from kb_fts`)
           }
         } catch (err) {
-          console.warn('[KB-DB] Failed to migrate kb_fts:', err)
+          logger.warn('Failed to migrate kb_fts:', err)
         }
       })
 
       transaction()
-      console.log('[KB-DB] Migration completed successfully')
+      logger.info('Migration completed successfully')
     } catch (err) {
-      console.error('[KB-DB] Migration failed:', err)
+      logger.error('Migration failed:', err)
     }
   }
 

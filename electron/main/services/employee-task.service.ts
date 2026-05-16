@@ -4,6 +4,7 @@ import TaskNotificationService, { type TaskCompletionNotification } from './task
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
+import type { DBEmployee } from '../../shared/db-types'
 
 interface EmployeeTask {
   id: string
@@ -244,7 +245,7 @@ class EmployeeTaskService {
     if (!task) throw new Error(`Task ${taskId} not found`)
     if (!task.is_enabled) throw new Error(`Task ${taskId} is disabled`)
 
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(task.employee_id) as any
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(task.employee_id) as DBEmployee | undefined
     if (!employee) throw new Error(`Employee ${task.employee_id} not found`)
     if (employee.status !== 'active') throw new Error(`Employee ${task.employee_id} is not active (status: ${employee.status})`)
 
@@ -267,7 +268,7 @@ class EmployeeTaskService {
     executionId: string,
     taskId: string,
     task: EmployeeTask,
-    employee: any,
+    employee: DBEmployee,
     providerId: string,
     modelId: string | null,
     triggerType: 'manual' | 'scheduled',

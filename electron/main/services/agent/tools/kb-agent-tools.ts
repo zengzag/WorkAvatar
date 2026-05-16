@@ -3,6 +3,11 @@ import DatabaseService from '../../database.service'
 import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from '../tool.types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
+import { formatEntityList } from './utils'
+
+function formatKBOptions(projectKBs: any[]): string {
+  return projectKBs.map(kb => `${kb.id}(${kb.name})`).join(', ')
+}
 
 export function createKBAgentTools(
   kbService: KnowledgeBaseService,
@@ -31,7 +36,7 @@ export function createKBAgentTools(
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。不传则返回所有可访问知识库列表；传入则返回该知识库的文档详情。可选值: ${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`
+          description: `知识库ID（可选）。不传则返回所有可访问知识库列表；传入则返回该知识库的文档详情。可选值: ${formatKBOptions(projectKBs)}`
         }
       },
       required: []
@@ -147,7 +152,7 @@ export function createKBAgentTools(
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选，不提供则使用默认知识库）。可选值: ${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`
+          description: `知识库ID（可选，不提供则使用默认知识库）。可选值: ${formatKBOptions(projectKBs)}`
         }
       },
       required: []
@@ -198,7 +203,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
         }
       },
       required: ['entity_name']
@@ -272,7 +277,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
         }
       },
       required: ['query']
@@ -289,7 +294,7 @@ export function createKBAgentTools(
         }
         const output = chapters.map((ch: any, i: number) => {
           const entities: any[] = JSON.parse(ch.entities_json || '[]')
-          const entityNames = entities.map((e: any) => `${e.name}(${e.type})`).join(', ')
+          const entityNames = formatEntityList(entities, ', ', '')
           return `[${i + 1}] 文档: ${ch.document_name} | 章节: ${ch.title}\n摘要: ${ch.summary || '无摘要'}\n关键词: ${JSON.parse(ch.keywords_json || '[]').join(', ')}\n实体: ${entityNames}\n[document_id: ${ch.document_id}, chapter_id: ${ch.id}]`
         }).join('\n\n---\n\n')
         return { success: true, output: output + '\n\n提示: 使用 kb_get_content 并传入 document_id 或 chapter_id 可获取完整内容；传入 start_offset/end_offset 或 start_line/end_line 可获取指定文本区间。' }
@@ -327,7 +332,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${projectKBs.map((kb: any) => `${kb.id}(${kb.name})`).join(', ')}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
         }
       },
       required: ['query']

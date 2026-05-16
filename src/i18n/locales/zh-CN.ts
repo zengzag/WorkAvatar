@@ -314,6 +314,7 @@ export default {
     toolDisabled: '工具已禁用',
     mcpUpdated: 'MCP 服务器已更新',
     mcpCreated: 'MCP 服务器已创建',
+    invalidJson: '环境变量 JSON 格式无效',
   },
   knowledgeBase: {
     title: '知识库管理',

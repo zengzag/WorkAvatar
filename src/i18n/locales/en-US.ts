@@ -314,6 +314,7 @@ export default {
     toolDisabled: 'Tool disabled',
     mcpUpdated: 'MCP server updated',
     mcpCreated: 'MCP server created',
+    invalidJson: 'Invalid JSON format for environment variables',
   },
   knowledgeBase: {
     title: 'Knowledge Base Management',

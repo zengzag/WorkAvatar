@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '../tool.types'
 import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
+import { formatEntityList } from './utils'
 
 export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
   const kbDb = KBDatabaseService.getInstance()
@@ -80,7 +81,7 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
 
           const entities: any[] = JSON.parse(chapter.entities_json || '[]')
           if (entities.length > 0) {
-            output += `\n\n### 本章实体\n${entities.map((e: any) => `- ${e.name}(${e.type})`).join('\n')}`
+            output += `\n\n### 本章实体\n${formatEntityList(entities)}`
           }
 
           // 添加章节导航

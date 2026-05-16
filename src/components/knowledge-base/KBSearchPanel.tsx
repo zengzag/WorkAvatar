@@ -144,14 +144,16 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             kb_id: selectedKbId,
             type: entitySearchType,
           })
-          const filtered = (data || []).filter((e: any) =>
-            !query.trim() ||
-            e.name.toLowerCase().includes(query.toLowerCase()) ||
-            (e.description || '').toLowerCase().includes(query.toLowerCase()) ||
-            (JSON.parse(e.aliases_json || '[]') as string[]).some((a: string) =>
-              a.toLowerCase().includes(query.toLowerCase())
-            )
-          )
+          const filtered = (data || []).filter((e: any) => {
+            if (!query.trim()) return true
+            const q = query.toLowerCase()
+            if (e.name?.toLowerCase().includes(q)) return true
+            if ((e.description || '').toLowerCase().includes(q)) return true
+            try {
+              const aliases: string[] = JSON.parse(e.aliases_json || '[]')
+              return aliases.some((a: string) => a.toLowerCase().includes(q))
+            } catch { return false }
+          })
           setEntityResults(filtered.slice(0, topK))
           break
         }
@@ -208,7 +210,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   }, [handleSearch, loading])
 
   const handleCopyResult = useCallback((text: string) => {
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(text).catch(() => {})
   }, [])
 
   const selectedKb = kbList.find(kb => kb.id === selectedKbId)
@@ -400,7 +402,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     return (
       <div>
         {entityResults.map((entity: any, index: number) => {
-          const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
+          const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
           return (
             <Card
               key={index}
@@ -463,7 +465,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
 
     const { entity, relations, mentions } = graphResult
-    const aliases: string[] = JSON.parse(entity.aliases_json || '[]')
+    const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
 
     return (
       <div>
@@ -530,8 +532,8 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       return <Empty description={t('kbSearch.noGlobalSummary')} />
     }
 
-    const keyTopics: string[] = JSON.parse(globalSummaryResult.key_topics_json || '[]')
-    const keyEntities: any[] = JSON.parse(globalSummaryResult.key_entities_json || '[]')
+    const keyTopics: string[] = (() => { try { return JSON.parse(globalSummaryResult.key_topics_json || '[]') } catch { return [] } })()
+    const keyEntities: any[] = (() => { try { return JSON.parse(globalSummaryResult.key_entities_json || '[]') } catch { return [] } })()
 
     return (
       <div>
@@ -665,7 +667,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}
-                message={t('kbSearch.semanticDegraded')}
+                title={t('kbSearch.semanticDegraded')}
               />
             )}
             <div style={{ marginBottom: 8 }}>

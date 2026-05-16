@@ -143,10 +143,7 @@ const LLMSettings: React.FC = () => {
   const handleEdit = (provider: LLMProvider) => {
     setEditingProvider(provider)
     const loadedModels: LLMModelConfig[] = provider.models_json
-      ? JSON.parse(provider.models_json).map((m: any) => ({
-          ...m,
-          category: m.category || 'chat',
-        }))
+      ? (() => { try { return JSON.parse(provider.models_json).map((m: any) => ({ ...m, category: m.category || 'chat' })) } catch { return [] } })()
       : []
     setModels(loadedModels)
     form.resetFields()
@@ -373,7 +370,7 @@ const LLMSettings: React.FC = () => {
       title: t('settings.modelConfig'),
       key: 'model_info',
       render: (_: any, record: LLMProvider) => {
-        const allModels: LLMModelConfig[] = record.models_json ? JSON.parse(record.models_json) : []
+        const allModels: LLMModelConfig[] = record.models_json ? (() => { try { return JSON.parse(record.models_json) } catch { return [] } })() : []
         const chatCount = allModels.filter((m: any) => (m.category || 'chat') === 'chat').length
         const embeddingCount = allModels.filter((m: any) => m.category === 'embedding').length
         return (

@@ -1,6 +1,9 @@
 import Database from 'better-sqlite3'
 import fs from 'fs'
 import PathService from './path.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('DB')
 
 class DatabaseService {
   private db: Database.Database
@@ -328,7 +331,7 @@ class DatabaseService {
       WHERE status IN ('running', 'pending')
     `).run()
     if (runningTasksResult.changes > 0) {
-      console.log(`[DB] Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
+      logger.info(`Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
     }
   }
 
