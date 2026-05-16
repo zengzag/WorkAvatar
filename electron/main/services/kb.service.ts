@@ -177,6 +177,10 @@ class KnowledgeBaseService {
       try { fs.rmSync(parsedDir, { recursive: true, force: true }) } catch {}
     }
 
+    if (fs.existsSync(kbBasePath)) {
+      try { fs.rmSync(kbBasePath, { recursive: true, force: true }) } catch {}
+    }
+
     const result = this.db.prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id)
     return result.changes > 0
   }

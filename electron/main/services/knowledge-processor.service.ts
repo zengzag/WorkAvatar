@@ -155,13 +155,17 @@ class KnowledgeProcessorService {
   ): Promise<ChapterSummary> {
     onProgress?.('chapter_summary', `Generating chapter summary: ${chapterTitle}`)
 
-    const prompt = `为以下章节生成摘要，JSON格式返回�?
-章节标题�?{chapterTitle}
-章节内容�?${chapterContent.substring(0, 8000)}
+    const prompt = `为以下章节生成摘要，JSON格式返回。
 
-返回字段�?- title: 章节标题
-- summary: 摘要�?00-500字）
-- keywords: 关键词列�?- entities: 实体列表，每个含 name、type(person/organization/location/event/concept/other)、description
+章节标题：${chapterTitle}
+章节内容：
+${chapterContent.substring(0, 8000)}
+
+返回字段：
+- title: 章节标题
+- summary: 摘要（200-500字）
+- keywords: 关键词列表
+- entities: 实体列表，每个含 name、type(person/organization/location/event/concept/other)、description
 
 只返回JSON。`
 
@@ -196,17 +200,21 @@ class KnowledgeProcessorService {
     onProgress?.('doc_summary', `Generating document summary: ${documentTitle}`)
 
     const summariesText = chapterSummaries.map((cs, i) =>
-      `### 章节${i + 1}: ${cs.title}\n${cs.summary}\n关键�? ${cs.keywords.join(', ')}\n实体: ${cs.entities.map(e => `${e.name}(${e.type})`).join(', ')}`
+      `### 章节${i + 1}: ${cs.title}\n${cs.summary}\n关键词: ${cs.keywords.join(', ')}\n实体: ${cs.entities.map(e => `${e.name}(${e.type})`).join(', ')}`
     ).join('\n\n')
 
-    const prompt = `基于章节摘要生成文档全局摘要，JSON格式返回�?
-文档标题�?{documentTitle}
-章节摘要�?${summariesText.substring(0, 15000)}
+    const prompt = `基于章节摘要生成文档全局摘要，JSON格式返回。
 
-返回字段�?- summary: 全局摘要�?00-800字）
+文档标题：${documentTitle}
+章节摘要：
+${summariesText.substring(0, 15000)}
+
+返回字段：
+- summary: 全局摘要（300-800字）
 - keyEntities: 实体列表，每个含 name、type、description
 - timeline: 事件列表，每个含 time、event
-- keywords: 关键词列�?- mainTopics: 主要主题列表
+- keywords: 关键词列表
+- mainTopics: 主要主题列表
 
 只返回JSON。`
 
@@ -241,11 +249,14 @@ class KnowledgeProcessorService {
   ): Promise<EntityExtraction> {
     onProgress?.('entity_extract', `Extracting entities: ${sourceTitle}`)
 
-    const prompt = `从文本中提取实体及关系，JSON格式返回�?
-来源�?{sourceTitle}
-文本内容�?${text.substring(0, 10000)}
+    const prompt = `从文本中提取实体及关系，JSON格式返回。
 
-返回字段�?- entities: 实体列表，每个含 name、type(person/organization/location/event/concept/tool/other)、description、aliases、attributes
+来源：${sourceTitle}
+文本内容：
+${text.substring(0, 10000)}
+
+返回字段：
+- entities: 实体列表，每个含 name、type(person/organization/location/event/concept/tool/other)、description、aliases、attributes
 - relations: 关系列表，每个含 source、target、relationType、description
 
 只返回JSON。`
@@ -284,14 +295,17 @@ class KnowledgeProcessorService {
       `### 文档${i + 1}: ${ds.title}\n${ds.summary}\n主要主题: ${ds.mainTopics.join(', ')}\n关键实体: ${ds.keyEntities.map(e => `${e.name}(${e.type})`).join(', ')}`
     ).join('\n\n')
 
-    const prompt = `基于文档摘要生成知识库全局摘要，JSON格式返回�?
-知识库名称：${kbName}
-文档摘要�?${docsText.substring(0, 20000)}
+    const prompt = `基于文档摘要生成知识库全局摘要，JSON格式返回。
 
-返回字段�?- summary: 全局摘要�?00-1500字）
+知识库名称：${kbName}
+文档摘要：
+${docsText.substring(0, 20000)}
+
+返回字段：
+- summary: 全局摘要（500-1500字）
 - keyTopics: 核心主题列表
 - keyEntities: 实体列表，每个含 name、type、description
-- globalTimeline: 时间线，每个�?time、event
+- globalTimeline: 时间线，每个含 time、event
 
 只返回JSON。`
 
