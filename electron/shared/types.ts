@@ -28,7 +28,7 @@ export interface File {
 
 export interface Employee {
   id: string
-  project_id: string
+  project_id?: string
   project_name?: string
   name: string
   description: string

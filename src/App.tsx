@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { Layout, Menu, Typography } from 'antd'
 import {
-  RocketOutlined,
-  FolderOpenOutlined,
-  UserOutlined,
+  MessageOutlined,
+  RobotOutlined,
   ApartmentOutlined,
   SettingOutlined,
   BookOutlined,
@@ -34,45 +33,39 @@ const App: React.FC = () => {
 
   const getSelectedKey = () => {
     const path = location.pathname
-    if (path.startsWith('/dashboard')) return 'dashboard'
-    if (path === '/projects' || path.startsWith('/project/')) return 'projects'
+    if (path === '/' || path.startsWith('/conversation-center')) return 'conversation-center'
+    if (path === '/projects' || path.startsWith('/project/')) return 'settings'
     if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
     if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
-    return 'dashboard'
+    return 'conversation-center'
   }
 
   const menuItems = [
     {
-      key: 'dashboard',
-      icon: <RocketOutlined />,
-      label: t('nav.dashboard'),
-      onClick: () => navigate('/dashboard'),
-    },
-    {
-      key: 'projects',
-      icon: <FolderOpenOutlined />,
-      label: t('nav.projects'),
-      onClick: () => navigate('/projects'),
+      key: 'conversation-center',
+      icon: <MessageOutlined />,
+      label: t('nav.conversationCenter'),
+      onClick: () => navigate('/'),
     },
     {
       key: 'employees',
-      icon: <UserOutlined />,
+      icon: <RobotOutlined />,
       label: t('nav.employees'),
       onClick: () => navigate('/employees'),
-    },
-    {
-      key: 'workflows',
-      icon: <ApartmentOutlined />,
-      label: t('nav.workflows'),
-      onClick: () => navigate('/workflows'),
     },
     {
       key: 'knowledge-base',
       icon: <BookOutlined />,
       label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
+    },
+    {
+      key: 'workflows',
+      icon: <ApartmentOutlined />,
+      label: t('nav.workflows'),
+      onClick: () => navigate('/workflows'),
     },
     {
       key: 'settings',
@@ -103,7 +96,7 @@ const App: React.FC = () => {
             borderBottom: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0',
           }}
         >
-          <RocketOutlined
+          <MessageOutlined
             style={{
               fontSize: collapsed ? 24 : 20,
               color: '#1677ff',

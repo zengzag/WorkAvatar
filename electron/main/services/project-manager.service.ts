@@ -164,14 +164,14 @@ class ProjectManagerService {
     return this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(id) as Employee || null
   }
 
-  createEmployee(projectId: string, name: string, description: string = '', profileJson: string = ''): Employee {
+  createEmployee(projectId: string | null | undefined, name: string, description: string = '', profileJson: string = ''): Employee {
     const employeeId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().prepare(`
       INSERT INTO employees (id, project_id, name, description, profile_json, status, avatar_type, review_mode, arch_version, total_tasks, total_approvals, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, 'draft', 'default', 0, 1, 0, 0, ?, ?)
-    `).run(employeeId, projectId, name, description, profileJson, now, now)
+    `).run(employeeId, projectId || null, name, description, profileJson, now, now)
 
     return this.getEmployee(employeeId)!
   }
@@ -218,6 +218,34 @@ class ProjectManagerService {
 
   deleteEmployee(id: string): boolean {
     const result = this.db.getDb().prepare('DELETE FROM employees WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  getKBsForEmployee(employeeId: string): any[] {
+    return this.db.getDb().prepare(`
+      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
+      FROM knowledge_bases kb
+      INNER JOIN employee_kb_links l ON kb.id = l.kb_id
+      WHERE l.employee_id = ?
+      ORDER BY kb.name
+    `).all(employeeId)
+  }
+
+  linkKBToEmployee(employeeId: string, kbId: string): boolean {
+    try {
+      this.db.getDb().prepare(
+        'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
+      ).run(employeeId, kbId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  unlinkKBFromEmployee(employeeId: string, kbId: string): boolean {
+    const result = this.db.getDb().prepare(
+      'DELETE FROM employee_kb_links WHERE employee_id = ? AND kb_id = ?'
+    ).run(employeeId, kbId)
     return result.changes > 0
   }
 
@@ -333,6 +361,16 @@ class ProjectManagerService {
   deleteAllConversations(employeeId: string): number {
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
     return result.changes
+  }
+
+  getAllRecentConversations(limit: number = 20): Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }> {
+    return this.db.getDb().prepare(`
+      SELECT c.id, c.employee_id, c.title, c.message_count, c.status, c.created_at, c.updated_at, e.name as employee_name
+      FROM conversations c
+      LEFT JOIN employees e ON c.employee_id = e.id
+      ORDER BY c.updated_at DESC
+      LIMIT ?
+    `).all(limit) as Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }>
   }
 
   private resolveWorkspacePath(projectId: string, relativePath?: string): { fullPath: string; error?: string } {

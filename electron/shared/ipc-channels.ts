@@ -32,6 +32,10 @@ export type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
+  ConversationRecentParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,

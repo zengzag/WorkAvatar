@@ -4,19 +4,24 @@ import {
   SaveOutlined,
   SettingOutlined,
   RobotOutlined,
+  FolderOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import {
   LLMSettings,
   AppearanceSettings,
   StorageSettings,
   AboutSection,
   DefaultModelSettings,
+  ProjectManagement,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
   const { t } = useTranslation()
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
 
   const tabItems: TabsProps['items'] = [
     {
@@ -36,6 +41,15 @@ const Settings: React.FC = () => {
         </span>
       ),
       children: <DefaultModelSettings />,
+    },
+    {
+      key: 'projects',
+      label: (
+        <span>
+          <FolderOutlined /> {t('settings.tabProjects')}
+        </span>
+      ),
+      children: <ProjectManagement />,
     },
     {
       key: 'storage',
@@ -62,10 +76,13 @@ const Settings: React.FC = () => {
     },
   ]
 
+  const validTabs = ['llm', 'defaultModel', 'projects', 'storage', 'appearance', 'about']
+  const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
+
   return (
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <Card>
-        <Tabs items={tabItems} style={{ minHeight: 400 }} />
+        <Tabs defaultActiveKey={defaultActiveKey} items={tabItems} style={{ minHeight: 400 }} />
       </Card>
     </div>
   )

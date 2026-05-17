@@ -25,6 +25,7 @@ import type {
   SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationRecentParams,
   AppGetPathParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
@@ -59,6 +60,9 @@ import type {
   EmployeeTaskUpdateParams,
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
   WorkflowCreateParams,
   WorkflowUpdateParams,
 } from '../shared/ipc-channels'
@@ -121,6 +125,9 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
     },
+    listKBs: (params: EmployeeKBListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LIST, params),
+    linkKB: (params: EmployeeKBLinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LINK, params),
+    unlinkKB: (params: EmployeeKBUnlinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, params),
   },
 
   skill: {
@@ -138,6 +145,7 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
+    recentList: (params?: ConversationRecentParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_RECENT, params),
   },
 
   llm: {

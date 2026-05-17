@@ -1,7 +1,5 @@
 import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
-import Dashboard from '../pages/Dashboard'
-import ProjectManager from '../pages/ProjectManager'
 import ProjectDetail from '../pages/ProjectDetail'
 import CreationWizard from '../pages/CreationWizard'
 import DocumentViewer from '../pages/DocumentViewer'
@@ -10,6 +8,7 @@ import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
+import ConversationCenter from '../pages/ConversationCenter'
 import WorkflowList from '../pages/WorkflowList'
 import WorkflowEditor from '../pages/WorkflowEditor'
 
@@ -20,15 +19,19 @@ const router = createHashRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/dashboard" replace />,
+        element: <Navigate to="/conversation-center" replace />,
+      },
+      {
+        path: 'conversation-center',
+        element: <ConversationCenter />,
       },
       {
         path: 'dashboard',
-        element: <Dashboard />,
+        element: <Navigate to="/conversation-center" replace />,
       },
       {
         path: 'projects',
-        element: <ProjectManager />,
+        element: <Navigate to="/settings?tab=projects" replace />,
       },
       {
         path: 'project/:id',
@@ -36,6 +39,10 @@ const router = createHashRouter([
       },
       {
         path: 'project/:id/wizard',
+        element: <CreationWizard />,
+      },
+      {
+        path: 'wizard',
         element: <CreationWizard />,
       },
       {

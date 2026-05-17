@@ -116,8 +116,8 @@ const ProjectDetail: React.FC = () => {
       <PageHeader
         title={project.name}
         subTitle={project.description}
-        onBack={() => navigate('/dashboard')}
-        breadcrumb={[{ title: t('projectDetail.breadcrumbDashboard') }, { title: t('projectDetail.breadcrumbProjectDetail') }]}
+        onBack={() => navigate('/settings?tab=projects')}
+        breadcrumb={[{ title: t('projectDetail.breadcrumbProjects'), onClick: () => navigate('/settings?tab=projects') }, { title: t('projectDetail.breadcrumbProjectDetail') }]}
         extra={
           <Space>
             <Button icon={<RobotOutlined />} type="primary" onClick={handleCreateEmployee}>

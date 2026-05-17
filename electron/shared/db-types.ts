@@ -1,6 +1,6 @@
 export interface DBEmployee {
   id: string
-  project_id: string
+  project_id: string | null
   name: string
   description: string
   avatar_type: string

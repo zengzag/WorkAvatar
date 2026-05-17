@@ -9,12 +9,16 @@ import type {
   SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationRecentParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
 } from '../../shared/ipc-channels'
 import type ProjectManagerService from '../services/project-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
@@ -34,7 +38,7 @@ export function registerEmployeeHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CREATE, (_, params: EmployeeCreateParams) => {
-    return projectManager.createEmployee(params.project_id, params.name, params.description, params.profile_json)
+    return projectManager.createEmployee(params.project_id || null, params.name, params.description, params.profile_json)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_UPDATE, (_, params: EmployeeUpdateParams) => {
@@ -94,10 +98,14 @@ export function registerEmployeeHandlers(
     return projectManager.deleteAllConversations(employeeId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_RECENT, (_, params?: ConversationRecentParams) => {
+    return projectManager.getAllRecentConversations(params?.limit)
+  })
+
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, async (event, params: EmployeeProfileAnalyzeParams) => {
     try {
       const result = await profilingService.analyzeProjectForEmployee(
-        params.project_id,
+        params.project_id || '',
         params.kb_ids,
         params.provider_id,
         params.model_id,
@@ -163,5 +171,17 @@ export function registerEmployeeHandlers(
         event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
       }
     )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LIST, (_, params: EmployeeKBListParams) => {
+    return projectManager.getKBsForEmployee(params.employee_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LINK, (_, params: EmployeeKBLinkParams) => {
+    return projectManager.linkKBToEmployee(params.employee_id, params.kb_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, (_, params: EmployeeKBUnlinkParams) => {
+    return projectManager.unlinkKBFromEmployee(params.employee_id, params.kb_id)
   })
 }

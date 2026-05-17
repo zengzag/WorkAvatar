@@ -18,6 +18,7 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
+  CONVERSATION_RECENT: 'conversation:recent',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
@@ -29,6 +30,10 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_IMPORT_PACKAGE: 'employee:import-package',
   EMPLOYEE_EXPORT_PROGRESS: 'employee:export-progress',
   EMPLOYEE_IMPORT_PROGRESS: 'employee:import-progress',
+
+  EMPLOYEE_KB_LIST: 'employee:kb-list',
+  EMPLOYEE_KB_LINK: 'employee:kb-link',
+  EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
 } as const
 
 export interface EmployeeListParams {
@@ -37,7 +42,7 @@ export interface EmployeeListParams {
 }
 
 export interface EmployeeCreateParams {
-  project_id: string
+  project_id?: string
   name: string
   description?: string
   profile_json?: string
@@ -53,6 +58,8 @@ export interface EmployeeUpdateParams {
   default_skill_id?: string
   llm_provider_id?: string
   llm_model?: string
+  project_id?: string | null
+  avatar_type?: string
 }
 
 export interface SkillListParams {
@@ -89,7 +96,7 @@ export interface ConversationCreateParams {
 }
 
 export interface EmployeeProfileAnalyzeParams {
-  project_id: string
+  project_id?: string
   kb_ids: string[]
   provider_id?: string
   model_id?: string
@@ -131,4 +138,22 @@ export interface EmployeeImportPackageParams {
   import_path: string
   project_id: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
+}
+
+export interface ConversationRecentParams {
+  limit?: number
+}
+
+export interface EmployeeKBListParams {
+  employee_id: string
+}
+
+export interface EmployeeKBLinkParams {
+  employee_id: string
+  kb_id: string
+}
+
+export interface EmployeeKBUnlinkParams {
+  employee_id: string
+  kb_id: string
 }

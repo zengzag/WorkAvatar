@@ -86,7 +86,7 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS employees (
         id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
@@ -333,6 +333,16 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_task_executions_employee ON employee_task_executions(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_task_executions_task ON employee_task_executions(task_id);
       CREATE INDEX IF NOT EXISTS idx_employee_task_executions_status ON employee_task_executions(status);
+
+      CREATE TABLE IF NOT EXISTS employee_kb_links (
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (employee_id, kb_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_kb_links_employee ON employee_kb_links(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_kb_links_kb ON employee_kb_links(kb_id);
     `)
 
     this.addColumnIfNotExists('employee_tasks', 'llm_provider_id', 'TEXT')
@@ -346,9 +356,80 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
-    this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'\'')
+    this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'')
+
+    this.migrateEmployeeProjectIdNullable()
+    this.migrateEmployeeProjectIdCascade()
 
     this.recoverStuckDocs()
+  }
+
+  private migrateEmployeeProjectIdNullable(): void {
+    const tableInfo = this.db.prepare('PRAGMA table_info(employees)').all() as any[]
+    const projectCol = tableInfo.find((c) => c.name === 'project_id')
+    if (projectCol && projectCol.notnull === 1) {
+      logger.info('Migrating employees.project_id from NOT NULL to nullable...')
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS employees_new (
+          id TEXT PRIMARY KEY,
+          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          name TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          avatar_type TEXT DEFAULT 'default',
+          status TEXT NOT NULL DEFAULT 'draft',
+          review_mode BOOLEAN NOT NULL DEFAULT 0,
+          default_skill_id TEXT,
+          llm_provider_id TEXT,
+          llm_model TEXT,
+          profile_json TEXT DEFAULT '',
+          arch_version INTEGER NOT NULL DEFAULT 1,
+          total_tasks INTEGER DEFAULT 0,
+          total_approvals INTEGER DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        INSERT INTO employees_new SELECT * FROM employees;
+        DROP TABLE employees;
+        ALTER TABLE employees_new RENAME TO employees;
+        CREATE INDEX IF NOT EXISTS idx_employees_project ON employees(project_id);
+        CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+      `)
+      logger.info('Migration completed: employees.project_id is now nullable')
+    }
+  }
+
+  private migrateEmployeeProjectIdCascade(): void {
+    const fkList = this.db.prepare('PRAGMA foreign_key_list(employees)').all() as any[]
+    const projectFk = fkList.find((fk) => fk.from === 'project_id')
+    if (projectFk && projectFk.on_delete === 'CASCADE') {
+      logger.info('Migrating employees.project_id ON DELETE CASCADE to SET NULL...')
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS employees_new (
+          id TEXT PRIMARY KEY,
+          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          name TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          avatar_type TEXT DEFAULT 'default',
+          status TEXT NOT NULL DEFAULT 'draft',
+          review_mode BOOLEAN NOT NULL DEFAULT 0,
+          default_skill_id TEXT,
+          llm_provider_id TEXT,
+          llm_model TEXT,
+          profile_json TEXT DEFAULT '',
+          arch_version INTEGER NOT NULL DEFAULT 1,
+          total_tasks INTEGER DEFAULT 0,
+          total_approvals INTEGER DEFAULT 0,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        INSERT INTO employees_new SELECT * FROM employees;
+        DROP TABLE employees;
+        ALTER TABLE employees_new RENAME TO employees;
+        CREATE INDEX IF NOT EXISTS idx_employees_project ON employees(project_id);
+        CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+      `)
+      logger.info('Migration completed: employees.project_id ON DELETE is now SET NULL')
+    }
   }
 
   private recoverStuckDocs(): void {

@@ -80,6 +80,8 @@ const EmployeeSettings: React.FC = () => {
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [linkedKBs, setLinkedKBs] = useState<any[]>([])
+  const [employeeKBs, setEmployeeKBs] = useState<any[]>([])
+  const [allKBs, setAllKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
@@ -96,6 +98,7 @@ const EmployeeSettings: React.FC = () => {
   const [availableSkills, setAvailableSkills] = useState<InstalledSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
   const [formLlmProviderId, setFormLlmProviderId] = useState<string>('')
+  const [projects, setProjects] = useState<any[]>([])
 
   useEffect(() => {
     if (employee) {
@@ -129,10 +132,36 @@ const EmployeeSettings: React.FC = () => {
     } catch {}
   }, [])
 
-  const loadLinkedKBs = useCallback(async (projectId: string) => {
+  const loadProjects = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.project.list()
+      setProjects(result.projects || result || [])
+    } catch {}
+  }, [])
+
+  const loadLinkedKBs = useCallback(async (projectId: string | undefined | null) => {
+    if (!projectId) {
+      setLinkedKBs([])
+      return
+    }
     try {
       const result = await window.electronAPI.kb.getKBsForProject(projectId)
       setLinkedKBs(result)
+    } catch {}
+  }, [])
+
+  const loadEmployeeKBs = useCallback(async () => {
+    if (!id) return
+    try {
+      const result = await window.electronAPI.employee.listKBs({ employee_id: id })
+      setEmployeeKBs(result)
+    } catch {}
+  }, [id])
+
+  const loadAllKBs = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kb.list()
+      setAllKBs(result)
     } catch {}
   }, [])
 
@@ -177,12 +206,15 @@ const EmployeeSettings: React.FC = () => {
     if (id) {
       loadEmployee()
       loadProviders()
+      loadProjects()
       loadTools()
       loadMCPServers()
       loadInstalledSkills()
       loadEmployeeSkills()
+      loadEmployeeKBs()
+      loadAllKBs()
     }
-  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills])
+  }, [id, loadEmployee, loadProviders, loadProjects, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills, loadEmployeeKBs, loadAllKBs])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -298,6 +330,15 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
+  const handleProjectChange = async (value: string) => {
+    try {
+      await window.electronAPI.employee.update({ id: id!, project_id: value || null })
+      loadEmployee()
+    } catch {
+      message.error(t('common.saveFailed'))
+    }
+  }
+
   const handleToggleStatus = async () => {
     if (!employee) return
     const newStatus = employee.status === 'active' ? 'paused' : 'active'
@@ -317,7 +358,7 @@ const EmployeeSettings: React.FC = () => {
     try {
       await window.electronAPI.employee.delete(id!)
       message.success(t('common.deleted'))
-      navigate('/dashboard')
+      navigate('/')
     } catch {
       message.error(t('common.deleteFailed'))
     }
@@ -432,7 +473,7 @@ const EmployeeSettings: React.FC = () => {
         subTitle={t('employeeSettings.subtitle')}
         onBack={() => navigate(`/employee/${id}`)}
         breadcrumb={[
-          { title: t('employeeSettings.breadcrumbDashboard') },
+          { title: t('employeeSettings.breadcrumbChatCenter'), onClick: () => navigate('/') },
           { title: employee.name },
           { title: t('employeeSettings.breadcrumbConfig') },
         ]}
@@ -471,6 +512,9 @@ const EmployeeSettings: React.FC = () => {
                 loading={loading}
                 onSave={handleSaveBasic}
                 onDelete={handleDeleteEmployee}
+                projectId={employee.project_id}
+                projects={projects}
+                onProjectChange={handleProjectChange}
               />
             )
           },
@@ -527,7 +571,14 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <KnowledgeBaseSection
                 linkedKBs={linkedKBs}
+                employeeKBs={employeeKBs}
+                allKBs={allKBs}
                 projectId={employee.project_id}
+                employeeId={id!}
+                onRefresh={() => {
+                  loadLinkedKBs(employee.project_id)
+                  loadEmployeeKBs()
+                }}
               />
             )
           },

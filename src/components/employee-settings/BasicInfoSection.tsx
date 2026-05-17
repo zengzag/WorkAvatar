@@ -44,6 +44,9 @@ interface BasicInfoSectionProps {
   loading: boolean
   onSave: (values: any) => void
   onDelete: () => void
+  projectId?: string
+  projects?: any[]
+  onProjectChange?: (projectId: string) => void
 }
 
 const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
@@ -54,6 +57,9 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   loading,
   onSave,
   onDelete,
+  projectId,
+  projects,
+  onProjectChange,
 }) => {
   const { t } = useTranslation()
 
@@ -93,6 +99,20 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
 
         <Form.Item name="description" label={t('common.description')}>
           <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
+        </Form.Item>
+
+        <Form.Item label={t('employeeSettings.projectOptional')}>
+          <Select
+            value={projectId || undefined}
+            placeholder={t('employeeSettings.selectProject')}
+            allowClear
+            onChange={onProjectChange}
+          >
+            <Select.Option value="">{t('employeeSettings.noProjectOption')}</Select.Option>
+            {(projects || []).map((p: any) => (
+              <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
+            ))}
+          </Select>
         </Form.Item>
 
         <Row gutter={24}>

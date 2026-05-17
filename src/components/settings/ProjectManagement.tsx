@@ -1,38 +1,36 @@
 import { useEffect, useState } from 'react'
 import {
-  Card,
   Button,
   Table,
-  message,
   Space,
   Typography,
   Modal,
   Input,
   theme,
   Checkbox,
+  Empty,
+  App,
 } from 'antd'
 import {
   FolderOpenOutlined,
   PlusOutlined,
   DeleteOutlined,
-  EyeOutlined,
   EditOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useAppStore } from '../stores/app.store'
-import PageHeader from '../components/common/PageHeader'
-import EmptyState from '../components/common/EmptyState'
+import { useAppStore } from '../../stores/app.store'
 import dayjs from 'dayjs'
-import type { Project } from '../types'
+import type { Project } from '../../types'
 import { useTranslation } from 'react-i18next'
 
-const { Text } = Typography
+const { Text, Title, Paragraph } = Typography
 
-const ProjectManager: React.FC = () => {
+const ProjectManagement: React.FC = () => {
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const { projects, setProjects, addProject, setLoading } = useAppStore()
+  const { message: messageApi } = App.useApp()
+  const { projects, setProjects, addProject } = useAppStore()
   const [loadingTable, setLoadingTable] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [renameModalOpen, setRenameModalOpen] = useState(false)
@@ -49,16 +47,13 @@ const ProjectManager: React.FC = () => {
 
   const loadProjects = async () => {
     setLoadingTable(true)
-    setLoading('projects', true)
     try {
       const result = await window.electronAPI.project.list()
       setProjects(result.projects)
     } catch (error) {
-      console.error('加载项目失败:', error)
-      message.error(t('projectManager.loadFailed'))
+      messageApi.error(t('settings.projectManagement.createFailed'))
     } finally {
       setLoadingTable(false)
-      setLoading('projects', false)
     }
   }
 
@@ -70,7 +65,7 @@ const ProjectManager: React.FC = () => {
 
   const confirmCreateProject = async () => {
     if (!newProjectName.trim()) {
-      message.error(t('projectManager.nameRequired'))
+      messageApi.error(t('settings.projectManagement.nameRequired'))
       return
     }
     try {
@@ -81,12 +76,11 @@ const ProjectManager: React.FC = () => {
         root_path: documentsPath,
       })
       addProject(project as Project)
-      message.success(t('projectManager.createSuccess'))
+      messageApi.success(t('settings.projectManagement.createSuccess'))
       setCreateModalOpen(false)
       navigate(`/project/${project.id}`)
     } catch (error) {
-      console.error('创建项目失败:', error)
-      message.error(t('projectManager.createFailed'))
+      messageApi.error(t('settings.projectManagement.createFailed'))
     }
   }
 
@@ -104,12 +98,11 @@ const ProjectManager: React.FC = () => {
         delete_workspace: deleteWorkspace,
       })
       setProjects(projects.filter((p) => p.id !== deleteProject.id))
-      message.success(t('projectManager.deleteSuccess'))
+      messageApi.success(t('settings.projectManagement.deleteSuccess'))
       setDeleteModalOpen(false)
       setDeleteProject(null)
     } catch (error) {
-      console.error('删除项目失败:', error)
-      message.error(t('projectManager.deleteFailed'))
+      messageApi.error(t('settings.projectManagement.deleteFailed'))
     }
   }
 
@@ -122,7 +115,7 @@ const ProjectManager: React.FC = () => {
 
   const confirmRenameProject = async () => {
     if (!newProjectName.trim() || !currentProject) {
-      message.error(t('projectManager.nameRequired'))
+      messageApi.error(t('settings.projectManagement.nameRequired'))
       return
     }
     try {
@@ -132,26 +125,28 @@ const ProjectManager: React.FC = () => {
         description: newProjectDesc,
       })
       setProjects(projects.map(p => p.id === currentProject.id ? { ...p, name: newProjectName, description: newProjectDesc } : p))
-      message.success(t('projectManager.renameSuccess'))
+      messageApi.success(t('settings.projectManagement.renameSuccess'))
       setRenameModalOpen(false)
     } catch (error) {
-      console.error('重命名项目失败:', error)
-      message.error(t('projectManager.renameFailed'))
+      messageApi.error(t('settings.projectManagement.renameFailed'))
     }
   }
 
   const columns = [
     {
-      title: t('projectManager.projectName'),
+      title: t('settings.projectManagement.projectName'),
       dataIndex: 'name',
       key: 'name',
       render: (_: string, record: Project) => (
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Space>
+          <Space
+            style={{ cursor: 'pointer' }}
+            onClick={() => navigate(`/project/${record.id}`)}
+          >
             <div
               style={{
-                width: 40,
-                height: 40,
+                width: 36,
+                height: 36,
                 borderRadius: 8,
                 background: token.colorPrimaryBg,
                 display: 'flex',
@@ -159,7 +154,7 @@ const ProjectManager: React.FC = () => {
                 justifyContent: 'center',
               }}
             >
-              <FolderOpenOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+              <FolderOpenOutlined style={{ fontSize: 18, color: token.colorPrimary }} />
             </div>
             <div>
               <Text strong>{record.name}</Text>
@@ -170,32 +165,20 @@ const ProjectManager: React.FC = () => {
               </div>
             </div>
           </Space>
-          <Space>
+          <Space size={0}>
             <Button
-              type="link"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => navigate(`/project/${record.id}`)}
-            >
-              {t('projectManager.view')}
-            </Button>
-            <Button
-              type="link"
+              type="text"
               size="small"
               icon={<EditOutlined />}
               onClick={() => handleRenameProject(record)}
-            >
-              {t('common.rename')}
-            </Button>
+            />
             <Button
-              type="link"
+              type="text"
               size="small"
               danger
               icon={<DeleteOutlined />}
               onClick={() => handleDeleteProject(record)}
-            >
-              {t('common.delete')}
-            </Button>
+            />
           </Space>
         </Space>
       ),
@@ -211,42 +194,48 @@ const ProjectManager: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '16px 24px 24px' }}>
-      <PageHeader
-        title={t('projectManager.title')}
-        subTitle={t('projectManager.subtitle')}
-        extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleCreateProject}
-          >
-            {t('projectManager.newProject')}
-          </Button>
-        }
-      />
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <Title level={5} style={{ margin: 0 }}>{t('settings.projectManagement.title')}</Title>
+          <Paragraph type="secondary" style={{ margin: '4px 0 0' }}>{t('settings.projectManagement.desc')}</Paragraph>
+        </div>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={handleCreateProject}
+        >
+          {t('settings.projectManagement.createProject')}
+        </Button>
+      </div>
 
-      <Card>
-        {projects.length > 0 ? (
-          <Table
-            dataSource={projects}
-            columns={columns}
-            rowKey="id"
-            loading={loadingTable}
-            pagination={{ pageSize: 10 }}
-          />
-        ) : (
-          <EmptyState
-            title={t('projectManager.noProjects')}
-            description={t('projectManager.noProjectsDesc')}
-            actionText={t('projectManager.createProjectAction')}
-            onAction={handleCreateProject}
-          />
-        )}
-      </Card>
+      {projects.length > 0 ? (
+        <Table
+          dataSource={projects}
+          columns={columns}
+          rowKey="id"
+          loading={loadingTable}
+          pagination={false}
+          size="small"
+        />
+      ) : (
+        <Empty
+          description={
+            <div>
+              <Text type="secondary">{t('settings.projectManagement.noProjects')}</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.projectManagement.noProjectsDesc')}</Text>
+            </div>
+          }
+        >
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateProject}>
+            {t('settings.projectManagement.createProject')}
+          </Button>
+        </Empty>
+      )}
 
       <Modal
-        title={t('projectManager.createProject')}
+        title={t('settings.projectManagement.createProject')}
         open={createModalOpen}
         onOk={confirmCreateProject}
         onCancel={() => setCreateModalOpen(false)}
@@ -254,7 +243,7 @@ const ProjectManager: React.FC = () => {
         cancelText={t('common.cancel')}
       >
         <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 4 }}>{t('projectManager.projectName')}</div>
+          <div style={{ marginBottom: 4 }}>{t('settings.projectManagement.projectName')}</div>
           <Input
             value={newProjectName}
             onChange={(e) => setNewProjectName(e.target.value)}
@@ -262,10 +251,10 @@ const ProjectManager: React.FC = () => {
           />
         </div>
         <div>
-          <div style={{ marginBottom: 4 }}>{t('projectManager.projectDesc')}</div>
+          <div style={{ marginBottom: 4 }}>{t('settings.projectManagement.projectDesc')}</div>
           <Input.TextArea
             rows={3}
-            placeholder={t('projectManager.descPlaceholder')}
+            placeholder={t('settings.projectManagement.descPlaceholder')}
             value={newProjectDesc}
             onChange={(e) => setNewProjectDesc(e.target.value)}
           />
@@ -273,7 +262,7 @@ const ProjectManager: React.FC = () => {
       </Modal>
 
       <Modal
-        title={t('projectManager.renameProject')}
+        title={t('settings.projectManagement.renameProject')}
         open={renameModalOpen}
         onOk={confirmRenameProject}
         onCancel={() => setRenameModalOpen(false)}
@@ -281,19 +270,19 @@ const ProjectManager: React.FC = () => {
         cancelText={t('common.cancel')}
       >
         <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 4 }}>{t('projectManager.projectName')}</div>
+          <div style={{ marginBottom: 4 }}>{t('settings.projectManagement.projectName')}</div>
           <Input
-            placeholder={t('projectManager.renamePlaceholder')}
+            placeholder={t('settings.projectManagement.renamePlaceholder')}
             value={newProjectName}
             onChange={(e) => setNewProjectName(e.target.value)}
             onPressEnter={confirmRenameProject}
           />
         </div>
         <div>
-          <div style={{ marginBottom: 4 }}>{t('projectManager.projectDesc')}</div>
+          <div style={{ marginBottom: 4 }}>{t('settings.projectManagement.projectDesc')}</div>
           <Input.TextArea
             rows={3}
-            placeholder={t('projectManager.descPlaceholder')}
+            placeholder={t('settings.projectManagement.descPlaceholder')}
             value={newProjectDesc}
             onChange={(e) => setNewProjectDesc(e.target.value)}
           />
@@ -301,7 +290,7 @@ const ProjectManager: React.FC = () => {
       </Modal>
 
       <Modal
-        title={t('projectManager.confirmDeleteProject')}
+        title={t('settings.projectManagement.confirmDeleteProject')}
         open={deleteModalOpen}
         onOk={confirmDeleteProject}
         onCancel={() => { setDeleteModalOpen(false); setDeleteProject(null) }}
@@ -309,19 +298,19 @@ const ProjectManager: React.FC = () => {
         cancelText={t('common.cancel')}
         okButtonProps={{ danger: true }}
       >
-        <p>{t('projectManager.deleteProjectDesc')}</p>
+        <p>{t('settings.projectManagement.deleteProjectDesc')}</p>
         {deleteProject?.root_path && (
           <Checkbox
             checked={deleteWorkspace}
             onChange={(e) => setDeleteWorkspace(e.target.checked)}
             style={{ marginTop: 8 }}
           >
-            {t('projectManager.deleteWorkspace')}
+            {t('settings.projectManagement.deleteWorkspace')}
           </Checkbox>
         )}
         {deleteWorkspace && deleteProject?.root_path && (
           <div style={{ marginTop: 8, padding: '8px 12px', background: token.colorWarningBg, borderRadius: 6, fontSize: 13 }}>
-            {t('projectManager.deleteWorkspaceWarning')}<br />
+            {t('settings.projectManagement.deleteWorkspaceWarning')}<br />
             <Text type="secondary" style={{ fontSize: 12 }}>{deleteProject.root_path}</Text>
           </div>
         )}
@@ -330,4 +319,4 @@ const ProjectManager: React.FC = () => {
   )
 }
 
-export default ProjectManager
+export default ProjectManagement

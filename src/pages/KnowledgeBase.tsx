@@ -49,7 +49,7 @@ const KnowledgeBasePage: React.FC = () => {
         subTitle={t('knowledgeBase.subtitle')}
         extra={
           <Space>
-            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('dashboard.kbSearch')}</Button>
+            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('knowledgeBase.kbSearch')}</Button>
             <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>{t('knowledgeBase.createKb')}</Button>
           </Space>
         }

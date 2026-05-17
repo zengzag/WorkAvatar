@@ -105,7 +105,7 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const workspaceGuidance = getWorkspacePrompt(employee.project_id)
+    const workspaceGuidance = getWorkspacePrompt(employee.project_id || '')
 
     const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
@@ -181,10 +181,10 @@ class EmployeeAgentService {
     const employeeTools = this.getEmployeeTools(employeeId)
     agent.registerTools(employeeTools)
 
-    const knowledgeTools = this.getKnowledgeTools(employee.project_id).filter(t => enabledToolIds.has(t.id))
+    const knowledgeTools = this.getKnowledgeTools(employee.project_id || '', employee.id).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
 
-    const workspaceTools = createWorkspaceTools(employee.project_id)
+    const workspaceTools = createWorkspaceTools(employee.project_id || '')
     if (workspaceTools.length > 0) {
       agent.registerTools(workspaceTools)
     }
@@ -193,8 +193,8 @@ class EmployeeAgentService {
     return agent
   }
 
-  private getKnowledgeTools(projectId: string): ToolDefinition[] {
-    return createKBAgentTools(this.kbService, this.db, projectId)
+  private getKnowledgeTools(projectId: string, employeeId?: string): ToolDefinition[] {
+    return createKBAgentTools(this.kbService, this.db, projectId, employeeId)
   }
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {

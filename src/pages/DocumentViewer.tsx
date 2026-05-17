@@ -350,7 +350,7 @@ const DocumentViewer: React.FC = () => {
         subTitle={t('documentViewer.breadcrumbDocPreview')}
         onBack={() => navigate(`/project/${id}`)}
         breadcrumb={[
-          { title: t('documentViewer.breadcrumbDashboard') },
+          { title: t('documentViewer.breadcrumbChatCenter'), onClick: () => navigate('/') },
           { title: projectName },
           { title: t('documentViewer.breadcrumbDocPreview') },
         ]}

@@ -136,7 +136,22 @@ const EmployeeManager: React.FC = () => {
       key: 'project_name',
       width: 180,
       ellipsis: true,
-      render: (_: any, record: Employee) => record.project_name || record.project_id,
+      render: (_: any, record: Employee) => {
+        const projectName = record.project_name || record.project_id
+        if (projectName) {
+          return (
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0 }}
+              onClick={() => navigate(`/project/${record.project_id}`)}
+            >
+              {projectName}
+            </Button>
+          )
+        }
+        return t('employeeManager.unassigned')
+      },
     },
     {
       title: t('employeeManager.tasksApprovals'),
@@ -164,6 +179,11 @@ const EmployeeManager: React.FC = () => {
       <PageHeader
         title={t('employeeManager.title')}
         subTitle={t('employeeManager.subtitle')}
+        extra={
+          <Button type="primary" icon={<RobotOutlined />} onClick={() => navigate('/wizard')}>
+            {t('employeeManager.createEmployee')}
+          </Button>
+        }
       />
 
       <Card>
@@ -181,7 +201,7 @@ const EmployeeManager: React.FC = () => {
             title={t('employeeManager.noEmployees')}
             description={t('employeeManager.noEmployeesDesc')}
             actionText={t('employeeManager.goToProjects')}
-            onAction={() => navigate('/projects')}
+            onAction={() => navigate('/wizard')}
           />
         )}
       </Card>

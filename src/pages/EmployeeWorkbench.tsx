@@ -97,7 +97,7 @@ const EmployeeWorkbench: React.FC = () => {
         <Space size={12}>
           <Tooltip title={t('workbench.backToDashboard')}>
             <Button type="text" icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/dashboard')} style={{ fontSize: 16 }} />
+              onClick={() => navigate('/')} style={{ fontSize: 16 }} />
           </Tooltip>
           <Text strong style={{ fontSize: 15 }}>{employee.name}</Text>
           <Tag color={employee.status === 'active' ? 'green' : employee.status === 'draft' ? 'default' : employee.status === 'paused' ? 'orange' : 'red'}
