@@ -36,7 +36,7 @@ const ExecutionPanel: React.FC = () => {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    const cleanupProgress = (window as any).electronAPI?.workflow?.onExecutionProgress?.((data: any) => {
+    const cleanupProgress = window.electronAPI.workflow.onExecutionProgress((data: any) => {
       updateNodeExecution(data.nodeId, {
         status: data.status,
         input: data.input,
@@ -47,20 +47,20 @@ const ExecutionPanel: React.FC = () => {
       })
     })
 
-    const cleanupNodeUpdate = (window as any).electronAPI?.workflow?.onNodeExecutionUpdate?.((data: any) => {
+    const cleanupNodeUpdate = window.electronAPI.workflow.onNodeExecutionUpdate((data: any) => {
       updateNodeExecution(data.nodeId, {
-        status: data.status,
-        input: data.input,
-        output: data.output,
-        error: data.error,
-        startedAt: data.startedAt,
-        completedAt: data.completedAt,
+        status: data.nodeExecution?.status || data.status,
+        input: data.nodeExecution?.input || data.input,
+        output: data.nodeExecution?.output || data.output,
+        error: data.nodeExecution?.error || data.error,
+        startedAt: data.nodeExecution?.started_at ? new Date(data.nodeExecution.started_at * 1000).toISOString() : data.startedAt,
+        completedAt: data.nodeExecution?.completed_at ? new Date(data.nodeExecution.completed_at * 1000).toISOString() : data.completedAt,
       })
     })
 
     return () => {
-      cleanupProgress?.()
-      cleanupNodeUpdate?.()
+      cleanupProgress()
+      cleanupNodeUpdate()
     }
   }, [updateNodeExecution])
 

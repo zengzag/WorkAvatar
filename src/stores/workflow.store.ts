@@ -20,6 +20,8 @@ export interface EmployeeNodeData {
   employee_id?: string
   employee_name?: string
   description?: string
+  provider_id?: string
+  model_id?: string
   [key: string]: unknown
 }
 

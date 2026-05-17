@@ -22,10 +22,9 @@ import '@xyflow/react/dist/style.css'
 import { Button, Dropdown, Modal, Table, App, theme } from 'antd'
 import {
   PlusOutlined,
-  PlayCircleOutlined,
-  StopOutlined,
   ApartmentOutlined,
-  ExpandOutlined,
+  EnterOutlined,
+  ExportOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { generateId } from '../../utils/format'
@@ -143,9 +142,6 @@ const FlowCanvas: React.FC = () => {
   const addStoreNode = useWorkflowStore((s) => s.addNode)
   const addStoreEdge = useWorkflowStore((s) => s.addEdge)
   const setSelectedNodeId = useWorkflowStore((s) => s.setSelectedNodeId)
-  const execution = useWorkflowStore((s) => s.execution)
-  const setExecution = useWorkflowStore((s) => s.setExecution)
-  const resetExecution = useWorkflowStore((s) => s.resetExecution)
 
   const [nodes, setNodes] = useNodesState(storeNodes)
   const [edges, setEdges] = useEdgesState(storeEdges)
@@ -266,19 +262,6 @@ const FlowCanvas: React.FC = () => {
     setStoreNodes(layouted)
   }, [nodes, edges, setNodes, setStoreNodes])
 
-  const handleRun = useCallback(() => {
-    if (execution?.status === 'running') {
-      resetExecution()
-      return
-    }
-    setExecution({
-      id: `exec-${generateId()}`,
-      status: 'running',
-      nodeExecutions: {},
-      startedAt: new Date().toISOString(),
-    })
-  }, [execution, setExecution, resetExecution])
-
   const handleDelete = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -318,13 +301,13 @@ const FlowCanvas: React.FC = () => {
       {
         key: 'input',
         label: t('workflow.addInputNode'),
-        icon: <PlayCircleOutlined />,
+        icon: <EnterOutlined />,
         onClick: () => addNodeByType('input'),
       },
       {
         key: 'output',
         label: t('workflow.addOutputNode'),
-        icon: <ExpandOutlined />,
+        icon: <ExportOutlined />,
         onClick: () => addNodeByType('output'),
       },
       {
@@ -364,7 +347,6 @@ const FlowCanvas: React.FC = () => {
   )
 
   const bgColor = effectiveTheme === 'dark' ? '#1a1a2e' : '#f5f5f5'
-  const isRunning = execution?.status === 'running'
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -383,14 +365,6 @@ const FlowCanvas: React.FC = () => {
             {t('workflow.addNode')}
           </Button>
         </Dropdown>
-        <Button
-          icon={isRunning ? <StopOutlined /> : <PlayCircleOutlined />}
-          danger={isRunning}
-          type={isRunning ? 'primary' : 'default'}
-          onClick={handleRun}
-        >
-          {isRunning ? t('workflow.stop') : t('workflow.run')}
-        </Button>
         <Button icon={<ApartmentOutlined />} onClick={handleAutoLayout}>
           {t('workflow.autoLayout')}
         </Button>
@@ -412,6 +386,7 @@ const FlowCanvas: React.FC = () => {
           deleteKeyCode={null}
           minZoom={0.2}
           maxZoom={2}
+          colorMode={effectiveTheme}
         >
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} color={effectiveTheme === 'dark' ? '#333' : '#ddd'} />
           <Controls showInteractive={false} />
@@ -422,7 +397,6 @@ const FlowCanvas: React.FC = () => {
               if (node.type === 'employee') return '#722ed1'
               return '#999'
             }}
-            style={{ background: effectiveTheme === 'dark' ? '#1a1a2e' : '#fff' }}
           />
         </ReactFlow>
       </div>

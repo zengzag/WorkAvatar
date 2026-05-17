@@ -24,16 +24,16 @@ function EmployeeNode({ id, selected, data }: NodeProps) {
     <div
       style={{
         background: token.colorBgContainer,
-        border: `2px solid ${selected ? '#722ed1' : token.colorBorderSecondary}`,
+        border: `1px solid ${selected ? '#722ed1' : token.colorBorder}`,
         borderRadius: 8,
         padding: '8px 12px',
         minWidth: 180,
         maxWidth: 240,
-        boxShadow: selected ? '0 0 8px rgba(114, 46, 209, 0.3)' : token.boxShadowSecondary,
+        boxShadow: selected ? '0 0 8px rgba(114, 46, 209, 0.3)' : 'none',
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ background: '#722ed1', width: 8, height: 8 }} />
-      <Handle type="source" position={Position.Right} style={{ background: '#722ed1', width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Left} style={{ background: '#722ed1', width: 12, height: 12 }} />
+      <Handle type="source" position={Position.Right} style={{ background: '#722ed1', width: 12, height: 12 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <UserOutlined style={{ color: '#722ed1', fontSize: 18 }} />
         <span style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{nodeData.employee_name || nodeData.label}</span>

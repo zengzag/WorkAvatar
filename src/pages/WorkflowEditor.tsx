@@ -45,6 +45,7 @@ const WorkflowEditor: React.FC = () => {
   const execution = useWorkflowStore((s) => s.execution)
   const setExecution = useWorkflowStore((s) => s.setExecution)
   const resetExecution = useWorkflowStore((s) => s.resetExecution)
+  const updateNodeExecution = useWorkflowStore((s) => s.updateNodeExecution)
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -54,6 +55,12 @@ const WorkflowEditor: React.FC = () => {
       loadFromWorkflow({ nodes_json: '[]', edges_json: '[]' })
     }
   }, [id])
+
+  useEffect(() => {
+    if (storeNodes.length > 0 || storeEdges.length > 0) {
+      setUnsaved(true)
+    }
+  }, [storeNodes, storeEdges])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -78,13 +85,52 @@ const WorkflowEditor: React.FC = () => {
   }, [storeNodes, storeEdges])
 
   useEffect(() => {
-    const cleanup = window.electronAPI.workflow.onExecutionProgress((data) => {
+    const cleanupProgress = window.electronAPI.workflow.onExecutionProgress((data) => {
       if (data.status === 'completed' || data.status === 'failed' || data.status === 'aborted') {
         setIsRunning(false)
       }
+      if (execution?.id === data.executionId) {
+        const nodeExecutions: Record<string, any> = {}
+        if (data.nodeExecutions) {
+          for (const [nodeId, exec] of Object.entries(data.nodeExecutions)) {
+            nodeExecutions[nodeId] = {
+              nodeId,
+              status: (exec as any).status,
+              input: (exec as any).input || '',
+              output: (exec as any).output || '',
+              error: (exec as any).error || null,
+              startedAt: (exec as any).started_at ? new Date((exec as any).started_at * 1000).toISOString() : null,
+              completedAt: (exec as any).completed_at ? new Date((exec as any).completed_at * 1000).toISOString() : null,
+            }
+          }
+        }
+        setExecution({
+          id: data.executionId,
+          status: data.status,
+          nodeExecutions,
+          startedAt: execution?.startedAt || new Date().toISOString(),
+        })
+      }
     })
-    return () => { cleanup() }
-  }, [])
+    return () => { cleanupProgress() }
+  }, [execution?.id, execution?.startedAt, setExecution])
+
+  useEffect(() => {
+    const cleanupNodeUpdate = window.electronAPI.workflow.onNodeExecutionUpdate((data) => {
+      if (execution?.id === data.executionId && data.nodeExecution) {
+        const ne = data.nodeExecution
+        updateNodeExecution(data.nodeId, {
+          status: ne.status,
+          input: ne.input || '',
+          output: ne.output || '',
+          error: ne.error || null,
+          startedAt: ne.started_at ? new Date(ne.started_at * 1000).toISOString() : null,
+          completedAt: ne.completed_at ? new Date(ne.completed_at * 1000).toISOString() : null,
+        })
+      }
+    })
+    return () => { cleanupNodeUpdate() }
+  }, [execution?.id, updateNodeExecution])
 
   const loadWorkflow = async () => {
     if (!id) return

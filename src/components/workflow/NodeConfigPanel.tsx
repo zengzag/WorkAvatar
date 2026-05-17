@@ -3,8 +3,10 @@ import { Button, Input, Select, Typography, Divider, theme } from 'antd'
 import { CloseOutlined, UserOutlined, PlayCircleOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useWorkflowStore, type InputNodeData, type EmployeeNodeData } from '../../stores/workflow.store'
+import LLMSelector from '../llm/LLMSelector'
+import type { LLMProvider } from '../../types'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 const { TextArea } = Input
 
 const NodeConfigPanel: React.FC = () => {
@@ -16,9 +18,12 @@ const NodeConfigPanel: React.FC = () => {
   const setSelectedNodeId = useWorkflowStore((s) => s.setSelectedNodeId)
 
   const [employees, setEmployees] = useState<any[]>([])
+  const [providers, setProviders] = useState<LLMProvider[]>([])
   const [localPrompt, setLocalPrompt] = useState('')
   const [localLabel, setLocalLabel] = useState('')
   const [localEmployeeId, setLocalEmployeeId] = useState<string | undefined>()
+  const [localProviderId, setLocalProviderId] = useState<string | undefined>()
+  const [localModelId, setLocalModelId] = useState<string | undefined>()
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId)
 
@@ -28,10 +33,13 @@ const NodeConfigPanel: React.FC = () => {
       setLocalPrompt(data.prompt || '')
       setLocalLabel(data.label || '')
       setLocalEmployeeId(data.employee_id)
+      setLocalProviderId(data.provider_id)
+      setLocalModelId(data.model_id)
     }
   }, [selectedNodeId, selectedNode])
 
   useEffect(() => {
+    loadProviders()
     if (selectedNode?.type === 'employee') {
       loadEmployees()
     }
@@ -41,6 +49,13 @@ const NodeConfigPanel: React.FC = () => {
     try {
       const result = await window.electronAPI.employee.list()
       setEmployees(result || [])
+    } catch {}
+  }
+
+  const loadProviders = async () => {
+    try {
+      const result = await window.electronAPI.llm.getProviders()
+      setProviders(result as LLMProvider[])
     } catch {}
   }
 
@@ -63,12 +78,40 @@ const NodeConfigPanel: React.FC = () => {
           employee_id: emp.id,
           employee_name: emp.name,
           label: emp.name,
+          provider_id: emp.llm_provider_id || undefined,
+          model_id: emp.llm_model || undefined,
         } as Partial<EmployeeNodeData>)
         setLocalEmployeeId(emp.id)
         setLocalLabel(emp.name)
+        setLocalProviderId(emp.llm_provider_id || undefined)
+        setLocalModelId(emp.llm_model || undefined)
       }
     },
     [selectedNodeId, employees, updateNodeData]
+  )
+
+  const handleProviderChange = useCallback(
+    (providerId: string) => {
+      if (!selectedNodeId) return
+      updateNodeData(selectedNodeId, {
+        provider_id: providerId,
+        model_id: '',
+      } as Partial<EmployeeNodeData>)
+      setLocalProviderId(providerId)
+      setLocalModelId('')
+    },
+    [selectedNodeId, updateNodeData]
+  )
+
+  const handleModelChange = useCallback(
+    (modelId: string) => {
+      if (!selectedNodeId) return
+      updateNodeData(selectedNodeId, {
+        model_id: modelId,
+      } as Partial<EmployeeNodeData>)
+      setLocalModelId(modelId)
+    },
+    [selectedNodeId, updateNodeData]
   )
 
   if (!selectedNode) return null
@@ -113,9 +156,9 @@ const NodeConfigPanel: React.FC = () => {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {getIcon()}
-          <Title level={5} style={{ margin: 0 }}>
+          <Typography.Title level={5} style={{ margin: 0 }}>
             {getTypeLabel()}
-          </Title>
+          </Typography.Title>
         </div>
         <Button type="text" icon={<CloseOutlined />} size="small" onClick={() => setSelectedNodeId(null)} />
       </div>
@@ -189,7 +232,7 @@ const NodeConfigPanel: React.FC = () => {
               </div>
             )}
             {nodeData.description && (
-              <div>
+              <div style={{ marginBottom: 16 }}>
                 <Text strong style={{ display: 'block', marginBottom: 4 }}>
                   {t('common.description')}
                 </Text>
@@ -198,6 +241,22 @@ const NodeConfigPanel: React.FC = () => {
                 </Text>
               </div>
             )}
+            <Divider style={{ margin: '12px 0' }} />
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                {t('workflow.modelConfig')}
+              </Text>
+              <LLMSelector
+                providerId={localProviderId}
+                modelId={localModelId}
+                onProviderChange={handleProviderChange}
+                onModelChange={handleModelChange}
+                providers={providers}
+              />
+              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                {t('workflow.modelConfigHint')}
+              </Text>
+            </div>
           </>
         )}
       </div>

@@ -128,6 +128,7 @@ const WorkflowList: React.FC = () => {
       const result = await window.electronAPI.workflow.execute(workflow.id)
       if (result.success) {
         message.success(t('workflow.runSuccess'))
+        navigate(`/workflow/${workflow.id}`)
       } else {
         message.error(result.error || t('workflow.runFailed'))
       }

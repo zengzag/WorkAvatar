@@ -1233,5 +1233,7 @@ export default {
     noNodeExecutions: 'No node execution records',
     selectNodeHint: 'Click a node to view config',
     defaultWorkflowName: 'Workflow {{date}}',
+    modelConfig: 'Model Config',
+    modelConfigHint: 'Override the LLM provider and model for this node. Leave empty to use employee defaults',
   },
 }

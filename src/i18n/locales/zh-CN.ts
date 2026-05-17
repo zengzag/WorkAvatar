@@ -208,6 +208,8 @@ export default {
     status_completed: '已完成',
     status_failed: '失败',
     employeeName: '员工名称',
+    modelConfig: '模型配置',
+    modelConfigHint: '覆盖该员工节点的 LLM 提供商和模型，留空则使用员工默认配置',
   },
   workbench: {
     defaultConvTitle: '对话 {{date}}',

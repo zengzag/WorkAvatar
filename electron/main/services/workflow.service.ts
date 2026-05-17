@@ -192,13 +192,15 @@ class WorkflowService {
 
         try {
           if (node.type === 'input') {
-            const config = node.data?.config_json || node.config_json || {}
-            nodeExec.input = config.prompt || ''
-            nodeExec.output = config.prompt || ''
+            const prompt = node.data?.prompt || node.data?.config_json?.prompt || ''
+            nodeExec.input = prompt
+            nodeExec.output = prompt
           } else if (node.type === 'employee') {
-            const config = node.data?.config_json || node.config_json || {}
-            const employeeId = config.employee_id
+            const employeeId = node.data?.employee_id || node.data?.config_json?.employee_id
             if (!employeeId) throw new Error(`Employee node ${nodeId} has no employee_id configured`)
+
+            const nodeModelId = node.data?.model_id || node.data?.config_json?.model_id
+            const nodeProviderId = node.data?.provider_id || node.data?.config_json?.provider_id
 
             const inputParts: string[] = []
             for (const predId of predecessors.get(nodeId) || []) {
@@ -210,7 +212,7 @@ class WorkflowService {
             const combinedInput = inputParts.join('\n\n')
             nodeExec.input = combinedInput
 
-            const result = await this.executeEmployeeNode(employeeId, combinedInput, abortController.signal, (segments) => {
+            const result = await this.executeEmployeeNode(employeeId, nodeProviderId, nodeModelId, combinedInput, abortController.signal, (segments) => {
               nodeExec.segments = segments
               this.sendNodeUpdate(mainWindow, executionId, nodeId, { ...nodeExec })
             })
@@ -270,6 +272,8 @@ class WorkflowService {
 
   private async executeEmployeeNode(
     employeeId: string,
+    overrideProviderId: string | undefined,
+    modelId: string | undefined,
     input: string,
     signal: AbortSignal,
     onSegments: (segments: any[]) => void
@@ -278,8 +282,10 @@ class WorkflowService {
     if (!employee) throw new Error(`Employee ${employeeId} not found`)
     if (employee.status !== 'active') throw new Error(`Employee ${employeeId} is not active`)
 
-    const providerId = employee.llm_provider_id
+    const providerId = overrideProviderId || employee.llm_provider_id
     if (!providerId) throw new Error(`Employee ${employeeId} has no LLM provider configured`)
+
+    const resolvedModelId = modelId || employee.llm_model || undefined
 
     const agentService = EmployeeAgentService.getInstance()
 
@@ -304,7 +310,7 @@ class WorkflowService {
         {
           employee_id: employeeId,
           provider_id: providerId,
-          model_id: undefined,
+          model_id: resolvedModelId,
           messages: [{ role: 'user', content: input }],
           use_skills: true,
           enable_thinking: false,

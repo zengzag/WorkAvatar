@@ -17,6 +17,16 @@
   --text-secondary: rgba(0, 0, 0, 0.65);
   --text-tertiary: rgba(0, 0, 0, 0.45);
   --shadow-color: rgba(0, 0, 0, 0.06);
+  --xy-node-background-color-default: transparent;
+  --xy-node-border-default: none;
+  --xy-controls-button-background-color-default: #ffffff;
+  --xy-controls-button-background-color-hover-default: #f5f5f5;
+  --xy-controls-button-border-color-default: #e8e8e8;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.06);
+  --xy-minimap-background-color-default: #ffffff;
+  --xy-minimap-mask-background-color-default: rgba(240, 240, 240, 0.7);
+  --xy-minimap-mask-stroke-color-default: #d9d9d9;
+  --xy-background-pattern-dot-color-default: #d9d9d9;
 }
 
 html.dark {
@@ -28,6 +38,16 @@ html.dark {
   --text-secondary: rgba(255, 255, 255, 0.65);
   --text-tertiary: rgba(255, 255, 255, 0.45);
   --shadow-color: rgba(0, 0, 0, 0.3);
+  --xy-node-background-color-default: transparent;
+  --xy-node-border-default: none;
+  --xy-controls-button-background-color-default: #2a2a2a;
+  --xy-controls-button-background-color-hover-default: #353535;
+  --xy-controls-button-border-color-default: #404040;
+  --xy-controls-box-shadow-default: 0 0 2px 1px rgba(0, 0, 0, 0.3);
+  --xy-minimap-background-color-default: #1f1f1f;
+  --xy-minimap-mask-background-color-default: rgba(255, 255, 255, 0.08);
+  --xy-minimap-mask-stroke-color-default: #555;
+  --xy-background-pattern-dot-color-default: #3a3a3a;
 }
 
 body {
@@ -45,4 +65,35 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--xy-controls-button-background-color-default);
+  border-color: var(--xy-controls-button-border-color-default);
+  color: var(--text-primary);
+}
+
+.react-flow__controls-button:hover {
+  background: var(--xy-controls-button-background-color-hover-default);
+}
+
+.react-flow__controls-button svg {
+  fill: var(--text-primary);
+}
+
+.react-flow__minimap {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--xy-controls-box-shadow-default);
+}
+
+.react-flow__minimap-mask {
+  fill: var(--xy-minimap-mask-background-color-default);
+  stroke: var(--xy-minimap-mask-stroke-color-default);
+}
+
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
