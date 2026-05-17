@@ -133,34 +133,34 @@ const electronAPI = {
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
-    abortChat: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT),
-    onChunk: (callback: (chunk: string) => void) => {
-      const handler = (_event: any, chunk: string) => callback(chunk)
+    abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
+    onChunk: (callback: (data: { sessionId: string; chunk: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; chunk: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
-    onDone: (callback: () => void) => {
-      const handler = () => callback()
+    onDone: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },
-    onError: (callback: (error: string) => void) => {
-      const handler = (_event: any, error: string) => callback(error)
+    onError: (callback: (data: { sessionId: string; error: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; error: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
     },
-    onThought: (callback: (thought: string) => void) => {
-      const handler = (_event: any, thought: string) => callback(thought)
+    onThought: (callback: (data: { sessionId: string; thought: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; thought: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_THOUGHT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_THOUGHT, handler)
     },
-    onToolCall: (callback: (toolCall: { name: string; args: any }) => void) => {
-      const handler = (_event: any, toolCall: { name: string; args: any }) => callback(toolCall)
+    onToolCall: (callback: (data: { sessionId: string; name: string; args: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; args: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
-    onToolResult: (callback: (toolResult: { name: string; result: any }) => void) => {
-      const handler = (_event: any, toolResult: { name: string; result: any }) => callback(toolResult)
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },

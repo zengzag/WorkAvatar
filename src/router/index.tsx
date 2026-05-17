@@ -1,7 +1,7 @@
 import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
 import CreationWizard from '../pages/CreationWizard'
-import DigitalEmployeeCenter from '../pages/DigitalEmployeeCenter'
+import EmployeeRedirect from '../components/common/EmployeeRedirect'
 import TaskCenter from '../pages/TaskCenter'
 import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
@@ -17,19 +17,19 @@ const router = createHashRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/digital-employees" replace />,
+        element: <EmployeeRedirect />,
       },
       {
         path: 'digital-employees',
-        element: <DigitalEmployeeCenter />,
+        element: <Navigate to="/" replace />,
       },
       {
         path: 'dashboard',
-        element: <Navigate to="/digital-employees" replace />,
+        element: <Navigate to="/" replace />,
       },
       {
         path: 'conversation-center',
-        element: <Navigate to="/digital-employees" replace />,
+        element: <Navigate to="/" replace />,
       },
       {
         path: 'wizard',

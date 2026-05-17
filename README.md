@@ -744,10 +744,9 @@ WorkAvatar/
 │       └── SKILL.md
 ├── src/                               # 渲染进程（React 前端）
 │   ├── pages/                         # 页面组件
-│   │   ├── DigitalEmployeeCenter.tsx  # 数字员工（默认首页）
 │   │   ├── CreationWizard.tsx         # 数字员工创建向导（2步）
 │   │   ├── KnowledgeBase.tsx          # 独立知识库管理页面
-│   │   ├── EmployeeWorkbench.tsx      # 数字员工工作台
+│   │   ├── EmployeeWorkbench.tsx      # 数字员工工作台（默认首页）
 │   │   ├── EmployeeSettings.tsx       # 数字员工配置管理
 │   │   ├── TaskCenter.tsx             # 任务中心页面
 │   │   ├── WorkflowList.tsx           # 工作流列表

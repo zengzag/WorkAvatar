@@ -32,7 +32,7 @@ const App: React.FC = () => {
 
   const getSelectedKey = () => {
     const path = location.pathname
-    if (path === '/' || path.startsWith('/digital-employees') || path.startsWith('/conversation-center')) return 'digital-employees'
+    if (path === '/' || path.startsWith('/digital-employees') || path.startsWith('/employee') || path.startsWith('/conversation-center')) return 'digital-employees'
     if (path === '/task-center') return 'task-center'
     if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'

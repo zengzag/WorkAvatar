@@ -1,4 +1,5 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   Button,
   Space,
@@ -8,30 +9,65 @@ import {
   Tooltip,
   theme,
   App,
+  Dropdown,
 } from 'antd'
 import {
   RobotOutlined,
   SettingOutlined,
   MenuFoldOutlined,
-  HistoryOutlined,
-  ArrowLeftOutlined,
+  MenuUnfoldOutlined,
   DatabaseOutlined,
   BulbOutlined,
   BulbFilled,
+  PlusOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
+import type { Employee } from '../types'
 
 const { Text, Paragraph } = Typography
 
+const AVATAR_COLORS = [
+  '#1677ff', '#52c41a', '#fa8c16', '#722ed1',
+  '#eb2f96', '#13c2c2', '#faad14', '#f5222d',
+]
+
 const EmployeeWorkbench: React.FC = () => {
   const { message } = App.useApp()
-  const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const { id: routeId } = useParams<{ id: string }>()
+
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [employeeListLoaded, setEmployeeListLoaded] = useState(false)
+
+  useEffect(() => {
+    loadEmployees()
+  }, [])
+
+  const loadEmployees = async () => {
+    try {
+      const result = await window.electronAPI.employee.list()
+      setEmployees(result)
+      setEmployeeListLoaded(true)
+    } catch {
+      message.error(t('digitalEmployees.loadEmployeesFailed'))
+    }
+  }
+
+  const isEmptyRoute = routeId === '_empty'
+  const id = isEmptyRoute ? undefined : routeId
+
+  useEffect(() => {
+    if (id) {
+      localStorage.setItem('employeeWorkbench:lastEmployeeId', id)
+    }
+  }, [id])
+
+  const chatHook = useEmployeeChat({ id, message })
 
   const {
     employee,
@@ -60,7 +96,7 @@ const EmployeeWorkbench: React.FC = () => {
     handleStop,
     selectConversation,
     deleteConversation,
-    deleteAllConversations,
+    deleteSelectedConversations,
     startEditTitle,
     saveEditTitle,
     cancelEditTitle,
@@ -72,7 +108,48 @@ const EmployeeWorkbench: React.FC = () => {
     handleDeleteMessage,
     handleToggleSegment,
     getToolDisplayName,
-  } = useEmployeeChat({ id, message })
+    isConversationStreaming,
+  } = chatHook
+
+  const handleEmployeeChange = (newEmployeeId: string) => {
+    if (newEmployeeId === 'create-new') {
+      navigate('/wizard')
+      return
+    }
+    navigate(`/employee/${newEmployeeId}`)
+  }
+
+  if (!employeeListLoaded) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (employees.length === 0) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+        <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />
+        <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.noEmployeeHint')}</Paragraph>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/wizard')}>
+          {t('workbench.createEmployee')}
+        </Button>
+      </div>
+    )
+  }
+
+  if (!employee && id) {
+    const firstEmployee = employees[0]
+    if (firstEmployee) {
+      navigate(`/employee/${firstEmployee.id}`, { replace: true })
+    }
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
 
   if (!employee) {
     return (
@@ -81,6 +158,37 @@ const EmployeeWorkbench: React.FC = () => {
       </div>
     )
   }
+
+  const employeeSelectItems = [
+    ...employees.map((emp, index) => ({
+      key: emp.id,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            width: 24, height: 24, borderRadius: 6,
+            background: `${AVATAR_COLORS[index % AVATAR_COLORS.length]}15`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <RobotOutlined style={{ fontSize: 12, color: AVATAR_COLORS[index % AVATAR_COLORS.length] }} />
+          </div>
+          <span>{emp.name}</span>
+          {emp.id === id && <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginLeft: 4 }}>Active</Tag>}
+        </div>
+      ),
+      onClick: () => handleEmployeeChange(emp.id),
+    })),
+    { type: 'divider' as const },
+    {
+      key: 'create-new',
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: token.colorPrimary }}>
+          <PlusOutlined />
+          <span>{t('workbench.createEmployee')}</span>
+        </div>
+      ),
+      onClick: () => handleEmployeeChange('create-new'),
+    },
+  ]
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
@@ -95,15 +203,28 @@ const EmployeeWorkbench: React.FC = () => {
         flexShrink: 0,
       }}>
         <Space size={12}>
-          <Tooltip title={t('workbench.backToDashboard')}>
-            <Button type="text" icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/')} style={{ fontSize: 16 }} />
+          <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
+            <Button type="text"
+              icon={showSidePanel ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+              onClick={() => setShowSidePanel(!showSidePanel)}
+            />
           </Tooltip>
-          <Text strong style={{ fontSize: 15 }}>{employee.name}</Text>
-          <Tag color={employee.status === 'active' ? 'green' : employee.status === 'draft' ? 'default' : employee.status === 'paused' ? 'orange' : 'red'}
-            style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-            {employee.status === 'active' ? t('workbench.statusRunning') : employee.status === 'draft' ? t('workbench.statusDraft') : employee.status === 'paused' ? t('workbench.statusPaused') : t('workbench.statusError')}
-          </Tag>
+          <Dropdown menu={{ items: employeeSelectItems }} trigger={['click']}>
+            <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', height: 'auto' }}>
+              <div style={{
+                width: 26, height: 26, borderRadius: 6,
+                background: `${token.colorPrimary}15`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
+              </div>
+              <Text strong style={{ fontSize: 14 }}>{employee.name}</Text>
+              <Tag color={employee.status === 'active' ? 'green' : employee.status === 'paused' ? 'orange' : 'default'}
+                style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                {employee.status === 'active' ? t('workbench.statusRunning') : employee.status === 'paused' ? t('workbench.statusPaused') : t('workbench.statusDraft')}
+              </Tag>
+            </Button>
+          </Dropdown>
         </Space>
         <Space size={4}>
           <LLMSelector
@@ -125,13 +246,6 @@ const EmployeeWorkbench: React.FC = () => {
             <Button type="text" icon={<SettingOutlined />}
               onClick={() => navigate(`/employee/${id}/settings`)} />
           </Tooltip>
-          <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
-            <Button type="text"
-              icon={showSidePanel ? <MenuFoldOutlined /> : <HistoryOutlined />}
-              onClick={() => setShowSidePanel(!showSidePanel)}
-              style={{ color: conversations.length > 0 ? '#1677ff' : undefined }}
-            />
-          </Tooltip>
         </Space>
       </div>
 
@@ -150,15 +264,15 @@ const EmployeeWorkbench: React.FC = () => {
             onEditTitleChange={(e) => setEditingTitle(e.target.value)}
             onEditKeyDown={handleEditKeyDown}
             onDelete={deleteConversation}
-            onDeleteAll={deleteAllConversations}
+            onDeleteSelected={deleteSelectedConversations}
             onNewConversation={startNewConversation}
             onLoadMore={loadMoreConversations}
             onListScroll={handleConversationListScroll}
+            isConversationStreaming={isConversationStreaming}
           />
         )}
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-
           <div ref={chatContainerRef} onScroll={handleScroll}
             style={{
               flex: 1,
