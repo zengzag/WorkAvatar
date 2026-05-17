@@ -4,8 +4,8 @@ import type { WorkflowCreateParams, WorkflowUpdateParams } from '../../shared/ip
 import type WorkflowService from '../services/workflow.service'
 
 export function registerWorkflowHandlers(workflowService: WorkflowService) {
-  ipcMain.handle(IPC_CHANNELS.WORKFLOW_LIST, (_, params?: { project_id?: string }) => {
-    return workflowService.listWorkflows(params?.project_id)
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_LIST, (_event) => {
+    return workflowService.listWorkflows()
   })
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_GET, (_, id: string) => {

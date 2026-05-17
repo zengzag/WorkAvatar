@@ -83,12 +83,6 @@ class PathService {
     return dir
   }
 
-  getProjectsBasePath(): string {
-    const dir = path.join(this.dataDir, 'projects')
-    this.ensureDir(dir)
-    return dir
-  }
-
   setDataDir(newDir: string): { success: boolean; error?: string } {
     if (!fs.existsSync(newDir)) {
       try {

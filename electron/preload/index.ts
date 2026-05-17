@@ -1,14 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
-  ProjectListParams,
-  ProjectCreateParams,
-  ProjectUpdateParams,
-  ProjectDeleteParams,
-  FileListParams,
-  FileImportParams,
-  FileParseParams,
-  FileGetContentParams,
   WorkspaceInfoParams,
   WorkspaceListFilesParams,
   WorkspaceReadFileParams,
@@ -46,7 +38,6 @@ import type {
   KBCreateParams,
   KBUpdateParams,
   KBDocParseParams,
-  KBLinkProjectParams,
   KBExportFullParams,
   KBExportSummaryParams,
   KBExportDocumentsParams,
@@ -70,23 +61,6 @@ import type {
 const electronAPI = {
   ping: () => ipcRenderer.invoke(IPC_CHANNELS.PING),
 
-  project: {
-    list: (params?: ProjectListParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_GET, id),
-    create: (params: ProjectCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, params),
-    update: (params: ProjectUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE, params),
-    delete: (params: string | ProjectDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DELETE, params),
-  },
-
-  file: {
-    list: (params: FileListParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_GET, id),
-    import: (params: FileImportParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_IMPORT, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DELETE, id),
-    parse: (params: FileParseParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_PARSE, params),
-    getContent: (params: FileGetContentParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_GET_CONTENT, params),
-  },
-
   workspace: {
     info: (params: WorkspaceInfoParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_INFO, params),
     listFiles: (params: WorkspaceListFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params),
@@ -103,7 +77,8 @@ const electronAPI = {
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET, id),
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, id),
+    delete: (params: string | { id: string; delete_workspace?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    deleteWorkspace: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE_WORKSPACE, id),
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
@@ -248,12 +223,8 @@ const electronAPI = {
     parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
     deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
     getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
-    linkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_LINK_PROJECT, params),
-    unlinkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UNLINK_PROJECT, params),
-    getLinkedProjects: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROJECTS, kbId),
     parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
     getFileByHash: (params: { hash: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_FILE_BY_HASH, params),
-    importDocsToProject: (params: { project_id: string; doc_ids: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_DOCS_TO_PROJECT, params),
     onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
       const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
@@ -284,7 +255,6 @@ const electronAPI = {
     searchChapters: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_CHAPTERS, params),
     searchDocSummaries: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, params),
     getProcessingJobs: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, params),
-    getKBsForProject: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_KBS_FOR_PROJECT, projectId),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
     onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
@@ -384,7 +354,7 @@ const electronAPI = {
   },
 
   workflow: {
-    list: (params?: { project_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
+    list: (params?: Record<string, never>) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET, id),
     create: (params: WorkflowCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CREATE, params),
     update: (params: WorkflowUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_UPDATE, params),
@@ -467,7 +437,7 @@ export type ElectronAPI = typeof electronAPI & {
     onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
   }
   workflow: {
-    list: (params?: { project_id?: string }) => Promise<any[]>
+    list: (params?: Record<string, never>) => Promise<any[]>
     get: (id: string) => Promise<any>
     create: (params: WorkflowCreateParams) => Promise<any>
     update: (params: WorkflowUpdateParams) => Promise<any>

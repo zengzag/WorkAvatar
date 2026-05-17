@@ -20,14 +20,11 @@ export const useKnowledgeBase = () => {
   const [kbs, setKBs] = useState<KnowledgeBase[]>([])
   const [selectedKB, setSelectedKB] = useState<KnowledgeBase | null>(null)
   const [docs, setDocs] = useState<KBDocument[]>([])
-  const [linkedProjects, setLinkedProjects] = useState<any[]>([])
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [newKBName, setNewKBName] = useState('')
   const [newKBDesc, setNewKBDesc] = useState('')
   const [uploadLoading, setUploadLoading] = useState(false)
   const [parsingAll, setParsingAll] = useState(false)
-  const [linkModalOpen, setLinkModalOpen] = useState(false)
-  const [allProjects, setAllProjects] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem(KB_TAB_KEY) || 'docs')
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
     return localStorage.getItem('knowledgeBase:selectedProviderId') || getCachedSceneDefaultModel('knowledge')?.provider_id || ''
@@ -170,14 +167,6 @@ export const useKnowledgeBase = () => {
     setProcessedDocIds(processedIds)
   }
 
-  const loadLinkedProjects = useCallback(async (kbId: string) => {
-    try {
-      const result = await window.electronAPI.kb.getLinkedProjects(kbId)
-      if (activeKBRef.current !== kbId) return
-      setLinkedProjects(result)
-    } catch {}
-  }, [])
-
   const loadKnowledgeStats = async (kbId: string) => {
     try {
       const stats = await window.electronAPI.kb.getStats(kbId)
@@ -246,7 +235,6 @@ export const useKnowledgeBase = () => {
     setAllRelations([])
     setSelectedEntity(null)
     loadDocs(kb.id)
-    loadLinkedProjects(kb.id)
     loadKnowledgeStats(kb.id)
     loadEntities(kb.id)
     loadGlobalSummary(kb.id)
@@ -656,18 +644,6 @@ export const useKnowledgeBase = () => {
     openDetail(docId, docName)
   }
 
-  const handleLinkProject = async () => {
-    if (!selectedKB) return
-    try { const result = await window.electronAPI.project.list(); setAllProjects(result.projects); setLinkModalOpen(true) }
-    catch { message.error(t('knowledgeBase.loadProjectsFailed')) }
-  }
-
-  const handleProjectLink = async (projectId: string) => {
-    if (!selectedKB) return
-    try { await window.electronAPI.kb.linkProject({ kb_id: selectedKB.id, project_id: projectId }); message.success(t('knowledgeBase.linkSuccess')); loadLinkedProjects(selectedKB.id); setLinkModalOpen(false) }
-    catch { message.error(t('knowledgeBase.linkFailed')) }
-  }
-
   const handleEditKB = () => {
     if (!selectedKB) return
     setEditKBName(selectedKB.name)
@@ -805,7 +781,7 @@ export const useKnowledgeBase = () => {
   }
 
   const handleRefreshDocs = () => {
-    if (selectedKB) { loadDocs(selectedKB.id); loadLinkedProjects(selectedKB.id) }
+    if (selectedKB) { loadDocs(selectedKB.id) }
   }
 
   const handleFolderScanModalClose = () => {
@@ -882,11 +858,6 @@ export const useKnowledgeBase = () => {
     onViewEntity: handleViewEntity,
     onCloseEntityModal: () => setEntityModalOpen(false),
 
-    linkedProjects,
-    allProjects,
-    onLinkProject: handleLinkProject,
-    onProjectLink: handleProjectLink,
-
     createModalOpen,
     setCreateModalOpen,
     newKBName,
@@ -903,9 +874,6 @@ export const useKnowledgeBase = () => {
     setEditKBDesc,
     onConfirmEditKB: confirmEditKB,
     onEditKB: handleEditKB,
-
-    linkModalOpen,
-    setLinkModalOpen,
 
     activeTab,
     onTabChange: handleTabChange,

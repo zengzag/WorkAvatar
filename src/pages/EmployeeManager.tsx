@@ -7,7 +7,8 @@ import {
   Table,
   message,
   Space,
-  Popconfirm,
+  Modal,
+  Checkbox,
   Typography,
   theme,
 } from 'antd'
@@ -52,15 +53,40 @@ const EmployeeManager: React.FC = () => {
     }
   }
 
-  const handleDeleteEmployee = async (id: string) => {
-    try {
-      await window.electronAPI.employee.delete(id)
-      setEmployees(employees.filter((e) => e.id !== id))
-      message.success(t('employeeManager.deleteSuccess'))
-    } catch (error) {
-      console.error('删除数字员工失败:', error)
-      message.error(t('employeeManager.deleteFailed'))
-    }
+  const handleDeleteEmployee = (record: Employee) => {
+    let deleteWorkspace = false
+    Modal.confirm({
+      title: t('employeeManager.confirmDelete'),
+      content: (
+        <div>
+          <p>{t('employeeManager.deleteDesc')}</p>
+          {record.workspace_path && (
+            <Checkbox
+              onChange={(e) => { deleteWorkspace = e.target.checked }}
+              style={{ marginTop: 8 }}
+            >
+              {t('employeeManager.alsoDeleteWorkspace')}
+            </Checkbox>
+          )}
+        </div>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.delete({
+            id: record.id,
+            delete_workspace: deleteWorkspace,
+          })
+          setEmployees(employees.filter((e) => e.id !== record.id))
+          message.success(t('employeeManager.deleteSuccess'))
+        } catch (error) {
+          console.error('删除数字员工失败:', error)
+          message.error(t('employeeManager.deleteFailed'))
+        }
+      },
+    })
   }
 
   const columns = [
@@ -116,42 +142,18 @@ const EmployeeManager: React.FC = () => {
             >
               {t('employeeManager.settings')}
             </Button>
-            <Popconfirm
-              title={t('employeeManager.confirmDelete')}
-              description={t('employeeManager.deleteDesc')}
-              onConfirm={() => handleDeleteEmployee(record.id)}
-              okText={t('common.confirm')}
-              cancelText={t('common.cancel')}
-            >
-              <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                {t('common.delete')}
-              </Button>
-            </Popconfirm>
-          </Space>
-        </Space>
-      ),
-    },
-    {
-      title: t('employeeManager.project'),
-      key: 'project_name',
-      width: 180,
-      ellipsis: true,
-      render: (_: any, record: Employee) => {
-        const projectName = record.project_name || record.project_id
-        if (projectName) {
-          return (
             <Button
               type="link"
               size="small"
-              style={{ padding: 0 }}
-              onClick={() => navigate(`/project/${record.project_id}`)}
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => handleDeleteEmployee(record)}
             >
-              {projectName}
+              {t('common.delete')}
             </Button>
-          )
-        }
-        return t('employeeManager.unassigned')
-      },
+          </Space>
+        </Space>
+      ),
     },
     {
       title: t('employeeManager.tasksApprovals'),
@@ -200,7 +202,7 @@ const EmployeeManager: React.FC = () => {
           <EmptyState
             title={t('employeeManager.noEmployees')}
             description={t('employeeManager.noEmployeesDesc')}
-            actionText={t('employeeManager.goToProjects')}
+            actionText={t('employeeManager.goToCreate')}
             onAction={() => navigate('/wizard')}
           />
         )}

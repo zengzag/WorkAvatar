@@ -45,48 +45,9 @@ class DatabaseService {
 
   private initializeSchema(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        root_path TEXT NOT NULL,
-        llm_provider_id TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE TABLE IF NOT EXISTS files (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        path TEXT NOT NULL,
-        original_name TEXT NOT NULL,
-        type TEXT NOT NULL,
-        size INTEGER NOT NULL DEFAULT 0,
-        hash TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        parsed_json TEXT,
-        thumbnail_text TEXT,
-        rule_count INTEGER DEFAULT 0,
-        qa_count INTEGER DEFAULT 0,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE TABLE IF NOT EXISTS file_annotations (
-        id TEXT PRIMARY KEY,
-        file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-        type TEXT NOT NULL,
-        text TEXT NOT NULL,
-        start_offset INTEGER NOT NULL,
-        end_offset INTEGER NOT NULL,
-        comment TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
       CREATE TABLE IF NOT EXISTS employees (
         id TEXT PRIMARY KEY,
-        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        workspace_path TEXT DEFAULT '',
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
@@ -169,7 +130,6 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS workflows (
         id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         nodes_json TEXT NOT NULL DEFAULT '[]',
@@ -190,14 +150,9 @@ class DatabaseService {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE INDEX IF NOT EXISTS idx_workflows_project ON workflows(project_id);
       CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions(workflow_id);
       CREATE INDEX IF NOT EXISTS idx_workflow_executions_status ON workflow_executions(status);
 
-      CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id);
-      CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
-      CREATE INDEX IF NOT EXISTS idx_file_annotations_file ON file_annotations(file_id);
-      CREATE INDEX IF NOT EXISTS idx_employees_project ON employees(project_id);
       CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
@@ -358,21 +313,22 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
     this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'')
 
-    this.migrateEmployeeProjectIdNullable()
-    this.migrateEmployeeProjectIdCascade()
+    this.migrateEmployeeAddWorkspacePath()
+    this.migrateWorkflowRemoveProjectId()
 
     this.recoverStuckDocs()
   }
 
-  private migrateEmployeeProjectIdNullable(): void {
+  private migrateEmployeeAddWorkspacePath(): void {
+    this.addColumnIfNotExists('employees', 'workspace_path', "TEXT DEFAULT ''")
     const tableInfo = this.db.prepare('PRAGMA table_info(employees)').all() as any[]
-    const projectCol = tableInfo.find((c) => c.name === 'project_id')
-    if (projectCol && projectCol.notnull === 1) {
-      logger.info('Migrating employees.project_id from NOT NULL to nullable...')
+    const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
+    if (hasProjectId) {
+      logger.info('Migrating employees: removing project_id column...')
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS employees_new (
           id TEXT PRIMARY KEY,
-          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+          workspace_path TEXT DEFAULT '',
           name TEXT NOT NULL,
           description TEXT DEFAULT '',
           avatar_type TEXT DEFAULT 'default',
@@ -388,47 +344,38 @@ class DatabaseService {
           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
-        INSERT INTO employees_new SELECT * FROM employees;
+        INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, review_mode, default_skill_id, llm_provider_id, llm_model, profile_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
+          SELECT id, '', name, description, avatar_type, status, review_mode, default_skill_id, llm_provider_id, llm_model, profile_json, arch_version, total_tasks, total_approvals, created_at, updated_at FROM employees;
         DROP TABLE employees;
         ALTER TABLE employees_new RENAME TO employees;
-        CREATE INDEX IF NOT EXISTS idx_employees_project ON employees(project_id);
         CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       `)
-      logger.info('Migration completed: employees.project_id is now nullable')
+      logger.info('Migration completed: employees.project_id removed, workspace_path added')
     }
   }
 
-  private migrateEmployeeProjectIdCascade(): void {
-    const fkList = this.db.prepare('PRAGMA foreign_key_list(employees)').all() as any[]
-    const projectFk = fkList.find((fk) => fk.from === 'project_id')
-    if (projectFk && projectFk.on_delete === 'CASCADE') {
-      logger.info('Migrating employees.project_id ON DELETE CASCADE to SET NULL...')
+  private migrateWorkflowRemoveProjectId(): void {
+    const tableInfo = this.db.prepare('PRAGMA table_info(workflows)').all() as any[]
+    const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
+    if (hasProjectId) {
+      logger.info('Migrating workflows: removing project_id column...')
       this.db.exec(`
-        CREATE TABLE IF NOT EXISTS employees_new (
+        CREATE TABLE IF NOT EXISTS workflows_new (
           id TEXT PRIMARY KEY,
-          project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
           name TEXT NOT NULL,
           description TEXT DEFAULT '',
-          avatar_type TEXT DEFAULT 'default',
+          nodes_json TEXT NOT NULL DEFAULT '[]',
+          edges_json TEXT NOT NULL DEFAULT '[]',
           status TEXT NOT NULL DEFAULT 'draft',
-          review_mode BOOLEAN NOT NULL DEFAULT 0,
-          default_skill_id TEXT,
-          llm_provider_id TEXT,
-          llm_model TEXT,
-          profile_json TEXT DEFAULT '',
-          arch_version INTEGER NOT NULL DEFAULT 1,
-          total_tasks INTEGER DEFAULT 0,
-          total_approvals INTEGER DEFAULT 0,
           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
-        INSERT INTO employees_new SELECT * FROM employees;
-        DROP TABLE employees;
-        ALTER TABLE employees_new RENAME TO employees;
-        CREATE INDEX IF NOT EXISTS idx_employees_project ON employees(project_id);
-        CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+        INSERT INTO workflows_new (id, name, description, nodes_json, edges_json, status, created_at, updated_at)
+          SELECT id, name, description, nodes_json, edges_json, status, created_at, updated_at FROM workflows;
+        DROP TABLE workflows;
+        ALTER TABLE workflows_new RENAME TO workflows;
       `)
-      logger.info('Migration completed: employees.project_id ON DELETE is now SET NULL')
+      logger.info('Migration completed: workflows.project_id removed')
     }
   }
 

@@ -8,6 +8,8 @@ import {
   Button,
   Space,
   Tag,
+  Modal,
+  Checkbox,
   App,
 } from 'antd'
 import {
@@ -79,7 +81,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
-  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
   const [employeeKBs, setEmployeeKBs] = useState<any[]>([])
   const [allKBs, setAllKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -98,7 +99,6 @@ const EmployeeSettings: React.FC = () => {
   const [availableSkills, setAvailableSkills] = useState<InstalledSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
   const [formLlmProviderId, setFormLlmProviderId] = useState<string>('')
-  const [projects, setProjects] = useState<any[]>([])
 
   useEffect(() => {
     if (employee) {
@@ -112,7 +112,6 @@ const EmployeeSettings: React.FC = () => {
         llm_model: employee.llm_model,
       })
       setFormLlmProviderId(employee.llm_provider_id || '')
-      loadLinkedKBs(employee.project_id)
     }
   }, [employee])
 
@@ -129,24 +128,6 @@ const EmployeeSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
-    } catch {}
-  }, [])
-
-  const loadProjects = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.project.list()
-      setProjects(result.projects || result || [])
-    } catch {}
-  }, [])
-
-  const loadLinkedKBs = useCallback(async (projectId: string | undefined | null) => {
-    if (!projectId) {
-      setLinkedKBs([])
-      return
-    }
-    try {
-      const result = await window.electronAPI.kb.getKBsForProject(projectId)
-      setLinkedKBs(result)
     } catch {}
   }, [])
 
@@ -206,7 +187,6 @@ const EmployeeSettings: React.FC = () => {
     if (id) {
       loadEmployee()
       loadProviders()
-      loadProjects()
       loadTools()
       loadMCPServers()
       loadInstalledSkills()
@@ -214,7 +194,7 @@ const EmployeeSettings: React.FC = () => {
       loadEmployeeKBs()
       loadAllKBs()
     }
-  }, [id, loadEmployee, loadProviders, loadProjects, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills, loadEmployeeKBs, loadAllKBs])
+  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills, loadEmployeeKBs, loadAllKBs])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -330,15 +310,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleProjectChange = async (value: string) => {
-    try {
-      await window.electronAPI.employee.update({ id: id!, project_id: value || null })
-      loadEmployee()
-    } catch {
-      message.error(t('common.saveFailed'))
-    }
-  }
-
   const handleToggleStatus = async () => {
     if (!employee) return
     const newStatus = employee.status === 'active' ? 'paused' : 'active'
@@ -354,14 +325,39 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleDeleteEmployee = async () => {
-    try {
-      await window.electronAPI.employee.delete(id!)
-      message.success(t('common.deleted'))
-      navigate('/')
-    } catch {
-      message.error(t('common.deleteFailed'))
-    }
+  const handleDeleteEmployee = (workspacePath?: string) => {
+    let deleteWorkspace = false
+    Modal.confirm({
+      title: t('employeeSettings.confirmDeleteEmployee'),
+      content: (
+        <div>
+          <p>{t('employeeSettings.deleteEmployeeDesc')}</p>
+          {workspacePath && (
+            <Checkbox
+              onChange={(e) => { deleteWorkspace = e.target.checked }}
+              style={{ marginTop: 8 }}
+            >
+              {t('employeeSettings.alsoDeleteWorkspace')}
+            </Checkbox>
+          )}
+        </div>
+      ),
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.delete({
+            id: id!,
+            delete_workspace: deleteWorkspace,
+          })
+          message.success(t('common.deleted'))
+          navigate('/')
+        } catch {
+          message.error(t('common.deleteFailed'))
+        }
+      },
+    })
   }
 
   const handleToggleTool = async (toolId: string, enabled: boolean) => {
@@ -512,9 +508,8 @@ const EmployeeSettings: React.FC = () => {
                 loading={loading}
                 onSave={handleSaveBasic}
                 onDelete={handleDeleteEmployee}
-                projectId={employee.project_id}
-                projects={projects}
-                onProjectChange={handleProjectChange}
+                workspacePath={employee.workspace_path}
+                employeeId={id!}
               />
             )
           },
@@ -570,13 +565,10 @@ const EmployeeSettings: React.FC = () => {
             label: t('employeeSettings.tabKnowledge'),
             children: (
               <KnowledgeBaseSection
-                linkedKBs={linkedKBs}
                 employeeKBs={employeeKBs}
                 allKBs={allKBs}
-                projectId={employee.project_id}
                 employeeId={id!}
                 onRefresh={() => {
-                  loadLinkedKBs(employee.project_id)
                   loadEmployeeKBs()
                 }}
               />
@@ -602,7 +594,7 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <ProfileSection
                 employee={employee}
-                linkedKBCount={linkedKBs.length}
+                linkedKBCount={employeeKBs.length}
               />
             )
           },
@@ -613,7 +605,6 @@ const EmployeeSettings: React.FC = () => {
               <ExportImportSection
                 employeeId={id!}
                 employeeName={employee.name}
-                projectId={employee.project_id}
               />
             )
           }

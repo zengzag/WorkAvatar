@@ -34,18 +34,19 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_KB_LIST: 'employee:kb-list',
   EMPLOYEE_KB_LINK: 'employee:kb-link',
   EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
+
+  EMPLOYEE_DELETE_WORKSPACE: 'employee:delete-workspace',
 } as const
 
 export interface EmployeeListParams {
-  project_id?: string
   status?: string
 }
 
 export interface EmployeeCreateParams {
-  project_id?: string
   name: string
   description?: string
   profile_json?: string
+  workspace_path?: string
 }
 
 export interface EmployeeUpdateParams {
@@ -58,7 +59,7 @@ export interface EmployeeUpdateParams {
   default_skill_id?: string
   llm_provider_id?: string
   llm_model?: string
-  project_id?: string | null
+  workspace_path?: string
   avatar_type?: string
 }
 
@@ -96,7 +97,6 @@ export interface ConversationCreateParams {
 }
 
 export interface EmployeeProfileAnalyzeParams {
-  project_id?: string
   kb_ids: string[]
   provider_id?: string
   model_id?: string
@@ -125,7 +125,6 @@ export interface EmployeeExportConfigParams {
 
 export interface EmployeeImportConfigParams {
   import_path: string
-  project_id: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }
 
@@ -136,7 +135,6 @@ export interface EmployeeExportPackageParams {
 
 export interface EmployeeImportPackageParams {
   import_path: string
-  project_id: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }
 

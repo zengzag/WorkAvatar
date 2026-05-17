@@ -129,7 +129,6 @@ const ConversationCenter: React.FC = () => {
       const name = quickChatName.trim() || t('conversationCenter.quickChatNameDefault')
       const employee = await window.electronAPI.employee.create({
         name,
-        project_id: undefined,
       })
       await window.electronAPI.employee.update({
         id: employee.id,

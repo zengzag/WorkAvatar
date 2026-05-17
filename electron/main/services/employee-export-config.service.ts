@@ -78,7 +78,7 @@ export class EmployeeExportConfigService {
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
 
-      const linkedKBs = this.getEmployeeKnowledgeBases(employee.project_id)
+      const linkedKBs = this.getEmployeeKnowledgeBases(employeeId)
 
       const mcpServers = this.getEmployeeMCPServers(employeeId)
 
@@ -148,7 +148,6 @@ export class EmployeeExportConfigService {
 
   importConfig(
     importPath: string,
-    projectId: string,
     conflictStrategy: 'skip' | 'overwrite' | 'merge' = 'merge'
   ): { success: boolean; error?: string; employeeId?: string; warnings?: string[] } {
     try {
@@ -183,20 +182,14 @@ export class EmployeeExportConfigService {
 
       const warnings: string[] = []
 
-      const project = this.db.getDb().prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as any
-      if (!project) {
-        return { success: false, error: 'Target project not found' }
-      }
-
       const employeeId = generateId()
       const now = Math.floor(Date.now() / 1000)
 
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, project_id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
-        projectId,
         importData.employee.name,
         importData.employee.description || '',
         importData.employee.profile_json || '',
@@ -250,19 +243,7 @@ export class EmployeeExportConfigService {
           'SELECT id FROM knowledge_bases WHERE id = ?'
         ).get(kbRef.kb_id) as any
 
-        if (kbExists) {
-          const linkExists = this.kbDb.getDb().prepare(
-            'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
-          ).get(kbRef.kb_id, projectId) as any
-
-          if (!linkExists) {
-            const linkId = generateId()
-            this.kbDb.getDb().prepare(`
-              INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
-              VALUES (?, ?, ?, ?)
-            `).run(linkId, kbRef.kb_id, projectId, now)
-          }
-        } else {
+        if (!kbExists) {
           warnings.push(`Knowledge base "${kbRef.kb_name}" (${kbRef.kb_id}) not found, skipped`)
         }
       }
@@ -308,7 +289,6 @@ export class EmployeeExportConfigService {
 
   importConfigFromData(
     importData: EmployeeConfigExport,
-    projectId: string,
     _conflictStrategy: 'skip' | 'overwrite' | 'merge'
   ): { success: boolean; error?: string; employeeId?: string; warnings?: string[] } {
     const validation = this.validateConfig(importData)
@@ -322,10 +302,10 @@ export class EmployeeExportConfigService {
     const employeeId = generateId()
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, project_id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
     `).run(
-      employeeId, projectId,
+      employeeId,
       importData.employee.name,
       importData.employee.description || '',
       importData.employee.profile_json || '',
@@ -360,18 +340,7 @@ export class EmployeeExportConfigService {
 
     for (const kbRef of importData.knowledgeBases || []) {
       const kbExists = this.kbDb.getDb().prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
-      if (kbExists) {
-        const linkExists = this.kbDb.getDb().prepare(
-          'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
-        ).get(kbRef.kb_id, projectId) as any
-        if (!linkExists) {
-          const linkId = generateId()
-          this.kbDb.getDb().prepare(`
-            INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
-            VALUES (?, ?, ?, ?)
-          `).run(linkId, kbRef.kb_id, projectId, now)
-        }
-      } else {
+      if (!kbExists) {
         warnings.push(`Knowledge base "${kbRef.kb_name}" not found, skipped`)
       }
     }
@@ -392,13 +361,13 @@ export class EmployeeExportConfigService {
     return { success: true, employeeId, warnings }
   }
 
-  getEmployeeKnowledgeBases(projectId: string): Array<{ kb_id: string; kb_name: string }> {
+  getEmployeeKnowledgeBases(employeeId: string): Array<{ kb_id: string; kb_name: string }> {
     return this.kbDb.getDb().prepare(`
       SELECT kb.id as kb_id, kb.name as kb_name
       FROM knowledge_bases kb
-      INNER JOIN kb_project_links kpl ON kb.id = kpl.kb_id
-      WHERE kpl.project_id = ?
-    `).all(projectId) as Array<{ kb_id: string; kb_name: string }>
+      INNER JOIN employee_kb_links l ON kb.id = l.kb_id
+      WHERE l.employee_id = ?
+    `).all(employeeId) as Array<{ kb_id: string; kb_name: string }>
   }
 
   getEmployeeMCPServers(_employeeId: string): Array<{ server_id: string; server_name: string }> {

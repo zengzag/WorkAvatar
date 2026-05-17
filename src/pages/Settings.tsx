@@ -4,7 +4,6 @@ import {
   SaveOutlined,
   SettingOutlined,
   RobotOutlined,
-  FolderOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +14,6 @@ import {
   StorageSettings,
   AboutSection,
   DefaultModelSettings,
-  ProjectManagement,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -43,15 +41,6 @@ const Settings: React.FC = () => {
       children: <DefaultModelSettings />,
     },
     {
-      key: 'projects',
-      label: (
-        <span>
-          <FolderOutlined /> {t('settings.tabProjects')}
-        </span>
-      ),
-      children: <ProjectManagement />,
-    },
-    {
       key: 'storage',
       label: (
         <span>
@@ -76,7 +65,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'projects', 'storage', 'appearance', 'about']
+  const validTabs = ['llm', 'defaultModel', 'storage', 'appearance', 'about']
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (

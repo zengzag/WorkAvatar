@@ -39,7 +39,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const [employee, setEmployee] = useState<any | null>(null)
-  const [currentProjectId, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
@@ -123,7 +122,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.employee.get(id!)
       setEmployee(result)
-      setProjectId(result.project_id || null)
       if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
       if (result.llm_model) setSelectedLlmModelId(result.llm_model)
     } catch {
@@ -577,7 +575,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         options: { temperature: 0.3 },
         use_skills: true,
         enable_thinking: enableThinking,
-        project_id: currentProjectId || undefined,
       })
     } catch {
       finish()
@@ -643,7 +640,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   return {
     employee,
-    currentProjectId,
     conversations,
     allConversations,
     activeConversationId,

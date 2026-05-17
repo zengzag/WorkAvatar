@@ -83,5 +83,4 @@ export interface EmployeeChatStreamParams {
   }
   use_skills?: boolean
   enable_thinking?: boolean
-  project_id?: string
 }

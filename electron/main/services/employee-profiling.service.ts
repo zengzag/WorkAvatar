@@ -71,8 +71,8 @@ class EmployeeProfilingService {
     return EmployeeProfilingService.instance
   }
 
-  async analyzeProjectForEmployee(
-    _projectId: string,
+  async analyzeForEmployee(
+    _employeeId: string,
     kbIds: string[],
     providerId?: string,
     modelId?: string,

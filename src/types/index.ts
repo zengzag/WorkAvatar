@@ -1,6 +1,4 @@
 export type {
-  Project,
-  File,
   Employee,
   Skill,
   Conversation,

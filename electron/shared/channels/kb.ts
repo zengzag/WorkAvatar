@@ -8,12 +8,8 @@ export const KB_CHANNELS = {
   KB_DOC_PARSE: 'kb:doc-parse',
   KB_DOC_DELETE: 'kb:doc-delete',
   KB_DOC_LIST: 'kb:doc-list',
-  KB_LINK_PROJECT: 'kb:link-project',
-  KB_UNLINK_PROJECT: 'kb:unlink-project',
-  KB_GET_PROJECTS: 'kb:get-projects',
   KB_PARSE_ALL: 'kb:parse-all',
   KB_GET_FILE_BY_HASH: 'kb:get-file-by-hash',
-  KB_IMPORT_DOCS_TO_PROJECT: 'kb:import-docs-to-project',
   KB_PROCESS_DOCUMENT: 'kb:process-document',
   KB_PROCESS_ALL: 'kb:process-all',
   KB_BUILD_GLOBAL: 'kb:build-global',
@@ -29,7 +25,6 @@ export const KB_CHANNELS = {
   KB_SEARCH_CHAPTERS: 'kb:search-chapters',
   KB_SEARCH_DOC_SUMMARIES: 'kb:search-doc-summaries',
   KB_GET_PROCESSING_JOBS: 'kb:get-processing-jobs',
-  KB_GET_KBS_FOR_PROJECT: 'kb:get-kbs-for-project',
   KB_GET_DOC_CONTENT: 'kb:get-doc-content',
   KB_UPLOAD_PROGRESS: 'kb:upload-progress',
   KB_PARSE_PROGRESS: 'kb:parse-progress',
@@ -68,11 +63,6 @@ export interface KBUpdateParams {
   id: string
   name?: string
   description?: string
-}
-
-export interface KBLinkProjectParams {
-  kb_id: string
-  project_id: string
 }
 
 export interface KBDocParseParams {

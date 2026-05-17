@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
 import {
   Card,
   Button,
@@ -8,40 +7,33 @@ import {
   Typography,
   Select,
   Space,
-  Tag,
   App,
 } from 'antd'
-import { LinkOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import KBListItem from '../common/KBListItem'
 
 const { Text } = Typography
 
 interface KnowledgeBaseSectionProps {
-  linkedKBs: any[]
   employeeKBs: any[]
   allKBs: any[]
-  projectId?: string
   employeeId: string
   onRefresh: () => void
 }
 
 const KnowledgeBaseSection: React.FC<KnowledgeBaseSectionProps> = ({
-  linkedKBs,
   employeeKBs,
   allKBs,
-  projectId,
   employeeId,
   onRefresh,
 }) => {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const { message } = App.useApp()
   const [linking, setLinking] = useState(false)
   const [selectedKbId, setSelectedKbId] = useState<string | undefined>(undefined)
 
   const existingKbIds = new Set([
     ...employeeKBs.map((kb: any) => kb.id),
-    ...linkedKBs.map((kb: any) => kb.id),
   ])
 
   const availableKBs = allKBs.filter((kb: any) => !existingKbIds.has(kb.id))
@@ -73,13 +65,8 @@ const KnowledgeBaseSection: React.FC<KnowledgeBaseSectionProps> = ({
 
   const allLinkedKBs = (() => {
     const map = new Map<string, any>()
-    for (const kb of linkedKBs) {
-      map.set(kb.id, { ...kb, source: 'project' })
-    }
     for (const kb of employeeKBs) {
-      if (!map.has(kb.id)) {
-        map.set(kb.id, { ...kb, source: 'employee' })
-      }
+      map.set(kb.id, { ...kb, source: 'employee' })
     }
     return Array.from(map.values())
   })()
@@ -87,13 +74,6 @@ const KnowledgeBaseSection: React.FC<KnowledgeBaseSectionProps> = ({
   return (
     <Card
       title={t('employeeSettings.linkedKb')}
-      extra={
-        projectId ? (
-          <Button type="link" icon={<LinkOutlined />} onClick={() => navigate(`/project/${projectId}`)}>
-            {t('employeeSettings.manageAssociation')}
-          </Button>
-        ) : null
-      }
     >
       {allLinkedKBs.length > 0 ? (
         <div>
@@ -110,9 +90,6 @@ const KnowledgeBaseSection: React.FC<KnowledgeBaseSectionProps> = ({
                   icon={<DeleteOutlined />}
                   onClick={() => handleUnlinkKB(kb.id)}
                 />
-              )}
-              {kb.source === 'project' && (
-                <Tag color="blue" style={{ fontSize: 11 }}>{t('employeeSettings.kbFromProject')}</Tag>
               )}
             </div>
           ))}

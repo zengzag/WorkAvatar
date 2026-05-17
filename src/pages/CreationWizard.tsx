@@ -10,7 +10,6 @@ import {
   Typography,
   Space,
   Input,
-  Select,
   Empty,
   Alert,
   Descriptions,
@@ -60,11 +59,7 @@ const CreationWizard: React.FC = () => {
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [currentStep, setCurrentStep] = useState(0)
-  const [project, setProject] = useState<any>(null)
-  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
   const [allKBs, setAllKBs] = useState<any[]>([])
-  const [projects, setProjects] = useState<any[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string>(id || '')
   const [selectedKBIds, setSelectedKBIds] = useState<string[]>([])
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -121,34 +116,9 @@ const CreationWizard: React.FC = () => {
 
   useEffect(() => {
     loadProviders()
-    if (id) {
-      loadProject()
-      loadLinkedKBs()
-    } else {
-      loadAllKBs()
-    }
-    loadProjects()
+    loadAllKBs()
     loadBuiltinTools()
   }, [id])
-
-  const loadProject = async () => {
-    try {
-      const result = await window.electronAPI.project.get(id!)
-      setProject(result)
-    } catch {
-      message.error(t('creationWizard.loadProjectFailed'))
-    }
-  }
-
-  const loadLinkedKBs = async () => {
-    try {
-      const result = await window.electronAPI.kb.getKBsForProject(id!)
-      setLinkedKBs(result)
-      setSelectedKBIds(result.map((kb: any) => kb.id))
-    } catch {
-      message.error(t('creationWizard.loadKbFailed'))
-    }
-  }
 
   const loadAllKBs = async () => {
     try {
@@ -157,13 +127,6 @@ const CreationWizard: React.FC = () => {
     } catch {
       message.error(t('creationWizard.loadKbFailed'))
     }
-  }
-
-  const loadProjects = async () => {
-    try {
-      const result = await window.electronAPI.project.list()
-      setProjects(result.projects || result || [])
-    } catch {}
   }
 
   const loadProviders = async () => {
@@ -237,7 +200,6 @@ const CreationWizard: React.FC = () => {
       const enhancedDescription = businessDescription || undefined
 
       const result = await window.electronAPI.employee.analyzeProfile({
-        project_id: selectedProjectId || '',
         kb_ids: selectedKBIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
@@ -371,7 +333,6 @@ const CreationWizard: React.FC = () => {
 
     try {
       const employee = await window.electronAPI.employee.create({
-        project_id: selectedProjectId || undefined,
         name: employeeName,
         description: profile?.roleDescription || businessDescription || '',
         profile_json: profile ? JSON.stringify({
@@ -423,7 +384,7 @@ const CreationWizard: React.FC = () => {
     { title: t('creationWizard.stepConfirmCreate'), icon: <CheckOutlined /> },
   ]
 
-  const displayKBs = id ? linkedKBs : allKBs
+  const displayKBs = allKBs
 
   const renderStep1 = () => (
     <div>
@@ -448,23 +409,6 @@ const CreationWizard: React.FC = () => {
               prefix={<UserOutlined />}
               value={employeeName}
               onChange={(e) => setEmployeeName(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 8 }}>
-              {t('creationWizard.projectLabel')} {t('common.optional')}
-            </Text>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={t('creationWizard.projectPlaceholder')}
-              value={selectedProjectId || undefined}
-              onChange={(value) => setSelectedProjectId(value || '')}
-              disabled={!!id}
-              options={[
-                { value: '', label: t('creationWizard.noProjectOption') },
-                ...projects.map((p: any) => ({ value: p.id, label: p.name })),
-              ]}
             />
           </div>
 
@@ -526,7 +470,7 @@ const CreationWizard: React.FC = () => {
                 })}
               </div>
             ) : (
-              <Empty description={id ? t('creationWizard.noLinkedKb') : t('creationWizard.noKbAvailable')} />
+              <Empty description={t('creationWizard.noKbAvailable')} />
             )}
           </div>
 
@@ -772,22 +716,15 @@ const CreationWizard: React.FC = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 0))
   }
 
-  const breadcrumbItems = id
-    ? [
-        { title: t('creationWizard.breadcrumbChatCenter'), onClick: () => navigate('/') },
-        { title: project?.name || t('creationWizard.breadcrumbProject') },
-        { title: t('creationWizard.breadcrumbCreate') },
-      ]
-    : [
-        { title: t('creationWizard.breadcrumbChatCenter'), onClick: () => navigate('/') },
-        { title: t('creationWizard.breadcrumbCreate') },
-      ]
+  const breadcrumbItems = [
+    { title: t('creationWizard.breadcrumbChatCenter'), onClick: () => navigate('/') },
+    { title: t('creationWizard.breadcrumbCreate') },
+  ]
 
   return (
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <PageHeader
         title={t('creationWizard.title')}
-        subTitle={project?.name}
         onBack={() => navigate('/')}
         breadcrumb={breadcrumbItems}
       />

@@ -1,13 +1,10 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import type { Project, File, Employee, Skill, Conversation } from '../types'
+import type { Employee, Skill, Conversation } from '../types'
 
 interface AppState {
-  projects: Project[]
-  currentProjectId: string | null
   employees: Employee[]
   currentEmployeeId: string | null
-  files: Record<string, File[]>
   skills: Record<string, Skill[]>
   conversations: Record<string, Conversation[]>
   loading: Record<string, boolean>
@@ -16,22 +13,11 @@ interface AppState {
   setLoading: (key: string, value: boolean) => void
   setError: (error: string | null) => void
 
-  setProjects: (projects: Project[]) => void
-  setCurrentProjectId: (id: string | null) => void
-  addProject: (project: Project) => void
-  updateProject: (id: string, data: Partial<Project>) => void
-  removeProject: (id: string) => void
-
   setEmployees: (employees: Employee[]) => void
   setCurrentEmployeeId: (id: string | null) => void
   addEmployee: (employee: Employee) => void
   updateEmployee: (id: string, data: Partial<Employee>) => void
   removeEmployee: (id: string) => void
-
-  setFiles: (projectId: string, files: File[]) => void
-  addFile: (projectId: string, file: File) => void
-  updateFile: (projectId: string, id: string, data: Partial<File>) => void
-  removeFile: (projectId: string, id: string) => void
 
   setSkills: (employeeId: string, skills: Skill[]) => void
   addSkill: (employeeId: string, skill: Skill) => void
@@ -46,11 +32,8 @@ interface AppState {
 
 export const useAppStore = create<AppState>()(
   immer((set) => ({
-    projects: [],
-    currentProjectId: null,
     employees: [],
     currentEmployeeId: null,
-    files: {},
     skills: {},
     conversations: {},
     loading: {},
@@ -64,37 +47,6 @@ export const useAppStore = create<AppState>()(
     setError: (error) =>
       set((state) => {
         state.error = error
-      }),
-
-    setProjects: (projects) =>
-      set((state) => {
-        state.projects = projects
-      }),
-
-    setCurrentProjectId: (id) =>
-      set((state) => {
-        state.currentProjectId = id
-      }),
-
-    addProject: (project) =>
-      set((state) => {
-        state.projects.unshift(project)
-      }),
-
-    updateProject: (id, data) =>
-      set((state) => {
-        const index = state.projects.findIndex((p) => p.id === id)
-        if (index !== -1) {
-          state.projects[index] = { ...state.projects[index], ...data }
-        }
-      }),
-
-    removeProject: (id) =>
-      set((state) => {
-        state.projects = state.projects.filter((p) => p.id !== id)
-        if (state.currentProjectId === id) {
-          state.currentProjectId = null
-        }
       }),
 
     setEmployees: (employees) =>
@@ -125,37 +77,6 @@ export const useAppStore = create<AppState>()(
         state.employees = state.employees.filter((e) => e.id !== id)
         if (state.currentEmployeeId === id) {
           state.currentEmployeeId = null
-        }
-      }),
-
-    setFiles: (projectId, files) =>
-      set((state) => {
-        state.files[projectId] = files
-      }),
-
-    addFile: (projectId, file) =>
-      set((state) => {
-        if (!state.files[projectId]) {
-          state.files[projectId] = []
-        }
-        state.files[projectId].unshift(file)
-      }),
-
-    updateFile: (projectId, id, data) =>
-      set((state) => {
-        const files = state.files[projectId]
-        if (files) {
-          const index = files.findIndex((f) => f.id === id)
-          if (index !== -1) {
-            files[index] = { ...files[index], ...data }
-          }
-        }
-      }),
-
-    removeFile: (projectId, id) =>
-      set((state) => {
-        if (state.files[projectId]) {
-          state.files[projectId] = state.files[projectId].filter((f) => f.id !== id)
         }
       }),
 

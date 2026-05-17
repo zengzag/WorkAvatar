@@ -1,6 +1,6 @@
 export interface DBEmployee {
   id: string
-  project_id: string | null
+  workspace_path: string | null
   name: string
   description: string
   avatar_type: string
@@ -153,16 +153,6 @@ export interface DBLLMProvider {
   is_default: number
   models_json: string
   created_at: number
-}
-
-export interface DBProject {
-  id: string
-  name: string
-  description: string
-  root_path: string
-  llm_provider_id: string | null
-  created_at: number
-  updated_at: number
 }
 
 export interface DBConversation {

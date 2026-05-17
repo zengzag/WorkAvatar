@@ -1,4 +1,4 @@
-import { registerProjectHandlers } from './project.handlers'
+import { registerWorkspaceHandlers } from './workspace.handlers'
 import { registerEmployeeHandlers } from './employee.handlers'
 import { registerLLMHandlers } from './llm.handlers'
 import { registerAppHandlers } from './app.handlers'
@@ -7,8 +7,7 @@ import { registerKBHandlers } from './kb.handlers'
 import { registerTaskHandlers } from './task.handlers'
 import { registerEmployeeTaskHandlers } from './employee-task.handlers'
 import { registerWorkflowHandlers } from './workflow.handlers'
-import ProjectManagerService from '../services/project-manager.service'
-import FileParserService from '../services/file-parser.service'
+import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
 import OCRService from '../services/ocr.service'
 import DatabaseService from '../services/database.service'
@@ -23,8 +22,7 @@ import SchedulerService from '../services/scheduler.service'
 import WorkflowService from '../services/workflow.service'
 
 export function registerIpcHandlers() {
-  const projectManager = ProjectManagerService.getInstance()
-  const fileParser = FileParserService.getInstance()
+  const workspaceManager = WorkspaceManagerService.getInstance()
   const llmClient = LLMClientService.getInstance()
   const ocrService = OCRService.getInstance()
   const profilingService = EmployeeProfilingService.getInstance()
@@ -38,8 +36,8 @@ export function registerIpcHandlers() {
   const workflowService = WorkflowService.getInstance()
   const db = DatabaseService.getInstance().getDb()
 
-  registerProjectHandlers(projectManager, fileParser, kbService)
-  registerEmployeeHandlers(projectManager, profilingService, employeeExportService)
+  registerWorkspaceHandlers(workspaceManager)
+  registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService)
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db, ocrService)
   registerToolHandlers(db, toolEngine, skillRegistry)

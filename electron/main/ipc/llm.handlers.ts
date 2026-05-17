@@ -90,7 +90,6 @@ export function registerLLMHandlers(
         {
           sessionId,
           employeeId: params.employee_id,
-          projectId: params.project_id || '',
         },
         async () => {
           await employeeAgent.chatStream(

@@ -13,7 +13,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
 
   const kbOptionsDesc = allowedKbIds.length > 0
     ? `可选值: ${allowedKbIds.join(', ')}`
-    : '当前项目未关联知识库'
+    : '当前员工未关联知识库'
 
   return {
     id: 'kb_list_entities',
@@ -117,7 +117,7 @@ export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition
 
   const kbOptionsDesc = allowedKbIds.length > 0
     ? `可选值: ${allowedKbIds.join(', ')}`
-    : '当前项目未关联知识库'
+    : '当前员工未关联知识库'
 
   return {
     id: 'kb_entity_detail',

@@ -56,7 +56,7 @@ export class EmployeeExportPackageService {
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
 
-      const linkedKBs = this.configService.getEmployeeKnowledgeBases(employee.project_id)
+      const linkedKBs = this.configService.getEmployeeKnowledgeBases(employeeId)
       const mcpServers = this.configService.getEmployeeMCPServers(employeeId)
       const installedSkills = this.db.getDb().prepare(
         'SELECT es.skill_id, es.is_enabled, sk.name as skill_name FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
@@ -241,7 +241,6 @@ export class EmployeeExportPackageService {
 
   async importPackage(
     importPath: string,
-    projectId: string,
     conflictStrategy: 'skip' | 'overwrite' | 'merge' = 'merge',
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string; employeeId?: string; warnings?: string[] }> {
@@ -292,7 +291,7 @@ export class EmployeeExportPackageService {
       }
 
       onProgress?.('importing_config', 'Importing employee configuration...')
-      const configResult = this.configService.importConfigFromData(configData, projectId, conflictStrategy)
+      const configResult = this.configService.importConfigFromData(configData, conflictStrategy)
       if (!configResult.success) {
         return { success: false, error: configResult.error }
       }
@@ -402,19 +401,6 @@ export class EmployeeExportPackageService {
           }
         } else {
           targetKBId = this.createKBFromData(kbData)
-        }
-
-        const linkExists = this.kbDb.getDb().prepare(
-          'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
-        ).get(targetKBId, projectId) as any
-
-        if (!linkExists) {
-          const linkId = generateId()
-          const now = Math.floor(Date.now() / 1000)
-          this.kbDb.getDb().prepare(`
-            INSERT INTO kb_project_links (id, kb_id, project_id, created_at)
-            VALUES (?, ?, ?, ?)
-          `).run(linkId, targetKBId, projectId, now)
         }
 
         const kbBasePath = PathService.getInstance().getKBBasePath(targetKBId)

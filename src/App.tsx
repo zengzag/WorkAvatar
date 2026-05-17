@@ -34,7 +34,6 @@ const App: React.FC = () => {
   const getSelectedKey = () => {
     const path = location.pathname
     if (path === '/' || path.startsWith('/conversation-center')) return 'conversation-center'
-    if (path === '/projects' || path.startsWith('/project/')) return 'settings'
     if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
     if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'

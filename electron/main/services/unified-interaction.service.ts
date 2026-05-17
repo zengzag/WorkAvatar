@@ -44,7 +44,6 @@ interface SessionInfo {
 export interface SessionContext {
   sessionId: string
   employeeId: string
-  projectId: string
 }
 
 export const interactionContext = new AsyncLocalStorage<SessionContext>()

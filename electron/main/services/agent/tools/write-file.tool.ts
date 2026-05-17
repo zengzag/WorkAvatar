@@ -3,19 +3,19 @@ import * as fs from 'fs'
 import * as path from 'path'
 import UnifiedInteractionService from '../../unified-interaction.service'
 import { interactionContext } from '../../unified-interaction.service'
-import ProjectManagerService from '../../project-manager.service'
+import DatabaseService from '../../database.service'
 
-function isPathInProject(filePath: string): boolean {
+function isPathInWorkspace(filePath: string): boolean {
   try {
     const ctx = interactionContext.getStore()
-    if (!ctx || !ctx.projectId) return false
+    if (!ctx || !ctx.employeeId) return false
 
-    const projectManager = ProjectManagerService.getInstance()
-    const project = projectManager.getProject(ctx.projectId)
-    if (!project || !project.root_path) return false
+    const db = DatabaseService.getInstance().getDb()
+    const employee = db.prepare('SELECT workspace_path FROM employees WHERE id = ?').get(ctx.employeeId) as { workspace_path: string | null } | undefined
+    if (!employee || !employee.workspace_path) return false
 
     const resolved = path.resolve(filePath)
-    const workspaceRoot = path.resolve(project.root_path)
+    const workspaceRoot = path.resolve(employee.workspace_path)
     return resolved.startsWith(workspaceRoot + path.sep) || resolved === workspaceRoot
   } catch {
     return false
@@ -42,21 +42,21 @@ export const writeFileTool: ToolDefinition = {
 
       const resolved = path.resolve(filePath)
 
-      if (!isPathInProject(resolved)) {
+      if (!isPathInWorkspace(resolved)) {
         const ctx = interactionContext.getStore()
         if (ctx) {
           try {
             const interactionService = UnifiedInteractionService.getInstance()
             const response = await interactionService.request({
               type: 'confirm',
-              title: '确认写入项目外文件',
-              message: `即将写入项目工作区外的文件：\n\n${resolved}\n\n此操作可能影响项目外的文件，是否确认？`,
+              title: '确认写入工作区外文件',
+              message: `即将写入工作区外的文件：\n\n${resolved}\n\n此操作可能影响工作区外的文件，是否确认？`,
               danger: true,
-              source: 'security:write_outside_project',
+              source: 'security:write_outside_workspace',
             })
 
             if (response.cancelled || response.confirmed !== true) {
-              return { success: false, error: '用户取消了写入项目外文件的操作' }
+              return { success: false, error: '用户取消了写入工作区外文件的操作' }
             }
           } catch {
             return { success: false, error: '写入确认失败，操作已取消' }

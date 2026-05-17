@@ -13,7 +13,6 @@ export const WORKFLOW_CHANNELS = {
 } as const
 
 export interface WorkflowCreateParams {
-  project_id: string
   name: string
   description?: string
   nodes?: any[]

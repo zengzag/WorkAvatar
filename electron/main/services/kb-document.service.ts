@@ -12,7 +12,7 @@ import PathService from './path.service'
 import type { SearchResult } from './search-engine.service'
 import { calculateFileHash, getDefaultProviderId, generateId } from './common-utils'
 import type Database from 'better-sqlite3'
-import type { DBKBDocument, DBKBDocumentSummary, DBKBChapter, DBKBEntity, DBProject } from '../../shared/db-types'
+import type { DBKBDocument, DBKBDocumentSummary, DBKBChapter, DBKBEntity } from '../../shared/db-types'
 
 export interface KBDocumentServiceDeps {
   db: Database.Database
@@ -598,50 +598,6 @@ class KBDocumentService {
     return this.db.prepare(query).all(...params) as DBKBDocument[]
   }
 
-  linkProject(kbId: string, projectId: string): boolean {
-    const existing = this.db.prepare(
-      'SELECT id FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
-    ).get(kbId, projectId)
-
-    if (existing) return true
-
-    const id = generateId()
-    const now = Math.floor(Date.now() / 1000)
-    this.db.prepare(
-      'INSERT INTO kb_project_links (id, kb_id, project_id, created_at) VALUES (?, ?, ?, ?)'
-    ).run(id, kbId, projectId, now)
-    return true
-  }
-
-  unlinkProject(kbId: string, projectId: string): boolean {
-    const result = this.db.prepare(
-      'DELETE FROM kb_project_links WHERE kb_id = ? AND project_id = ?'
-    ).run(kbId, projectId)
-    return result.changes > 0
-  }
-
-  getLinkedProjects(kbId: string): DBProject[] {
-    const links = this.db.prepare(
-      'SELECT project_id FROM kb_project_links WHERE kb_id = ?'
-    ).all(kbId) as { project_id: string }[]
-    if (links.length === 0) return []
-    const projectIds = links.map(l => l.project_id)
-    const placeholders = projectIds.map(() => '?').join(',')
-    return this.mainDb.getDb().prepare(
-      `SELECT * FROM projects WHERE id IN (${placeholders})`
-    ).all(...projectIds) as DBProject[]
-  }
-
-  getKBsForProject(projectId: string): any[] {
-    return this.db.prepare(`
-      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
-      FROM knowledge_bases kb
-      INNER JOIN kb_project_links l ON kb.id = l.kb_id
-      WHERE l.project_id = ?
-      ORDER BY kb.name
-    `).all(projectId)
-  }
-
   getDocumentContent(docId: string): string | null {
     const doc = this.db.prepare('SELECT parsed_json_path FROM kb_documents WHERE id = ?').get(docId) as Pick<DBKBDocument, 'parsed_json_path'> | undefined
     if (!doc?.parsed_json_path) return null
@@ -656,11 +612,9 @@ class KBDocumentService {
 
   async importOrSyncToKB(
     filePath: string,
-    projectId?: string,
     options?: { contentText?: string; parsedJson?: string }
   ): Promise<{ kbDocId: string | null; reused: boolean; kbId: string }> {
     const kbId = this.ensureDefaultKBCallback()
-    if (projectId) this.linkProject(kbId, projectId)
 
     try {
       const stats = await fs.promises.stat(filePath)
@@ -724,78 +678,6 @@ class KBDocumentService {
       console.error('importOrSyncToKB error:', err)
       return { kbDocId: null, reused: false, kbId }
     }
-  }
-
-  async syncForProject(projectId: string): Promise<void> {
-    const kbId = this.ensureDefaultKBCallback()
-    this.linkProject(kbId, projectId)
-  }
-
-  async importKBDocsToProject(
-    projectId: string,
-    docIds: string[]
-  ): Promise<{ imported: any[]; errors: Array<{ docId: string; error: string }> }> {
-    const imported: any[] = []
-    const errors: Array<{ docId: string; error: string }> = []
-
-    for (const docId of docIds) {
-      try {
-        const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as DBKBDocument | undefined
-        if (!doc) {
-          errors.push({ docId, error: 'Document not found' })
-          continue
-        }
-        if (doc.parse_status !== 'completed') {
-          errors.push({ docId, error: 'Document not parsed yet' })
-          continue
-        }
-
-        const kbBasePath = this.getKBBasePath(doc.kb_id)
-        const filePath = path.join(kbBasePath, doc.original_name)
-
-        if (!fs.existsSync(filePath)) {
-          errors.push({ docId, error: 'Source file not found on disk' })
-          continue
-        }
-
-        const existingFile = this.mainDb.getDb().prepare(
-          'SELECT id FROM files WHERE project_id = ? AND hash = ? LIMIT 1'
-        ).get(projectId, doc.hash) as { id: string } | undefined
-
-        if (existingFile) {
-          imported.push({
-            id: existingFile.id,
-            original_name: doc.original_name,
-            type: doc.type,
-            size: doc.size,
-            hash: doc.hash,
-            status: 'completed',
-            skipped: true,
-          })
-          continue
-        }
-
-        const FileParserService = (await import('./file-parser.service')).default
-        const fileParser = FileParserService.getInstance()
-        const result = await fileParser.importFile(projectId, filePath)
-
-        imported.push({
-          id: result.id,
-          original_name: doc.original_name,
-          type: doc.type,
-          size: doc.size,
-          hash: doc.hash,
-          status: 'pending',
-        })
-      } catch (error) {
-        errors.push({
-          docId,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        })
-      }
-    }
-
-    return { imported, errors }
   }
 
   searchChapters(kbId: string, query: string, topK: number = 5): SearchResult[] {

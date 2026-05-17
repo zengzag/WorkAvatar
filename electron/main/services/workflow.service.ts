@@ -6,7 +6,6 @@ import type { DBEmployee } from '../../shared/db-types'
 
 interface Workflow {
   id: string
-  project_id: string
   name: string
   description: string
   nodes_json: string
@@ -65,12 +64,7 @@ class WorkflowService {
     return WorkflowService.instance
   }
 
-  listWorkflows(projectId?: string): Workflow[] {
-    if (projectId) {
-      return this.db.getDb().prepare(
-        'SELECT * FROM workflows WHERE project_id = ? ORDER BY updated_at DESC'
-      ).all(projectId) as Workflow[]
-    }
+  listWorkflows(): Workflow[] {
     return this.db.getDb().prepare(
       'SELECT * FROM workflows ORDER BY updated_at DESC'
     ).all() as Workflow[]
@@ -82,13 +76,13 @@ class WorkflowService {
     ).get(id) as Workflow | null
   }
 
-  createWorkflow(params: { project_id: string; name: string; description?: string; nodes?: any[]; edges?: any[] }): Workflow {
+  createWorkflow(params: { name: string; description?: string; nodes?: any[]; edges?: any[] }): Workflow {
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
-      `INSERT INTO workflows (id, project_id, name, description, nodes_json, edges_json, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)`
-    ).run(id, params.project_id, params.name, params.description || '', JSON.stringify(params.nodes || []), JSON.stringify(params.edges || []), now, now)
+      `INSERT INTO workflows (id, name, description, nodes_json, edges_json, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)`
+    ).run(id, params.name, params.description || '', JSON.stringify(params.nodes || []), JSON.stringify(params.edges || []), now, now)
     return this.getWorkflow(id)!
   }
 

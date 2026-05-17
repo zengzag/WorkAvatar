@@ -5,43 +5,27 @@ import { ToolDefinition } from '../tool.types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
 import { formatEntityList } from './utils'
 
-function formatKBOptions(projectKBs: any[]): string {
-  return projectKBs.map(kb => `${kb.id}(${kb.name})`).join(', ')
+function formatKBOptions(kbs: any[]): string {
+  return kbs.map(kb => `${kb.id}(${kb.name})`).join(', ')
 }
 
 export function createKBAgentTools(
   kbService: KnowledgeBaseService,
   _db: DatabaseService,
-  projectId: string,
   employeeId?: string
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = []
-  if (!projectId && !employeeId) return tools
+  if (!employeeId) return tools
 
-  let projectKBs: any[] = []
-  let employeeKBs: any[] = []
+  const employeeKBs = _db.getDb().prepare(`
+    SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
+    FROM knowledge_bases kb
+    INNER JOIN employee_kb_links l ON kb.id = l.kb_id
+    WHERE l.employee_id = ?
+    ORDER BY kb.name
+  `).all(employeeId) as any[]
 
-  if (projectId) {
-    projectKBs = kbService.getKBsForProject(projectId) as any[]
-  }
-  if (employeeId) {
-    employeeKBs = _db.getDb().prepare(`
-      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
-      FROM knowledge_bases kb
-      INNER JOIN employee_kb_links l ON kb.id = l.kb_id
-      WHERE l.employee_id = ?
-      ORDER BY kb.name
-    `).all(employeeId) as any[]
-  }
-
-  const seenIds = new Set<string>()
-  const allKBs: any[] = []
-  for (const kb of [...projectKBs, ...employeeKBs]) {
-    if (!seenIds.has(kb.id)) {
-      seenIds.add(kb.id)
-      allKBs.push(kb)
-    }
-  }
+  const allKBs = employeeKBs
 
   const kbIds = allKBs.map((kb: any) => kb.id)
 
@@ -70,7 +54,7 @@ export function createKBAgentTools(
       try {
         if (!args.kb_id) {
           if (allKBs.length === 0) {
-            return { success: true, output: '当前项目未关联任何知识库。' }
+            return { success: true, output: '当前员工未关联任何知识库。' }
           }
 
           let output = `## 可访问的知识库列表\n\n`

@@ -8,7 +8,6 @@ import {
   Typography,
   Modal,
   Input,
-  Select,
   Tag,
   theme,
 } from 'antd'
@@ -33,7 +32,7 @@ const WorkflowList: React.FC = () => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { projects, setProjects, setLoading } = useAppStore()
+  const { setLoading } = useAppStore()
   const [workflows, setWorkflows] = useState<any[]>([])
   const [loadingTable, setLoadingTable] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -41,11 +40,9 @@ const WorkflowList: React.FC = () => {
   const [deleteWorkflow, setDeleteWorkflow] = useState<any>(null)
   const [newWorkflowName, setNewWorkflowName] = useState('')
   const [newWorkflowDesc, setNewWorkflowDesc] = useState('')
-  const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>(undefined)
 
   useEffect(() => {
     loadWorkflows()
-    loadProjects()
   }, [])
 
   const loadWorkflows = async () => {
@@ -63,20 +60,9 @@ const WorkflowList: React.FC = () => {
     }
   }
 
-  const loadProjects = async () => {
-    if (projects.length > 0) return
-    try {
-      const result = await window.electronAPI.project.list()
-      setProjects(result.projects)
-    } catch (error) {
-      console.error('Failed to load projects:', error)
-    }
-  }
-
   const handleCreateWorkflow = () => {
     setNewWorkflowName(t('workflow.defaultWorkflowName', { date: dayjs().format('MMDDHHmm') }))
     setNewWorkflowDesc('')
-    setSelectedProjectId(projects.length > 0 ? projects[0].id : undefined)
     setCreateModalOpen(true)
   }
 
@@ -85,13 +71,8 @@ const WorkflowList: React.FC = () => {
       message.error(t('workflow.namePlaceholder'))
       return
     }
-    if (!selectedProjectId) {
-      message.error(t('workflow.selectProject'))
-      return
-    }
     try {
       const workflow = await window.electronAPI.workflow.create({
-        project_id: selectedProjectId,
         name: newWorkflowName,
         description: newWorkflowDesc,
       })
@@ -298,19 +279,6 @@ const WorkflowList: React.FC = () => {
             placeholder={t('workflow.descPlaceholder')}
             value={newWorkflowDesc}
             onChange={(e) => setNewWorkflowDesc(e.target.value)}
-          />
-        </div>
-        <div>
-          <div style={{ marginBottom: 4 }}>{t('workflow.projectLabel')}</div>
-          <Select
-            style={{ width: '100%' }}
-            value={selectedProjectId}
-            onChange={setSelectedProjectId}
-            placeholder={t('workflow.selectProject')}
-            options={projects.map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
           />
         </div>
       </Modal>

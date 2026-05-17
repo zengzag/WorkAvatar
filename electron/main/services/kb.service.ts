@@ -97,7 +97,7 @@ class KnowledgeBaseService {
       return existing.id
     }
 
-    const kb = this.createKB('默认知识库', '系统默认知识库，所有项目自动关联')
+    const kb = this.createKB('默认知识库', '系统默认知识库，新员工可自动关联')
     this.defaultKBId = kb?.id || ''
     return kb?.id || ''
   }
@@ -190,15 +190,9 @@ class KnowledgeBaseService {
   async processAllDocuments(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean, onProgress?: (stage: string, detail: string) => void) { return this.documentService.processAllDocuments(kbId, providerId, modelId, enableThinking, onProgress) }
   deleteDocument(docId: string) { return this.documentService.deleteDocument(docId) }
   getDocumentList(kbId: string, status?: string) { return this.documentService.getDocumentList(kbId, status) }
-  linkProject(kbId: string, projectId: string) { return this.documentService.linkProject(kbId, projectId) }
-  unlinkProject(kbId: string, projectId: string) { return this.documentService.unlinkProject(kbId, projectId) }
-  getLinkedProjects(kbId: string) { return this.documentService.getLinkedProjects(kbId) }
-  getKBsForProject(projectId: string) { return this.documentService.getKBsForProject(projectId) }
   getDocumentContent(docId: string) { return this.documentService.getDocumentContent(docId) }
   getParsedJson(docId: string) { return this.documentService.getParsedJson(docId) }
-  async importOrSyncToKB(filePath: string, projectId?: string, options?: { contentText?: string; parsedJson?: string }) { return this.documentService.importOrSyncToKB(filePath, projectId, options) }
-  async syncForProject(projectId: string) { return this.documentService.syncForProject(projectId) }
-  async importKBDocsToProject(projectId: string, docIds: string[]) { return this.documentService.importKBDocsToProject(projectId, docIds) }
+  async importOrSyncToKB(filePath: string, options?: { contentText?: string; parsedJson?: string }) { return this.documentService.importOrSyncToKB(filePath, options) }
   searchChapters(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchChapters(kbId, query, topK) }
   searchDocumentSummaries(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchDocumentSummaries(kbId, query, topK) }
   search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] { return this.documentService.search(kbId, query, topK, documentIds) }

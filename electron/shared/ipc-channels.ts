@@ -1,13 +1,5 @@
 export { IPC_CHANNELS } from './channels'
 export type {
-  ProjectListParams,
-  ProjectCreateParams,
-  ProjectUpdateParams,
-  ProjectDeleteParams,
-  FileListParams,
-  FileImportParams,
-  FileParseParams,
-  FileGetContentParams,
   WorkspaceInfoParams,
   WorkspaceListFilesParams,
   WorkspaceReadFileParams,
@@ -16,7 +8,7 @@ export type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
-} from './channels/project'
+} from './channels/workspace'
 export type {
   EmployeeListParams,
   EmployeeCreateParams,
@@ -61,7 +53,6 @@ export type {
 export type {
   KBCreateParams,
   KBUpdateParams,
-  KBLinkProjectParams,
   KBDocParseParams,
   KBProcessDocumentParams,
   KBProcessAllParams,

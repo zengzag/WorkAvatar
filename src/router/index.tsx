@@ -1,8 +1,6 @@
 import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
-import ProjectDetail from '../pages/ProjectDetail'
 import CreationWizard from '../pages/CreationWizard'
-import DocumentViewer from '../pages/DocumentViewer'
 import EmployeeManager from '../pages/EmployeeManager'
 import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
@@ -30,24 +28,8 @@ const router = createHashRouter([
         element: <Navigate to="/conversation-center" replace />,
       },
       {
-        path: 'projects',
-        element: <Navigate to="/settings?tab=projects" replace />,
-      },
-      {
-        path: 'project/:id',
-        element: <ProjectDetail />,
-      },
-      {
-        path: 'project/:id/wizard',
-        element: <CreationWizard />,
-      },
-      {
         path: 'wizard',
         element: <CreationWizard />,
-      },
-      {
-        path: 'project/:id/file/:fileId',
-        element: <DocumentViewer />,
       },
       {
         path: 'employees',

@@ -83,8 +83,9 @@ WorkAvatar 是一款**本地优先、隐私安全**的 Windows 桌面软件。�
 - 支持手动启用/禁用技能，调整技能参数
 
 #### 创建流程
-1. **基础配置**：填写员工名称，选择关联知识库、LLM 模型、业务场景描述（可选）、归属项目（可选）
+1. **基础配置**：填写员工名称，选择关联知识库、LLM 模型、业务场景描述（可选）
 2. **确认创建**：系统自动分析生成员工画像，用户可编辑修改；工具默认选中知识库检索和文件操作；高级配置（技能、MCP）默认折叠
+3. **工作区目录**：创建员工时自动创建专属工作区目录，支持手动更改
 
 ---
 
@@ -133,34 +134,27 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 5. 项目工作区
+### 5. 员工工作区
 
-#### 项目工作区（Project Workspace）
-- 项目作为数字员工的可选分组属性，不再是一级导航入口
-- 数字员工可以脱离项目独立创建和运行
-- 员工设置页中可随时选择或切换项目归属
-- 每个项目拥有专属工作区文件夹，作为数字员工的"工作目录"
-- 创建项目时自动创建项目工作区目录
-- 数字员工通过 `workspace_*` 系列工具天然可以使用项目工作区：
+#### 员工工作区（Employee Workspace）
+- 每个数字员工拥有专属工作区目录，作为其"工作目录"
+- 创建员工时自动创建默认工作区目录
+- 支持在员工设置中手动更改工作区目录路径
+- 删除员工时可选择是否同时删除工作区目录
+- 数字员工通过 `workspace_*` 系列工具天然可以使用工作区：
   - `workspace_list_files`：列出工作区中的文件和文件夹
   - `workspace_read_file`：读取工作区中的文件内容
   - `workspace_write_file`：向工作区写入文件（如文档、报告、数据文件等）
   - `workspace_create_folder`：在工作区创建文件夹来组织文件
   - `workspace_delete_item`：删除工作区中的文件或文件夹
   - `workspace_rename_item`：重命名工作区中的文件或文件夹
-- 所有路径相对于工作区根目录，确保安全沙盒（不可越权访问项目外的文件）
-- Agent 系统提示词自动注入项目工作区信息，数字员工感知并使用工作区
-- 项目详情页提供"工作区"Tab，支持：
-  - 浏览工作区文件和文件夹（面包屑导航）
-  - 新建文件、新建文件夹
-  - 导入外部文件到工作区
-  - 查看文件内容、重命名、删除
-  - 在文件管理器中打开工作区目录
+- 所有路径相对于工作区根目录，确保安全沙盒（不可越权访问工作区外的文件）
+- Agent 系统提示词自动注入工作区信息，数字员工感知并使用工作区
 
 #### 典型应用场景
-- 写文档的数字员工可以在项目工作区中创建和编辑文档
+- 写文档的数字员工可以在工作区中创建和编辑文档
 - 数据分析员工可以在工作区中生成报告和数据文件
-- 项目工作区成为数字员工的产出物存储和管理中心
+- 工作区成为数字员工的产出物存储和管理中心
 
 ---
 
@@ -277,10 +271,10 @@ skill-name/
 
 ### 10. 独立知识库管理
 
-#### 知识库与项目解耦
-- 知识库独立于项目管理，支持跨项目共享复用
-- 同一文件只需解析一次，多项目共享已解析结果
-- 知识库可关联到多个项目，员工可直接使用知识库内容
+#### 知识库独立管理
+- 知识库独立管理，支持跨员工共享复用
+- 同一文件只需解析一次，多员工共享已解析结果
+- 知识库可关联到多个数字员工，员工可直接使用知识库内容
 - 数字员工可直接关联知识库，无需通过项目中转
 - 基于文件哈希值(SHA-256)自动识别重复文件，避免重复解析
 - 侧边栏独立入口：「知识库」管理页面
@@ -375,7 +369,7 @@ skill-name/
 
 - **LLM 配置**：多提供商增删改查，连接测试，模型分类管理
 - **默认模型**：为不同场景单独配置默认模型（创建数字员工、数字员工对话、知识库处理、快速模型、嵌入模型）
-- **项目管理**：管理项目分组，创建/重命名/删除项目（项目作为数字员工的可选分组属性）
+- **工作区管理**：每个数字员工拥有独立工作区目录，支持文件操作
 - **MCP 服务器配置**：管理 MCP 服务器连接
 - **技能管理**：查看和管理已安装的 Claude Skills
 - **存储设置**：数据存储目录选择，自动备份配置
@@ -416,8 +410,8 @@ skill-name/
 │  │                       │  │   Svc                 │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │   OCR Service         │  │   Project Mgmt Svc    │                  │
-│  │   (Tesseract.js)      │  │                       │                  │
+│  │   OCR Service         │  │   Employee Mgmt Svc   │                  │
+│  │   (Tesseract.js)      │  │   (员工+工作区管理)    │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
 │  │   KB Service          │  │   Search Engine Svc   │                  │
@@ -464,7 +458,7 @@ skill-name/
 │  └───────────────────────┘                                             │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
 │  │                  模块化 IPC 处理器 (类型安全)                        │ │
-│  │  app | employee | kb | llm | project | task | tool | workflow      │ │
+│  │  app | employee | kb | llm | workspace | task | tool | workflow     │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
                                         │
@@ -475,10 +469,10 @@ skill-name/
                                         │
 ┌────────────────────────────────────────────────────────────────────────┐
 │                      渲染进程 (Renderer Process)                        │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │Conversation│  │ Project  │  │ Employee │  │Employee  │  │ Settings │  │
-│  │ Center    │  │ Detail   │  │Workbench │  │Settings  │  │  Page    │  │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
+│  │Conversation│  │ Employee │  │Employee  │  │ Settings │  │
+│  │ Center    │  │Workbench │  │Settings  │  │  Page    │  │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
 │  ┌──────────┐  ┌──────────┐                                          │
 │  │   KB     │  │ Employee │                                          │
 │  │  Page    │  │ Manager  │                                          │
@@ -538,7 +532,7 @@ LLM 智能分析（流式输出思考过程）
 ```
 用户上传文件
     ↓
-文件存储到本地项目目录
+文件存储到本地知识库目录
     ↓
 文件解析队列 → 文件解析服务
     ├─ PDF/Word/Excel → 文本提取
@@ -595,7 +589,7 @@ LLM 调用（流式）
     │       │   ├─ kb_advanced_search
     │       │   ├─ kb_list_entities / kb_entity_detail
     │       │   └─ kb_get_content
-    │       └─ 项目工作区工具（6个）
+    │       └─ 工作区工具（6个）
     │           ├─ workspace_list_files
     │           ├─ workspace_read_file
     │           ├─ workspace_write_file
@@ -675,7 +669,7 @@ WorkAvatar/
 │   │   │   ├── employee.handlers.ts   # 员工相关 IPC
 │   │   │   ├── kb.handlers.ts         # 知识库相关 IPC
 │   │   │   ├── llm.handlers.ts        # LLM 相关 IPC
-│   │   │   ├── project.handlers.ts    # 项目相关 IPC
+│   │   │   ├── workspace.handlers.ts    # 工作区相关 IPC
 │   │   │   ├── task.handlers.ts       # 任务队列相关 IPC
 │   │   │   ├── tool.handlers.ts       # 工具相关 IPC
 │   │   │   ├── workflow.handlers.ts   # 工作流相关 IPC
@@ -708,7 +702,7 @@ WorkAvatar/
 │   │       │   │   ├── kb-content.tool.ts      # 知识库内容获取工具
 │   │       │   │   ├── kb-entities.tool.ts     # 知识库实体工具
 │   │       │   │   ├── kb-agent-tools.ts       # 员工代理知识库工具集
-│   │       │   │   ├── workspace-tools.ts      # 项目工作区工具集
+│   │   │       │   ├── workspace-tools.ts      # 员工工作区工具集
 │   │       │   │   ├── utils.ts
 │   │       │   │   └── index.ts
 │   │       ├── database.service.ts    # SQLite 数据库服务
@@ -726,7 +720,7 @@ WorkAvatar/
 │   │       ├── employee-task.service.ts  # 员工任务配置服务
 │   │       ├── scheduler.service.ts  # 定时调度服务
 │   │       ├── ocr.service.ts         # OCR 识别服务
-│   │       ├── project-manager.service.ts # 项目管理服务
+│   │       ├── workspace-manager.service.ts # 员工与工作区管理服务
 │   │       ├── rule-extraction.service.ts # 规则抽取引擎
 │   │       └── sandbox-tester.service.ts  # 沙盒测试服务
 │   │       ├── workflow.service.ts      # 工作流编排与执行服务
@@ -738,7 +732,7 @@ WorkAvatar/
 │       │   ├── employee.ts
 │       │   ├── kb.ts
 │       │   ├── llm.ts
-│       │   ├── project.ts
+│       │   ├── workspace.ts             # 工作区 IPC 通道
 │       │   ├── task.ts
 │       │   ├── tool.ts
 │       │   ├── workflow.ts
@@ -751,9 +745,7 @@ WorkAvatar/
 ├── src/                               # 渲染进程（React 前端）
 │   ├── pages/                         # 页面组件
 │   │   ├── ConversationCenter.tsx     # 对话中心（默认首页）
-│   │   ├── ProjectDetail.tsx          # 项目详情/文件管理
 │   │   ├── CreationWizard.tsx         # 数字员工创建向导（2步）
-│   │   ├── DocumentViewer.tsx         # 文档预览/解析结果
 │   │   ├── KnowledgeBase.tsx          # 独立知识库管理页面
 │   │   ├── EmployeeWorkbench.tsx      # 数字员工工作台
 │   │   ├── EmployeeSettings.tsx       # 数字员工配置管理
@@ -793,9 +785,8 @@ WorkAvatar/
 │   │   │   ├── KBSearchPanel.tsx
 │   │   │   ├── ParseDetailModal.tsx
 │   │   │   └── index.ts
-│   │   ├── project/                   # 项目子组件
-│   │   │   ├── ProjectWorkspace.tsx   # 项目工作区文件管理
-│   │   │   └── index.ts
+│   │   ├── project/                   # （已移除）
+│   │   │   └── (已移除)
 │   │   ├── workflow/                  # 工作流子组件
 │   │   │   ├── FlowCanvas.tsx         # 工作流画布
 │   │   │   ├── NodeConfigPanel.tsx    # 节点配置面板
@@ -812,7 +803,6 @@ WorkAvatar/
 │   │       ├── SkillSettings.tsx
 │   │       ├── AppearanceSettings.tsx
 │   │       ├── StorageSettings.tsx
-│   │       ├── ProjectManagement.tsx
 │   │       ├── AboutSection.tsx
 │   │       └── index.ts
 │   ├── stores/                        # Zustand 状态管理

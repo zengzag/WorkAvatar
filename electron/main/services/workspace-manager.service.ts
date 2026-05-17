@@ -1,161 +1,35 @@
 import fs from 'fs'
 import path from 'path'
-import type { Project, File, Employee, Skill, Conversation } from '../../shared/types'
+import type { Employee, Skill, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
 
-class ProjectManagerService {
+class WorkspaceManagerService {
   private db: DatabaseService
-  private static instance: ProjectManagerService
+  private static instance: WorkspaceManagerService
 
   private constructor() {
     this.db = DatabaseService.getInstance()
   }
 
-  static getInstance(): ProjectManagerService {
-    if (!ProjectManagerService.instance) {
-      ProjectManagerService.instance = new ProjectManagerService()
+  static getInstance(): WorkspaceManagerService {
+    if (!WorkspaceManagerService.instance) {
+      WorkspaceManagerService.instance = new WorkspaceManagerService()
     }
-    return ProjectManagerService.instance
+    return WorkspaceManagerService.instance
   }
 
-  getProjectList(limit?: number, offset?: number): { projects: (Project & { file_count: number })[]; total: number } {
-    const query = `
-      SELECT p.*, COUNT(f.id) as file_count 
-      FROM projects p 
-      LEFT JOIN files f ON p.id = f.project_id 
-      GROUP BY p.id 
-      ORDER BY p.updated_at DESC
-    `
-    const countResult = this.db.getDb().prepare('SELECT COUNT(*) as count FROM projects').get() as { count: number }
-    const total = countResult.count
-
-    let projects: (Project & { file_count: number })[]
-    if (limit !== undefined) {
-      projects = this.db.getDb().prepare(query + ' LIMIT ? OFFSET ?').all(limit, offset || 0) as (Project & { file_count: number })[]
-    } else {
-      projects = this.db.getDb().prepare(query).all() as (Project & { file_count: number })[]
-    }
-
-    return { projects, total }
-  }
-
-  getProject(id: string): Project | null {
-    return this.db.getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project || null
-  }
-
-  createProject(name: string, description: string = '', rootPath?: string): Project {
-    const projectId = generateId()
-    const basePath = rootPath || PathService.getInstance().getDataDir()
-    const projectRoot = path.join(basePath, 'WorkAvatar', 'projects', projectId)
-
-    if (!fs.existsSync(projectRoot)) {
-      fs.mkdirSync(projectRoot, { recursive: true })
-    }
-
-    const now = Math.floor(Date.now() / 1000)
-    this.db.getDb().prepare(`
-      INSERT INTO projects (id, name, description, root_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(projectId, name, description, projectRoot, now, now)
-
-    return this.getProject(projectId)!
-  }
-
-  updateProject(id: string, data: { name?: string; description?: string; root_path?: string; llm_provider_id?: string }): Project | null {
-    const project = this.getProject(id)
-    if (!project) return null
-
-    const updates: string[] = []
-    const values: any[] = []
-
-    if (data.name !== undefined) {
-      updates.push('name = ?')
-      values.push(data.name)
-    }
-    if (data.description !== undefined) {
-      updates.push('description = ?')
-      values.push(data.description)
-    }
-    if (data.root_path !== undefined) {
-      updates.push('root_path = ?')
-      values.push(data.root_path)
-    }
-    if (data.llm_provider_id !== undefined) {
-      updates.push('llm_provider_id = ?')
-      values.push(data.llm_provider_id)
-    }
-
-    if (updates.length > 0) {
-      updates.push('updated_at = unixepoch()')
-      values.push(id)
-
-      this.db.getDb().prepare(`
-        UPDATE projects SET ${updates.join(', ')} WHERE id = ?
-      `).run(...values)
-    }
-
-    return this.getProject(id)
-  }
-
-  deleteProject(id: string, deleteWorkspace: boolean = false): boolean {
-    if (deleteWorkspace) {
-      const project = this.getProject(id)
-      if (project && project.root_path) {
-        const workspaceRoot = path.resolve(project.root_path)
-        if (fs.existsSync(workspaceRoot)) {
-          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch {}
-        }
-      }
-    }
-    const result = this.db.getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
-    return result.changes > 0
-  }
-
-  getFileList(projectId: string, status?: string): { files: File[]; total: number } {
-    let query = 'SELECT * FROM files WHERE project_id = ?'
-    const params: any[] = [projectId]
-
-    if (status) {
-      query += ' AND status = ?'
-      params.push(status)
-    }
-
-    query += ' ORDER BY created_at DESC'
-
-    const files = this.db.getDb().prepare(query).all(...params) as File[]
-    const countResult = this.db.getDb().prepare(
-      'SELECT COUNT(*) as count FROM files WHERE project_id = ?' + (status ? ' AND status = ?' : '')
-    ).get(...params) as { count: number }
-
-    return { files, total: countResult.count }
-  }
-
-  getFile(id: string): File | null {
-    return this.db.getDb().prepare('SELECT * FROM files WHERE id = ?').get(id) as File || null
-  }
-
-  deleteFile(id: string): boolean {
-    const result = this.db.getDb().prepare('DELETE FROM files WHERE id = ?').run(id)
-    return result.changes > 0
-  }
-
-  getEmployeeList(projectId?: string, status?: string): Employee[] {
-    let query = 'SELECT e.*, p.name as project_name FROM employees e LEFT JOIN projects p ON e.project_id = p.id'
+  getEmployeeList(status?: string): Employee[] {
+    let query = 'SELECT * FROM employees'
     const params: any[] = []
 
-    if (projectId) {
-      query += ' WHERE e.project_id = ?'
-      params.push(projectId)
-    }
-
     if (status) {
-      query += projectId ? ' AND e.status = ?' : ' WHERE e.status = ?'
+      query += ' WHERE status = ?'
       params.push(status)
     }
 
-    query += ' ORDER BY e.updated_at DESC'
+    query += ' ORDER BY updated_at DESC'
 
     return this.db.getDb().prepare(query).all(...params) as Employee[]
   }
@@ -164,14 +38,21 @@ class ProjectManagerService {
     return this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(id) as Employee || null
   }
 
-  createEmployee(projectId: string | null | undefined, name: string, description: string = '', profileJson: string = ''): Employee {
+  createEmployee(name: string, description: string = '', profileJson: string = ''): Employee {
     const employeeId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
+    const basePath = PathService.getInstance().getDataDir()
+    const workspacePath = path.join(basePath, 'WorkAvatar', 'employees', employeeId)
+
+    if (!fs.existsSync(workspacePath)) {
+      fs.mkdirSync(workspacePath, { recursive: true })
+    }
+
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, project_id, name, description, profile_json, status, avatar_type, review_mode, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      INSERT INTO employees (id, workspace_path, name, description, profile_json, status, avatar_type, review_mode, arch_version, total_tasks, total_approvals, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, 'draft', 'default', 0, 1, 0, 0, ?, ?)
-    `).run(employeeId, projectId || null, name, description, profileJson, now, now)
+    `).run(employeeId, workspacePath, name, description, profileJson, now, now)
 
     return this.getEmployee(employeeId)!
   }
@@ -185,6 +66,7 @@ class ProjectManagerService {
     default_skill_id?: string
     llm_provider_id?: string
     llm_model?: string
+    workspace_path?: string | null
   }): Employee | null {
     const employee = this.getEmployee(id)
     if (!employee) return null
@@ -216,9 +98,31 @@ class ProjectManagerService {
     return this.getEmployee(id)
   }
 
-  deleteEmployee(id: string): boolean {
+  deleteEmployee(id: string, deleteWorkspace: boolean = false): boolean {
+    if (deleteWorkspace) {
+      const employee = this.getEmployee(id)
+      if (employee && employee.workspace_path) {
+        const workspaceRoot = path.resolve(employee.workspace_path)
+        if (fs.existsSync(workspaceRoot)) {
+          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch {}
+        }
+      }
+    }
     const result = this.db.getDb().prepare('DELETE FROM employees WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  deleteEmployeeWorkspace(id: string): boolean {
+    const employee = this.getEmployee(id)
+    if (!employee || !employee.workspace_path) return false
+
+    const workspaceRoot = path.resolve(employee.workspace_path)
+    if (fs.existsSync(workspaceRoot)) {
+      try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch { return false }
+    }
+
+    this.db.getDb().prepare('UPDATE employees SET workspace_path = NULL, updated_at = unixepoch() WHERE id = ?').run(id)
+    return true
   }
 
   getKBsForEmployee(employeeId: string): any[] {
@@ -305,7 +209,6 @@ class ProjectManagerService {
   }
 
   getConversationList(employeeId: string): Conversation[] {
-    // 只查询必要字段，避免加载大的 messages_json
     return this.db.getDb().prepare(
       'SELECT id, employee_id, skill_id, title, message_count, status, created_at, updated_at FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
     ).all(employeeId) as Conversation[]
@@ -373,26 +276,24 @@ class ProjectManagerService {
     `).all(limit) as Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }>
   }
 
-  private resolveWorkspacePath(projectId: string, relativePath?: string): { fullPath: string; error?: string } {
-    const project = this.getProject(projectId)
-    if (!project) return { fullPath: '', error: '项目不存在' }
+  private resolveWorkspacePath(workspacePath: string, relativePath?: string): { fullPath: string; error?: string } {
+    if (!workspacePath) return { fullPath: '', error: '工作区路径未设置' }
 
-    const workspaceRoot = path.resolve(project.root_path)
+    const workspaceRoot = path.resolve(workspacePath)
     if (!relativePath) return { fullPath: workspaceRoot }
 
     const fullPath = path.resolve(workspaceRoot, relativePath)
     if (!fullPath.startsWith(workspaceRoot + path.sep) && fullPath !== workspaceRoot) {
-      return { fullPath: '', error: '路径超出项目工作区范围' }
+      return { fullPath: '', error: '路径超出工作区范围' }
     }
 
     return { fullPath }
   }
 
-  getWorkspaceInfo(projectId: string): { success: boolean; path?: string; stats?: { fileCount: number; dirCount: number; totalSize: number }; error?: string } {
-    const project = this.getProject(projectId)
-    if (!project) return { success: false, error: '项目不存在' }
+  getWorkspaceInfo(workspacePath: string): { success: boolean; path?: string; stats?: { fileCount: number; dirCount: number; totalSize: number }; error?: string } {
+    if (!workspacePath) return { success: false, error: '工作区路径未设置' }
 
-    const workspaceRoot = path.resolve(project.root_path)
+    const workspaceRoot = path.resolve(workspacePath)
     if (!fs.existsSync(workspaceRoot)) {
       fs.mkdirSync(workspaceRoot, { recursive: true })
       return { success: true, path: workspaceRoot, stats: { fileCount: 0, dirCount: 0, totalSize: 0 } }
@@ -421,16 +322,15 @@ class ProjectManagerService {
     return { success: true, path: workspaceRoot, stats: { fileCount, dirCount, totalSize } }
   }
 
-  listWorkspaceFiles(projectId: string, subPath?: string, recursive?: boolean): { success: boolean; items?: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: number }>; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, subPath)
+  listWorkspaceFiles(workspacePath: string, subPath?: string, recursive?: boolean): { success: boolean; items?: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: number }>; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, subPath)
     if (error) return { success: false, error }
 
     if (!fs.existsSync(fullPath)) return { success: false, error: '目录不存在' }
     if (!fs.statSync(fullPath).isDirectory()) return { success: false, error: '路径不是目录' }
 
     const items: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: number }> = []
-    const project = this.getProject(projectId)!
-    const workspaceRoot = path.resolve(project.root_path)
+    const workspaceRoot = path.resolve(workspacePath)
 
     const walk = (dir: string) => {
       let entries: fs.Dirent[]
@@ -458,8 +358,8 @@ class ProjectManagerService {
     return { success: true, items }
   }
 
-  readWorkspaceFile(projectId: string, filePath: string): { success: boolean; content?: string; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, filePath)
+  readWorkspaceFile(workspacePath: string, filePath: string): { success: boolean; content?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, filePath)
     if (error) return { success: false, error }
 
     if (!fs.existsSync(fullPath)) return { success: false, error: '文件不存在' }
@@ -473,8 +373,8 @@ class ProjectManagerService {
     }
   }
 
-  writeWorkspaceFile(projectId: string, filePath: string, content: string): { success: boolean; path?: string; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, filePath)
+  writeWorkspaceFile(workspacePath: string, filePath: string, content: string): { success: boolean; path?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, filePath)
     if (error) return { success: false, error }
 
     const dir = path.dirname(fullPath)
@@ -488,8 +388,8 @@ class ProjectManagerService {
     }
   }
 
-  createWorkspaceFolder(projectId: string, folderPath: string): { success: boolean; path?: string; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, folderPath)
+  createWorkspaceFolder(workspacePath: string, folderPath: string): { success: boolean; path?: string; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, folderPath)
     if (error) return { success: false, error }
 
     if (fs.existsSync(fullPath)) return { success: false, error: '路径已存在' }
@@ -502,8 +402,8 @@ class ProjectManagerService {
     }
   }
 
-  deleteWorkspaceItem(projectId: string, itemPath: string): { success: boolean; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, itemPath)
+  deleteWorkspaceItem(workspacePath: string, itemPath: string): { success: boolean; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, itemPath)
     if (error) return { success: false, error }
 
     if (!fs.existsSync(fullPath)) return { success: false, error: '路径不存在' }
@@ -521,15 +421,17 @@ class ProjectManagerService {
     }
   }
 
-  renameWorkspaceItem(projectId: string, itemPath: string, newName: string): { success: boolean; error?: string } {
-    const { fullPath, error } = this.resolveWorkspacePath(projectId, itemPath)
+  renameWorkspaceItem(workspacePath: string, itemPath: string, newName: string): { success: boolean; error?: string } {
+    const { fullPath, error } = this.resolveWorkspacePath(workspacePath, itemPath)
     if (error) return { success: false, error }
 
     if (!fs.existsSync(fullPath)) return { success: false, error: '路径不存在' }
 
     const dir = path.dirname(fullPath)
     const newPath = path.join(dir, newName)
-    const { fullPath: newFullPath, error: newError } = this.resolveWorkspacePath(projectId, path.relative(this.getProject(projectId)!.root_path, newPath).replace(/\\/g, '/'))
+    const workspaceRoot = path.resolve(workspacePath)
+    const newRelativePath = path.relative(workspaceRoot, newPath).replace(/\\/g, '/')
+    const { fullPath: newFullPath, error: newError } = this.resolveWorkspacePath(workspacePath, newRelativePath)
     if (newError) return { success: false, error: newError }
 
     if (fs.existsSync(newFullPath)) return { success: false, error: '目标名称已存在' }
@@ -542,8 +444,8 @@ class ProjectManagerService {
     }
   }
 
-  importToWorkspace(projectId: string, sourcePaths: string[], targetFolder?: string): { success: boolean; imported?: string[]; errors?: Array<{ path: string; error: string }> } {
-    const { fullPath: targetDir, error: dirError } = this.resolveWorkspacePath(projectId, targetFolder)
+  importToWorkspace(workspacePath: string, sourcePaths: string[], targetFolder?: string): { success: boolean; imported?: string[]; errors?: Array<{ path: string; error: string }> } {
+    const { fullPath: targetDir, error: dirError } = this.resolveWorkspacePath(workspacePath, targetFolder)
     if (dirError) return { success: false, errors: [{ path: '', error: dirError }] }
 
     if (!fs.existsSync(targetDir)) {
@@ -580,4 +482,4 @@ class ProjectManagerService {
   }
 }
 
-export default ProjectManagerService
+export default WorkspaceManagerService
