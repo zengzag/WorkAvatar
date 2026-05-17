@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 
 export const envVarsTool: ToolDefinition = {
   id: 'env_vars',

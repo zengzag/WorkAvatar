@@ -1,5 +1,5 @@
 import SearchEngineService from '../../search-engine.service'
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 
 export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefinition {
   const searchEngine = SearchEngineService.getInstance()

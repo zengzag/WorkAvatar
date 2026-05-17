@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { formatFileSize } from './utils'

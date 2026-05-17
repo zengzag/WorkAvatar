@@ -1,6 +1,6 @@
 import KnowledgeBaseService from '../../kb.service'
 import SearchEngineService from '../../search-engine.service'
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 
 interface SearchResult {
   document_id: string

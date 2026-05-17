@@ -2,7 +2,7 @@ import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
 import KBDatabaseService from '../../kb-database.service'
 import SearchEngineService from '../../search-engine.service'
-import { ToolDefinition } from '../tool.types'
+import { ToolDefinition } from './types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
 import { formatEntityList } from './utils'
 

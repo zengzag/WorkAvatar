@@ -11,6 +11,7 @@ import LLMClientService from './llm-client.service'
 import PathService from './path.service'
 import type { SearchResult } from './search-engine.service'
 import { calculateFileHash, getDefaultProviderId, generateId } from './common-utils'
+import * as crypto from 'crypto'
 import type Database from 'better-sqlite3'
 import type { DBKBDocument, DBKBDocumentSummary, DBKBChapter, DBKBEntity } from '../../shared/db-types'
 
@@ -621,7 +622,7 @@ class KBDocumentService {
       const originalName = path.basename(filePath)
       const fileType = path.extname(filePath).toLowerCase().slice(1)
       const fileHash = options?.contentText
-        ? require('crypto').createHash('sha256').update(options.contentText).digest('hex')
+        ? crypto.createHash('sha256').update(options.contentText).digest('hex')
         : await calculateFileHash(filePath)
 
       const existingDoc = await this.getExistingDocByHash(fileHash, kbId)

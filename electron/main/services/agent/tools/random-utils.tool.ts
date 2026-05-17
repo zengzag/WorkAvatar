@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import { generateUUID } from './utils'
 
 export const randomUtilsTool: ToolDefinition = {
@@ -35,7 +35,7 @@ export const randomUtilsTool: ToolDefinition = {
           }
           return { success: true, result: count === 1 ? results[0] : results }
         }
-        case 'uid': {
+        case 'uuid': {
           const count = Math.min(Math.max(args.count || 1, 1), 100)
           const results: string[] = []
           for (let i = 0; i < count; i++) {

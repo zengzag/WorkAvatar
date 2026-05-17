@@ -189,7 +189,12 @@ ${feedback}
         throw new Error('No JSON found in LLM response')
       }
 
-      const result = JSON.parse(cleaned)
+      let result: any
+      try {
+        result = JSON.parse(cleaned)
+      } catch (e) {
+        throw new Error(`优化结果 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`)
+      }
 
       const profile: EmployeeProfile = {
         roleName: result.roleName || previousProfile.roleName,
@@ -386,7 +391,12 @@ ${userGuidance}
       throw new Error('No JSON found in LLM response')
     }
 
-    const result = JSON.parse(cleaned)
+    let result: any
+    try {
+      result = JSON.parse(cleaned)
+    } catch (e) {
+      throw new Error(`分析结果 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     const profile: EmployeeProfile = {
       roleName: result.roleName || '数字员工',

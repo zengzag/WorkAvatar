@@ -92,6 +92,7 @@ export const useKnowledgeBase = () => {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const activeKBRef = useRef<string>('')
   const autoRestoredRef = useRef(false)
+  const loadDocsRef = useRef<((kbId: string) => Promise<void>) | null>(null)
 
   const loadKBs = useCallback(async () => {
     try {
@@ -118,7 +119,7 @@ export const useKnowledgeBase = () => {
         const resumeAll = () => {
           window.electronAPI.kb.resumeAllParses()
           message.info(t('parseProgress.resumeAllSuccess'))
-          if (selectedKB) loadDocs(selectedKB.id)
+          if (activeKBRef.current) loadDocsRef.current?.(activeKBRef.current)
           notification.destroy(`resumable-${kbId}`)
         }
         notification.open({
@@ -149,9 +150,10 @@ export const useKnowledgeBase = () => {
         if (kbTasks.some((t: any) => t.id?.startsWith('build-global'))) {
           setBuildingGlobal(true)
         }
-      } catch {}
+      } catch (e) { console.error('Failed to load doc processing status:', e) }
     } catch { message.error(t('knowledgeBase.loadDocsFailed')) }
   }, [])
+  loadDocsRef.current = loadDocs
 
   const loadDocProcessingStatus = async (docList: KBDocument[]) => {
     const completedDocs = docList.filter(d => d.parse_status === 'completed')
@@ -172,7 +174,7 @@ export const useKnowledgeBase = () => {
       const stats = await window.electronAPI.kb.getStats(kbId)
       if (activeKBRef.current !== kbId) return
       setKnowledgeStats(stats)
-    } catch {}
+    } catch (e) { console.error('Failed to load knowledge stats:', e) }
   }
 
   const loadEntities = async (kbId: string, type?: string) => {
@@ -180,7 +182,7 @@ export const useKnowledgeBase = () => {
       const result = await window.electronAPI.kb.getEntities({ kb_id: kbId, type })
       if (activeKBRef.current !== kbId) return
       setEntities(result)
-    } catch {}
+    } catch (e) { console.error('Failed to load entities:', e) }
   }
 
   const loadGlobalSummary = async (kbId: string) => {
@@ -188,7 +190,7 @@ export const useKnowledgeBase = () => {
       const summary = await window.electronAPI.kb.getGlobalSummary(kbId)
       if (activeKBRef.current !== kbId) return
       setGlobalSummary(summary)
-    } catch {}
+    } catch (e) { console.error('Failed to load global summary:', e) }
   }
 
   const loadDocSummaries = async (kbId: string) => {
@@ -196,7 +198,7 @@ export const useKnowledgeBase = () => {
       const summaries = await window.electronAPI.kb.getAllDocSummaries(kbId)
       if (activeKBRef.current !== kbId) return
       setDocSummaries(summaries)
-    } catch {}
+    } catch (e) { console.error('Failed to load doc summaries:', e) }
   }
 
   const loadAllRelations = async (kbId: string) => {
@@ -216,11 +218,11 @@ export const useKnowledgeBase = () => {
               relations.push(rel)
             }
           }
-        } catch {}
+        } catch (e) { console.error('Failed to load entity relations:', e) }
       }
       if (activeKBRef.current !== kbId) return
       setAllRelations(relations)
-    } catch {}
+    } catch (e) { console.error('Failed to load all relations:', e) }
   }
 
   const handleSelectKB = useCallback((kb: KnowledgeBase) => {

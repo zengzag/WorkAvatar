@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import { exec as execCb } from 'child_process'
 import { promisify } from 'util'
 import UnifiedInteractionService from '../../unified-interaction.service'

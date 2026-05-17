@@ -6,8 +6,6 @@ export const WORKFLOW_CHANNELS = {
   WORKFLOW_DELETE: 'workflow:delete',
   WORKFLOW_EXECUTE: 'workflow:execute',
   WORKFLOW_ABORT_EXECUTION: 'workflow:abort-execution',
-  WORKFLOW_GET_EXECUTION: 'workflow:get-execution',
-  WORKFLOW_LIST_EXECUTIONS: 'workflow:list-executions',
   WORKFLOW_EXECUTION_PROGRESS: 'workflow:execution-progress',
   WORKFLOW_NODE_EXECUTION_UPDATE: 'workflow:node-execution-update',
 } as const

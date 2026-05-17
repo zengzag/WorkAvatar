@@ -1,15 +1,9 @@
 export const APP_CHANNELS = {
-  PING: 'ping',
-
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
-  SETTINGS_KEY_SET: 'settings:key-set',
-  SETTINGS_KEY_GET: 'settings:key-get',
 
-  APP_GET_PATH: 'app:get-path',
   APP_SHOW_OPEN_DIALOG: 'app:show-open-dialog',
   APP_SHOW_SAVE_DIALOG: 'app:show-save-dialog',
-  APP_SHOW_MESSAGE_BOX: 'app:show-message-box',
 
   PATH_GET_DATA_DIR: 'path:get-data-dir',
   PATH_SET_DATA_DIR: 'path:set-data-dir',
@@ -22,10 +16,6 @@ export interface SettingsGetParams {
 export interface SettingsSetParams {
   key: string
   value: string
-}
-
-export interface AppGetPathParams {
-  name: 'home' | 'appData' | 'userData' | 'temp' | 'documents' | 'downloads'
 }
 
 export interface AppShowOpenDialogParams {

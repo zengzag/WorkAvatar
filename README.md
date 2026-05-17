@@ -103,6 +103,7 @@ WorkAvatar 是一款**本地优先、隐私安全**的 Windows 桌面软件。�
 - **系统工具**：`shell_exec`（执行 shell 命令）、`system_info`（系统信息）、`env_vars`（环境变量）
 - **网络工具**：`web_search`（网络搜索）、`web_fetch`（获取网页内容）
 - **实用工具**：`calculator`（计算器）、`date_time`（日期时间）、`json_utils`（JSON 处理）、`random_utils`（随机工具）
+- **交互工具**：`ask_user`（向用户提问，获取补充信息或确认）
 
 #### 渐进式知识查询工具
 Agent 内置知识库查询工具，支持分层查询：
@@ -410,55 +411,79 @@ skill-name/
 │  │                       │  │   Svc                 │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │   OCR Service         │  │   Employee Mgmt Svc   │                  │
-│  │   (Tesseract.js)      │  │   (员工+工作区管理)    │                  │
+│  │   OCR Service         │  │   Workspace Manager   │                  │
+│  │   (Tesseract.js)      │  │   Svc (员工+工作区)    │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
+│  ┌───────────────────────────────────────────────────────────────────┐ │
+│  │               KB Service (独立知识库)                              │ │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐              │ │
+│  │  │ KB Database  │ │ KB Document  │ │ KB Chapter   │              │ │
+│  │  └──────────────┘ └──────────────┘ └──────────────┘              │ │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐              │ │
+│  │  │ KB Entity    │ │ KB Summary   │ │ KB Export    │              │ │
+│  │  └──────────────┘ └──────────────┘ └──────────────┘              │ │
+│  └───────────────────────────────────────────────────────────────────┘ │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │   KB Service          │  │   Search Engine Svc   │                  │
-│  │   (独立知识库)        │  │  (FTS5+向量+混合搜索) │                  │
+│  │   Search Engine Svc   │  │   Task Queue Svc      │                  │
+│  │  (FTS5+向量+混合搜索) │  │                       │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
-│  ┌───────────────────────┐                                             │
-│  │   Task Queue Svc      │                                             │
-│  │                       │                                             │
-│  └───────────────────────┘                                             │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
 │  │                     LightAgent 智能代理系统                        │ │
-│  │  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────┐ │ │
-│  │  │  Agent Core         │  │  Tool Registry      │  │  Skill Mgr  │ │ │
-│  │  │  (多步推理/工具调用)│  │  (12内置+11知识库+6工作区)│  │  (Claude)   │ │ │
-│  │  └─────────────────────┘  └─────────────────────┘  └─────────────┘ │ │
-│  │  ┌─────────────────────┐  ┌─────────────────────┐                  │ │
-│  │  │  Tool Dispatcher    │  │  Knowledge Query    │                  │ │
-│  │  │                     │  │  Tools (11个)       │                  │ │
-│  │  └─────────────────────┘  └─────────────────────┘                  │ │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │ │
+│  │  │  core/  Agent核心 (Orchestrator/Context/Events/BaseAgent)   │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  business/  业务层 (EmployeeAgent/Prompts)                  │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  llm/  LLM提供商 (OpenAI Provider)                         │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  memory/  记忆管理 (Memory Manager)                         │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  planning/  规划层 (Planner)                                │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  tools/  工具层                                             │  │ │
+│  │  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐   │  │ │
+│  │  │  │ Tool Registry  │ │Tool Dispatcher │ │Tool Middleware  │   │  │ │
+│  │  │  └────────────────┘ └────────────────┘ └────────────────┘   │  │ │
+│  │  │  (13内置+10知识库+6工作区)                                    │  │ │
+│  │  ├─────────────────────────────────────────────────────────────┤  │ │
+│  │  │  Skill Manager (Claude Skills)                              │  │ │
+│  │  └─────────────────────────────────────────────────────────────┘  │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
 │  │  Employee Profiling   │  │  Skill Registry Svc   │                  │
 │  │  Svc (智能画像分析)   │  │                       │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │  Employee Agent Svc   │  │  Rule Extraction Svc  │                  │
-│  │                       │  │                       │                  │
+│  │  Employee Agent Svc   │  │  Tool Engine Svc      │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │  Tool Engine Svc      │  │  MCP Integration      │                  │
-│  │                       │  │                       │                  │
+│  │  MCP Integration      │  │  Employee Task Svc    │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐  ┌───────────────────────┐                  │
-│  │  Employee Task Svc    │  │  Scheduler Svc        │                  │
-│  │  (任务配置/执行)      │  │  (定时调度/Cron)      │                  │
+│  │  Scheduler Svc        │  │  Parse Task Manager   │                  │
+│  │  (定时调度/Cron)      │  │  Svc                  │                  │
+│  └───────────────────────┘  └───────────────────────┘                  │
+│  ┌───────────────────────────────────────────────────────────────────┐ │
+│  │            Employee Export Svc (导入导出)                          │ │
+│  │  ┌──────────────────┐ ┌──────────────────────────┐                │ │
+│  │  │ Export Config    │ │ Export Package            │                │ │
+│  │  └──────────────────┘ └──────────────────────────┘                │ │
+│  └───────────────────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────┐  ┌───────────────────────┐                  │
+│  │  Workflow Svc         │  │  Path Svc             │                  │
+│  │  (工作流编排/执行)    │  │  (路径管理)           │                  │
+│  └───────────────────────┘  └───────────────────────┘                  │
+│  ┌───────────────────────┐  ┌───────────────────────┐                  │
+│  │  Task Notification    │  │  Unified Interaction   │                  │
+│  │  Svc                  │  │  Svc                   │                  │
 │  └───────────────────────┘  └───────────────────────┘                  │
 │  ┌───────────────────────┐                                             │
-│  │  Employee Export Svc  │                                             │
-│  │  (导入导出)           │                                             │
-│  └───────────────────────┘                                             │
-│  ┌───────────────────────┐                                             │
-│  │  Workflow Svc         │                                             │
-│  │  (工作流编排/执行)    │                                             │
+│  │  Logger               │                                             │
 │  └───────────────────────┘                                             │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
 │  │                  模块化 IPC 处理器 (类型安全)                        │ │
-│  │  app | employee | kb | llm | workspace | task | tool | workflow     │ │
+│  │  app | employee | employee-task | kb | llm | workspace |           │ │
+│  │  task | tool | workflow                                           │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
                                         │
@@ -486,7 +511,7 @@ skill-name/
 
 ### 2. 核心数据流
 
-#### 智能数字员工创建流程（最新）
+#### 智能数字员工创建流程
 
 ```
 用户选择知识库
@@ -527,33 +552,7 @@ LLM 智能分析（流式输出思考过程）
 进入工作台对话
 ```
 
-#### 传统数字员工创建流程（兼容）
-
-```
-用户上传文件
-    ↓
-文件存储到本地知识库目录
-    ↓
-文件解析队列 → 文件解析服务
-    ├─ PDF/Word/Excel → 文本提取
-    └─ 图片 → OCR 识别 → 文本提取
-    ↓
-解析结果存储到 files.parsed_json
-    ↓
-规则抽取引擎 → LLM 或启发式提取规则/知识/模板
-    ↓
-用户在创建向导中确认解析结果
-    ↓
-自动生成技能配置和 Prompt 模板
-    ↓
-创建数字员工记录（employees 表）
-    ↓
-创建关联技能记录（skills 表）
-    ↓
-数字员工启用完成，可进入工作台对话
-```
-
-#### LightAgent 智能代理对话流程（最新）
+#### LightAgent 智能代理对话流程
 
 ```
 用户输入消息
@@ -576,10 +575,10 @@ LLM 调用（流式）
     ↓
 如果需要工具调用？
     ├─ 是 → Tool Dispatcher 执行工具
-    │       ├─ 内置工具（12个）
+    │       ├─ 内置工具（13个）
     │       ├─ MCP 服务器工具
     │       ├─ Claude Skills 工具
-    │       ├─ 知识库查询工具（11个）
+    │       ├─ 知识库查询工具（10个）
     │       │   ├─ kb_overview
     │       │   ├─ query_global_summary
     │       │   ├─ query_knowledge_graph
@@ -667,9 +666,10 @@ WorkAvatar/
 │   │   ├── ipc/                       # 模块化 IPC 处理器
 │   │   │   ├── app.handlers.ts        # 应用相关 IPC
 │   │   │   ├── employee.handlers.ts   # 员工相关 IPC
+│   │   │   ├── employee-task.handlers.ts # 员工任务相关 IPC
 │   │   │   ├── kb.handlers.ts         # 知识库相关 IPC
 │   │   │   ├── llm.handlers.ts        # LLM 相关 IPC
-│   │   │   ├── workspace.handlers.ts    # 工作区相关 IPC
+│   │   │   ├── workspace.handlers.ts  # 工作区相关 IPC
 │   │   │   ├── task.handlers.ts       # 任务队列相关 IPC
 │   │   │   ├── tool.handlers.ts       # 工具相关 IPC
 │   │   │   ├── workflow.handlers.ts   # 工作流相关 IPC
@@ -678,33 +678,57 @@ WorkAvatar/
 │   │       ├── agent/                 # LightAgent 智能代理系统
 │   │       │   ├── agent.ts           # LightAgent 核心类
 │   │       │   ├── agent.types.ts     # Agent 相关类型定义
-│   │       │   ├── tool-registry.ts   # 工具注册表
-│   │       │   ├── tool-dispatcher.ts # 工具调用分发器
+│   │       │   ├── builtin-tools.ts   # 内置工具导出
 │   │       │   ├── skill-manager.ts   # Claude Skills 管理
 │   │       │   ├── skill.types.ts     # 技能相关类型
+│   │       │   ├── tool-dispatcher.ts # 工具调用分发器
+│   │       │   ├── tool-registry.ts   # 工具注册表
 │   │       │   ├── tool.types.ts      # 工具相关类型
-│   │       │   ├── builtin-tools.ts   # 内置工具导出
-│   │       │   ├── tools/             # 内置工具实现
-│   │       │   │   ├── calculator.tool.ts
-│   │       │   │   ├── date-time.tool.ts
-│   │       │   │   ├── shell-exec.tool.ts
-│   │       │   │   ├── read-file.tool.ts
-│   │       │   │   ├── write-file.tool.ts
-│   │       │   │   ├── list-dir.tool.ts
-│   │       │   │   ├── system-info.tool.ts
-│   │       │   │   ├── web-search.tool.ts
-│   │       │   │   ├── web-fetch.tool.ts
-│   │       │   │   ├── json-utils.tool.ts
-│   │       │   │   ├── random-utils.tool.ts
-│   │       │   │   ├── env-vars.tool.ts
-│   │       │   │   ├── kb-search.tool.ts       # 知识库检索工具
-│   │       │   │   ├── kb-advanced.tool.ts     # 知识库高级检索工具
-│   │       │   │   ├── kb-content.tool.ts      # 知识库内容获取工具
-│   │       │   │   ├── kb-entities.tool.ts     # 知识库实体工具
-│   │       │   │   ├── kb-agent-tools.ts       # 员工代理知识库工具集
-│   │   │       │   ├── workspace-tools.ts      # 员工工作区工具集
-│   │       │   │   ├── utils.ts
-│   │       │   │   └── index.ts
+│   │       │   ├── index.ts           # 模块导出
+│   │       │   ├── business/          # 业务层
+│   │       │   │   ├── employee-agent.ts  # 员工代理实现
+│   │       │   │   └── prompts.ts     # 提示词模板
+│   │       │   ├── core/              # Agent 核心
+│   │       │   │   ├── agent-context.ts   # Agent 上下文
+│   │       │   │   ├── agent-events.ts    # Agent 事件系统
+│   │       │   │   ├── agent-orchestrator.ts # Agent 编排器
+│   │       │   │   ├── base-agent.ts  # 基础 Agent 类
+│   │       │   │   └── types.ts       # 核心类型定义
+│   │       │   ├── llm/               # LLM 提供商
+│   │       │   │   ├── openai-provider.ts # OpenAI 兼容提供商
+│   │       │   │   └── types.ts       # LLM 类型定义
+│   │       │   ├── memory/            # 记忆管理
+│   │       │   │   ├── memory-manager.ts # 记忆管理器
+│   │       │   │   └── types.ts       # 记忆类型定义
+│   │       │   ├── planning/          # 规划层
+│   │       │   │   ├── planner.ts     # 任务规划器
+│   │       │   │   └── types.ts       # 规划类型定义
+│   │       │   └── tools/             # 工具层
+│   │       │       ├── index.ts       # 工具导出
+│   │       │       ├── tool-registry.ts   # 工具注册表
+│   │       │       ├── tool-dispatcher.ts # 工具分发器
+│   │       │       ├── tool-middleware.ts # 工具中间件
+│   │       │       ├── types.ts       # 工具类型定义
+│   │       │       ├── utils.ts       # 工具辅助函数
+│   │       │       ├── ask-user.tool.ts   # 向用户提问工具
+│   │       │       ├── calculator.tool.ts
+│   │       │       ├── date-time.tool.ts
+│   │       │       ├── shell-exec.tool.ts
+│   │       │       ├── read-file.tool.ts
+│   │       │       ├── write-file.tool.ts
+│   │       │       ├── list-dir.tool.ts
+│   │       │       ├── system-info.tool.ts
+│   │       │       ├── web-search.tool.ts
+│   │       │       ├── web-fetch.tool.ts
+│   │       │       ├── json-utils.tool.ts
+│   │       │       ├── random-utils.tool.ts
+│   │       │       ├── env-vars.tool.ts
+│   │       │       ├── kb-search.tool.ts       # 知识库检索工具
+│   │       │       ├── kb-advanced.tool.ts     # 知识库高级检索工具
+│   │       │       ├── kb-content.tool.ts      # 知识库内容获取工具
+│   │       │       ├── kb-entities.tool.ts     # 知识库实体工具
+│   │       │       ├── kb-agent-tools.ts       # 员工代理知识库工具集
+│   │       │       └── workspace-tools.ts      # 员工工作区工具集
 │   │       ├── database.service.ts    # SQLite 数据库服务
 │   │       ├── common-utils.ts        # 共享工具函数（哈希、计算、日期、URL等）
 │   │       ├── file-parser.service.ts # 文件解析服务
@@ -712,31 +736,45 @@ WorkAvatar/
 │   │       ├── knowledge-processor.service.ts  # 知识处理服务
 │   │       ├── search-engine.service.ts  # 搜索引擎服务（FTS5+向量+混合搜索）
 │   │       ├── kb.service.ts          # 独立知识库服务
+│   │       ├── kb-chapter.service.ts  # 知识库章节服务
+│   │       ├── kb-database.service.ts # 知识库数据库服务
+│   │       ├── kb-document.service.ts # 知识库文档服务
+│   │       ├── kb-entity.service.ts   # 知识库实体服务
+│   │       ├── kb-export.service.ts   # 知识库导出服务
+│   │       ├── kb-summary.service.ts  # 知识库摘要服务
 │   │       ├── employee-profiling.service.ts   # 员工画像分析服务
 │   │       ├── employee-agent.service.ts       # 员工代理服务
+│   │       ├── employee-export.service.ts      # 员工导出服务
+│   │       ├── employee-export-config.service.ts # 员工导出配置服务
+│   │       ├── employee-export-package.service.ts # 员工导出打包服务
+│   │       ├── employee-task.service.ts  # 员工任务配置服务
 │   │       ├── skill-registry.service.ts       # 技能注册表服务
 │   │       ├── tool-engine.service.ts          # 工具引擎服务
 │   │       ├── task-queue.service.ts  # 后台任务队列服务
-│   │       ├── employee-task.service.ts  # 员工任务配置服务
+│   │       ├── parse-task-manager.service.ts # 解析任务管理服务
 │   │       ├── scheduler.service.ts  # 定时调度服务
 │   │       ├── ocr.service.ts         # OCR 识别服务
 │   │       ├── workspace-manager.service.ts # 员工与工作区管理服务
-│   │       ├── rule-extraction.service.ts # 规则抽取引擎
-│   │       └── sandbox-tester.service.ts  # 沙盒测试服务
-│   │       ├── workflow.service.ts      # 工作流编排与执行服务
+│   │       ├── path.service.ts        # 路径管理服务
+│   │       ├── task-notification.service.ts # 任务通知服务
+│   │       ├── unified-interaction.service.ts # 统一交互服务
+│   │       ├── logger.ts              # 日志服务
+│   │       └── workflow.service.ts    # 工作流编排与执行服务
 │   ├── preload/                       # 预加载脚本
 │   │   └── index.ts                   # ContextBridge API 暴露
 │   └── shared/                        # 共享类型和常量
 │       ├── channels/                  # IPC 通道定义（模块化）
 │       │   ├── app.ts
 │       │   ├── employee.ts
+│       │   ├── employee-task.ts
 │       │   ├── kb.ts
 │       │   ├── llm.ts
-│       │   ├── workspace.ts             # 工作区 IPC 通道
+│       │   ├── workspace.ts
 │       │   ├── task.ts
 │       │   ├── tool.ts
 │       │   ├── workflow.ts
 │       │   └── index.ts
+│       ├── db-types.ts               # 数据库类型定义
 │       ├── ipc-channels.ts            # IPC 通道统一导出
 │       └── types.ts                   # 共享数据类型
 ├── skills/                            # Claude Skills 技能目录
@@ -756,7 +794,12 @@ WorkAvatar/
 │   │   ├── common/                    # 基础组件
 │   │   │   ├── EmptyState.tsx
 │   │   │   ├── PageHeader.tsx
-│   │   │   └── TaskProgressPanel.tsx
+│   │   │   ├── TaskProgressPanel.tsx
+│   │   │   ├── EmployeeRedirect.tsx   # 员工重定向组件
+│   │   │   ├── KBListItem.tsx         # 知识库列表项组件
+│   │   │   ├── KBTagList.tsx          # 知识库标签列表组件
+│   │   │   ├── TaskNotificationHandler.tsx # 任务通知处理组件
+│   │   │   └── UnifiedInteractionModal.tsx # 统一交互弹窗组件
 │   │   ├── llm/                       # LLM 相关组件
 │   │   │   └── LLMSelector.tsx
 │   │   ├── workbench/                 # 工作台子组件
@@ -775,6 +818,10 @@ WorkAvatar/
 │   │   │   ├── SkillsSection.tsx
 │   │   │   ├── MCPServersSection.tsx
 │   │   │   ├── KnowledgeBaseSection.tsx
+│   │   │   ├── ExecutionDetailModal.tsx # 执行详情弹窗
+│   │   │   ├── ExportImportSection.tsx  # 导入导出配置
+│   │   │   ├── ScheduleSection.tsx      # 定时调度配置
+│   │   │   ├── TaskConfigSection.tsx    # 任务配置
 │   │   │   └── index.ts
 │   │   ├── knowledge-base/            # 知识库子组件
 │   │   │   ├── KBListPanel.tsx
@@ -783,9 +830,14 @@ WorkAvatar/
 │   │   │   ├── KBEntityGraph.tsx
 │   │   │   ├── KBSearchPanel.tsx
 │   │   │   ├── ParseDetailModal.tsx
+│   │   │   ├── KBCreateModal.tsx       # 知识库创建弹窗
+│   │   │   ├── KBEditModal.tsx         # 知识库编辑弹窗
+│   │   │   ├── KBExportModal.tsx       # 知识库导出弹窗
+│   │   │   ├── KBFolderScanModal.tsx   # 文件夹扫描弹窗
+│   │   │   ├── KBHeaderCard.tsx        # 知识库头部卡片
+│   │   │   ├── KBImportModal.tsx       # 知识库导入弹窗
+│   │   │   ├── types.ts               # 知识库组件类型
 │   │   │   └── index.ts
-│   │   ├── project/                   # （已移除）
-│   │   │   └── (已移除)
 │   │   ├── workflow/                  # 工作流子组件
 │   │   │   ├── FlowCanvas.tsx         # 工作流画布
 │   │   │   ├── NodeConfigPanel.tsx    # 节点配置面板
@@ -801,12 +853,18 @@ WorkAvatar/
 │   │       ├── MCPServerSettings.tsx
 │   │       ├── SkillSettings.tsx
 │   │       ├── AppearanceSettings.tsx
+│   │       ├── DefaultModelSettings.tsx # 默认模型设置
 │   │       ├── StorageSettings.tsx
 │   │       ├── AboutSection.tsx
 │   │       └── index.ts
+│   ├── hooks/                         # 自定义 Hooks
+│   │   ├── useEmployeeChat.ts         # 员工对话 Hook
+│   │   └── useKnowledgeBase.tsx       # 知识库 Hook
 │   ├── stores/                        # Zustand 状态管理
 │   │   ├── app.store.ts
-│   │   └── appearance.store.ts
+│   │   ├── appearance.store.ts
+│   │   ├── interaction.store.ts       # 交互状态
+│   │   ├── task-detail.store.ts       # 任务详情状态
 │   │   └── workflow.store.ts
 │   ├── i18n/                          # 国际化
 │   │   ├── index.ts
@@ -818,7 +876,8 @@ WorkAvatar/
 │   ├── utils/                         # 前端共享工具函数
 │   │   ├── status.ts                  # 员工状态映射
 │   │   ├── llm.ts                     # LLM 提供商工具函数
-│   │   └── format.ts                  # 格式化工具函数
+│   │   ├── format.ts                  # 格式化工具函数
+│   │   └── default-model.ts           # 默认模型配置
 │   ├── router/                        # 路由配置
 │   │   └── index.tsx
 │   ├── styles/                        # 全局样式

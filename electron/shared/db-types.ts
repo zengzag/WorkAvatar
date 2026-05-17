@@ -129,44 +129,6 @@ export interface DBKBEntityMention {
   chapter_title: string | null
 }
 
-export interface DBKnowledgeBase {
-  id: string
-  name: string
-  description: string
-  root_path: string
-  created_at: number
-  updated_at: number
-}
-
-export interface DBLLMProvider {
-  id: string
-  name: string
-  provider_type: string
-  base_url: string | null
-  model: string
-  embedding_model: string
-  temperature: number
-  max_tokens: number
-  timeout_ms: number
-  extra_headers_json: string | null
-  extra_body_json: string | null
-  is_default: number
-  models_json: string
-  created_at: number
-}
-
-export interface DBConversation {
-  id: string
-  employee_id: string
-  skill_id: string | null
-  title: string
-  messages_json: string
-  message_count: number
-  status: string
-  created_at: number
-  updated_at: number
-}
-
 export interface DBEmployeeTool {
   id: string
   employee_id: string

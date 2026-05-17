@@ -1,5 +1,3 @@
-import type { Skill } from '../types'
-
 export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_LIST: 'employee:list',
   EMPLOYEE_GET: 'employee:get',
@@ -7,18 +5,12 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_UPDATE: 'employee:update',
   EMPLOYEE_DELETE: 'employee:delete',
 
-  SKILL_LIST: 'skill:list',
-  SKILL_CREATE: 'skill:create',
-  SKILL_UPDATE: 'skill:update',
-  SKILL_DELETE: 'skill:delete',
-
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_GET: 'conversation:get',
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
-  CONVERSATION_RECENT: 'conversation:recent',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
@@ -34,8 +26,6 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_KB_LIST: 'employee:kb-list',
   EMPLOYEE_KB_LINK: 'employee:kb-link',
   EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
-
-  EMPLOYEE_DELETE_WORKSPACE: 'employee:delete-workspace',
 } as const
 
 export interface EmployeeListParams {
@@ -61,29 +51,6 @@ export interface EmployeeUpdateParams {
   llm_model?: string
   workspace_path?: string
   avatar_type?: string
-}
-
-export interface SkillListParams {
-  employee_id: string
-}
-
-export interface SkillCreateParams {
-  employee_id: string
-  type: Skill['type']
-  name: string
-  description?: string
-  prompt_template?: string
-}
-
-export interface SkillUpdateParams {
-  id: string
-  name?: string
-  description?: string
-  config_json?: string
-  prompt_template?: string
-  rules_json?: string
-  priority?: number
-  is_enabled?: boolean
 }
 
 export interface ConversationListParams {
@@ -136,10 +103,6 @@ export interface EmployeeExportPackageParams {
 export interface EmployeeImportPackageParams {
   import_path: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
-}
-
-export interface ConversationRecentParams {
-  limit?: number
 }
 
 export interface EmployeeKBListParams {

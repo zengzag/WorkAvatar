@@ -6,7 +6,7 @@ import KnowledgeBaseService from './kb.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { createBuiltinTools } from './agent/builtin-tools'
+import { allBuiltinTools } from './agent/tools'
 import { createKBAgentTools } from './agent/tools/kb-agent-tools'
 import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
 import type { ToolDefinition } from './agent/tools/types'
@@ -173,7 +173,6 @@ class EmployeeAgentService {
       agent.registerTools([skillDef])
     }
 
-    const allBuiltinTools = createBuiltinTools()
     const enabledToolIds = this.getEnabledBuiltinToolIds(employeeId)
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
@@ -198,7 +197,7 @@ class EmployeeAgentService {
   }
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
-    const allBuiltinToolIds = new Set(createBuiltinTools().map(t => t.id))
+    const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
     const kbToolIds = [
       'kb_search',
       'kb_advanced_search',

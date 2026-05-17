@@ -51,10 +51,6 @@ export function registerEmployeeTaskHandlers(
     return taskService.getSchedules(employeeId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_GET, (_, scheduleId: string) => {
-    return taskService.getSchedule(scheduleId)
-  })
-
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, (_, params: EmployeeScheduleCreateParams) => {
     const schedule = taskService.createSchedule(params.employee_id, params.name, params.cron_expr, params.task_ids, params.run_mode, params.notify_on_complete)
     schedulerService.updateNextRunTimes()
@@ -80,10 +76,6 @@ export function registerEmployeeTaskHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, (_, cronExpr: string) => {
     return schedulerService.validateCronExpression(cronExpr)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST, (_, params: { employee_id: string; limit?: number; offset?: number }) => {
-    return taskService.getExecutions(params.employee_id, params.limit, params.offset)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, (_, params: { task_id: string; limit?: number }) => {

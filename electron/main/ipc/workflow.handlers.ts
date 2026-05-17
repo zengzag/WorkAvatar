@@ -38,12 +38,4 @@ export function registerWorkflowHandlers(workflowService: WorkflowService) {
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, (_, executionId: string) => {
     return workflowService.abortExecution(executionId)
   })
-
-  ipcMain.handle(IPC_CHANNELS.WORKFLOW_GET_EXECUTION, (_, executionId: string) => {
-    return workflowService.getExecution(executionId)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.WORKFLOW_LIST_EXECUTIONS, (_, params: { workflow_id: string; limit?: number }) => {
-    return workflowService.listExecutions(params.workflow_id, params.limit)
-  })
 }

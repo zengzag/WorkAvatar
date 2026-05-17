@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import { formatDate } from './utils'
 
 export const dateTimeTool: ToolDefinition = {

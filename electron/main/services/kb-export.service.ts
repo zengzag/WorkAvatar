@@ -20,6 +20,15 @@ class KBExportService {
   private createKBCallback: (name: string, description?: string) => any | null
   private documentService: KBDocumentService | null = null
 
+  private safeJsonParse(json: string | null | undefined, fallback: any = []): any {
+    if (!json) return fallback
+    try {
+      return JSON.parse(json)
+    } catch {
+      return fallback
+    }
+  }
+
   constructor(deps: KBExportServiceDeps) {
     this.db = deps.db
     this.getKBCallback = deps.getKB
@@ -219,9 +228,9 @@ class KBExportService {
             '@id': `kb:${kbId}/global-summary`,
             '@type': 'GlobalSummary',
             summary: globalSummary.summary,
-            keyTopics: JSON.parse(globalSummary.key_topics_json || '[]'),
-            keyEntities: JSON.parse(globalSummary.key_entities_json || '[]'),
-            globalTimeline: JSON.parse(globalSummary.global_timeline_json || '[]'),
+            keyTopics: this.safeJsonParse(globalSummary.key_topics_json),
+            keyEntities: this.safeJsonParse(globalSummary.key_entities_json),
+            globalTimeline: this.safeJsonParse(globalSummary.global_timeline_json),
           })
         }
 
@@ -230,10 +239,10 @@ class KBExportService {
             '@id': `kb:${kbId}/doc/${ds.document_id}/summary`,
             '@type': 'DocumentSummary',
             summary: ds.summary,
-            keyEntities: JSON.parse(ds.key_entities_json || '[]'),
-            timeline: JSON.parse(ds.timeline_json || '[]'),
-            keywords: JSON.parse(ds.keywords_json || '[]'),
-            mainTopics: JSON.parse(ds.main_topics_json || '[]'),
+            keyEntities: this.safeJsonParse(ds.key_entities_json),
+            timeline: this.safeJsonParse(ds.timeline_json),
+            keywords: this.safeJsonParse(ds.keywords_json),
+            mainTopics: this.safeJsonParse(ds.main_topics_json),
           })
         }
 
@@ -244,8 +253,8 @@ class KBExportService {
             name: entity.name,
             entityType: entity.type,
             description: entity.description,
-            aliases: JSON.parse(entity.aliases_json || '[]'),
-            attributes: JSON.parse(entity.attributes_json || '{}'),
+            aliases: this.safeJsonParse(entity.aliases_json),
+            attributes: this.safeJsonParse(entity.attributes_json, {}),
             mentionCount: entity.mention_count,
           })
         }
@@ -268,8 +277,8 @@ class KBExportService {
             '@type': 'Chapter',
             title: ch.title,
             summary: ch.summary,
-            keywords: JSON.parse(ch.keywords_json || '[]'),
-            entities: JSON.parse(ch.entities_json || '[]'),
+            keywords: this.safeJsonParse(ch.keywords_json),
+            entities: this.safeJsonParse(ch.entities_json),
           })
         }
 
@@ -286,21 +295,21 @@ class KBExportService {
         csvLines.push('=== Global Summary ===')
         csvLines.push('summary,key_topics,key_entities')
         if (globalSummary) {
-          csvLines.push(`"${(globalSummary.summary || '').replace(/"/g, '""')}","${JSON.stringify(JSON.parse(globalSummary.key_topics_json || '[]')).replace(/"/g, '""')}","${JSON.stringify(JSON.parse(globalSummary.key_entities_json || '[]')).replace(/"/g, '""')}"`)
+          csvLines.push(`"${(globalSummary.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(globalSummary.key_topics_json)).replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(globalSummary.key_entities_json)).replace(/"/g, '""')}"`)
         }
         csvLines.push('')
 
         csvLines.push('=== Document Summaries ===')
         csvLines.push('document_id,summary,keywords,main_topics')
         for (const ds of docSummaries) {
-          csvLines.push(`"${ds.document_id}","${(ds.summary || '').replace(/"/g, '""')}","${JSON.stringify(JSON.parse(ds.keywords_json || '[]')).replace(/"/g, '""')}","${JSON.stringify(JSON.parse(ds.main_topics_json || '[]')).replace(/"/g, '""')}"`)
+          csvLines.push(`"${ds.document_id}","${(ds.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(ds.keywords_json)).replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(ds.main_topics_json)).replace(/"/g, '""')}"`)
         }
         csvLines.push('')
 
         csvLines.push('=== Entities ===')
         csvLines.push('id,name,type,description,aliases,mention_count')
         for (const entity of entities) {
-          csvLines.push(`"${entity.id}","${(entity.name || '').replace(/"/g, '""')}","${entity.type}","${(entity.description || '').replace(/"/g, '""')}","${JSON.stringify(JSON.parse(entity.aliases_json || '[]')).replace(/"/g, '""')}",${entity.mention_count || 0}`)
+          csvLines.push(`"${entity.id}","${(entity.name || '').replace(/"/g, '""')}","${entity.type}","${(entity.description || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(entity.aliases_json)).replace(/"/g, '""')}",${entity.mention_count || 0}`)
         }
         csvLines.push('')
 
@@ -314,7 +323,7 @@ class KBExportService {
         csvLines.push('=== Chapters ===')
         csvLines.push('document_id,title,summary,keywords')
         for (const ch of chapters) {
-          csvLines.push(`"${ch.document_id}","${(ch.title || '').replace(/"/g, '""')}","${(ch.summary || '').replace(/"/g, '""')}","${JSON.stringify(JSON.parse(ch.keywords_json || '[]')).replace(/"/g, '""')}"`)
+          csvLines.push(`"${ch.document_id}","${(ch.title || '').replace(/"/g, '""')}","${(ch.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(ch.keywords_json)).replace(/"/g, '""')}"`)
         }
 
         fs.writeFileSync(exportPath, csvLines.join('\n'), 'utf-8')
@@ -399,7 +408,12 @@ class KBExportService {
         return { success: false, error: 'Invalid archive: manifest.json not found' }
       }
 
-      const manifest = JSON.parse(manifestEntry.getData().toString('utf-8'))
+      let manifest: any
+      try {
+        manifest = JSON.parse(manifestEntry.getData().toString('utf-8'))
+      } catch (e) {
+        return { success: false, error: `Invalid manifest.json: ${e instanceof Error ? e.message : String(e)}` }
+      }
       if (manifest.type !== 'workavatar-kb-full') {
         return { success: false, error: 'Invalid archive: not a WorkAvatar knowledge base export' }
       }
@@ -409,7 +423,12 @@ class KBExportService {
         return { success: false, error: 'Invalid archive: knowledge-data.json not found' }
       }
 
-      const knowledgeData = JSON.parse(dataEntry.getData().toString('utf-8'))
+      let knowledgeData: any
+      try {
+        knowledgeData = JSON.parse(dataEntry.getData().toString('utf-8'))
+      } catch (e) {
+        return { success: false, error: `Invalid knowledge-data.json: ${e instanceof Error ? e.message : String(e)}` }
+      }
 
       onProgress?.('creating_kb', 'Creating knowledge base...')
       const newKBName = kbName || manifest.kb?.name || 'Imported Knowledge Base'
@@ -587,7 +606,12 @@ class KBExportService {
       let importedRelations: Array<{ source: string; target: string; relationType: string; description: string }> = []
 
       if (format === 'json-ld') {
-        const jsonLd = JSON.parse(content)
+        let jsonLd: any
+        try {
+          jsonLd = JSON.parse(content)
+        } catch (e) {
+          return { success: false, error: `Invalid JSON-LD file: ${e instanceof Error ? e.message : String(e)}` }
+        }
         const graph = jsonLd['@graph'] || []
 
         for (const node of graph) {
@@ -655,7 +679,7 @@ class KBExportService {
           } else if (conflictStrategy === 'merge') {
             const existing = this.db.prepare('SELECT * FROM kb_entities WHERE id = ?').get(existingId) as any
             if (existing) {
-              const existingAliases: string[] = JSON.parse(existing.aliases_json || '[]')
+              const existingAliases: string[] = this.safeJsonParse(existing.aliases_json)
               const newAliases = entity.aliases.filter(a => !existingAliases.includes(a))
               this.db.prepare(`
                 UPDATE kb_entities SET aliases_json = ?, mention_count = mention_count + 1, updated_at = unixepoch()

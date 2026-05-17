@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 
 export const jsonUtilsTool: ToolDefinition = {
   id: 'json_utils',

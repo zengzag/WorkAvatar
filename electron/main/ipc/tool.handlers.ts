@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
-  ToolExecuteParams,
   ToolAssignParams,
   MCPServerCreateParams,
   MCPServerUpdateParams,
@@ -9,7 +8,7 @@ import type {
 import type DatabaseService from '../services/database.service'
 import type ToolEngineService from '../services/tool-engine.service'
 import type SkillRegistryService from '../services/skill-registry.service'
-import { allBuiltinTools } from '../services/agent/builtin-tools'
+import { allBuiltinTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 
 function getUnifiedBuiltinToolCatalog() {
@@ -62,10 +61,6 @@ export function registerToolHandlers(
     return getUnifiedBuiltinToolCatalog()
   })
 
-  ipcMain.handle(IPC_CHANNELS.TOOL_EXECUTE, async (_, params: ToolExecuteParams) => {
-    return toolEngine.executeTool(params.tool_id, params.args)
-  })
-
   ipcMain.handle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, (_, params: { employee_id: string }) => {
     const catalog = getUnifiedBuiltinToolCatalog()
 
@@ -89,11 +84,6 @@ export function registerToolHandlers(
     db.prepare(
       'INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = ?'
     ).run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
-    return { success: true }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.TOOL_REMOVE_FROM_EMPLOYEE, (_, params: { employee_id: string; tool_id: string }) => {
-    db.prepare('DELETE FROM employee_tools WHERE employee_id = ? AND tool_id = ?').run(params.employee_id, params.tool_id)
     return { success: true }
   })
 
@@ -167,10 +157,6 @@ export function registerToolHandlers(
     return skillRegistry.getInstalledSkills()
   })
 
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_GET, (_, id: string) => {
-    return skillRegistry.getSkillById(id)
-  })
-
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_INSTALL, async (_, params: { source: 'directory' | 'zip'; path: string }) => {
     try {
       if (params.source === 'directory') {
@@ -186,11 +172,6 @@ export function registerToolHandlers(
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_UNINSTALL, async (_, id: string) => {
     const result = await skillRegistry.uninstallSkill(id)
     return { success: result }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE, (_, params: { id: string; enabled: boolean }) => {
-    skillRegistry.toggleSkill(params.id, params.enabled)
-    return { success: true }
   })
 
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_GET_EMPLOYEE_SKILLS, (_, params: { employee_id: string }) => {

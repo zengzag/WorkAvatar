@@ -77,10 +77,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return result
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_GET_FILE_BY_HASH, (_, params: { hash: string }) => {
-    return kbService.getExistingDocByHash(params.hash)
-  })
-
   ipcMain.handle(IPC_CHANNELS.KB_PROCESS_DOCUMENT, async (event, params: KBProcessDocumentParams) => {
     return kbService.processDocument(
       params.doc_id,
@@ -155,14 +151,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
 
   ipcMain.handle(IPC_CHANNELS.KB_SEARCH_CHAPTERS, (_, params: { kb_id: string; query: string; top_k?: number }) => {
     return kbService.searchChapters(params.kb_id, params.query, params.top_k)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, (_, params: { kb_id: string; query: string; top_k?: number }) => {
-    return kbService.searchDocumentSummaries(params.kb_id, params.query, params.top_k)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, (_, params: { kb_id: string; status?: string }) => {
-    return kbService.getProcessingJobs(params.kb_id, params.status)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_GET_DOC_CONTENT, (_, docId: string) => {

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import { safeCalculate } from './utils'
 
 export const calculatorTool: ToolDefinition = {

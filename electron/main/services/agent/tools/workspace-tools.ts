@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import WorkspaceManagerService from '../../workspace-manager.service'
 import UnifiedInteractionService from '../../unified-interaction.service'
 import { interactionContext } from '../../unified-interaction.service'

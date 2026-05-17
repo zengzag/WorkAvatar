@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 

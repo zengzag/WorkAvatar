@@ -4,12 +4,8 @@ import type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
-  SkillListParams,
-  SkillCreateParams,
-  SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
-  ConversationRecentParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
@@ -55,33 +51,6 @@ export function registerEmployeeHandlers(
     return workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_DELETE_WORKSPACE, (_, id: string) => {
-    return workspaceManager.deleteEmployeeWorkspace(id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_LIST, (_, params: SkillListParams) => {
-    return workspaceManager.getSkillList(params.employee_id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_CREATE, (_, params: SkillCreateParams) => {
-    return workspaceManager.createSkill(
-      params.employee_id,
-      params.type,
-      params.name,
-      params.description,
-      params.prompt_template
-    )
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_UPDATE, (_, params: SkillUpdateParams) => {
-    const { id, ...data } = params
-    return workspaceManager.updateSkill(id, data)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_DELETE, (_, id: string) => {
-    return workspaceManager.deleteSkill(id)
-  })
-
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_LIST, (_, params: ConversationListParams) => {
     return workspaceManager.getConversationList(params.employee_id)
   })
@@ -105,10 +74,6 @@ export function registerEmployeeHandlers(
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (_, employeeId: string) => {
     return workspaceManager.deleteAllConversations(employeeId)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_RECENT, (_, params?: ConversationRecentParams) => {
-    return workspaceManager.getAllRecentConversations(params?.limit)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, async (event, params: EmployeeProfileAnalyzeParams) => {

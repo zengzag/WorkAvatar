@@ -5,7 +5,6 @@ import type {
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatParams,
-  LLMChatStreamParams,
 } from '../../shared/ipc-channels'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
@@ -38,10 +37,6 @@ export function registerLLMHandlers(
     return llmClient.getProviderList()
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_GET, (_, id: string) => {
-    return llmClient.getProvider(id)
-  })
-
   ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_CREATE, async (_, params: LLMProviderCreateParams) => {
     return llmClient.createProvider(params)
   })
@@ -70,20 +65,6 @@ export function registerLLMHandlers(
     } catch (error: any) {
       return { success: false, error: error.message || String(error) }
     }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.LLM_CHAT_STREAM, async (event, params: LLMChatStreamParams) => {
-    await llmClient.chatStream(
-      params.provider_id,
-      params.messages,
-      (chunk: string) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, chunk) },
-      () => { event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE) },
-      (error: Error) => { event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, error.message) },
-      params.model_id ? { ...params.options, model: params.model_id, enable_thinking: params.enable_thinking } : { ...params.options, enable_thinking: params.enable_thinking },
-      undefined,
-      (thoughtChunk: string) => { event.sender.send(IPC_CHANNELS.LLM_THOUGHT, thoughtChunk) },
-    )
-    return { success: true }
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: any) => {

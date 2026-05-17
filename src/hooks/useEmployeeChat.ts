@@ -385,7 +385,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as any[])
-    } catch {}
+    } catch (e) { console.error('Failed to load providers:', e) }
   }
 
   const startNewConversation = async (): Promise<string | null> => {
@@ -599,7 +599,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           )
         }
       }
-    } catch {}
+    } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
   const handleSend = async () => {
@@ -617,7 +617,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const streamState = streamStatesRef.current.get(currentConvId)
     if (streamState?.isStreaming) return
 
-    setInputValue(content)
     sendMessage(currentConvId)
   }
 
@@ -750,7 +749,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     )
     try {
       await window.electronAPI.llm.abortChat(activeConversationId)
-    } catch {}
+    } catch (e) { console.error('Failed to abort chat:', e) }
   }
 
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name

@@ -13,9 +13,6 @@ export type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
-  SkillListParams,
-  SkillCreateParams,
-  SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
@@ -24,7 +21,6 @@ export type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
-  ConversationRecentParams,
   EmployeeKBListParams,
   EmployeeKBLinkParams,
   EmployeeKBUnlinkParams,
@@ -34,11 +30,9 @@ export type {
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatParams,
-  LLMChatStreamParams,
   EmployeeChatStreamParams,
 } from './channels/llm'
 export type {
-  ToolExecuteParams,
   ToolAssignParams,
   MCPServerCreateParams,
   MCPServerUpdateParams,
@@ -46,7 +40,6 @@ export type {
 export type {
   SettingsGetParams,
   SettingsSetParams,
-  AppGetPathParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
 } from './channels/app'
