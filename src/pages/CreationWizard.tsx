@@ -630,7 +630,7 @@ const CreationWizard: React.FC = () => {
               }
             }}
           >
-            {tool.name}
+            {tool.title || tool.name}
           </Checkbox>
         ))}
       </div>
@@ -717,7 +717,7 @@ const CreationWizard: React.FC = () => {
   }
 
   const breadcrumbItems = [
-    { title: t('creationWizard.breadcrumbChatCenter'), onClick: () => navigate('/') },
+    { title: t('creationWizard.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
     { title: t('creationWizard.breadcrumbCreate') },
   ]
 

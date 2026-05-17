@@ -1,5 +1,6 @@
 import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from '../tool.types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
@@ -17,13 +18,22 @@ export function createKBAgentTools(
   const tools: ToolDefinition[] = []
   if (!employeeId) return tools
 
-  const employeeKBs = _db.getDb().prepare(`
-    SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
-    FROM knowledge_bases kb
-    INNER JOIN employee_kb_links l ON kb.id = l.kb_id
-    WHERE l.employee_id = ?
-    ORDER BY kb.name
-  `).all(employeeId) as any[]
+  const kbDb = KBDatabaseService.getInstance()
+  const links = _db.getDb().prepare(
+    'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
+  ).all(employeeId) as any[]
+
+  const linkedKbIds = links.map((l) => l.kb_id)
+  let employeeKBs: any[] = []
+  if (linkedKbIds.length > 0) {
+    const placeholders = linkedKbIds.map(() => '?').join(',')
+    employeeKBs = kbDb.getDb().prepare(`
+      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
+      FROM knowledge_bases kb
+      WHERE kb.id IN (${placeholders})
+      ORDER BY kb.name
+    `).all(...linkedKbIds) as any[]
+  }
 
   const allKBs = employeeKBs
 

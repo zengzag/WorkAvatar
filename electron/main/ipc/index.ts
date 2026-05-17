@@ -37,7 +37,7 @@ export function registerIpcHandlers() {
   const db = DatabaseService.getInstance().getDb()
 
   registerWorkspaceHandlers(workspaceManager)
-  registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService)
+  registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService, employeeAgent)
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db, ocrService)
   registerToolHandlers(db, toolEngine, skillRegistry)

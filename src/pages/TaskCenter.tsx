@@ -24,7 +24,7 @@ import {
   FieldTimeOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import ExecutionDetailModal from '../employee-settings/ExecutionDetailModal'
+import ExecutionDetailModal from '../components/employee-settings/ExecutionDetailModal'
 
 const { Text } = Typography
 
@@ -53,7 +53,7 @@ interface TaskInfo {
   name: string
 }
 
-const GlobalTaskCenter: React.FC = () => {
+const TaskCenter: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const [executions, setExecutions] = useState<ExecutionItem[]>([])
@@ -259,97 +259,99 @@ const GlobalTaskCenter: React.FC = () => {
   ]
 
   return (
-    <Card
-      title={
-        <Space>
-          <FieldTimeOutlined />
-          <span>{t('empTask.globalTaskCenter')}</span>
-          {failedExecs.length > 0 && (
-            <Badge count={failedExecs.length} size="small">
-              <AlertOutlined style={{ color: token.colorError }} />
-            </Badge>
-          )}
-        </Space>
-      }
-      extra={
-        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>
-          {t('common.refresh')}
-        </Button>
-      }
-      size="small"
-    >
-      {failedExecs.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <Tag color="error" icon={<AlertOutlined />}>
-            {t('empTask.failedAlert', { count: failedExecs.length })}
-          </Tag>
-        </div>
-      )}
-
-      <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Select
-          allowClear
-          placeholder={t('empTask.filterStatus')}
-          value={filterStatus}
-          onChange={setFilterStatus}
-          style={{ width: 120 }}
-          size="small"
-          options={[
-            { label: t('empTask.statusRunning'), value: 'running' },
-            { label: t('empTask.statusCompleted'), value: 'completed' },
-            { label: t('empTask.statusFailed'), value: 'failed' },
-            { label: t('empTask.statusTimeout'), value: 'timeout' },
-          ]}
-        />
-        <Select
-          allowClear
-          placeholder={t('empTask.filterEmployee')}
-          value={filterEmployee}
-          onChange={setFilterEmployee}
-          style={{ width: 140 }}
-          size="small"
-          options={employeeOptions}
-          showSearch
-          optionFilterProp="label"
-        />
-        <Select
-          allowClear
-          placeholder={t('empTask.filterTriggerType')}
-          value={filterTrigger}
-          onChange={setFilterTrigger}
-          style={{ width: 120 }}
-          size="small"
-          options={[
-            { label: t('empTask.manual'), value: 'manual' },
-            { label: t('empTask.scheduled'), value: 'scheduled' },
-          ]}
-        />
-      </div>
-
-      <Table
-        dataSource={filteredExecutions}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
+    <div style={{ padding: '16px 24px 24px' }}>
+      <Card
+        title={
+          <Space>
+            <FieldTimeOutlined />
+            <span>{t('empTask.globalTaskCenter')}</span>
+            {failedExecs.length > 0 && (
+              <Badge count={failedExecs.length} size="small">
+                <AlertOutlined style={{ color: token.colorError }} />
+              </Badge>
+            )}
+          </Space>
+        }
+        extra={
+          <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>
+            {t('common.refresh')}
+          </Button>
+        }
         size="small"
-        pagination={{ pageSize: 10, size: 'small' }}
-        locale={{ emptyText: t('empTask.noExecutions') }}
-        scroll={{ x: 'max-content' }}
-      />
+      >
+        {failedExecs.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Tag color="error" icon={<AlertOutlined />}>
+              {t('empTask.failedAlert', { count: failedExecs.length })}
+            </Tag>
+          </div>
+        )}
 
-      <ExecutionDetailModal
-        open={detailModalOpen}
-        execution={detailExecution}
-        liveExecutionId={liveExecutionId}
-        onClose={() => { setDetailModalOpen(false); setLiveExecutionId(null) }}
-        onAbort={async (executionId: string) => {
-          try {
-            await window.electronAPI.employeeTask.abortExecution(executionId)
-          } catch {}
-        }}
-      />
-    </Card>
+        <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Select
+            allowClear
+            placeholder={t('empTask.filterStatus')}
+            value={filterStatus}
+            onChange={setFilterStatus}
+            style={{ width: 120 }}
+            size="small"
+            options={[
+              { label: t('empTask.statusRunning'), value: 'running' },
+              { label: t('empTask.statusCompleted'), value: 'completed' },
+              { label: t('empTask.statusFailed'), value: 'failed' },
+              { label: t('empTask.statusTimeout'), value: 'timeout' },
+            ]}
+          />
+          <Select
+            allowClear
+            placeholder={t('empTask.filterEmployee')}
+            value={filterEmployee}
+            onChange={setFilterEmployee}
+            style={{ width: 140 }}
+            size="small"
+            options={employeeOptions}
+            showSearch
+            optionFilterProp="label"
+          />
+          <Select
+            allowClear
+            placeholder={t('empTask.filterTriggerType')}
+            value={filterTrigger}
+            onChange={setFilterTrigger}
+            style={{ width: 120 }}
+            size="small"
+            options={[
+              { label: t('empTask.manual'), value: 'manual' },
+              { label: t('empTask.scheduled'), value: 'scheduled' },
+            ]}
+          />
+        </div>
+
+        <Table
+          dataSource={filteredExecutions}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          size="small"
+          pagination={{ pageSize: 10, size: 'small' }}
+          locale={{ emptyText: t('empTask.noExecutions') }}
+          scroll={{ x: 'max-content' }}
+        />
+
+        <ExecutionDetailModal
+          open={detailModalOpen}
+          execution={detailExecution}
+          liveExecutionId={liveExecutionId}
+          onClose={() => { setDetailModalOpen(false); setLiveExecutionId(null) }}
+          onAbort={async (executionId: string) => {
+            try {
+              await window.electronAPI.employeeTask.abortExecution(executionId)
+            } catch {}
+          }}
+        />
+      </Card>
+    </div>
   )
 }
 
-export default GlobalTaskCenter
+export default TaskCenter

@@ -469,7 +469,7 @@ const EmployeeSettings: React.FC = () => {
         subTitle={t('employeeSettings.subtitle')}
         onBack={() => navigate(`/employee/${id}`)}
         breadcrumb={[
-          { title: t('employeeSettings.breadcrumbChatCenter'), onClick: () => navigate('/') },
+          { title: t('employeeSettings.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
           { title: employee.name },
           { title: t('employeeSettings.breadcrumbConfig') },
         ]}

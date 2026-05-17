@@ -1,15 +1,14 @@
 import { useState } from 'react'
 import { Layout, Menu, Typography } from 'antd'
 import {
-  MessageOutlined,
   RobotOutlined,
+  FieldTimeOutlined,
   ApartmentOutlined,
   SettingOutlined,
   BookOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import TaskProgressPanel from './components/common/TaskProgressPanel'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
 import TaskNotificationHandler from './components/common/TaskNotificationHandler'
 import { ParseDetailModal } from './components/knowledge-base'
@@ -33,32 +32,32 @@ const App: React.FC = () => {
 
   const getSelectedKey = () => {
     const path = location.pathname
-    if (path === '/' || path.startsWith('/conversation-center')) return 'conversation-center'
-    if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
+    if (path === '/' || path.startsWith('/digital-employees') || path.startsWith('/conversation-center')) return 'digital-employees'
+    if (path === '/task-center') return 'task-center'
     if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
-    return 'conversation-center'
+    return 'digital-employees'
   }
 
   const menuItems = [
     {
-      key: 'conversation-center',
-      icon: <MessageOutlined />,
-      label: t('nav.conversationCenter'),
-      onClick: () => navigate('/'),
-    },
-    {
-      key: 'employees',
+      key: 'digital-employees',
       icon: <RobotOutlined />,
-      label: t('nav.employees'),
-      onClick: () => navigate('/employees'),
+      label: t('nav.digitalEmployees'),
+      onClick: () => navigate('/'),
     },
     {
       key: 'knowledge-base',
       icon: <BookOutlined />,
       label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
+    },
+    {
+      key: 'task-center',
+      icon: <FieldTimeOutlined />,
+      label: t('nav.taskCenter'),
+      onClick: () => navigate('/task-center'),
     },
     {
       key: 'workflows',
@@ -95,7 +94,7 @@ const App: React.FC = () => {
             borderBottom: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0',
           }}
         >
-          <MessageOutlined
+          <RobotOutlined
             style={{
               fontSize: collapsed ? 24 : 20,
               color: '#1677ff',
@@ -110,9 +109,6 @@ const App: React.FC = () => {
           items={menuItems}
           style={{ borderRight: 'none', marginTop: 8, flex: 1 }}
         />
-        <div style={{ padding: '8px 16px 12px', borderTop: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0' }}>
-          <TaskProgressPanel />
-        </div>
       </Sider>
       <Layout>
         <Content

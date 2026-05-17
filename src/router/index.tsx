@@ -1,12 +1,12 @@
 import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
 import CreationWizard from '../pages/CreationWizard'
-import EmployeeManager from '../pages/EmployeeManager'
+import DigitalEmployeeCenter from '../pages/DigitalEmployeeCenter'
+import TaskCenter from '../pages/TaskCenter'
 import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
-import ConversationCenter from '../pages/ConversationCenter'
 import WorkflowList from '../pages/WorkflowList'
 import WorkflowEditor from '../pages/WorkflowEditor'
 
@@ -17,23 +17,27 @@ const router = createHashRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/conversation-center" replace />,
+        element: <Navigate to="/digital-employees" replace />,
       },
       {
-        path: 'conversation-center',
-        element: <ConversationCenter />,
+        path: 'digital-employees',
+        element: <DigitalEmployeeCenter />,
       },
       {
         path: 'dashboard',
-        element: <Navigate to="/conversation-center" replace />,
+        element: <Navigate to="/digital-employees" replace />,
+      },
+      {
+        path: 'conversation-center',
+        element: <Navigate to="/digital-employees" replace />,
       },
       {
         path: 'wizard',
         element: <CreationWizard />,
       },
       {
-        path: 'employees',
-        element: <EmployeeManager />,
+        path: 'task-center',
+        element: <TaskCenter />,
       },
       {
         path: 'workflows',

@@ -362,12 +362,19 @@ export class EmployeeExportConfigService {
   }
 
   getEmployeeKnowledgeBases(employeeId: string): Array<{ kb_id: string; kb_name: string }> {
+    const links = this.db.getDb().prepare(
+      'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
+    ).all(employeeId) as any[]
+
+    const kbIds = links.map((l) => l.kb_id)
+    if (kbIds.length === 0) return []
+
+    const placeholders = kbIds.map(() => '?').join(',')
     return this.kbDb.getDb().prepare(`
       SELECT kb.id as kb_id, kb.name as kb_name
       FROM knowledge_bases kb
-      INNER JOIN employee_kb_links l ON kb.id = l.kb_id
-      WHERE l.employee_id = ?
-    `).all(employeeId) as Array<{ kb_id: string; kb_name: string }>
+      WHERE kb.id IN (${placeholders})
+    `).all(...kbIds) as Array<{ kb_id: string; kb_name: string }>
   }
 
   getEmployeeMCPServers(_employeeId: string): Array<{ server_id: string; server_name: string }> {

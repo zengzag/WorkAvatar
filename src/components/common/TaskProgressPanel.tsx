@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Button, Space, Typography, Progress, Tag, Popover, Empty, theme } from 'antd'
+import { Button, Space, Typography, Progress, Tag, Popover, Empty, Badge, theme } from 'antd'
 import {
   ClockCircleOutlined,
-  SyncOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LoadingOutlined,
@@ -12,10 +11,8 @@ import {
   StopOutlined,
   FieldTimeOutlined,
   EyeOutlined,
-  BookOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
 import { useTaskDetailStore } from '../../stores/task-detail.store'
 
 const { Text } = Typography
@@ -40,7 +37,6 @@ const TaskProgressPanel: React.FC = () => {
   const [tasks, setTasks] = useState<BackgroundTask[]>([])
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const openDetail = useTaskDetailStore((s) => s.openDetail)
 
   useEffect(() => {
@@ -61,11 +57,8 @@ const TaskProgressPanel: React.FC = () => {
 
   const activeCount = tasks.filter(t => t.status === 'running').length
   const pendingCount = tasks.filter(t => t.status === 'pending').length
-  const pausedCount = tasks.filter(t => t.status === 'paused').length
   const failedCount = tasks.filter(t => t.status === 'failed').length
-  const hasActive = activeCount + pendingCount + pausedCount > 0
-
-  if (tasks.length === 0) return null
+  const totalActiveCount = activeCount + pendingCount
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -120,19 +113,8 @@ const TaskProgressPanel: React.FC = () => {
     }
   }
 
-  const handleNavigateToKB = (task: BackgroundTask) => {
-    if (task.metadata?.kbId) {
-      navigate('/knowledge-base')
-    }
-  }
-
   const canViewDetail = (task: BackgroundTask) => {
     return (task.type === 'parse' && task.metadata?.docId) &&
-      (task.status === 'running' || task.status === 'paused' || task.status === 'completed' || task.status === 'failed')
-  }
-
-  const canNavigateToKB = (task: BackgroundTask) => {
-    return (task.type === 'process' && task.metadata?.kbId) &&
       (task.status === 'running' || task.status === 'paused' || task.status === 'completed' || task.status === 'failed')
   }
 
@@ -151,9 +133,6 @@ const TaskProgressPanel: React.FC = () => {
             <Space size={4} style={{ flexShrink: 0 }}>
               {canViewDetail(task) && (
                 <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(task)} title={t('parseProgress.detail')} />
-              )}
-              {canNavigateToKB(task) && (
-                <Button type="text" size="small" icon={<BookOutlined />} onClick={() => handleNavigateToKB(task)} title={t('taskProgress.goToKB')} />
               )}
               {(task.status === 'running' || task.status === 'pending') && (
                 <Button type="text" size="small" icon={<PauseOutlined />} onClick={() => handlePause(task.id)} title={t('parseProgress.pause')} />
@@ -194,36 +173,21 @@ const TaskProgressPanel: React.FC = () => {
     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('taskProgress.noTasks')} style={{ margin: '8px 0' }} />
   )
 
-  const triggerContent = hasActive ? (
-    <Space size={4} wrap>
-      {activeCount > 0 && <Tag color="blue" icon={<SyncOutlined spin />} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{activeCount}</Tag>}
-      {pausedCount > 0 && <Tag color="gold" icon={<PauseCircleOutlined />} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{pausedCount}</Tag>}
-      {failedCount > 0 && <Tag color="red" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', marginRight: 0 }}>{failedCount}</Tag>}
-    </Space>
-  ) : (
-    <Space size={4}>
-      <FieldTimeOutlined style={{ color: token.colorTextQuaternary }} />
-    </Space>
-  )
+  const badgeCount = totalActiveCount > 0 ? totalActiveCount : (failedCount > 0 ? failedCount : 0)
+  const badgeColor = totalActiveCount === 0 && failedCount > 0 ? '#ff4d4f' : undefined
 
   return (
     <Popover
       content={taskListContent}
       title={<Text strong style={{ fontSize: 13 }}>{t('taskProgress.panelTitle')}</Text>}
       trigger="click"
-      placement="topRight"
+      placement="bottomLeft"
     >
-      <div style={{
-        padding: '6px 10px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        cursor: 'pointer',
-        borderRadius: 6,
-        transition: 'background 0.2s',
-      }}>
-        {triggerContent}
-      </div>
+      <Badge count={badgeCount} color={badgeColor} size="small" offset={[-4, 4]}>
+        <Button icon={<FieldTimeOutlined />} size="middle">
+          {t('taskProgress.panelTitle')}
+        </Button>
+      </Badge>
     </Popover>
   )
 }

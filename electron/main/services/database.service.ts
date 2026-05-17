@@ -178,6 +178,8 @@ class DatabaseService {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_tools_unique ON employee_tools(employee_id, tool_id);
+
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -291,7 +293,7 @@ class DatabaseService {
 
       CREATE TABLE IF NOT EXISTS employee_kb_links (
         employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+        kb_id TEXT NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         PRIMARY KEY (employee_id, kb_id)
       );

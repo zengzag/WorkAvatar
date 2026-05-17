@@ -163,7 +163,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               >
                 {providers.map((p) => (
                   <Select.Option key={p.id} value={p.id}>
-                    {p.name} ({p.model})
+                    {p.name}{p.model ? ` (${p.model})` : ''}
                   </Select.Option>
                 ))}
               </Select>

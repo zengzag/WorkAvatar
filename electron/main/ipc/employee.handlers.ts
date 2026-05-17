@@ -23,11 +23,13 @@ import type {
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
+import type EmployeeAgentService from '../services/employee-agent.service'
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
   profilingService: EmployeeProfilingService,
-  employeeExportService: EmployeeExportService
+  employeeExportService: EmployeeExportService,
+  employeeAgentService: EmployeeAgentService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
     return workspaceManager.getEmployeeList(params?.status)
@@ -184,10 +186,18 @@ export function registerEmployeeHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LINK, (_, params: EmployeeKBLinkParams) => {
-    return workspaceManager.linkKBToEmployee(params.employee_id, params.kb_id)
+    const result = workspaceManager.linkKBToEmployee(params.employee_id, params.kb_id)
+    if (result) {
+      employeeAgentService.clearAgentCache(params.employee_id)
+    }
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, (_, params: EmployeeKBUnlinkParams) => {
-    return workspaceManager.unlinkKBFromEmployee(params.employee_id, params.kb_id)
+    const result = workspaceManager.unlinkKBFromEmployee(params.employee_id, params.kb_id)
+    if (result) {
+      employeeAgentService.clearAgentCache(params.employee_id)
+    }
+    return result
   })
 }

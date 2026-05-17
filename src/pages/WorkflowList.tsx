@@ -212,7 +212,7 @@ const WorkflowList: React.FC = () => {
       },
     },
     {
-      title: t('employeeManager.createTime'),
+      title: t('workflow.createTime'),
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
