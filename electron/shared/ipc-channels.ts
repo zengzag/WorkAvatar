@@ -74,3 +74,7 @@ export type {
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
 } from './channels/employee-task'
+export type {
+  WorkflowCreateParams,
+  WorkflowUpdateParams,
+} from './channels/workflow'

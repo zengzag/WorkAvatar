@@ -10,6 +10,8 @@ import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
+import WorkflowList from '../pages/WorkflowList'
+import WorkflowEditor from '../pages/WorkflowEditor'
 
 const router = createHashRouter([
   {
@@ -43,6 +45,14 @@ const router = createHashRouter([
       {
         path: 'employees',
         element: <EmployeeManager />,
+      },
+      {
+        path: 'workflows',
+        element: <WorkflowList />,
+      },
+      {
+        path: 'workflow/:id',
+        element: <WorkflowEditor />,
       },
       {
         path: 'employee/:id',

@@ -181,7 +181,27 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 6. Claude Skills 技能生态
+### 6. 工作流编排
+
+#### 可视化图编辑器
+- 基于 DAG（有向无环图）的工作流编排，支持多个数字员工协同处理任务
+- 拖拽式图编辑器，支持节点添加、连线、删除、自动布局
+- 三种节点类型：
+  - **输入节点**：定义工作流的初始输入提示词
+  - **员工节点**：绑定数字员工，接收上游输出作为输入，执行 Agent 对话
+  - **输出节点**：收集工作流的最终输出产物
+- 连线验证：自动检测循环依赖，确保工作流是有向无环图
+- 支持多输入汇聚：当某个员工节点依赖多个上游输入时，等待所有输入完成后合并执行
+
+#### 运行时可视化
+- 实时展示工作流执行状态：每个节点的运行/完成/失败状态
+- 节点执行详情：查看每个节点的输入内容、输出结果、错误信息
+- 支持中止正在执行的工作流
+- 执行历史记录查看
+
+---
+
+### 7. Claude Skills 技能生态
 
 #### 技能管理
 - 支持从目录安装 Claude Skills 格式的技能
@@ -208,7 +228,7 @@ skill-name/
 
 ---
 
-### 7. MCP 服务器集成
+### 8. MCP 服务器集成
 
 #### Model Context Protocol 支持
 - 集成 `@modelcontextprotocol/sdk`
@@ -218,7 +238,7 @@ skill-name/
 
 ---
 
-### 8. 数字员工工作台
+### 9. 数字员工工作台
 
 #### 沉浸式对话界面
 - **极简顶栏**：显示员工名称、状态标签、LLM 选择器和快捷操作图标
@@ -239,7 +259,7 @@ skill-name/
 
 ---
 
-### 9. 独立知识库管理
+### 10. 独立知识库管理
 
 #### 知识库与项目解耦
 - 知识库独立于项目管理，支持跨项目共享复用
@@ -272,7 +292,7 @@ skill-name/
 
 ---
 
-### 10. 后台任务队列
+### 11. 后台任务队列
 
 #### 任务进度面板
 - 全局任务进度指示器，位于侧边栏底部
@@ -282,7 +302,7 @@ skill-name/
 
 ---
 
-### 11. 知识检索
+### 12. 知识检索
 
 #### FTS5 全文索引检索
 - 基于 SQLite FTS5 的全文索引引擎（`SearchEngineService`），支持中英文混合搜索
@@ -324,7 +344,7 @@ skill-name/
 
 ---
 
-### 12. 多 LLM 提供商支持
+### 13. 多 LLM 提供商支持
 
 - 支持多种 LLM 提供商：
 - 模型分类管理：支持 chat（对话）和 embedding（嵌入）两种模型分类
@@ -334,7 +354,7 @@ skill-name/
 
 ---
 
-### 13. 全局配置管理
+### 14. 全局配置管理
 
 - **LLM 配置**：多提供商增删改查，连接测试，模型分类管理
 - **默认模型**：为不同场景单独配置默认模型（创建数字员工、数字员工对话、知识库处理、快速模型、嵌入模型）
@@ -346,7 +366,7 @@ skill-name/
 
 ---
 
-### 14. 数字员工导入导出
+### 15. 数字员工导入导出
 
 #### 配置导出/导入
 - **配置导出**：将数字员工配置导出为 JSON 文件，包含角色信息、提示词模板、工具配置、关联知识库列表、权限设置等
@@ -420,9 +440,13 @@ skill-name/
 │  │  Employee Export Svc  │                                             │
 │  │  (导入导出)           │                                             │
 │  └───────────────────────┘                                             │
+│  ┌───────────────────────┐                                             │
+│  │  Workflow Svc         │                                             │
+│  │  (工作流编排/执行)    │                                             │
+│  └───────────────────────┘                                             │
 │  ┌───────────────────────────────────────────────────────────────────┐ │
 │  │                  模块化 IPC 处理器 (类型安全)                        │ │
-│  │  app | employee | kb | llm | project | task | tool                 │ │
+│  │  app | employee | kb | llm | project | task | tool | workflow      │ │
 │  └───────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
                                         │
@@ -636,6 +660,7 @@ WorkAvatar/
 │   │   │   ├── project.handlers.ts    # 项目相关 IPC
 │   │   │   ├── task.handlers.ts       # 任务队列相关 IPC
 │   │   │   ├── tool.handlers.ts       # 工具相关 IPC
+│   │   │   ├── workflow.handlers.ts   # 工作流相关 IPC
 │   │   │   └── index.ts               # IPC 处理器导出
 │   │   └── services/                  # 核心服务
 │   │       ├── agent/                 # LightAgent 智能代理系统
@@ -686,6 +711,7 @@ WorkAvatar/
 │   │       ├── project-manager.service.ts # 项目管理服务
 │   │       ├── rule-extraction.service.ts # 规则抽取引擎
 │   │       └── sandbox-tester.service.ts  # 沙盒测试服务
+│   │       ├── workflow.service.ts      # 工作流编排与执行服务
 │   ├── preload/                       # 预加载脚本
 │   │   └── index.ts                   # ContextBridge API 暴露
 │   └── shared/                        # 共享类型和常量
@@ -697,6 +723,7 @@ WorkAvatar/
 │       │   ├── project.ts
 │       │   ├── task.ts
 │       │   ├── tool.ts
+│       │   ├── workflow.ts
 │       │   └── index.ts
 │       ├── ipc-channels.ts            # IPC 通道统一导出
 │       └── types.ts                   # 共享数据类型
@@ -714,6 +741,8 @@ WorkAvatar/
 │   │   ├── EmployeeSettings.tsx       # 数字员工配置管理
 │   │   ├── EmployeeManager.tsx        # 员工管理列表
 │   │   ├── ProjectManager.tsx         # 项目管理列表
+│   │   ├── WorkflowList.tsx           # 工作流列表
+│   │   ├── WorkflowEditor.tsx         # 工作流编辑器
 │   │   └── Settings.tsx               # 全局设置
 │   ├── components/                    # 通用组件
 │   │   ├── common/                    # 基础组件
@@ -750,6 +779,16 @@ WorkAvatar/
 │   │   ├── project/                   # 项目子组件
 │   │   │   ├── ProjectWorkspace.tsx   # 项目工作区文件管理
 │   │   │   └── index.ts
+│   │   ├── workflow/                  # 工作流子组件
+│   │   │   ├── FlowCanvas.tsx         # 工作流画布
+│   │   │   ├── NodeConfigPanel.tsx    # 节点配置面板
+│   │   │   ├── ExecutionPanel.tsx     # 执行状态面板
+│   │   │   ├── nodes/                 # 自定义节点
+│   │   │   │   ├── InputNode.tsx
+│   │   │   │   ├── OutputNode.tsx
+│   │   │   │   ├── EmployeeNode.tsx
+│   │   │   │   └── index.ts
+│   │   │   └── index.ts
 │   │   └── settings/                  # 设置子组件
 │   │       ├── LLMSettings.tsx
 │   │       ├── MCPServerSettings.tsx
@@ -761,6 +800,7 @@ WorkAvatar/
 │   ├── stores/                        # Zustand 状态管理
 │   │   ├── app.store.ts
 │   │   └── appearance.store.ts
+│   │   └── workflow.store.ts
 │   ├── i18n/                          # 国际化
 │   │   ├── index.ts
 │   │   └── locales/

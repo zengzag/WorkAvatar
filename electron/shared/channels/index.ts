@@ -6,6 +6,7 @@ import { APP_CHANNELS } from './app'
 import { KB_CHANNELS } from './kb'
 import { TASK_CHANNELS } from './task'
 import { EMPLOYEE_TASK_CHANNELS } from './employee-task'
+import { WORKFLOW_CHANNELS } from './workflow'
 
 export const IPC_CHANNELS = {
   ...PROJECT_CHANNELS,
@@ -16,6 +17,7 @@ export const IPC_CHANNELS = {
   ...KB_CHANNELS,
   ...TASK_CHANNELS,
   ...EMPLOYEE_TASK_CHANNELS,
+  ...WORKFLOW_CHANNELS,
 } as const
 
 export * from './project'
@@ -26,3 +28,4 @@ export * from './app'
 export * from './kb'
 export * from './task'
 export * from './employee-task'
+export * from './workflow'

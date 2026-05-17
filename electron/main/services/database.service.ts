@@ -167,6 +167,33 @@ class DatabaseService {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      CREATE TABLE IF NOT EXISTS workflows (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        nodes_json TEXT NOT NULL DEFAULT '[]',
+        edges_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS workflow_executions (
+        id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        node_executions_json TEXT NOT NULL DEFAULT '{}',
+        started_at INTEGER,
+        completed_at INTEGER,
+        error_message TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workflows_project ON workflows(project_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions(workflow_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_executions_status ON workflow_executions(status);
+
       CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id);
       CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
       CREATE INDEX IF NOT EXISTS idx_file_annotations_file ON file_annotations(file_id);

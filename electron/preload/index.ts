@@ -59,6 +59,8 @@ import type {
   EmployeeTaskUpdateParams,
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
+  WorkflowCreateParams,
+  WorkflowUpdateParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -372,6 +374,28 @@ const electronAPI = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
     },
   },
+
+  workflow: {
+    list: (params?: { project_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
+    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET, id),
+    create: (params: WorkflowCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CREATE, params),
+    update: (params: WorkflowUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_UPDATE, params),
+    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DELETE, id),
+    execute: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE, workflowId),
+    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, executionId),
+    getExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET_EXECUTION, executionId),
+    listExecutions: (params: { workflow_id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST_EXECUTIONS, params),
+    onExecutionProgress: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
+    },
+    onNodeExecutionUpdate: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
+    },
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -433,6 +457,19 @@ export type ElectronAPI = typeof electronAPI & {
     onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => () => void
     onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => () => void
     onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
+  }
+  workflow: {
+    list: (params?: { project_id?: string }) => Promise<any[]>
+    get: (id: string) => Promise<any>
+    create: (params: WorkflowCreateParams) => Promise<any>
+    update: (params: WorkflowUpdateParams) => Promise<any>
+    delete: (id: string) => Promise<boolean>
+    execute: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
+    abortExecution: (executionId: string) => Promise<boolean>
+    getExecution: (executionId: string) => Promise<any>
+    listExecutions: (params: { workflow_id: string; limit?: number }) => Promise<any[]>
+    onExecutionProgress: (callback: (data: any) => void) => () => void
+    onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
   }
 }
 

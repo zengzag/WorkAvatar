@@ -4,6 +4,7 @@ import {
   RocketOutlined,
   FolderOpenOutlined,
   UserOutlined,
+  ApartmentOutlined,
   SettingOutlined,
   BookOutlined,
 } from '@ant-design/icons'
@@ -36,6 +37,7 @@ const App: React.FC = () => {
     if (path.startsWith('/dashboard')) return 'dashboard'
     if (path === '/projects' || path.startsWith('/project/')) return 'projects'
     if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
+    if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
     return 'dashboard'
@@ -59,6 +61,12 @@ const App: React.FC = () => {
       icon: <UserOutlined />,
       label: t('nav.employees'),
       onClick: () => navigate('/employees'),
+    },
+    {
+      key: 'workflows',
+      icon: <ApartmentOutlined />,
+      label: t('nav.workflows'),
+      onClick: () => navigate('/workflows'),
     },
     {
       key: 'knowledge-base',
