@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { App } from 'antd'
+import { App, theme } from 'antd'
 import { useTranslation } from 'react-i18next'
 import {
   CheckCircleOutlined,
@@ -28,13 +28,14 @@ interface TaskCompletionNotification {
 const TaskNotificationHandler: React.FC = () => {
   const { notification } = App.useApp()
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const navigate = useNavigate()
   const taskNotifications = useAppearanceStore((s) => s.taskNotifications)
   const pendingClickRef = useRef<{ executionId: string; taskId: string; employeeId: string } | null>(null)
 
   const handleNotificationClick = useCallback((data: { executionId: string; taskId: string; employeeId: string }) => {
     pendingClickRef.current = data
-    navigate(`/employee/${data.employeeId}/settings`, { state: { tab: 'tasks', executionId: data.executionId } })
+    navigate('/task-center')
   }, [navigate])
 
   useEffect(() => {
@@ -48,10 +49,10 @@ const TaskNotificationHandler: React.FC = () => {
           : ''
 
         const icon = isSuccess
-          ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+          ? <CheckCircleOutlined style={{ color: token.colorSuccess }} />
           : notif.status === 'timeout'
-            ? <ExclamationCircleOutlined style={{ color: '#faad14' }} />
-            : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+            ? <ExclamationCircleOutlined style={{ color: token.colorWarning }} />
+            : <CloseCircleOutlined style={{ color: token.colorError }} />
 
         const title = isSuccess
           ? t('taskNotification.completedTitle', { employee: notif.employeeName, task: notif.taskName })
@@ -76,7 +77,7 @@ const TaskNotificationHandler: React.FC = () => {
           duration: isSuccess ? 6 : 0,
           placement: 'bottomRight',
           onClick: () => {
-            navigate(`/employee/${notif.employeeId}/settings`, { state: { tab: 'tasks', executionId: notif.executionId } })
+            navigate('/task-center')
           },
           style: { cursor: 'pointer', maxWidth: 420 },
         })

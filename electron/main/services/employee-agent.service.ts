@@ -293,11 +293,6 @@ class EmployeeAgentService {
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
     const { employee_id, provider_id, model_id, messages, use_skills = true, enable_thinking } = params
 
-    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'status'> | undefined
-    if (employeeRow && employeeRow.status !== 'active') {
-      throw new Error(`Employee is not active (status: ${employeeRow.status})`)
-    }
-
     const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking)
 
     const history: Message[] = messages.slice(0, -1).map(m => ({

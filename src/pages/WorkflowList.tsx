@@ -19,7 +19,6 @@ import {
   PlayCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useAppStore } from '../stores/app.store'
 import PageHeader from '../components/common/PageHeader'
 import EmptyState from '../components/common/EmptyState'
 import dayjs from 'dayjs'
@@ -32,7 +31,6 @@ const WorkflowList: React.FC = () => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { setLoading } = useAppStore()
   const [workflows, setWorkflows] = useState<any[]>([])
   const [loadingTable, setLoadingTable] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -47,7 +45,6 @@ const WorkflowList: React.FC = () => {
 
   const loadWorkflows = async () => {
     setLoadingTable(true)
-    setLoading('workflows', true)
     try {
       const result = await window.electronAPI.workflow.list()
       setWorkflows(Array.isArray(result) ? result : [])
@@ -56,7 +53,6 @@ const WorkflowList: React.FC = () => {
       message.error(t('workflow.loadFailed'))
     } finally {
       setLoadingTable(false)
-      setLoading('workflows', false)
     }
   }
 

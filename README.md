@@ -159,7 +159,7 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 5. 任务配置与定时调度
+### 6. 任务配置与定时调度
 
 #### 任务配置
 - 为每个数字员工配置可执行的任务，包含自定义提示词、超时设置
@@ -192,7 +192,7 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 6. 工作流编排
+### 7. 工作流编排
 
 #### 可视化图编辑器
 - 基于 DAG（有向无环图）的工作流编排，支持多个数字员工协同处理任务
@@ -212,7 +212,7 @@ Agent 内置知识库查询工具，支持分层查询：
 
 ---
 
-### 7. Claude Skills 技能生态
+### 8. Claude Skills 技能生态
 
 #### 技能管理
 - 支持从目录安装 Claude Skills 格式的技能
@@ -239,7 +239,7 @@ skill-name/
 
 ---
 
-### 8. MCP 服务器集成
+### 9. MCP 服务器集成
 
 #### Model Context Protocol 支持
 - 集成 `@modelcontextprotocol/sdk`
@@ -249,7 +249,7 @@ skill-name/
 
 ---
 
-### 9. 数字员工工作台
+### 10. 数字员工工作台
 
 #### 沉浸式对话界面
 - **极简顶栏**：显示员工名称、状态标签、LLM 选择器和快捷操作图标
@@ -304,7 +304,7 @@ skill-name/
 
 ---
 
-### 11. 后台任务队列
+### 12. 后台任务队列
 
 #### 任务进度面板
 - 全局任务进度指示器，位于侧边栏底部
@@ -314,7 +314,7 @@ skill-name/
 
 ---
 
-### 12. 知识检索
+### 13. 知识检索
 
 #### FTS5 全文索引检索
 - 基于 SQLite FTS5 的全文索引引擎（`SearchEngineService`），支持中英文混合搜索
@@ -356,7 +356,7 @@ skill-name/
 
 ---
 
-### 13. 多 LLM 提供商支持
+### 14. 多 LLM 提供商支持
 
 - 支持多种 LLM 提供商：
 - 模型分类管理：支持 chat（对话）和 embedding（嵌入）两种模型分类
@@ -366,7 +366,7 @@ skill-name/
 
 ---
 
-### 14. 全局配置管理
+### 15. 全局配置管理
 
 - **LLM 配置**：多提供商增删改查，连接测试，模型分类管理
 - **默认模型**：为不同场景单独配置默认模型（创建数字员工、数字员工对话、知识库处理、快速模型、嵌入模型）
@@ -379,7 +379,7 @@ skill-name/
 
 ---
 
-### 15. 数字员工导入导出
+### 16. 数字员工导入导出
 
 #### 配置导出/导入
 - **配置导出**：将数字员工配置导出为 JSON 文件，包含角色信息、提示词模板、工具配置、关联知识库列表、权限设置等
@@ -861,7 +861,6 @@ WorkAvatar/
 │   │   ├── useEmployeeChat.ts         # 员工对话 Hook
 │   │   └── useKnowledgeBase.tsx       # 知识库 Hook
 │   ├── stores/                        # Zustand 状态管理
-│   │   ├── app.store.ts
 │   │   ├── appearance.store.ts
 │   │   ├── interaction.store.ts       # 交互状态
 │   │   ├── task-detail.store.ts       # 任务详情状态
@@ -905,15 +904,15 @@ WorkAvatar/
 
 ### 添加新的 IPC 通道
 
-1. 在 `electron/shared/ipc-channels.ts` 中定义通道名和类型
-2. 在 `electron/main/ipc-handlers.ts` 中注册处理器
+1. 在 `electron/shared/channels/` 对应模块中定义通道名和类型
+2. 在 `electron/main/ipc/` 对应模块的 handler 中注册处理器
 3. 在 `electron/preload/index.ts` 中通过 `contextBridge` 暴露 API
 4. 在前端通过 `window.electronAPI` 调用
 
 ### 添加新的服务
 
 1. 在 `electron/main/services/` 下创建新的服务类（单例模式）
-2. 在 `ipc-handlers.ts` 中注册相关的 IPC 处理器
+2. 在 `electron/main/ipc/` 对应 handler 中注册相关的 IPC 处理器
 3. 在预加载脚本中暴露对应的 API 方法
 
 ### 添加新的前端页面

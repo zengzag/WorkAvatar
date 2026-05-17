@@ -1,5 +1,6 @@
 export const EMPLOYEE_TASK_CHANNELS = {
   EMPLOYEE_TASK_LIST: 'employee-task:list',
+  EMPLOYEE_TASK_LIST_ALL: 'employee-task:list-all',
   EMPLOYEE_TASK_GET: 'employee-task:get',
   EMPLOYEE_TASK_CREATE: 'employee-task:create',
   EMPLOYEE_TASK_UPDATE: 'employee-task:update',
@@ -8,13 +9,12 @@ export const EMPLOYEE_TASK_CHANNELS = {
   EMPLOYEE_TASK_ABORT_EXECUTION: 'employee-task:abort-execution',
 
   EMPLOYEE_SCHEDULE_LIST: 'employee-schedule:list',
-  EMPLOYEE_SCHEDULE_GET: 'employee-schedule:get',
+  EMPLOYEE_SCHEDULE_LIST_ALL: 'employee-schedule:list-all',
   EMPLOYEE_SCHEDULE_CREATE: 'employee-schedule:create',
   EMPLOYEE_SCHEDULE_UPDATE: 'employee-schedule:update',
   EMPLOYEE_SCHEDULE_DELETE: 'employee-schedule:delete',
   EMPLOYEE_SCHEDULE_VALIDATE_CRON: 'employee-schedule:validate-cron',
 
-  EMPLOYEE_EXECUTION_LIST: 'employee-execution:list',
   EMPLOYEE_EXECUTION_LIST_FOR_TASK: 'employee-execution:list-for-task',
   EMPLOYEE_EXECUTION_GET: 'employee-execution:get',
   EMPLOYEE_EXECUTION_ALL_RECENT: 'employee-execution:all-recent',
@@ -53,7 +53,7 @@ export interface EmployeeTaskUpdateParams {
 }
 
 export interface EmployeeScheduleCreateParams {
-  employee_id: string
+  employee_id?: string
   name: string
   cron_expr: string
   task_ids: string[]

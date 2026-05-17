@@ -116,6 +116,12 @@ class EmployeeTaskService {
     ).get(taskId) as EmployeeTask | null
   }
 
+  getAllTasks(): EmployeeTask[] {
+    return this.db.getDb().prepare(
+      'SELECT * FROM employee_tasks ORDER BY created_at DESC'
+    ).all() as EmployeeTask[]
+  }
+
   createTask(employeeId: string, name: string, description: string, prompt: string, timeoutMs: number = 300000, llmProviderId?: string, llmModel?: string, enableThinking: boolean = false, runMode: 'recurring' | 'once' = 'recurring'): EmployeeTask {
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
@@ -171,13 +177,26 @@ class EmployeeTaskService {
     ).all() as EmployeeSchedule[]
   }
 
-  createSchedule(employeeId: string, name: string, cronExpr: string, taskIds: string[], runMode: 'recurring' | 'once' = 'recurring', notifyOnComplete: boolean = true): EmployeeSchedule {
+  getAllSchedules(): EmployeeSchedule[] {
+    return this.db.getDb().prepare(
+      'SELECT * FROM employee_schedules ORDER BY created_at DESC'
+    ).all() as EmployeeSchedule[]
+  }
+
+  createSchedule(employeeId: string | undefined, name: string, cronExpr: string, taskIds: string[], runMode: 'recurring' | 'once' = 'recurring', notifyOnComplete: boolean = true): EmployeeSchedule {
+    let resolvedEmployeeId = employeeId
+    if (!resolvedEmployeeId && taskIds.length > 0) {
+      const firstTask = this.getTask(taskIds[0])
+      if (firstTask) resolvedEmployeeId = firstTask.employee_id
+    }
+    if (!resolvedEmployeeId) throw new Error('Employee ID is required for schedule creation')
+
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       `INSERT INTO employee_schedules (id, employee_id, name, cron_expr, is_enabled, run_mode, notify_on_complete, task_ids_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
-    ).run(id, employeeId, name, cronExpr, runMode, notifyOnComplete ? 1 : 0, JSON.stringify(taskIds), now, now)
+    ).run(id, resolvedEmployeeId, name, cronExpr, runMode, notifyOnComplete ? 1 : 0, JSON.stringify(taskIds), now, now)
     return this.getSchedule(id)!
   }
 
@@ -247,7 +266,6 @@ class EmployeeTaskService {
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(task.employee_id) as DBEmployee | undefined
     if (!employee) throw new Error(`Employee ${task.employee_id} not found`)
-    if (employee.status !== 'active') throw new Error(`Employee ${task.employee_id} is not active (status: ${employee.status})`)
 
     const providerId = task.llm_provider_id || employee.llm_provider_id
     if (!providerId) throw new Error('No LLM provider configured')
@@ -409,7 +427,7 @@ class EmployeeTaskService {
       const completedAt = Math.floor(Date.now() / 1000)
       errorMsg = error.message || String(error)
 
-      const status = abortController.signal.aborted && errorMsg !== 'Employee is not active' ? 'timeout' : 'failed'
+      const status = abortController.signal.aborted ? 'timeout' : 'failed'
       this.db.getDb().prepare(
         `UPDATE employee_task_executions SET status = ?, error_message = ?, segments_json = ?, completed_at = ?, duration_ms = ? WHERE id = ?`
       ).run(status, errorMsg, segments.length > 0 ? JSON.stringify(segments) : null, completedAt, durationMs, executionId)

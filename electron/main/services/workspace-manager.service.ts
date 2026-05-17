@@ -77,8 +77,17 @@ class WorkspaceManagerService {
     const updates: string[] = []
     const values: any[] = []
 
+    const ALLOWED_COLUMNS = [
+      'name', 'role_name', 'role_description', 'responsibilities_json',
+      'personality_traits_json', 'working_style', 'suggested_tools_json',
+      'status', 'review_mode', 'avatar_url', 'prompt_template',
+      'system_prompt', 'kb_id', 'kb_ids_json', 'tool_ids_json',
+      'mcp_server_ids_json', 'skill_ids_json', 'workspace_dir',
+      'llm_provider_id', 'llm_model', 'enable_thinking', 'description'
+    ]
+
     Object.entries(data).forEach(([key, value]) => {
-      if (value !== undefined) {
+      if (value !== undefined && ALLOWED_COLUMNS.includes(key)) {
         if (key === 'review_mode') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
@@ -229,6 +238,11 @@ class WorkspaceManagerService {
   }
 
   createConversation(employeeId: string, skillId?: string, title: string = ''): Conversation {
+    const employee = this.db.getDb().prepare('SELECT id FROM employees WHERE id = ?').get(employeeId)
+    if (!employee) {
+      throw new Error(`Employee not found: ${employeeId}`)
+    }
+
     const conversationId = generateId()
     const now = Math.floor(Date.now() / 1000)
 

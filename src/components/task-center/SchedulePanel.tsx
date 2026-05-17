@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card,
   Table,
   Button,
   Space,
@@ -27,6 +26,8 @@ import {
   FieldTimeOutlined,
   BellOutlined,
   BellFilled,
+  PlayCircleOutlined,
+  PauseCircleOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
@@ -50,11 +51,8 @@ interface ScheduleItem {
 interface TaskItem {
   id: string
   name: string
+  employee_id: string
   is_enabled: boolean
-}
-
-interface ScheduleSectionProps {
-  employeeId: string
 }
 
 type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'hourly' | 'interval' | 'custom'
@@ -189,12 +187,16 @@ const WEEK_DAY_OPTIONS = [
   { value: 6, label: 'empTask.weekSaturday' },
 ]
 
-const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
+interface SchedulePanelProps {
+  tasks: TaskItem[]
+  onTasksChange?: () => void
+}
+
+const SchedulePanel: React.FC<SchedulePanelProps> = ({ tasks, onTasksChange }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
   const [schedules, setSchedules] = useState<ScheduleItem[]>([])
-  const [tasks, setTasks] = useState<TaskItem[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<ScheduleItem | null>(null)
@@ -212,17 +214,13 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
 
   useEffect(() => {
     loadData()
-  }, [employeeId])
+  }, [])
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [schedResult, taskResult] = await Promise.all([
-        window.electronAPI.employeeTask.listSchedules(employeeId),
-        window.electronAPI.employeeTask.list(employeeId),
-      ])
+      const schedResult = await window.electronAPI.employeeTask.listAllSchedules()
       setSchedules(schedResult || [])
-      setTasks((taskResult || []).filter((t: any) => t.is_enabled))
     } catch {
       message.error(t('empTask.loadFailed'))
     } finally {
@@ -385,13 +383,20 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
 
   const handleSave = async (values: any) => {
     try {
+      const taskIds: string[] = values.task_ids || []
+      const firstTask = tasks.find(ta => ta.id === taskIds[0])
+      const employeeId = firstTask?.employee_id
+      if (!employeeId) {
+        message.error(t('empTask.selectTaskRequired'))
+        return
+      }
       if (editingSchedule) {
         await window.electronAPI.employeeTask.updateSchedule({
           id: editingSchedule.id,
           name: values.name,
           cron_expr: values.cron_expr,
           is_enabled: values.is_enabled,
-          task_ids: values.task_ids || [],
+          task_ids: taskIds,
           run_mode: runMode,
           notify_on_complete: notifyOnComplete,
         })
@@ -401,7 +406,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
           employee_id: employeeId,
           name: values.name,
           cron_expr: values.cron_expr,
-          task_ids: values.task_ids || [],
+          task_ids: taskIds,
           run_mode: runMode,
           notify_on_complete: notifyOnComplete,
         })
@@ -409,6 +414,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
       }
       setModalOpen(false)
       loadData()
+      onTasksChange?.()
     } catch {
       message.error(t('common.saveFailed'))
     }
@@ -419,6 +425,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
       await window.electronAPI.employeeTask.deleteSchedule(scheduleId)
       message.success(t('common.deleteSuccess'))
       loadData()
+      onTasksChange?.()
     } catch {
       message.error(t('common.deleteFailed'))
     }
@@ -427,11 +434,15 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
   const handleToggleEnabled = async (scheduleId: string, enabled: boolean) => {
     try {
       await window.electronAPI.employeeTask.updateSchedule({ id: scheduleId, is_enabled: enabled })
-      message.success(enabled ? t('common.enable') + t('common.success') : t('common.disable') + t('common.success'))
+      message.success(enabled ? t('empTask.scheduleEnabled') : t('empTask.schedulePaused'))
       loadData()
     } catch {
       message.error(t('common.failed'))
     }
+  }
+
+  const getEnabledTasks = () => {
+    return tasks.filter(ta => ta.is_enabled)
   }
 
   const columns = [
@@ -467,7 +478,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
     {
       title: t('empTask.selectedTasks'),
       key: 'task_ids_json',
-      width: 200,
+      width: 180,
       render: (_: any, record: ScheduleItem) => {
         let taskIds: string[] = []
         try { taskIds = JSON.parse(record.task_ids_json) } catch {}
@@ -485,21 +496,21 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
       title: t('empTask.lastRun'),
       dataIndex: 'last_run_at',
       key: 'last_run_at',
-      width: 130,
+      width: 120,
       render: (v: number | null) => v ? dayjs(v * 1000).format('MM-DD HH:mm') : <Text type="secondary">-</Text>,
     },
     {
       title: t('empTask.nextRun'),
       dataIndex: 'next_run_at',
       key: 'next_run_at',
-      width: 130,
+      width: 120,
       render: (v: number | null) => v ? dayjs(v * 1000).format('MM-DD HH:mm') : <Text type="secondary">-</Text>,
     },
     {
       title: t('empTask.notifyLabel'),
       dataIndex: 'notify_on_complete',
       key: 'notify_on_complete',
-      width: 70,
+      width: 60,
       render: (v: boolean) => (
         <Tooltip title={v ? t('empTask.notifyEnabled') : t('empTask.notifyDisabled')}>
           {v ? <BellFilled style={{ color: token.colorPrimary }} /> : <BellOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -508,17 +519,23 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
     },
     {
       title: t('common.status'),
-      dataIndex: 'is_enabled',
       key: 'is_enabled',
-      width: 70,
-      render: (enabled: boolean, record: ScheduleItem) => (
-        <Switch size="small" checked={enabled} onChange={(v) => handleToggleEnabled(record.id, v)} />
+      width: 100,
+      render: (_: any, record: ScheduleItem) => (
+        <Tooltip title={record.is_enabled ? t('empTask.scheduleEnabled') : t('empTask.schedulePaused')}>
+          <Button
+            type="link"
+            size="small"
+            icon={record.is_enabled ? <PlayCircleOutlined style={{ color: token.colorSuccess }} /> : <PauseCircleOutlined style={{ color: token.colorTextQuaternary }} />}
+            onClick={() => handleToggleEnabled(record.id, !record.is_enabled)}
+          />
+        </Tooltip>
       ),
     },
     {
       title: t('common.action'),
       key: 'action',
-      width: 100,
+      width: 80,
       render: (_: any, record: ScheduleItem) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
@@ -546,24 +563,21 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
 
   return (
     <div>
-      <Card
-        title={t('empTask.scheduleTitle')}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            {t('empTask.createSchedule')}
-          </Button>
-        }
-      >
-        <Table
-          dataSource={schedules}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-          size="small"
-          locale={{ emptyText: t('empTask.noSchedules') }}
-        />
-      </Card>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+          {t('empTask.createSchedule')}
+        </Button>
+      </div>
+
+      <Table
+        dataSource={schedules}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+        pagination={false}
+        size="small"
+        locale={{ emptyText: t('empTask.noSchedules') }}
+      />
 
       <Modal
         open={modalOpen}
@@ -722,7 +736,7 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
             <Select
               mode="multiple"
               placeholder={t('empTask.selectTaskPlaceholder')}
-              options={tasks.map(ta => ({ label: ta.name, value: ta.id }))}
+              options={getEnabledTasks().map(ta => ({ label: ta.name, value: ta.id }))}
             />
           </Form.Item>
           <Form.Item name="is_enabled" label={t('empTask.enabledLabel')} valuePropName="checked">
@@ -742,4 +756,4 @@ const ScheduleSection: React.FC<ScheduleSectionProps> = ({ employeeId }) => {
   )
 }
 
-export default ScheduleSection
+export default SchedulePanel

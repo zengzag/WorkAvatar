@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card,
+  Tabs,
   Table,
   Tag,
   Button,
@@ -12,6 +12,8 @@ import {
   Popconfirm,
   Select,
   theme,
+  Card,
+  Statistic,
 } from 'antd'
 import {
   CheckCircleOutlined,
@@ -22,9 +24,14 @@ import {
   AlertOutlined,
   DeleteOutlined,
   FieldTimeOutlined,
+  UnorderedListOutlined,
+  SettingOutlined,
+  ScheduleOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import ExecutionDetailModal from '../components/employee-settings/ExecutionDetailModal'
+import { TaskConfigPanel, SchedulePanel } from '../components/task-center'
 
 const { Text } = Typography
 
@@ -51,6 +58,8 @@ interface EmployeeInfo {
 interface TaskInfo {
   id: string
   name: string
+  employee_id: string
+  is_enabled: boolean
 }
 
 const TaskCenter: React.FC = () => {
@@ -61,6 +70,7 @@ const TaskCenter: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [employeeMap, setEmployeeMap] = useState<Record<string, EmployeeInfo>>({})
   const [taskMap, setTaskMap] = useState<Record<string, TaskInfo>>({})
+  const [allTasks, setAllTasks] = useState<TaskInfo[]>([])
 
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [detailExecution, setDetailExecution] = useState<ExecutionItem | null>(null)
@@ -69,6 +79,8 @@ const TaskCenter: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string | undefined>(undefined)
   const [filterEmployee, setFilterEmployee] = useState<string | undefined>(undefined)
   const [filterTrigger, setFilterTrigger] = useState<string | undefined>(undefined)
+
+  const [employees, setEmployees] = useState<EmployeeInfo[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -102,21 +114,32 @@ const TaskCenter: React.FC = () => {
         if (e.task_id) taskIds.add(e.task_id)
       }
 
-      const employees = await window.electronAPI.employee.list()
+      const empList = await window.electronAPI.employee.list()
       const empMap: Record<string, EmployeeInfo> = {}
-      for (const emp of (employees || [])) {
+      const empArr: EmployeeInfo[] = []
+      for (const emp of (empList || [])) {
         empMap[emp.id] = { id: emp.id, name: emp.name }
+        empArr.push({ id: emp.id, name: emp.name })
       }
       setEmployeeMap(empMap)
+      setEmployees(empArr)
 
       const tMap: Record<string, TaskInfo> = {}
       for (const tid of taskIds) {
         try {
           const task = await window.electronAPI.employeeTask.get(tid)
-          if (task) tMap[tid] = { id: task.id, name: task.name }
+          if (task) tMap[tid] = { id: task.id, name: task.name, employee_id: task.employee_id, is_enabled: task.is_enabled }
         } catch {}
       }
       setTaskMap(tMap)
+
+      const allTaskResult = await window.electronAPI.employeeTask.listAll()
+      setAllTasks((allTaskResult || []).map((ta: any) => ({
+        id: ta.id,
+        name: ta.name,
+        employee_id: ta.employee_id,
+        is_enabled: ta.is_enabled,
+      })))
     } catch {
     } finally {
       setLoading(false)
@@ -175,6 +198,10 @@ const TaskCenter: React.FC = () => {
   })
 
   const employeeOptions = Object.entries(employeeMap).map(([id, emp]) => ({ label: emp.name, value: id }))
+
+  const runningCount = executions.filter(e => e.status === 'running').length
+  const completedCount = executions.filter(e => e.status === 'completed').length
+  const failedCount = failedExecs.length
 
   const columns = [
     {
@@ -258,98 +285,159 @@ const TaskCenter: React.FC = () => {
     },
   ]
 
+  const renderExecutionsTab = () => (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <Card size="small" style={{ flex: '1 1 140px', minWidth: 140 }} styles={{ body: { padding: '12px 16px' } }}>
+          <Statistic
+            title={<Text type="secondary" style={{ fontSize: 12 }}>{t('empTask.statusRunning')}</Text>}
+            value={runningCount}
+            prefix={<ThunderboltOutlined style={{ color: token.colorPrimary }} />}
+            styles={{ content: { color: token.colorPrimary, fontSize: 20 } }}
+          />
+        </Card>
+        <Card size="small" style={{ flex: '1 1 140px', minWidth: 140 }} styles={{ body: { padding: '12px 16px' } }}>
+          <Statistic
+            title={<Text type="secondary" style={{ fontSize: 12 }}>{t('empTask.statusCompleted')}</Text>}
+            value={completedCount}
+            prefix={<CheckCircleOutlined style={{ color: token.colorSuccess }} />}
+            styles={{ content: { color: token.colorSuccess, fontSize: 20 } }}
+          />
+        </Card>
+        <Card size="small" style={{ flex: '1 1 140px', minWidth: 140 }} styles={{ body: { padding: '12px 16px' } }}>
+          <Statistic
+            title={<Text type="secondary" style={{ fontSize: 12 }}>{t('empTask.statusFailed')}</Text>}
+            value={failedCount}
+            prefix={<CloseCircleOutlined style={{ color: token.colorError }} />}
+            styles={{ content: { color: failedCount > 0 ? token.colorError : token.colorTextSecondary, fontSize: 20 } }}
+          />
+        </Card>
+      </div>
+
+      {failedExecs.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Tag color="error" icon={<AlertOutlined />}>
+            {t('empTask.failedAlert', { count: failedExecs.length })}
+          </Tag>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Select
+          allowClear
+          placeholder={t('empTask.filterStatus')}
+          value={filterStatus}
+          onChange={setFilterStatus}
+          style={{ width: 120 }}
+          size="small"
+          options={[
+            { label: t('empTask.statusRunning'), value: 'running' },
+            { label: t('empTask.statusCompleted'), value: 'completed' },
+            { label: t('empTask.statusFailed'), value: 'failed' },
+            { label: t('empTask.statusTimeout'), value: 'timeout' },
+          ]}
+        />
+        <Select
+          allowClear
+          placeholder={t('empTask.filterEmployee')}
+          value={filterEmployee}
+          onChange={setFilterEmployee}
+          style={{ width: 140 }}
+          size="small"
+          options={employeeOptions}
+          showSearch
+          optionFilterProp="label"
+        />
+        <Select
+          allowClear
+          placeholder={t('empTask.filterTriggerType')}
+          value={filterTrigger}
+          onChange={setFilterTrigger}
+          style={{ width: 120 }}
+          size="small"
+          options={[
+            { label: t('empTask.manual'), value: 'manual' },
+            { label: t('empTask.scheduled'), value: 'scheduled' },
+          ]}
+        />
+        <div style={{ flex: 1 }} />
+        <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>
+          {t('common.refresh')}
+        </Button>
+      </div>
+
+      <Table
+        dataSource={filteredExecutions}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        pagination={{ pageSize: 10, size: 'small' }}
+        locale={{ emptyText: t('empTask.noExecutions') }}
+        scroll={{ x: 'max-content' }}
+      />
+    </div>
+  )
+
   return (
     <div style={{ padding: '16px 24px 24px' }}>
-      <Card
-        title={
-          <Space>
-            <FieldTimeOutlined />
-            <span>{t('empTask.globalTaskCenter')}</span>
-            {failedExecs.length > 0 && (
-              <Badge count={failedExecs.length} size="small">
-                <AlertOutlined style={{ color: token.colorError }} />
-              </Badge>
-            )}
-          </Space>
-        }
-        extra={
-          <Button size="small" icon={<ReloadOutlined />} loading={loading} onClick={loadData}>
-            {t('common.refresh')}
-          </Button>
-        }
-        size="small"
-      >
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <FieldTimeOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+        <Text strong style={{ fontSize: 18 }}>{t('empTask.globalTaskCenter')}</Text>
         {failedExecs.length > 0 && (
-          <div style={{ marginBottom: 12 }}>
-            <Tag color="error" icon={<AlertOutlined />}>
-              {t('empTask.failedAlert', { count: failedExecs.length })}
-            </Tag>
-          </div>
+          <Badge count={failedExecs.length} size="small">
+            <AlertOutlined style={{ color: token.colorError }} />
+          </Badge>
         )}
+      </div>
 
-        <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Select
-            allowClear
-            placeholder={t('empTask.filterStatus')}
-            value={filterStatus}
-            onChange={setFilterStatus}
-            style={{ width: 120 }}
-            size="small"
-            options={[
-              { label: t('empTask.statusRunning'), value: 'running' },
-              { label: t('empTask.statusCompleted'), value: 'completed' },
-              { label: t('empTask.statusFailed'), value: 'failed' },
-              { label: t('empTask.statusTimeout'), value: 'timeout' },
-            ]}
-          />
-          <Select
-            allowClear
-            placeholder={t('empTask.filterEmployee')}
-            value={filterEmployee}
-            onChange={setFilterEmployee}
-            style={{ width: 140 }}
-            size="small"
-            options={employeeOptions}
-            showSearch
-            optionFilterProp="label"
-          />
-          <Select
-            allowClear
-            placeholder={t('empTask.filterTriggerType')}
-            value={filterTrigger}
-            onChange={setFilterTrigger}
-            style={{ width: 120 }}
-            size="small"
-            options={[
-              { label: t('empTask.manual'), value: 'manual' },
-              { label: t('empTask.scheduled'), value: 'scheduled' },
-            ]}
-          />
-        </div>
+      <Tabs
+        defaultActiveKey="records"
+        items={[
+          {
+            key: 'records',
+            label: (
+              <Space>
+                <UnorderedListOutlined />
+                <span>{t('empTask.tabRecords')}</span>
+              </Space>
+            ),
+            children: renderExecutionsTab(),
+          },
+          {
+            key: 'tasks',
+            label: (
+              <Space>
+                <SettingOutlined />
+                <span>{t('empTask.tabTaskConfig')}</span>
+              </Space>
+            ),
+            children: <TaskConfigPanel employees={employees} onTasksChange={loadData} />,
+          },
+          {
+            key: 'schedules',
+            label: (
+              <Space>
+                <ScheduleOutlined />
+                <span>{t('empTask.tabSchedules')}</span>
+              </Space>
+            ),
+            children: <SchedulePanel tasks={allTasks} onTasksChange={loadData} />,
+          },
+        ]}
+      />
 
-        <Table
-          dataSource={filteredExecutions}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          size="small"
-          pagination={{ pageSize: 10, size: 'small' }}
-          locale={{ emptyText: t('empTask.noExecutions') }}
-          scroll={{ x: 'max-content' }}
-        />
-
-        <ExecutionDetailModal
-          open={detailModalOpen}
-          execution={detailExecution}
-          liveExecutionId={liveExecutionId}
-          onClose={() => { setDetailModalOpen(false); setLiveExecutionId(null) }}
-          onAbort={async (executionId: string) => {
-            try {
-              await window.electronAPI.employeeTask.abortExecution(executionId)
-            } catch {}
-          }}
-        />
-      </Card>
+      <ExecutionDetailModal
+        open={detailModalOpen}
+        execution={detailExecution}
+        liveExecutionId={liveExecutionId}
+        onClose={() => { setDetailModalOpen(false); setLiveExecutionId(null) }}
+        onAbort={async (executionId: string) => {
+          try {
+            await window.electronAPI.employeeTask.abortExecution(executionId)
+          } catch {}
+        }}
+      />
     </div>
   )
 }

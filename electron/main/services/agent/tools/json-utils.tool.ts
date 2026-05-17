@@ -24,8 +24,8 @@ export const jsonUtilsTool: ToolDefinition = {
     try {
       const { operation } = args
       switch (operation) {
-        case 'parse': return { success: true, result: JSON.parse(args.data || '{}') }
-        case 'stringify': return { success: true, result: JSON.stringify(args.obj || {}, null, args.indent || 2) }
+        case 'parse': return { success: true, output: JSON.stringify(JSON.parse(args.data || '{}'), null, 2) }
+        case 'stringify': return { success: true, output: JSON.stringify(args.obj || {}, null, args.indent || 2) }
         case 'get': {
           const parsed = JSON.parse(args.data || '{}')
           const keys = (args.path || '').split('.')
@@ -34,19 +34,19 @@ export const jsonUtilsTool: ToolDefinition = {
             if (current === null || current === undefined) break
             current = current[key]
           }
-          return { success: true, result: current }
+          return { success: true, output: JSON.stringify(current, null, 2) }
         }
         case 'validate': {
           JSON.parse(args.data || '{}')
-          return { success: true, result: true, message: '有效的JSON' }
+          return { success: true, output: '有效的JSON' }
         }
         case 'beautify': {
           const parsed = JSON.parse(args.data || '{}')
-          return { success: true, result: JSON.stringify(parsed, null, args.indent || 2) }
+          return { success: true, output: JSON.stringify(parsed, null, args.indent || 2) }
         }
         case 'minify': {
           const parsed = JSON.parse(args.data || '{}')
-          return { success: true, result: JSON.stringify(parsed) }
+          return { success: true, output: JSON.stringify(parsed) }
         }
         default: return { success: false, error: 'Unknown operation' }
       }

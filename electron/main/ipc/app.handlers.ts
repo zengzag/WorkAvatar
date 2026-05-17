@@ -9,8 +9,7 @@ import type {
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
 export function registerAppHandlers(
-  db: ReturnType<DatabaseService['getDb']>,
-  _ocrService: any
+  db: ReturnType<DatabaseService['getDb']>
 ) {
   ipcMain.handle(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, async (_, params: AppShowOpenDialogParams) => {
     const result = await dialog.showOpenDialog({

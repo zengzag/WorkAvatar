@@ -30,6 +30,7 @@ function InputNode({ id, selected, data }: NodeProps) {
   return (
     <div
       style={{
+        position: 'relative',
         background: token.colorBgContainer,
         border: `1px solid ${selected ? '#52c41a' : token.colorBorder}`,
         borderRadius: 8,
@@ -39,7 +40,7 @@ function InputNode({ id, selected, data }: NodeProps) {
         boxShadow: selected ? '0 0 8px rgba(82, 196, 26, 0.3)' : 'none',
       }}
     >
-      <Handle type="source" position={Position.Right} style={{ background: '#52c41a', width: 12, height: 12 }} />
+      <Handle type="source" position={Position.Right} style={{ background: '#52c41a', width: 12, height: 12, top: '50%', right: -6, transform: 'translateY(-50%)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <PlayCircleOutlined style={{ color: '#52c41a', fontSize: 18 }} />
         <span style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{nodeData.label}</span>

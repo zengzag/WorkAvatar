@@ -79,7 +79,7 @@ export function registerEmployeeHandlers(
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, async (event, params: EmployeeProfileAnalyzeParams) => {
     try {
       const result = await profilingService.analyzeForEmployee(
-        '',
+        'new',
         params.kb_ids,
         params.provider_id,
         params.model_id,

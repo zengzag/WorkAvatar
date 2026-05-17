@@ -49,9 +49,7 @@ class TaskNotificationService {
     if (!ElectronNotification.isSupported()) return
 
     const statusEmoji = notification.status === 'completed' ? '✅' : '❌'
-    const title = notification.status === 'completed'
-      ? `${statusEmoji} ${notification.employeeName} - ${notification.taskName}`
-      : `${statusEmoji} ${notification.employeeName} - ${notification.taskName}`
+    const title = `${statusEmoji} ${notification.employeeName} - ${notification.taskName}`
 
     let body = ''
     if (notification.status === 'completed') {

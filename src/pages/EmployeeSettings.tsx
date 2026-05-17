@@ -6,16 +6,12 @@ import {
   Tabs,
   Form,
   Button,
-  Space,
-  Tag,
   Modal,
   Checkbox,
   App,
 } from 'antd'
 import {
   SaveOutlined,
-  PauseCircleOutlined,
-  PlayCircleOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import {
@@ -26,11 +22,8 @@ import {
   MCPServersSection,
   KnowledgeBaseSection,
   ExportImportSection,
-  TaskConfigSection,
-  ScheduleSection,
 } from '../components/employee-settings'
 import type { Employee, LLMProvider } from '../types'
-import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
 
 interface ToolInfo {
   id: string
@@ -69,15 +62,11 @@ const EmployeeSettings: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const [activeTab, setActiveTab] = useState('basic')
-  const autoOpenExecutionId = (location.state as any)?.executionId || null
 
   useEffect(() => {
     const state = location.state as any
     if (state?.tab) {
       setActiveTab(state.tab)
-    }
-    if (state?.executionId) {
-      setActiveTab('tasks')
     }
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
@@ -106,7 +95,6 @@ const EmployeeSettings: React.FC = () => {
         name: employee.name,
         description: employee.description,
         avatar_type: employee.avatar_type,
-        status: employee.status,
         review_mode: employee.review_mode,
         llm_provider_id: employee.llm_provider_id,
         llm_model: employee.llm_model,
@@ -310,21 +298,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleToggleStatus = async () => {
-    if (!employee) return
-    const newStatus = employee.status === 'active' ? 'paused' : 'active'
-    try {
-      await window.electronAPI.employee.update({
-        id: id!,
-        status: newStatus,
-      })
-      message.success(newStatus === 'active' ? t('employeeSettings.enabled') : t('employeeSettings.paused'))
-      loadEmployee()
-    } catch {
-      message.error(t('employeeSettings.operationFailed'))
-    }
-  }
-
   const handleDeleteEmployee = (workspacePath?: string) => {
     let deleteWorkspace = false
     Modal.confirm({
@@ -474,20 +447,9 @@ const EmployeeSettings: React.FC = () => {
           { title: t('employeeSettings.breadcrumbConfig') },
         ]}
         extra={
-          <Space>
-            <Tag color={EMPLOYEE_STATUS_COLOR_MAP[employee.status]}>
-              {getEmployeeStatusTextMap(t)[employee.status]}
-            </Tag>
-            <Button
-              icon={employee.status === 'active' ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-              onClick={handleToggleStatus}
-            >
-              {employee.status === 'active' ? t('employeeSettings.pause') : t('employeeSettings.activate')}
-            </Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
-              {t('common.save')}
-            </Button>
-          </Space>
+          <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
+            {t('common.save')}
+          </Button>
         }
       />
 
@@ -572,20 +534,6 @@ const EmployeeSettings: React.FC = () => {
                   loadEmployeeKBs()
                 }}
               />
-            )
-          },
-          {
-            key: 'tasks',
-            label: t('employeeSettings.tabTasks'),
-            children: (
-              <TaskConfigSection employeeId={id!} autoOpenExecutionId={autoOpenExecutionId} />
-            )
-          },
-          {
-            key: 'schedules',
-            label: t('employeeSettings.tabSchedules'),
-            children: (
-              <ScheduleSection employeeId={id!} />
             )
           },
           {

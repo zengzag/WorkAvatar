@@ -4,22 +4,21 @@ import KBDatabaseService from '../../kb-database.service'
 import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from './types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
-import { formatEntityList } from './utils'
+import { formatEntityList, createKbIdValidator } from './utils'
 
 function formatKBOptions(kbs: any[]): string {
   return kbs.map(kb => `${kb.id}(${kb.name})`).join(', ')
 }
-
 export function createKBAgentTools(
-  kbService: KnowledgeBaseService,
-  _db: DatabaseService,
-  employeeId?: string
+    kbService: KnowledgeBaseService,
+    db: DatabaseService,
+    employeeId?: string
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = []
   if (!employeeId) return tools
 
   const kbDb = KBDatabaseService.getInstance()
-  const links = _db.getDb().prepare(
+  const links = db.getDb().prepare(
     'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
   ).all(employeeId) as any[]
 
@@ -39,11 +38,7 @@ export function createKBAgentTools(
 
   const kbIds = allKBs.map((kb: any) => kb.id)
 
-  const validateKbId = (kbId: string | undefined): string | null => {
-    if (!kbId) return kbIds.length > 0 ? kbIds[0] : null
-    if (!kbIds.includes(kbId)) return null
-    return kbId
-  }
+  const validateKbId = createKbIdValidator(kbIds)
 
   const kbOverviewTool: ToolDefinition = {
     id: 'kb_overview',

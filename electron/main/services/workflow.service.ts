@@ -274,7 +274,6 @@ class WorkflowService {
   ): Promise<string> {
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
     if (!employee) throw new Error(`Employee ${employeeId} not found`)
-    if (employee.status !== 'active') throw new Error(`Employee ${employeeId} is not active`)
 
     const providerId = overrideProviderId || employee.llm_provider_id
     if (!providerId) throw new Error(`Employee ${employeeId} has no LLM provider configured`)

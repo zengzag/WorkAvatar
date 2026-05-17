@@ -16,9 +16,6 @@ export const TOOL_CHANNELS = {
   SKILL_REGISTRY_GET_EMPLOYEE_SKILLS: 'skill-registry:get-employee-skills',
   SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE: 'skill-registry:assign-to-employee',
   SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE: 'skill-registry:remove-from-employee',
-
-  OCR_RECOGNIZE: 'ocr:recognize',
-  OCR_STATUS: 'ocr:status',
 } as const
 
 export interface ToolAssignParams {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Button,
@@ -111,6 +111,96 @@ const EmployeeWorkbench: React.FC = () => {
     isConversationStreaming,
   } = chatHook
 
+  const workbenchStyle = useMemo(() => `
+        .cursor-blink { animation: blink 1s infinite; }
+        @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+        .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
+        .workbench-input:focus { outline: none; }
+        .workbench-input {
+          background: transparent !important;
+        }
+        .workbench-input:hover, .workbench-input:focus {
+          background: transparent !important;
+        }
+        .ant-input-textarea-focused {
+          background: transparent !important;
+        }
+        .markdown-content h1, .markdown-content h2, .markdown-content h3,
+        .markdown-content h4, .markdown-content h5, .markdown-content h6 {
+          margin-top: 16px;
+          margin-bottom: 8px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
+        .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
+        .markdown-content h3 { font-size: 1.1em; }
+        .markdown-content p { margin: 0 0 8px; }
+        .markdown-content p:last-child { margin-bottom: 0; }
+        .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
+        .markdown-content li { margin-bottom: 4px; }
+        .markdown-content code {
+          background: ${token.colorBgTextHover};
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 0.9em;
+          font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+        }
+        .markdown-content pre {
+          background: ${token.colorBgTextHover};
+          padding: 12px 16px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 8px 0;
+          border: 1px solid ${token.colorBorderSecondary};
+        }
+        .markdown-content pre code {
+          background: transparent;
+          padding: 0;
+          border-radius: 0;
+          font-size: 0.85em;
+          line-height: 1.6;
+        }
+        .markdown-content blockquote {
+          border-left: 3px solid ${token.colorPrimary};
+          margin: 8px 0;
+          padding: 4px 12px;
+          color: ${token.colorTextSecondary};
+          background: ${token.colorPrimaryBg};
+          border-radius: 0 6px 6px 0;
+        }
+        .markdown-content table {
+          border-collapse: collapse;
+          width: 100%;
+          margin: 8px 0;
+        }
+        .markdown-content th, .markdown-content td {
+          border: 1px solid ${token.colorBorderSecondary};
+          padding: 6px 12px;
+          text-align: left;
+        }
+        .markdown-content th {
+          background: ${token.colorBgTextHover};
+          font-weight: 600;
+        }
+        .markdown-content a {
+          color: ${token.colorPrimary};
+          text-decoration: none;
+        }
+        .markdown-content a:hover {
+          text-decoration: underline;
+        }
+        .markdown-content hr {
+          border: none;
+          border-top: 1px solid ${token.colorBorderSecondary};
+          margin: 16px 0;
+        }
+        .markdown-content img {
+          max-width: 100%;
+          border-radius: 6px;
+        }
+      `, [token])
+
   const handleEmployeeChange = (newEmployeeId: string) => {
     if (newEmployeeId === 'create-new') {
       navigate('/wizard')
@@ -219,10 +309,6 @@ const EmployeeWorkbench: React.FC = () => {
                 <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
               </div>
               <Text strong style={{ fontSize: 14 }}>{employee.name}</Text>
-              <Tag color={employee.status === 'active' ? 'green' : employee.status === 'paused' ? 'orange' : 'default'}
-                style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                {employee.status === 'active' ? t('workbench.statusRunning') : employee.status === 'paused' ? t('workbench.statusPaused') : t('workbench.statusDraft')}
-              </Tag>
             </Button>
           </Dropdown>
         </Space>
@@ -325,95 +411,7 @@ const EmployeeWorkbench: React.FC = () => {
         </div>
       </div>
 
-      <style>{`
-        .cursor-blink { animation: blink 1s infinite; }
-        @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
-        .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
-        .workbench-input:focus { outline: none; }
-        .workbench-input {
-          background: transparent !important;
-        }
-        .workbench-input:hover, .workbench-input:focus {
-          background: transparent !important;
-        }
-        .ant-input-textarea-focused {
-          background: transparent !important;
-        }
-        .markdown-content h1, .markdown-content h2, .markdown-content h3,
-        .markdown-content h4, .markdown-content h5, .markdown-content h6 {
-          margin-top: 16px;
-          margin-bottom: 8px;
-          font-weight: 600;
-          line-height: 1.4;
-        }
-        .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
-        .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
-        .markdown-content h3 { font-size: 1.1em; }
-        .markdown-content p { margin: 0 0 8px; }
-        .markdown-content p:last-child { margin-bottom: 0; }
-        .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
-        .markdown-content li { margin-bottom: 4px; }
-        .markdown-content code {
-          background: ${token.colorBgTextHover};
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-size: 0.9em;
-          font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-        }
-        .markdown-content pre {
-          background: ${token.colorBgTextHover};
-          padding: 12px 16px;
-          border-radius: 8px;
-          overflow-x: auto;
-          margin: 8px 0;
-          border: 1px solid ${token.colorBorderSecondary};
-        }
-        .markdown-content pre code {
-          background: transparent;
-          padding: 0;
-          border-radius: 0;
-          font-size: 0.85em;
-          line-height: 1.6;
-        }
-        .markdown-content blockquote {
-          border-left: 3px solid ${token.colorPrimary};
-          margin: 8px 0;
-          padding: 4px 12px;
-          color: ${token.colorTextSecondary};
-          background: ${token.colorPrimaryBg};
-          border-radius: 0 6px 6px 0;
-        }
-        .markdown-content table {
-          border-collapse: collapse;
-          width: 100%;
-          margin: 8px 0;
-        }
-        .markdown-content th, .markdown-content td {
-          border: 1px solid ${token.colorBorderSecondary};
-          padding: 6px 12px;
-          text-align: left;
-        }
-        .markdown-content th {
-          background: ${token.colorBgTextHover};
-          font-weight: 600;
-        }
-        .markdown-content a {
-          color: ${token.colorPrimary};
-          text-decoration: none;
-        }
-        .markdown-content a:hover {
-          text-decoration: underline;
-        }
-        .markdown-content hr {
-          border: none;
-          border-top: 1px solid ${token.colorBorderSecondary};
-          margin: 16px 0;
-        }
-        .markdown-content img {
-          max-width: 100%;
-          border-radius: 6px;
-        }
-      `}</style>
+      <style>{workbenchStyle}</style>
     </div>
   )
 }

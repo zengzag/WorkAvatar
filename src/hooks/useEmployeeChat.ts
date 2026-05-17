@@ -106,14 +106,25 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     if (id) {
-      loadEmployee()
-      loadConversations()
-      loadProviders()
+      initEmployee()
     }
     return () => {
       initializedRef.current = false
     }
   }, [id])
+
+  const initEmployee = async () => {
+    try {
+      const result = await window.electronAPI.employee.get(id!)
+      setEmployee(result)
+      if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
+      if (result.llm_model) setSelectedLlmModelId(result.llm_model)
+      loadConversations()
+      loadProviders()
+    } catch {
+      setEmployee(null)
+    }
+  }
 
   useEffect(() => {
     if (isUserAtBottomRef.current) {
@@ -334,17 +345,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const forceScrollToBottom = () => {
     isUserAtBottomRef.current = true
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  const loadEmployee = async () => {
-    try {
-      const result = await window.electronAPI.employee.get(id!)
-      setEmployee(result)
-      if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
-      if (result.llm_model) setSelectedLlmModelId(result.llm_model)
-    } catch {
-      setEmployee(null)
-    }
   }
 
   const loadConversations = async () => {

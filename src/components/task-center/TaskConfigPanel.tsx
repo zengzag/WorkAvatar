@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card,
   Table,
   Button,
   Space,
@@ -15,6 +14,8 @@ import {
   Popconfirm,
   Tooltip,
   Typography,
+  Select,
+  theme,
 } from 'antd'
 import {
   PlusOutlined,
@@ -22,15 +23,18 @@ import {
   DeleteOutlined,
   PlayCircleOutlined,
   ClockCircleOutlined,
+  BulbOutlined,
+  BulbFilled,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import LLMSelector from '../llm/LLMSelector'
-import ExecutionDetailModal from './ExecutionDetailModal'
+import ExecutionDetailModal from '../employee-settings/ExecutionDetailModal'
 
 const { Text } = Typography
 
 interface TaskItem {
   id: string
+  employee_id: string
   name: string
   description: string
   prompt: string
@@ -57,14 +61,20 @@ interface ExecutionItem {
   duration_ms: number | null
 }
 
-interface TaskConfigSectionProps {
-  employeeId: string
-  autoOpenExecutionId?: string | null
+interface EmployeeInfo {
+  id: string
+  name: string
 }
 
-const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoOpenExecutionId }) => {
+interface TaskConfigPanelProps {
+  employees: EmployeeInfo[]
+  onTasksChange?: () => void
+}
+
+const TaskConfigPanel: React.FC<TaskConfigPanelProps> = ({ employees, onTasksChange }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
@@ -74,6 +84,8 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
 
   const [taskProviderId, setTaskProviderId] = useState<string | undefined>(undefined)
   const [taskModelId, setTaskModelId] = useState<string | undefined>(undefined)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | undefined>(undefined)
+  const [enableThinking, setEnableThinking] = useState(false)
 
   const [execModalOpen, setExecModalOpen] = useState(false)
   const [selectedTaskExecs, setSelectedTaskExecs] = useState<ExecutionItem[]>([])
@@ -84,30 +96,13 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
   const [liveExecutionId, setLiveExecutionId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (autoOpenExecutionId) {
-      openExecutionDetail(autoOpenExecutionId)
-    }
-  }, [autoOpenExecutionId])
-
-  const openExecutionDetail = async (executionId: string) => {
-    try {
-      const exec = await window.electronAPI.employeeTask.getExecution(executionId)
-      if (exec) {
-        setDetailExecution(exec)
-        setLiveExecutionId(exec.status === 'running' ? exec.id : null)
-        setDetailModalOpen(true)
-      }
-    } catch {}
-  }
-
-  useEffect(() => {
     loadTasks()
-  }, [employeeId])
+  }, [])
 
   const loadTasks = async () => {
     setLoading(true)
     try {
-      const result = await window.electronAPI.employeeTask.list(employeeId)
+      const result = await window.electronAPI.employeeTask.listAll()
       setTasks(result || [])
     } catch {
       message.error(t('empTask.loadFailed'))
@@ -119,9 +114,11 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
   const handleCreate = () => {
     setEditingTask(null)
     form.resetFields()
-    form.setFieldsValue({ timeout_ms: 300000, is_enabled: true, enable_thinking: false })
+    form.setFieldsValue({ timeout_ms: 300000, is_enabled: true })
     setTaskProviderId(undefined)
     setTaskModelId(undefined)
+    setSelectedEmployeeId(undefined)
+    setEnableThinking(false)
     setModalOpen(true)
   }
 
@@ -133,19 +130,27 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
       prompt: task.prompt,
       timeout_ms: task.timeout_ms,
       is_enabled: task.is_enabled,
-      enable_thinking: task.enable_thinking,
     })
     setTaskProviderId(task.llm_provider_id || undefined)
     setTaskModelId(task.llm_model || undefined)
+    setSelectedEmployeeId(task.employee_id)
+    setEnableThinking(task.enable_thinking)
     setModalOpen(true)
   }
 
   const handleSave = async (values: any) => {
     try {
+      const employeeId = selectedEmployeeId || values.employee_id
+      if (!employeeId) {
+        message.error(t('empTask.selectEmployeeRequired'))
+        return
+      }
       const data = {
         ...values,
+        employee_id: employeeId,
         llm_provider_id: taskProviderId || null,
         llm_model: taskModelId || null,
+        enable_thinking: enableThinking,
       }
       if (editingTask) {
         await window.electronAPI.employeeTask.update({
@@ -154,14 +159,12 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
         })
         message.success(t('common.updateSuccess'))
       } else {
-        await window.electronAPI.employeeTask.create({
-          employee_id: employeeId,
-          ...data,
-        })
+        await window.electronAPI.employeeTask.create(data)
         message.success(t('common.createSuccess'))
       }
       setModalOpen(false)
       loadTasks()
+      onTasksChange?.()
     } catch {
       message.error(t('common.saveFailed'))
     }
@@ -172,6 +175,7 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
       await window.electronAPI.employeeTask.delete(taskId)
       message.success(t('common.deleteSuccess'))
       loadTasks()
+      onTasksChange?.()
     } catch {
       message.error(t('common.deleteFailed'))
     }
@@ -181,6 +185,7 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
     try {
       await window.electronAPI.employeeTask.update({ id: taskId, is_enabled: enabled })
       loadTasks()
+      onTasksChange?.()
     } catch {
       message.error(t('common.failed'))
     }
@@ -281,6 +286,11 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
     return <Tag color={colorMap[status] || 'default'}>{labelMap[status] || status}</Tag>
   }
 
+  const getEmployeeName = (employeeId: string) => {
+    const emp = employees.find(e => e.id === employeeId)
+    return emp?.name || employeeId.slice(0, 8)
+  }
+
   const columns = [
     {
       title: t('common.name'),
@@ -295,10 +305,17 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
       ),
     },
     {
+      title: t('empTask.employee'),
+      dataIndex: 'employee_id',
+      key: 'employee_id',
+      width: 120,
+      render: (id: string) => <Tag>{getEmployeeName(id)}</Tag>,
+    },
+    {
       title: t('common.status'),
       dataIndex: 'is_enabled',
       key: 'is_enabled',
-      width: 70,
+      width: 80,
       render: (enabled: boolean, record: TaskItem) => (
         <Switch size="small" checked={enabled} onChange={(v) => handleToggleEnabled(record.id, v)} />
       ),
@@ -307,7 +324,6 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
       title: t('common.action'),
       key: 'action',
       width: 180,
-      fixed: 'right' as const,
       render: (_: any, record: TaskItem) => (
         <Space size="small">
           <Tooltip title={t('empTask.run')}>
@@ -408,25 +424,22 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
 
   return (
     <div>
-      <Card
-        title={t('empTask.taskConfigTitle')}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            {t('empTask.createTask')}
-          </Button>
-        }
-      >
-        <Table
-          dataSource={tasks}
-          columns={columns}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-          size="small"
-          scroll={{ x: 'max-content' }}
-          locale={{ emptyText: t('empTask.noTasks') }}
-        />
-      </Card>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'flex-end' }}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+          {t('empTask.createTask')}
+        </Button>
+      </div>
+
+      <Table
+        dataSource={tasks}
+        columns={columns}
+        rowKey="id"
+        loading={loading}
+        pagination={false}
+        size="small"
+        scroll={{ x: 'max-content' }}
+        locale={{ emptyText: t('empTask.noTasks') }}
+      />
 
       <Modal
         open={modalOpen}
@@ -438,6 +451,16 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
         width={720}
       >
         <Form form={form} layout="vertical" onFinish={handleSave} style={{ marginTop: 16 }}>
+          <Form.Item name="employee_id" label={t('empTask.selectEmployee')} rules={[{ required: true, message: t('empTask.selectEmployeeRequired') }]}>
+            <Select
+              showSearch
+              placeholder={t('empTask.selectEmployeePlaceholder')}
+              optionFilterProp="label"
+              value={selectedEmployeeId}
+              onChange={(v) => setSelectedEmployeeId(v)}
+              options={employees.map(emp => ({ label: emp.name, value: emp.id }))}
+            />
+          </Form.Item>
           <Form.Item name="name" label={t('common.name')} rules={[{ required: true, message: t('empTask.nameRequired') }]}>
             <Input placeholder={t('empTask.namePlaceholder')} />
           </Form.Item>
@@ -448,16 +471,24 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
             <Input.TextArea rows={5} placeholder={t('empTask.promptPlaceholder')} />
           </Form.Item>
           <Form.Item label={t('empTask.llmConfigLabel')}>
-            <LLMSelector
-              providerId={taskProviderId}
-              modelId={taskModelId}
-              onProviderChange={setTaskProviderId}
-              onModelChange={setTaskModelId}
-            />
+            <Space>
+              <LLMSelector
+                providerId={taskProviderId}
+                modelId={taskModelId}
+                onProviderChange={setTaskProviderId}
+                onModelChange={setTaskModelId}
+              />
+              <Tooltip title={enableThinking ? t('empTask.thinkingEnabled') : t('empTask.thinkingDisabled')}>
+                <Button
+                  type={enableThinking ? 'primary' : 'text'}
+                  icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                  size="small"
+                  onClick={() => setEnableThinking(!enableThinking)}
+                  style={enableThinking ? {} : { color: token.colorTextSecondary }}
+                />
+              </Tooltip>
+            </Space>
             <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>{t('empTask.llmConfigTip')}</Text>
-          </Form.Item>
-          <Form.Item name="enable_thinking" label={t('empTask.thinkingModeLabel')} valuePropName="checked">
-            <Switch />
           </Form.Item>
           <Form.Item name="timeout_ms" label={t('empTask.timeoutLabel')}>
             <InputNumber min={10000} max={3600000} step={10000} addonAfter="ms" style={{ width: '100%' }} />
@@ -496,4 +527,4 @@ const TaskConfigSection: React.FC<TaskConfigSectionProps> = ({ employeeId, autoO
   )
 }
 
-export default TaskConfigSection
+export default TaskConfigPanel

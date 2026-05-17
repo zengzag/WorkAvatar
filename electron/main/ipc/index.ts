@@ -9,7 +9,6 @@ import { registerEmployeeTaskHandlers } from './employee-task.handlers'
 import { registerWorkflowHandlers } from './workflow.handlers'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
-import OCRService from '../services/ocr.service'
 import DatabaseService from '../services/database.service'
 import EmployeeProfilingService from '../services/employee-profiling.service'
 import ToolEngineService from '../services/tool-engine.service'
@@ -24,7 +23,6 @@ import WorkflowService from '../services/workflow.service'
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
   const llmClient = LLMClientService.getInstance()
-  const ocrService = OCRService.getInstance()
   const profilingService = EmployeeProfilingService.getInstance()
   const toolEngine = ToolEngineService.getInstance()
   const skillRegistry = SkillRegistryService.getInstance()
@@ -39,7 +37,7 @@ export function registerIpcHandlers() {
   registerWorkspaceHandlers(workspaceManager)
   registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService, employeeAgent)
   registerLLMHandlers(llmClient, employeeAgent)
-  registerAppHandlers(db, ocrService)
+  registerAppHandlers(db)
   registerToolHandlers(db, toolEngine, skillRegistry)
   registerKBHandlers(kbService)
   registerTaskHandlers()

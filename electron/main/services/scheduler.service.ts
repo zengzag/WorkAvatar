@@ -138,9 +138,6 @@ class SchedulerService {
     const schedules = this.taskService.getAllEnabledSchedules()
     for (const schedule of schedules) {
       try {
-        const employee = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(schedule.employee_id) as any
-        if (!employee || employee.status !== 'active') continue
-
         const parsed = parseCronExpression(schedule.cron_expr)
         if (!parsed) continue
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -55,7 +55,6 @@ interface EmployeeProfile {
 const CreationWizard: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [currentStep, setCurrentStep] = useState(0)
@@ -118,7 +117,7 @@ const CreationWizard: React.FC = () => {
     loadProviders()
     loadAllKBs()
     loadBuiltinTools()
-  }, [id])
+  }, [])
 
   const loadAllKBs = async () => {
     try {
@@ -456,7 +455,7 @@ const CreationWizard: React.FC = () => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ marginBottom: 2 }}>
                           <Space>
-                            <DatabaseOutlined style={{ color: '#722ed1' }} />
+                            <DatabaseOutlined style={{ color: token.colorPrimary }} />
                             <Text strong>{kb.name}</Text>
                             <Tag>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
                           </Space>

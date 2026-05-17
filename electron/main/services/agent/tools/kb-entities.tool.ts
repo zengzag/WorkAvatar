@@ -1,15 +1,11 @@
-import type { ToolDefinition } from './types'
+import { ToolDefinition } from './types'
+import { createKbIdValidator } from './utils'
 import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 
 export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
   const kbDb = KBDatabaseService.getInstance()
-
-  const validateKbId = (kbId: string | undefined): string | null => {
-    if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
-    if (!allowedKbIds.includes(kbId)) return null
-    return kbId
-  }
+  const validateKbId = createKbIdValidator(allowedKbIds)
 
   const kbOptionsDesc = allowedKbIds.length > 0
     ? `可选值: ${allowedKbIds.join(', ')}`
@@ -108,12 +104,7 @@ export function createKBEntitiesTool(allowedKbIds: string[]): ToolDefinition {
 
 export function createKBEntityDetailTool(allowedKbIds: string[]): ToolDefinition {
   const kbService = KnowledgeBaseService.getInstance()
-
-  const validateKbId = (kbId: string | undefined): string | null => {
-    if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
-    if (!allowedKbIds.includes(kbId)) return null
-    return kbId
-  }
+  const validateKbId = createKbIdValidator(allowedKbIds)
 
   const kbOptionsDesc = allowedKbIds.length > 0
     ? `可选值: ${allowedKbIds.join(', ')}`

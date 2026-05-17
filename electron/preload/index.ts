@@ -189,10 +189,25 @@ const electronAPI = {
     update: (params: KBUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DELETE, id),
     uploadDocuments: (params: { kb_id: string; paths: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_UPLOAD, params),
+    onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
+      const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
+    },
     parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
+    onParseProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
+      const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
+    },
     deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
     getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
     parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
+    onParseAllProgress: (callback: (progress: { current: number; total: number; docName: string }) => void) => {
+      const handler = (_event: any, progress: { current: number; total: number; docName: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
+    },
     processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
     processAll: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
     buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
@@ -264,6 +279,7 @@ const electronAPI = {
 
   employeeTask: {
     list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
+    listAll: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL),
     get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
     create: (params: EmployeeTaskCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_CREATE, params),
     update: (params: EmployeeTaskUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_UPDATE, params),
@@ -271,6 +287,7 @@ const electronAPI = {
     execute: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, taskId),
     abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_ABORT_EXECUTION, executionId),
     listSchedules: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, employeeId),
+    listAllSchedules: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL),
     createSchedule: (params: EmployeeScheduleCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, params),
     updateSchedule: (params: EmployeeScheduleUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_UPDATE, params),
     deleteSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_DELETE, scheduleId),
@@ -354,6 +371,7 @@ export type ElectronAPI = typeof electronAPI & {
   }
   employeeTask: {
     list: (employeeId: string) => Promise<any[]>
+    listAll: () => Promise<any[]>
     get: (taskId: string) => Promise<any>
     create: (params: any) => Promise<any>
     update: (params: any) => Promise<any>
@@ -361,6 +379,7 @@ export type ElectronAPI = typeof electronAPI & {
     execute: (taskId: string) => Promise<{ success: boolean; execution?: any; error?: string }>
     abortExecution: (executionId: string) => Promise<boolean>
     listSchedules: (employeeId: string) => Promise<any[]>
+    listAllSchedules: () => Promise<any[]>
     createSchedule: (params: any) => Promise<any>
     updateSchedule: (params: any) => Promise<any>
     deleteSchedule: (scheduleId: string) => Promise<boolean>

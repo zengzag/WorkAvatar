@@ -17,6 +17,10 @@ export function registerEmployeeTaskHandlers(
     return taskService.getTasks(employeeId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL, () => {
+    return taskService.getAllTasks()
+  })
+
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_TASK_GET, (_, taskId: string) => {
     return taskService.getTask(taskId)
   })
@@ -49,6 +53,10 @@ export function registerEmployeeTaskHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, (_, employeeId: string) => {
     return taskService.getSchedules(employeeId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL, () => {
+    return taskService.getAllSchedules()
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, (_, params: EmployeeScheduleCreateParams) => {

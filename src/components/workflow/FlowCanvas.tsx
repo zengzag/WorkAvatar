@@ -14,6 +14,7 @@ import {
   type Node,
   type NodeChange,
   type EdgeChange,
+  type ReactFlowInstance,
   applyNodeChanges,
   applyEdgeChanges,
   MarkerType,
@@ -25,12 +26,23 @@ import {
   ApartmentOutlined,
   EnterOutlined,
   ExportOutlined,
+  DeleteOutlined,
+  CopyOutlined,
+  ScissorOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { generateId } from '../../utils/format'
 import { useWorkflowStore } from '../../stores/workflow.store'
 import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 import { nodeTypes } from './nodes'
+
+interface ContextMenuState {
+  visible: boolean
+  x: number
+  y: number
+  type: 'pane' | 'node' | 'edge'
+  targetId?: string
+}
 
 function hasCycle(nodes: Node[], edges: Edge[], source: string, target: string): boolean {
   const adj = new Map<string, string[]>()
@@ -147,7 +159,8 @@ const FlowCanvas: React.FC = () => {
   const [edges, setEdges] = useEdgesState(storeEdges)
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
   const [employees, setEmployees] = useState<any[]>([])
-  const reactFlowRef = useRef<any>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, type: 'pane' })
+  const reactFlowInstance = useRef<ReactFlowInstance | null>(null)
 
   useEffect(() => {
     setNodes(storeNodes)
@@ -157,14 +170,25 @@ const FlowCanvas: React.FC = () => {
     setEdges(storeEdges)
   }, [])
 
+  const skipStoreSyncRef = useRef(false)
+
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const updated = applyNodeChanges(changes, nodes)
       setNodes(updated)
+      skipStoreSyncRef.current = true
       setStoreNodes(updated)
     },
     [nodes, setNodes, setStoreNodes]
   )
+
+  useEffect(() => {
+    if (skipStoreSyncRef.current) {
+      skipStoreSyncRef.current = false
+      return
+    }
+    setNodes(storeNodes)
+  }, [storeNodes])
 
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
@@ -206,10 +230,52 @@ const FlowCanvas: React.FC = () => {
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null)
+    setContextMenu((prev) => ({ ...prev, visible: false }))
   }, [setSelectedNodeId])
 
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault()
+      setContextMenu({
+        visible: true,
+        x: (event as React.MouseEvent).clientX,
+        y: (event as React.MouseEvent).clientY,
+        type: 'pane',
+      })
+    },
+    []
+  )
+
+  const handleNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault()
+      setContextMenu({
+        visible: true,
+        x: event.clientX,
+        y: event.clientY,
+        type: 'node',
+        targetId: node.id,
+      })
+    },
+    []
+  )
+
+  const handleEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.preventDefault()
+      setContextMenu({
+        visible: true,
+        x: event.clientX,
+        y: event.clientY,
+        type: 'edge',
+        targetId: edge.id,
+      })
+    },
+    []
+  )
+
   const addNodeByType = useCallback(
-    (type: string) => {
+    (type: string, position?: { x: number; y: number }) => {
       if (type === 'employee') {
         loadEmployees()
         setEmployeeModalOpen(true)
@@ -220,11 +286,12 @@ const FlowCanvas: React.FC = () => {
       const newNode: Node = {
         id,
         type,
-        position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
+        position: position || { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
         data: { label },
       }
       setNodes((nds) => [...nds, newNode])
       addStoreNode(newNode)
+      setContextMenu((prev) => ({ ...prev, visible: false }))
     },
     [setNodes, addStoreNode, t]
   )
@@ -255,6 +322,48 @@ const FlowCanvas: React.FC = () => {
     addStoreNode(newNode)
     setEmployeeModalOpen(false)
   }
+
+  const handleDeleteNodeById = useCallback(
+    (nodeId: string) => {
+      const remaining = nodes.filter((n) => n.id !== nodeId)
+      const remainingEdges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId)
+      setNodes(remaining)
+      setEdges(remainingEdges)
+      setStoreNodes(remaining)
+      setStoreEdges(remainingEdges)
+      setSelectedNodeId(null)
+      setContextMenu((prev) => ({ ...prev, visible: false }))
+    },
+    [nodes, edges, setNodes, setEdges, setStoreNodes, setStoreEdges, setSelectedNodeId]
+  )
+
+  const handleCopyNode = useCallback(
+    (nodeId: string) => {
+      const sourceNode = nodes.find((n) => n.id === nodeId)
+      if (!sourceNode) return
+      const id = `node-${generateId()}`
+      const newNode: Node = {
+        id,
+        type: sourceNode.type,
+        position: { x: sourceNode.position.x + 40, y: sourceNode.position.y + 40 },
+        data: { ...sourceNode.data, label: `${(sourceNode.data as any).label} ${t('workflow.copySuffix')}` },
+      }
+      setNodes((nds) => [...nds, newNode])
+      addStoreNode(newNode)
+      setContextMenu((prev) => ({ ...prev, visible: false }))
+    },
+    [nodes, setNodes, addStoreNode, t]
+  )
+
+  const handleDeleteEdgeById = useCallback(
+    (edgeId: string) => {
+      const remaining = edges.filter((e) => e.id !== edgeId)
+      setEdges(remaining)
+      setStoreEdges(remaining)
+      setContextMenu((prev) => ({ ...prev, visible: false }))
+    },
+    [edges, setEdges, setStoreEdges]
+  )
 
   const handleAutoLayout = useCallback(() => {
     const layouted = topologicalLayout(nodes, edges)
@@ -320,6 +429,62 @@ const FlowCanvas: React.FC = () => {
     [addNodeByType, t]
   )
 
+  const paneContextMenuItems = useMemo(() => {
+    const flowPos = reactFlowInstance.current?.screenToFlowPosition({ x: contextMenu.x, y: contextMenu.y }) || { x: 100, y: 100 }
+    return [
+      {
+        key: 'input',
+        label: t('workflow.addInputNode'),
+        icon: <EnterOutlined />,
+        onClick: () => addNodeByType('input', flowPos),
+      },
+      {
+        key: 'output',
+        label: t('workflow.addOutputNode'),
+        icon: <ExportOutlined />,
+        onClick: () => addNodeByType('output', flowPos),
+      },
+      {
+        key: 'employee',
+        label: t('workflow.addEmployeeNode'),
+        icon: <PlusOutlined />,
+        onClick: () => addNodeByType('employee', flowPos),
+      },
+    ]
+  }, [addNodeByType, t, contextMenu.x, contextMenu.y])
+
+  const nodeContextMenuItems = useMemo(() => {
+    if (!contextMenu.targetId) return []
+    return [
+      {
+        key: 'copy',
+        label: t('workflow.copyNode'),
+        icon: <CopyOutlined />,
+        onClick: () => handleCopyNode(contextMenu.targetId!),
+      },
+      {
+        key: 'delete',
+        label: t('workflow.deleteNode'),
+        icon: <DeleteOutlined />,
+        danger: true,
+        onClick: () => handleDeleteNodeById(contextMenu.targetId!),
+      },
+    ]
+  }, [contextMenu.targetId, handleCopyNode, handleDeleteNodeById, t])
+
+  const edgeContextMenuItems = useMemo(() => {
+    if (!contextMenu.targetId) return []
+    return [
+      {
+        key: 'delete',
+        label: t('workflow.deleteEdge'),
+        icon: <ScissorOutlined />,
+        danger: true,
+        onClick: () => handleDeleteEdgeById(contextMenu.targetId!),
+      },
+    ]
+  }, [contextMenu.targetId, handleDeleteEdgeById, t])
+
   const employeeColumns = useMemo(
     () => [
       {
@@ -372,7 +537,7 @@ const FlowCanvas: React.FC = () => {
 
       <div style={{ flex: 1 }}>
         <ReactFlow
-          ref={reactFlowRef}
+          onInit={(instance) => { reactFlowInstance.current = instance }}
           nodes={nodes}
           edges={edges}
           onNodesChange={handleNodesChange}
@@ -380,6 +545,9 @@ const FlowCanvas: React.FC = () => {
           onConnect={handleConnect}
           onNodeClick={handleNodeClick}
           onPaneClick={handlePaneClick}
+          onPaneContextMenu={handlePaneContextMenu}
+          onNodeContextMenu={handleNodeContextMenu}
+          onEdgeContextMenu={handleEdgeContextMenu}
           nodeTypes={nodeTypes}
           fitView
           style={{ background: bgColor }}
@@ -399,6 +567,34 @@ const FlowCanvas: React.FC = () => {
             }}
           />
         </ReactFlow>
+
+        {contextMenu.visible && (
+          <div
+            style={{
+              position: 'fixed',
+              top: contextMenu.y,
+              left: contextMenu.x,
+              zIndex: 1000,
+            }}
+          >
+            <Dropdown
+              menu={{
+                items:
+                  contextMenu.type === 'pane'
+                    ? paneContextMenuItems
+                    : contextMenu.type === 'node'
+                      ? nodeContextMenuItems
+                      : edgeContextMenuItems,
+              }}
+              open={contextMenu.visible}
+              onOpenChange={(open) => {
+                if (!open) setContextMenu((prev) => ({ ...prev, visible: false }))
+              }}
+            >
+              <div />
+            </Dropdown>
+          </div>
+        )}
       </div>
 
       <Modal

@@ -44,7 +44,7 @@ const KBListItem: React.FC<KBListItemProps> = ({ kb, actions, iconSize = 40 }) =
             flexShrink: 0,
           }}
         >
-          <DatabaseOutlined style={{ fontSize: iconFontSize, color: '#722ed1' }} />
+          <DatabaseOutlined style={{ fontSize: iconFontSize, color: token.colorPrimary }} />
         </div>
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <Tooltip title={kb.name}>

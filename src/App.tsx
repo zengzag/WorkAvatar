@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Layout, Menu, Typography } from 'antd'
+import { Layout, Menu, Typography, theme } from 'antd'
 import {
   RobotOutlined,
   FieldTimeOutlined,
@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const [collapsed, setCollapsed] = useState(true)
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
@@ -97,7 +98,7 @@ const App: React.FC = () => {
           <RobotOutlined
             style={{
               fontSize: collapsed ? 24 : 20,
-              color: '#1677ff',
+              color: token.colorPrimary,
               marginRight: collapsed ? 0 : 8,
             }}
           />

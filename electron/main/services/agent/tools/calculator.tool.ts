@@ -19,7 +19,7 @@ export const calculatorTool: ToolDefinition = {
   handler: (args: any) => {
     try {
       const result = safeCalculate(args.expression)
-      return { success: true, result: String(result) }
+      return { success: true, output: String(result) }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
