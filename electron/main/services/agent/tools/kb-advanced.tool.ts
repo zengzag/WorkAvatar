@@ -14,7 +14,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
     id: 'kb_advanced_search',
     name: 'kb_advanced_search',
     title: '高级知识库检索',
-    description: `高级知识库检索，支持精确短语、排除词、文档类型过滤。基于FTS5全文索引，性能优异。`,
+    description: `高级知识库检索，支持精确短语、排除词。基于FTS5全文索引，性能优异。`,
     parameters: {
       type: 'object',
       properties: {
@@ -32,10 +32,6 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
         kb_id: {
           type: 'string',
           description: `知识库ID（可选）。${kbOptionsDesc}`
-        },
-        document_type: {
-          type: 'string',
-          description: '限定文档类型，如 pdf, docx, xlsx, txt, md（可选）'
         }
       },
       required: ['query']
@@ -54,9 +50,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
 
         const topK = Math.min(Math.max(args.top_k || 10, 1), 20)
 
-        const results = searchEngine.advancedFtsSearch(targetKbId, query, topK, {
-          documentType: args.document_type
-        })
+        const results = searchEngine.advancedFtsSearch(targetKbId, query, topK)
 
         if (results.length === 0) {
           return {
@@ -74,8 +68,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
           const typeLabel = {
             document_title: '文档标题',
             document_summary: '文档摘要',
-            chapter: '章节摘要',
-            entity: '知识实体',
+            paragraph: '段落摘要',
             content_paragraph: '原文内容',
             hybrid: '混合匹配',
           }[r.match_type] || r.match_type
@@ -85,7 +78,7 @@ export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefiniti
 
           const locParts: string[] = []
           if (r.document_id) locParts.push(`document_id: ${r.document_id}`)
-          if (r.chapter_id) locParts.push(`chapter_id: ${r.chapter_id}`)
+          if (r.paragraph_id) locParts.push(`paragraph_id: ${r.paragraph_id}`)
           if (r.start_line !== undefined && r.end_line !== undefined) {
             locParts.push(`line: ${r.start_line}-${r.end_line}`)
           }

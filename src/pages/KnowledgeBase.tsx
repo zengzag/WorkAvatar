@@ -1,10 +1,10 @@
 import { useTranslation } from 'react-i18next'
 import { Card, Button, Space, Empty, Tabs, theme } from 'antd'
-import { PlusOutlined, FileTextOutlined, BookOutlined, ThunderboltOutlined, NodeIndexOutlined, SearchOutlined } from '@ant-design/icons'
+import { PlusOutlined, FileTextOutlined, BookOutlined, ThunderboltOutlined, SearchOutlined } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import TaskProgressPanel from '../components/common/TaskProgressPanel'
 import {
-  KBListPanel, KBDocList, KBKnowledgeView, KBEntityGraph, KBSearchPanel,
+  KBListPanel, KBDocList, KBKnowledgeView, KBSearchPanel,
   KBHeaderCard, KBCreateModal, KBEditModal,
   KBExportModal, KBImportModal, KBFolderScanModal,
 } from '../components/knowledge-base'
@@ -23,20 +23,18 @@ const KnowledgeBasePage: React.FC = () => {
     onPauseAll, onResumeAll, onCancelAll,
     onUploadFiles, onUploadFolder, onRefreshDocs,
     processingDocId, processingAll, buildingGlobal, processProgress,
-    knowledgeStats, globalSummary, docSummaries, allRelations,
+    knowledgeStats, globalSummary, docSummaries,
     onProcessDocument, onProcessAll, onBuildGlobal,
-    onViewChapters, onViewDocContent, onViewParseDetail,
-    docChapters, chapterModalOpen, selectedDocSummary, onCloseChapterModal,
+    onViewParagraphs, onViewDocContent, onViewParseDetail,
+    docParagraphs, paragraphModalOpen, selectedDocSummary, onCloseParagraphModal,
     docContent, docContentTitle, docContentModalOpen, onCloseDocContentModal,
-    entities, entityFilter, selectedEntity, entityRelations, entityModalOpen,
-    onEntityFilterChange, onLoadEntities, onViewEntity, onCloseEntityModal,
     createModalOpen, setCreateModalOpen, newKBName, setNewKBName, newKBDesc, setNewKBDesc, onCreateKB,
     editKBModalOpen, setEditKBModalOpen, editKBName, setEditKBName, editKBDesc, setEditKBDesc, onConfirmEditKB, onEditKB,
     activeTab, onTabChange,
     selectedProviderId, selectedModelId, enableThinking,
     onProviderChange, onModelChange, onThinkingChange,
-    exportModalOpen, setExportModalOpen, exportType, setExportType, exportFormat, setExportFormat, exporting, exportProgress, onExport,
-    importModalOpen, setImportModalOpen, importType, setImportType, importFormat, setImportFormat, importConflictStrategy, setImportConflictStrategy, importing, importProgress, importKBName, setImportKBName, onImport, onOpenImportModal,
+    exportModalOpen, setExportModalOpen, exporting, exportProgress, onExport,
+    importModalOpen, setImportModalOpen, importConflictStrategy, setImportConflictStrategy, importing, importProgress, importKBName, setImportKBName, onImport, onOpenImportModal,
     folderScanModalOpen, folderScanning, scannedFiles, scannedUnsupported, selectedScannedKeys, setSelectedScannedKeys, scannedTreeData, expandedFolderKeys, folderUploading, onTreeSelect, onFolderUploadConfirm, onFolderScanModalClose,
     searchPanelOpen, setSearchPanelOpen,
   } = useKnowledgeBase()
@@ -130,7 +128,6 @@ const KnowledgeBasePage: React.FC = () => {
                       knowledgeStats={knowledgeStats}
                       globalSummary={globalSummary}
                       docSummaries={docSummaries}
-                      allRelations={allRelations}
                       processingDocId={processingDocId}
                       processingAll={processingAll}
                       buildingGlobal={buildingGlobal}
@@ -138,35 +135,17 @@ const KnowledgeBasePage: React.FC = () => {
                       onProcessAll={onProcessAll}
                       onBuildGlobal={onBuildGlobal}
                       onProcessDocument={onProcessDocument}
-                      onViewChapters={onViewChapters}
+                      onViewParagraphs={onViewParagraphs}
                       onViewDocContent={onViewDocContent}
-                      docChapters={docChapters}
-                      chapterModalOpen={chapterModalOpen}
+                      docParagraphs={docParagraphs}
+                      paragraphModalOpen={paragraphModalOpen}
                       selectedDocSummary={selectedDocSummary}
-                      onCloseChapterModal={onCloseChapterModal}
+                      onCloseParagraphModal={onCloseParagraphModal}
                       docContent={docContent}
                       docContentTitle={docContentTitle}
                       docContentModalOpen={docContentModalOpen}
                       onCloseDocContentModal={onCloseDocContentModal}
                       onViewParseDetail={onViewParseDetail}
-                    />
-                  ),
-                },
-                {
-                  key: 'entities',
-                  label: <Space><NodeIndexOutlined />{t('knowledgeBase.tabEntity')}</Space>,
-                  children: (
-                    <KBEntityGraph
-                      entities={entities}
-                      entityFilter={entityFilter}
-                      selectedEntity={selectedEntity}
-                      entityRelations={entityRelations}
-                      entityModalOpen={entityModalOpen}
-                      onEntityFilterChange={onEntityFilterChange}
-                      onLoadEntities={onLoadEntities}
-                      onViewEntity={onViewEntity}
-                      onCloseEntityModal={onCloseEntityModal}
-                      selectedKBId={selectedKB.id}
                     />
                   ),
                 },
@@ -200,10 +179,6 @@ const KnowledgeBasePage: React.FC = () => {
         open={exportModalOpen}
         onCancel={() => setExportModalOpen(false)}
         onConfirm={onExport}
-        exportType={exportType}
-        onTypeChange={setExportType}
-        exportFormat={exportFormat}
-        onFormatChange={setExportFormat}
         exporting={exporting}
         exportProgress={exportProgress}
       />
@@ -212,10 +187,6 @@ const KnowledgeBasePage: React.FC = () => {
         open={importModalOpen}
         onCancel={() => setImportModalOpen(false)}
         onConfirm={onImport}
-        importType={importType}
-        onTypeChange={setImportType}
-        importFormat={importFormat}
-        onFormatChange={setImportFormat}
         conflictStrategy={importConflictStrategy}
         onConflictStrategyChange={setImportConflictStrategy}
         importing={importing}

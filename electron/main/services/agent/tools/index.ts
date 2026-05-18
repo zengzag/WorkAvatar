@@ -30,7 +30,6 @@ export const allBuiltinTools: ToolDefinition[] = [
 ]
 
 export { createKBSearchTool } from './kb-search.tool'
-export { createKBEntitiesTool, createKBEntityDetailTool } from './kb-entities.tool'
 export { createKBAdvancedSearchTool } from './kb-advanced.tool'
 export { createKBGetContentTool } from './kb-content.tool'
 export { createKBAgentTools } from './kb-agent-tools'

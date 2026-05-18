@@ -195,13 +195,10 @@ class EmployeeAgentService {
     const kbToolIds = [
       'kb_search',
       'kb_advanced_search',
-      'kb_list_entities',
-      'kb_entity_detail',
       'kb_get_content',
       'kb_overview',
       'query_global_summary',
-      'query_knowledge_graph',
-      'query_chapters',
+      'query_paragraphs',
       'query_fulltext',
     ]
     for (const id of kbToolIds) {

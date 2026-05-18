@@ -34,7 +34,6 @@ class FileParserService {
       fullText: result.markdown,
       sections: this.splitIntoSections(result.markdown),
       tables: [],
-      entities: [],
       metadata: {
         pageCount: result.metadata.pageCount,
       },
@@ -51,7 +50,6 @@ class FileParserService {
         fullText: result.value,
         sections: this.splitIntoSections(result.value),
         tables: [],
-        entities: [],
         metadata: {},
       }
     } catch (error) {
@@ -71,7 +69,6 @@ class FileParserService {
       fullText: result.markdown,
       sections: this.splitIntoSections(result.markdown),
       tables: [],
-      entities: [],
       metadata: {},
     }
   }
@@ -91,7 +88,6 @@ class FileParserService {
         fullText: result.markdown,
         sections: this.splitIntoSections(result.markdown),
         tables: [],
-        entities: [],
         metadata: {},
       }
     }
@@ -120,7 +116,6 @@ class FileParserService {
       fullText: fullText.trim(),
       sections: [],
       tables,
-      entities: [],
       metadata: { sheetNames: workbook.SheetNames },
     }
   }
@@ -133,7 +128,6 @@ class FileParserService {
       fullText: content,
       sections: this.splitIntoSections(content),
       tables: [],
-      entities: [],
       metadata: {},
     }
   }
@@ -146,7 +140,6 @@ class FileParserService {
       fullText: ocrResult.text,
       sections: this.splitIntoSections(ocrResult.text),
       tables: [],
-      entities: [],
       metadata: {
         ocrEngine: ocrResult.engine,
         confidence: ocrResult.confidence,

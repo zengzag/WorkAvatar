@@ -14,10 +14,6 @@ export function generateUUID(): string {
   return generateId()
 }
 
-export function formatEntityList(entities: any[], separator: string = '\n', prefix: string = '- '): string {
-  return entities.map(e => `${prefix}${e.name}(${e.type})`).join(separator)
-}
-
 export function validateKbId(kbIds: string[] | undefined | null): string | null {
   if (!kbIds || kbIds.length === 0) return 'knowledge_base_ids为必填字段'
   return null

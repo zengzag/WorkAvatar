@@ -55,7 +55,6 @@ export type {
   KBExportSummaryParams,
   KBExportDocumentsParams,
   KBImportFullParams,
-  KBImportGraphParams,
 } from './channels/kb'
 export type {
   EmployeeTaskCreateParams,

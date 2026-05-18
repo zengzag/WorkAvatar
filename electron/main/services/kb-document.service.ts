@@ -13,7 +13,7 @@ import type { SearchResult } from './search-engine.service'
 import { calculateFileHash, getDefaultProviderId, generateId } from './common-utils'
 import * as crypto from 'crypto'
 import type Database from 'better-sqlite3'
-import type { DBKBDocument, DBKBDocumentSummary, DBKBChapter, DBKBEntity } from '../../shared/db-types'
+import type { DBKBDocument, DBKBDocumentSummary, DBKBParagraph } from '../../shared/db-types'
 
 export interface KBDocumentServiceDeps {
   db: Database.Database
@@ -454,7 +454,7 @@ class KBDocumentService {
       return { success: false, error: 'LLM provider not configured' }
     }
 
-    const jobId = this.processor.createProcessingJob(kbId, docId, 'full_process', 4)
+    const jobId = this.processor.createProcessingJob(kbId, docId, 'full_process', 3)
     const taskId = `process-${docId}`
 
     this.taskQueue.addTask({
@@ -469,46 +469,40 @@ class KBDocumentService {
     })
 
     try {
-      this.processor.updateProcessingJob(jobId, 'running', 0, 'chapter_identify')
-      onProgress?.('chapter_identify', `Identifying document structure: ${doc.original_name}`)
-      this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Chapter identify: ${doc.original_name}` })
+      this.processor.updateProcessingJob(jobId, 'running', 0, 'paragraph_identify')
+      onProgress?.('paragraph_identify', `Identifying document structure: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Paragraph identify: ${doc.original_name}` })
 
       const text = this.getDocumentContent(docId) || ''
-      const chapters = this.processor.identifyChapters(text)
+      const paragraphs = this.processor.identifyParagraphs(text)
 
-      this.processor.updateProcessingJob(jobId, 'running', 1, 'chapter_summary')
-      const chapterSummaries = []
-      for (let i = 0; i < chapters.length; i++) {
-        const chapter = chapters[i]
-        const progressPercent = 10 + Math.round((i + 1) / chapters.length * 40)
-        onProgress?.('chapter_summary', `Generating chapter summary (${i + 1}/${chapters.length}): ${chapter.title}`)
-        this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Chapter summary (${i + 1}/${chapters.length}): ${chapter.title}` })
-        const summary = await this.processor.generateChapterSummary(
-          chapter.content, chapter.title, provider, modelId, enableThinking, onProgress
+      const toc = paragraphs
+        .filter(p => p.level >= 1)
+        .map(p => ({ title: p.title, level: p.level, path: p.titlePath, offset: p.startOffset }))
+
+      this.processor.updateProcessingJob(jobId, 'running', 1, 'paragraph_summary')
+      const paragraphSummaries = []
+      for (let i = 0; i < paragraphs.length; i++) {
+        const paragraph = paragraphs[i]
+        const progressPercent = 10 + Math.round((i + 1) / paragraphs.length * 40)
+        onProgress?.('paragraph_summary', `Generating paragraph summary (${i + 1}/${paragraphs.length}): ${paragraph.title}`)
+        this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Paragraph summary (${i + 1}/${paragraphs.length}): ${paragraph.title}` })
+        const summary = await this.processor.generateParagraphSummary(
+          paragraph.content, paragraph.title, provider, modelId, enableThinking, onProgress
         )
-        chapterSummaries.push(summary)
+        paragraphSummaries.push(summary)
       }
 
-      this.processor.saveChapters(kbId, docId, chapters, chapterSummaries)
+      this.processor.saveParagraphs(kbId, docId, paragraphs, paragraphSummaries)
 
       this.processor.updateProcessingJob(jobId, 'running', 2, 'doc_summary')
       this.taskQueue.updateTask(taskId, { progress: 60, progressText: `Doc summary: ${doc.original_name}` })
       const docSummary = await this.processor.generateDocumentSummary(
-        chapterSummaries, doc.original_name, provider, modelId, enableThinking, onProgress
+        paragraphSummaries, doc.original_name, toc, provider, modelId, enableThinking, onProgress
       )
       this.processor.saveDocumentSummary(kbId, docId, docSummary)
 
-      this.processor.updateProcessingJob(jobId, 'running', 3, 'entity_extract')
-      this.taskQueue.updateTask(taskId, { progress: 80, progressText: `Entity extract: ${doc.original_name}` })
-      const entityText = chapterSummaries.map(cs =>
-        `## ${cs.title}\n${cs.summary}\n实体: ${cs.entities.map((e: { name: string; type: string }) => `${e.name}(${e.type})`).join(', ')}`
-      ).join('\n\n')
-      const extraction = await this.processor.extractEntities(
-        entityText, doc.original_name, provider, modelId, enableThinking, onProgress
-      )
-      this.processor.saveEntities(kbId, docId, extraction)
-
-      this.processor.updateProcessingJob(jobId, 'completed', 4, 'complete')
+      this.processor.updateProcessingJob(jobId, 'completed', 3, 'complete')
       onProgress?.('complete', `Document processing completed: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: `Processing completed: ${doc.original_name}` })
 
@@ -681,9 +675,9 @@ class KBDocumentService {
     }
   }
 
-  searchChapters(kbId: string, query: string, topK: number = 5): SearchResult[] {
+  searchParagraphs(kbId: string, query: string, topK: number = 5): SearchResult[] {
     return this.searchEngine.ftsSearch(kbId, query, topK, {
-      sourceTypes: ['chapter']
+      sourceTypes: ['paragraph']
     })
   }
 
@@ -723,10 +717,8 @@ class KBDocumentService {
     return this.searchEngine.search(kbId, query, topK, documentIds, queryEmbedding || undefined)
   }
 
-  advancedSearch(kbId: string, query: string, topK: number = 10, documentType?: string): SearchResult[] {
-    return this.searchEngine.advancedFtsSearch(kbId, query, topK, {
-      documentType
-    })
+  advancedSearch(kbId: string, query: string, topK: number = 10): SearchResult[] {
+    return this.searchEngine.advancedFtsSearch(kbId, query, topK)
   }
 
   getSearchIndexStats(kbId: string): any {
@@ -758,42 +750,25 @@ class KBDocumentService {
         kbId,
         ds.document_id,
         ds.summary,
-        JSON.parse(ds.keywords_json || '[]'),
-        JSON.parse(ds.main_topics_json || '[]')
+        JSON.parse(ds.keywords_json || '[]')
       )
     }
 
-    const chapters = this.db.prepare(
-      'SELECT * FROM kb_chapters WHERE kb_id = ?'
-    ).all(kbId) as DBKBChapter[]
+    const paragraphs = this.db.prepare(
+      'SELECT * FROM kb_paragraphs WHERE kb_id = ?'
+    ).all(kbId) as DBKBParagraph[]
 
-    for (const ch of chapters) {
-      this.searchEngine.indexChapter(
+    for (const p of paragraphs) {
+      this.searchEngine.indexParagraph(
         kbId,
-        ch.document_id,
-        ch.id,
-        ch.title,
-        ch.summary || '',
-        JSON.parse(ch.keywords_json || '[]'),
-        JSON.parse(ch.entities_json || '[]'),
-        ch.start_offset,
-        ch.end_offset
-      )
-    }
-
-    const entities = this.db.prepare(
-      'SELECT * FROM kb_entities WHERE kb_id = ?'
-    ).all(kbId) as DBKBEntity[]
-
-    for (const entity of entities) {
-      this.searchEngine.indexEntity(
-        kbId,
-        entity.id,
-        entity.name,
-        entity.type,
-        entity.description || '',
-        JSON.parse(entity.aliases_json || '[]'),
-        entity.first_seen_doc_id || ''
+        p.document_id,
+        p.id,
+        p.title,
+        p.title_path || '',
+        p.summary || '',
+        JSON.parse(p.keywords_json || '[]'),
+        p.start_offset,
+        p.end_offset
       )
     }
 

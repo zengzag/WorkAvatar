@@ -11,7 +11,6 @@ import type {
   KBExportSummaryParams,
   KBExportDocumentsParams,
   KBImportFullParams,
-  KBImportGraphParams,
 } from '../../shared/ipc-channels'
 import type KnowledgeBaseService from '../services/kb.service'
 
@@ -117,8 +116,8 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.getKnowledgeStats(kbId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_GET_CHAPTERS, (_, docId: string) => {
-    return kbService.getChapters(docId)
+  ipcMain.handle(IPC_CHANNELS.KB_GET_PARAGRAPHS, (_, docId: string) => {
+    return kbService.getParagraphs(docId)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_GET_DOC_SUMMARY, (_, docId: string) => {
@@ -133,24 +132,8 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.getGlobalSummary(kbId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_GET_ENTITIES, (_, params: { kb_id: string; type?: string }) => {
-    return kbService.getEntities(params.kb_id, params.type)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_ENTITY, (_, params: { kb_id: string; name: string }) => {
-    return kbService.getEntityByName(params.kb_id, params.name)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_ENTITY_RELATIONS, (_, params: { entity_id: string; depth?: number }) => {
-    return kbService.getEntityRelations(params.entity_id, params.depth)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_ENTITY_MENTIONS, (_, entityId: string) => {
-    return kbService.getEntityMentions(entityId)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_CHAPTERS, (_, params: { kb_id: string; query: string; top_k?: number }) => {
-    return kbService.searchChapters(params.kb_id, params.query, params.top_k)
+  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_PARAGRAPHS, (_, params: { kb_id: string; query: string; top_k?: number }) => {
+    return kbService.searchParagraphs(params.kb_id, params.query, params.top_k)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_GET_DOC_CONTENT, (_, docId: string) => {
@@ -228,18 +211,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     )
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_IMPORT_GRAPH, async (event, params: KBImportGraphParams) => {
-    return kbService.importKBGraph(
-      params.kb_id,
-      params.import_path,
-      params.format,
-      params.conflict_strategy,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.KB_IMPORT_PROGRESS, { kb_id: params.kb_id, stage, detail })
-      }
-    )
-  })
-
   ipcMain.handle(IPC_CHANNELS.KB_SCAN_FOLDER, async (_, params: { folder_path: string }) => {
     return kbService.scanFolder(params.folder_path)
   })
@@ -248,8 +219,8 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.search(params.kb_id, params.query, params.top_k, params.document_ids)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_ADVANCED_SEARCH, (_, params: { kb_id: string; query: string; top_k?: number; document_type?: string }) => {
-    return kbService.advancedSearch(params.kb_id, params.query, params.top_k, params.document_type)
+  ipcMain.handle(IPC_CHANNELS.KB_ADVANCED_SEARCH, (_, params: { kb_id: string; query: string; top_k?: number }) => {
+    return kbService.advancedSearch(params.kb_id, params.query, params.top_k)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, async (_, params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => {

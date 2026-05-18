@@ -140,8 +140,8 @@ export class EmployeeExportPackageService {
           'SELECT * FROM kb_documents WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
-        const kbChapters = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_chapters WHERE kb_id = ?'
+        const kbParagraphs = this.kbDb.getDb().prepare(
+          'SELECT * FROM kb_paragraphs WHERE kb_id = ?'
         ).all(kbRef.kb_id) as any[]
 
         const kbDocSummaries = this.kbDb.getDb().prepare(
@@ -151,14 +151,6 @@ export class EmployeeExportPackageService {
         const kbGlobalSummary = this.kbDb.getDb().prepare(
           'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
         ).get(kbRef.kb_id) as any
-
-        const kbEntities = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_entities WHERE kb_id = ?'
-        ).all(kbRef.kb_id) as any[]
-
-        const kbEntityRelations = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
-        ).all(kbRef.kb_id) as any[]
 
         const kbData = {
           id: kb.id,
@@ -181,11 +173,9 @@ export class EmployeeExportPackageService {
               updated_at: d.updated_at,
             }
           }),
-          chapters: kbChapters,
+          paragraphs: kbParagraphs,
           docSummaries: kbDocSummaries,
           globalSummary: kbGlobalSummary || null,
-          entities: kbEntities,
-          entityRelations: kbEntityRelations,
         }
 
         const safeKbName = kb.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')
@@ -462,18 +452,19 @@ export class EmployeeExportPackageService {
       )
     }
 
-    for (const ch of kbData.chapters || []) {
-      const newDocId = docIdMap.get(ch.document_id)
+    for (const p of kbData.paragraphs || []) {
+      const newDocId = docIdMap.get(p.document_id)
       if (!newDocId) continue
 
-      const chId = generateId()
+      const pId = generateId()
       this.kbDb.getDb().prepare(`
-        INSERT INTO kb_chapters (id, kb_id, document_id, title, chapter_index, start_offset, end_offset, content, summary, keywords_json, entities_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
-        chId, kbId, newDocId, ch.title, ch.chapter_index,
-        ch.start_offset, ch.end_offset, ch.content || '',
-        ch.summary || null, ch.keywords_json || '[]', ch.entities_json || '[]'
+        pId, kbId, newDocId, p.title, p.title_path || null,
+        p.level || 1, p.paragraph_index ?? 0,
+        p.start_offset, p.end_offset, p.content || '',
+        p.summary || null, p.keywords_json || '[]'
       )
     }
 
@@ -483,12 +474,12 @@ export class EmployeeExportPackageService {
 
       const id = generateId()
       this.kbDb.getDb().prepare(`
-        INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, keywords_json, main_topics_json, toc_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
         id, kbId, newDocId, ds.summary || '',
-        ds.key_entities_json || '[]', ds.timeline_json || '[]',
-        ds.keywords_json || '[]', ds.main_topics_json || '[]'
+        ds.keywords_json || '[]', ds.main_topics_json || '[]',
+        ds.toc_json || '[]'
       )
     }
 
@@ -496,42 +487,11 @@ export class EmployeeExportPackageService {
       const gs = kbData.globalSummary
       const id = generateId()
       this.kbDb.getDb().prepare(`
-        INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(
         id, kbId, gs.summary || '',
-        gs.key_topics_json || '[]', gs.key_entities_json || '[]', gs.global_timeline_json || '[]'
-      )
-    }
-
-    const entityIdMap = new Map<string, string>()
-    for (const entity of kbData.entities || []) {
-      const newEntityId = generateId()
-      entityIdMap.set(entity.id, newEntityId)
-
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, first_seen_doc_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(
-        newEntityId, kbId, entity.name, entity.type, entity.description,
-        entity.aliases_json || '[]', entity.attributes_json || '{}',
-        entity.mention_count || 0, docIdMap.get(entity.first_seen_doc_id) || null
-      )
-    }
-
-    for (const rel of kbData.entityRelations || []) {
-      const newSourceId = entityIdMap.get(rel.source_entity_id)
-      const newTargetId = entityIdMap.get(rel.target_entity_id)
-      if (!newSourceId || !newTargetId) continue
-
-      const id = generateId()
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
-      `).run(
-        id, kbId, newSourceId, newTargetId, rel.relation_type,
-        rel.description || null, docIdMap.get(rel.source_document_id) || null,
-        rel.confidence || null
+        gs.key_topics_json || '[]'
       )
     }
 

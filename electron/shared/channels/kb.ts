@@ -13,15 +13,11 @@ export const KB_CHANNELS = {
   KB_PROCESS_ALL: 'kb:process-all',
   KB_BUILD_GLOBAL: 'kb:build-global',
   KB_GET_STATS: 'kb:get-stats',
-  KB_GET_CHAPTERS: 'kb:get-chapters',
+  KB_GET_PARAGRAPHS: 'kb:get-paragraphs',
   KB_GET_DOC_SUMMARY: 'kb:get-doc-summary',
   KB_GET_ALL_DOC_SUMMARIES: 'kb:get-all-doc-summaries',
   KB_GET_GLOBAL_SUMMARY: 'kb:get-global-summary',
-  KB_GET_ENTITIES: 'kb:get-entities',
-  KB_GET_ENTITY: 'kb:get-entity',
-  KB_GET_ENTITY_RELATIONS: 'kb:get-entity-relations',
-  KB_GET_ENTITY_MENTIONS: 'kb:get-entity-mentions',
-  KB_SEARCH_CHAPTERS: 'kb:search-chapters',
+  KB_SEARCH_PARAGRAPHS: 'kb:search-paragraphs',
   KB_GET_DOC_CONTENT: 'kb:get-doc-content',
   KB_UPLOAD_PROGRESS: 'kb:upload-progress',
   KB_PARSE_PROGRESS: 'kb:parse-progress',
@@ -41,7 +37,6 @@ export const KB_CHANNELS = {
   KB_EXPORT_DOCUMENTS: 'kb:export-documents',
   KB_SCAN_FOLDER: 'kb:scan-folder',
   KB_IMPORT_FULL: 'kb:import-full',
-  KB_IMPORT_GRAPH: 'kb:import-graph',
   KB_EXPORT_PROGRESS: 'kb:export-progress',
   KB_IMPORT_PROGRESS: 'kb:import-progress',
   KB_SEARCH: 'kb:search',
@@ -111,9 +106,3 @@ export interface KBImportFullParams {
   conflict_strategy: 'skip' | 'overwrite' | 'rename'
 }
 
-export interface KBImportGraphParams {
-  kb_id: string
-  import_path: string
-  format: 'json-ld' | 'rdf'
-  conflict_strategy: 'skip' | 'overwrite' | 'merge'
-}

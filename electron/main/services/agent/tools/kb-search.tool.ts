@@ -6,8 +6,8 @@ import { createKbIdValidator } from './utils'
 interface SearchResult {
   document_id: string
   document_name: string
-  chapter_id?: string
-  chapter_title?: string
+  paragraph_id?: string
+  paragraph_title?: string
   text: string
   score: number
   match_type: string
@@ -15,9 +15,6 @@ interface SearchResult {
   end_offset?: number
   start_line?: number
   end_line?: number
-  entity_id?: string
-  entity_name?: string
-  entity_type?: string
 }
 
 export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
@@ -35,7 +32,7 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
     id: 'kb_search',
     name: 'kb_search',
     title: '智能知识库检索',
-    description: `对知识库进行智能检索，支持关键词搜索和语义搜索，搜索标题、摘要、章节、关键词、实体和内容。`,
+    description: `对知识库进行智能检索，支持关键词搜索和语义搜索，搜索标题、摘要、段落、关键词和内容。`,
     parameters: {
       type: 'object',
       properties: {
@@ -105,19 +102,18 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
           const typeLabel = {
             document_title: '文档标题',
             document_summary: '文档摘要',
-            chapter: '章节摘要',
-            entity: '知识实体',
+            paragraph: '段落摘要',
             content_paragraph: '原文内容',
             hybrid: '混合匹配',
           }[r.match_type] || r.match_type
 
           output += `[${i + 1}] **${typeLabel}**\n`
-          output += `来源: ${r.document_name}${r.chapter_title ? ` > ${r.chapter_title}` : ''}\n`
+          output += `来源: ${r.document_name}${r.paragraph_title ? ` > ${r.paragraph_title}` : ''}\n`
           output += `${r.text}\n`
 
           const locParts: string[] = []
           if (r.document_id) locParts.push(`document_id: ${r.document_id}`)
-          if (r.chapter_id) locParts.push(`chapter_id: ${r.chapter_id}`)
+          if (r.paragraph_id) locParts.push(`paragraph_id: ${r.paragraph_id}`)
           if (r.start_line !== undefined && r.end_line !== undefined) {
             locParts.push(`line: ${r.start_line}-${r.end_line}`)
           }
@@ -131,9 +127,8 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
         }
 
         output += `### 下一步建议\n`
-        output += `- 使用 kb_get_content 获取某个文档或章节的完整内容（支持 chapter_id / start_offset+end_offset / start_line+end_line 精准定位）\n`
-        output += `- 使用 kb_entity_detail 查询某个实体的详细信息\n`
-        output += `- 使用 query_knowledge_graph 查询某个实体的关系网络\n`
+        output += `- 使用 kb_get_content 获取某个文档或段落的完整内容（支持 paragraph_id / start_offset+end_offset / start_line+end_line 精准定位）\n`
+        output += `- 使用 query_paragraphs 按关键词检索相关段落摘要\n`
         output += `- 使用 kb_advanced_search 进行更精确的高级检索\n`
         if (!args.use_semantic) {
           output += `- 启用语义搜索(use_semantic=true)可获取语义匹配结果，提升搜索召回率\n`

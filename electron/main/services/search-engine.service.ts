@@ -1,22 +1,19 @@
 import KBDatabaseService from './kb-database.service'
 import { generateId } from './common-utils'
 
-type SourceType = 'document_title' | 'document_summary' | 'chapter' | 'entity' | 'content_paragraph'
+type SourceType = 'document_title' | 'document_summary' | 'paragraph' | 'content_paragraph'
 
 interface SearchResult {
   document_id: string
   document_name: string
-  chapter_id?: string
-  chapter_title?: string
+  paragraph_id?: string
+  paragraph_title?: string
   text: string
   match_type: SourceType | 'hybrid'
   start_offset?: number
   end_offset?: number
   start_line?: number
   end_line?: number
-  entity_id?: string
-  entity_name?: string
-  entity_type?: string
 }
 
 interface HybridSearchOptions {
@@ -96,20 +93,19 @@ class SearchEngineService {
     kbId: string,
     documentId: string,
     summary: string,
-    keywords: string[],
-    topics: string[]
+    keywords: string[]
   ): void {
     const existing = this.db.prepare(
       "SELECT id FROM kb_search_index WHERE source_type = 'document_summary' AND source_id = ?"
     ).get(documentId) as any
 
     const keywordsStr = keywords.join(', ')
-    const content = [summary, ...topics].join(' ')
+    const content = summary
 
     if (existing) {
       this.db.prepare(`
         UPDATE kb_search_index SET title = ?, content = ?, keywords_json = ?, metadata_json = ?, updated_at = unixepoch() WHERE id = ?
-      `).run('文档摘要', content, JSON.stringify(keywords), JSON.stringify({ topics }), existing.id)
+      `).run('文档摘要', content, JSON.stringify(keywords), JSON.stringify({}), existing.id)
 
       this.deleteFtsRow(existing.id)
       this.insertFtsRow(existing.id, kbId, 'document_summary', documentId, documentId, '文档摘要', content, keywordsStr)
@@ -118,85 +114,49 @@ class SearchEngineService {
       this.db.prepare(`
         INSERT INTO kb_search_index (id, kb_id, source_type, source_id, document_id, title, content, keywords_json, metadata_json, created_at, updated_at)
         VALUES (?, ?, 'document_summary', ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(id, kbId, documentId, documentId, '文档摘要', content, JSON.stringify(keywords), JSON.stringify({ topics }))
+      `).run(id, kbId, documentId, documentId, '文档摘要', content, JSON.stringify(keywords), JSON.stringify({}))
 
       this.insertFtsRow(id, kbId, 'document_summary', documentId, documentId, '文档摘要', content, keywordsStr)
     }
   }
 
-  indexChapter(
+  indexParagraph(
     kbId: string,
     documentId: string,
-    chapterId: string,
+    paragraphId: string,
     title: string,
+    titlePath: string,
     summary: string,
     keywords: string[],
-    entities: Array<{ name: string; type: string }>,
     startOffset: number,
     endOffset: number
   ): void {
     const existing = this.db.prepare(
-      "SELECT id FROM kb_search_index WHERE source_type = 'chapter' AND source_id = ?"
-    ).get(chapterId) as any
+      "SELECT id FROM kb_search_index WHERE source_type = 'paragraph' AND source_id = ?"
+    ).get(paragraphId) as any
 
     const keywordsStr = keywords.join(', ')
-    const entityNames = entities.map(e => e.name).join(', ')
-    const content = [title, summary, entityNames].filter(Boolean).join(' ')
+    const content = [title, summary].filter(Boolean).join(' ')
 
     if (existing) {
       this.db.prepare(`
         UPDATE kb_search_index SET title = ?, content = ?, keywords_json = ?, metadata_json = ?,
           start_offset = ?, end_offset = ?, updated_at = unixepoch() WHERE id = ?
-      `).run(title, content, JSON.stringify(keywords), JSON.stringify({ entities, summary }),
+      `).run(title, content, JSON.stringify(keywords), JSON.stringify({ summary, title_path: titlePath }),
         startOffset, endOffset, existing.id)
 
       this.deleteFtsRow(existing.id)
-      this.insertFtsRow(existing.id, kbId, 'chapter', chapterId, documentId, title, content, keywordsStr)
+      this.insertFtsRow(existing.id, kbId, 'paragraph', paragraphId, documentId, title, content, keywordsStr)
     } else {
       const id = generateId()
       this.db.prepare(`
         INSERT INTO kb_search_index (id, kb_id, source_type, source_id, document_id, title, content, keywords_json, metadata_json, start_offset, end_offset, created_at, updated_at)
-        VALUES (?, ?, 'chapter', ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(id, kbId, chapterId, documentId, title, content,
-        JSON.stringify(keywords), JSON.stringify({ entities, summary }),
+        VALUES (?, ?, 'paragraph', ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      `).run(id, kbId, paragraphId, documentId, title, content,
+        JSON.stringify(keywords), JSON.stringify({ summary, title_path: titlePath }),
         startOffset, endOffset)
 
-      this.insertFtsRow(id, kbId, 'chapter', chapterId, documentId, title, content, keywordsStr)
-    }
-  }
-
-  indexEntity(
-    kbId: string,
-    entityId: string,
-    name: string,
-    type: string,
-    description: string,
-    aliases: string[],
-    firstSeenDocId: string
-  ): void {
-    const existing = this.db.prepare(
-      "SELECT id FROM kb_search_index WHERE source_type = 'entity' AND source_id = ?"
-    ).get(entityId) as any
-
-    const aliasesStr = aliases.join(', ')
-    const content = [name, type, description, aliasesStr].filter(Boolean).join(' ')
-
-    if (existing) {
-      this.db.prepare(`
-        UPDATE kb_search_index SET title = ?, content = ?, metadata_json = ?, document_id = ?, updated_at = unixepoch() WHERE id = ?
-      `).run(name, content, JSON.stringify({ type, description, aliases }), firstSeenDocId, existing.id)
-
-      this.deleteFtsRow(existing.id)
-      this.insertFtsRow(existing.id, kbId, 'entity', entityId, firstSeenDocId, name, content, aliasesStr)
-    } else {
-      const id = generateId()
-      this.db.prepare(`
-        INSERT INTO kb_search_index (id, kb_id, source_type, source_id, document_id, title, content, metadata_json, created_at, updated_at)
-        VALUES (?, ?, 'entity', ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(id, kbId, entityId, firstSeenDocId, name, content,
-        JSON.stringify({ type, description, aliases }))
-
-      this.insertFtsRow(id, kbId, 'entity', entityId, firstSeenDocId, name, content, aliasesStr)
+      this.insertFtsRow(id, kbId, 'paragraph', paragraphId, documentId, title, content, keywordsStr)
     }
   }
 
@@ -300,7 +260,7 @@ class SearchEngineService {
     this.deleteIndexByKb(kbId)
   }
 
-  private buildFtsWhereClause(kbId: string, options?: { documentIds?: string[]; sourceTypes?: SourceType[]; excludeEntity?: boolean }): { whereClause: string; params: any[] } {
+  private buildFtsWhereClause(kbId: string, options?: { documentIds?: string[]; sourceTypes?: SourceType[] }): { whereClause: string; params: any[] } {
     let whereClause = "kb_fts.kb_id = ?"
     const params: any[] = [kbId]
 
@@ -314,10 +274,6 @@ class SearchEngineService {
       const placeholders = options.sourceTypes.map(() => '?').join(',')
       whereClause += ` AND kb_fts.source_type IN (${placeholders})`
       params.push(...options.sourceTypes)
-    }
-
-    if (options?.excludeEntity) {
-      whereClause += " AND kb_fts.source_type != 'entity'"
     }
 
     return { whereClause, params }
@@ -360,7 +316,7 @@ class SearchEngineService {
     kbId: string,
     query: string,
     topK: number = 10,
-    options?: { documentIds?: string[]; documentType?: string }
+    options?: { documentIds?: string[] }
   ): SearchResult[] {
     const phrases: string[] = []
     const required: string[] = []
@@ -404,7 +360,6 @@ class SearchEngineService {
 
     const { whereClause, params } = this.buildFtsWhereClause(kbId, {
       documentIds: options?.documentIds,
-      excludeEntity: !!options?.documentType,
     })
 
     try {
@@ -472,28 +427,16 @@ class SearchEngineService {
           }
           break
 
-        case 'chapter':
+        case 'paragraph':
           result = {
             document_id: row.document_id,
             document_name: docName,
-            chapter_id: row.source_id,
-            chapter_title: row.title,
-            text: `章节「${row.title}」: ${(metadata.summary || row.content).substring(0, 300)}`,
-            match_type: 'chapter',
+            paragraph_id: row.source_id,
+            paragraph_title: row.title,
+            text: `段落「${row.title}」(${metadata.title_path || ''}): ${metadata.summary || row.content}`.substring(0, 400),
+            match_type: 'paragraph',
             start_offset: row.start_offset,
             end_offset: row.end_offset,
-          }
-          break
-
-        case 'entity':
-          result = {
-            document_id: row.document_id,
-            document_name: '知识图谱实体',
-            text: `实体「${row.title}」(${metadata.type || 'other'}): ${metadata.description || '无描述'}`,
-            match_type: 'entity',
-            entity_id: row.source_id,
-            entity_name: row.title,
-            entity_type: metadata.type,
           }
           break
 
@@ -690,8 +633,8 @@ class SearchEngineService {
             result: {
               document_id: indexEntry.document_id,
               document_name: doc?.original_name || '',
-              chapter_id: vs.sourceType === 'chapter' ? vs.sourceId : undefined,
-              chapter_title: indexEntry.title,
+              paragraph_id: vs.sourceType === 'paragraph' ? vs.sourceId : undefined,
+              paragraph_title: indexEntry.title,
               text: indexEntry.content.substring(0, 300),
               match_type: 'hybrid',
               start_offset: indexEntry.start_offset,
@@ -798,8 +741,7 @@ class SearchEngineService {
   }
 
   private getResultKey(result: SearchResult): string {
-    if (result.chapter_id) return `chapter-${result.chapter_id}`
-    if (result.entity_id) return `entity-${result.entity_id}`
+    if (result.paragraph_id) return `paragraph-${result.paragraph_id}`
     if (result.match_type === 'content_paragraph' && result.start_offset !== undefined) {
       return `content-${result.document_id}-${result.start_offset}`
     }
