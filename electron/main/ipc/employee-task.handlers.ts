@@ -17,6 +17,10 @@ export function registerEmployeeTaskHandlers(
     return taskService.getTasks(employeeId)
   })
 
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL, () => {
+    return taskService.getAllTasks()
+  })
+
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_TASK_GET, (_, taskId: string) => {
     return taskService.getTask(taskId)
   })
@@ -51,8 +55,8 @@ export function registerEmployeeTaskHandlers(
     return taskService.getSchedules(employeeId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_GET, (_, scheduleId: string) => {
-    return taskService.getSchedule(scheduleId)
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL, () => {
+    return taskService.getAllSchedules()
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, (_, params: EmployeeScheduleCreateParams) => {
@@ -80,10 +84,6 @@ export function registerEmployeeTaskHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, (_, cronExpr: string) => {
     return schedulerService.validateCronExpression(cronExpr)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST, (_, params: { employee_id: string; limit?: number; offset?: number }) => {
-    return taskService.getExecutions(params.employee_id, params.limit, params.offset)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, (_, params: { task_id: string; limit?: number }) => {

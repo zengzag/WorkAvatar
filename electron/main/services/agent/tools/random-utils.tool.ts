@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import { generateUUID } from './utils'
 
 export const randomUtilsTool: ToolDefinition = {
@@ -33,20 +33,20 @@ export const randomUtilsTool: ToolDefinition = {
           for (let i = 0; i < count; i++) {
             results.push(Math.floor(Math.random() * (max - min + 1)) + min)
           }
-          return { success: true, result: count === 1 ? results[0] : results }
+          return { success: true, output: count === 1 ? String(results[0]) : JSON.stringify(results) }
         }
-        case 'uid': {
+        case 'uuid': {
           const count = Math.min(Math.max(args.count || 1, 1), 100)
           const results: string[] = []
           for (let i = 0; i < count; i++) {
             results.push(generateUUID())
           }
-          return { success: true, result: count === 1 ? results[0] : results }
+          return { success: true, output: count === 1 ? results[0] : JSON.stringify(results) }
         }
         case 'choice': {
           const items = args.items || []
           if (items.length === 0) return { success: false, error: '选项数组不能为空' }
-          return { success: true, result: items[Math.floor(Math.random() * items.length)] }
+          return { success: true, output: String(items[Math.floor(Math.random() * items.length)]) }
         }
         case 'shuffle': {
           const items = [...(args.items || [])]
@@ -54,7 +54,7 @@ export const randomUtilsTool: ToolDefinition = {
             const j = Math.floor(Math.random() * (i + 1));
             [items[i], items[j]] = [items[j], items[i]]
           }
-          return { success: true, result: items }
+          return { success: true, output: JSON.stringify(items) }
         }
         case 'boolean': {
           const count = Math.min(Math.max(args.count || 1, 1), 100)
@@ -62,7 +62,7 @@ export const randomUtilsTool: ToolDefinition = {
           for (let i = 0; i < count; i++) {
             results.push(Math.random() < 0.5)
           }
-          return { success: true, result: count === 1 ? results[0] : results }
+          return { success: true, output: count === 1 ? String(results[0]) : JSON.stringify(results) }
         }
         default: return { success: false, error: 'Unknown operation' }
       }

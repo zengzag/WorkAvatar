@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { formatFileSize as formatBytes } from './utils'

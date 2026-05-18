@@ -24,13 +24,11 @@ const { Text } = Typography
 interface ExportImportSectionProps {
   employeeId: string
   employeeName: string
-  projectId: string
 }
 
 const ExportImportSection: React.FC<ExportImportSectionProps> = ({
   employeeId,
   employeeName,
-  projectId,
 }) => {
   const { t } = useTranslation()
   const { modal } = App.useApp()
@@ -99,7 +97,6 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
 
       const importResult = await window.electronAPI.employee.importConfig({
         import_path: result.filePaths[0],
-        project_id: projectId,
         conflict_strategy: conflictStrategy,
       })
 
@@ -234,7 +231,6 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       try {
         const importResult = await window.electronAPI.employee.importPackage({
           import_path: result.filePaths[0],
-          project_id: projectId,
           conflict_strategy: conflictStrategy,
         })
 

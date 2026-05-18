@@ -1,15 +1,14 @@
 import { createHashRouter, Navigate } from 'react-router-dom'
 import App from '../App'
-import Dashboard from '../pages/Dashboard'
-import ProjectManager from '../pages/ProjectManager'
-import ProjectDetail from '../pages/ProjectDetail'
 import CreationWizard from '../pages/CreationWizard'
-import DocumentViewer from '../pages/DocumentViewer'
-import EmployeeManager from '../pages/EmployeeManager'
+import EmployeeRedirect from '../components/common/EmployeeRedirect'
+import TaskCenter from '../pages/TaskCenter'
 import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
+import WorkflowList from '../pages/WorkflowList'
+import WorkflowEditor from '../pages/WorkflowEditor'
 
 const router = createHashRouter([
   {
@@ -18,31 +17,35 @@ const router = createHashRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/dashboard" replace />,
+        element: <EmployeeRedirect />,
+      },
+      {
+        path: 'digital-employees',
+        element: <Navigate to="/" replace />,
       },
       {
         path: 'dashboard',
-        element: <Dashboard />,
+        element: <Navigate to="/" replace />,
       },
       {
-        path: 'projects',
-        element: <ProjectManager />,
+        path: 'conversation-center',
+        element: <Navigate to="/" replace />,
       },
       {
-        path: 'project/:id',
-        element: <ProjectDetail />,
-      },
-      {
-        path: 'project/:id/wizard',
+        path: 'wizard',
         element: <CreationWizard />,
       },
       {
-        path: 'project/:id/file/:fileId',
-        element: <DocumentViewer />,
+        path: 'task-center',
+        element: <TaskCenter />,
       },
       {
-        path: 'employees',
-        element: <EmployeeManager />,
+        path: 'workflows',
+        element: <WorkflowList />,
+      },
+      {
+        path: 'workflow/:id',
+        element: <WorkflowEditor />,
       },
       {
         path: 'employee/:id',

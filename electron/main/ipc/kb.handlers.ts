@@ -4,7 +4,6 @@ import type {
   KBCreateParams,
   KBUpdateParams,
   KBDocParseParams,
-  KBLinkProjectParams,
   KBProcessDocumentParams,
   KBProcessAllParams,
   KBBuildGlobalParams,
@@ -68,18 +67,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.getDocumentList(params.kb_id, params.status)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_LINK_PROJECT, (_, params: KBLinkProjectParams) => {
-    return kbService.linkProject(params.kb_id, params.project_id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_UNLINK_PROJECT, (_, params: KBLinkProjectParams) => {
-    return kbService.unlinkProject(params.kb_id, params.project_id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_PROJECTS, (_, kbId: string) => {
-    return kbService.getLinkedProjects(kbId)
-  })
-
   ipcMain.handle(IPC_CHANNELS.KB_PARSE_ALL, async (event, params: { kb_id: string }) => {
     const result = await kbService.parseAllDocuments(
       params.kb_id,
@@ -88,14 +75,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
       }
     )
     return result
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_FILE_BY_HASH, (_, params: { hash: string }) => {
-    return kbService.getExistingDocByHash(params.hash)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_IMPORT_DOCS_TO_PROJECT, async (_, params: { project_id: string; doc_ids: string[] }) => {
-    return kbService.importKBDocsToProject(params.project_id, params.doc_ids)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_PROCESS_DOCUMENT, async (event, params: KBProcessDocumentParams) => {
@@ -172,18 +151,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
 
   ipcMain.handle(IPC_CHANNELS.KB_SEARCH_CHAPTERS, (_, params: { kb_id: string; query: string; top_k?: number }) => {
     return kbService.searchChapters(params.kb_id, params.query, params.top_k)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, (_, params: { kb_id: string; query: string; top_k?: number }) => {
-    return kbService.searchDocumentSummaries(params.kb_id, params.query, params.top_k)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, (_, params: { kb_id: string; status?: string }) => {
-    return kbService.getProcessingJobs(params.kb_id, params.status)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_KBS_FOR_PROJECT, (_, projectId: string) => {
-    return kbService.getKBsForProject(projectId)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_GET_DOC_CONTENT, (_, docId: string) => {

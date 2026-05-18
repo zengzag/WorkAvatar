@@ -31,7 +31,7 @@ export class EmployeeAgent extends BaseAgent {
     super(config, options)
     this.employeeConfig = this.normalizeEmployeeConfig(config)
     this.skillManager = new SkillManager(
-      this.employeeConfig.skillsDirectories,
+      this.employeeConfig.skillsDirectories || [],
       this.employeeConfig.allowedSkillPaths,
       this.employeeConfig.debug ? this.log.bind(this) : undefined
     )

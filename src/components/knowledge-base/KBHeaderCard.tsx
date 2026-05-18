@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Card, Typography, Space, Button, Tooltip, Dropdown, theme } from 'antd'
 import {
-  UploadOutlined, LinkOutlined, EditOutlined,
+  UploadOutlined, EditOutlined,
   ExportOutlined, ImportOutlined, FolderAddOutlined, MoreOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
@@ -10,14 +10,12 @@ import type { KnowledgeBase } from './types'
 
 interface KBHeaderCardProps {
   selectedKB: KnowledgeBase
-  linkedProjects: any[]
   uploadLoading: boolean
   onUploadFiles: () => void
   onUploadFolder: () => void
   onEditKB: () => void
   onOpenExportModal: () => void
   onOpenImportModal: () => void
-  onLinkProject: () => void
   selectedProviderId: string
   selectedModelId: string
   enableThinking: boolean
@@ -28,14 +26,12 @@ interface KBHeaderCardProps {
 
 const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
   selectedKB,
-  linkedProjects,
   uploadLoading,
   onUploadFiles,
   onUploadFolder,
   onEditKB,
   onOpenExportModal,
   onOpenImportModal,
-  onLinkProject,
   selectedProviderId,
   selectedModelId,
   enableThinking,
@@ -54,14 +50,6 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Title level={4} style={{ margin: 0 }} ellipsis>{selectedKB.name}</Title>
-            {linkedProjects.length > 0 && (
-              <Tooltip title={t('knowledgeBase.linkToProject')}>
-                <LinkOutlined
-                  style={{ cursor: 'pointer', color: token.colorPrimary, fontSize: 14 }}
-                  onClick={onLinkProject}
-                />
-              </Tooltip>
-            )}
           </div>
           <Tooltip title={selectedKB.description || t('common.noDescription')}>
             <Text type="secondary" ellipsis style={{ display: 'block' }}>{selectedKB.description || t('common.noDescription')}</Text>

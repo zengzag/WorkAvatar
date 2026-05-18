@@ -31,10 +31,9 @@ class EmployeeExportService {
 
   importConfig(
     importPath: string,
-    projectId: string,
     conflictStrategy: 'skip' | 'overwrite' | 'merge' = 'merge'
   ): { success: boolean; error?: string; employeeId?: string; warnings?: string[] } {
-    return this.configService.importConfig(importPath, projectId, conflictStrategy)
+    return this.configService.importConfig(importPath, conflictStrategy)
   }
 
   async exportPackage(
@@ -47,11 +46,10 @@ class EmployeeExportService {
 
   async importPackage(
     importPath: string,
-    projectId: string,
     conflictStrategy: 'skip' | 'overwrite' | 'merge' = 'merge',
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string; employeeId?: string; warnings?: string[] }> {
-    return this.packageService.importPackage(importPath, projectId, conflictStrategy, onProgress)
+    return this.packageService.importPackage(importPath, conflictStrategy, onProgress)
   }
 }
 

@@ -1,13 +1,5 @@
 export { IPC_CHANNELS } from './channels'
 export type {
-  ProjectListParams,
-  ProjectCreateParams,
-  ProjectUpdateParams,
-  ProjectDeleteParams,
-  FileListParams,
-  FileImportParams,
-  FileParseParams,
-  FileGetContentParams,
   WorkspaceInfoParams,
   WorkspaceListFilesParams,
   WorkspaceReadFileParams,
@@ -16,14 +8,12 @@ export type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
-} from './channels/project'
+  WorkspaceOpenInExplorerParams,
+} from './channels/workspace'
 export type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
-  SkillListParams,
-  SkillCreateParams,
-  SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
@@ -32,17 +22,18 @@ export type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatParams,
-  LLMChatStreamParams,
   EmployeeChatStreamParams,
 } from './channels/llm'
 export type {
-  ToolExecuteParams,
   ToolAssignParams,
   MCPServerCreateParams,
   MCPServerUpdateParams,
@@ -50,14 +41,12 @@ export type {
 export type {
   SettingsGetParams,
   SettingsSetParams,
-  AppGetPathParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
 } from './channels/app'
 export type {
   KBCreateParams,
   KBUpdateParams,
-  KBLinkProjectParams,
   KBDocParseParams,
   KBProcessDocumentParams,
   KBProcessAllParams,
@@ -74,3 +63,7 @@ export type {
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
 } from './channels/employee-task'
+export type {
+  WorkflowCreateParams,
+  WorkflowUpdateParams,
+} from './channels/workflow'

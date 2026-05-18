@@ -34,12 +34,7 @@ export class ToolDispatcher {
 
     try {
       const result = await this.middlewareChain.execute(toolName, toolParams, async () => {
-        let result
-        if (tool.handler.constructor.name === 'AsyncFunction') {
-          result = await tool.handler(toolParams)
-        } else {
-          result = tool.handler(toolParams)
-        }
+        const result = await tool.handler(toolParams)
 
         const output = this.serializeResult(result)
 

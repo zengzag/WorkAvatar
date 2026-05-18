@@ -6,7 +6,7 @@ import KnowledgeBaseService from './kb.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { createBuiltinTools } from './agent/builtin-tools'
+import { allBuiltinTools } from './agent/tools'
 import { createKBAgentTools } from './agent/tools/kb-agent-tools'
 import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
 import type { ToolDefinition } from './agent/tools/types'
@@ -28,6 +28,7 @@ interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
+  use_kb?: boolean
   enable_thinking?: boolean
 }
 
@@ -62,8 +63,8 @@ class EmployeeAgentService {
     return EmployeeAgentService.instance
   }
 
-  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean): Promise<EmployeeAgent> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
+  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean, useKb?: boolean): Promise<EmployeeAgent> {
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}:${useKb !== false ? 'kb' : 'no-kb'}`
     if (this.agents.has(cacheKey)) {
       return this.agents.get(cacheKey)!
     }
@@ -89,15 +90,6 @@ class EmployeeAgentService {
         if (profile.roleName) {
           role = profile.roleName
         }
-        if (profile.responsibilities?.length > 0) {
-          instructions += '\n\n## 核心职责\n' + profile.responsibilities.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')
-        }
-        if (profile.personalityTraits?.length > 0) {
-          instructions += '\n\n## 性格特质\n' + profile.personalityTraits.join('、')
-        }
-        if (profile.workingStyle) {
-          instructions += '\n\n## 工作风格\n' + profile.workingStyle
-        }
       } catch {
         // ignore
       }
@@ -105,7 +97,7 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const workspaceGuidance = getWorkspacePrompt(employee.project_id)
+    const workspaceGuidance = getWorkspacePrompt(employee.workspace_path || '')
 
     const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
@@ -135,7 +127,7 @@ class EmployeeAgentService {
       allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      knowledgeGuidance: `\n\n${KNOWLEDGE_QUERY_GUIDANCE}`,
+      knowledgeGuidance: useKb !== false ? `\n\n${KNOWLEDGE_QUERY_GUIDANCE}` : '',
       workspaceGuidance: workspaceGuidance || undefined,
     }
 
@@ -173,7 +165,6 @@ class EmployeeAgentService {
       agent.registerTools([skillDef])
     }
 
-    const allBuiltinTools = createBuiltinTools()
     const enabledToolIds = this.getEnabledBuiltinToolIds(employeeId)
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
@@ -181,10 +172,12 @@ class EmployeeAgentService {
     const employeeTools = this.getEmployeeTools(employeeId)
     agent.registerTools(employeeTools)
 
-    const knowledgeTools = this.getKnowledgeTools(employee.project_id).filter(t => enabledToolIds.has(t.id))
+    const knowledgeTools = useKb !== false
+      ? this.getKnowledgeTools(employee.id).filter(t => enabledToolIds.has(t.id))
+      : []
     agent.registerTools(knowledgeTools)
 
-    const workspaceTools = createWorkspaceTools(employee.project_id)
+    const workspaceTools = createWorkspaceTools(employee.workspace_path || '')
     if (workspaceTools.length > 0) {
       agent.registerTools(workspaceTools)
     }
@@ -193,12 +186,12 @@ class EmployeeAgentService {
     return agent
   }
 
-  private getKnowledgeTools(projectId: string): ToolDefinition[] {
-    return createKBAgentTools(this.kbService, this.db, projectId)
+  private getKnowledgeTools(employeeId?: string): ToolDefinition[] {
+    return createKBAgentTools(this.kbService, this.db, employeeId)
   }
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
-    const allBuiltinToolIds = new Set(createBuiltinTools().map(t => t.id))
+    const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
     const kbToolIds = [
       'kb_search',
       'kb_advanced_search',
@@ -236,19 +229,21 @@ class EmployeeAgentService {
     }
 
     const result = new Set<string>()
-    const disabledSet = new Set<string>()
+    const enabledRowIds = new Set<string>()
     for (const row of enabledRows) {
-      if (allBuiltinToolIds.has(row.tool_id)) {
-        if (row.is_enabled === 1) {
-          result.add(row.tool_id)
-        } else {
-          disabledSet.add(row.tool_id)
-        }
+      enabledRowIds.add(row.tool_id)
+      if (allBuiltinToolIds.has(row.tool_id) && row.is_enabled === 1) {
+        result.add(row.tool_id)
       }
     }
 
-    for (const id of allBuiltinToolIds) {
-      if (!disabledSet.has(id) && !result.has(id)) {
+    for (const id of kbToolIds) {
+      if (!enabledRowIds.has(id)) {
+        result.add(id)
+      }
+    }
+    for (const id of workspaceToolIds) {
+      if (!enabledRowIds.has(id)) {
         result.add(id)
       }
     }
@@ -292,14 +287,9 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, enable_thinking } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, use_kb = true, enable_thinking } = params
 
-    const employeeRow = this.db.getDb().prepare('SELECT status FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'status'> | undefined
-    if (employeeRow && employeeRow.status !== 'active') {
-      throw new Error(`Employee is not active (status: ${employeeRow.status})`)
-    }
-
-    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking)
+    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, use_kb)
 
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,

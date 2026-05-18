@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 
 export const webSearchTool: ToolDefinition = {
   id: 'web_search',

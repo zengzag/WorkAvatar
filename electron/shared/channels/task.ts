@@ -4,8 +4,5 @@ export const TASK_CHANNELS = {
   TASK_CANCEL: 'tasks:cancel',
   TASK_PAUSE: 'tasks:pause',
   TASK_RESUME: 'tasks:resume',
-  TASK_PAUSE_ALL: 'tasks:pause-all',
-  TASK_RESUME_ALL: 'tasks:resume-all',
-  TASK_CANCEL_ALL: 'tasks:cancel-all',
   TASK_UPDATED: 'tasks:updated',
 } as const

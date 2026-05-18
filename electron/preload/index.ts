@@ -1,14 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
-  ProjectListParams,
-  ProjectCreateParams,
-  ProjectUpdateParams,
-  ProjectDeleteParams,
-  FileListParams,
-  FileImportParams,
-  FileParseParams,
-  FileGetContentParams,
   WorkspaceInfoParams,
   WorkspaceListFilesParams,
   WorkspaceReadFileParams,
@@ -17,35 +9,29 @@ import type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
+  WorkspaceOpenInExplorerParams,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
-  SkillListParams,
-  SkillCreateParams,
-  SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
-  AppGetPathParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
   LLMProviderCreateParams,
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatParams,
-  LLMChatStreamParams,
   EmployeeChatStreamParams,
   SettingsGetParams,
   SettingsSetParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
-  ToolExecuteParams,
   ToolAssignParams,
   MCPServerCreateParams,
   MCPServerUpdateParams,
   KBCreateParams,
   KBUpdateParams,
   KBDocParseParams,
-  KBLinkProjectParams,
   KBExportFullParams,
   KBExportSummaryParams,
   KBExportDocumentsParams,
@@ -59,28 +45,14 @@ import type {
   EmployeeTaskUpdateParams,
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
+  WorkflowCreateParams,
+  WorkflowUpdateParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
-  ping: () => ipcRenderer.invoke(IPC_CHANNELS.PING),
-
-  project: {
-    list: (params?: ProjectListParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_GET, id),
-    create: (params: ProjectCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, params),
-    update: (params: ProjectUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE, params),
-    delete: (params: string | ProjectDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DELETE, params),
-  },
-
-  file: {
-    list: (params: FileListParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_GET, id),
-    import: (params: FileImportParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_IMPORT, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DELETE, id),
-    parse: (params: FileParseParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_PARSE, params),
-    getContent: (params: FileGetContentParams) => ipcRenderer.invoke(IPC_CHANNELS.FILE_GET_CONTENT, params),
-  },
-
   workspace: {
     info: (params: WorkspaceInfoParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_INFO, params),
     listFiles: (params: WorkspaceListFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params),
@@ -90,6 +62,7 @@ const electronAPI = {
     deleteItem: (params: WorkspaceDeleteItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_ITEM, params),
     renameItem: (params: WorkspaceRenameItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_ITEM, params),
     importFiles: (params: WorkspaceImportParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_IMPORT, params),
+    openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
   },
 
   employee: {
@@ -97,7 +70,7 @@ const electronAPI = {
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET, id),
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, id),
+    delete: (params: string | { id: string; delete_workspace?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
@@ -119,13 +92,9 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
     },
-  },
-
-  skill: {
-    list: (params: SkillListParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_LIST, params),
-    create: (params: SkillCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_CREATE, params),
-    update: (params: SkillUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_DELETE, id),
+    listKBs: (params: EmployeeKBListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LIST, params),
+    linkKB: (params: EmployeeKBLinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LINK, params),
+    unlinkKB: (params: EmployeeKBUnlinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, params),
   },
 
   conversation: {
@@ -140,42 +109,40 @@ const electronAPI = {
 
   llm: {
     getProviders: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_LIST),
-    getProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_GET, id),
     createProvider: (params: LLMProviderCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_CREATE, params),
     updateProvider: (params: LLMProviderUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_UPDATE, params),
     deleteProvider: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_PROVIDER_DELETE, id),
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
-    chatStream: (params: LLMChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT_STREAM, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
-    abortChat: () => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT),
-    onChunk: (callback: (chunk: string) => void) => {
-      const handler = (_event: any, chunk: string) => callback(chunk)
+    abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
+    onChunk: (callback: (data: { sessionId: string; chunk: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; chunk: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
-    onDone: (callback: () => void) => {
-      const handler = () => callback()
+    onDone: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },
-    onError: (callback: (error: string) => void) => {
-      const handler = (_event: any, error: string) => callback(error)
+    onError: (callback: (data: { sessionId: string; error: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; error: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_ERROR, handler)
     },
-    onThought: (callback: (thought: string) => void) => {
-      const handler = (_event: any, thought: string) => callback(thought)
+    onThought: (callback: (data: { sessionId: string; thought: string }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; thought: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_THOUGHT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_THOUGHT, handler)
     },
-    onToolCall: (callback: (toolCall: { name: string; args: any }) => void) => {
-      const handler = (_event: any, toolCall: { name: string; args: any }) => callback(toolCall)
+    onToolCall: (callback: (data: { sessionId: string; name: string; args: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; args: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
-    onToolResult: (callback: (toolResult: { name: string; result: any }) => void) => {
-      const handler = (_event: any, toolResult: { name: string; result: any }) => callback(toolResult)
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },
@@ -187,25 +154,16 @@ const electronAPI = {
   },
 
   app: {
-    getPath: (params: AppGetPathParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_PATH, params),
     showOpenDialog: (params: AppShowOpenDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, params),
     showSaveDialog: (params: AppShowSaveDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, params),
-    showMessageBox: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_MESSAGE_BOX, params),
     getDataDir: () => ipcRenderer.invoke(IPC_CHANNELS.PATH_GET_DATA_DIR),
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
   },
 
-  ocr: {
-    recognize: (params: { image_path: string; language?: string }) => ipcRenderer.invoke(IPC_CHANNELS.OCR_RECOGNIZE, params),
-    status: () => ipcRenderer.invoke(IPC_CHANNELS.OCR_STATUS),
-  },
-
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
-    execute: (params: ToolExecuteParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_EXECUTE, params),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
-    removeFromEmployee: (params: { employee_id: string; tool_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_REMOVE_FROM_EMPLOYEE, params),
   },
 
   mcp: {
@@ -219,10 +177,8 @@ const electronAPI = {
 
   skillRegistry: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_LIST),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_GET, id),
     install: (params: { source: 'directory' | 'zip'; path: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_INSTALL, params),
     uninstall: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_UNINSTALL, id),
-    toggle: (params: { id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE, params),
     getEmployeeSkills: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_GET_EMPLOYEE_SKILLS, params),
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
@@ -235,25 +191,20 @@ const electronAPI = {
     update: (params: KBUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DELETE, id),
     uploadDocuments: (params: { kb_id: string; paths: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_UPLOAD, params),
-    parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
-    deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
-    getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
-    linkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_LINK_PROJECT, params),
-    unlinkProject: (params: KBLinkProjectParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UNLINK_PROJECT, params),
-    getLinkedProjects: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROJECTS, kbId),
-    parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
-    getFileByHash: (params: { hash: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_FILE_BY_HASH, params),
-    importDocsToProject: (params: { project_id: string; doc_ids: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_DOCS_TO_PROJECT, params),
     onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
       const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
     },
+    parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
     onParseProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
     },
+    deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
+    getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
+    parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
     onParseAllProgress: (callback: (progress: { current: number; total: number; docName: string }) => void) => {
       const handler = (_event: any, progress: { current: number; total: number; docName: string }) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
@@ -272,9 +223,6 @@ const electronAPI = {
     getEntityRelations: (params: { entity_id: string; depth?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_RELATIONS, params),
     getEntityMentions: (entityId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_MENTIONS, entityId),
     searchChapters: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_CHAPTERS, params),
-    searchDocSummaries: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_DOC_SUMMARIES, params),
-    getProcessingJobs: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PROCESSING_JOBS, params),
-    getKBsForProject: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_KBS_FOR_PROJECT, projectId),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
     onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
@@ -333,6 +281,7 @@ const electronAPI = {
 
   employeeTask: {
     list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
+    listAll: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL),
     get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
     create: (params: EmployeeTaskCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_CREATE, params),
     update: (params: EmployeeTaskUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_UPDATE, params),
@@ -340,12 +289,11 @@ const electronAPI = {
     execute: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, taskId),
     abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_ABORT_EXECUTION, executionId),
     listSchedules: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, employeeId),
-    getSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_GET, scheduleId),
+    listAllSchedules: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL),
     createSchedule: (params: EmployeeScheduleCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, params),
     updateSchedule: (params: EmployeeScheduleUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_UPDATE, params),
     deleteSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_DELETE, scheduleId),
     validateCron: (cronExpr: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, cronExpr),
-    listExecutions: (params: { employee_id: string; limit?: number; offset?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST, params),
     listExecutionsForTask: (params: { task_id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, params),
     getExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_GET, executionId),
     allRecentExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_ALL_RECENT, limit),
@@ -372,6 +320,26 @@ const electronAPI = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
     },
   },
+
+  workflow: {
+    list: (params?: Record<string, never>) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
+    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET, id),
+    create: (params: WorkflowCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CREATE, params),
+    update: (params: WorkflowUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_UPDATE, params),
+    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DELETE, id),
+    execute: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE, workflowId),
+    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, executionId),
+    onExecutionProgress: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
+    },
+    onNodeExecutionUpdate: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
+    },
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -382,9 +350,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, taskId),
     pause: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE, taskId),
     resume: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME, taskId),
-    pauseAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE_ALL, type),
-    resumeAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME_ALL, type),
-    cancelAll: (type?: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL_ALL, type),
     onTasksUpdated: (callback: (tasks: any[]) => void) => {
       const handler = (_event: any, tasks: any[]) => callback(tasks)
       ipcRenderer.on(IPC_CHANNELS.TASK_UPDATED, handler)
@@ -400,9 +365,6 @@ export type ElectronAPI = typeof electronAPI & {
     cancel: (taskId: string) => Promise<boolean>
     pause: (taskId: string) => Promise<boolean>
     resume: (taskId: string) => Promise<boolean>
-    pauseAll: (type?: string) => Promise<number>
-    resumeAll: (type?: string) => Promise<number>
-    cancelAll: (type?: string) => Promise<number>
     onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
   }
   interaction: {
@@ -411,6 +373,7 @@ export type ElectronAPI = typeof electronAPI & {
   }
   employeeTask: {
     list: (employeeId: string) => Promise<any[]>
+    listAll: () => Promise<any[]>
     get: (taskId: string) => Promise<any>
     create: (params: any) => Promise<any>
     update: (params: any) => Promise<any>
@@ -418,12 +381,11 @@ export type ElectronAPI = typeof electronAPI & {
     execute: (taskId: string) => Promise<{ success: boolean; execution?: any; error?: string }>
     abortExecution: (executionId: string) => Promise<boolean>
     listSchedules: (employeeId: string) => Promise<any[]>
-    getSchedule: (scheduleId: string) => Promise<any>
+    listAllSchedules: () => Promise<any[]>
     createSchedule: (params: any) => Promise<any>
     updateSchedule: (params: any) => Promise<any>
     deleteSchedule: (scheduleId: string) => Promise<boolean>
     validateCron: (cronExpr: string) => Promise<{ valid: boolean; error?: string; nextRun?: string }>
-    listExecutions: (params: { employee_id: string; limit?: number; offset?: number }) => Promise<any[]>
     listExecutionsForTask: (params: { task_id: string; limit?: number }) => Promise<any[]>
     getExecution: (executionId: string) => Promise<any>
     allRecentExecutions: (limit?: number) => Promise<any[]>
@@ -433,6 +395,17 @@ export type ElectronAPI = typeof electronAPI & {
     onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => () => void
     onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => () => void
     onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
+  }
+  workflow: {
+    list: (params?: Record<string, never>) => Promise<any[]>
+    get: (id: string) => Promise<any>
+    create: (params: WorkflowCreateParams) => Promise<any>
+    update: (params: WorkflowUpdateParams) => Promise<any>
+    delete: (id: string) => Promise<boolean>
+    execute: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
+    abortExecution: (executionId: string) => Promise<boolean>
+    onExecutionProgress: (callback: (data: any) => void) => () => void
+    onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
   }
 }
 

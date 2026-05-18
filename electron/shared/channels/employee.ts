@@ -1,16 +1,9 @@
-import type { Skill } from '../types'
-
 export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_LIST: 'employee:list',
   EMPLOYEE_GET: 'employee:get',
   EMPLOYEE_CREATE: 'employee:create',
   EMPLOYEE_UPDATE: 'employee:update',
   EMPLOYEE_DELETE: 'employee:delete',
-
-  SKILL_LIST: 'skill:list',
-  SKILL_CREATE: 'skill:create',
-  SKILL_UPDATE: 'skill:update',
-  SKILL_DELETE: 'skill:delete',
 
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_GET: 'conversation:get',
@@ -29,18 +22,21 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_IMPORT_PACKAGE: 'employee:import-package',
   EMPLOYEE_EXPORT_PROGRESS: 'employee:export-progress',
   EMPLOYEE_IMPORT_PROGRESS: 'employee:import-progress',
+
+  EMPLOYEE_KB_LIST: 'employee:kb-list',
+  EMPLOYEE_KB_LINK: 'employee:kb-link',
+  EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
 } as const
 
 export interface EmployeeListParams {
-  project_id?: string
   status?: string
 }
 
 export interface EmployeeCreateParams {
-  project_id: string
   name: string
   description?: string
   profile_json?: string
+  workspace_path?: string
 }
 
 export interface EmployeeUpdateParams {
@@ -53,29 +49,8 @@ export interface EmployeeUpdateParams {
   default_skill_id?: string
   llm_provider_id?: string
   llm_model?: string
-}
-
-export interface SkillListParams {
-  employee_id: string
-}
-
-export interface SkillCreateParams {
-  employee_id: string
-  type: Skill['type']
-  name: string
-  description?: string
-  prompt_template?: string
-}
-
-export interface SkillUpdateParams {
-  id: string
-  name?: string
-  description?: string
-  config_json?: string
-  prompt_template?: string
-  rules_json?: string
-  priority?: number
-  is_enabled?: boolean
+  workspace_path?: string
+  avatar_type?: string
 }
 
 export interface ConversationListParams {
@@ -89,7 +64,6 @@ export interface ConversationCreateParams {
 }
 
 export interface EmployeeProfileAnalyzeParams {
-  project_id: string
   kb_ids: string[]
   provider_id?: string
   model_id?: string
@@ -101,9 +75,6 @@ export interface EmployeeProfileRefineParams {
   previous_profile: {
     roleName: string
     roleDescription: string
-    responsibilities: string[]
-    personalityTraits: string[]
-    workingStyle: string
     suggestedTools: string[]
   }
   feedback: string
@@ -118,7 +89,6 @@ export interface EmployeeExportConfigParams {
 
 export interface EmployeeImportConfigParams {
   import_path: string
-  project_id: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
 }
 
@@ -129,6 +99,19 @@ export interface EmployeeExportPackageParams {
 
 export interface EmployeeImportPackageParams {
   import_path: string
-  project_id: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
+}
+
+export interface EmployeeKBListParams {
+  employee_id: string
+}
+
+export interface EmployeeKBLinkParams {
+  employee_id: string
+  kb_id: string
+}
+
+export interface EmployeeKBUnlinkParams {
+  employee_id: string
+  kb_id: string
 }

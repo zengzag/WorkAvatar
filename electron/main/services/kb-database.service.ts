@@ -83,17 +83,8 @@ class KBDatabaseService {
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE TABLE IF NOT EXISTS kb_project_links (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        project_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
       CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(hash);
-      CREATE INDEX IF NOT EXISTS idx_kb_project_links_kb ON kb_project_links(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_project_links_project ON kb_project_links(project_id);
 
       CREATE TABLE IF NOT EXISTS kb_chapters (
         id TEXT PRIMARY KEY,
@@ -321,7 +312,6 @@ class KBDatabaseService {
 
       const KB_TABLES = [
         'knowledge_bases',
-        'kb_project_links',
         'kb_documents',
         'kb_chapters',
         'kb_document_summaries',

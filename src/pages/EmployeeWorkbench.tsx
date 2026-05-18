@@ -1,4 +1,5 @@
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   Button,
   Space,
@@ -8,30 +9,215 @@ import {
   Tooltip,
   theme,
   App,
+  Input,
+  Popover,
+  Checkbox,
 } from 'antd'
 import {
   RobotOutlined,
   SettingOutlined,
   MenuFoldOutlined,
-  HistoryOutlined,
-  ArrowLeftOutlined,
+  MenuUnfoldOutlined,
   DatabaseOutlined,
   BulbOutlined,
   BulbFilled,
+  PlusOutlined,
+  SearchOutlined,
+  DeleteOutlined,
+  FolderOutlined,
+  FolderOpenOutlined,
+  WarningOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
+import type { Employee } from '../types'
 
 const { Text, Paragraph } = Typography
 
+const AVATAR_COLORS = [
+  '#1677ff', '#52c41a', '#fa8c16', '#722ed1',
+  '#eb2f96', '#13c2c2', '#faad14', '#f5222d',
+]
+
 const EmployeeWorkbench: React.FC = () => {
-  const { message } = App.useApp()
-  const { id } = useParams<{ id: string }>()
+  const { message, modal } = App.useApp()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const { id: routeId } = useParams<{ id: string }>()
+
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [employeeListLoaded, setEmployeeListLoaded] = useState(false)
+  const [employeeSearchText, setEmployeeSearchText] = useState('')
+  const [employeeSelectorOpen, setEmployeeSelectorOpen] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    loadEmployees()
+  }, [])
+
+  useEffect(() => {
+    if (!employeeSelectorOpen) {
+      setContextMenu(null)
+      setEmployeeSearchText('')
+    }
+  }, [employeeSelectorOpen])
+
+  const loadEmployees = async () => {
+    try {
+      const result = await window.electronAPI.employee.list()
+      setEmployees(result)
+      setEmployeeListLoaded(true)
+    } catch {
+      message.error(t('digitalEmployees.loadEmployeesFailed'))
+    }
+  }
+
+  const isEmptyRoute = routeId === '_empty'
+  const id = isEmptyRoute ? undefined : routeId
+
+  const filteredEmployees = useMemo(() => {
+    if (!employeeSearchText.trim()) return employees
+    const search = employeeSearchText.toLowerCase()
+    return employees.filter(emp => emp.name.toLowerCase().includes(search))
+  }, [employees, employeeSearchText])
+
+  useEffect(() => {
+    if (id) {
+      localStorage.setItem('employeeWorkbench:lastEmployeeId', id)
+    }
+  }, [id])
+
+  const handleDeleteEmployee = useCallback(async (emp: Employee) => {
+    let deleteWorkspace = false
+    const workspacePath = emp.workspace_path
+
+    let tasks: any[] = []
+    let schedules: any[] = []
+    try {
+      tasks = await window.electronAPI.employeeTask.list(emp.id)
+      schedules = await window.electronAPI.employeeTask.listSchedules(emp.id)
+    } catch {}
+
+    const hasBoundTasks = tasks.length > 0 || schedules.length > 0
+
+    const handleOpenExplorer = (path: string) => {
+      window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
+    }
+
+    modal.confirm({
+      title: t('employeeSettings.confirmDeleteEmployee'),
+      icon: null,
+      width: 520,
+      content: (
+        <div>
+          <Text>{t('employeeSettings.deleteEmployeeDesc')}</Text>
+          {workspacePath && (
+            <div style={{
+              marginTop: 8,
+              padding: '6px 10px',
+              background: token.colorFillTertiary,
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              <FolderOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+              <Tooltip title={workspacePath}>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: token.colorTextSecondary,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t('employeeSettings.workspacePath')}: {workspacePath}
+                </Text>
+              </Tooltip>
+              <Button
+                type="link"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={() => handleOpenExplorer(workspacePath)}
+                style={{ flexShrink: 0, padding: 0 }}
+              />
+            </div>
+          )}
+          {hasBoundTasks && (
+            <div style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              background: token.colorWarningBg,
+              border: `1px solid ${token.colorWarningBorder}`,
+              borderRadius: 6,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6, color: token.colorWarningText, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <WarningOutlined />
+                {t('employeeSettings.boundTasksWarning')}
+              </div>
+              {tasks.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary }}>
+                  {t('employeeSettings.boundTaskCount', { count: tasks.length })}
+                  {tasks.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({tasks.map((t: any) => t.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              {schedules.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary, marginTop: 2 }}>
+                  {t('employeeSettings.boundScheduleCount', { count: schedules.length })}
+                  {schedules.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({schedules.map((s: any) => s.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              <div style={{ fontSize: 12, marginTop: 6, color: token.colorTextTertiary }}>
+                {t('employeeSettings.boundTasksDeleteHint')}
+              </div>
+            </div>
+          )}
+          {workspacePath && (
+            <Checkbox
+              onChange={(e) => { deleteWorkspace = e.target.checked }}
+              style={{ marginTop: 12 }}
+            >
+              {t('employeeSettings.alsoDeleteWorkspace')}
+            </Checkbox>
+          )}
+        </div>
+      ),
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.delete({
+            id: emp.id,
+            delete_workspace: deleteWorkspace,
+          })
+          message.success(t('common.deleted'))
+          await loadEmployees()
+          if (emp.id === id) {
+            setEmployeeSelectorOpen(false)
+          }
+        } catch {
+          message.error(t('common.deleteFailed'))
+        }
+      },
+    })
+  }, [id, modal, message, t, token])
+
+  const chatHook = useEmployeeChat({ id, message })
 
   const {
     employee,
@@ -48,6 +234,8 @@ const EmployeeWorkbench: React.FC = () => {
     setSelectedLlmModelId,
     enableThinking,
     setEnableThinking,
+    kbEnabled,
+    setKbEnabled,
     showSidePanel,
     setShowSidePanel,
     editingConversationId,
@@ -60,7 +248,7 @@ const EmployeeWorkbench: React.FC = () => {
     handleStop,
     selectConversation,
     deleteConversation,
-    deleteAllConversations,
+    deleteSelectedConversations,
     startEditTitle,
     saveEditTitle,
     cancelEditTitle,
@@ -72,146 +260,11 @@ const EmployeeWorkbench: React.FC = () => {
     handleDeleteMessage,
     handleToggleSegment,
     getToolDisplayName,
-  } = useEmployeeChat({ id, message })
+    isConversationStreaming,
+    generateConversationTitle,
+  } = chatHook
 
-  if (!employee) {
-    return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Spin size="large" />
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
-      <div style={{
-        height: 48,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 20px',
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        background: token.colorBgContainer,
-        flexShrink: 0,
-      }}>
-        <Space size={12}>
-          <Tooltip title={t('workbench.backToDashboard')}>
-            <Button type="text" icon={<ArrowLeftOutlined />}
-              onClick={() => navigate('/dashboard')} style={{ fontSize: 16 }} />
-          </Tooltip>
-          <Text strong style={{ fontSize: 15 }}>{employee.name}</Text>
-          <Tag color={employee.status === 'active' ? 'green' : employee.status === 'draft' ? 'default' : employee.status === 'paused' ? 'orange' : 'red'}
-            style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-            {employee.status === 'active' ? t('workbench.statusRunning') : employee.status === 'draft' ? t('workbench.statusDraft') : employee.status === 'paused' ? t('workbench.statusPaused') : t('workbench.statusError')}
-          </Tag>
-        </Space>
-        <Space size={4}>
-          <LLMSelector
-            providerId={selectedLlmProviderId}
-            modelId={selectedLlmModelId}
-            onProviderChange={setSelectedLlmProviderId}
-            onModelChange={setSelectedLlmModelId}
-          />
-          <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
-            <Button
-              type={enableThinking ? 'primary' : 'text'}
-              icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-              size="small"
-              onClick={() => setEnableThinking(!enableThinking)}
-              style={enableThinking ? {} : { color: token.colorTextSecondary }}
-            />
-          </Tooltip>
-          <Tooltip title={t('workbench.employeeConfig')}>
-            <Button type="text" icon={<SettingOutlined />}
-              onClick={() => navigate(`/employee/${id}/settings`)} />
-          </Tooltip>
-          <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
-            <Button type="text"
-              icon={showSidePanel ? <MenuFoldOutlined /> : <HistoryOutlined />}
-              onClick={() => setShowSidePanel(!showSidePanel)}
-              style={{ color: conversations.length > 0 ? '#1677ff' : undefined }}
-            />
-          </Tooltip>
-        </Space>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {showSidePanel && (
-          <ConversationSidebar
-            conversations={conversations}
-            allConversations={allConversations}
-            activeConversationId={activeConversationId}
-            editingConversationId={editingConversationId}
-            editingTitle={editingTitle}
-            onSelect={selectConversation}
-            onStartEdit={startEditTitle}
-            onSaveEdit={saveEditTitle}
-            onCancelEdit={cancelEditTitle}
-            onEditTitleChange={(e) => setEditingTitle(e.target.value)}
-            onEditKeyDown={handleEditKeyDown}
-            onDelete={deleteConversation}
-            onDeleteAll={deleteAllConversations}
-            onNewConversation={startNewConversation}
-            onLoadMore={loadMoreConversations}
-            onListScroll={handleConversationListScroll}
-          />
-        )}
-
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-
-          <div ref={chatContainerRef} onScroll={handleScroll}
-            style={{
-              flex: 1,
-              overflow: 'auto',
-              padding: '24px 10%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 20,
-            }}
-          >
-            {messages.length === 0 && activeConversationId && (
-              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-                <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
-                <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
-              </div>
-            )}
-
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                msg={msg}
-                onCopy={handleCopy}
-                onDeleteMessage={handleDeleteMessage}
-                onToggleSegment={handleToggleSegment}
-                getToolDisplayName={getToolDisplayName}
-              />
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            gap: 8,
-            padding: '0 0 4px',
-          }}>
-            <Tag color="green" style={{ cursor: 'pointer', fontSize: 12, borderRadius: 12 }}>
-              <DatabaseOutlined /> {t('workbench.knowledgeBase')}
-            </Tag>
-          </div>
-
-          <ChatInput
-            value={inputValue}
-            onChange={setInputValue}
-            onSend={handleSend}
-            onStop={handleStop}
-            isStreaming={isStreaming}
-            placeholder={t('workbench.inputPlaceholder')}
-          />
-        </div>
-      </div>
-
-      <style>{`
+  const workbenchStyle = useMemo(() => `
         .cursor-blink { animation: blink 1s infinite; }
         @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
         .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
@@ -299,7 +352,336 @@ const EmployeeWorkbench: React.FC = () => {
           max-width: 100%;
           border-radius: 6px;
         }
-      `}</style>
+      `, [token])
+
+  const handleEmployeeChange = (newEmployeeId: string) => {
+    if (newEmployeeId === 'create-new') {
+      navigate('/wizard')
+      return
+    }
+    navigate(`/employee/${newEmployeeId}`)
+  }
+
+  useEffect(() => {
+    if (!employee && id && employees.length > 0) {
+      const firstEmployee = employees[0]
+      if (firstEmployee) {
+        navigate(`/employee/${firstEmployee.id}`, { replace: true })
+      }
+    }
+  }, [employee, id, employees])
+
+  if (!employeeListLoaded) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (employees.length === 0) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+        <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />
+        <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.noEmployeeHint')}</Paragraph>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/wizard')}>
+          {t('workbench.createEmployee')}
+        </Button>
+      </div>
+    )
+  }
+
+  if (!employee) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  const employeeSelectorContent = (
+    <div style={{ width: 260 }}>
+      <Input
+        placeholder={t('workbench.searchEmployee')}
+        prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+        value={employeeSearchText}
+        onChange={(e) => setEmployeeSearchText(e.target.value)}
+        allowClear
+        variant="borderless"
+        style={{ marginBottom: 4, padding: '4px 8px' }}
+      />
+      {filteredEmployees.length === 0 && (
+        <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 13 }}>
+          {employeeSearchText ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+        </div>
+      )}
+      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+        {filteredEmployees.map((emp, idx) => {
+          const color = AVATAR_COLORS[idx % AVATAR_COLORS.length]
+          const isActive = emp.id === id
+          return (
+            <div
+              key={emp.id}
+              onClick={() => {
+                setEmployeeSelectorOpen(false)
+                handleEmployeeChange(emp.id)
+              }}
+              onContextMenu={(e) => {
+                if (isActive) return
+                e.preventDefault()
+                setContextMenu({ emp, x: e.clientX, y: e.clientY })
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 8px', borderRadius: 6,
+                cursor: 'pointer',
+                background: isActive ? token.colorPrimaryBg : 'transparent',
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) e.currentTarget.style.background = token.colorBgTextHover
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) e.currentTarget.style.background = 'transparent'
+              }}
+            >
+              <div style={{
+                width: 28, height: 28, borderRadius: 6,
+                background: `${color}18`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <RobotOutlined style={{ fontSize: 14, color }} />
+              </div>
+              <span style={{
+                flex: 1,
+                fontWeight: isActive ? 600 : 400,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {emp.name}
+              </span>
+              {isActive && (
+                <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
+                  Active
+                </Tag>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 4, marginTop: 4 }}>
+        <Button
+          type="text"
+          icon={<PlusOutlined />}
+          style={{ width: '100%', justifyContent: 'flex-start', color: token.colorPrimary }}
+          onClick={() => {
+            setEmployeeSelectorOpen(false)
+            handleEmployeeChange('create-new')
+          }}
+        >
+          {t('workbench.createEmployee')}
+        </Button>
+      </div>
+
+      {contextMenu && (
+        <>
+          <div
+            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1050 }}
+            onClick={() => setContextMenu(null)}
+            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null) }}
+          />
+          <div style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 1051,
+            background: token.colorBgElevated,
+            borderRadius: 8,
+            boxShadow: token.boxShadowSecondary,
+            padding: 4,
+            minWidth: 140,
+            border: `1px solid ${token.colorBorderSecondary}`,
+          }}>
+            <div
+              style={{
+                padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
+                color: token.colorError, display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 13,
+              }}
+              onClick={() => {
+                setContextMenu(null)
+                handleDeleteEmployee(contextMenu.emp)
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = token.colorErrorBg }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              <DeleteOutlined />
+              <span>{t('workbench.deleteEmployee')}</span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
+      <div style={{
+        height: 48,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        background: token.colorBgContainer,
+        flexShrink: 0,
+      }}>
+        <Space size={12}>
+          <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
+            <Button type="text"
+              icon={showSidePanel ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+              onClick={() => setShowSidePanel(!showSidePanel)}
+            />
+          </Tooltip>
+          <Popover
+            content={employeeSelectorContent}
+            trigger="click"
+            open={employeeSelectorOpen}
+            onOpenChange={setEmployeeSelectorOpen}
+            placement="bottomLeft"
+            arrow={false}
+            overlayInnerStyle={{ padding: 8 }}
+          >
+            <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', height: 'auto' }}>
+              <div style={{
+                width: 26, height: 26, borderRadius: 6,
+                background: `${token.colorPrimary}15`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
+              </div>
+              <Text strong style={{ fontSize: 14 }}>{employee.name}</Text>
+            </Button>
+          </Popover>
+        </Space>
+        <Space size={4}>
+          <Tooltip title={kbEnabled ? t('workbench.kbEnabled') : t('workbench.kbDisabled')}>
+            <Tag
+              color={kbEnabled ? 'green' : 'default'}
+              style={{
+                cursor: 'pointer',
+                fontSize: 12,
+                borderRadius: 12,
+                opacity: kbEnabled ? 1 : 0.5,
+                marginRight: 0,
+              }}
+              onClick={() => setKbEnabled(!kbEnabled)}
+            >
+              <DatabaseOutlined /> {t('workbench.knowledgeBase')}
+            </Tag>
+          </Tooltip>
+          <LLMSelector
+            providerId={selectedLlmProviderId}
+            modelId={selectedLlmModelId}
+            onProviderChange={setSelectedLlmProviderId}
+            onModelChange={setSelectedLlmModelId}
+          />
+          <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+            <Button
+              type={enableThinking ? 'primary' : 'text'}
+              icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+              size="small"
+              onClick={() => setEnableThinking(!enableThinking)}
+              style={enableThinking ? {} : { color: token.colorTextSecondary }}
+            />
+          </Tooltip>
+          <Tooltip title={t('workbench.employeeConfig')}>
+            <Button type="text" icon={<SettingOutlined />}
+              onClick={() => navigate(`/employee/${id}/settings`)} />
+          </Tooltip>
+        </Space>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {showSidePanel && (
+          <ConversationSidebar
+            conversations={conversations}
+            allConversations={allConversations}
+            activeConversationId={activeConversationId}
+            editingConversationId={editingConversationId}
+            editingTitle={editingTitle}
+            onSelect={selectConversation}
+            onStartEdit={startEditTitle}
+            onSaveEdit={saveEditTitle}
+            onCancelEdit={cancelEditTitle}
+            onEditTitleChange={(e) => setEditingTitle(e.target.value)}
+            onEditKeyDown={handleEditKeyDown}
+            onDelete={deleteConversation}
+            onDeleteSelected={deleteSelectedConversations}
+            onNewConversation={startNewConversation}
+            onLoadMore={loadMoreConversations}
+            onListScroll={handleConversationListScroll}
+            isConversationStreaming={isConversationStreaming}
+            onGenerateTitle={async (conv) => {
+              try {
+                const fullConv = await window.electronAPI.conversation.get(conv.id)
+                if (fullConv?.messages_json) {
+                  const msgs = JSON.parse(fullConv.messages_json)
+                  const firstUserMsg = msgs.find((m: any) => m.role === 'user')
+                  if (firstUserMsg?.content) {
+                    generateConversationTitle(conv.id, firstUserMsg.content)
+                  }
+                }
+              } catch {}
+            }}
+          />
+        )}
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <div ref={chatContainerRef} onScroll={handleScroll}
+            style={{
+              flex: 1,
+              overflow: 'auto',
+              padding: '24px 10%',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 20,
+            }}
+          >
+            {messages.length === 0 && activeConversationId && (
+              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
+                <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
+                <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
+              </div>
+            )}
+
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                msg={msg}
+                onCopy={handleCopy}
+                onDeleteMessage={handleDeleteMessage}
+                onToggleSegment={handleToggleSegment}
+                getToolDisplayName={getToolDisplayName}
+              />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <ChatInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSend={handleSend}
+            onStop={handleStop}
+            isStreaming={isStreaming}
+            placeholder={t('workbench.inputPlaceholder')}
+          />
+        </div>
+      </div>
+
+      <style>{workbenchStyle}</style>
     </div>
   )
 }

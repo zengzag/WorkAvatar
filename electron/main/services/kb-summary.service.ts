@@ -96,12 +96,18 @@ class KBSummaryService {
 
       this.taskQueue.updateTask(taskId, { progress: 50, progressText: `Aggregating ${docSummaries.length} doc summaries...` })
 
-      const summaryInputs = docSummaries.map(ds => ({
-        title: ds.title,
-        summary: ds.summary,
-        keyEntities: JSON.parse(ds.key_entities_json || '[]'),
-        mainTopics: JSON.parse(ds.main_topics_json || '[]'),
-      }))
+      const summaryInputs = docSummaries.map(ds => {
+        let keyEntities: any[] = []
+        let mainTopics: any[] = []
+        try { keyEntities = JSON.parse(ds.key_entities_json || '[]') } catch { keyEntities = [] }
+        try { mainTopics = JSON.parse(ds.main_topics_json || '[]') } catch { mainTopics = [] }
+        return {
+          title: ds.title,
+          summary: ds.summary,
+          keyEntities,
+          mainTopics,
+        }
+      })
 
       this.taskQueue.updateTask(taskId, { progress: 70, progressText: 'Calling LLM to generate global summary...' })
 

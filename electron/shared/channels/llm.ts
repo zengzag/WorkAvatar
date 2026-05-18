@@ -2,13 +2,11 @@ import type { LLMProvider } from '../types'
 
 export const LLM_CHANNELS = {
   LLM_PROVIDER_LIST: 'llm:provider-list',
-  LLM_PROVIDER_GET: 'llm:provider-get',
   LLM_PROVIDER_CREATE: 'llm:provider-create',
   LLM_PROVIDER_UPDATE: 'llm:provider-update',
   LLM_PROVIDER_DELETE: 'llm:provider-delete',
   LLM_TEST_CONNECTION: 'llm:test-connection',
   LLM_CHAT: 'llm:chat',
-  LLM_CHAT_STREAM: 'llm:chat-stream',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
   LLM_ABORT_CHAT: 'llm:abort-chat',
   LLM_CHAT_CHUNK: 'llm:chat-chunk',
@@ -60,18 +58,6 @@ export interface LLMChatParams {
   }
 }
 
-export interface LLMChatStreamParams {
-  provider_id: string
-  model_id?: string
-  messages: Array<{ role: string; content: string }>
-  options?: {
-    temperature?: number
-    max_tokens?: number
-    stream?: boolean
-  }
-  enable_thinking?: boolean
-}
-
 export interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
@@ -82,6 +68,7 @@ export interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
+  use_kb?: boolean
   enable_thinking?: boolean
-  project_id?: string
+  conversation_id?: string
 }

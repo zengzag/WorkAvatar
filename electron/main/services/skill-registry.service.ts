@@ -1,5 +1,6 @@
 import path from 'path'
 import fs from 'fs'
+import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
@@ -116,7 +117,6 @@ class SkillRegistryService {
       const extractDir = path.join(this.skillsDir, '_temp_' + Date.now())
       fs.mkdirSync(extractDir, { recursive: true })
 
-      const AdmZip = require('adm-zip')
       const zip = new AdmZip(zipPath)
       zip.extractAllTo(extractDir, true)
 

@@ -12,6 +12,15 @@ interface UseEmployeeChatParams {
   message: ReturnType<typeof import('antd').App.useApp>['message']
 }
 
+interface ConversationStreamState {
+  isStreaming: boolean
+  messages: MessageWithThought[]
+  assistantMessageId: string | null
+  segCounter: number
+  toolCallCounter: number
+  cleanupFns: (() => void)[]
+}
+
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
@@ -39,7 +48,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const [employee, setEmployee] = useState<any | null>(null)
-  const [currentProjectId, setProjectId] = useState<string | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
@@ -48,26 +56,49 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [inputValue, setInputValue] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
-  const [showSidePanel, setShowSidePanel] = useState(false)
+  const [showSidePanel, setShowSidePanel] = useState(true)
+  const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
+  const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
+  const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
+
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedProviderId') || getCachedSceneDefaultModel('workbench')?.provider_id || ''
+    const stored = selectedLlmProviderIdKey ? localStorage.getItem(selectedLlmProviderIdKey) : null
+    return stored || getCachedSceneDefaultModel('workbench')?.provider_id || ''
   })
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedModelId') || getCachedSceneDefaultModel('workbench')?.model_id || ''
+    const stored = selectedLlmModelIdKey ? localStorage.getItem(selectedLlmModelIdKey) : null
+    return stored || getCachedSceneDefaultModel('workbench')?.model_id || ''
   })
   const [enableThinking, setEnableThinking] = useState<boolean>(() => {
-    return localStorage.getItem('employeeWorkbench:enableThinking') === 'true'
+    const stored = enableThinkingKey ? localStorage.getItem(enableThinkingKey) : null
+    return stored === 'true'
+  })
+  const kbEnabledKey = id ? `employeeWorkbench:kbEnabled:${id}` : 'employeeWorkbench:kbEnabled'
+  const [kbEnabled, setKbEnabled] = useState<boolean>(() => {
+    const stored = kbEnabledKey ? localStorage.getItem(kbEnabledKey) : null
+    return stored !== 'false'
   })
 
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:selectedProviderId', selectedLlmProviderId)
-  }, [selectedLlmProviderId])
+    if (selectedLlmProviderIdKey) {
+      localStorage.setItem(selectedLlmProviderIdKey, selectedLlmProviderId)
+    }
+  }, [selectedLlmProviderId, selectedLlmProviderIdKey])
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:selectedModelId', selectedLlmModelId)
-  }, [selectedLlmModelId])
+    if (selectedLlmModelIdKey) {
+      localStorage.setItem(selectedLlmModelIdKey, selectedLlmModelId)
+    }
+  }, [selectedLlmModelId, selectedLlmModelIdKey])
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:enableThinking', String(enableThinking))
-  }, [enableThinking])
+    if (enableThinkingKey) {
+      localStorage.setItem(enableThinkingKey, String(enableThinking))
+    }
+  }, [enableThinking, enableThinkingKey])
+  useEffect(() => {
+    if (kbEnabledKey) {
+      localStorage.setItem(kbEnabledKey, String(kbEnabled))
+    }
+  }, [kbEnabled, kbEnabledKey])
 
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -76,20 +107,48 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
-  const finishRef = useRef<(() => void) | null>(null)
   const initializedRef = useRef(false)
-  const activeListenersRef = useRef<(() => void)[]>([])
+
+  const streamStatesRef = useRef<Map<string, ConversationStreamState>>(new Map())
+  const conversationMessagesRef = useRef<Map<string, MessageWithThought[]>>(new Map())
+  const globalListenersCleanupRef = useRef<(() => void) | null>(null)
+  const activeConversationIdRef = useRef<string | null>(null)
+
+  const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
+    conversationMessagesRef.current.set(convId, updater(conversationMessagesRef.current.get(convId) || []))
+    if (convId === activeConversationIdRef.current) {
+      setMessages(conversationMessagesRef.current.get(convId) || [])
+    }
+  }
+
+  const setConvMessages = (convId: string, msgs: MessageWithThought[]) => {
+    conversationMessagesRef.current.set(convId, msgs)
+    if (convId === activeConversationIdRef.current) {
+      setMessages(msgs)
+    }
+  }
 
   useEffect(() => {
     if (id) {
-      loadEmployee()
-      loadConversations()
-      loadProviders()
+      initEmployee()
     }
     return () => {
       initializedRef.current = false
     }
   }, [id])
+
+  const initEmployee = async () => {
+    try {
+      const result = await window.electronAPI.employee.get(id!)
+      setEmployee(result)
+      if (result.llm_provider_id && !localStorage.getItem(selectedLlmProviderIdKey)) setSelectedLlmProviderId(result.llm_provider_id)
+      if (result.llm_model && !localStorage.getItem(selectedLlmModelIdKey)) setSelectedLlmModelId(result.llm_model)
+      loadConversations()
+      loadProviders()
+    } catch {
+      setEmployee(null)
+    }
+  }
 
   useEffect(() => {
     if (isUserAtBottomRef.current) {
@@ -99,13 +158,206 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     return () => {
-      activeListenersRef.current.forEach(cleanup => cleanup())
-      activeListenersRef.current = []
-      if (finishRef.current) {
-        finishRef.current()
+      if (globalListenersCleanupRef.current) {
+        globalListenersCleanupRef.current()
+        globalListenersCleanupRef.current = null
       }
+      for (const [, state] of streamStatesRef.current) {
+        state.cleanupFns.forEach(fn => fn())
+      }
+      streamStatesRef.current.clear()
     }
   }, [])
+
+  const setupGlobalListeners = useCallback(() => {
+    if (globalListenersCleanupRef.current) return
+
+    const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk: string }) => {
+      const { sessionId, chunk } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].type === 'thinking' && segs[i].isStreaming) {
+              segs[i] = { ...segs[i], isStreaming: false, collapsed: true }
+            }
+          }
+
+          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + chunk }
+          } else {
+            segs.push({
+              type: 'answer',
+              id: `${streamState.assistantMessageId}_seg_${streamState.segCounter++}`,
+              content: chunk,
+              isStreaming: true,
+              timestamp: Date.now(),
+            })
+          }
+          return { ...m, segments: segs, content: (m.content || '') + chunk }
+        })
+      )
+    })
+
+    const thoughtCleanup = window.electronAPI.llm.onThought((data: { sessionId: string; thought: string }) => {
+      const { sessionId, thought } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].isStreaming && segs[i].type !== 'thinking') {
+              segs[i] = { ...segs[i], isStreaming: false }
+            }
+          }
+
+          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + thought }
+          } else {
+            segs.push({
+              type: 'thinking',
+              id: `${streamState.assistantMessageId}_seg_${streamState.segCounter++}`,
+              content: thought,
+              isStreaming: true,
+              collapsed: false,
+              timestamp: Date.now(),
+            })
+          }
+          return { ...m, segments: segs, thought: (m.thought || '') + thought }
+        })
+      )
+    })
+
+    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; name: string; args: any }) => {
+      const { sessionId, name, args } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastSeg = segs[segs.length - 1]
+          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false }
+          }
+          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true }
+          }
+          segs.push({
+            type: 'tool_call',
+            id: `${streamState.assistantMessageId}_tool_${streamState.toolCallCounter++}`,
+            toolName: name,
+            toolArgs: args,
+            isToolComplete: false,
+            collapsed: false,
+            timestamp: Date.now(),
+          })
+          return { ...m, segments: segs }
+        })
+      )
+    })
+
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any }) => {
+      const { sessionId, name, result } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          const lastIncompleteIndex = [...segs].reverse().findIndex(
+            s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete
+          )
+          if (lastIncompleteIndex === -1) return m
+          const actualIndex = segs.length - 1 - lastIncompleteIndex
+          segs[actualIndex] = { ...segs[actualIndex], toolResult: result, isToolComplete: true, collapsed: true }
+          return { ...m, segments: segs }
+        })
+      )
+    })
+
+    const doneCleanup = window.electronAPI.llm.onDone((data: { sessionId: string }) => {
+      const { sessionId } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) => {
+        const assistantMsg = prev.find((m) => m.id === streamState.assistantMessageId)
+        if (!assistantMsg) return prev
+        const segs = (assistantMsg.segments || []).map(s => ({
+          ...s,
+          isStreaming: false,
+          ...(s.type === 'thinking' ? { collapsed: true } : {}),
+        }))
+        const savedAssistantMsg: MessageWithThought = {
+          ...assistantMsg,
+          isStreaming: false,
+          segments: segs,
+        }
+        const prevMsgs = prev.filter(m => m.role === 'user')
+        window.electronAPI.conversation.update({
+          id: sessionId,
+          messages_json: JSON.stringify([...prevMsgs, savedAssistantMsg]),
+          message_count: prevMsgs.length + 1,
+        }).catch(() => {})
+        return prev.map((m) =>
+          m.id === streamState.assistantMessageId ? savedAssistantMsg : m
+        )
+      })
+
+      streamState.isStreaming = false
+      streamState.cleanupFns.forEach(fn => fn())
+      streamStatesRef.current.delete(sessionId)
+
+      if (sessionId === activeConversationId) {
+        setIsStreaming(false)
+      }
+    })
+
+    const errorCleanup = window.electronAPI.llm.onError((data: { sessionId: string; error: string }) => {
+      const { sessionId, error } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(sessionId, (prev) =>
+        prev.map((m) =>
+          m.id === streamState.assistantMessageId
+            ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
+            : m
+        )
+      )
+
+      streamState.isStreaming = false
+      streamState.cleanupFns.forEach(fn => fn())
+      streamStatesRef.current.delete(sessionId)
+
+      if (sessionId === activeConversationId) {
+        setIsStreaming(false)
+      }
+    })
+
+    globalListenersCleanupRef.current = () => {
+      chunkCleanup()
+      thoughtCleanup()
+      toolCallCleanup()
+      toolResultCleanup()
+      doneCleanup()
+      errorCleanup()
+    }
+  }, [activeConversationId, t])
 
   const handleScroll = useCallback(() => {
     const el = chatContainerRef.current
@@ -117,18 +369,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const forceScrollToBottom = () => {
     isUserAtBottomRef.current = true
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  const loadEmployee = async () => {
-    try {
-      const result = await window.electronAPI.employee.get(id!)
-      setEmployee(result)
-      setProjectId(result.project_id || null)
-      if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
-      if (result.llm_model) setSelectedLlmModelId(result.llm_model)
-    } catch {
-      message.error(t('workbench.loadEmployeeFailed'))
-    }
   }
 
   const loadConversations = async () => {
@@ -169,11 +409,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as any[])
-    } catch {}
+    } catch (e) { console.error('Failed to load providers:', e) }
   }
 
   const startNewConversation = async (): Promise<string | null> => {
-    if (isCreatingConversation) return null
+    if (isCreatingConversation || !id) return null
     setIsCreatingConversation(true)
     try {
       const result = await window.electronAPI.conversation.create({
@@ -184,19 +424,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setAllConversations((prev) => [(result as Conversation), ...prev])
       setConversations((prev) => [(result as Conversation), ...prev])
       setActiveConversationId(convId)
+      activeConversationIdRef.current = convId
       setMessages([])
-      setShowSidePanel(false)
+      setConvMessages(convId, [])
       forceScrollToBottom()
 
       if (pendingMessage) {
         setInputValue(pendingMessage)
         setPendingMessage(null)
-        setTimeout(() => sendMessage(), 0)
+        setTimeout(() => sendMessage(convId), 0)
       }
 
       return convId
     } catch {
-      message.error(t('workbench.createConvFailed'))
       setPendingMessage(null)
       return null
     } finally {
@@ -206,27 +446,70 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   const selectConversation = async (convId: string) => {
     setActiveConversationId(convId)
-    try {
-      const fullConv = await window.electronAPI.conversation.get(convId)
-      if (fullConv) {
-        const msgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
-          .map(ensureSegments)
-        setMessages(msgs)
+    activeConversationIdRef.current = convId
+
+    const streamState = streamStatesRef.current.get(convId)
+    setIsStreaming(!!streamState?.isStreaming)
+
+    const cachedMsgs = conversationMessagesRef.current.get(convId)
+    if (cachedMsgs !== undefined) {
+      setMessages(cachedMsgs)
+    } else {
+      try {
+        const fullConv = await window.electronAPI.conversation.get(convId)
+        if (fullConv) {
+          const msgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
+            .map(ensureSegments)
+          setConvMessages(convId, msgs)
+        }
+      } catch {
+        setConvMessages(convId, [])
       }
-    } catch {
-      setMessages([])
     }
   }
 
-  const deleteConversation = async (convId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
+  const deleteConversation = async (convId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
     try {
+      const streamState = streamStatesRef.current.get(convId)
+      if (streamState) {
+        streamState.cleanupFns.forEach(fn => fn())
+        streamStatesRef.current.delete(convId)
+      }
+      conversationMessagesRef.current.delete(convId)
+
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
       setConversations((prev) => prev.filter((c) => c.id !== convId))
       if (activeConversationId === convId) {
         setActiveConversationId(null)
+        activeConversationIdRef.current = null
         setMessages([])
+        setIsStreaming(false)
+      }
+      message.success(t('workbench.deleteSuccess'))
+    } catch {
+      message.error(t('workbench.deleteFailed'))
+    }
+  }
+
+  const deleteSelectedConversations = async (convIds: string[]) => {
+    try {
+      for (const convId of convIds) {
+        const streamState = streamStatesRef.current.get(convId)
+        if (streamState) {
+          streamState.cleanupFns.forEach(fn => fn())
+          streamStatesRef.current.delete(convId)
+        }
+        conversationMessagesRef.current.delete(convId)
+        await window.electronAPI.conversation.delete(convId)
+      }
+      setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
+      setConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
+      if (convIds.includes(activeConversationId || '')) {
+        setActiveConversationId(null)
+        setMessages([])
+        setIsStreaming(false)
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -237,11 +520,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const deleteAllConversations = async () => {
     if (!id) return
     try {
+      for (const [, state] of streamStatesRef.current) {
+        state.cleanupFns.forEach(fn => fn())
+      }
+      streamStatesRef.current.clear()
+      conversationMessagesRef.current.clear()
+
       await window.electronAPI.conversation.deleteAll(id)
       setAllConversations([])
       setConversations([])
       setActiveConversationId(null)
+      activeConversationIdRef.current = null
       setMessages([])
+      setIsStreaming(false)
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
@@ -336,25 +627,31 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           )
         }
       }
-    } catch {}
+    } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
   const handleSend = async () => {
     const content = inputValue.trim()
-    if (!content || isStreaming) return
+    if (!content) return
 
-    if (!activeConversationId) {
+    const currentConvId = activeConversationId
+    if (!currentConvId) {
       if (isCreatingConversation) return
       setPendingMessage(content)
       await startNewConversation()
       return
     }
 
-    setInputValue(content)
-    sendMessage()
+    const streamState = streamStatesRef.current.get(currentConvId)
+    if (streamState?.isStreaming) return
+
+    sendMessage(currentConvId)
   }
 
-  const sendMessage = async () => {
+  const sendMessage = async (convId?: string) => {
+    const targetConvId = convId || activeConversationId
+    if (!targetConvId) return
+
     const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
     if (!providerId) {
       message.warning(t('workbench.noLlmProvider'))
@@ -362,14 +659,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
 
     const content = inputValue.trim()
-    if (!content || isStreaming) return
+    if (!content) return
 
-    if (!activeConversationId) return
+    const existingStream = streamStatesRef.current.get(targetConvId)
+    if (existingStream?.isStreaming) return
 
     setInputValue('')
 
-    if (messages.length === 0) {
-      generateConversationTitle(activeConversationId, content).catch(() => {})
+    setupGlobalListeners()
+
+    const currentMsgs = conversationMessagesRef.current.get(targetConvId) || []
+
+    if (currentMsgs.length === 0) {
+      generateConversationTitle(targetConvId, content).catch(() => {})
     }
 
     const userMessage: MessageWithThought = {
@@ -379,8 +681,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       timestamp: Date.now(),
     }
 
-    const updatedMessagesRef = [...messages, userMessage]
-    setMessages(prev => [...prev, userMessage])
+    const updatedMessagesRef = [...currentMsgs, userMessage]
+    setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
     const assistantMessageId = `msg_${generateId()}`
     const assistantMessage: MessageWithThought = {
@@ -391,179 +693,21 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       isStreaming: true,
       segments: [],
     }
-    setMessages((prev) => [...prev, assistantMessage])
+    updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
 
-    setIsStreaming(true)
-
-    let segCounter = 0
-    const nextSegId = () => `${assistantMessageId}_seg_${segCounter++}`
-    let toolCallCounter = 0
-    const nextToolCallId = () => `${assistantMessageId}_tool_${toolCallCounter++}`
-
-    let chunkCleanup: () => void
-    let doneCleanupFn: () => void
-    let errorCleanupFn: () => void
-    let thoughtCleanupFn: () => void
-    let toolCallCleanupFn: () => void
-    let toolResultCleanupFn: () => void
-
-    chunkCleanup = window.electronAPI.llm.onChunk((chunk: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMessageId) return m
-          const segs = [...(m.segments || [])]
-          const lastSeg = segs[segs.length - 1]
-
-          for (let i = 0; i < segs.length; i++) {
-            if (segs[i].type === 'thinking' && segs[i].isStreaming) {
-              segs[i] = { ...segs[i], isStreaming: false, collapsed: true }
-            }
-          }
-
-          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + chunk }
-          } else {
-            segs.push({
-              type: 'answer',
-              id: nextSegId(),
-              content: chunk,
-              isStreaming: true,
-              timestamp: Date.now(),
-            })
-          }
-          return { ...m, segments: segs, content: (m.content || '') + chunk }
-        })
-      )
-    })
-
-    thoughtCleanupFn = window.electronAPI.llm.onThought((thoughtChunk: string) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMessageId) return m
-          const segs = [...(m.segments || [])]
-          const lastSeg = segs[segs.length - 1]
-
-          for (let i = 0; i < segs.length; i++) {
-            if (segs[i].isStreaming && segs[i].type !== 'thinking') {
-              segs[i] = { ...segs[i], isStreaming: false }
-            }
-          }
-
-          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + thoughtChunk }
-          } else {
-            segs.push({
-              type: 'thinking',
-              id: nextSegId(),
-              content: thoughtChunk,
-              isStreaming: true,
-              collapsed: false,
-              timestamp: Date.now(),
-            })
-          }
-          return { ...m, segments: segs, thought: (m.thought || '') + thoughtChunk }
-        })
-      )
-    })
-
-    toolCallCleanupFn = window.electronAPI.llm.onToolCall((toolCall: { name: string; args: any }) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMessageId) return m
-          const segs = [...(m.segments || [])]
-          const lastSeg = segs[segs.length - 1]
-          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false }
-          }
-          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true }
-          }
-          segs.push({
-            type: 'tool_call',
-            id: nextToolCallId(),
-            toolName: toolCall.name,
-            toolArgs: toolCall.args,
-            isToolComplete: false,
-            collapsed: false,
-            timestamp: Date.now(),
-          })
-          return { ...m, segments: segs }
-        })
-      )
-    })
-
-    toolResultCleanupFn = window.electronAPI.llm.onToolResult((toolResult: { name: string; result: any }) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== assistantMessageId) return m
-          const segs = [...(m.segments || [])]
-          const lastIncompleteIndex = [...segs].reverse().findIndex(
-            s => s.type === 'tool_call' && s.toolName === toolResult.name && !s.isToolComplete
-          )
-          if (lastIncompleteIndex === -1) return m
-          const actualIndex = segs.length - 1 - lastIncompleteIndex
-          segs[actualIndex] = { ...segs[actualIndex], toolResult: toolResult.result, isToolComplete: true, collapsed: true }
-          return { ...m, segments: segs }
-        })
-      )
-    })
-
-    const finish = () => {
-      chunkCleanup()
-      if (thoughtCleanupFn) thoughtCleanupFn()
-      if (doneCleanupFn) doneCleanupFn()
-      if (errorCleanupFn) errorCleanupFn()
-      if (toolCallCleanupFn) toolCallCleanupFn()
-      if (toolResultCleanupFn) toolResultCleanupFn()
-      finishRef.current = null
-      activeListenersRef.current = []
+    if (targetConvId === activeConversationId) {
+      setIsStreaming(true)
     }
 
-    finishRef.current = finish
-
-    doneCleanupFn = window.electronAPI.llm.onDone(() => {
-      setMessages((prev) => {
-        const assistantMsg = prev.find((m) => m.id === assistantMessageId)
-        if (!assistantMsg) return prev
-        const segs = (assistantMsg.segments || []).map(s => ({
-          ...s,
-          isStreaming: false,
-          ...(s.type === 'thinking' ? { collapsed: true } : {}),
-        }))
-        const savedAssistantMsg: MessageWithThought = {
-          ...assistantMsg,
-          isStreaming: false,
-          segments: segs,
-        }
-        window.electronAPI.conversation.update({
-          id: activeConversationId,
-          messages_json: JSON.stringify([
-            ...updatedMessagesRef,
-            savedAssistantMsg,
-          ]),
-          message_count: updatedMessagesRef.length + 1,
-        }).catch(() => {})
-        return prev.map((m) =>
-          m.id === assistantMessageId ? savedAssistantMsg : m
-        )
-      })
-      setIsStreaming(false)
-      finish()
-    })
-
-    errorCleanupFn = window.electronAPI.llm.onError((error: string) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
-            : m
-        )
-      )
-      setIsStreaming(false)
-      finish()
-    })
-
-    activeListenersRef.current = [chunkCleanup, thoughtCleanupFn, doneCleanupFn, errorCleanupFn, toolCallCleanupFn, toolResultCleanupFn]
+    const streamState: ConversationStreamState = {
+      isStreaming: true,
+      messages: updatedMessagesRef,
+      assistantMessageId,
+      segCounter: 0,
+      toolCallCounter: 0,
+      cleanupFns: [],
+    }
+    streamStatesRef.current.set(targetConvId, streamState)
 
     try {
       const messageHistory: Array<{ role: string; content: string }> = []
@@ -576,12 +720,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
+        use_kb: kbEnabled,
         enable_thinking: enableThinking,
-        project_id: currentProjectId || undefined,
+        conversation_id: targetConvId,
       })
     } catch {
-      finish()
-      setIsStreaming(false)
+      streamState.isStreaming = false
+      streamStatesRef.current.delete(targetConvId)
+      if (targetConvId === activeConversationId) {
+        setIsStreaming(false)
+      }
     }
   }
 
@@ -596,7 +744,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     if (!activeConversationId) return
     try {
       const newMessages = messages.filter((m) => m.id !== msgId)
-      setMessages(newMessages)
+      setConvMessages(activeConversationId, newMessages)
       await window.electronAPI.conversation.update({
         id: activeConversationId,
         messages_json: JSON.stringify(newMessages),
@@ -609,6 +757,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleStop = async () => {
+    if (!activeConversationId) return
+    const streamState = streamStatesRef.current.get(activeConversationId)
+    if (streamState) {
+      streamState.isStreaming = false
+      streamState.cleanupFns.forEach(fn => fn())
+      streamStatesRef.current.delete(activeConversationId)
+    }
     setIsStreaming(false)
     setMessages((prev) =>
       prev.map((m) =>
@@ -621,18 +776,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           : m
       )
     )
-    if (finishRef.current) {
-      finishRef.current()
-    }
     try {
-      await window.electronAPI.llm.abortChat()
-    } catch {}
+      await window.electronAPI.llm.abortChat(activeConversationId)
+    } catch (e) { console.error('Failed to abort chat:', e) }
   }
 
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
 
   const handleToggleSegment = (msgId: string, segId: string) => {
-    setMessages(prev => prev.map(m => {
+    if (!activeConversationId) return
+    updateConvMessages(activeConversationId, (prev) => prev.map(m => {
       if (m.id !== msgId || !m.segments) return m
       const newSegs = m.segments.map(s =>
         s.id === segId ? { ...s, collapsed: !s.collapsed } : s
@@ -641,9 +794,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }))
   }
 
+  const isConversationStreaming = (convId: string) => {
+    return !!streamStatesRef.current.get(convId)?.isStreaming
+  }
+
   return {
     employee,
-    currentProjectId,
     conversations,
     allConversations,
     activeConversationId,
@@ -659,6 +815,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setSelectedLlmModelId,
     enableThinking,
     setEnableThinking,
+    kbEnabled,
+    setKbEnabled,
     showSidePanel,
     setShowSidePanel,
     editingConversationId,
@@ -672,6 +830,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleStop,
     selectConversation,
     deleteConversation,
+    deleteSelectedConversations,
     deleteAllConversations,
     startEditTitle,
     saveEditTitle,
@@ -685,6 +844,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleToggleSegment,
     forceScrollToBottom,
     getToolDisplayName,
+    isConversationStreaming,
+    generateConversationTitle,
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '../tool.types'
+import type { ToolDefinition } from './types'
 import UnifiedInteractionService from '../../unified-interaction.service'
 
 export const askUserTool: ToolDefinition = {

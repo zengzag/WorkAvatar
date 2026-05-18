@@ -4,17 +4,13 @@ import pdf from 'pdf-parse'
 import mammoth from 'mammoth'
 import XLSX from 'xlsx'
 import type { ParseResult } from '../../shared/types'
-import DatabaseService from './database.service'
 import OCRService from './ocr.service'
-import { calculateFileHash, generateId } from './common-utils'
 
 class FileParserService {
-  private db: DatabaseService
   private ocr: OCRService
   private static instance: FileParserService
 
   private constructor() {
-    this.db = DatabaseService.getInstance()
     this.ocr = OCRService.getInstance()
     this.ocr.initialize().catch(console.error)
   }
@@ -24,85 +20,6 @@ class FileParserService {
       FileParserService.instance = new FileParserService()
     }
     return FileParserService.instance
-  }
-
-  async importFile(projectId: string, filePath: string): Promise<{ id: string; path: string; original_name: string }> {
-    const stats = await fs.promises.stat(filePath)
-    const fileHash = await this.calculateFileHash(filePath)
-    const originalName = path.basename(filePath)
-    const fileType = this.getFileType(filePath)
-    const fileId = generateId()
-
-    this.db.getDb().prepare(`
-      INSERT INTO files (id, project_id, path, original_name, type, size, hash, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', unixepoch(), unixepoch())
-    `).run(fileId, projectId, filePath, originalName, fileType, stats.size, fileHash)
-
-    return { id: fileId, path: filePath, original_name: originalName }
-  }
-
-  async parseFile(fileId: string): Promise<ParseResult> {
-    const file = this.db.getDb().prepare('SELECT * FROM files WHERE id = ?').get(fileId) as any
-    if (!file) {
-      throw new Error(`File ${fileId} not found`)
-    }
-
-    this.db.getDb().prepare("UPDATE files SET status = 'parsing', updated_at = unixepoch() WHERE id = ?").run(fileId)
-
-    try {
-      let result: ParseResult
-
-      switch (file.type) {
-        case 'pdf':
-          result = await this.parsePDF(file.path)
-          break
-        case 'doc':
-          result = await this.parseDoc(file.path)
-          break
-        case 'docx':
-          result = await this.parseWord(file.path)
-          break
-        case 'xlsx':
-        case 'xls':
-        case 'csv':
-          result = await this.parseExcel(file.path)
-          break
-        case 'txt':
-        case 'md':
-        case 'html':
-          result = await this.parseText(file.path, file.type)
-          break
-        case 'png':
-        case 'jpg':
-        case 'jpeg':
-        case 'bmp':
-        case 'tiff':
-        case 'webp':
-          result = await this.parseImage(file.path)
-          break
-        default:
-          throw new Error(`Unsupported file type: ${file.type}`)
-      }
-
-      const parsedJson = JSON.stringify(result)
-      const thumbnailText = result.fullText.substring(0, 5000)
-
-      this.db.getDb().prepare(`
-        UPDATE files 
-        SET status = 'completed', parsed_json = ?, thumbnail_text = ?, updated_at = unixepoch()
-        WHERE id = ?
-      `).run(parsedJson, thumbnailText, fileId)
-
-      return result
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      this.db.getDb().prepare(`
-        UPDATE files 
-        SET status = 'failed', error_message = ?, updated_at = unixepoch()
-        WHERE id = ?
-      `).run(errorMessage, fileId)
-      throw error
-    }
   }
 
   private async parsePDF(filePath: string): Promise<ParseResult> {
@@ -220,10 +137,6 @@ class FileParserService {
     return supportedTypes.includes(ext) ? ext : 'unknown'
   }
 
-  private async calculateFileHash(filePath: string): Promise<string> {
-    return calculateFileHash(filePath)
-  }
-
   private splitIntoSections(text: string): ParseResult['sections'] {
     const sections: ParseResult['sections'] = []
     const lines = text.split('\n')
@@ -312,17 +225,6 @@ class FileParserService {
     return result
   }
 
-  getFileContent(fileId: string): string | null {
-    const file = this.db.getDb().prepare('SELECT thumbnail_text FROM files WHERE id = ?').get(fileId) as any
-    return file?.thumbnail_text || null
-  }
-
-  updateFileFromKB(fileId: string, contentText: string, parsedJson: string) {
-    this.db.getDb().prepare(`
-      UPDATE files SET status = 'completed', thumbnail_text = ?, parsed_json = ?, updated_at = unixepoch()
-      WHERE id = ?
-    `).run(contentText, parsedJson, fileId)
-  }
 }
 
 export default FileParserService

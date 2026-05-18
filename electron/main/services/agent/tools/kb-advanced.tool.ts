@@ -1,18 +1,14 @@
 import SearchEngineService from '../../search-engine.service'
-import type { ToolDefinition } from '../tool.types'
+import { ToolDefinition } from './types'
+import { createKbIdValidator } from './utils'
 
 export function createKBAdvancedSearchTool(allowedKbIds: string[]): ToolDefinition {
   const searchEngine = SearchEngineService.getInstance()
-
-  const validateKbId = (kbId: string | undefined): string | null => {
-    if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
-    if (!allowedKbIds.includes(kbId)) return null
-    return kbId
-  }
+  const validateKbId = createKbIdValidator(allowedKbIds)
 
   const kbOptionsDesc = allowedKbIds.length > 0
     ? `可选值: ${allowedKbIds.join(', ')}`
-    : '当前项目未关联知识库'
+    : '当前员工未关联知识库'
 
   return {
     id: 'kb_advanced_search',

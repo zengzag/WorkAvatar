@@ -2,9 +2,10 @@ import { useTranslation } from 'react-i18next'
 import { Card, Button, Space, Empty, Tabs, theme } from 'antd'
 import { PlusOutlined, FileTextOutlined, BookOutlined, ThunderboltOutlined, NodeIndexOutlined, SearchOutlined } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
+import TaskProgressPanel from '../components/common/TaskProgressPanel'
 import {
   KBListPanel, KBDocList, KBKnowledgeView, KBEntityGraph, KBSearchPanel,
-  KBHeaderCard, KBCreateModal, KBEditModal, KBLinkProjectModal,
+  KBHeaderCard, KBCreateModal, KBEditModal,
   KBExportModal, KBImportModal, KBFolderScanModal,
 } from '../components/knowledge-base'
 import { useKnowledgeBase } from '../hooks/useKnowledgeBase'
@@ -29,10 +30,8 @@ const KnowledgeBasePage: React.FC = () => {
     docContent, docContentTitle, docContentModalOpen, onCloseDocContentModal,
     entities, entityFilter, selectedEntity, entityRelations, entityModalOpen,
     onEntityFilterChange, onLoadEntities, onViewEntity, onCloseEntityModal,
-    linkedProjects, allProjects, onLinkProject, onProjectLink,
     createModalOpen, setCreateModalOpen, newKBName, setNewKBName, newKBDesc, setNewKBDesc, onCreateKB,
     editKBModalOpen, setEditKBModalOpen, editKBName, setEditKBName, editKBDesc, setEditKBDesc, onConfirmEditKB, onEditKB,
-    linkModalOpen, setLinkModalOpen,
     activeTab, onTabChange,
     selectedProviderId, selectedModelId, enableThinking,
     onProviderChange, onModelChange, onThinkingChange,
@@ -49,7 +48,8 @@ const KnowledgeBasePage: React.FC = () => {
         subTitle={t('knowledgeBase.subtitle')}
         extra={
           <Space>
-            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('dashboard.kbSearch')}</Button>
+            <TaskProgressPanel />
+            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('knowledgeBase.kbSearch')}</Button>
             <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>{t('knowledgeBase.createKb')}</Button>
           </Space>
         }
@@ -76,14 +76,12 @@ const KnowledgeBasePage: React.FC = () => {
             <div>
               <KBHeaderCard
                 selectedKB={selectedKB}
-                linkedProjects={linkedProjects}
                 uploadLoading={uploadLoading}
                 onUploadFiles={onUploadFiles}
                 onUploadFolder={onUploadFolder}
                 onEditKB={onEditKB}
                 onOpenExportModal={() => setExportModalOpen(true)}
                 onOpenImportModal={onOpenImportModal}
-                onLinkProject={onLinkProject}
                 selectedProviderId={selectedProviderId}
                 selectedModelId={selectedModelId}
                 enableThinking={enableThinking}
@@ -186,14 +184,6 @@ const KnowledgeBasePage: React.FC = () => {
         onNameChange={setNewKBName}
         desc={newKBDesc}
         onDescChange={setNewKBDesc}
-      />
-
-      <KBLinkProjectModal
-        open={linkModalOpen}
-        onCancel={() => setLinkModalOpen(false)}
-        allProjects={allProjects}
-        linkedProjects={linkedProjects}
-        onProjectLink={onProjectLink}
       />
 
       <KBEditModal

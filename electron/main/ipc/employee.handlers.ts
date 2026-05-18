@@ -4,9 +4,6 @@ import type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
-  SkillListParams,
-  SkillCreateParams,
-  SkillUpdateParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
@@ -15,89 +12,74 @@ import type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
+  EmployeeKBListParams,
+  EmployeeKBLinkParams,
+  EmployeeKBUnlinkParams,
 } from '../../shared/ipc-channels'
-import type ProjectManagerService from '../services/project-manager.service'
+import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
+import type EmployeeAgentService from '../services/employee-agent.service'
 
 export function registerEmployeeHandlers(
-  projectManager: ProjectManagerService,
+  workspaceManager: WorkspaceManagerService,
   profilingService: EmployeeProfilingService,
-  employeeExportService: EmployeeExportService
+  employeeExportService: EmployeeExportService,
+  employeeAgentService: EmployeeAgentService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
-    return projectManager.getEmployeeList(params?.project_id, params?.status)
+    return workspaceManager.getEmployeeList(params?.status)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_GET, (_, id: string) => {
-    return projectManager.getEmployee(id)
+    return workspaceManager.getEmployee(id)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CREATE, (_, params: EmployeeCreateParams) => {
-    return projectManager.createEmployee(params.project_id, params.name, params.description, params.profile_json)
+    return workspaceManager.createEmployee(params.name, params.description, params.profile_json)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_UPDATE, (_, params: EmployeeUpdateParams) => {
     const { id, ...data } = params
-    return projectManager.updateEmployee(id, data)
+    return workspaceManager.updateEmployee(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_DELETE, (_, id: string) => {
-    return projectManager.deleteEmployee(id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_LIST, (_, params: SkillListParams) => {
-    return projectManager.getSkillList(params.employee_id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_CREATE, (_, params: SkillCreateParams) => {
-    return projectManager.createSkill(
-      params.employee_id,
-      params.type,
-      params.name,
-      params.description,
-      params.prompt_template
-    )
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_UPDATE, (_, params: SkillUpdateParams) => {
-    const { id, ...data } = params
-    return projectManager.updateSkill(id, data)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.SKILL_DELETE, (_, id: string) => {
-    return projectManager.deleteSkill(id)
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_DELETE, (_, params: string | { id: string; delete_workspace?: boolean }) => {
+    if (typeof params === 'string') {
+      return workspaceManager.deleteEmployee(params, false)
+    }
+    return workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_LIST, (_, params: ConversationListParams) => {
-    return projectManager.getConversationList(params.employee_id)
+    return workspaceManager.getConversationList(params.employee_id)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_GET, (_, id: string) => {
-    return projectManager.getConversation(id)
+    return workspaceManager.getConversation(id)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_CREATE, (_, params: ConversationCreateParams) => {
-    return projectManager.createConversation(params.employee_id, params.skill_id, params.title)
+    return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_UPDATE, (_, params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string }) => {
     const { id, ...data } = params
-    return projectManager.updateConversation(id, data)
+    return workspaceManager.updateConversation(id, data)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE, (_, id: string) => {
-    return projectManager.deleteConversation(id)
+    return workspaceManager.deleteConversation(id)
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (_, employeeId: string) => {
-    return projectManager.deleteAllConversations(employeeId)
+    return workspaceManager.deleteAllConversations(employeeId)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, async (event, params: EmployeeProfileAnalyzeParams) => {
     try {
-      const result = await profilingService.analyzeProjectForEmployee(
-        params.project_id,
+      const result = await profilingService.analyzeForEmployee(
+        'new',
         params.kb_ids,
         params.provider_id,
         params.model_id,
@@ -141,7 +123,7 @@ export function registerEmployeeHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_CONFIG, (_, params: EmployeeImportConfigParams) => {
-    return employeeExportService.importConfig(params.import_path, params.project_id, params.conflict_strategy)
+    return employeeExportService.importConfig(params.import_path, params.conflict_strategy)
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_PACKAGE, async (event, params: EmployeeExportPackageParams) => {
@@ -157,11 +139,30 @@ export function registerEmployeeHandlers(
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_PACKAGE, async (event, params: EmployeeImportPackageParams) => {
     return employeeExportService.importPackage(
       params.import_path,
-      params.project_id,
       params.conflict_strategy,
       (stage, detail) => {
         event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
       }
     )
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LIST, (_, params: EmployeeKBListParams) => {
+    return workspaceManager.getKBsForEmployee(params.employee_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LINK, (_, params: EmployeeKBLinkParams) => {
+    const result = workspaceManager.linkKBToEmployee(params.employee_id, params.kb_id)
+    if (result) {
+      employeeAgentService.clearAgentCache(params.employee_id)
+    }
+    return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, (_, params: EmployeeKBUnlinkParams) => {
+    const result = workspaceManager.unlinkKBFromEmployee(params.employee_id, params.kb_id)
+    if (result) {
+      employeeAgentService.clearAgentCache(params.employee_id)
+    }
+    return result
   })
 }

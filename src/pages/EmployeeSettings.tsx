@@ -6,14 +6,15 @@ import {
   Tabs,
   Form,
   Button,
-  Space,
-  Tag,
+  Checkbox,
   App,
+  theme,
+  Tooltip,
+  Typography,
 } from 'antd'
+import { FolderOutlined, WarningOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import {
   SaveOutlined,
-  PauseCircleOutlined,
-  PlayCircleOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import {
@@ -24,11 +25,8 @@ import {
   MCPServersSection,
   KnowledgeBaseSection,
   ExportImportSection,
-  TaskConfigSection,
-  ScheduleSection,
 } from '../components/employee-settings'
 import type { Employee, LLMProvider } from '../types'
-import { EMPLOYEE_STATUS_COLOR_MAP, getEmployeeStatusTextMap } from '../utils/status'
 
 interface ToolInfo {
   id: string
@@ -62,24 +60,22 @@ interface InstalledSkill {
 
 const EmployeeSettings: React.FC = () => {
   const { t } = useTranslation()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('basic')
-  const autoOpenExecutionId = (location.state as any)?.executionId || null
 
   useEffect(() => {
     const state = location.state as any
     if (state?.tab) {
       setActiveTab(state.tab)
     }
-    if (state?.executionId) {
-      setActiveTab('tasks')
-    }
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
-  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
+  const [employeeKBs, setEmployeeKBs] = useState<any[]>([])
+  const [allKBs, setAllKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
@@ -103,13 +99,11 @@ const EmployeeSettings: React.FC = () => {
         name: employee.name,
         description: employee.description,
         avatar_type: employee.avatar_type,
-        status: employee.status,
         review_mode: employee.review_mode,
         llm_provider_id: employee.llm_provider_id,
         llm_model: employee.llm_model,
       })
       setFormLlmProviderId(employee.llm_provider_id || '')
-      loadLinkedKBs(employee.project_id)
     }
   }, [employee])
 
@@ -129,10 +123,18 @@ const EmployeeSettings: React.FC = () => {
     } catch {}
   }, [])
 
-  const loadLinkedKBs = useCallback(async (projectId: string) => {
+  const loadEmployeeKBs = useCallback(async () => {
+    if (!id) return
     try {
-      const result = await window.electronAPI.kb.getKBsForProject(projectId)
-      setLinkedKBs(result)
+      const result = await window.electronAPI.employee.listKBs({ employee_id: id })
+      setEmployeeKBs(result)
+    } catch {}
+  }, [id])
+
+  const loadAllKBs = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kb.list()
+      setAllKBs(result)
     } catch {}
   }, [])
 
@@ -181,8 +183,10 @@ const EmployeeSettings: React.FC = () => {
       loadMCPServers()
       loadInstalledSkills()
       loadEmployeeSkills()
+      loadEmployeeKBs()
+      loadAllKBs()
     }
-  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills])
+  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills, loadEmployeeKBs, loadAllKBs])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -298,29 +302,129 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleToggleStatus = async () => {
-    if (!employee) return
-    const newStatus = employee.status === 'active' ? 'paused' : 'active'
-    try {
-      await window.electronAPI.employee.update({
-        id: id!,
-        status: newStatus,
-      })
-      message.success(newStatus === 'active' ? t('employeeSettings.enabled') : t('employeeSettings.paused'))
-      loadEmployee()
-    } catch {
-      message.error(t('employeeSettings.operationFailed'))
-    }
-  }
+  const { Text } = Typography
 
-  const handleDeleteEmployee = async () => {
+  const handleDeleteEmployee = async (workspacePath?: string) => {
+    let deleteWorkspace = false
+
+    let tasks: any[] = []
+    let schedules: any[] = []
     try {
-      await window.electronAPI.employee.delete(id!)
-      message.success(t('common.deleted'))
-      navigate('/dashboard')
-    } catch {
-      message.error(t('common.deleteFailed'))
+      tasks = await window.electronAPI.employeeTask.list(id!)
+      schedules = await window.electronAPI.employeeTask.listSchedules(id!)
+    } catch {}
+
+    const hasBoundTasks = tasks.length > 0 || schedules.length > 0
+
+    const handleOpenExplorer = (path: string) => {
+      window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
     }
+
+    modal.confirm({
+      title: t('employeeSettings.confirmDeleteEmployee'),
+      icon: null,
+      width: 520,
+      content: (
+        <div>
+          <Text>{t('employeeSettings.deleteEmployeeDesc')}</Text>
+          {workspacePath && (
+            <div style={{
+              marginTop: 8,
+              padding: '6px 10px',
+              background: token.colorFillTertiary,
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              <FolderOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+              <Tooltip title={workspacePath}>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: token.colorTextSecondary,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t('employeeSettings.workspacePath')}: {workspacePath}
+                </Text>
+              </Tooltip>
+              <Button
+                type="link"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={() => handleOpenExplorer(workspacePath)}
+                style={{ flexShrink: 0, padding: 0 }}
+              />
+            </div>
+          )}
+          {hasBoundTasks && (
+            <div style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              background: token.colorWarningBg,
+              border: `1px solid ${token.colorWarningBorder}`,
+              borderRadius: 6,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6, color: token.colorWarningText, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <WarningOutlined />
+                {t('employeeSettings.boundTasksWarning')}
+              </div>
+              {tasks.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary }}>
+                  {t('employeeSettings.boundTaskCount', { count: tasks.length })}
+                  {tasks.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({tasks.map((t: any) => t.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              {schedules.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary, marginTop: 2 }}>
+                  {t('employeeSettings.boundScheduleCount', { count: schedules.length })}
+                  {schedules.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({schedules.map((s: any) => s.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              <div style={{ fontSize: 12, marginTop: 6, color: token.colorTextTertiary }}>
+                {t('employeeSettings.boundTasksDeleteHint')}
+              </div>
+            </div>
+          )}
+          {workspacePath && (
+            <Checkbox
+              onChange={(e) => { deleteWorkspace = e.target.checked }}
+              style={{ marginTop: 12 }}
+            >
+              {t('employeeSettings.alsoDeleteWorkspace')}
+            </Checkbox>
+          )}
+        </div>
+      ),
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.delete({
+            id: id!,
+            delete_workspace: deleteWorkspace,
+          })
+          message.success(t('common.deleted'))
+          navigate('/')
+        } catch {
+          message.error(t('common.deleteFailed'))
+        }
+      },
+    })
   }
 
   const handleToggleTool = async (toolId: string, enabled: boolean) => {
@@ -432,25 +536,14 @@ const EmployeeSettings: React.FC = () => {
         subTitle={t('employeeSettings.subtitle')}
         onBack={() => navigate(`/employee/${id}`)}
         breadcrumb={[
-          { title: t('employeeSettings.breadcrumbDashboard') },
+          { title: t('employeeSettings.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
           { title: employee.name },
           { title: t('employeeSettings.breadcrumbConfig') },
         ]}
         extra={
-          <Space>
-            <Tag color={EMPLOYEE_STATUS_COLOR_MAP[employee.status]}>
-              {getEmployeeStatusTextMap(t)[employee.status]}
-            </Tag>
-            <Button
-              icon={employee.status === 'active' ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
-              onClick={handleToggleStatus}
-            >
-              {employee.status === 'active' ? t('employeeSettings.pause') : t('employeeSettings.activate')}
-            </Button>
-            <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
-              {t('common.save')}
-            </Button>
-          </Space>
+          <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
+            {t('common.save')}
+          </Button>
         }
       />
 
@@ -471,6 +564,8 @@ const EmployeeSettings: React.FC = () => {
                 loading={loading}
                 onSave={handleSaveBasic}
                 onDelete={handleDeleteEmployee}
+                workspacePath={employee.workspace_path}
+                employeeId={id!}
               />
             )
           },
@@ -526,23 +621,13 @@ const EmployeeSettings: React.FC = () => {
             label: t('employeeSettings.tabKnowledge'),
             children: (
               <KnowledgeBaseSection
-                linkedKBs={linkedKBs}
-                projectId={employee.project_id}
+                employeeKBs={employeeKBs}
+                allKBs={allKBs}
+                employeeId={id!}
+                onRefresh={() => {
+                  loadEmployeeKBs()
+                }}
               />
-            )
-          },
-          {
-            key: 'tasks',
-            label: t('employeeSettings.tabTasks'),
-            children: (
-              <TaskConfigSection employeeId={id!} autoOpenExecutionId={autoOpenExecutionId} />
-            )
-          },
-          {
-            key: 'schedules',
-            label: t('employeeSettings.tabSchedules'),
-            children: (
-              <ScheduleSection employeeId={id!} />
             )
           },
           {
@@ -551,7 +636,7 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <ProfileSection
                 employee={employee}
-                linkedKBCount={linkedKBs.length}
+                linkedKBCount={employeeKBs.length}
               />
             )
           },
@@ -562,7 +647,6 @@ const EmployeeSettings: React.FC = () => {
               <ExportImportSection
                 employeeId={id!}
                 employeeName={employee.name}
-                projectId={employee.project_id}
               />
             )
           }

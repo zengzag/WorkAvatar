@@ -48,7 +48,6 @@ const ChatInput: React.FC<{
           }}
           placeholder={placeholder}
           autoSize={{ minRows: 1, maxRows: 5 }}
-          disabled={isStreaming}
           style={{
             flex: 1,
             background: 'transparent',

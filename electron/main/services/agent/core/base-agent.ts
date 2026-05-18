@@ -232,9 +232,10 @@ export abstract class BaseAgent {
   }
 
   protected async onToolCallExecuted(toolName: string, _args: any, result: ToolCallResult): Promise<void> {
-    if (toolName === 'activate_skill' && result.success && result.output) {
-      const skillInstructions = String(result.output)
-      if (!this.activeSkillInstructions.includes(skillInstructions)) {
+    if (toolName === 'activate_skill' && result.success) {
+      const rawOutput = result.rawOutput as Record<string, any> | undefined
+      const skillInstructions = rawOutput?.instructions as string | undefined
+      if (skillInstructions && !this.activeSkillInstructions.includes(skillInstructions)) {
         this.activeSkillInstructions.push(skillInstructions)
         this.eventEmitter.emit('skill:activated', { skillName: _args.skill_name })
       }
@@ -563,7 +564,10 @@ export abstract class BaseAgent {
   }
 
   protected log(level: string, action: string, data: any): void {
-    if (!this.config.debug) return
+    const levels: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 }
+    const configLevel = levels[this.config.logLevel ?? 'info'] ?? 2
+    const msgLevel = levels[level] ?? 2
+    if (msgLevel > configLevel) return
 
     const timestamp = new Date().toISOString()
     console.log(`[${timestamp}] [${level.toUpperCase()}] [${this.name}:${action}]`, data)

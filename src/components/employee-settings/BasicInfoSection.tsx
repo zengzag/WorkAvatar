@@ -10,10 +10,10 @@ import {
   Space,
   Avatar,
   Divider,
-  Popconfirm,
   Typography,
   Row,
   Col,
+  App,
 } from 'antd'
 import {
   SaveOutlined,
@@ -21,6 +21,7 @@ import {
   RobotOutlined,
   FileTextOutlined,
   SettingOutlined,
+  FolderOpenOutlined,
   DeleteOutlined,
 } from '@ant-design/icons'
 import type { LLMProvider } from '../../types'
@@ -43,7 +44,9 @@ interface BasicInfoSectionProps {
   providers: LLMProvider[]
   loading: boolean
   onSave: (values: any) => void
-  onDelete: () => void
+  onDelete: (workspacePath?: string) => void
+  workspacePath?: string
+  employeeId: string
 }
 
 const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
@@ -54,8 +57,38 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   loading,
   onSave,
   onDelete,
+  workspacePath,
+  employeeId,
 }) => {
   const { t } = useTranslation()
+  const { message } = App.useApp()
+
+  const handleChangeWorkspacePath = async () => {
+    try {
+      const result = await window.electronAPI.app.showOpenDialog({
+        title: t('employeeSettings.selectWorkspaceDir'),
+        properties: ['openDirectory'],
+      })
+      if (result.canceled || !result.filePaths.length) return
+
+      await window.electronAPI.employee.update({
+        id: employeeId,
+        workspace_path: result.filePaths[0],
+      })
+      message.success(t('common.saveSuccess'))
+    } catch {
+      message.error(t('common.saveFailed'))
+    }
+  }
+
+  const handleOpenInExplorer = async () => {
+    if (!workspacePath) return
+    try {
+      await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+    } catch {
+      message.error(t('employeeSettings.operationFailed'))
+    }
+  }
 
   return (
     <Card>
@@ -95,6 +128,30 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
         </Form.Item>
 
+        <Form.Item label={t('employeeSettings.workspacePath')}>
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              value={workspacePath || ''}
+              readOnly
+              placeholder={t('employeeSettings.workspacePathPlaceholder')}
+            />
+            <Button
+              icon={<FolderOpenOutlined />}
+              onClick={handleChangeWorkspacePath}
+            >
+              {t('employeeSettings.changeWorkspaceDir')}
+            </Button>
+            {workspacePath && (
+              <Button
+                icon={<FolderOpenOutlined />}
+                onClick={handleOpenInExplorer}
+              >
+                {t('employeeSettings.openInExplorer')}
+              </Button>
+            )}
+          </Space.Compact>
+        </Form.Item>
+
         <Row gutter={24}>
           <Col span={12}>
             <Form.Item name="llm_provider_id" label={t('employeeSettings.llmProvider')}>
@@ -108,7 +165,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               >
                 {providers.map((p) => (
                   <Select.Option key={p.id} value={p.id}>
-                    {p.name} ({p.model})
+                    {p.name}{p.model ? ` (${p.model})` : ''}
                   </Select.Option>
                 ))}
               </Select>
@@ -141,18 +198,13 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
             <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
               {t('employeeSettings.saveBasic')}
             </Button>
-            <Popconfirm
-              title={t('employeeSettings.confirmDeleteEmployee')}
-              description={t('employeeSettings.deleteEmployeeDesc')}
-              onConfirm={onDelete}
-              okText={t('common.delete')}
-              cancelText={t('common.cancel')}
-              okButtonProps={{ danger: true }}
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => onDelete(workspacePath)}
             >
-              <Button danger icon={<DeleteOutlined />}>
-                {t('employeeSettings.deleteEmployee')}
-              </Button>
-            </Popconfirm>
+              {t('employeeSettings.deleteEmployee')}
+            </Button>
           </Space>
         </Form.Item>
       </Form>

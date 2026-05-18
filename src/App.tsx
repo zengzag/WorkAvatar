@@ -1,15 +1,14 @@
 import { useState } from 'react'
-import { Layout, Menu, Typography } from 'antd'
+import { Layout, Menu, Typography, theme } from 'antd'
 import {
-  RocketOutlined,
-  FolderOpenOutlined,
-  UserOutlined,
+  RobotOutlined,
+  FieldTimeOutlined,
+  ApartmentOutlined,
   SettingOutlined,
   BookOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import TaskProgressPanel from './components/common/TaskProgressPanel'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
 import TaskNotificationHandler from './components/common/TaskNotificationHandler'
 import { ParseDetailModal } from './components/knowledge-base'
@@ -23,6 +22,7 @@ const App: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const [collapsed, setCollapsed] = useState(true)
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
@@ -33,38 +33,38 @@ const App: React.FC = () => {
 
   const getSelectedKey = () => {
     const path = location.pathname
-    if (path.startsWith('/dashboard')) return 'dashboard'
-    if (path === '/projects' || path.startsWith('/project/')) return 'projects'
-    if (path === '/employees' || path.startsWith('/employee/')) return 'employees'
+    if (path === '/' || path.startsWith('/digital-employees') || path.startsWith('/employee') || path.startsWith('/conversation-center')) return 'digital-employees'
+    if (path === '/task-center') return 'task-center'
+    if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
-    return 'dashboard'
+    return 'digital-employees'
   }
 
   const menuItems = [
     {
-      key: 'dashboard',
-      icon: <RocketOutlined />,
-      label: t('nav.dashboard'),
-      onClick: () => navigate('/dashboard'),
-    },
-    {
-      key: 'projects',
-      icon: <FolderOpenOutlined />,
-      label: t('nav.projects'),
-      onClick: () => navigate('/projects'),
-    },
-    {
-      key: 'employees',
-      icon: <UserOutlined />,
-      label: t('nav.employees'),
-      onClick: () => navigate('/employees'),
+      key: 'digital-employees',
+      icon: <RobotOutlined />,
+      label: t('nav.digitalEmployees'),
+      onClick: () => navigate('/'),
     },
     {
       key: 'knowledge-base',
       icon: <BookOutlined />,
       label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
+    },
+    {
+      key: 'task-center',
+      icon: <FieldTimeOutlined />,
+      label: t('nav.taskCenter'),
+      onClick: () => navigate('/task-center'),
+    },
+    {
+      key: 'workflows',
+      icon: <ApartmentOutlined />,
+      label: t('nav.workflows'),
+      onClick: () => navigate('/workflows'),
     },
     {
       key: 'settings',
@@ -95,10 +95,10 @@ const App: React.FC = () => {
             borderBottom: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0',
           }}
         >
-          <RocketOutlined
+          <RobotOutlined
             style={{
               fontSize: collapsed ? 24 : 20,
-              color: '#1677ff',
+              color: token.colorPrimary,
               marginRight: collapsed ? 0 : 8,
             }}
           />
@@ -110,9 +110,6 @@ const App: React.FC = () => {
           items={menuItems}
           style={{ borderRight: 'none', marginTop: 8, flex: 1 }}
         />
-        <div style={{ padding: '8px 16px 12px', borderTop: effectiveTheme === 'dark' ? '1px solid #303030' : '1px solid #f0f0f0' }}>
-          <TaskProgressPanel />
-        </div>
       </Sider>
       <Layout>
         <Content

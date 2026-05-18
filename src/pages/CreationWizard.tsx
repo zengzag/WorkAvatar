@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -9,19 +9,15 @@ import {
   Tag,
   Typography,
   Space,
-  Form,
   Input,
-  Select,
-  Switch,
   Empty,
-  Divider,
   Alert,
   Descriptions,
-  Badge,
   Progress,
   Timeline,
   Tooltip,
   Modal,
+  Collapse,
   theme,
   App,
 } from 'antd'
@@ -37,39 +33,35 @@ import {
   EditOutlined,
   ToolOutlined,
   CommentOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
 import type { LLMProvider } from '../types'
-import { getProviderModels, getProviderModelOptions } from '../utils/llm'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 
-const { Text, Title, Paragraph } = Typography
+const { Text, Paragraph } = Typography
 const { TextArea } = Input
 
 interface EmployeeProfile {
   roleName: string
   roleDescription: string
-  responsibilities: string[]
-  personalityTraits: string[]
-  workingStyle: string
   suggestedTools: string[]
 }
 
 const CreationWizard: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [currentStep, setCurrentStep] = useState(0)
-  const [project, setProject] = useState<any>(null)
-  const [linkedKBs, setLinkedKBs] = useState<any[]>([])
+  const [allKBs, setAllKBs] = useState<any[]>([])
   const [selectedKBIds, setSelectedKBIds] = useState<string[]>([])
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [employeeName, setEmployeeName] = useState<string>('')
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
     return localStorage.getItem('creationWizard:selectedProviderId') || getCachedSceneDefaultModel('creation')?.provider_id || ''
   })
@@ -80,13 +72,12 @@ const CreationWizard: React.FC = () => {
     return localStorage.getItem('creationWizard:enableThinking') === 'true'
   })
   const [businessDescription, setBusinessDescription] = useState<string>('')
-  const [additionalResponsibilities, setAdditionalResponsibilities] = useState<string>('')
-  const [step5ProviderId, setStep5ProviderId] = useState<string>('')
   const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
   const [refineModalOpen, setRefineModalOpen] = useState(false)
   const [refineFeedback, setRefineFeedback] = useState('')
+  const [builtinTools, setBuiltinTools] = useState<any[]>([])
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
 
-  // Persist selections to localStorage
   useEffect(() => {
     localStorage.setItem('creationWizard:selectedProviderId', selectedProviderId)
   }, [selectedProviderId])
@@ -96,6 +87,7 @@ const CreationWizard: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('creationWizard:enableThinking', String(enableThinking))
   }, [enableThinking])
+
   const [analyzeStage, setAnalyzeStage] = useState<string>('')
   const [analyzeDetail, setAnalyzeDetail] = useState<string>('')
   const [analyzeChunks, setAnalyzeChunks] = useState<string[]>([])
@@ -112,39 +104,22 @@ const CreationWizard: React.FC = () => {
     }
   }, [])
 
-  const [form] = Form.useForm()
+  useEffect(() => {
+    if (currentStep === 1 && profile) {
+      setEmployeeName(profile.roleName)
+    }
+  }, [currentStep, profile])
 
   useEffect(() => {
-    if (currentStep === 3 && profile) {
-      form.setFieldsValue({
-        name: profile.roleName,
-        description: profile.roleDescription,
-      })
-    }
-  }, [currentStep, profile, form])
+    loadProviders()
+    loadAllKBs()
+    loadBuiltinTools()
+  }, [])
 
-  useEffect(() => {
-    if (id) {
-      loadProject()
-      loadLinkedKBs()
-      loadProviders()
-    }
-  }, [id])
-
-  const loadProject = async () => {
+  const loadAllKBs = async () => {
     try {
-      const result = await window.electronAPI.project.get(id!)
-      setProject(result)
-    } catch {
-      message.error(t('creationWizard.loadProjectFailed'))
-    }
-  }
-
-  const loadLinkedKBs = async () => {
-    try {
-      const result = await window.electronAPI.kb.getKBsForProject(id!)
-      setLinkedKBs(result)
-      setSelectedKBIds(result.map((kb: any) => kb.id))
+      const result = await window.electronAPI.kb.list()
+      setAllKBs(result)
     } catch {
       message.error(t('creationWizard.loadKbFailed'))
     }
@@ -166,6 +141,21 @@ const CreationWizard: React.FC = () => {
           setSelectedProviderId(defaultProvider.id)
         }
       }
+    } catch {}
+  }
+
+  const loadBuiltinTools = async () => {
+    try {
+      const result = await window.electronAPI.tool.listBuiltin()
+      setBuiltinTools(result)
+      const defaultToolIds = result
+        .filter((tool: any) =>
+          tool.name === 'kb_search' ||
+          tool.name === 'read_file' ||
+          tool.name === 'write_file'
+        )
+        .map((tool: any) => tool.id)
+      setSelectedToolIds(defaultToolIds)
     } catch {}
   }
 
@@ -203,13 +193,9 @@ const CreationWizard: React.FC = () => {
     })
 
     try {
-      const enhancedDescription = [
-        businessDescription,
-        additionalResponsibilities ? `${t('creationWizard.extraDuties')} ${additionalResponsibilities}` : '',
-      ].filter(Boolean).join('\n\n')
+      const enhancedDescription = businessDescription || undefined
 
       const result = await window.electronAPI.employee.analyzeProfile({
-        project_id: id!,
         kb_ids: selectedKBIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
@@ -220,6 +206,19 @@ const CreationWizard: React.FC = () => {
         setProfile(result.profile)
         if (result.messages) {
           setAnalysisMessages(result.messages)
+        }
+
+        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
+          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
+          const matchedIds = builtinTools
+            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
+            .map((tool: any) => tool.id)
+          if (matchedIds.length > 0) {
+            setSelectedToolIds((prev) => {
+              const existing = new Set([...prev, ...matchedIds])
+              return Array.from(existing)
+            })
+          }
         }
 
         if (result.analysisMethod === 'llm') {
@@ -299,9 +298,6 @@ const CreationWizard: React.FC = () => {
         previous_profile: {
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
-          responsibilities: profile.responsibilities,
-          personalityTraits: profile.personalityTraits,
-          workingStyle: profile.workingStyle,
           suggestedTools: profile.suggestedTools,
         },
         feedback: refineFeedback,
@@ -313,6 +309,18 @@ const CreationWizard: React.FC = () => {
         setProfile(result.profile)
         if (result.messages) {
           setAnalysisMessages(result.messages)
+        }
+        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
+          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
+          const matchedIds = builtinTools
+            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
+            .map((tool: any) => tool.id)
+          if (matchedIds.length > 0) {
+            setSelectedToolIds((prev) => {
+              const existing = new Set([...prev, ...matchedIds])
+              return Array.from(existing)
+            })
+          }
         }
         if (result.error) {
           message.warning(result.error)
@@ -334,59 +342,89 @@ const CreationWizard: React.FC = () => {
     }
   }
 
-  const handleCreateEmployee = async () => {
-    let values
+  const handleQuickCreate = async () => {
+    setCreating(true)
     try {
-      values = await form.validateFields()
-    } catch {
+      const employee = await window.electronAPI.employee.create({
+        name: t('creationWizard.quickCreateDefaultName'),
+        description: '',
+      })
+
+      if (selectedProviderId) {
+        await window.electronAPI.employee.update({
+          id: employee.id,
+          llm_provider_id: selectedProviderId,
+          llm_model: selectedModelId,
+          status: 'active',
+        })
+      }
+
+      for (const toolId of selectedToolIds) {
+        try {
+          await window.electronAPI.tool.assignToEmployee({
+            employee_id: employee.id,
+            tool_id: toolId,
+            is_enabled: true,
+          })
+        } catch {}
+      }
+
+      for (const kbId of selectedKBIds) {
+        try {
+          await window.electronAPI.employee.linkKB({ employee_id: employee.id, kb_id: kbId })
+        } catch {}
+      }
+
+      navigate(`/employee/${employee.id}`)
+    } catch (error) {
+      message.error(t('creationWizard.createFailed'))
+      console.error(error)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleCreateEmployee = async () => {
+    if (!employeeName.trim()) {
+      message.warning(t('creationWizard.enterName'))
       return
     }
     setCreating(true)
 
     try {
       const employee = await window.electronAPI.employee.create({
-        project_id: id!,
-        name: values.name,
-        description: values.description || '',
+        name: employeeName,
+        description: profile?.roleDescription || businessDescription || '',
         profile_json: profile ? JSON.stringify({
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
-          responsibilities: profile.responsibilities,
-          personalityTraits: profile.personalityTraits,
-          workingStyle: profile.workingStyle,
           suggestedTools: profile.suggestedTools,
         }) : undefined,
       })
 
-      if (values.llm_provider_id) {
+      if (selectedProviderId) {
         await window.electronAPI.employee.update({
           id: employee.id,
-          llm_provider_id: values.llm_provider_id,
-          llm_model: values.llm_model,
+          llm_provider_id: selectedProviderId,
+          llm_model: selectedModelId,
           status: 'active',
         })
       }
 
-      if (profile?.suggestedTools && profile.suggestedTools.length > 0) {
+      for (const toolId of selectedToolIds) {
         try {
-          const builtinTools = await window.electronAPI.tool.listBuiltin()
-          for (const toolName of profile.suggestedTools) {
-            try {
-              const matchedTool = builtinTools.find((t: any) =>
-                t.name === toolName || t.id === toolName
-              )
-              if (matchedTool) {
-                await window.electronAPI.tool.assignToEmployee({
-                  employee_id: employee.id,
-                  tool_id: matchedTool.id,
-                  is_enabled: true,
-                })
-              }
-            } catch {
-            }
-          }
-        } catch {
-        }
+          await window.electronAPI.tool.assignToEmployee({
+            employee_id: employee.id,
+            tool_id: toolId,
+            is_enabled: true,
+          })
+        } catch {}
+      }
+
+      for (const kbId of selectedKBIds) {
+        try {
+          await window.electronAPI.employee.linkKB({ employee_id: employee.id, kb_id: kbId })
+        } catch {}
       }
 
       navigate(`/employee/${employee.id}`)
@@ -399,11 +437,11 @@ const CreationWizard: React.FC = () => {
   }
 
   const steps = [
-    { title: t('creationWizard.stepSelectKbOptional'), icon: <DatabaseOutlined /> },
-    { title: t('creationWizard.stepBusinessDesc'), icon: <BulbOutlined /> },
-    { title: t('creationWizard.stepAnalysis'), icon: <RobotOutlined /> },
-    { title: t('creationWizard.stepComplete'), icon: <CheckOutlined /> },
+    { title: t('creationWizard.stepBasicConfig'), icon: <DatabaseOutlined /> },
+    { title: t('creationWizard.stepConfirmCreate'), icon: <CheckOutlined /> },
   ]
+
+  const displayKBs = allKBs
 
   const renderStep1 = () => (
     <div>
@@ -416,232 +454,252 @@ const CreationWizard: React.FC = () => {
           style={{ marginBottom: 16 }}
         />
       )}
+
+      <Card style={{ marginBottom: 16 }}>
+        <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong>{t('creationWizard.linkedKbLabel')}</Text>
+              <Space>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedKBIds(displayKBs.map((kb: any) => kb.id))}
+                >
+                  {t('common.selectAll')}
+                </Button>
+                <Button size="small" onClick={() => setSelectedKBIds([])}>
+                  {t('common.clearAll')}
+                </Button>
+              </Space>
+            </div>
+            {displayKBs.length > 0 ? (
+              <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>
+                {displayKBs.map((kb: any) => {
+                  const isSelected = selectedKBIds.includes(kb.id)
+                  return (
+                    <div
+                      key={kb.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '10px 16px',
+                        background: isSelected ? token.colorPrimaryBg : 'transparent',
+                        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                      }}
+                    >
+                      <Checkbox
+                        checked={isSelected}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedKBIds((prev) => [...prev, kb.id])
+                          } else {
+                            setSelectedKBIds((prev) => prev.filter((i) => i !== kb.id))
+                          }
+                        }}
+                        style={{ marginRight: 12 }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ marginBottom: 2 }}>
+                          <Space>
+                            <DatabaseOutlined style={{ color: token.colorPrimary }} />
+                            <Text strong>{kb.name}</Text>
+                            <Tag>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
+                          </Space>
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {kb.description || t('common.noDescription')}
+                        </Text>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <Empty description={t('creationWizard.noKbAvailable')} />
+            )}
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong>{t('creationWizard.llmModelLabel')}</Text>
+              <Space>
+                <LLMSelector
+                  providerId={selectedProviderId}
+                  modelId={selectedModelId}
+                  onProviderChange={setSelectedProviderId}
+                  onModelChange={setSelectedModelId}
+                />
+                <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
+                  <Button
+                    type={enableThinking ? 'primary' : 'text'}
+                    icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                    size="small"
+                    onClick={() => setEnableThinking(!enableThinking)}
+                    style={enableThinking ? {} : { color: token.colorTextSecondary }}
+                  />
+                </Tooltip>
+              </Space>
+            </div>
+          </div>
+
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>
+              {t('creationWizard.businessSceneDesc')}
+            </Text>
+            <TextArea
+              placeholder={t('creationWizard.businessScenePlaceholder')}
+              value={businessDescription}
+              onChange={(e) => setBusinessDescription(e.target.value)}
+              rows={4}
+            />
+          </div>
+        </Space>
+      </Card>
+    </div>
+  )
+
+  const renderAnalysisProgress = () => (
+    <Card title={t('creationWizard.analysisProgress')} style={{ marginBottom: 16 }}>
+      <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
+      <Timeline
+        items={[
+          { color: analyzeProgress >= 10 ? 'green' : 'gray', content: t('creationWizard.stepPrepare') },
+          { color: analyzeProgress >= 30 ? 'green' : 'gray', content: t('creationWizard.stepCallLlm') },
+          { color: analyzeProgress >= 45 ? 'green' : 'gray', content: t('creationWizard.stepLlmThinking') },
+          { color: analyzeProgress >= 60 ? 'green' : 'gray', content: t('creationWizard.stepReceiveStream') },
+          { color: analyzeProgress >= 90 ? 'green' : 'gray', content: t('creationWizard.stepParseResult') },
+        ]}
+      />
+      {analyzeDetail && (
+        <Alert title={analyzeDetail} type="info" showIcon style={{ marginTop: 12 }} />
+      )}
+    </Card>
+  )
+
+  const renderAnalysisStreaming = () => (
+    <>
+      {analyzeThinkChunks.length > 0 && (
+        <Card title={t('creationWizard.llmThinkingProcess')} size="small" style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto' }}>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0, color: '#8c8c8c' }}>
+            {analyzeThinkChunks.join('')}
+          </pre>
+        </Card>
+      )}
+      {analyzeChunks.length > 0 && (
+        <Card title={t('creationWizard.llmRealtimeOutput')} size="small" style={{ marginBottom: 16, maxHeight: 300, overflow: 'auto' }}>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0 }}>
+            {analyzeChunks.join('')}
+          </pre>
+        </Card>
+      )}
+    </>
+  )
+
+  const renderProfileDisplay = () => (
+    <>
       <Alert
-        title={t('creationWizard.selectKbAlert')}
-        description={t('creationWizard.selectKbAlertDesc')}
-        type="info"
+        title={t('creationWizard.analysisComplete', { roleName: profile!.roleName })}
+        type="success"
         showIcon
         style={{ marginBottom: 16 }}
-      />
-      {selectedKBIds.length === 0 && (
-        <Alert
-          title={t('creationWizard.noKbSelectedAlert')}
-          description={t('creationWizard.noKbSelectedAlertDesc')}
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
-
-      <Card
-        title={t('creationWizard.projectLinkedKb', { count: linkedKBs.length })}
-        extra={
+        action={
           <Space>
-            <LLMSelector
-              providerId={selectedProviderId}
-              modelId={selectedModelId}
-              onProviderChange={setSelectedProviderId}
-              onModelChange={setSelectedModelId}
-            />
-            <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
-              <Button
-                type={enableThinking ? 'primary' : 'text'}
-                icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                size="small"
-                onClick={() => setEnableThinking(!enableThinking)}
-                style={enableThinking ? {} : { color: token.colorTextSecondary }}
-              />
-            </Tooltip>
-            <Button
-              size="small"
-              onClick={() => setSelectedKBIds(linkedKBs.map((kb: any) => kb.id))}
-            >
-              {t('common.selectAll')}
+            <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
+              {t('creationWizard.reAnalyze')}
             </Button>
-            <Button size="small" onClick={() => setSelectedKBIds([])}>
-              {t('common.clearAll')}
-            </Button>
+            {analysisMessages.length > 0 && (
+              <Button size="small" onClick={() => setRefineModalOpen(true)} icon={<CommentOutlined />}>
+                {t('creationWizard.refineProfile')}
+              </Button>
+            )}
           </Space>
         }
-      >
-        <div>
-          {linkedKBs.map((kb: any) => {
-            const isSelected = selectedKBIds.includes(kb.id)
-            return (
-              <div
-                key={kb.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: '12px 16px',
-                  background: isSelected ? token.colorPrimaryBg : 'transparent',
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                }}
-              >
-                <Checkbox
-                  checked={isSelected}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setSelectedKBIds((prev) => [...prev, kb.id])
-                    } else {
-                      setSelectedKBIds((prev) => prev.filter((i) => i !== kb.id))
-                    }
-                  }}
-                  style={{ marginRight: 12 }}
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ marginBottom: 2 }}>
-                    <Space>
-                      <DatabaseOutlined style={{ color: '#722ed1' }} />
-                      <Text strong>{kb.name}</Text>
-                      <Tag>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
-                    </Space>
-                  </div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {kb.description || t('common.noDescription')}
-                  </Text>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        {linkedKBs.length === 0 && (
-          <Empty description={t('creationWizard.noLinkedKb')}>
-            <Button type="primary" onClick={() => navigate(`/project/${id}`)}>
-              {t('creationWizard.goToLinkKb')}
-            </Button>
-          </Empty>
-        )}
+      />
+
+      <Card style={{ marginBottom: 16 }}>
+        <Descriptions title={t('creationWizard.employeeProfile')} bordered column={1} size="small">
+          <Descriptions.Item label={t('creationWizard.roleName')}>
+            <Space>
+              <UserOutlined />
+              <Text strong>{profile!.roleName}</Text>
+            </Space>
+          </Descriptions.Item>
+          <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile!.roleDescription}</Descriptions.Item>
+          {profile!.suggestedTools.length > 0 && (
+            <Descriptions.Item label={t('creationWizard.suggestedTools')}>
+              <Space wrap>
+                {profile!.suggestedTools.map((tool, i) => {
+                  const found = builtinTools.find((bt: any) => bt.name === tool)
+                  return (
+                    <Tag key={i} icon={<ToolOutlined />} color="orange">
+                      {found ? (found.title || found.name) : tool}
+                    </Tag>
+                  )
+                })}
+              </Space>
+            </Descriptions.Item>
+          )}
+        </Descriptions>
       </Card>
+    </>
+  )
+
+  const renderToolCheckboxes = () => (
+    <div>
+      <Text strong style={{ display: 'block', marginBottom: 8 }}>
+        <ToolOutlined style={{ marginRight: 4 }} />
+        {t('creationWizard.toolsHint')}
+      </Text>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {builtinTools.map((tool: any) => (
+          <Checkbox
+            key={tool.id}
+            checked={selectedToolIds.includes(tool.id)}
+            onChange={(e) => {
+              if (e.target.checked) {
+                setSelectedToolIds((prev) => [...prev, tool.id])
+              } else {
+                setSelectedToolIds((prev) => prev.filter((id) => id !== tool.id))
+              }
+            }}
+          >
+            {tool.title || tool.name}
+          </Checkbox>
+        ))}
+      </div>
     </div>
   )
 
   const renderStep2 = () => (
     <div>
       <Alert
-        title={t('creationWizard.businessDescAlert')}
-        description={t('creationWizard.businessDescAlertDesc')}
+        title={t('creationWizard.confirmCreateDesc')}
         type="info"
         showIcon
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 16 }}
       />
 
-      <Card title={t('creationWizard.businessDescCard')} style={{ marginBottom: 24 }}>
-        <Paragraph type="secondary">{t('creationWizard.businessDescHint')}</Paragraph>
-        <TextArea
-          placeholder={t('creationWizard.businessDescPlaceholder')}
-          value={businessDescription}
-          onChange={(e) => setBusinessDescription(e.target.value)}
-          rows={6}
+      <div style={{ marginBottom: 16 }}>
+        <Text strong style={{ display: 'block', marginBottom: 8 }}>
+          {t('creationWizard.employeeNameLabel')} <Text type="danger">*</Text>
+        </Text>
+        <Input
+          placeholder={t('creationWizard.employeeNamePlaceholder')}
+          prefix={<UserOutlined />}
+          value={employeeName}
+          onChange={(e) => setEmployeeName(e.target.value)}
         />
-      </Card>
+      </div>
 
-      <Card title={t('creationWizard.extraDutiesCard')}>
-        <TextArea
-          placeholder={t('creationWizard.extraDutiesPlaceholder')}
-          value={additionalResponsibilities}
-          onChange={(e) => setAdditionalResponsibilities(e.target.value)}
-          rows={3}
-        />
-      </Card>
-    </div>
-  )
-
-  const renderStep3 = () => (
-    <div>
       {loading ? (
-        <div style={{ padding: 24 }}>
-          <Card title={t('creationWizard.analysisProgress')} style={{ marginBottom: 16 }}>
-            <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
-            <Timeline
-              items={[
-                { color: analyzeProgress >= 10 ? 'green' : 'gray', content: t('creationWizard.stepPrepare') },
-                { color: analyzeProgress >= 30 ? 'green' : 'gray', content: t('creationWizard.stepCallLlm') },
-                { color: analyzeProgress >= 45 ? 'green' : 'gray', content: t('creationWizard.stepLlmThinking') },
-                { color: analyzeProgress >= 60 ? 'green' : 'gray', content: t('creationWizard.stepReceiveStream') },
-                { color: analyzeProgress >= 90 ? 'green' : 'gray', content: t('creationWizard.stepParseResult') },
-              ]}
-            />
-            {analyzeDetail && (
-              <Alert title={analyzeDetail} type="info" showIcon style={{ marginTop: 12 }} />
-            )}
-          </Card>
-          {analyzeThinkChunks.length > 0 && (
-            <Card title={t('creationWizard.llmThinkingProcess')} size="small" style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto' }}>
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0, color: '#8c8c8c' }}>
-                {analyzeThinkChunks.join('')}
-              </pre>
-            </Card>
-          )}
-          {analyzeChunks.length > 0 && (
-            <Card title={t('creationWizard.llmRealtimeOutput')} size="small" style={{ maxHeight: 300, overflow: 'auto' }}>
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0 }}>
-                {analyzeChunks.join('')}
-              </pre>
-            </Card>
-          )}
+        <div style={{ padding: '0 0 16px' }}>
+          {renderAnalysisProgress()}
+          {renderAnalysisStreaming()}
         </div>
       ) : profile ? (
-        <>
-          <Alert
-            title={t('creationWizard.analysisComplete', { roleName: profile.roleName })}
-            type="success"
-            showIcon
-            style={{ marginBottom: 16 }}
-            action={
-              <Space>
-                <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
-                  {t('creationWizard.reAnalyze')}
-                </Button>
-                {analysisMessages.length > 0 && (
-                  <Button size="small" onClick={() => setRefineModalOpen(true)} icon={<CommentOutlined />}>
-                    {t('creationWizard.refineProfile')}
-                  </Button>
-                )}
-              </Space>
-            }
-          />
-
-          <Card style={{ marginBottom: 16 }}>
-            <Descriptions title={t('creationWizard.employeeProfile')} bordered column={1} size="small">
-              <Descriptions.Item label={t('creationWizard.roleName')}>
-                <Space>
-                  <UserOutlined />
-                  <Text strong>{profile.roleName}</Text>
-                </Space>
-              </Descriptions.Item>
-              <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile.roleDescription}</Descriptions.Item>
-              <Descriptions.Item label={t('creationWizard.workStyle')}>
-                <Badge status="processing" text={profile.workingStyle} />
-              </Descriptions.Item>
-              <Descriptions.Item label={t('creationWizard.duties')}>
-                <Space orientation="vertical" size={4}>
-                  {profile.responsibilities.map((r, i) => (
-                    <Text key={i}>· {r}</Text>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-              <Descriptions.Item label={t('creationWizard.traits')}>
-                <Space wrap>
-                  {profile.personalityTraits.map((t, i) => (
-                    <Tag key={i} color="blue">{t}</Tag>
-                  ))}
-                </Space>
-              </Descriptions.Item>
-              {profile.suggestedTools.length > 0 && (
-                <Descriptions.Item label={t('creationWizard.suggestedTools')}>
-                  <Space wrap>
-                    {profile.suggestedTools.map((tool, i) => (
-                      <Tag key={i} icon={<ToolOutlined />} color="orange">{tool}</Tag>
-                    ))}
-                  </Space>
-                </Descriptions.Item>
-              )}
-            </Descriptions>
-          </Card>
-        </>
+        renderProfileDisplay()
       ) : (
-        <div style={{ textAlign: 'center', padding: 60 }}>
+        <div style={{ textAlign: 'center', padding: 40 }}>
           <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: token.colorPrimary }} />
           <Paragraph>{t('creationWizard.clickToAnalyze')}</Paragraph>
           <Button type="primary" size="large" onClick={analyzeKBs} icon={<RobotOutlined />}>
@@ -649,153 +707,95 @@ const CreationWizard: React.FC = () => {
           </Button>
         </div>
       )}
-    </div>
-  )
 
-  const renderStep5 = () => (
-    <div>
-      <Alert
-        title={t('creationWizard.finalConfirm')}
-        description={t('creationWizard.finalConfirmDesc')}
-        type="info"
-        showIcon
+      <Collapse
         style={{ marginBottom: 16 }}
+        items={[
+          {
+            key: 'tools',
+            label: t('creationWizard.toolSettings'),
+            children: renderToolCheckboxes(),
+          },
+        ]}
       />
 
-      <Form
-        form={form}
-        layout="vertical"
-        initialValues={{
-          review_mode: false,
-        }}
-      >
-        <Form.Item
-          name="name"
-          label={t('creationWizard.employeeName')}
-          rules={[{ required: true, message: t('creationWizard.enterName') }]}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          type="primary"
+          icon={<CheckOutlined />}
+          onClick={handleCreateEmployee}
+          loading={creating}
+          disabled={!employeeName.trim()}
+          size="large"
         >
-          <Input placeholder={t('creationWizard.namePlaceholder')} prefix={<UserOutlined />} />
-        </Form.Item>
-
-        <Form.Item name="description" label={t('common.description')}>
-          <TextArea rows={3} placeholder={t('creationWizard.descPlaceholder')} />
-        </Form.Item>
-
-        <Form.Item name="llm_provider_id" label={t('creationWizard.llmProvider')}>
-          <Select
-            placeholder={t('creationWizard.selectProvider')}
-            options={providers.map((p) => ({ value: p.id, label: p.name }))}
-            allowClear
-            onChange={(value) => {
-              setStep5ProviderId(value || '')
-              form.setFieldValue('llm_model', undefined)
-            }}
-          />
-        </Form.Item>
-
-        <Form.Item name="llm_model" label={t('creationWizard.modelName')}>
-          {step5ProviderId && getProviderModels(providers.find(p => p.id === step5ProviderId) || {}).length > 0 ? (
-            <Select
-              placeholder={t('creationWizard.selectModel')}
-              allowClear
-              options={getProviderModelOptions(providers.find(p => p.id === step5ProviderId) || {})}
-            />
-          ) : (
-            <Input placeholder={t('creationWizard.modelPlaceholder')} />
-          )}
-        </Form.Item>
-
-        <Form.Item name="review_mode" valuePropName="checked" label={t('creationWizard.manualReview')}>
-          <Switch />
-        </Form.Item>
-        <Text type="secondary" style={{ display: 'block', marginTop: -16, marginBottom: 16 }}>
-          {t('creationWizard.manualReviewDesc')}
-        </Text>
-
-        <Divider />
-
-        <Title level={5}>{t('creationWizard.createSummary')}</Title>
-        <Space orientation="vertical" style={{ width: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Text type="secondary">{t('creationWizard.selectedKb')}</Text>
-            <Text>{selectedKBIds.length} {t('common.unit')}</Text>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Text type="secondary">{t('creationWizard.identifiedRole')}</Text>
-            <Text strong>{profile?.roleName || '-'}</Text>
-          </div>
-          {profile?.suggestedTools && profile.suggestedTools.length > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <Text type="secondary">{t('creationWizard.suggestedToolsLabel')}</Text>
-              <Text>{profile.suggestedTools.join(', ')}</Text>
-            </div>
-          )}
-        </Space>
-      </Form>
+          {t('creationWizard.createButton')}
+        </Button>
+      </div>
     </div>
   )
 
   const handleNext = async () => {
-    if (currentStep === 2 && !profile) {
-      message.warning(t('creationWizard.completeAnalysisFirst'))
-      return
+    if (currentStep === 0) {
+      setCurrentStep(1)
+      analyzeKBs()
     }
-    setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1))
   }
 
   const handlePrev = () => {
     setCurrentStep((prev) => Math.max(prev - 1, 0))
   }
 
+  const breadcrumbItems = [
+    { title: t('creationWizard.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
+    { title: t('creationWizard.breadcrumbCreate') },
+  ]
+
   return (
     <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
       <PageHeader
         title={t('creationWizard.title')}
-        subTitle={project?.name}
-        onBack={() => navigate(`/project/${id}`)}
-        breadcrumb={[{ title: t('creationWizard.breadcrumbDashboard') }, { title: project?.name || t('creationWizard.breadcrumbProject') }, { title: t('creationWizard.breadcrumbCreate') }]}
+        onBack={() => navigate('/')}
+        breadcrumb={breadcrumbItems}
       />
 
       <Card style={{ marginBottom: 24 }}>
         <Steps current={currentStep} items={steps} />
       </Card>
 
-      <Card style={{ marginBottom: 24, minHeight: 400 }}>
+      <Card style={{ marginBottom: 16, minHeight: 400 }}>
         {currentStep === 0 && renderStep1()}
         {currentStep === 1 && renderStep2()}
-        {currentStep === 2 && renderStep3()}
-        {currentStep === 3 && renderStep5()}
       </Card>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <Button
-          icon={<ArrowLeftOutlined />}
-          onClick={handlePrev}
-          disabled={currentStep === 0}
-        >
-          {t('common.prev')}
-        </Button>
-
-        {currentStep < steps.length - 1 ? (
+      {currentStep === 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Button
+            icon={<ThunderboltOutlined />}
+            onClick={handleQuickCreate}
+            loading={creating}
+          >
+            {t('creationWizard.quickCreate')}
+          </Button>
           <Button
             type="primary"
             icon={<ArrowRightOutlined />}
             onClick={handleNext}
-            loading={loading && currentStep === 2}
           >
             {t('common.next')}
           </Button>
-        ) : (
+        </div>
+      )}
+
+      {currentStep === 1 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
           <Button
-            type="primary"
-            icon={<CheckOutlined />}
-            onClick={handleCreateEmployee}
-            loading={creating}
+            icon={<ArrowLeftOutlined />}
+            onClick={handlePrev}
           >
-            {t('common.finish')}
+            {t('common.prev')}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       <Modal
         title={t('creationWizard.refineModalTitle')}

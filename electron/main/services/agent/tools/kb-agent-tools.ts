@@ -1,30 +1,44 @@
 import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
+import KBDatabaseService from '../../kb-database.service'
 import SearchEngineService from '../../search-engine.service'
-import { ToolDefinition } from '../tool.types'
+import { ToolDefinition } from './types'
 import { createKBSearchTool, createKBAdvancedSearchTool, createKBEntitiesTool, createKBEntityDetailTool, createKBGetContentTool } from './index'
-import { formatEntityList } from './utils'
+import { formatEntityList, createKbIdValidator } from './utils'
 
-function formatKBOptions(projectKBs: any[]): string {
-  return projectKBs.map(kb => `${kb.id}(${kb.name})`).join(', ')
+function formatKBOptions(kbs: any[]): string {
+  return kbs.map(kb => `${kb.id}(${kb.name})`).join(', ')
 }
-
 export function createKBAgentTools(
-  kbService: KnowledgeBaseService,
-  _db: DatabaseService,
-  projectId: string
+    kbService: KnowledgeBaseService,
+    db: DatabaseService,
+    employeeId?: string
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = []
-  if (!projectId) return tools
+  if (!employeeId) return tools
 
-  const projectKBs = kbService.getKBsForProject(projectId) as any[]
-  const kbIds = projectKBs.map((kb: any) => kb.id)
+  const kbDb = KBDatabaseService.getInstance()
+  const links = db.getDb().prepare(
+    'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
+  ).all(employeeId) as any[]
 
-  const validateKbId = (kbId: string | undefined): string | null => {
-    if (!kbId) return kbIds.length > 0 ? kbIds[0] : null
-    if (!kbIds.includes(kbId)) return null
-    return kbId
+  const linkedKbIds = links.map((l) => l.kb_id)
+  let employeeKBs: any[] = []
+  if (linkedKbIds.length > 0) {
+    const placeholders = linkedKbIds.map(() => '?').join(',')
+    employeeKBs = kbDb.getDb().prepare(`
+      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
+      FROM knowledge_bases kb
+      WHERE kb.id IN (${placeholders})
+      ORDER BY kb.name
+    `).all(...linkedKbIds) as any[]
   }
+
+  const allKBs = employeeKBs
+
+  const kbIds = allKBs.map((kb: any) => kb.id)
+
+  const validateKbId = createKbIdValidator(kbIds)
 
   const kbOverviewTool: ToolDefinition = {
     id: 'kb_overview',
@@ -36,7 +50,7 @@ export function createKBAgentTools(
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。不传则返回所有可访问知识库列表；传入则返回该知识库的文档详情。可选值: ${formatKBOptions(projectKBs)}`
+          description: `知识库ID（可选）。不传则返回所有可访问知识库列表；传入则返回该知识库的文档详情。可选值: ${formatKBOptions(allKBs)}`
         }
       },
       required: []
@@ -44,15 +58,15 @@ export function createKBAgentTools(
     handler: async (args: any) => {
       try {
         if (!args.kb_id) {
-          if (projectKBs.length === 0) {
-            return { success: true, output: '当前项目未关联任何知识库。' }
+          if (allKBs.length === 0) {
+            return { success: true, output: '当前员工未关联任何知识库。' }
           }
 
           let output = `## 可访问的知识库列表\n\n`
-          output += `当前数字员工可访问 ${projectKBs.length} 个知识库，请根据问题选择最合适的知识库进行查询：\n\n`
+          output += `当前数字员工可访问 ${allKBs.length} 个知识库，请根据问题选择最合适的知识库进行查询：\n\n`
 
-          for (let i = 0; i < projectKBs.length; i++) {
-            const kb = projectKBs[i]
+          for (let i = 0; i < allKBs.length; i++) {
+            const kb = allKBs[i]
             output += `[${i + 1}] **${kb.name}**\n`
             output += `- **知识库ID**: ${kb.id}\n`
             if (kb.description) {
@@ -152,7 +166,7 @@ export function createKBAgentTools(
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选，不提供则使用默认知识库）。可选值: ${formatKBOptions(projectKBs)}`
+          description: `知识库ID（可选，不提供则使用默认知识库）。可选值: ${formatKBOptions(allKBs)}`
         }
       },
       required: []
@@ -203,7 +217,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(allKBs)}`
         }
       },
       required: ['entity_name']
@@ -277,7 +291,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(allKBs)}`
         }
       },
       required: ['query']
@@ -332,7 +346,7 @@ export function createKBAgentTools(
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。可选值: ${formatKBOptions(projectKBs)}`
+          description: `知识库ID（可选）。可选值: ${formatKBOptions(allKBs)}`
         }
       },
       required: ['query']

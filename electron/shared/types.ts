@@ -1,35 +1,6 @@
-export interface Project {
-  id: string
-  name: string
-  description: string
-  root_path: string
-  llm_provider_id?: string
-  created_at: number
-  updated_at: number
-}
-
-export interface File {
-  id: string
-  project_id: string
-  path: string
-  original_name: string
-  type: string
-  size: number
-  hash?: string
-  status: 'pending' | 'parsing' | 'completed' | 'failed'
-  parsed_json?: string
-  thumbnail_text?: string
-  rule_count: number
-  qa_count: number
-  error_message?: string
-  created_at: number
-  updated_at: number
-}
-
 export interface Employee {
   id: string
-  project_id: string
-  project_name?: string
+  workspace_path?: string
   name: string
   description: string
   profile_json: string

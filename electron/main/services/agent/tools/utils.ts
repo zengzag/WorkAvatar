@@ -17,3 +17,20 @@ export function generateUUID(): string {
 export function formatEntityList(entities: any[], separator: string = '\n', prefix: string = '- '): string {
   return entities.map(e => `${prefix}${e.name}(${e.type})`).join(separator)
 }
+
+export function validateKbId(kbIds: string[] | undefined | null): string | null {
+  if (!kbIds || kbIds.length === 0) return 'knowledge_base_ids为必填字段'
+  return null
+}
+
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5)
+}
+
+export function createKbIdValidator(allowedKbIds: string[]) {
+  return (kbId: string | undefined): string | null => {
+    if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
+    if (!allowedKbIds.includes(kbId)) return null
+    return kbId
+  }
+}

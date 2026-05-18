@@ -1,14 +1,15 @@
-import { Typography, Button, Space, Popconfirm, Input, theme } from 'antd'
+import { Typography, Button, Input, theme, Dropdown, Checkbox, App } from 'antd'
 import {
   PlusOutlined,
-  ClearOutlined,
   CheckOutlined,
   CloseOutlined,
   EditOutlined,
   DeleteOutlined,
+  CheckSquareOutlined,
+  SelectOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
-import { memo } from 'react'
-import dayjs from 'dayjs'
+import { memo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../../types'
 
@@ -19,6 +20,7 @@ const ConversationItem = memo(({
   isActive,
   isEditing,
   editingTitle,
+  isStreaming,
   onSelect,
   onStartEdit,
   onSaveEdit,
@@ -26,72 +28,146 @@ const ConversationItem = memo(({
   onEditTitleChange,
   onEditKeyDown,
   onDelete,
+  onDeleteWithConfirm,
+  onGenerateTitle,
+  isSelectMode,
+  isSelected,
+  onToggleSelect,
 }: {
   conv: Conversation
   isActive: boolean
   isEditing: boolean
   editingTitle: string
+  isStreaming: boolean
   onSelect: (id: string) => void
   onStartEdit: (conv: Conversation, e: React.MouseEvent) => void
   onSaveEdit: () => void
   onCancelEdit: () => void
   onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onEditKeyDown: (e: React.KeyboardEvent) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string, e?: React.MouseEvent) => void
+  onDeleteWithConfirm: (id: string) => void
+  onGenerateTitle: (conv: Conversation) => void
+  isSelectMode: boolean
+  isSelected: boolean
+  onToggleSelect: (id: string) => void
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const [showDelete, setShowDelete] = useState(false)
+
+  const contextMenuItems = [
+    {
+      key: 'generate',
+      label: t('common.generateTitle'),
+      icon: <ThunderboltOutlined />,
+      onClick: () => onGenerateTitle(conv),
+    },
+    {
+      key: 'edit',
+      label: t('common.editConversationName'),
+      icon: <EditOutlined />,
+      onClick: (e: any) => onStartEdit(conv, e.domEvent),
+    },
+    {
+      key: 'delete',
+      label: t('common.delete'),
+      icon: <DeleteOutlined />,
+      danger: true,
+      onClick: (e: any) => onDelete(conv.id, e.domEvent),
+    },
+  ]
+
   return (
-    <div
-      onClick={() => !isEditing && onSelect(conv.id)}
-      style={{
-        padding: '10px 14px',
-        cursor: isEditing ? 'default' : 'pointer',
-        borderLeft: isActive ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
-        background: isActive ? token.colorPrimaryBg : 'transparent',
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-      }}
+    <Dropdown
+      menu={{ items: contextMenuItems }}
+      trigger={['contextMenu']}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        {isEditing ? (
-          <Input
-            value={editingTitle}
-            onChange={onEditTitleChange}
-            onKeyDown={onEditKeyDown}
-            autoFocus
-            style={{ fontSize: 13, flex: 1, marginRight: 8 }}
-            size="small"
-          />
-        ) : (
-          <Text style={{ fontSize: 13, maxWidth: 150 }} ellipsis>
-            {conv.title || t('workbench.defaultConvTitle', { date: dayjs(conv.created_at * 1000).format('MM/DD HH:mm') })}
-          </Text>
+      <div
+        onClick={() => {
+          if (isSelectMode) {
+            onToggleSelect(conv.id)
+          } else if (!isEditing) {
+            onSelect(conv.id)
+          }
+        }}
+        style={{
+          margin: '0 10px 2px',
+          padding: '8px 12px',
+          cursor: isEditing ? 'default' : 'pointer',
+          borderRadius: 8,
+          background: isActive ? token.colorFillSecondary : 'transparent',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          transition: 'all 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          if (!isActive) (e.currentTarget as HTMLElement).style.background = token.colorFillTertiary
+          setShowDelete(true)
+        }}
+        onMouseLeave={(e) => {
+          if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'
+          setShowDelete(false)
+        }}
+      >
+        {isSelectMode && (
+          <Checkbox checked={isSelected} style={{ flexShrink: 0 }} />
         )}
-        <Space size={2}>
+        {isStreaming && !isSelectMode && (
+          <div style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: token.colorPrimary,
+            flexShrink: 0,
+            animation: 'pulse 1.5s ease-in-out infinite',
+          }} />
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
           {isEditing ? (
-            <>
-              <Button type="text" size="small" icon={<CheckOutlined />}
-                onClick={onSaveEdit} style={{ color: '#52c41a' }} />
-              <Button type="text" size="small" icon={<CloseOutlined />}
-                onClick={onCancelEdit} />
-            </>
+            <Input
+              value={editingTitle}
+              onChange={onEditTitleChange}
+              onKeyDown={onEditKeyDown}
+              autoFocus
+              style={{ fontSize: 13 }}
+              size="small"
+              suffix={
+                <span style={{ display: 'flex', gap: 2 }}>
+                  <CheckOutlined style={{ color: '#52c41a', cursor: 'pointer', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onSaveEdit() }} />
+                  <CloseOutlined style={{ cursor: 'pointer', fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onCancelEdit() }} />
+                </span>
+              }
+            />
           ) : (
-            <>
-              <Button type="text" size="small" icon={<EditOutlined />}
-                onClick={(e) => onStartEdit(conv, e)} />
-              <Popconfirm title={t('workbench.confirmDelete')} onConfirm={(e) => onDelete(conv.id, e!)}
-                okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                <Button type="text" size="small" danger icon={<DeleteOutlined />}
-                  onClick={(ev) => ev.stopPropagation()} />
-              </Popconfirm>
-            </>
+            <Text style={{ fontSize: 14, fontWeight: isActive ? 500 : 400, color: isActive ? token.colorText : token.colorTextSecondary }} ellipsis>
+              {conv.title || t('workbench.defaultConvTitle', { date: '' }).replace(' ', '')}
+            </Text>
           )}
-        </Space>
+        </div>
+        {!isEditing && !isSelectMode && (
+          <DeleteOutlined
+            onClick={(e) => {
+              e.stopPropagation()
+              onDeleteWithConfirm(conv.id)
+            }}
+            style={{
+              fontSize: 13,
+              color: token.colorTextQuaternary,
+              cursor: 'pointer',
+              opacity: showDelete ? 1 : 0,
+              transition: 'opacity 0.2s',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = token.colorError
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = token.colorTextQuaternary
+            }}
+          />
+        )}
       </div>
-      <Text type="secondary" style={{ fontSize: 11 }}>
-        {t('common.messages', { count: conv.message_count || 0 })} · {dayjs(conv.created_at * 1000).format('MM-DD HH:mm')}
-      </Text>
-    </div>
+    </Dropdown>
   )
 })
 
@@ -107,11 +183,13 @@ const ConversationSidebar: React.FC<{
   onCancelEdit: () => void
   onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onEditKeyDown: (e: React.KeyboardEvent) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
-  onDeleteAll: () => void
+  onDelete: (id: string, e?: React.MouseEvent) => void
+  onDeleteSelected: (ids: string[]) => void
   onNewConversation: () => void
   onLoadMore: () => void
   onListScroll: (e: React.UIEvent<HTMLDivElement>) => void
+  isConversationStreaming: (convId: string) => boolean
+  onGenerateTitle: (conv: Conversation) => void
 }> = ({
   conversations,
   allConversations,
@@ -125,13 +203,61 @@ const ConversationSidebar: React.FC<{
   onEditTitleChange,
   onEditKeyDown,
   onDelete,
-  onDeleteAll,
+  onDeleteSelected,
   onNewConversation,
   onLoadMore,
   onListScroll,
+  isConversationStreaming,
+  onGenerateTitle,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const { modal } = App.useApp()
+
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(conversations.map(c => c.id)))
+  }, [conversations])
+
+  const exitSelectMode = useCallback(() => {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }, [])
+
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedIds.size === 0) return
+    modal.confirm({
+      title: t('workbench.confirmDeleteSelected', { count: selectedIds.size }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await onDeleteSelected(Array.from(selectedIds))
+        exitSelectMode()
+      },
+    })
+  }, [selectedIds, onDeleteSelected, exitSelectMode, modal, t])
+
+  const handleInlineDelete = useCallback((convId: string) => {
+    modal.confirm({
+      title: t('workbench.confirmDeleteMsg'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: () => onDelete(convId),
+    })
+  }, [modal, onDelete, t])
 
   return (
     <div style={{
@@ -142,19 +268,63 @@ const ConversationSidebar: React.FC<{
       flexDirection: 'column',
       background: token.colorBgLayout,
     }}>
-      <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
-        <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
-          onClick={onNewConversation}>{t('workbench.newConv')}</Button>
-        {conversations.length > 0 && (
-          <Popconfirm
-            title={t('workbench.confirmClearAll')}
-            description={t('workbench.clearAllDesc')}
-            onConfirm={onDeleteAll}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-          >
-            <Button danger icon={<ClearOutlined />} />
-          </Popconfirm>
+      <div style={{ padding: '10px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+        {selectMode ? (
+          <>
+            <Button
+              icon={<SelectOutlined />}
+              size="small"
+              onClick={selectAll}
+              style={{ flex: 1 }}
+            >
+              {t('common.selectAll')}
+            </Button>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              size="small"
+              disabled={selectedIds.size === 0}
+              onClick={handleDeleteSelected}
+            >
+              {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+            </Button>
+            <Button
+              icon={<CloseOutlined />}
+              size="small"
+              onClick={exitSelectMode}
+            />
+          </>
+        ) : (
+          <>
+            <Button
+              style={{
+                flex: 1,
+                borderRadius: 8,
+                background: token.colorFillSecondary,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                color: token.colorText,
+                fontWeight: 500,
+              }}
+              icon={<PlusOutlined />}
+              onClick={onNewConversation}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = token.colorFillTertiary
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = token.colorFillSecondary
+              }}
+            >
+              {t('workbench.newConv')}
+            </Button>
+            {conversations.length > 0 && (
+              <Button
+                icon={<CheckSquareOutlined />}
+                size="small"
+                onClick={() => setSelectMode(true)}
+                title={t('workbench.multiSelect')}
+              />
+            )}
+          </>
         )}
       </div>
       <div style={{ flex: 1, overflow: 'auto' }} onScroll={onListScroll}>
@@ -165,6 +335,7 @@ const ConversationSidebar: React.FC<{
             isActive={activeConversationId === conv.id}
             isEditing={editingConversationId === conv.id}
             editingTitle={editingTitle}
+            isStreaming={isConversationStreaming(conv.id)}
             onSelect={onSelect}
             onStartEdit={onStartEdit}
             onSaveEdit={onSaveEdit}
@@ -172,6 +343,11 @@ const ConversationSidebar: React.FC<{
             onEditTitleChange={onEditTitleChange}
             onEditKeyDown={onEditKeyDown}
             onDelete={onDelete}
+            onDeleteWithConfirm={handleInlineDelete}
+            onGenerateTitle={onGenerateTitle}
+            isSelectMode={selectMode}
+            isSelected={selectedIds.has(conv.id)}
+            onToggleSelect={toggleSelect}
           />
         ))}
 
@@ -181,6 +357,7 @@ const ConversationSidebar: React.FC<{
               type="dashed"
               block
               onClick={onLoadMore}
+              style={{ borderRadius: 8 }}
             >
               {t('workbench.loadMore', { current: conversations.length, total: allConversations.length })}
             </Button>
@@ -191,6 +368,13 @@ const ConversationSidebar: React.FC<{
           <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary, fontSize: 13 }}>{t('workbench.noConv')}</div>
         )}
       </div>
+
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
     </div>
   )
 }

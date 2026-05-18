@@ -21,6 +21,7 @@
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xyflow/react": "^12.10.2",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",

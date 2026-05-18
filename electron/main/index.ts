@@ -3,6 +3,12 @@ import path from 'path'
 import DatabaseService from './services/database.service'
 import { registerIpcHandlers } from './ipc-handlers'
 
+const gotTheLock = app.requestSingleInstanceLock()
+
+if (!gotTheLock) {
+  app.quit()
+}
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false

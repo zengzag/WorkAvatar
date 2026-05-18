@@ -2,14 +2,12 @@ import DatabaseService from './database.service'
 import KBDatabaseService from './kb-database.service'
 import LLMClientService from './llm-client.service'
 import { getDefaultProviderId } from './common-utils'
+import { allBuiltinTools } from './agent/tools'
 
 export interface EmployeeProfile {
   roleName: string
   roleDescription: string
-  responsibilities: string[]
   suggestedSkills: SuggestedSkill[]
-  personalityTraits: string[]
-  workingStyle: string
   suggestedTools: string[]
 }
 
@@ -71,8 +69,8 @@ class EmployeeProfilingService {
     return EmployeeProfilingService.instance
   }
 
-  async analyzeProjectForEmployee(
-    _projectId: string,
+  async analyzeForEmployee(
+    _employeeId: string,
     kbIds: string[],
     providerId?: string,
     modelId?: string,
@@ -81,12 +79,6 @@ class EmployeeProfilingService {
   ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string; messages?: Array<{ role: string; content: string }> }> {
     const kbContents = this.loadKBContents(kbIds)
     const defaultProvider = providerId || this.getDefaultProviderId()
-
-    if (kbContents.length === 0 && !additionalContext) {
-      if (!defaultProvider) {
-        return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
-      }
-    }
 
     if (!defaultProvider) {
       if (kbContents.length > 0) {
@@ -123,9 +115,6 @@ class EmployeeProfilingService {
       const profileJson = JSON.stringify({
         roleName: previousProfile.roleName,
         roleDescription: previousProfile.roleDescription,
-        responsibilities: previousProfile.responsibilities,
-        personalityTraits: previousProfile.personalityTraits,
-        workingStyle: previousProfile.workingStyle,
         suggestedTools: previousProfile.suggestedTools,
       }, null, 2)
 
@@ -139,9 +128,13 @@ ${profileJson}
 用户反馈：
 ${feedback}
 
-输出字段：roleName、roleDescription、responsibilities、personalityTraits、workingStyle、suggestedTools
+可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
+${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
 
-只输出JSON。`
+输出字段（只输出JSON）：
+- roleName: 角色名称
+- roleDescription: 角色描述（包含职责、注意事项和工作流程等完整描述）
+- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取`
 
       onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
 
@@ -189,15 +182,17 @@ ${feedback}
         throw new Error('No JSON found in LLM response')
       }
 
-      const result = JSON.parse(cleaned)
+      let result: any
+      try {
+        result = JSON.parse(cleaned)
+      } catch (e) {
+        throw new Error(`优化结果 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`)
+      }
 
       const profile: EmployeeProfile = {
         roleName: result.roleName || previousProfile.roleName,
         roleDescription: result.roleDescription || previousProfile.roleDescription,
-        responsibilities: Array.isArray(result.responsibilities) ? result.responsibilities : previousProfile.responsibilities,
-        suggestedSkills: this.normalizeSkills(result.suggestedSkills, []),
-        personalityTraits: Array.isArray(result.personalityTraits) ? result.personalityTraits : previousProfile.personalityTraits,
-        workingStyle: result.workingStyle || previousProfile.workingStyle,
+        suggestedSkills: previousProfile.suggestedSkills,
         suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : previousProfile.suggestedTools,
       }
 
@@ -274,6 +269,10 @@ ${feedback}
     return getDefaultProviderId(this.db)
   }
 
+  private getSystemToolsList(): Array<{ name: string; title: string; description: string }> {
+    return allBuiltinTools.map((tool) => ({ name: tool.name, title: tool.title, description: tool.description }))
+  }
+
   private async analyzeWithLLM(
     kbContents: KBContent[],
     providerId: string,
@@ -292,6 +291,9 @@ ${feedback}
       ? `\n\n## 用户补充说明\n${additionalContext}\n\n请在设计数字员工角色时，优先考虑以上用户的补充说明和期望。`
       : ''
 
+    const allTools = this.getSystemToolsList()
+    const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
+
     let prompt: string
     if (hasKB) {
       prompt = `分析知识库内容，设计数字员工角色，JSON格式输出。
@@ -299,43 +301,37 @@ ${feedback}
 知识库资料：
 ${truncatedText}${userGuidance}
 
-分析维度：
-1. 业务场景：领域和工作流程
-2. 角色定位：如合同审核专员、客服顾问
-3. 职责：具体承担的任务
-4. 工作风格：严谨型、亲和型等
-5. 工具需求：计算器、知识库检索等
+分析要求：
+1. 分析知识库中的业务领域、文档类型、关键实体和核心主题，确定该知识库的业务场景
+2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
+3. 基于知识库内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
+4. 根据业务特性确定工作流程和注意事项
 
-输出字段：
-- roleName: 角色名称
-- roleDescription: 角色描述（100字左右）
-- responsibilities: 职责列表
-- personalityTraits: 特质列表
-- workingStyle: 工作风格
-- suggestedTools: 工具列表
+可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
+${toolsListText}
 
-只输出JSON。`
+输出字段（只输出JSON）：
+- roleName: 角色名称（简洁明了）
+- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）
+- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"read_file"、"calculator"等）`
     } else {
       prompt = `根据业务描述设计数字员工角色，JSON格式输出。
 
 ${userGuidance}
 
-分析维度：
-1. 业务场景：领域和工作流程
-2. 角色定位：如合同审核专员、客服顾问
-3. 职责：具体承担的任务
-4. 工作风格：严谨型、亲和型等
-5. 工具需求：计算器、知识库检索等
+分析要求：
+1. 分析业务描述中的领域信息、业务类型和工作内容，确定业务场景
+2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
+3. 基于业务描述推导员工应承担的职责
+4. 根据业务特性确定工作流程和注意事项
 
-输出字段：
-- roleName: 角色名称
-- roleDescription: 角色描述（100字左右）
-- responsibilities: 职责列表
-- personalityTraits: 特质列表
-- workingStyle: 工作风格
-- suggestedTools: 工具列表
+可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
+${toolsListText}
 
-只输出JSON。`
+输出字段（只输出JSON）：
+- roleName: 角色名称（简洁明了）
+- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）
+- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"read_file"、"calculator"等）`
     }
 
     onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 进行智能分析...' })
@@ -343,7 +339,7 @@ ${userGuidance}
     const llmMessages: Array<{ role: string; content: string }> = [
       {
         role: 'system',
-        content: '根据知识库或业务描述设计数字员工角色，JSON格式输出。'
+        content: '根据知识库内容或业务描述分析设计数字员工角色，输出JSON格式结果。suggestedTools 必须从提供的工具列表中选取。'
       },
       { role: 'user', content: prompt },
     ]
@@ -386,15 +382,17 @@ ${userGuidance}
       throw new Error('No JSON found in LLM response')
     }
 
-    const result = JSON.parse(cleaned)
+    let result: any
+    try {
+      result = JSON.parse(cleaned)
+    } catch (e) {
+      throw new Error(`分析结果 JSON 解析失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     const profile: EmployeeProfile = {
       roleName: result.roleName || '数字员工',
       roleDescription: result.roleDescription || (hasKB ? '基于知识库自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
-      responsibilities: Array.isArray(result.responsibilities) ? result.responsibilities : [],
-      suggestedSkills: this.normalizeSkills(result.suggestedSkills, kbContents),
-      personalityTraits: Array.isArray(result.personalityTraits) ? result.personalityTraits : ['专业', '高效'],
-      workingStyle: result.workingStyle || '专业严谨',
+      suggestedSkills: [],
       suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : [],
     }
 
@@ -457,67 +455,6 @@ ${userGuidance}
     }
 
     return parts.join('\n')
-  }
-
-  private normalizeSkills(rawSkills: any[], kbContents: KBContent[]): SuggestedSkill[] {
-    if (!Array.isArray(rawSkills)) return []
-
-    const kbNames = kbContents.map((kb) => kb.kbName)
-
-    return rawSkills.map((skill, index) => ({
-      type: this.normalizeSkillType(skill.type),
-      name: skill.name || `技能 ${index + 1}`,
-      description: skill.description || '',
-      promptTemplate: skill.promptTemplate || this.buildDefaultPrompt(skill.name, skill.description),
-      rules: Array.isArray(skill.rules) ? skill.rules : [],
-      testCases: Array.isArray(skill.testCases) ? skill.testCases : [],
-      inputSchema: skill.inputSchema || undefined,
-      outputSchema: skill.outputSchema || undefined,
-      sourceFiles: Array.isArray(skill.sourceFiles) && skill.sourceFiles.length > 0
-        ? skill.sourceFiles
-        : kbNames,
-      enabled: skill.enabled !== false,
-    }))
-  }
-
-  private normalizeSkillType(type: string): string {
-    const validTypes = ['extraction', 'qa', 'generation', 'classification', 'query', 'calculation', 'custom']
-    const normalized = (type || '').toLowerCase().trim()
-    if (validTypes.includes(normalized)) return normalized
-
-    const typeMap: Record<string, string> = {
-      '提取': 'extraction',
-      '审核': 'extraction',
-      '问答': 'qa',
-      '咨询': 'qa',
-      '生成': 'generation',
-      '写作': 'generation',
-      '分类': 'classification',
-      '路由': 'classification',
-      '查询': 'query',
-      '数据': 'query',
-      '计算': 'calculation',
-      '推导': 'calculation',
-      '自定义': 'custom',
-    }
-
-    for (const [key, value] of Object.entries(typeMap)) {
-      if (normalized.includes(key)) return value
-    }
-
-    return 'custom'
-  }
-
-  private buildDefaultPrompt(skillName: string, description: string): string {
-    return `你是${skillName}专家。
-
-${description || '根据用户需求提供专业服务'}
-
-原则：
-1. 分析需求，理解意图
-2. 基于专业知识处理
-3. 输出准确、完整、有条理
-4. 不确定时明确说明`
   }
 
   private getHeuristicProfile(kbContents: KBContent[]): EmployeeProfile {
@@ -625,11 +562,8 @@ ${description || '根据用户需求提供专业服务'}
 
     return {
       roleName: '数字员工',
-      roleDescription: '基于知识库自动创建的数字员工，提供专业知识服务',
-      responsibilities: ['回答用户咨询', '处理业务请求', '提供专业建议'],
+      roleDescription: '基于知识库自动创建的数字员工，提供专业知识服务。负责回答用户咨询、处理业务请求、提供专业建议。专业耐心，风格严谨细致。',
       suggestedSkills: skills,
-      personalityTraits: ['专业', '耐心', '准确'],
-      workingStyle: '严谨细致，基于知识库提供专业回答',
       suggestedTools: [],
     }
   }
@@ -637,8 +571,7 @@ ${description || '根据用户需求提供专业服务'}
   private getDefaultProfile(): EmployeeProfile {
     return {
       roleName: '通用数字员工',
-      roleDescription: '一个通用的数字员工，可以回答各类问题',
-      responsibilities: ['回答用户问题', '提供信息查询'],
+      roleDescription: '一个通用的数字员工，可以回答各类问题和提供信息查询。友好专业，准确回答用户问题。',
       suggestedSkills: [{
         type: 'qa',
         name: '通用问答',
@@ -649,8 +582,6 @@ ${description || '根据用户需求提供专业服务'}
         sourceFiles: [],
         enabled: true,
       }],
-      personalityTraits: ['友好', '专业'],
-      workingStyle: '友好专业，准确回答',
       suggestedTools: [],
     }
   }

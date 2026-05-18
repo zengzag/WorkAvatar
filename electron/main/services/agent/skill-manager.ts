@@ -1,282 +1,179 @@
-import path from 'path'
 import fs from 'fs'
-import yaml from 'js-yaml'
-import { Skill, SkillManifest } from './skill.types'
+import path from 'path'
+import SkillRegistryService from '../skill-registry.service'
 
-const FRONTMATTER_REGEX = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n/
+interface DiscoveredSkill {
+  name: string
+  description: string
+  instructions: string
+  references: Map<string, string>
+}
 
 export class SkillManager {
   private skillsDirectories: string[]
-  private allowedSkillPaths?: string[]
-  private skills: Map<string, Skill> = new Map()
-  private logger?: (level: string, action: string, data: any) => void
+  private allowedSkillPaths: string[] | undefined
+  private debugLog: ((...args: any[]) => void) | undefined
+  private discoveredSkills: Map<string, DiscoveredSkill> = new Map()
+  private activeSkills: Set<string> = new Set()
 
-  constructor(skillsDirectories?: string[], allowedSkillPaths?: string[], logger?: (level: string, action: string, data: any) => void) {
-    this.skillsDirectories = skillsDirectories || ['skills']
+  constructor(
+    skillsDirectories: string[],
+    allowedSkillPaths?: string[],
+    debugLog?: (...args: any[]) => void
+  ) {
+    this.skillsDirectories = skillsDirectories
     this.allowedSkillPaths = allowedSkillPaths
-    this.logger = logger
+    this.debugLog = debugLog
   }
 
-  discoverSkills(): Skill[] {
-    const discovered: Skill[] = []
+  discoverSkills(): void {
+    this.discoveredSkills.clear()
 
-    for (const baseDir of this.skillsDirectories) {
-      if (!fs.existsSync(baseDir)) {
-        continue
+    const registry = SkillRegistryService.getInstance()
+    const installedSkills = registry.getInstalledSkills()
+
+    for (const skill of installedSkills) {
+      if (!skill.is_enabled) continue
+      if (this.allowedSkillPaths && !this.allowedSkillPaths.includes(skill.installPath)) continue
+
+      const references = new Map<string, string>()
+      for (const ref of skill.references) {
+        references.set(ref.name, ref.content)
       }
 
-      const entries = fs.readdirSync(baseDir, { withFileTypes: true })
-      
-      for (const entry of entries) {
-        if (!entry.isDirectory()) {
-          continue
-        }
-
-        const skillPath = path.join(baseDir, entry.name)
-        const skillFile = path.join(skillPath, 'SKILL.md')
-
-        if (!fs.existsSync(skillFile)) {
-          continue
-        }
-
-        try {
-          const skill = this.loadSkillMetadata(skillPath)
-          if (skill) {
-            // 如果指定了允许的技能路径，只加载在允许列表中的技能
-            if (this.allowedSkillPaths && !this.allowedSkillPaths.includes(skillPath)) {
-              this.log('debug', 'skip_skill_not_allowed', { name: skill.name, path: skillPath })
-              continue
-            }
-            this.skills.set(skill.name, skill)
-            discovered.push(skill)
-            this.log('debug', 'discover_skill', { name: skill.name, path: skillPath })
-          }
-        } catch (error) {
-          this.log('error', 'discover_skill_failed', { path: skillPath, error: String(error) })
-        }
-      }
+      this.discoveredSkills.set(skill.name, {
+        name: skill.name,
+        description: skill.description,
+        instructions: skill.skillMdContent,
+        references,
+      })
     }
 
-    return discovered
+    for (const dir of this.skillsDirectories) {
+      this.discoverFromDirectory(dir)
+    }
+
+    if (this.debugLog) {
+      this.debugLog(`[SkillManager] Discovered ${this.discoveredSkills.size} skills`)
+    }
   }
 
-  /**
-   * 手动加载特定的技能路径
-   */
-  loadSkillFromPath(skillPath: string): Skill | null {
-    if (!fs.existsSync(skillPath)) {
-      this.log('error', 'skill_path_not_exists', { path: skillPath })
-      return null
-    }
-
-    const skillFile = path.join(skillPath, 'SKILL.md')
-    if (!fs.existsSync(skillFile)) {
-      this.log('error', 'skill_md_not_exists', { path: skillPath })
-      return null
-    }
+  private discoverFromDirectory(dir: string): void {
+    if (!fs.existsSync(dir)) return
 
     try {
-      const skill = this.loadSkillMetadata(skillPath)
-      if (skill) {
-        this.skills.set(skill.name, skill)
-        this.log('debug', 'load_skill_from_path', { name: skill.name, path: skillPath })
-        return skill
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const skillDir = path.join(dir, entry.name)
+        const skillMdPath = path.join(skillDir, 'SKILL.md')
+
+        if (fs.existsSync(skillMdPath)) {
+          const content = fs.readFileSync(skillMdPath, 'utf-8')
+          const { name, description } = this.parseSkillMd(content)
+
+          if (name && !this.discoveredSkills.has(name)) {
+            const references = new Map<string, string>()
+            const refsDir = path.join(skillDir, 'references')
+            if (fs.existsSync(refsDir)) {
+              const refFiles = fs.readdirSync(refsDir)
+              for (const refFile of refFiles) {
+                const refPath = path.join(refsDir, refFile)
+                if (fs.statSync(refPath).isFile()) {
+                  references.set(refFile, fs.readFileSync(refPath, 'utf-8'))
+                }
+              }
+            }
+
+            this.discoveredSkills.set(name, {
+              name,
+              description,
+              instructions: content,
+              references,
+            })
+          }
+        }
       }
-    } catch (error) {
-      this.log('error', 'load_skill_failed', { path: skillPath, error: String(error) })
+    } catch {
+      // Skip unreadable directories
     }
-    return null
   }
 
-  getSkills(): Skill[] {
-    return Array.from(this.skills.values())
+  private parseSkillMd(content: string): { name: string; description: string } {
+    let name = ''
+    let description = ''
+
+    const titleMatch = content.match(/^#\s+(.+)$/m)
+    if (titleMatch) {
+      name = titleMatch[1].trim()
+    }
+
+    const descPatterns = [
+      /^#\s+.+\n\n(.+?)(?:\n\n|\n#{1,6}\s|$)/ms,
+      /^#\s+.+\n(.+?)(?:\n\n|\n#{1,6}\s|$)/ms,
+    ]
+    for (const pattern of descPatterns) {
+      const descMatch = content.match(pattern)
+      if (descMatch) {
+        const desc = descMatch[1].trim()
+        if (desc.length >= 5) {
+          description = desc
+          break
+        }
+      }
+    }
+
+    return { name, description }
   }
 
-  getSkill(name: string): Skill | undefined {
-    return this.skills.get(name)
+  getSkillsXml(): string {
+    if (this.discoveredSkills.size === 0) return ''
+
+    const parts: string[] = []
+    for (const [name, skill] of this.discoveredSkills) {
+      parts.push(`<skill name="${name}">${skill.description}</skill>`)
+    }
+
+    return `<skills>\n${parts.join('\n')}\n</skills>`
   }
 
   activateSkill(name: string): string {
-    const skill = this.skills.get(name)
+    const skill = this.discoveredSkills.get(name)
     if (!skill) {
       throw new Error(`Skill "${name}" not found`)
     }
 
-    const skillFile = path.join(skill.path, 'SKILL.md')
-    if (!fs.existsSync(skillFile)) {
-      throw new Error(`Skill file not found at ${skillFile}`)
+    this.activeSkills.add(name)
+
+    if (this.debugLog) {
+      this.debugLog(`[SkillManager] Activated skill: ${name}`)
     }
 
-    let content = fs.readFileSync(skillFile, 'utf-8')
-    
-    content = content.replace(FRONTMATTER_REGEX, '')
-    skill.instructions = content.trim()
-
-    this.log('info', 'activate_skill', { name })
     return skill.instructions
   }
 
-  getSkillsXml(): string {
-    if (this.skills.size === 0) {
-      return ''
-    }
-
-    const parts: string[] = ['<available_skills>']
-
-    for (const skill of this.skills.values()) {
-      parts.push(`  <skill>`)
-      parts.push(`    <name>${skill.name}</name>`)
-      parts.push(`    <description>${skill.description}</description>`)
-      parts.push(`    <location>${path.join(skill.path, 'SKILL.md')}</location>`)
-      parts.push(`  </skill>`)
-    }
-
-    parts.push('</available_skills>')
-    return parts.join('\n')
-  }
-
-  executeScript(skillName: string, scriptName: string, args?: string[]): string {
-    const skill = this.skills.get(skillName)
-    if (!skill) {
-      return `Error: Skill "${skillName}" not found`
-    }
-
-    const scriptPath = path.join(skill.path, 'scripts', scriptName)
-    if (!fs.existsSync(scriptPath)) {
-      return `Error: Script "${scriptName}" not found in skill "${skillName}"`
-    }
-
-    if (!scriptPath.startsWith(path.join(skill.path, 'scripts'))) {
-      return 'Error: Security violation - cannot execute outside scripts directory'
-    }
-
-    try {
-      const { spawnSync } = require('child_process')
-      const result = spawnSync(scriptPath, args || [], {
-        cwd: require('os').tmpdir(),
-        timeout: 30000,
-        encoding: 'utf-8'
-      })
-
-      let output = result.stdout || ''
-      if (result.stderr) {
-        output += `\nSTDERR:\n${result.stderr}`
-      }
-
-      this.log('debug', 'execute_script', { skill: skillName, script: scriptName, output: output.substring(0, 200) })
-      return output
-    } catch (error: any) {
-      return `Error executing script: ${error.message}`
-    }
-  }
-
-  readReference(skillName: string, refPath: string): string {
-    const skill = this.skills.get(skillName)
-    if (!skill) {
-      return `Error: Skill "${skillName}" not found`
-    }
-
-    const fullPath = path.join(skill.path, 'references', refPath)
-    
-    if (!fullPath.startsWith(path.join(skill.path, 'references'))) {
-      return 'Error: Security violation - invalid reference path'
-    }
-
-    if (!fs.existsSync(fullPath)) {
-      return `Error: Reference "${refPath}" not found`
-    }
-
-    try {
-      return fs.readFileSync(fullPath, 'utf-8')
-    } catch (error: any) {
-      return `Error reading reference: ${error.message}`
-    }
-  }
-
-  readAsset(skillName: string, assetPath: string): Buffer | null {
-    const skill = this.skills.get(skillName)
+  readReference(skillName: string, referencePath: string): string {
+    const skill = this.discoveredSkills.get(skillName)
     if (!skill) {
       throw new Error(`Skill "${skillName}" not found`)
     }
 
-    const fullPath = path.join(skill.path, 'assets', assetPath)
-    
-    if (!fullPath.startsWith(path.join(skill.path, 'assets'))) {
-      throw new Error('Security violation: invalid asset path')
+    const content = skill.references.get(referencePath)
+    if (!content) {
+      throw new Error(`Reference "${referencePath}" not found in skill "${skillName}"`)
     }
 
-    if (!fs.existsSync(fullPath)) {
-      return null
-    }
-
-    return fs.readFileSync(fullPath)
+    return content
   }
 
-  getAlwaysSkills(): Skill[] {
-    return this.getSkills().filter(skill => {
-      const manifest = this.parseSkillManifest(skill.path)
-      return manifest?.always === true
-    })
-  }
-
-  private loadSkillMetadata(skillPath: string): Skill | null {
-    const manifest = this.parseSkillManifest(skillPath)
-    if (!manifest) {
-      return null
-    }
-
-    const scriptsDir = path.join(skillPath, 'scripts')
-    const refsDir = path.join(skillPath, 'references')
-    const assetsDir = path.join(skillPath, 'assets')
-
-    return {
-      name: manifest.name,
-      description: manifest.description,
-      path: skillPath,
-      instructions: '',
-      hasScripts: fs.existsSync(scriptsDir),
-      hasReferences: fs.existsSync(refsDir),
-      hasAssets: fs.existsSync(assetsDir),
-      isEnabled: true
-    }
-  }
-
-  private parseSkillManifest(skillPath: string): SkillManifest | null {
-    const skillFile = path.join(skillPath, 'SKILL.md')
-    if (!fs.existsSync(skillFile)) {
-      return null
-    }
-
-    const content = fs.readFileSync(skillFile, 'utf-8')
-    const match = content.match(FRONTMATTER_REGEX)
-    
-    if (!match) {
-      return null
-    }
-
-    try {
-      const frontmatter = yaml.load(match[1]) as any
-      
-      return {
-        name: frontmatter.name || path.basename(skillPath),
-        description: frontmatter.description || '',
-        version: frontmatter.version,
-        author: frontmatter.author,
-        tags: frontmatter.tags,
-        tools: frontmatter.tools,
-        mcpServers: frontmatter.mcp_servers,
-        requires: frontmatter.requires,
-        metadata: frontmatter.metadata,
-        always: frontmatter.always
+  getActiveSkillInstructions(): string[] {
+    const instructions: string[] = []
+    for (const name of this.activeSkills) {
+      const skill = this.discoveredSkills.get(name)
+      if (skill) {
+        instructions.push(skill.instructions)
       }
-    } catch {
-      return null
     }
-  }
-
-  private log(level: string, action: string, data: any): void {
-    if (this.logger) {
-      this.logger(level, action, data)
-    }
+    return instructions
   }
 }
