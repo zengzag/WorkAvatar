@@ -28,6 +28,7 @@ interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
+  use_kb?: boolean
   enable_thinking?: boolean
 }
 
@@ -62,8 +63,8 @@ class EmployeeAgentService {
     return EmployeeAgentService.instance
   }
 
-  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean): Promise<EmployeeAgent> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
+  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean, useKb?: boolean): Promise<EmployeeAgent> {
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}:${useKb !== false ? 'kb' : 'no-kb'}`
     if (this.agents.has(cacheKey)) {
       return this.agents.get(cacheKey)!
     }
@@ -126,7 +127,7 @@ class EmployeeAgentService {
       allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      knowledgeGuidance: `\n\n${KNOWLEDGE_QUERY_GUIDANCE}`,
+      knowledgeGuidance: useKb !== false ? `\n\n${KNOWLEDGE_QUERY_GUIDANCE}` : '',
       workspaceGuidance: workspaceGuidance || undefined,
     }
 
@@ -171,7 +172,9 @@ class EmployeeAgentService {
     const employeeTools = this.getEmployeeTools(employeeId)
     agent.registerTools(employeeTools)
 
-    const knowledgeTools = this.getKnowledgeTools(employee.id).filter(t => enabledToolIds.has(t.id))
+    const knowledgeTools = useKb !== false
+      ? this.getKnowledgeTools(employee.id).filter(t => enabledToolIds.has(t.id))
+      : []
     agent.registerTools(knowledgeTools)
 
     const workspaceTools = createWorkspaceTools(employee.workspace_path || '')
@@ -226,9 +229,22 @@ class EmployeeAgentService {
     }
 
     const result = new Set<string>()
+    const enabledRowIds = new Set<string>()
     for (const row of enabledRows) {
+      enabledRowIds.add(row.tool_id)
       if (allBuiltinToolIds.has(row.tool_id) && row.is_enabled === 1) {
         result.add(row.tool_id)
+      }
+    }
+
+    for (const id of kbToolIds) {
+      if (!enabledRowIds.has(id)) {
+        result.add(id)
+      }
+    }
+    for (const id of workspaceToolIds) {
+      if (!enabledRowIds.has(id)) {
+        result.add(id)
       }
     }
 
@@ -271,9 +287,9 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, enable_thinking } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, use_kb = true, enable_thinking } = params
 
-    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking)
+    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, use_kb)
 
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,

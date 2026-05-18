@@ -158,13 +158,5 @@ export function getWorkspacePrompt(workspacePath: string): string {
   return [
     `\n## 工作区`,
     `工作区根目录：${workspacePath}`,
-    `可用工具：`,
-    `  - workspace_list_files：列出文件`,
-    `  - workspace_read_file：读取文件`,
-    `  - workspace_write_file：写入文件`,
-    `  - workspace_create_folder：创建文件夹`,
-    `  - workspace_delete_item：删除（需确认）`,
-    `  - workspace_rename_item：重命名`,
-    `所有路径均为工作区相对路径。`,
   ].join('\n')
 }

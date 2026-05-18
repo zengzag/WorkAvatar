@@ -57,25 +57,48 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
+  const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
+  const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
+  const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
+
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedProviderId') || getCachedSceneDefaultModel('workbench')?.provider_id || ''
+    const stored = selectedLlmProviderIdKey ? localStorage.getItem(selectedLlmProviderIdKey) : null
+    return stored || getCachedSceneDefaultModel('workbench')?.provider_id || ''
   })
   const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>(() => {
-    return localStorage.getItem('employeeWorkbench:selectedModelId') || getCachedSceneDefaultModel('workbench')?.model_id || ''
+    const stored = selectedLlmModelIdKey ? localStorage.getItem(selectedLlmModelIdKey) : null
+    return stored || getCachedSceneDefaultModel('workbench')?.model_id || ''
   })
   const [enableThinking, setEnableThinking] = useState<boolean>(() => {
-    return localStorage.getItem('employeeWorkbench:enableThinking') === 'true'
+    const stored = enableThinkingKey ? localStorage.getItem(enableThinkingKey) : null
+    return stored === 'true'
+  })
+  const kbEnabledKey = id ? `employeeWorkbench:kbEnabled:${id}` : 'employeeWorkbench:kbEnabled'
+  const [kbEnabled, setKbEnabled] = useState<boolean>(() => {
+    const stored = kbEnabledKey ? localStorage.getItem(kbEnabledKey) : null
+    return stored !== 'false'
   })
 
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:selectedProviderId', selectedLlmProviderId)
-  }, [selectedLlmProviderId])
+    if (selectedLlmProviderIdKey) {
+      localStorage.setItem(selectedLlmProviderIdKey, selectedLlmProviderId)
+    }
+  }, [selectedLlmProviderId, selectedLlmProviderIdKey])
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:selectedModelId', selectedLlmModelId)
-  }, [selectedLlmModelId])
+    if (selectedLlmModelIdKey) {
+      localStorage.setItem(selectedLlmModelIdKey, selectedLlmModelId)
+    }
+  }, [selectedLlmModelId, selectedLlmModelIdKey])
   useEffect(() => {
-    localStorage.setItem('employeeWorkbench:enableThinking', String(enableThinking))
-  }, [enableThinking])
+    if (enableThinkingKey) {
+      localStorage.setItem(enableThinkingKey, String(enableThinking))
+    }
+  }, [enableThinking, enableThinkingKey])
+  useEffect(() => {
+    if (kbEnabledKey) {
+      localStorage.setItem(kbEnabledKey, String(kbEnabled))
+    }
+  }, [kbEnabled, kbEnabledKey])
 
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -118,8 +141,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.employee.get(id!)
       setEmployee(result)
-      if (result.llm_provider_id) setSelectedLlmProviderId(result.llm_provider_id)
-      if (result.llm_model) setSelectedLlmModelId(result.llm_model)
+      if (result.llm_provider_id && !localStorage.getItem(selectedLlmProviderIdKey)) setSelectedLlmProviderId(result.llm_provider_id)
+      if (result.llm_model && !localStorage.getItem(selectedLlmModelIdKey)) setSelectedLlmModelId(result.llm_model)
       loadConversations()
       loadProviders()
     } catch {
@@ -697,6 +720,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
+        use_kb: kbEnabled,
         enable_thinking: enableThinking,
         conversation_id: targetConvId,
       })
@@ -791,6 +815,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setSelectedLlmModelId,
     enableThinking,
     setEnableThinking,
+    kbEnabled,
+    setKbEnabled,
     showSidePanel,
     setShowSidePanel,
     editingConversationId,
@@ -819,6 +845,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     forceScrollToBottom,
     getToolDisplayName,
     isConversationStreaming,
+    generateConversationTitle,
   }
 }
 

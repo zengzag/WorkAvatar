@@ -7,6 +7,7 @@ import {
   DeleteOutlined,
   CheckSquareOutlined,
   SelectOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { memo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,6 +28,8 @@ const ConversationItem = memo(({
   onEditTitleChange,
   onEditKeyDown,
   onDelete,
+  onDeleteWithConfirm,
+  onGenerateTitle,
   isSelectMode,
   isSelected,
   onToggleSelect,
@@ -43,17 +46,26 @@ const ConversationItem = memo(({
   onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onEditKeyDown: (e: React.KeyboardEvent) => void
   onDelete: (id: string, e?: React.MouseEvent) => void
+  onDeleteWithConfirm: (id: string) => void
+  onGenerateTitle: (conv: Conversation) => void
   isSelectMode: boolean
   isSelected: boolean
   onToggleSelect: (id: string) => void
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const [showDelete, setShowDelete] = useState(false)
 
   const contextMenuItems = [
     {
+      key: 'generate',
+      label: t('common.generateTitle'),
+      icon: <ThunderboltOutlined />,
+      onClick: () => onGenerateTitle(conv),
+    },
+    {
       key: 'edit',
-      label: t('common.edit'),
+      label: t('common.editConversationName'),
       icon: <EditOutlined />,
       onClick: (e: any) => onStartEdit(conv, e.domEvent),
     },
@@ -80,20 +92,23 @@ const ConversationItem = memo(({
           }
         }}
         style={{
-          padding: '10px 14px',
+          margin: '0 10px 2px',
+          padding: '8px 12px',
           cursor: isEditing ? 'default' : 'pointer',
-          borderLeft: isActive ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
-          background: isActive ? token.colorPrimaryBg : 'transparent',
+          borderRadius: 8,
+          background: isActive ? token.colorFillSecondary : 'transparent',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          transition: 'background 0.2s',
+          transition: 'all 0.2s ease',
         }}
         onMouseEnter={(e) => {
-          if (!isActive) (e.currentTarget as HTMLElement).style.background = token.colorBgTextHover
+          if (!isActive) (e.currentTarget as HTMLElement).style.background = token.colorFillTertiary
+          setShowDelete(true)
         }}
         onMouseLeave={(e) => {
           if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent'
+          setShowDelete(false)
         }}
       >
         {isSelectMode && (
@@ -124,11 +139,33 @@ const ConversationItem = memo(({
               }
             />
           ) : (
-            <Text style={{ fontSize: 13 }} ellipsis>
+            <Text style={{ fontSize: 14, fontWeight: isActive ? 500 : 400, color: isActive ? token.colorText : token.colorTextSecondary }} ellipsis>
               {conv.title || t('workbench.defaultConvTitle', { date: '' }).replace(' ', '')}
             </Text>
           )}
         </div>
+        {!isEditing && !isSelectMode && (
+          <DeleteOutlined
+            onClick={(e) => {
+              e.stopPropagation()
+              onDeleteWithConfirm(conv.id)
+            }}
+            style={{
+              fontSize: 13,
+              color: token.colorTextQuaternary,
+              cursor: 'pointer',
+              opacity: showDelete ? 1 : 0,
+              transition: 'opacity 0.2s',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.color = token.colorError
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.color = token.colorTextQuaternary
+            }}
+          />
+        )}
       </div>
     </Dropdown>
   )
@@ -152,6 +189,7 @@ const ConversationSidebar: React.FC<{
   onLoadMore: () => void
   onListScroll: (e: React.UIEvent<HTMLDivElement>) => void
   isConversationStreaming: (convId: string) => boolean
+  onGenerateTitle: (conv: Conversation) => void
 }> = ({
   conversations,
   allConversations,
@@ -170,6 +208,7 @@ const ConversationSidebar: React.FC<{
   onLoadMore,
   onListScroll,
   isConversationStreaming,
+  onGenerateTitle,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -210,16 +249,26 @@ const ConversationSidebar: React.FC<{
     })
   }, [selectedIds, onDeleteSelected, exitSelectMode, modal, t])
 
+  const handleInlineDelete = useCallback((convId: string) => {
+    modal.confirm({
+      title: t('workbench.confirmDeleteMsg'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: () => onDelete(convId),
+    })
+  }, [modal, onDelete, t])
+
   return (
     <div style={{
-      width: 260,
+      width: 280,
       flexShrink: 0,
       borderRight: `1px solid ${token.colorBorderSecondary}`,
       display: 'flex',
       flexDirection: 'column',
       background: token.colorBgLayout,
     }}>
-      <div style={{ padding: '12px', display: 'flex', gap: '8px' }}>
+      <div style={{ padding: '10px', display: 'flex', gap: '6px', alignItems: 'center' }}>
         {selectMode ? (
           <>
             <Button
@@ -247,8 +296,26 @@ const ConversationSidebar: React.FC<{
           </>
         ) : (
           <>
-            <Button type="primary" style={{ flex: 1 }} icon={<PlusOutlined />}
-              onClick={onNewConversation}>{t('workbench.newConv')}</Button>
+            <Button
+              style={{
+                flex: 1,
+                borderRadius: 8,
+                background: token.colorFillSecondary,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                color: token.colorText,
+                fontWeight: 500,
+              }}
+              icon={<PlusOutlined />}
+              onClick={onNewConversation}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.background = token.colorFillTertiary
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.background = token.colorFillSecondary
+              }}
+            >
+              {t('workbench.newConv')}
+            </Button>
             {conversations.length > 0 && (
               <Button
                 icon={<CheckSquareOutlined />}
@@ -276,6 +343,8 @@ const ConversationSidebar: React.FC<{
             onEditTitleChange={onEditTitleChange}
             onEditKeyDown={onEditKeyDown}
             onDelete={onDelete}
+            onDeleteWithConfirm={handleInlineDelete}
+            onGenerateTitle={onGenerateTitle}
             isSelectMode={selectMode}
             isSelected={selectedIds.has(conv.id)}
             onToggleSelect={toggleSelect}
@@ -288,6 +357,7 @@ const ConversationSidebar: React.FC<{
               type="dashed"
               block
               onClick={onLoadMore}
+              style={{ borderRadius: 8 }}
             >
               {t('workbench.loadMore', { current: conversations.length, total: allConversations.length })}
             </Button>

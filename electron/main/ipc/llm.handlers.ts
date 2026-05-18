@@ -88,6 +88,7 @@ export function registerLLMHandlers(
               model_id: params.model_id,
               messages: params.messages,
               use_skills: params.use_skills !== false,
+              use_kb: params.use_kb !== false,
               enable_thinking: params.enable_thinking,
             },
             {
