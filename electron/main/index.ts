@@ -1,3 +1,9 @@
+// Preload pdf-parse in our module context so its debug mode detection
+// (!module.parent) evaluates to false. When file2md later requires it,
+// the cached version (with isDebugMode=false) is returned, preventing
+// the ENOENT crash on test/data/05-versions-space.pdf
+import 'pdf-parse'
+
 import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import DatabaseService from './services/database.service'
