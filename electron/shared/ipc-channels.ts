@@ -8,6 +8,7 @@ export type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
+  WorkspaceOpenInExplorerParams,
 } from './channels/workspace'
 export type {
   EmployeeListParams,

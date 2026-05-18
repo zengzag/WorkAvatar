@@ -9,6 +9,7 @@ import type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
+  WorkspaceOpenInExplorerParams,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
@@ -61,6 +62,7 @@ const electronAPI = {
     deleteItem: (params: WorkspaceDeleteItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_ITEM, params),
     renameItem: (params: WorkspaceRenameItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_ITEM, params),
     importFiles: (params: WorkspaceImportParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_IMPORT, params),
+    openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
   },
 
   employee: {

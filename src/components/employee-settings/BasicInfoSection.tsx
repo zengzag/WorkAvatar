@@ -84,8 +84,10 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   const handleOpenInExplorer = async () => {
     if (!workspacePath) return
     try {
-      await window.electronAPI.workspace.info({ employee_id: employeeId })
-    } catch {}
+      await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+    } catch {
+      message.error(t('employeeSettings.operationFailed'))
+    }
   }
 
   return (
@@ -141,7 +143,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
             </Button>
             {workspacePath && (
               <Button
-                icon={<DeleteOutlined />}
+                icon={<FolderOpenOutlined />}
                 onClick={handleOpenInExplorer}
               >
                 {t('employeeSettings.openInExplorer')}

@@ -13,7 +13,6 @@ import {
   Empty,
   Alert,
   Descriptions,
-  Badge,
   Progress,
   Timeline,
   Tooltip,
@@ -34,6 +33,7 @@ import {
   EditOutlined,
   ToolOutlined,
   CommentOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
@@ -46,9 +46,6 @@ const { TextArea } = Input
 interface EmployeeProfile {
   roleName: string
   roleDescription: string
-  responsibilities: string[]
-  personalityTraits: string[]
-  workingStyle: string
   suggestedTools: string[]
 }
 
@@ -211,6 +208,19 @@ const CreationWizard: React.FC = () => {
           setAnalysisMessages(result.messages)
         }
 
+        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
+          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
+          const matchedIds = builtinTools
+            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
+            .map((tool: any) => tool.id)
+          if (matchedIds.length > 0) {
+            setSelectedToolIds((prev) => {
+              const existing = new Set([...prev, ...matchedIds])
+              return Array.from(existing)
+            })
+          }
+        }
+
         if (result.analysisMethod === 'llm') {
           message.success(t('creationWizard.llmAnalysisComplete'))
         } else if (result.analysisMethod === 'heuristic') {
@@ -288,9 +298,6 @@ const CreationWizard: React.FC = () => {
         previous_profile: {
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
-          responsibilities: profile.responsibilities,
-          personalityTraits: profile.personalityTraits,
-          workingStyle: profile.workingStyle,
           suggestedTools: profile.suggestedTools,
         },
         feedback: refineFeedback,
@@ -302,6 +309,18 @@ const CreationWizard: React.FC = () => {
         setProfile(result.profile)
         if (result.messages) {
           setAnalysisMessages(result.messages)
+        }
+        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
+          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
+          const matchedIds = builtinTools
+            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
+            .map((tool: any) => tool.id)
+          if (matchedIds.length > 0) {
+            setSelectedToolIds((prev) => {
+              const existing = new Set([...prev, ...matchedIds])
+              return Array.from(existing)
+            })
+          }
         }
         if (result.error) {
           message.warning(result.error)
@@ -323,6 +342,48 @@ const CreationWizard: React.FC = () => {
     }
   }
 
+  const handleQuickCreate = async () => {
+    setCreating(true)
+    try {
+      const employee = await window.electronAPI.employee.create({
+        name: t('creationWizard.quickCreateDefaultName'),
+        description: '',
+      })
+
+      if (selectedProviderId) {
+        await window.electronAPI.employee.update({
+          id: employee.id,
+          llm_provider_id: selectedProviderId,
+          llm_model: selectedModelId,
+          status: 'active',
+        })
+      }
+
+      for (const toolId of selectedToolIds) {
+        try {
+          await window.electronAPI.tool.assignToEmployee({
+            employee_id: employee.id,
+            tool_id: toolId,
+            is_enabled: true,
+          })
+        } catch {}
+      }
+
+      for (const kbId of selectedKBIds) {
+        try {
+          await window.electronAPI.employee.linkKB({ employee_id: employee.id, kb_id: kbId })
+        } catch {}
+      }
+
+      navigate(`/employee/${employee.id}`)
+    } catch (error) {
+      message.error(t('creationWizard.createFailed'))
+      console.error(error)
+    } finally {
+      setCreating(false)
+    }
+  }
+
   const handleCreateEmployee = async () => {
     if (!employeeName.trim()) {
       message.warning(t('creationWizard.enterName'))
@@ -337,9 +398,6 @@ const CreationWizard: React.FC = () => {
         profile_json: profile ? JSON.stringify({
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
-          responsibilities: profile.responsibilities,
-          personalityTraits: profile.personalityTraits,
-          workingStyle: profile.workingStyle,
           suggestedTools: profile.suggestedTools,
         }) : undefined,
       })
@@ -399,18 +457,6 @@ const CreationWizard: React.FC = () => {
 
       <Card style={{ marginBottom: 16 }}>
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 8 }}>
-              {t('creationWizard.employeeNameLabel')} <Text type="danger">*</Text>
-            </Text>
-            <Input
-              placeholder={t('creationWizard.employeeNamePlaceholder')}
-              prefix={<UserOutlined />}
-              value={employeeName}
-              onChange={(e) => setEmployeeName(e.target.value)}
-            />
-          </div>
-
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong>{t('creationWizard.linkedKbLabel')}</Text>
@@ -579,29 +625,17 @@ const CreationWizard: React.FC = () => {
             </Space>
           </Descriptions.Item>
           <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile!.roleDescription}</Descriptions.Item>
-          <Descriptions.Item label={t('creationWizard.workStyle')}>
-            <Badge status="processing" text={profile!.workingStyle} />
-          </Descriptions.Item>
-          <Descriptions.Item label={t('creationWizard.duties')}>
-            <Space orientation="vertical" size={4}>
-              {profile!.responsibilities.map((r, i) => (
-                <Text key={i}>· {r}</Text>
-              ))}
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('creationWizard.traits')}>
-            <Space wrap>
-              {profile!.personalityTraits.map((trait, i) => (
-                <Tag key={i} color="blue">{trait}</Tag>
-              ))}
-            </Space>
-          </Descriptions.Item>
           {profile!.suggestedTools.length > 0 && (
             <Descriptions.Item label={t('creationWizard.suggestedTools')}>
               <Space wrap>
-                {profile!.suggestedTools.map((tool, i) => (
-                  <Tag key={i} icon={<ToolOutlined />} color="orange">{tool}</Tag>
-                ))}
+                {profile!.suggestedTools.map((tool, i) => {
+                  const found = builtinTools.find((bt: any) => bt.name === tool)
+                  return (
+                    <Tag key={i} icon={<ToolOutlined />} color="orange">
+                      {found ? (found.title || found.name) : tool}
+                    </Tag>
+                  )
+                })}
               </Space>
             </Descriptions.Item>
           )}
@@ -614,7 +648,7 @@ const CreationWizard: React.FC = () => {
     <div>
       <Text strong style={{ display: 'block', marginBottom: 8 }}>
         <ToolOutlined style={{ marginRight: 4 }} />
-        {t('creationWizard.toolsDefaultSelected')}
+        {t('creationWizard.toolsHint')}
       </Text>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {builtinTools.map((tool: any) => (
@@ -678,8 +712,8 @@ const CreationWizard: React.FC = () => {
         style={{ marginBottom: 16 }}
         items={[
           {
-            key: 'advanced',
-            label: t('creationWizard.advancedConfig'),
+            key: 'tools',
+            label: t('creationWizard.toolSettings'),
             children: renderToolCheckboxes(),
           },
         ]}
@@ -702,10 +736,6 @@ const CreationWizard: React.FC = () => {
 
   const handleNext = async () => {
     if (currentStep === 0) {
-      if (!employeeName.trim()) {
-        message.warning(t('creationWizard.enterName'))
-        return
-      }
       setCurrentStep(1)
       analyzeKBs()
     }
@@ -732,13 +762,20 @@ const CreationWizard: React.FC = () => {
         <Steps current={currentStep} items={steps} />
       </Card>
 
-      <Card style={{ marginBottom: 24, minHeight: 400 }}>
+      <Card style={{ marginBottom: 16, minHeight: 400 }}>
         {currentStep === 0 && renderStep1()}
         {currentStep === 1 && renderStep2()}
       </Card>
 
       {currentStep === 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Button
+            icon={<ThunderboltOutlined />}
+            onClick={handleQuickCreate}
+            loading={creating}
+          >
+            {t('creationWizard.quickCreate')}
+          </Button>
           <Button
             type="primary"
             icon={<ArrowRightOutlined />}

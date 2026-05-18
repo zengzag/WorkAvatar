@@ -209,6 +209,15 @@ const EmployeeWorkbench: React.FC = () => {
     navigate(`/employee/${newEmployeeId}`)
   }
 
+  useEffect(() => {
+    if (!employee && id && employees.length > 0) {
+      const firstEmployee = employees[0]
+      if (firstEmployee) {
+        navigate(`/employee/${firstEmployee.id}`, { replace: true })
+      }
+    }
+  }, [employee, id, employees])
+
   if (!employeeListLoaded) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -225,18 +234,6 @@ const EmployeeWorkbench: React.FC = () => {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/wizard')}>
           {t('workbench.createEmployee')}
         </Button>
-      </div>
-    )
-  }
-
-  if (!employee && id) {
-    const firstEmployee = employees[0]
-    if (firstEmployee) {
-      navigate(`/employee/${firstEmployee.id}`, { replace: true })
-    }
-    return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Spin size="large" />
       </div>
     )
   }

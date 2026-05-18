@@ -89,15 +89,6 @@ class EmployeeAgentService {
         if (profile.roleName) {
           role = profile.roleName
         }
-        if (profile.responsibilities?.length > 0) {
-          instructions += '\n\n## 核心职责\n' + profile.responsibilities.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')
-        }
-        if (profile.personalityTraits?.length > 0) {
-          instructions += '\n\n## 性格特质\n' + profile.personalityTraits.join('、')
-        }
-        if (profile.workingStyle) {
-          instructions += '\n\n## 工作风格\n' + profile.workingStyle
-        }
       } catch {
         // ignore
       }
@@ -235,20 +226,9 @@ class EmployeeAgentService {
     }
 
     const result = new Set<string>()
-    const disabledSet = new Set<string>()
     for (const row of enabledRows) {
-      if (allBuiltinToolIds.has(row.tool_id)) {
-        if (row.is_enabled === 1) {
-          result.add(row.tool_id)
-        } else {
-          disabledSet.add(row.tool_id)
-        }
-      }
-    }
-
-    for (const id of allBuiltinToolIds) {
-      if (!disabledSet.has(id) && !result.has(id)) {
-        result.add(id)
+      if (allBuiltinToolIds.has(row.tool_id) && row.is_enabled === 1) {
+        result.add(row.tool_id)
       }
     }
 

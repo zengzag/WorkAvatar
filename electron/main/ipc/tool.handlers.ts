@@ -75,7 +75,7 @@ export function registerToolHandlers(
 
     return catalog.map(tool => ({
       ...tool,
-      is_enabled: enabledMap.has(tool.id) ? enabledMap.get(tool.id)! : false,
+      is_enabled: enabledMap.has(tool.id) ? enabledMap.get(tool.id)! : true,
       is_assigned: enabledMap.has(tool.id),
     }))
   })

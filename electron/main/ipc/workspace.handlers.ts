@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, shell } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   WorkspaceInfoParams,
@@ -9,6 +9,7 @@ import type {
   WorkspaceDeleteItemParams,
   WorkspaceRenameItemParams,
   WorkspaceImportParams,
+  WorkspaceOpenInExplorerParams,
 } from '../../shared/ipc-channels'
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 
@@ -61,5 +62,14 @@ export function registerWorkspaceHandlers(
     const employee = workspaceManager.getEmployee(params.employee_id)
     if (!employee || !employee.workspace_path) return { success: false, errors: [{ path: '', error: '工作区路径未设置' }] }
     return workspaceManager.importToWorkspace(employee.workspace_path, params.source_paths, params.target_folder)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, (_, params: WorkspaceOpenInExplorerParams) => {
+    try {
+      shell.openPath(params.path)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
   })
 }

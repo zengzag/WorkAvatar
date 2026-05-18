@@ -89,17 +89,18 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(new Map())
   const conversationMessagesRef = useRef<Map<string, MessageWithThought[]>>(new Map())
   const globalListenersCleanupRef = useRef<(() => void) | null>(null)
+  const activeConversationIdRef = useRef<string | null>(null)
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
     conversationMessagesRef.current.set(convId, updater(conversationMessagesRef.current.get(convId) || []))
-    if (convId === activeConversationId) {
+    if (convId === activeConversationIdRef.current) {
       setMessages(conversationMessagesRef.current.get(convId) || [])
     }
   }
 
   const setConvMessages = (convId: string, msgs: MessageWithThought[]) => {
     conversationMessagesRef.current.set(convId, msgs)
-    if (convId === activeConversationId) {
+    if (convId === activeConversationIdRef.current) {
       setMessages(msgs)
     }
   }
@@ -400,6 +401,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setAllConversations((prev) => [(result as Conversation), ...prev])
       setConversations((prev) => [(result as Conversation), ...prev])
       setActiveConversationId(convId)
+      activeConversationIdRef.current = convId
       setMessages([])
       setConvMessages(convId, [])
       forceScrollToBottom()
@@ -421,6 +423,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   const selectConversation = async (convId: string) => {
     setActiveConversationId(convId)
+    activeConversationIdRef.current = convId
 
     const streamState = streamStatesRef.current.get(convId)
     setIsStreaming(!!streamState?.isStreaming)
@@ -457,6 +460,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setConversations((prev) => prev.filter((c) => c.id !== convId))
       if (activeConversationId === convId) {
         setActiveConversationId(null)
+        activeConversationIdRef.current = null
         setMessages([])
         setIsStreaming(false)
       }
@@ -503,6 +507,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setAllConversations([])
       setConversations([])
       setActiveConversationId(null)
+      activeConversationIdRef.current = null
       setMessages([])
       setIsStreaming(false)
       message.success(t('workbench.clearAllSuccess'))

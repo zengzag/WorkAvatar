@@ -75,9 +75,6 @@ export interface EmployeeProfileRefineParams {
   previous_profile: {
     roleName: string
     roleDescription: string
-    responsibilities: string[]
-    personalityTraits: string[]
-    workingStyle: string
     suggestedTools: string[]
   }
   feedback: string

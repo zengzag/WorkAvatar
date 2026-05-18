@@ -6,10 +6,13 @@ import {
   Tabs,
   Form,
   Button,
-  Modal,
   Checkbox,
   App,
+  theme,
+  Tooltip,
+  Typography,
 } from 'antd'
+import { FolderOutlined, WarningOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import {
   SaveOutlined,
 } from '@ant-design/icons'
@@ -57,10 +60,11 @@ interface InstalledSkill {
 
 const EmployeeSettings: React.FC = () => {
   const { t } = useTranslation()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('basic')
 
   useEffect(() => {
@@ -298,17 +302,107 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleDeleteEmployee = (workspacePath?: string) => {
+  const { Text } = Typography
+
+  const handleDeleteEmployee = async (workspacePath?: string) => {
     let deleteWorkspace = false
-    Modal.confirm({
+
+    let tasks: any[] = []
+    let schedules: any[] = []
+    try {
+      tasks = await window.electronAPI.employeeTask.list(id!)
+      schedules = await window.electronAPI.employeeTask.listSchedules(id!)
+    } catch {}
+
+    const hasBoundTasks = tasks.length > 0 || schedules.length > 0
+
+    const handleOpenExplorer = (path: string) => {
+      window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
+    }
+
+    modal.confirm({
       title: t('employeeSettings.confirmDeleteEmployee'),
+      icon: null,
+      width: 520,
       content: (
         <div>
-          <p>{t('employeeSettings.deleteEmployeeDesc')}</p>
+          <Text>{t('employeeSettings.deleteEmployeeDesc')}</Text>
+          {workspacePath && (
+            <div style={{
+              marginTop: 8,
+              padding: '6px 10px',
+              background: token.colorFillTertiary,
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              <FolderOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
+              <Tooltip title={workspacePath}>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: token.colorTextSecondary,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t('employeeSettings.workspacePath')}: {workspacePath}
+                </Text>
+              </Tooltip>
+              <Button
+                type="link"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={() => handleOpenExplorer(workspacePath)}
+                style={{ flexShrink: 0, padding: 0 }}
+              />
+            </div>
+          )}
+          {hasBoundTasks && (
+            <div style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              background: token.colorWarningBg,
+              border: `1px solid ${token.colorWarningBorder}`,
+              borderRadius: 6,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6, color: token.colorWarningText, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <WarningOutlined />
+                {t('employeeSettings.boundTasksWarning')}
+              </div>
+              {tasks.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary }}>
+                  {t('employeeSettings.boundTaskCount', { count: tasks.length })}
+                  {tasks.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({tasks.map((t: any) => t.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              {schedules.length > 0 && (
+                <div style={{ fontSize: 13, color: token.colorTextSecondary, marginTop: 2 }}>
+                  {t('employeeSettings.boundScheduleCount', { count: schedules.length })}
+                  {schedules.length <= 5 && (
+                    <span style={{ marginLeft: 4 }}>
+                      ({schedules.map((s: any) => s.name).join(', ')})
+                    </span>
+                  )}
+                </div>
+              )}
+              <div style={{ fontSize: 12, marginTop: 6, color: token.colorTextTertiary }}>
+                {t('employeeSettings.boundTasksDeleteHint')}
+              </div>
+            </div>
+          )}
           {workspacePath && (
             <Checkbox
               onChange={(e) => { deleteWorkspace = e.target.checked }}
-              style={{ marginTop: 8 }}
+              style={{ marginTop: 12 }}
             >
               {t('employeeSettings.alsoDeleteWorkspace')}
             </Checkbox>

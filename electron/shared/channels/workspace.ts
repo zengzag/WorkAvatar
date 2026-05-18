@@ -7,7 +7,12 @@ export const WORKSPACE_CHANNELS = {
   WORKSPACE_DELETE_ITEM: 'workspace:delete-item',
   WORKSPACE_RENAME_ITEM: 'workspace:rename-item',
   WORKSPACE_IMPORT: 'workspace:import',
+  WORKSPACE_OPEN_IN_EXPLORER: 'workspace:open-in-explorer',
 } as const
+
+export interface WorkspaceOpenInExplorerParams {
+  path: string
+}
 
 export interface WorkspaceInfoParams {
   employee_id: string
