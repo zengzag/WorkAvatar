@@ -90,25 +90,14 @@ const NodeConfigPanel: React.FC = () => {
     [selectedNodeId, employees, updateNodeData]
   )
 
-  const handleProviderChange = useCallback(
-    (providerId: string) => {
+  const handleLlmChange = useCallback(
+    (providerId: string, modelId: string) => {
       if (!selectedNodeId) return
       updateNodeData(selectedNodeId, {
         provider_id: providerId,
-        model_id: '',
-      } as Partial<EmployeeNodeData>)
-      setLocalProviderId(providerId)
-      setLocalModelId('')
-    },
-    [selectedNodeId, updateNodeData]
-  )
-
-  const handleModelChange = useCallback(
-    (modelId: string) => {
-      if (!selectedNodeId) return
-      updateNodeData(selectedNodeId, {
         model_id: modelId,
       } as Partial<EmployeeNodeData>)
+      setLocalProviderId(providerId)
       setLocalModelId(modelId)
     },
     [selectedNodeId, updateNodeData]
@@ -249,8 +238,7 @@ const NodeConfigPanel: React.FC = () => {
               <LLMSelector
                 providerId={localProviderId}
                 modelId={localModelId}
-                onProviderChange={handleProviderChange}
-                onModelChange={handleModelChange}
+                onChange={handleLlmChange}
                 providers={providers}
               />
               <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>

@@ -33,7 +33,7 @@ const KnowledgeBasePage: React.FC = () => {
     editKBModalOpen, setEditKBModalOpen, editKBName, setEditKBName, editKBDesc, setEditKBDesc, onConfirmEditKB, onEditKB,
     activeTab, onTabChange,
     selectedProviderId, selectedModelId, enableThinking,
-    onProviderChange, onModelChange, onThinkingChange,
+    onLlmChange, onThinkingChange,
     exportModalOpen, setExportModalOpen, exporting, exportProgress, onExport,
     importModalOpen, setImportModalOpen, importConflictStrategy, setImportConflictStrategy, importing, importProgress, importKBName, setImportKBName, onImport, onOpenImportModal,
     folderScanModalOpen, folderScanning, scannedFiles, scannedUnsupported, selectedScannedKeys, setSelectedScannedKeys, scannedTreeData, expandedFolderKeys, folderUploading, onTreeSelect, onFolderUploadConfirm, onFolderScanModalClose,
@@ -90,8 +90,7 @@ const KnowledgeBasePage: React.FC = () => {
                 selectedProviderId={selectedProviderId}
                 selectedModelId={selectedModelId}
                 enableThinking={enableThinking}
-                onProviderChange={onProviderChange}
-                onModelChange={onModelChange}
+                onLlmChange={onLlmChange}
                 onThinkingChange={onThinkingChange}
               />
 

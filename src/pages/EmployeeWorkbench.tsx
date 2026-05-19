@@ -229,9 +229,8 @@ const EmployeeWorkbench: React.FC = () => {
     setInputValue,
     isStreaming,
     selectedLlmProviderId,
-    setSelectedLlmProviderId,
     selectedLlmModelId,
-    setSelectedLlmModelId,
+    handleLlmChange,
     enableThinking,
     setEnableThinking,
     kbEnabled,
@@ -585,8 +584,7 @@ const EmployeeWorkbench: React.FC = () => {
           <LLMSelector
             providerId={selectedLlmProviderId}
             modelId={selectedLlmModelId}
-            onProviderChange={setSelectedLlmProviderId}
-            onModelChange={setSelectedLlmModelId}
+            onChange={handleLlmChange}
           />
           <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
             <Button

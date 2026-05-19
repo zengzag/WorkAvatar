@@ -80,16 +80,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return stored !== 'false'
   })
 
+  const handleLlmChange = useCallback((providerId: string, modelId: string) => {
+    setSelectedLlmProviderId(providerId)
+    setSelectedLlmModelId(modelId)
+  }, [])
+
   useEffect(() => {
     if (selectedLlmProviderIdKey) {
       localStorage.setItem(selectedLlmProviderIdKey, selectedLlmProviderId)
     }
-  }, [selectedLlmProviderId, selectedLlmProviderIdKey])
-  useEffect(() => {
     if (selectedLlmModelIdKey) {
       localStorage.setItem(selectedLlmModelIdKey, selectedLlmModelId)
     }
-  }, [selectedLlmModelId, selectedLlmModelIdKey])
+  }, [selectedLlmProviderId, selectedLlmModelId, selectedLlmProviderIdKey, selectedLlmModelIdKey])
   useEffect(() => {
     if (enableThinkingKey) {
       localStorage.setItem(enableThinkingKey, String(enableThinking))
@@ -811,9 +814,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     isCreatingConversation,
     providers,
     selectedLlmProviderId,
-    setSelectedLlmProviderId,
     selectedLlmModelId,
-    setSelectedLlmModelId,
+    handleLlmChange,
     enableThinking,
     setEnableThinking,
     kbEnabled,

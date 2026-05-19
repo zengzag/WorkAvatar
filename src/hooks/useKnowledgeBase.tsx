@@ -728,8 +728,10 @@ export const useKnowledgeBase = () => {
     selectedProviderId,
     selectedModelId,
     enableThinking,
-    onProviderChange: setSelectedProviderId,
-    onModelChange: setSelectedModelId,
+    onLlmChange: (providerId: string, modelId: string) => {
+      setSelectedProviderId(providerId)
+      setSelectedModelId(modelId)
+    },
     onThinkingChange: setEnableThinking,
 
     exportModalOpen,

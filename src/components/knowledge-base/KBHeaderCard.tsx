@@ -19,8 +19,7 @@ interface KBHeaderCardProps {
   selectedProviderId: string
   selectedModelId: string
   enableThinking: boolean
-  onProviderChange: (id: string) => void
-  onModelChange: (id: string) => void
+  onLlmChange: (providerId: string, modelId: string) => void
   onThinkingChange: (v: boolean) => void
 }
 
@@ -35,8 +34,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
   selectedProviderId,
   selectedModelId,
   enableThinking,
-  onProviderChange,
-  onModelChange,
+  onLlmChange,
   onThinkingChange,
 }) => {
   const { t } = useTranslation()
@@ -92,8 +90,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
         <LLMSelector
           providerId={selectedProviderId}
           modelId={selectedModelId}
-          onProviderChange={onProviderChange}
-          onModelChange={onModelChange}
+          onChange={onLlmChange}
         />
         <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
           <BulbOutlined

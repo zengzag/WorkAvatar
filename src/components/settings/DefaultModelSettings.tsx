@@ -3,7 +3,7 @@ import { Card, Space, Typography, App, theme, Alert, InputNumber, Button } from 
 import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
-import { getAllSceneDefaultModels, getSceneDefaultModel, setSceneDefaultModel } from '../../utils/default-model'
+import { getAllSceneDefaultModels, setSceneDefaultModel } from '../../utils/default-model'
 import type { SceneKey, SceneDefaultModel } from '../../utils/default-model'
 import type { LLMProvider } from '../../types'
 
@@ -76,46 +76,17 @@ const DefaultModelSettings: React.FC = () => {
     { key: 'embedding', icon: <CloudServerOutlined style={{ fontSize: 20, color: '#eb2f96' }} /> },
   ]
 
-  const handleProviderChange = (scene: SceneKey) => async (providerId: string) => {
+  const handleLlmChange = (scene: SceneKey) => async (providerId: string, modelId: string) => {
     const newConfig: SceneDefaultModel = {
       provider_id: providerId,
-      model_id: '',
-    }
-    try {
-      await setSceneDefaultModel(scene, newConfig)
-      setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-      message.success(t('settings.defaultModelSaved'))
-    } catch {
-      message.error(t('settings.defaultModelSaveFailed'))
-    }
-  }
-
-  const handleModelChange = (scene: SceneKey) => async (modelId: string) => {
-    const current = configs[scene]
-    if (!current) {
-      const cached = await getSceneDefaultModel(scene)
-      if (!cached) return
-      const newConfig: SceneDefaultModel = {
-        ...cached,
-        model_id: modelId,
-      }
-      try {
-        await setSceneDefaultModel(scene, newConfig)
-        setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-        message.success(t('settings.defaultModelSaved'))
-      } catch {
-        message.error(t('settings.defaultModelSaveFailed'))
-      }
-      return
-    }
-    const newConfig: SceneDefaultModel = {
-      ...current,
       model_id: modelId,
     }
     try {
       await setSceneDefaultModel(scene, newConfig)
       setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-      message.success(t('settings.defaultModelSaved'))
+      if (providerId) {
+        message.success(t('settings.defaultModelSaved'))
+      }
     } catch {
       message.error(t('settings.defaultModelSaveFailed'))
     }
@@ -178,8 +149,7 @@ const DefaultModelSettings: React.FC = () => {
                   <LLMSelector
                     providerId={config?.provider_id || ''}
                     modelId={config?.model_id || ''}
-                    onProviderChange={handleProviderChange(scene.key)}
-                    onModelChange={handleModelChange(scene.key)}
+                    onChange={handleLlmChange(scene.key)}
                     modelCategory={scene.key === 'embedding' ? 'embedding' : 'chat'}
                     providers={providers}
                     style={{ flexShrink: 0 }}
