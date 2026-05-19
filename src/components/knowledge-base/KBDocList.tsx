@@ -2,14 +2,15 @@ import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Table, Tag, Button,
   Popconfirm, Empty, Statistic, Row, Col, Spin, Progress,
-  Tooltip, Dropdown, theme,
+  Tooltip, Dropdown, theme, Alert,
 } from 'antd'
 import {
   FileTextOutlined, SyncOutlined, ThunderboltOutlined,
   CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined,
   ReloadOutlined, RedoOutlined, PauseOutlined, CaretRightOutlined,
   DownOutlined, PauseCircleOutlined, PlayCircleOutlined,
-  StopOutlined, InfoCircleOutlined,
+  StopOutlined, InfoCircleOutlined, ApartmentOutlined,
+  ReadOutlined,
 } from '@ant-design/icons'
 import { formatFileSize } from '../../utils/format'
 
@@ -41,6 +42,7 @@ interface KBDocListProps {
   docs: KBDocument[]
   parsingAll: boolean
   processingAll: boolean
+  buildingGlobal: boolean
   processProgress: { stage: string; detail: string }
   completedCount: number
   pendingCount: number
@@ -48,9 +50,13 @@ interface KBDocListProps {
   pausedCount: number
   processedDocIds: Set<string>
   processingDocId: string | null
+  knowledgeStats: any
+  globalSummary: any
   onParseAll: () => void
   onParseDocument: (docId: string) => void
   onProcessDocument: (docId: string) => void
+  onProcessAll: () => void
+  onBuildGlobal: () => void
   onDeleteDoc: (docId: string) => void
   onRefresh: () => void
   onPauseParse: (docId: string) => void
@@ -63,11 +69,11 @@ interface KBDocListProps {
 }
 
 const KBDocList: React.FC<KBDocListProps> = ({
-  docs, parsingAll, processingAll, processProgress,
+  docs, parsingAll, processingAll, buildingGlobal, processProgress,
   completedCount, pendingCount, failedCount, pausedCount,
-  processedDocIds, processingDocId, onParseAll,
-  onParseDocument, onProcessDocument, onDeleteDoc, onRefresh,
-  onPauseParse, onResumeParse, onRetryParse,
+  processedDocIds, processingDocId, knowledgeStats, globalSummary,
+  onParseAll, onParseDocument, onProcessDocument, onProcessAll, onBuildGlobal,
+  onDeleteDoc, onRefresh, onPauseParse, onResumeParse, onRetryParse,
   onPauseAll, onResumeAll, onCancelAll, onViewDetail,
 }) => {
   const { t } = useTranslation()
@@ -85,12 +91,14 @@ const KBDocList: React.FC<KBDocListProps> = ({
 
   return (
     <div>
-      {(parsingAll || processingAll) && (
+      {(parsingAll || processingAll || buildingGlobal) && (
         <Card size="small" style={{ marginBottom: 16, border: `1px solid ${token.colorPrimary}` }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <Space>
               <Spin size="small" />
-              <Text strong>{parsingAll ? t('knowledgeBase.batchParsing') : t('knowledgeBase.batchKnowledgeProcessing')}</Text>
+              <Text strong>
+                {parsingAll ? t('knowledgeBase.batchParsing') : buildingGlobal ? t('knowledgeBase.buildGlobalKnowledge') : t('knowledgeBase.batchKnowledgeProcessing')}
+              </Text>
               {processProgress.stage && <Text type="secondary">{processProgress.stage}: {processProgress.detail}</Text>}
             </Space>
             {parsingAll && (() => {
@@ -106,7 +114,7 @@ const KBDocList: React.FC<KBDocListProps> = ({
                 </Space>
               ) : null
             })()}
-            {processingAll && processingDocId && (() => {
+            {(processingAll || buildingGlobal) && processingDocId && (() => {
               const procDoc = docs.find(d => d.id === processingDocId)
               return procDoc ? (
                 <Button size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(procDoc.id, procDoc.original_name)}>
@@ -117,6 +125,61 @@ const KBDocList: React.FC<KBDocListProps> = ({
           </div>
         </Card>
       )}
+
+      <Card style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <Space>
+            <ThunderboltOutlined style={{ fontSize: 20, color: '#722ed1' }} />
+            <Typography.Title level={5} style={{ margin: 0 }}>{t('knowledgeBase.layeredKnowledge')}</Typography.Title>
+          </Space>
+          <Space>
+            <Button icon={<ThunderboltOutlined />} onClick={onProcessAll} loading={processingAll}>{t('knowledgeBase.processAllDocs')}</Button>
+            <Button type="primary" icon={<ApartmentOutlined />} onClick={onBuildGlobal} loading={buildingGlobal}>{t('knowledgeBase.buildGlobalKnowledge')}</Button>
+          </Space>
+        </div>
+
+        {(processingAll || buildingGlobal) && processProgress.stage && (
+          <Alert
+            type="info"
+            title={processProgress.stage}
+            description={processProgress.detail}
+            style={{ marginBottom: 16 }}
+            showIcon
+            action={
+              processingDocId ? (
+                <Button size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(processingDocId, '')}>
+                  {t('parseProgress.detail')}
+                </Button>
+              ) : undefined
+            }
+          />
+        )}
+
+        {knowledgeStats && (
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={8}><Statistic title={t('knowledgeBase.paragraphs')} value={knowledgeStats.paragraphCount} prefix={<ReadOutlined />} /></Col>
+            <Col span={8}><Statistic title={t('knowledgeBase.docSummaries')} value={knowledgeStats.documentSummaryCount} prefix={<FileTextOutlined />} styles={{ content: { color: token.colorSuccess } }} /></Col>
+            <Col span={8}><Statistic title={t('knowledgeBase.globalSummary')} value={knowledgeStats.hasGlobalSummary ? 1 : 0} prefix={<ApartmentOutlined />} styles={{ content: { color: '#722ed1' } }} /></Col>
+          </Row>
+        )}
+
+        {globalSummary && (
+          <Card size="small" title={<Space><ApartmentOutlined />{t('knowledgeBase.globalKnowledgeSummary')}</Space>} style={{ marginBottom: 0 }}>
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, maxHeight: 300, overflow: 'auto' }}>
+              {globalSummary.summary}
+            </div>
+            {globalSummary.key_topics_json && (
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary">{t('knowledgeBase.coreTopics')} </Text>
+                {JSON.parse(globalSummary.key_topics_json || '[]').map((t: string) => (
+                  <Tag key={t} color="purple">{t}</Tag>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+      </Card>
+
       <Card
         title={<Space><FileTextOutlined />{t('knowledgeBase.docList')} ({docs.length})</Space>}
         extra={

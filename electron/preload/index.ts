@@ -215,7 +215,6 @@ const electronAPI = {
     getStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_STATS, kbId),
     getParagraphs: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS, docId),
     getDocSummary: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_SUMMARY, docId),
-    getAllDocSummaries: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ALL_DOC_SUMMARIES, kbId),
     getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
     searchParagraphs: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_PARAGRAPHS, params),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
@@ -261,6 +260,9 @@ const electronAPI = {
     searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
     searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
     rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),
+    updateParagraph: (params: { paragraph_id: string; updates: { summary?: string; keywords_json?: string; content?: string; title?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_PARAGRAPH, params),
+    updateDocSummary: (params: { document_id: string; updates: { summary?: string; keywords_json?: string; main_topics_json?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_DOC_SUMMARY, params),
+    getParagraphsByKb: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS_BY_KB, kbId),
   },
 
   interaction: {

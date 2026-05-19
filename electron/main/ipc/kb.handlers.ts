@@ -124,10 +124,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.getDocumentSummary(docId)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_GET_ALL_DOC_SUMMARIES, (_, kbId: string) => {
-    return kbService.getAllDocumentSummaries(kbId)
-  })
-
   ipcMain.handle(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, (_, kbId: string) => {
     return kbService.getGlobalSummary(kbId)
   })
@@ -234,5 +230,17 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
   ipcMain.handle(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, async (_, kbId: string) => {
     await kbService.rebuildSearchIndex(kbId)
     return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_UPDATE_PARAGRAPH, (_, params: { paragraph_id: string; updates: { summary?: string; keywords_json?: string; content?: string; title?: string } }) => {
+    return kbService.updateParagraph(params.paragraph_id, params.updates)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_UPDATE_DOC_SUMMARY, (_, params: { document_id: string; updates: { summary?: string; keywords_json?: string; main_topics_json?: string } }) => {
+    return kbService.updateDocumentSummary(params.document_id, params.updates)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KB_GET_PARAGRAPHS_BY_KB, (_, kbId: string) => {
+    return kbService.getParagraphsByKb(kbId)
   })
 }

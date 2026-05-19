@@ -56,6 +56,9 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
         Menu: {
           darkItemBg: '#1f1f1f',
         },
+        Table: {
+          stickyScrollBarBg: effectiveTheme === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)',
+        },
       },
     }),
     [effectiveTheme, fontSizeLevel]

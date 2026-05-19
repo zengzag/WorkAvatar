@@ -15,7 +15,6 @@ export const KB_CHANNELS = {
   KB_GET_STATS: 'kb:get-stats',
   KB_GET_PARAGRAPHS: 'kb:get-paragraphs',
   KB_GET_DOC_SUMMARY: 'kb:get-doc-summary',
-  KB_GET_ALL_DOC_SUMMARIES: 'kb:get-all-doc-summaries',
   KB_GET_GLOBAL_SUMMARY: 'kb:get-global-summary',
   KB_SEARCH_PARAGRAPHS: 'kb:search-paragraphs',
   KB_GET_DOC_CONTENT: 'kb:get-doc-content',
@@ -44,6 +43,9 @@ export const KB_CHANNELS = {
   KB_SEARCH_WITH_EMBEDDING: 'kb:search-with-embedding',
   KB_SEARCH_INDEX_STATS: 'kb:search-index-stats',
   KB_REBUILD_SEARCH_INDEX: 'kb:rebuild-search-index',
+  KB_UPDATE_PARAGRAPH: 'kb:update-paragraph',
+  KB_UPDATE_DOC_SUMMARY: 'kb:update-doc-summary',
+  KB_GET_PARAGRAPHS_BY_KB: 'kb:get-paragraphs-by-kb',
 } as const
 
 export interface KBCreateParams {

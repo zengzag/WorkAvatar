@@ -52,8 +52,10 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [docContentOffset, setDocContentOffset] = useState<{ start: number; end: number } | null>(null)
   const [searched, setSearched] = useState(false)
   const [semanticDegraded, setSemanticDegraded] = useState(false)
+  const [highlightParagraphId, setHighlightParagraphId] = useState<string | null>(null)
 
   const inputRef = useRef<any>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (open && kbList.length > 0 && !selectedKbId) {
@@ -66,6 +68,14 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       setTimeout(() => inputRef.current?.focus(), 300)
     }
   }, [open, searchMode])
+
+  useEffect(() => {
+    if (docContentModalOpen && highlightRef.current) {
+      setTimeout(() => {
+        highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 200)
+    }
+  }, [docContentModalOpen, docContent])
 
   const resetResults = useCallback(() => {
     setResults([])
@@ -146,11 +156,12 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
   }, [selectedKbId, query, searchMode, topK, advancedDocType, resetResults])
 
-  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }) => {
+  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }, paragraphId?: string) => {
     setDocContentLoading(true)
     setDocContent(null)
     setDocContentTitle(docName)
     setDocContentOffset(offset || null)
+    setHighlightParagraphId(paragraphId || null)
     setDocContentModalOpen(true)
     try {
       const content = await window.electronAPI.kb.getDocContent(docId)
@@ -230,6 +241,63 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       ),
     },
   ]
+
+  const renderHighlightedContent = (content: string, offset: { start: number; end: number } | null, paragraphId: string | null) => {
+    if (!offset && !paragraphId) {
+      return (
+        <>
+          {content.substring(0, 10000)}
+          {content.length > 10000 && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+              ...({t('kbSearch.contentTruncated')})
+            </Text>
+          )}
+        </>
+      )
+    }
+
+    if (offset) {
+      const contextChars = 500
+      const start = Math.max(0, offset.start - contextChars)
+      const end = Math.min(content.length, offset.end + contextChars)
+      const beforeText = content.substring(start, offset.start)
+      const highlightText = content.substring(offset.start, offset.end)
+      const afterText = content.substring(offset.end, end)
+
+      return (
+        <>
+          {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
+          <span ref={highlightRef}>{beforeText}</span>
+          <mark style={{
+            background: token.colorWarningBg,
+            padding: '1px 2px',
+            borderRadius: 2,
+            fontWeight: 500,
+          }}>
+            {highlightText.substring(0, 5000)}
+          </mark>
+          {afterText.substring(0, 5000)}
+          {(highlightText.length > 5000 || afterText.length > 5000) && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+              ...({t('kbSearch.contentTruncated')})
+            </Text>
+          )}
+          {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
+        </>
+      )
+    }
+
+    return (
+      <>
+        {content.substring(0, 10000)}
+        {content.length > 10000 && (
+          <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+            ...({t('kbSearch.contentTruncated')})
+          </Text>
+        )}
+      </>
+    )
+  }
 
   const renderResultItem = (item: any, index: number) => {
     const matchConfig = MATCH_TYPE_CONFIG[item.match_type] || { color: 'default', labelKey: 'kbSearch.matchTypeOther' }
@@ -324,7 +392,8 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 onClick={() => handleViewDocContent(item.document_id, item.document_name,
                   item.start_offset !== undefined && item.end_offset !== undefined
                     ? { start: item.start_offset, end: item.end_offset }
-                    : undefined
+                    : undefined,
+                  item.paragraph_id
                 )}
                 loading={docContentLoading}
               />
@@ -373,10 +442,15 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
               - {t('kbSearch.docContent')}
             </Text>
+            {docContentOffset && (
+              <Tag color="orange" style={{ fontSize: 11 }}>
+                {t('kbSearch.locatedAt', { start: docContentOffset.start, end: docContentOffset.end })}
+              </Tag>
+            )}
           </Space>
         }
         open={docContentModalOpen}
-        onCancel={() => setDocContentModalOpen(false)}
+        onCancel={() => { setDocContentModalOpen(false); setHighlightParagraphId(null) }}
         footer={null}
         width={720}
         styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
@@ -387,33 +461,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           </div>
         ) : docContent ? (
           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 13, backgroundColor: token.colorBgLayout, padding: 16, borderRadius: 8 }}>
-            {docContentOffset
-              ? (() => {
-                  const content = docContent.content
-                  const contextChars = 500
-                  const start = Math.max(0, docContentOffset.start - contextChars)
-                  const end = Math.min(content.length, docContentOffset.end + contextChars)
-                  const displayText = content.substring(start, end)
-                  return (
-                    <>
-                      {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
-                      {displayText.substring(0, 5000)}
-                      {displayText.length > 5000 && (
-                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-                          ...({t('kbSearch.contentTruncated')})
-                        </Text>
-                      )}
-                      {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
-                    </>
-                  )
-                })()
-              : docContent.content.substring(0, 5000)
-            }
-            {!docContentOffset && docContent.content.length > 5000 && (
-              <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-                ...({t('kbSearch.contentTruncated')})
-              </Text>
-            )}
+            {renderHighlightedContent(docContent.content, docContentOffset, highlightParagraphId)}
           </div>
         ) : (
           <Empty description={t('kbSearch.noResults')} />

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Space, Typography, App, theme, Alert } from 'antd'
-import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined } from '@ant-design/icons'
+import { Card, Space, Typography, App, theme, Alert, InputNumber, Button } from 'antd'
+import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
 import { getAllSceneDefaultModels, getSceneDefaultModel, setSceneDefaultModel } from '../../utils/default-model'
@@ -35,10 +35,31 @@ const DefaultModelSettings: React.FC = () => {
     } catch {}
   }, [])
 
+  const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
+
   useEffect(() => {
     loadProviders()
     loadConfigs()
+    loadEmbeddingMaxChars()
   }, [loadProviders])
+
+  const loadEmbeddingMaxChars = async () => {
+    try {
+      const result = await window.electronAPI.settings.get({ key: 'embedding_max_chars' })
+      if (result?.value) {
+        setEmbeddingMaxChars(parseInt(result.value, 10))
+      }
+    } catch {}
+  }
+
+  const handleSaveEmbeddingMaxChars = async () => {
+    try {
+      await window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
+      message.success(t('settings.embeddingMaxCharsSaved'))
+    } catch {
+      message.error(t('settings.defaultModelSaveFailed'))
+    }
+  }
 
   const loadConfigs = async () => {
     try {
@@ -177,6 +198,47 @@ const DefaultModelSettings: React.FC = () => {
             </Card>
           )
         })}
+
+        <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <CloudServerOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+              </div>
+              <div>
+                <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <InputNumber
+                value={embeddingMaxChars}
+                onChange={v => setEmbeddingMaxChars(v || 2000)}
+                min={100}
+                max={32000}
+                step={100}
+                style={{ width: 120 }}
+              />
+              <Button
+                type="primary"
+                size="small"
+                icon={<SaveOutlined />}
+                onClick={handleSaveEmbeddingMaxChars}
+              >
+                {t('common.save')}
+              </Button>
+            </div>
+          </div>
+        </Card>
       </Space>
     </div>
   )

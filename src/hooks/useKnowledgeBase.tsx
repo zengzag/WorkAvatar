@@ -52,13 +52,6 @@ export const useKnowledgeBase = () => {
   const [buildingGlobal, setBuildingGlobal] = useState(false)
   const [processProgress, setProcessProgress] = useState({ stage: '', detail: '' })
   const [globalSummary, setGlobalSummary] = useState<any>(null)
-  const [docSummaries, setDocSummaries] = useState<any[]>([])
-  const [selectedDocSummary, setSelectedDocSummary] = useState<any>(null)
-  const [docParagraphs, setDocParagraphs] = useState<any[]>([])
-  const [paragraphModalOpen, setParagraphModalOpen] = useState(false)
-  const [docContentModalOpen, setDocContentModalOpen] = useState(false)
-  const [docContent, setDocContent] = useState<string>('')
-  const [docContentTitle, setDocContentTitle] = useState<string>('')
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
   const [editKBModalOpen, setEditKBModalOpen] = useState(false)
   const [editKBName, setEditKBName] = useState('')
@@ -175,14 +168,6 @@ export const useKnowledgeBase = () => {
     } catch (e) { console.error('Failed to load global summary:', e) }
   }
 
-  const loadDocSummaries = async (kbId: string) => {
-    try {
-      const summaries = await window.electronAPI.kb.getAllDocSummaries(kbId)
-      if (activeKBRef.current !== kbId) return
-      setDocSummaries(summaries)
-    } catch (e) { console.error('Failed to load doc summaries:', e) }
-  }
-
   const handleSelectKB = useCallback((kb: KnowledgeBase) => {
     activeKBRef.current = kb.id
     setSelectedKB(kb)
@@ -190,11 +175,9 @@ export const useKnowledgeBase = () => {
     setDocs([])
     setKnowledgeStats(null)
     setGlobalSummary(null)
-    setDocSummaries([])
     loadDocs(kb.id)
     loadKnowledgeStats(kb.id)
     loadGlobalSummary(kb.id)
-    loadDocSummaries(kb.id)
   }, [])
 
   useEffect(() => {
@@ -225,6 +208,10 @@ export const useKnowledgeBase = () => {
                 pollRef.current = null
                 setParsingAll(false)
                 loadDocProcessingStatus(result)
+                if (activeKBRef.current) {
+                  loadKnowledgeStats(activeKBRef.current)
+                  loadGlobalSummary(activeKBRef.current)
+                }
               }
             }).catch(() => {})
           }
@@ -258,7 +245,7 @@ export const useKnowledgeBase = () => {
       if (result.success) {
         message.success(t('knowledgeBase.knowledgeProcessed'))
         setProcessedDocIds(prev => new Set(prev).add(docId))
-        if (selectedKB) { loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id) }
+        if (selectedKB) { loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id) }
       } else {
         message.error(result.error || t('knowledgeBase.processFailed'))
       }
@@ -285,7 +272,7 @@ export const useKnowledgeBase = () => {
         enable_thinking: enableThinking,
       })
       message.success(t('knowledgeBase.batchProcessResult', { success: result.success, failed: result.failed, skipped: result.skipped }))
-      loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id)
+      loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id)
     } catch { message.error(t('knowledgeBase.batchProcessFailed')) }
     finally { cleanupAll(); cleanupProgress(); setProcessingAll(false); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
   }
@@ -310,24 +297,6 @@ export const useKnowledgeBase = () => {
       }
     } catch { message.error(t('knowledgeBase.globalBuildFailed')) }
     finally { cleanup(); setBuildingGlobal(false); setProcessProgress({ stage: '', detail: '' }) }
-  }
-
-  const handleViewParagraphs = async (docId: string, docName: string) => {
-    try {
-      const paragraphs = await window.electronAPI.kb.getParagraphs(docId)
-      setDocParagraphs(paragraphs || [])
-      setSelectedDocSummary(docName)
-      setParagraphModalOpen(true)
-    } catch { setDocParagraphs([]) }
-  }
-
-  const handleViewDocContent = async (docId: string, docName: string) => {
-    try {
-      const content = await window.electronAPI.kb.getDocContent(docId)
-      setDocContent(content || t('knowledgeBase.docContentEmpty'))
-      setDocContentTitle(docName)
-      setDocContentModalOpen(true)
-    } catch { setDocContent(t('knowledgeBase.getDocContentFailed')) }
   }
 
   const handleCreateKB = async () => {
@@ -731,21 +700,10 @@ export const useKnowledgeBase = () => {
     processProgress,
     knowledgeStats,
     globalSummary,
-    docSummaries,
     onProcessDocument: handleProcessDocument,
     onProcessAll: handleProcessAll,
     onBuildGlobal: handleBuildGlobal,
-    onViewParagraphs: handleViewParagraphs,
-    onViewDocContent: handleViewDocContent,
     onViewParseDetail: handleViewParseDetail,
-    docParagraphs,
-    paragraphModalOpen,
-    selectedDocSummary,
-    onCloseParagraphModal: () => setParagraphModalOpen(false),
-    docContent,
-    docContentTitle,
-    docContentModalOpen,
-    onCloseDocContentModal: () => setDocContentModalOpen(false),
 
     createModalOpen,
     setCreateModalOpen,

@@ -384,6 +384,13 @@ class KBDocumentService {
       const content = this.readDocContentFromParsedJson(parsedJsonPath)
       if (content) {
         this.searchEngine.indexContentParagraphs(doc.kb_id, docId, content, doc.original_name)
+
+        const paragraphs = this.processor.identifyParagraphs(content)
+        const toc = this.processor.extractToc(content)
+        this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, paragraphs)
+        if (toc.length > 0) {
+          this.processor.saveTocOnly(doc.kb_id, docId, toc)
+        }
       }
 
       this.parseTaskManager.completeTask(docId)
@@ -469,36 +476,38 @@ class KBDocumentService {
     })
 
     try {
-      this.processor.updateProcessingJob(jobId, 'running', 0, 'paragraph_identify')
-      onProgress?.('paragraph_identify', `Identifying document structure: ${doc.original_name}`)
-      this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Paragraph identify: ${doc.original_name}` })
+      this.processor.updateProcessingJob(jobId, 'running', 0, 'paragraph_summary')
+      onProgress?.('paragraph_summary', `Generating paragraph summaries: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Paragraph summary: ${doc.original_name}` })
 
-      const text = this.getDocumentContent(docId) || ''
-      const paragraphs = this.processor.identifyParagraphs(text)
+      const existingParagraphs = this.processor.getParagraphs(docId)
+      if (existingParagraphs.length === 0) {
+        this.processor.updateProcessingJob(jobId, 'failed', undefined, undefined, 'No paragraphs found. Please re-parse the document.')
+        this.taskQueue.updateTask(taskId, { status: 'failed', error: 'No paragraphs found', progressText: 'No paragraphs found. Please re-parse.' })
+        return { success: false, error: 'No paragraphs found' }
+      }
 
-      const toc = paragraphs
-        .filter(p => p.level >= 1)
-        .map(p => ({ title: p.title, level: p.level, path: p.titlePath, offset: p.startOffset }))
-
-      this.processor.updateProcessingJob(jobId, 'running', 1, 'paragraph_summary')
       const paragraphSummaries = []
-      for (let i = 0; i < paragraphs.length; i++) {
-        const paragraph = paragraphs[i]
-        const progressPercent = 10 + Math.round((i + 1) / paragraphs.length * 40)
-        onProgress?.('paragraph_summary', `Generating paragraph summary (${i + 1}/${paragraphs.length}): ${paragraph.title}`)
-        this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Paragraph summary (${i + 1}/${paragraphs.length}): ${paragraph.title}` })
+      for (let i = 0; i < existingParagraphs.length; i++) {
+        const paragraph = existingParagraphs[i]
+        const progressPercent = 10 + Math.round((i + 1) / existingParagraphs.length * 40)
+        onProgress?.('paragraph_summary', `Generating paragraph summary (${i + 1}/${existingParagraphs.length}): ${paragraph.title}`)
+        this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Paragraph summary (${i + 1}/${existingParagraphs.length}): ${paragraph.title}` })
         const summary = await this.processor.generateParagraphSummary(
           paragraph.content, paragraph.title, provider, modelId, enableThinking, onProgress
         )
         paragraphSummaries.push(summary)
       }
 
-      this.processor.saveParagraphs(kbId, docId, paragraphs, paragraphSummaries)
+      this.processor.updateParagraphSummaries(docId, paragraphSummaries)
+
+      const toc = this.processor.getDocumentSummary(docId)
+      const tocData = toc?.toc_json ? JSON.parse(toc.toc_json) : []
 
       this.processor.updateProcessingJob(jobId, 'running', 2, 'doc_summary')
       this.taskQueue.updateTask(taskId, { progress: 60, progressText: `Doc summary: ${doc.original_name}` })
       const docSummary = await this.processor.generateDocumentSummary(
-        paragraphSummaries, doc.original_name, toc, provider, modelId, enableThinking, onProgress
+        paragraphSummaries, doc.original_name, tocData, provider, modelId, enableThinking, onProgress
       )
       this.processor.saveDocumentSummary(kbId, docId, docSummary)
 
@@ -784,6 +793,11 @@ class KBDocumentService {
 
     const modelName = embeddingConfig?.modelName
 
+    const maxCharsRow = this.mainDb.getDb().prepare(
+      "SELECT value FROM settings WHERE key = 'embedding_max_chars'"
+    ).get() as any
+    const maxEmbeddingChars = maxCharsRow?.value ? parseInt(maxCharsRow.value, 10) : 2000
+
     const indexEntries = this.db.prepare(
       'SELECT id, source_type, source_id, document_id, title, content FROM kb_search_index WHERE kb_id = ?'
     ).all(kbId) as Array<{ id: string; source_type: string; source_id: string; document_id: string; title: string; content: string }>
@@ -796,7 +810,7 @@ class KBDocumentService {
     for (const entry of indexEntries) {
       const text = [entry.title, entry.content].filter(Boolean).join(' ').trim()
       if (text.length > 10) {
-        texts.push(text.substring(0, 2000))
+        texts.push(text.substring(0, maxEmbeddingChars))
         meta.push({ sourceType: entry.source_type, sourceId: entry.source_id, documentId: entry.document_id })
       }
     }

@@ -33,10 +33,6 @@ class KBSummaryService {
     return this.processor.getKnowledgeStats(kbId)
   }
 
-  getAllDocumentSummaries(kbId: string): DBKBDocumentSummary[] {
-    return this.processor.getAllDocumentSummaries(kbId) as DBKBDocumentSummary[]
-  }
-
   getDocumentSummary(documentId: string): DBKBDocumentSummary | null {
     return this.processor.getDocumentSummary(documentId) as DBKBDocumentSummary | null
   }

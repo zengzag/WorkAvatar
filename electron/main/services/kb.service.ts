@@ -209,9 +209,11 @@ class KnowledgeBaseService {
   getPausedDocIds() { return this.documentService.getPausedDocIds() }
 
   getParagraphs(documentId: string) { return this.paragraphService.getParagraphs(documentId) }
+  getParagraphsByKb(kbId: string) { return this.processor.getParagraphsByKb(kbId) }
+  updateParagraph(paragraphId: string, updates: { summary?: string; keywords_json?: string; content?: string; title?: string }) { return this.processor.updateParagraph(paragraphId, updates) }
+  updateDocumentSummary(documentId: string, updates: { summary?: string; keywords_json?: string; main_topics_json?: string }) { return this.processor.updateDocumentSummary(documentId, updates) }
 
   getKnowledgeStats(kbId: string) { return this.summaryService.getKnowledgeStats(kbId) }
-  getAllDocumentSummaries(kbId: string) { return this.summaryService.getAllDocumentSummaries(kbId) }
   getDocumentSummary(documentId: string) { return this.summaryService.getDocumentSummary(documentId) }
   getGlobalSummary(kbId: string) { return this.summaryService.getGlobalSummary(kbId) }
   getProcessingJobs(kbId: string, status?: string) { return this.summaryService.getProcessingJobs(kbId, status) }

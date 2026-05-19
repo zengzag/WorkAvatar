@@ -1,18 +1,21 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Button, Space, Empty, Tabs, theme } from 'antd'
-import { PlusOutlined, FileTextOutlined, BookOutlined, ThunderboltOutlined, SearchOutlined } from '@ant-design/icons'
+import { Card, Button, Space, Empty, Tabs, theme, Tooltip } from 'antd'
+import { PlusOutlined, BookOutlined, FileSearchOutlined, EyeOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import TaskProgressPanel from '../components/common/TaskProgressPanel'
 import {
-  KBListPanel, KBDocList, KBKnowledgeView, KBSearchPanel,
+  KBListPanel, KBDocList, KBSearchPanel,
   KBHeaderCard, KBCreateModal, KBEditModal,
   KBExportModal, KBImportModal, KBFolderScanModal,
+  KBContentBrowser,
 } from '../components/knowledge-base'
 import { useKnowledgeBase } from '../hooks/useKnowledgeBase'
 
 const KnowledgeBasePage: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const [listPanelVisible, setListPanelVisible] = useState(true)
 
   const {
     kbs, selectedKB, onSelectKB, onDeleteKB,
@@ -23,11 +26,9 @@ const KnowledgeBasePage: React.FC = () => {
     onPauseAll, onResumeAll, onCancelAll,
     onUploadFiles, onUploadFolder, onRefreshDocs,
     processingDocId, processingAll, buildingGlobal, processProgress,
-    knowledgeStats, globalSummary, docSummaries,
+    knowledgeStats, globalSummary,
     onProcessDocument, onProcessAll, onBuildGlobal,
-    onViewParagraphs, onViewDocContent, onViewParseDetail,
-    docParagraphs, paragraphModalOpen, selectedDocSummary, onCloseParagraphModal,
-    docContent, docContentTitle, docContentModalOpen, onCloseDocContentModal,
+    onViewParseDetail,
     createModalOpen, setCreateModalOpen, newKBName, setNewKBName, newKBDesc, setNewKBDesc, onCreateKB,
     editKBModalOpen, setEditKBModalOpen, editKBName, setEditKBName, editKBDesc, setEditKBDesc, onConfirmEditKB, onEditKB,
     activeTab, onTabChange,
@@ -47,23 +48,34 @@ const KnowledgeBasePage: React.FC = () => {
         extra={
           <Space>
             <TaskProgressPanel />
-            <Button icon={<SearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('knowledgeBase.kbSearch')}</Button>
+            <Button icon={<FileSearchOutlined />} onClick={() => setSearchPanelOpen(true)} disabled={kbs.length === 0}>{t('knowledgeBase.kbSearch')}</Button>
             <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>{t('knowledgeBase.createKb')}</Button>
           </Space>
         }
       />
 
       <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 0 }}>
-        <KBListPanel
-          kbs={kbs}
-          selectedKB={selectedKB}
-          onSelectKB={onSelectKB}
-          onDeleteKB={onDeleteKB}
-        />
+        {listPanelVisible && (
+          <KBListPanel
+            kbs={kbs}
+            selectedKB={selectedKB}
+            onSelectKB={onSelectKB}
+            onDeleteKB={onDeleteKB}
+          />
+        )}
 
         <div style={{ flex: 1, overflow: 'auto' }}>
           {!selectedKB ? (
             <Card>
+              <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                <Tooltip title={listPanelVisible ? t('knowledgeBase.hideListPanel') : t('knowledgeBase.showListPanel')}>
+                  <Button
+                    type="text"
+                    icon={listPanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+                    onClick={() => setListPanelVisible(!listPanelVisible)}
+                  />
+                </Tooltip>
+              </div>
               <Empty image={<BookOutlined style={{ fontSize: 64, color: token.colorTextQuaternary }} />}
                 description={t('knowledgeBase.selectOrCreate')} />
               <div style={{ textAlign: 'center' }}>
@@ -72,6 +84,16 @@ const KnowledgeBasePage: React.FC = () => {
             </Card>
           ) : (
             <div>
+              <div style={{ marginBottom: 8 }}>
+                <Tooltip title={listPanelVisible ? t('knowledgeBase.hideListPanel') : t('knowledgeBase.showListPanel')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={listPanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
+                    onClick={() => setListPanelVisible(!listPanelVisible)}
+                  />
+                </Tooltip>
+              </div>
               <KBHeaderCard
                 selectedKB={selectedKB}
                 uploadLoading={uploadLoading}
@@ -91,12 +113,13 @@ const KnowledgeBasePage: React.FC = () => {
               <Tabs activeKey={activeTab} onChange={onTabChange} items={[
                 {
                   key: 'docs',
-                  label: <Space><FileTextOutlined />{t('knowledgeBase.tabDocs')}</Space>,
+                  label: <Space><FileSearchOutlined />{t('knowledgeBase.tabDocs')}</Space>,
                   children: (
                     <KBDocList
                       docs={docs}
                       parsingAll={parsingAll}
                       processingAll={processingAll}
+                      buildingGlobal={buildingGlobal}
                       processProgress={processProgress}
                       completedCount={completedCount}
                       pendingCount={pendingCount}
@@ -104,9 +127,13 @@ const KnowledgeBasePage: React.FC = () => {
                       pausedCount={pausedCount}
                       processedDocIds={processedDocIds}
                       processingDocId={processingDocId}
+                      knowledgeStats={knowledgeStats}
+                      globalSummary={globalSummary}
                       onParseAll={onParseAll}
                       onParseDocument={onParseDocument}
                       onProcessDocument={onProcessDocument}
+                      onProcessAll={onProcessAll}
+                      onBuildGlobal={onBuildGlobal}
                       onDeleteDoc={onDeleteDoc}
                       onRefresh={onRefreshDocs}
                       onPauseParse={onPauseParse}
@@ -120,32 +147,13 @@ const KnowledgeBasePage: React.FC = () => {
                   ),
                 },
                 {
-                  key: 'knowledge',
-                  label: <Space><ThunderboltOutlined />{t('knowledgeBase.tabKnowledge')}</Space>,
+                  key: 'content',
+                  label: <Space><EyeOutlined />{t('knowledgeBase.tabContent')}</Space>,
                   children: (
-                    <KBKnowledgeView
-                      selectedKbId={selectedKB?.id || ''}
-                      knowledgeStats={knowledgeStats}
-                      globalSummary={globalSummary}
-                      docSummaries={docSummaries}
-                      processingDocId={processingDocId}
-                      processingAll={processingAll}
-                      buildingGlobal={buildingGlobal}
-                      processProgress={processProgress}
-                      onProcessAll={onProcessAll}
-                      onBuildGlobal={onBuildGlobal}
-                      onProcessDocument={onProcessDocument}
-                      onViewParagraphs={onViewParagraphs}
-                      onViewDocContent={onViewDocContent}
-                      docParagraphs={docParagraphs}
-                      paragraphModalOpen={paragraphModalOpen}
-                      selectedDocSummary={selectedDocSummary}
-                      onCloseParagraphModal={onCloseParagraphModal}
-                      docContent={docContent}
-                      docContentTitle={docContentTitle}
-                      docContentModalOpen={docContentModalOpen}
-                      onCloseDocContentModal={onCloseDocContentModal}
-                      onViewParseDetail={onViewParseDetail}
+                    <KBContentBrowser
+                      kbId={selectedKB?.id || ''}
+                      docs={docs.filter(d => d.parse_status === 'completed')}
+                      loading={false}
                     />
                   ),
                 },

@@ -1,12 +1,12 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Typography, Space, Table, Tag, Button, Modal,
-  Empty, Statistic, Row, Col, Alert, theme, Tooltip, message,
+  Card, Typography, Space, Tag, Button,
+  Statistic, Row, Col, Alert, theme, Tooltip, message,
 } from 'antd'
 import {
   FileTextOutlined, ThunderboltOutlined, ApartmentOutlined,
-  ReadOutlined, RedoOutlined, EyeOutlined,
+  ReadOutlined,
   InfoCircleOutlined, DatabaseOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 
@@ -16,7 +16,6 @@ const { Text } = Typography
 interface KBKnowledgeViewProps {
   knowledgeStats: any
   globalSummary: any
-  docSummaries: any[]
   processingDocId: string | null
   processingAll: boolean
   buildingGlobal: boolean
@@ -25,28 +24,14 @@ interface KBKnowledgeViewProps {
 
   onProcessAll: () => void
   onBuildGlobal: () => void
-  onProcessDocument: (docId: string) => void
-  onViewParagraphs: (docId: string, docName: string) => void
-  onViewDocContent: (docId: string, docName: string) => void
-  docParagraphs: any[]
-  paragraphModalOpen: boolean
-  selectedDocSummary: string | null
-  onCloseParagraphModal: () => void
-  docContent: string
-  docContentTitle: string
-  docContentModalOpen: boolean
-  onCloseDocContentModal: () => void
   onViewParseDetail?: (docId: string, docName: string) => void
 }
 
 const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
-  knowledgeStats, globalSummary, docSummaries,
+  knowledgeStats, globalSummary,
   processingDocId, processingAll, buildingGlobal, processProgress,
   selectedKbId,
-  onProcessAll, onBuildGlobal, onProcessDocument,
-  onViewParagraphs, onViewDocContent,
-  docParagraphs, paragraphModalOpen, selectedDocSummary, onCloseParagraphModal,
-  docContent, docContentTitle, docContentModalOpen, onCloseDocContentModal,
+  onProcessAll, onBuildGlobal,
   onViewParseDetail,
 }) => {
   const { t } = useTranslation()
@@ -101,8 +86,7 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
             action={
               onViewParseDetail && processingDocId ? (
                 <Button size="small" icon={<InfoCircleOutlined />} onClick={() => {
-                  const doc = docSummaries.find((d: any) => d.doc_id === processingDocId)
-                  onViewParseDetail(processingDocId, doc?.doc_name || '')
+                  onViewParseDetail(processingDocId, '')
                 }}>
                   {t('parseProgress.detail')}
                 </Button>
@@ -187,95 +171,7 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
           </Card>
         )}
 
-        {docSummaries.length > 0 && (
-          <Card size="small" title={<Space><FileTextOutlined />{t('knowledgeBase.docSummaryList', { count: docSummaries.length })}</Space>} style={{ marginBottom: 16 }}>
-            <Table dataSource={docSummaries} rowKey="doc_id" size="small" pagination={{ pageSize: 5 }}
-              scroll={{ x: 'max-content' }}
-              columns={[
-                { title: t('knowledgeBase.doc'), dataIndex: 'doc_name', key: 'doc_name', width: 200,
-                  render: (name: string, record: any) => (
-                    <Button type="link" size="small" onClick={() => onViewParagraphs(record.doc_id, name)}>{name}</Button>
-                  ),
-                },
-                { title: t('knowledgeBase.summary'), dataIndex: 'summary', key: 'summary', ellipsis: true,
-                  render: (summary: string) => <Text type="secondary" ellipsis={{ tooltip: summary }}>{summary}</Text>,
-                },
-                { title: t('knowledgeBase.topics'), dataIndex: 'topics_json', key: 'topics', width: 200,
-                  render: (json: string) => {
-                    const topics: string[] = JSON.parse(json || '[]')
-                    return <Space size={2} wrap>{topics.slice(0, 3).map(t => <Tag key={t} color="green" style={{ fontSize: 11 }}>{t}</Tag>)}</Space>
-                  },
-                },
-                { title: t('common.action'), key: 'action', width: 180,
-                  render: (_: any, record: any) => (
-                    <Space size="small">
-                      <Button type="link" size="small" icon={<ReadOutlined />} onClick={() => onViewParagraphs(record.doc_id, record.doc_name)}>{t('knowledgeBase.paragraphsBtn')}</Button>
-                      <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => onViewDocContent(record.doc_id, record.doc_name)}>{t('knowledgeBase.original')}</Button>
-                      <Button type="link" size="small" icon={<RedoOutlined />} onClick={() => onProcessDocument(record.doc_id)} loading={processingDocId === record.doc_id}>{t('knowledgeBase.reprocess')}</Button>
-                    </Space>
-                  ),
-                },
-              ]}
-            />
-          </Card>
-        )}
-
       </Card>
-
-      <Modal
-        title={<Space><ReadOutlined />{selectedDocSummary} - {t('knowledgeBase.paragraphList')}</Space>}
-        open={paragraphModalOpen}
-        onCancel={onCloseParagraphModal}
-        footer={null}
-        width={800}
-        styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
-      >
-        {docParagraphs.length > 0 ? (
-          <Table dataSource={docParagraphs} rowKey="id" size="small" pagination={false}
-            scroll={{ x: 'max-content' }}
-            columns={[
-              { title: t('knowledgeBase.paragraphs'), dataIndex: 'title', key: 'title', width: 160,
-                render: (title: string) => <Text strong>{title}</Text>,
-              },
-              { title: t('knowledgeBase.titlePath'), dataIndex: 'title_path', key: 'title_path', width: 200,
-                render: (titlePath: string, record: any) => {
-                  const level = record.level || 1
-                  return (
-                    <div style={{ paddingLeft: (level - 1) * 16 }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{titlePath || '-'}</Text>
-                      <Tag style={{ marginLeft: 4, fontSize: 10 }} color={level === 1 ? 'blue' : level === 2 ? 'green' : 'default'}>L{level}</Tag>
-                    </div>
-                  )
-                },
-              },
-              { title: t('knowledgeBase.summary'), dataIndex: 'summary', key: 'summary', width: 300,
-                render: (summary: string) => <Text type="secondary" style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{summary || t('knowledgeBase.noSummary')}</Text>,
-              },
-              { title: t('knowledgeBase.keywords'), dataIndex: 'keywords_json', key: 'keywords', width: 180,
-                render: (json: string) => {
-                  const keywords: string[] = JSON.parse(json || '[]')
-                  return <Space size={2} wrap>{keywords.map(k => <Tag key={k} style={{ fontSize: 11 }}>{k}</Tag>)}</Space>
-                },
-              },
-            ]}
-          />
-        ) : (
-          <Empty description={t('knowledgeBase.noParagraphs')} />
-        )}
-      </Modal>
-
-      <Modal
-        title={<Space><FileTextOutlined />{docContentTitle} - {t('knowledgeBase.originalDoc')}</Space>}
-        open={docContentModalOpen}
-        onCancel={onCloseDocContentModal}
-        footer={null}
-        width={800}
-        styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
-      >
-        <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 13 }}>
-          {docContent}
-        </div>
-      </Modal>
     </div>
   )
 }

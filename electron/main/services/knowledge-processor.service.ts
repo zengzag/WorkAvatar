@@ -52,6 +52,9 @@ class KnowledgeProcessorService {
     return KnowledgeProcessorService.instance
   }
 
+  private static readonly MAX_PARAGRAPH_CHARS = 5000
+  private static readonly PARAGRAPH_OVERLAP_CHARS = 500
+
   identifyParagraphs(text: string): ParagraphInfo[] {
     const paragraphs: ParagraphInfo[] = []
     const lines = text.split('\n')
@@ -73,15 +76,15 @@ class KnowledgeProcessorService {
     }
 
     if (headingPositions.length === 0) {
-      const chunkSize = 5000
-      const chunks = this.splitIntoChunks(text, chunkSize, 500)
+      const chunkSize = KnowledgeProcessorService.MAX_PARAGRAPH_CHARS
+      const chunks = this.splitIntoChunks(text, chunkSize, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
       for (let i = 0; i < chunks.length; i++) {
         const startOff = text.indexOf(chunks[i])
         paragraphs.push({
           title: `段落 ${i + 1}`,
           titlePath: `段落 ${i + 1}`,
           index: i,
-          startOffset: startOff >= 0 ? startOff : i * (chunkSize - 500),
+          startOffset: startOff >= 0 ? startOff : i * (chunkSize - KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS),
           endOffset: startOff >= 0 ? startOff + chunks[i].length : (i + 1) * chunkSize,
           content: chunks[i],
           level: 1,
@@ -108,15 +111,32 @@ class KnowledgeProcessorService {
       const content = text.substring(startOff, endOff).trim()
 
       if (content.length > 50) {
-        paragraphs.push({
-          title: heading.title,
-          titlePath,
-          index: paragraphs.length,
-          startOffset: startOff,
-          endOffset: endOff,
-          content,
-          level: heading.level,
-        })
+        if (content.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
+          const subChunks = this.splitIntoChunks(content, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
+          for (let si = 0; si < subChunks.length; si++) {
+            const subStartInContent = content.indexOf(subChunks[si])
+            const absStartOff = startOff + (subStartInContent >= 0 ? subStartInContent : si * (KnowledgeProcessorService.MAX_PARAGRAPH_CHARS - KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS))
+            paragraphs.push({
+              title: subChunks.length > 1 ? `${heading.title} (${si + 1})` : heading.title,
+              titlePath: subChunks.length > 1 ? `${titlePath} (${si + 1})` : titlePath,
+              index: paragraphs.length,
+              startOffset: absStartOff,
+              endOffset: absStartOff + subChunks[si].length,
+              content: subChunks[si],
+              level: heading.level,
+            })
+          }
+        } else {
+          paragraphs.push({
+            title: heading.title,
+            titlePath,
+            index: paragraphs.length,
+            startOffset: startOff,
+            endOffset: endOff,
+            content,
+            level: heading.level,
+          })
+        }
       }
     }
 
@@ -133,6 +153,57 @@ class KnowledgeProcessorService {
     }
 
     return paragraphs
+  }
+
+  extractToc(text: string): Array<{ title: string; level: number; path: string; offset: number }> {
+    const lines = text.split('\n')
+    let currentOffset = 0
+    const headings: Array<{ title: string; level: number; offset: number }> = []
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const match = line.match(/^(#{1,4})\s+(.+)/)
+      if (match) {
+        headings.push({
+          title: match[2].trim(),
+          level: match[1].length,
+          offset: currentOffset,
+        })
+      }
+      currentOffset += line.length + 1
+    }
+
+    const headingStack: Array<{ title: string; level: number }> = []
+    return headings.map(h => {
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= h.level) {
+        headingStack.pop()
+      }
+      headingStack.push({ title: h.title, level: h.level })
+      return {
+        title: h.title,
+        level: h.level,
+        path: headingStack.map(s => s.title).join(' > '),
+        offset: h.offset,
+      }
+    })
+  }
+
+  saveTocOnly(kbId: string, documentId: string, toc: Array<{ title: string; level: number; path: string; offset: number }>): void {
+    const existing = this.db.prepare(
+      'SELECT id FROM kb_document_summaries WHERE document_id = ?'
+    ).get(documentId) as any
+
+    if (existing) {
+      this.db.prepare(
+        'UPDATE kb_document_summaries SET toc_json = ?, updated_at = unixepoch() WHERE document_id = ?'
+      ).run(JSON.stringify(toc), documentId)
+    } else {
+      const id = generateId()
+      this.db.prepare(`
+        INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, toc_json, keywords_json, main_topics_json, created_at, updated_at)
+        VALUES (?, ?, ?, '', ?, '[]', '[]', unixepoch(), unixepoch())
+      `).run(id, kbId, documentId, JSON.stringify(toc))
+    }
   }
 
   async generateParagraphSummary(
@@ -153,8 +224,8 @@ ${paragraphContent.substring(0, 8000)}
 
 返回字段：
 - title: 段落标题
-- summary: 摘要（200-500字）
-- keywords: 关键词列表
+- summary: 摘要（150字以内，简洁精炼）
+- keywords: 关键词列表（3-5个）
 
 只返回JSON。`
 
@@ -199,9 +270,9 @@ ${paragraphContent.substring(0, 8000)}
 ${summariesText.substring(0, 15000)}
 
 返回字段：
-- summary: 全局摘要（300-800字）
-- keywords: 关键词列表
-- mainTopics: 主要主题列表
+- summary: 全局摘要（150字以内，简洁精炼）
+- keywords: 关键词列表（5-8个）
+- mainTopics: 主要主题列表（3-5个）
 
 只返回JSON。`
 
@@ -321,6 +392,83 @@ ${docsText.substring(0, 20000)}
     }
   }
 
+  saveParagraphsWithoutSummary(kbId: string, documentId: string, paragraphs: ParagraphInfo[]): void {
+    const existingParagraphs = this.db.prepare(
+      'SELECT id FROM kb_paragraphs WHERE document_id = ?'
+    ).all(documentId) as any[]
+
+    if (existingParagraphs.length > 0) {
+      this.db.prepare('DELETE FROM kb_paragraphs WHERE document_id = ?').run(documentId)
+    }
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', unixepoch(), unixepoch())
+    `)
+
+    for (let i = 0; i < paragraphs.length; i++) {
+      const paragraph = paragraphs[i]
+      const id = generateId()
+
+      insertStmt.run(
+        id,
+        kbId,
+        documentId,
+        paragraph.title,
+        paragraph.titlePath,
+        paragraph.level,
+        paragraph.index,
+        paragraph.startOffset,
+        paragraph.endOffset,
+        paragraph.content,
+      )
+
+      this.searchEngine.indexParagraph(
+        kbId,
+        documentId,
+        id,
+        paragraph.title,
+        paragraph.titlePath,
+        '',
+        [],
+        paragraph.startOffset,
+        paragraph.endOffset
+      )
+    }
+  }
+
+  updateParagraphSummaries(documentId: string, summaries: ParagraphSummary[]): void {
+    const paragraphs = this.db.prepare(
+      'SELECT id, kb_id, title, start_offset, end_offset FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
+    ).all(documentId) as Array<{ id: string; kb_id: string; title: string; start_offset: number; end_offset: number }>
+
+    const updateStmt = this.db.prepare(`
+      UPDATE kb_paragraphs SET summary = ?, keywords_json = ?, updated_at = unixepoch() WHERE id = ?
+    `)
+
+    for (let i = 0; i < Math.min(paragraphs.length, summaries.length); i++) {
+      const paragraph = paragraphs[i]
+      const summary = summaries[i]
+      updateStmt.run(
+        summary?.summary || null,
+        JSON.stringify(summary?.keywords || []),
+        paragraph.id,
+      )
+
+      this.searchEngine.indexParagraph(
+        paragraph.kb_id,
+        documentId,
+        paragraph.id,
+        paragraph.title,
+        '',
+        summary?.summary || '',
+        summary?.keywords || [],
+        paragraph.start_offset,
+        paragraph.end_offset,
+      )
+    }
+  }
+
   saveDocumentSummary(kbId: string, documentId: string, docSummary: DocumentSummary): void {
     const existing = this.db.prepare(
       'SELECT id FROM kb_document_summaries WHERE document_id = ?'
@@ -387,6 +535,39 @@ ${docsText.substring(0, 20000)}
     ).all(documentId)
   }
 
+  getParagraphsByKb(kbId: string): any[] {
+    return this.db.prepare(
+      'SELECT * FROM kb_paragraphs WHERE kb_id = ? ORDER BY document_id, paragraph_index'
+    ).all(kbId)
+  }
+
+  updateParagraph(paragraphId: string, updates: { summary?: string; keywords_json?: string; content?: string; title?: string }): boolean {
+    const sets: string[] = []
+    const values: any[] = []
+    if (updates.summary !== undefined) { sets.push('summary = ?'); values.push(updates.summary) }
+    if (updates.keywords_json !== undefined) { sets.push('keywords_json = ?'); values.push(updates.keywords_json) }
+    if (updates.content !== undefined) { sets.push('content = ?'); values.push(updates.content) }
+    if (updates.title !== undefined) { sets.push('title = ?'); values.push(updates.title) }
+    if (sets.length === 0) return false
+    sets.push('updated_at = unixepoch()')
+    values.push(paragraphId)
+    const result = this.db.prepare(`UPDATE kb_paragraphs SET ${sets.join(', ')} WHERE id = ?`).run(...values)
+    return result.changes > 0
+  }
+
+  updateDocumentSummary(documentId: string, updates: { summary?: string; keywords_json?: string; main_topics_json?: string }): boolean {
+    const sets: string[] = []
+    const values: any[] = []
+    if (updates.summary !== undefined) { sets.push('summary = ?'); values.push(updates.summary) }
+    if (updates.keywords_json !== undefined) { sets.push('keywords_json = ?'); values.push(updates.keywords_json) }
+    if (updates.main_topics_json !== undefined) { sets.push('main_topics_json = ?'); values.push(updates.main_topics_json) }
+    if (sets.length === 0) return false
+    sets.push('updated_at = unixepoch()')
+    values.push(documentId)
+    const result = this.db.prepare(`UPDATE kb_document_summaries SET ${sets.join(', ')} WHERE document_id = ?`).run(...values)
+    return result.changes > 0
+  }
+
   getDocumentSummary(documentId: string): any | null {
     return this.db.prepare(
       'SELECT * FROM kb_document_summaries WHERE document_id = ?'
@@ -444,13 +625,6 @@ ${docsText.substring(0, 20000)}
       this.db.prepare('DELETE FROM kb_global_summaries WHERE kb_id = ?').run(kbId)
       this.db.prepare('DELETE FROM kb_processing_jobs WHERE kb_id = ?').run(kbId)
     }
-  }
-
-  getAllDocumentSummaries(kbId: string): any[] {
-    const summaries = this.db.prepare(
-      'SELECT ds.*, d.original_name as doc_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?'
-    ).all(kbId) as any[]
-    return summaries.map(s => ({ ...s, doc_id: s.document_id }))
   }
 
   getKnowledgeStats(kbId: string): {
