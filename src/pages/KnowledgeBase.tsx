@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Button, Space, Empty, Tabs, theme, Tooltip } from 'antd'
-import { PlusOutlined, BookOutlined, FileSearchOutlined, EyeOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { Button, Space, Empty, Tabs, theme } from 'antd'
+import { PlusOutlined, BookOutlined, FileSearchOutlined, EyeOutlined } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import TaskProgressPanel from '../components/common/TaskProgressPanel'
 import {
@@ -15,7 +15,7 @@ import { useKnowledgeBase } from '../hooks/useKnowledgeBase'
 const KnowledgeBasePage: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const [listPanelVisible, setListPanelVisible] = useState(true)
+  const [listPanelCollapsed, setListPanelCollapsed] = useState(true)
 
   const {
     kbs, selectedKB, onSelectKB, onDeleteKB,
@@ -54,46 +54,31 @@ const KnowledgeBasePage: React.FC = () => {
         }
       />
 
-      <div style={{ flex: 1, display: 'flex', gap: 16, minHeight: 0 }}>
-        {listPanelVisible && (
-          <KBListPanel
-            kbs={kbs}
-            selectedKB={selectedKB}
-            onSelectKB={onSelectKB}
-            onDeleteKB={onDeleteKB}
-          />
-        )}
+      <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
+        <KBListPanel
+          kbs={kbs}
+          selectedKB={selectedKB}
+          onSelectKB={onSelectKB}
+          onDeleteKB={onDeleteKB}
+          collapsed={listPanelCollapsed}
+          onToggleCollapse={() => setListPanelCollapsed(!listPanelCollapsed)}
+        />
 
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
           {!selectedKB ? (
-            <Card>
-              <div style={{ textAlign: 'center', marginBottom: 16 }}>
-                <Tooltip title={listPanelVisible ? t('knowledgeBase.hideListPanel') : t('knowledgeBase.showListPanel')}>
-                  <Button
-                    type="text"
-                    icon={listPanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
-                    onClick={() => setListPanelVisible(!listPanelVisible)}
-                  />
-                </Tooltip>
-              </div>
+            <div style={{
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
               <Empty image={<BookOutlined style={{ fontSize: 64, color: token.colorTextQuaternary }} />}
-                description={t('knowledgeBase.selectOrCreate')} />
-              <div style={{ textAlign: 'center' }}>
+                description={t('knowledgeBase.selectOrCreate')}>
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>{t('knowledgeBase.createKb')}</Button>
-              </div>
-            </Card>
+              </Empty>
+            </div>
           ) : (
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                <Tooltip title={listPanelVisible ? t('knowledgeBase.hideListPanel') : t('knowledgeBase.showListPanel')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={listPanelVisible ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
-                    onClick={() => setListPanelVisible(!listPanelVisible)}
-                  />
-                </Tooltip>
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               <KBHeaderCard
                 selectedKB={selectedKB}
                 uploadLoading={uploadLoading}
@@ -110,54 +95,56 @@ const KnowledgeBasePage: React.FC = () => {
                 onThinkingChange={onThinkingChange}
               />
 
-              <Tabs activeKey={activeTab} onChange={onTabChange} items={[
-                {
-                  key: 'docs',
-                  label: <Space><FileSearchOutlined />{t('knowledgeBase.tabDocs')}</Space>,
-                  children: (
-                    <KBDocList
-                      docs={docs}
-                      parsingAll={parsingAll}
-                      processingAll={processingAll}
-                      buildingGlobal={buildingGlobal}
-                      processProgress={processProgress}
-                      completedCount={completedCount}
-                      pendingCount={pendingCount}
-                      failedCount={failedCount}
-                      pausedCount={pausedCount}
-                      processedDocIds={processedDocIds}
-                      processingDocId={processingDocId}
-                      knowledgeStats={knowledgeStats}
-                      globalSummary={globalSummary}
-                      onParseAll={onParseAll}
-                      onParseDocument={onParseDocument}
-                      onProcessDocument={onProcessDocument}
-                      onProcessAll={onProcessAll}
-                      onBuildGlobal={onBuildGlobal}
-                      onDeleteDoc={onDeleteDoc}
-                      onRefresh={onRefreshDocs}
-                      onPauseParse={onPauseParse}
-                      onResumeParse={onResumeParse}
-                      onRetryParse={onRetryParse}
-                      onPauseAll={onPauseAll}
-                      onResumeAll={onResumeAll}
-                      onCancelAll={onCancelAll}
-                      onViewDetail={onViewParseDetail}
-                    />
-                  ),
-                },
-                {
-                  key: 'content',
-                  label: <Space><EyeOutlined />{t('knowledgeBase.tabContent')}</Space>,
-                  children: (
-                    <KBContentBrowser
-                      kbId={selectedKB?.id || ''}
-                      docs={docs.filter(d => d.parse_status === 'completed')}
-                      loading={false}
-                    />
-                  ),
-                },
-              ]} />
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <Tabs activeKey={activeTab} onChange={onTabChange} items={[
+                  {
+                    key: 'docs',
+                    label: <Space><FileSearchOutlined />{t('knowledgeBase.tabDocs')}</Space>,
+                    children: (
+                      <KBDocList
+                        docs={docs}
+                        parsingAll={parsingAll}
+                        processingAll={processingAll}
+                        buildingGlobal={buildingGlobal}
+                        processProgress={processProgress}
+                        completedCount={completedCount}
+                        pendingCount={pendingCount}
+                        failedCount={failedCount}
+                        pausedCount={pausedCount}
+                        processedDocIds={processedDocIds}
+                        processingDocId={processingDocId}
+                        knowledgeStats={knowledgeStats}
+                        globalSummary={globalSummary}
+                        onParseAll={onParseAll}
+                        onParseDocument={onParseDocument}
+                        onProcessDocument={onProcessDocument}
+                        onProcessAll={onProcessAll}
+                        onBuildGlobal={onBuildGlobal}
+                        onDeleteDoc={onDeleteDoc}
+                        onRefresh={onRefreshDocs}
+                        onPauseParse={onPauseParse}
+                        onResumeParse={onResumeParse}
+                        onRetryParse={onRetryParse}
+                        onPauseAll={onPauseAll}
+                        onResumeAll={onResumeAll}
+                        onCancelAll={onCancelAll}
+                        onViewDetail={onViewParseDetail}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'content',
+                    label: <Space><EyeOutlined />{t('knowledgeBase.tabContent')}</Space>,
+                    children: (
+                      <KBContentBrowser
+                        kbId={selectedKB?.id || ''}
+                        docs={docs.filter(d => d.parse_status === 'completed')}
+                        loading={false}
+                      />
+                    ),
+                  },
+                ]} />
+              </div>
             </div>
           )}
         </div>

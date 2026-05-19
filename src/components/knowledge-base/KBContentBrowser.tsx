@@ -438,7 +438,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
   ]
 
   return (
-    <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 260px)', minHeight: 400 }}>
+    <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 220px)', minHeight: 400 }}>
       <div style={{
         width: 280,
         flexShrink: 0,

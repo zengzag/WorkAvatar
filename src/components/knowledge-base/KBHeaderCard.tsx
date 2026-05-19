@@ -1,11 +1,11 @@
 import { useTranslation } from 'react-i18next'
-import { Card, Typography, Space, Button, Tooltip, Dropdown, theme } from 'antd'
+import { Typography, Space, Button, Tooltip, Dropdown, Divider, theme } from 'antd'
 import {
   UploadOutlined, EditOutlined,
   ExportOutlined, ImportOutlined, FolderAddOutlined, MoreOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
-import { BulbOutlined } from '@ant-design/icons'
+import { BulbOutlined, DatabaseOutlined } from '@ant-design/icons'
 import type { KnowledgeBase } from './types'
 
 interface KBHeaderCardProps {
@@ -42,60 +42,53 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
-  const { Title, Text } = Typography
+  const { Text } = Typography
 
   return (
-    <Card style={{ marginBottom: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Title level={4} style={{ margin: 0 }} ellipsis>{selectedKB.name}</Title>
-          </div>
-          <Tooltip title={selectedKB.description || t('common.noDescription')}>
-            <Text type="secondary" ellipsis style={{ display: 'block' }}>{selectedKB.description || t('common.noDescription')}</Text>
-          </Tooltip>
-        </div>
-        <Space>
-          <Button icon={<UploadOutlined />} onClick={onUploadFiles} loading={uploadLoading} type="primary">
-            {t('knowledgeBase.uploadFile')}
-          </Button>
-          <Button icon={<FolderAddOutlined />} onClick={onUploadFolder}>
-            {t('knowledgeBase.uploadFolder')}
-          </Button>
-
-          <Dropdown
-            menu={{
-              items: [
-                {
-                  key: 'edit',
-                  label: t('knowledgeBase.edit'),
-                  icon: <EditOutlined />,
-                  onClick: onEditKB
-                },
-                {
-                  key: 'export',
-                  label: t('knowledgeBase.export'),
-                  icon: <ExportOutlined />,
-                  onClick: onOpenExportModal
-                },
-                {
-                  key: 'import',
-                  label: t('knowledgeBase.import'),
-                  icon: <ImportOutlined />,
-                  onClick: onOpenImportModal
-                }
-              ]
-            }}
-            trigger={['click']}
-          >
-            <Button icon={<MoreOutlined />}>
-              {t('common.more')}
-            </Button>
-          </Dropdown>
-        </Space>
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      padding: '8px 12px',
+      background: token.colorBgContainer,
+      borderRadius: 8,
+      border: `1px solid ${token.colorBorderSecondary}`,
+      marginBottom: 12,
+      flexWrap: 'wrap',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: '1 1 auto' }}>
+        <DatabaseOutlined style={{ color: token.colorPrimary, fontSize: 16, flexShrink: 0 }} />
+        <Tooltip title={selectedKB.description || t('common.noDescription')}>
+          <Text strong style={{ fontSize: 15 }} ellipsis>{selectedKB.name}</Text>
+        </Tooltip>
       </div>
 
-      <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
+      <Divider type="vertical" style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
+
+      <Space size={4} style={{ flexShrink: 0 }}>
+        <Button icon={<UploadOutlined />} onClick={onUploadFiles} loading={uploadLoading} type="primary" size="small">
+          {t('knowledgeBase.uploadFile')}
+        </Button>
+        <Button icon={<FolderAddOutlined />} onClick={onUploadFolder} size="small">
+          {t('knowledgeBase.uploadFolder')}
+        </Button>
+        <Dropdown
+          menu={{
+            items: [
+              { key: 'edit', label: t('knowledgeBase.edit'), icon: <EditOutlined />, onClick: onEditKB },
+              { key: 'export', label: t('knowledgeBase.export'), icon: <ExportOutlined />, onClick: onOpenExportModal },
+              { key: 'import', label: t('knowledgeBase.import'), icon: <ImportOutlined />, onClick: onOpenImportModal },
+            ]
+          }}
+          trigger={['click']}
+        >
+          <Button icon={<MoreOutlined />} size="small" />
+        </Dropdown>
+      </Space>
+
+      <Divider type="vertical" style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <LLMSelector
           providerId={selectedProviderId}
           modelId={selectedModelId}
@@ -105,7 +98,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
         <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
           <BulbOutlined
             style={{
-              fontSize: 18,
+              fontSize: 16,
               color: enableThinking ? token.colorWarning : token.colorTextSecondary,
               cursor: 'pointer',
               transition: 'color 0.3s'
@@ -114,7 +107,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
           />
         </Tooltip>
       </div>
-    </Card>
+    </div>
   )
 }
 
