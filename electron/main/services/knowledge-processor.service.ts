@@ -31,6 +31,19 @@ interface DocumentSummary {
   }>
 }
 
+interface LLMTocEntry {
+  title: string
+  level: number
+  lineNumber: number
+}
+
+interface ValidatedTocEntry {
+  title: string
+  level: number
+  lineNumber: number
+  offset: number
+}
+
 class KnowledgeProcessorService {
   private kbDb: KBDatabaseService
   private llmClient: LLMClientService
@@ -54,6 +67,9 @@ class KnowledgeProcessorService {
 
   private static readonly MAX_PARAGRAPH_CHARS = 5000
   private static readonly PARAGRAPH_OVERLAP_CHARS = 500
+  private static readonly TOC_CHUNK_LINES = 100
+  private static readonly TOC_OVERLAP_LINES = 10
+  private static readonly TOC_MIN_HEADING_DENSITY = 8000
 
   identifyParagraphs(text: string): ParagraphInfo[] {
     const paragraphs: ParagraphInfo[] = []
@@ -184,6 +200,295 @@ class KnowledgeProcessorService {
         level: h.level,
         path: headingStack.map(s => s.title).join(' > '),
         offset: h.offset,
+      }
+    })
+  }
+
+  needsTocRestoration(text: string): boolean {
+    const lines = text.split('\n')
+    let headingCount = 0
+    for (const line of lines) {
+      if (/^#{1,4}\s+/.test(line.trim())) {
+        headingCount++
+      }
+    }
+    if (headingCount === 0) return true
+    if (text.length / headingCount > KnowledgeProcessorService.TOC_MIN_HEADING_DENSITY) return true
+    return false
+  }
+
+  private addLineNumbers(text: string, startLine: number = 1): string {
+    const lines = text.split('\n')
+    return lines.map((line, i) => `[L${startLine + i}] ${line}`).join('\n')
+  }
+
+  private async callLLMForToc(
+    numberedContent: string,
+    providerId: string,
+    modelId?: string,
+    enableThinking?: boolean
+  ): Promise<LLMTocEntry[]> {
+    const systemPrompt = `你是一个专业的文档结构分析专家。你的任务是分析文档内容，精确识别其中的章节标题、层级关系和位置。
+
+识别规则：
+1. 只识别真正的结构性标题，不要把正文中的强调文本、列表项、表格内容误认为标题
+2. 标题特征：通常是独立成行的短文本（一般不超过60字），具有概括性
+3. 常见标题模式：
+   - 编号型："第X章/节/部分"、"1."/"1.1"/"1.1.1"、"一、"/"二、"
+   - 无编号型：独立成行的概括性短语，后续跟随详细说明内容
+4. level表示层级深度：1=最高级（章/部分），2=次级（节），3=更次级（小节），4=最细粒度
+5. lineNumber必须精确对应内容中的行号标记[L数字]
+
+输出要求：
+- 严格按照JSON格式输出
+- 只返回JSON，不要包含任何解释文字
+- 如果无法识别任何标题结构，返回{"toc":[]}`
+
+    const userPrompt = `请分析以下文档内容，识别所有章节标题及其位置。
+
+文档内容：
+${numberedContent}
+
+返回格式：
+{"toc":[{"title":"标题文字","level":1,"lineNumber":5}]}`
+
+    try {
+      const result = await this.llmClient.chat(providerId, [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ], {
+        temperature: 0.1,
+        ...(modelId ? { model: modelId } : {}),
+        enable_thinking: enableThinking,
+      })
+
+      const parsed = this.parseJSON<{ toc: LLMTocEntry[] }>(result, { toc: [] })
+      return Array.isArray(parsed.toc) ? parsed.toc : []
+    } catch {
+      return []
+    }
+  }
+
+  private lineContainsTitle(lineContent: string, title: string): boolean {
+    const normalize = (s: string) => s.replace(/[\s\u3000]+/g, '').toLowerCase()
+    const normalizedLine = normalize(lineContent)
+    const normalizedTitle = normalize(title)
+    if (!normalizedLine || !normalizedTitle) return false
+    if (normalizedLine === normalizedTitle) return true
+    if (normalizedLine.includes(normalizedTitle) || normalizedTitle.includes(normalizedLine)) return true
+    const titleChars = [...normalizedTitle]
+    const lineChars = [...normalizedLine]
+    const shorterLen = Math.min(titleChars.length, lineChars.length)
+    if (shorterLen === 0) return false
+    let matchCount = 0
+    for (const ch of titleChars) {
+      if (lineChars.includes(ch)) matchCount++
+    }
+    return matchCount / titleChars.length >= 0.6
+  }
+
+  validateTocEntries(text: string, entries: LLMTocEntry[]): ValidatedTocEntry[] {
+    const lines = text.split('\n')
+    const lineOffsets: number[] = []
+    let offset = 0
+    for (const line of lines) {
+      lineOffsets.push(offset)
+      offset += line.length + 1
+    }
+
+    const validated: ValidatedTocEntry[] = []
+
+    for (const entry of entries) {
+      if (!entry.title || entry.lineNumber == null || entry.level == null) continue
+      if (entry.level < 1 || entry.level > 4) continue
+
+      const targetLineIndex = entry.lineNumber - 1
+      let foundLineIndex = -1
+
+      if (targetLineIndex >= 0 && targetLineIndex < lines.length) {
+        if (this.lineContainsTitle(lines[targetLineIndex], entry.title)) {
+          foundLineIndex = targetLineIndex
+        }
+      }
+
+      if (foundLineIndex === -1) {
+        for (let delta = -5; delta <= 5; delta++) {
+          const idx = targetLineIndex + delta
+          if (idx >= 0 && idx < lines.length && this.lineContainsTitle(lines[idx], entry.title)) {
+            foundLineIndex = idx
+            break
+          }
+        }
+      }
+
+      if (foundLineIndex === -1) {
+        for (let i = 0; i < lines.length; i++) {
+          if (this.lineContainsTitle(lines[i], entry.title)) {
+            foundLineIndex = i
+            break
+          }
+        }
+      }
+
+      if (foundLineIndex >= 0) {
+        validated.push({
+          title: entry.title,
+          level: entry.level,
+          lineNumber: foundLineIndex + 1,
+          offset: lineOffsets[foundLineIndex],
+        })
+      } else if (targetLineIndex >= 0 && targetLineIndex < lines.length) {
+        const trimmedLine = lines[targetLineIndex].trim()
+        if (trimmedLine.length > 0 && trimmedLine.length <= 10) {
+          validated.push({
+            title: entry.title,
+            level: entry.level,
+            lineNumber: targetLineIndex + 1,
+            offset: lineOffsets[targetLineIndex],
+          })
+        }
+      }
+    }
+
+    return validated
+  }
+
+  private deduplicateTocEntries(entries: LLMTocEntry[]): LLMTocEntry[] {
+    const sorted = [...entries].sort((a, b) => a.lineNumber - b.lineNumber)
+    const result: LLMTocEntry[] = []
+
+    for (const entry of sorted) {
+      const isDuplicate = result.some(existing =>
+        Math.abs(existing.lineNumber - entry.lineNumber) <= 3 &&
+        this.lineContainsTitle(existing.title, entry.title)
+      )
+      if (!isDuplicate) {
+        result.push(entry)
+      }
+    }
+
+    return result
+  }
+
+  async restoreTocWithLLM(
+    text: string,
+    providerId: string,
+    modelId?: string,
+    enableThinking?: boolean,
+    onProgress?: (stage: string, detail: string) => void
+  ): Promise<ValidatedTocEntry[]> {
+    const lines = text.split('\n')
+
+    onProgress?.('toc_restore', 'Starting TOC restoration with LLM...')
+
+    if (lines.length <= KnowledgeProcessorService.TOC_CHUNK_LINES) {
+      const numberedContent = this.addLineNumbers(text)
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking)
+      return this.validateTocEntries(text, entries)
+    }
+
+    const allEntries: LLMTocEntry[] = []
+    let startLine = 0
+    let chunkIndex = 0
+
+    while (startLine < lines.length) {
+      const endLine = Math.min(startLine + KnowledgeProcessorService.TOC_CHUNK_LINES, lines.length)
+      const chunkLines = lines.slice(startLine, endLine)
+      const numberedContent = this.addLineNumbers(chunkLines.join('\n'), startLine + 1)
+
+      onProgress?.('toc_restore', `Analyzing chunk ${chunkIndex + 1} for TOC structure...`)
+
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking)
+      allEntries.push(...entries)
+
+      chunkIndex++
+      if (endLine >= lines.length) break
+      startLine = endLine - KnowledgeProcessorService.TOC_OVERLAP_LINES
+    }
+
+    const deduplicated = this.deduplicateTocEntries(allEntries)
+    const validated = this.validateTocEntries(text, deduplicated)
+
+    onProgress?.('toc_restore', `TOC restoration completed: ${validated.length} entries found`)
+
+    return validated
+  }
+
+  identifyParagraphsFromLLMToc(text: string, tocEntries: ValidatedTocEntry[]): ParagraphInfo[] {
+    if (tocEntries.length === 0) {
+      return this.identifyParagraphs(text)
+    }
+
+    const paragraphs: ParagraphInfo[] = []
+    const sortedEntries = [...tocEntries].sort((a, b) => a.offset - b.offset)
+
+    const headingStack: Array<{ title: string; level: number }> = []
+
+    for (let i = 0; i < sortedEntries.length; i++) {
+      const entry = sortedEntries[i]
+
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= entry.level) {
+        headingStack.pop()
+      }
+      headingStack.push({ title: entry.title, level: entry.level })
+
+      const titlePath = headingStack.map(h => h.title).join(' > ')
+      const nextEntry = sortedEntries[i + 1]
+      const startOff = entry.offset
+      const endOff = nextEntry ? nextEntry.offset : text.length
+      const content = text.substring(startOff, endOff).trim()
+
+      if (content.length > 10) {
+        if (content.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
+          const subChunks = this.splitIntoChunks(content, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
+          for (let si = 0; si < subChunks.length; si++) {
+            const subStartInContent = content.indexOf(subChunks[si])
+            const absStartOff = startOff + (subStartInContent >= 0 ? subStartInContent : si * (KnowledgeProcessorService.MAX_PARAGRAPH_CHARS - KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS))
+            paragraphs.push({
+              title: subChunks.length > 1 ? `${entry.title} (${si + 1})` : entry.title,
+              titlePath: subChunks.length > 1 ? `${titlePath} (${si + 1})` : titlePath,
+              index: paragraphs.length,
+              startOffset: absStartOff,
+              endOffset: absStartOff + subChunks[si].length,
+              content: subChunks[si],
+              level: entry.level,
+            })
+          }
+        } else {
+          paragraphs.push({
+            title: entry.title,
+            titlePath,
+            index: paragraphs.length,
+            startOffset: startOff,
+            endOffset: endOff,
+            content,
+            level: entry.level,
+          })
+        }
+      }
+    }
+
+    if (paragraphs.length === 0) {
+      return this.identifyParagraphs(text)
+    }
+
+    return paragraphs
+  }
+
+  buildTocWithPath(entries: ValidatedTocEntry[]): Array<{ title: string; level: number; path: string; offset: number }> {
+    const sorted = [...entries].sort((a, b) => a.offset - b.offset)
+    const headingStack: Array<{ title: string; level: number }> = []
+
+    return sorted.map(entry => {
+      while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= entry.level) {
+        headingStack.pop()
+      }
+      headingStack.push({ title: entry.title, level: entry.level })
+      return {
+        title: entry.title,
+        level: entry.level,
+        path: headingStack.map(h => h.title).join(' > '),
+        offset: entry.offset,
       }
     })
   }
@@ -321,7 +626,7 @@ ${summariesText.substring(0, 15000)}
 ${docsText.substring(0, 20000)}
 
 返回字段：
-- summary: 全局摘要（500-1500字）
+- summary: 全局摘要（150字以内）
 - keyTopics: 核心主题列表
 
 只返回JSON。`
@@ -471,12 +776,16 @@ ${docsText.substring(0, 20000)}
 
   saveDocumentSummary(kbId: string, documentId: string, docSummary: DocumentSummary): void {
     const existing = this.db.prepare(
-      'SELECT id FROM kb_document_summaries WHERE document_id = ?'
+      'SELECT id, toc_json FROM kb_document_summaries WHERE document_id = ?'
     ).get(documentId) as any
+
+    const existingTocJson = existing?.toc_json
+    const existingToc = existingTocJson ? JSON.parse(existingTocJson) : []
+    const finalToc = existingToc.length > 0 ? existingToc : docSummary.toc
 
     const data = {
       summary: docSummary.summary,
-      toc_json: JSON.stringify(docSummary.toc),
+      toc_json: JSON.stringify(finalToc),
       keywords_json: JSON.stringify(docSummary.keywords),
       main_topics_json: JSON.stringify(docSummary.mainTopics),
     }

@@ -476,6 +476,34 @@ class KBDocumentService {
     })
 
     try {
+      this.processor.updateProcessingJob(jobId, 'running', 0, 'toc_restore')
+      onProgress?.('toc_restore', `Checking TOC restoration need: ${doc.original_name}`)
+      this.taskQueue.updateTask(taskId, { progress: 5, progressText: `Checking TOC: ${doc.original_name}` })
+
+      const content = this.getDocumentContent(docId)
+      if (content && this.processor.needsTocRestoration(content)) {
+        onProgress?.('toc_restore', `Restoring TOC for: ${doc.original_name}`)
+        this.taskQueue.updateTask(taskId, { progress: 8, progressText: `Restoring TOC: ${doc.original_name}` })
+
+        try {
+          const restoredToc = await this.processor.restoreTocWithLLM(
+            content, provider, modelId, enableThinking, onProgress
+          )
+
+          if (restoredToc.length > 0) {
+            const newParagraphs = this.processor.identifyParagraphsFromLLMToc(content, restoredToc)
+            this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, newParagraphs)
+
+            const tocForSave = this.processor.buildTocWithPath(restoredToc)
+            this.processor.saveTocOnly(doc.kb_id, docId, tocForSave)
+
+            onProgress?.('toc_restore', `TOC restored: ${restoredToc.length} entries, ${newParagraphs.length} paragraphs`)
+          }
+        } catch (tocError) {
+          onProgress?.('toc_restore', `TOC restoration failed, using default chunking: ${tocError instanceof Error ? tocError.message : 'Unknown'}`)
+        }
+      }
+
       this.processor.updateProcessingJob(jobId, 'running', 0, 'paragraph_summary')
       onProgress?.('paragraph_summary', `Generating paragraph summaries: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Paragraph summary: ${doc.original_name}` })
