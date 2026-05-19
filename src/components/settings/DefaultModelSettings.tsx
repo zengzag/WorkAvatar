@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Card, Space, Typography, App, theme, Alert } from 'antd'
-import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined } from '@ant-design/icons'
+import { Card, Space, Typography, App, theme, Alert, InputNumber, Button } from 'antd'
+import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined, SaveOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
-import { getAllSceneDefaultModels, getSceneDefaultModel, setSceneDefaultModel } from '../../utils/default-model'
+import { getAllSceneDefaultModels, setSceneDefaultModel } from '../../utils/default-model'
 import type { SceneKey, SceneDefaultModel } from '../../utils/default-model'
 import type { LLMProvider } from '../../types'
 
@@ -35,10 +35,31 @@ const DefaultModelSettings: React.FC = () => {
     } catch {}
   }, [])
 
+  const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
+
   useEffect(() => {
     loadProviders()
     loadConfigs()
+    loadEmbeddingMaxChars()
   }, [loadProviders])
+
+  const loadEmbeddingMaxChars = async () => {
+    try {
+      const result = await window.electronAPI.settings.get({ key: 'embedding_max_chars' })
+      if (result?.value) {
+        setEmbeddingMaxChars(parseInt(result.value, 10))
+      }
+    } catch {}
+  }
+
+  const handleSaveEmbeddingMaxChars = async () => {
+    try {
+      await window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
+      message.success(t('settings.embeddingMaxCharsSaved'))
+    } catch {
+      message.error(t('settings.defaultModelSaveFailed'))
+    }
+  }
 
   const loadConfigs = async () => {
     try {
@@ -55,46 +76,17 @@ const DefaultModelSettings: React.FC = () => {
     { key: 'embedding', icon: <CloudServerOutlined style={{ fontSize: 20, color: '#eb2f96' }} /> },
   ]
 
-  const handleProviderChange = (scene: SceneKey) => async (providerId: string) => {
+  const handleLlmChange = (scene: SceneKey) => async (providerId: string, modelId: string) => {
     const newConfig: SceneDefaultModel = {
       provider_id: providerId,
-      model_id: '',
-    }
-    try {
-      await setSceneDefaultModel(scene, newConfig)
-      setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-      message.success(t('settings.defaultModelSaved'))
-    } catch {
-      message.error(t('settings.defaultModelSaveFailed'))
-    }
-  }
-
-  const handleModelChange = (scene: SceneKey) => async (modelId: string) => {
-    const current = configs[scene]
-    if (!current) {
-      const cached = await getSceneDefaultModel(scene)
-      if (!cached) return
-      const newConfig: SceneDefaultModel = {
-        ...cached,
-        model_id: modelId,
-      }
-      try {
-        await setSceneDefaultModel(scene, newConfig)
-        setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-        message.success(t('settings.defaultModelSaved'))
-      } catch {
-        message.error(t('settings.defaultModelSaveFailed'))
-      }
-      return
-    }
-    const newConfig: SceneDefaultModel = {
-      ...current,
       model_id: modelId,
     }
     try {
       await setSceneDefaultModel(scene, newConfig)
       setConfigs(prev => ({ ...prev, [scene]: newConfig }))
-      message.success(t('settings.defaultModelSaved'))
+      if (providerId) {
+        message.success(t('settings.defaultModelSaved'))
+      }
     } catch {
       message.error(t('settings.defaultModelSaveFailed'))
     }
@@ -157,8 +149,7 @@ const DefaultModelSettings: React.FC = () => {
                   <LLMSelector
                     providerId={config?.provider_id || ''}
                     modelId={config?.model_id || ''}
-                    onProviderChange={handleProviderChange(scene.key)}
-                    onModelChange={handleModelChange(scene.key)}
+                    onChange={handleLlmChange(scene.key)}
                     modelCategory={scene.key === 'embedding' ? 'embedding' : 'chat'}
                     providers={providers}
                     style={{ flexShrink: 0 }}
@@ -177,6 +168,47 @@ const DefaultModelSettings: React.FC = () => {
             </Card>
           )
         })}
+
+        <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <CloudServerOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+              </div>
+              <div>
+                <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <InputNumber
+                value={embeddingMaxChars}
+                onChange={v => setEmbeddingMaxChars(v || 2000)}
+                min={100}
+                max={32000}
+                step={100}
+                style={{ width: 120 }}
+              />
+              <Button
+                type="primary"
+                size="small"
+                icon={<SaveOutlined />}
+                onClick={handleSaveEmbeddingMaxChars}
+              >
+                {t('common.save')}
+              </Button>
+            </div>
+          </div>
+        </Card>
       </Space>
     </div>
   )

@@ -11,8 +11,7 @@ import LLMClientService from './llm-client.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
 import KBDocumentService from './kb-document.service'
-import KBEntityService from './kb-entity.service'
-import KBChapterService from './kb-chapter.service'
+import KBParagraphService from './kb-paragraph.service'
 import KBSummaryService from './kb-summary.service'
 import KBExportService from './kb-export.service'
 import type { SearchResult } from './search-engine.service'
@@ -26,8 +25,7 @@ class KnowledgeBaseService {
   private defaultKBId: string | null = null
 
   private documentService: KBDocumentService
-  private entityService: KBEntityService
-  private chapterService: KBChapterService
+  private paragraphService: KBParagraphService
   private summaryService: KBSummaryService
   private exportService: KBExportService
 
@@ -55,8 +53,7 @@ class KnowledgeBaseService {
       ensureDefaultKB: () => this.ensureDefaultKB(),
     })
 
-    this.entityService = new KBEntityService(this.processor)
-    this.chapterService = new KBChapterService(this.processor)
+    this.paragraphService = new KBParagraphService(this.processor)
 
     this.summaryService = new KBSummaryService({
       db,
@@ -193,11 +190,11 @@ class KnowledgeBaseService {
   getDocumentContent(docId: string) { return this.documentService.getDocumentContent(docId) }
   getParsedJson(docId: string) { return this.documentService.getParsedJson(docId) }
   async importOrSyncToKB(filePath: string, options?: { contentText?: string; parsedJson?: string }) { return this.documentService.importOrSyncToKB(filePath, options) }
-  searchChapters(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchChapters(kbId, query, topK) }
+  searchParagraphs(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchParagraphs(kbId, query, topK) }
   searchDocumentSummaries(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchDocumentSummaries(kbId, query, topK) }
   search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] { return this.documentService.search(kbId, query, topK, documentIds) }
   async searchWithEmbedding(kbId: string, query: string, topK: number = 10, documentIds?: string[], providerId?: string) { return this.documentService.searchWithEmbedding(kbId, query, topK, documentIds, providerId) }
-  advancedSearch(kbId: string, query: string, topK: number = 10, documentType?: string): SearchResult[] { return this.documentService.advancedSearch(kbId, query, topK, documentType) }
+  advancedSearch(kbId: string, query: string, topK: number = 10): SearchResult[] { return this.documentService.advancedSearch(kbId, query, topK) }
   getSearchIndexStats(kbId: string) { return this.documentService.getSearchIndexStats(kbId) }
   async rebuildSearchIndex(kbId: string) { return this.documentService.rebuildSearchIndex(kbId) }
   async rebuildEmbeddings(kbId: string) { return this.documentService.rebuildEmbeddings(kbId) }
@@ -211,18 +208,14 @@ class KnowledgeBaseService {
   cancelAllParses() { return this.documentService.cancelAllParses() }
   getPausedDocIds() { return this.documentService.getPausedDocIds() }
 
-  getEntities(kbId: string, type?: string) { return this.entityService.getEntities(kbId, type) }
-  getEntityByName(kbId: string, name: string) { return this.entityService.getEntityByName(kbId, name) }
-  getEntityRelations(entityId: string, depth: number = 1) { return this.entityService.getEntityRelations(entityId, depth) }
-  getEntityMentions(entityId: string) { return this.entityService.getEntityMentions(entityId) }
-
-  getChapters(documentId: string) { return this.chapterService.getChapters(documentId) }
+  getParagraphs(documentId: string) { return this.paragraphService.getParagraphs(documentId) }
+  getParagraphsByKb(kbId: string) { return this.processor.getParagraphsByKb(kbId) }
+  updateParagraph(paragraphId: string, updates: { summary?: string; keywords_json?: string; content?: string; title?: string }) { return this.processor.updateParagraph(paragraphId, updates) }
+  updateDocumentSummary(documentId: string, updates: { summary?: string; keywords_json?: string; main_topics_json?: string }) { return this.processor.updateDocumentSummary(documentId, updates) }
 
   getKnowledgeStats(kbId: string) { return this.summaryService.getKnowledgeStats(kbId) }
-  getAllDocumentSummaries(kbId: string) { return this.summaryService.getAllDocumentSummaries(kbId) }
   getDocumentSummary(documentId: string) { return this.summaryService.getDocumentSummary(documentId) }
   getGlobalSummary(kbId: string) { return this.summaryService.getGlobalSummary(kbId) }
-  generateTimeline(kbId: string, topic?: string) { return this.summaryService.generateTimeline(kbId, topic) }
   getProcessingJobs(kbId: string, status?: string) { return this.summaryService.getProcessingJobs(kbId, status) }
   async buildGlobalKnowledge(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean, onProgress?: (stage: string, detail: string) => void) {
     const kb = this.getKB(kbId)
@@ -234,7 +227,6 @@ class KnowledgeBaseService {
   async exportKBSummary(kbId: string, exportPath: string, format: 'json-ld' | 'csv', onProgress?: (stage: string, detail: string) => void) { return this.exportService.exportKBSummary(kbId, exportPath, format, onProgress) }
   async exportKBDocuments(kbId: string, exportPath: string, docIds?: string[], onProgress?: (stage: string, detail: string) => void) { return this.exportService.exportKBDocuments(kbId, exportPath, docIds, onProgress) }
   async importKBFull(importPath: string, kbName?: string, conflictStrategy?: 'skip' | 'overwrite' | 'rename', onProgress?: (stage: string, detail: string) => void) { return this.exportService.importKBFull(importPath, kbName, conflictStrategy, onProgress) }
-  async importKBGraph(kbId: string, importPath: string, format: 'json-ld' | 'rdf', conflictStrategy?: 'skip' | 'overwrite' | 'merge', onProgress?: (stage: string, detail: string) => void) { return this.exportService.importKBGraph(kbId, importPath, format, conflictStrategy, onProgress) }
 }
 
 export default KnowledgeBaseService

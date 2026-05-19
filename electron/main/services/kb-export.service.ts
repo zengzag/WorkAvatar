@@ -89,8 +89,8 @@ class KBExportService {
         'SELECT * FROM kb_documents WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const chapters = this.db.prepare(
-        'SELECT * FROM kb_chapters WHERE kb_id = ?'
+      const paragraphs = this.db.prepare(
+        'SELECT * FROM kb_paragraphs WHERE kb_id = ?'
       ).all(kbId) as any[]
 
       const docSummaries = this.db.prepare(
@@ -101,21 +101,7 @@ class KBExportService {
         'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
       ).get(kbId) as any
 
-      const entities = this.db.prepare(
-        'SELECT * FROM kb_entities WHERE kb_id = ?'
-      ).all(kbId) as any[]
-
-      const entityRelations = this.db.prepare(
-        'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
-      ).all(kbId) as any[]
-
-      const entityMentions = this.db.prepare(
-        `SELECT m.* FROM kb_entity_mentions m
-         INNER JOIN kb_entities e ON m.entity_id = e.id
-         WHERE e.kb_id = ?`
-      ).all(kbId) as any[]
-
-      onProgress?.('collecting', `Collected ${documents.length} documents, ${entities.length} entities`)
+      onProgress?.('collecting', `Collected ${documents.length} documents, ${paragraphs.length} paragraphs`)
 
       const knowledgeData = {
         documents: documents.map(d => ({
@@ -129,12 +115,9 @@ class KBExportService {
           created_at: d.created_at,
           updated_at: d.updated_at,
         })),
-        chapters,
+        paragraphs,
         docSummaries,
         globalSummary: globalSummary || null,
-        entities,
-        entityRelations,
-        entityMentions,
       }
 
       const zip = new AdmZip()
@@ -157,7 +140,7 @@ class KBExportService {
 
       onProgress?.('saving', 'Saving ZIP archive...')
       zip.writeZip(exportPath)
-      onProgress?.('complete', `Export complete: ${documents.length} documents, ${entities.length} entities`)
+      onProgress?.('complete', `Export complete: ${documents.length} documents, ${paragraphs.length} paragraphs`)
 
       return { success: true }
     } catch (error) {
@@ -187,16 +170,8 @@ class KBExportService {
         'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
       ).all(kbId) as any[]
 
-      const entities = this.db.prepare(
-        'SELECT * FROM kb_entities WHERE kb_id = ?'
-      ).all(kbId) as any[]
-
-      const entityRelations = this.db.prepare(
-        'SELECT * FROM kb_entity_relations WHERE kb_id = ?'
-      ).all(kbId) as any[]
-
-      const chapters = this.db.prepare(
-        'SELECT id, kb_id, document_id, title, chapter_index, summary, keywords_json, entities_json FROM kb_chapters WHERE kb_id = ?'
+      const paragraphs = this.db.prepare(
+        'SELECT id, kb_id, document_id, title, title_path, level, paragraph_index, summary, keywords_json FROM kb_paragraphs WHERE kb_id = ?'
       ).all(kbId) as any[]
 
       if (format === 'json-ld') {
@@ -208,10 +183,8 @@ class KBExportService {
           'description': 'http://schema.org/description',
           'summary': 'http://schema.org/abstract',
           'type': 'http://schema.org/additionalType',
-          'entity': 'https://workavatar.ai/ontology/entity',
-          'relation': 'https://workavatar.ai/ontology/relation',
           'document': 'https://workavatar.ai/ontology/document',
-          'chapter': 'https://workavatar.ai/ontology/chapter',
+          'paragraph': 'https://workavatar.ai/ontology/paragraph',
         }
 
         const graph: any[] = []
@@ -229,8 +202,6 @@ class KBExportService {
             '@type': 'GlobalSummary',
             summary: globalSummary.summary,
             keyTopics: this.safeJsonParse(globalSummary.key_topics_json),
-            keyEntities: this.safeJsonParse(globalSummary.key_entities_json),
-            globalTimeline: this.safeJsonParse(globalSummary.global_timeline_json),
           })
         }
 
@@ -239,46 +210,21 @@ class KBExportService {
             '@id': `kb:${kbId}/doc/${ds.document_id}/summary`,
             '@type': 'DocumentSummary',
             summary: ds.summary,
-            keyEntities: this.safeJsonParse(ds.key_entities_json),
-            timeline: this.safeJsonParse(ds.timeline_json),
+            toc: this.safeJsonParse(ds.toc_json),
             keywords: this.safeJsonParse(ds.keywords_json),
             mainTopics: this.safeJsonParse(ds.main_topics_json),
           })
         }
 
-        for (const entity of entities) {
+        for (const p of paragraphs) {
           graph.push({
-            '@id': `kb:${kbId}/entity/${entity.id}`,
-            '@type': 'Entity',
-            name: entity.name,
-            entityType: entity.type,
-            description: entity.description,
-            aliases: this.safeJsonParse(entity.aliases_json),
-            attributes: this.safeJsonParse(entity.attributes_json, {}),
-            mentionCount: entity.mention_count,
-          })
-        }
-
-        for (const rel of entityRelations) {
-          graph.push({
-            '@id': `kb:${kbId}/relation/${rel.id}`,
-            '@type': 'Relation',
-            source: { '@id': `kb:${kbId}/entity/${rel.source_entity_id}` },
-            target: { '@id': `kb:${kbId}/entity/${rel.target_entity_id}` },
-            relationType: rel.relation_type,
-            description: rel.description,
-            confidence: rel.confidence,
-          })
-        }
-
-        for (const ch of chapters) {
-          graph.push({
-            '@id': `kb:${kbId}/chapter/${ch.id}`,
-            '@type': 'Chapter',
-            title: ch.title,
-            summary: ch.summary,
-            keywords: this.safeJsonParse(ch.keywords_json),
-            entities: this.safeJsonParse(ch.entities_json),
+            '@id': `kb:${kbId}/paragraph/${p.id}`,
+            '@type': 'Paragraph',
+            title: p.title,
+            titlePath: p.title_path,
+            level: p.level,
+            summary: p.summary,
+            keywords: this.safeJsonParse(p.keywords_json),
           })
         }
 
@@ -293,9 +239,9 @@ class KBExportService {
         const csvLines: string[] = []
 
         csvLines.push('=== Global Summary ===')
-        csvLines.push('summary,key_topics,key_entities')
+        csvLines.push('summary,key_topics')
         if (globalSummary) {
-          csvLines.push(`"${(globalSummary.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(globalSummary.key_topics_json)).replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(globalSummary.key_entities_json)).replace(/"/g, '""')}"`)
+          csvLines.push(`"${(globalSummary.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(globalSummary.key_topics_json)).replace(/"/g, '""')}"`)
         }
         csvLines.push('')
 
@@ -306,30 +252,16 @@ class KBExportService {
         }
         csvLines.push('')
 
-        csvLines.push('=== Entities ===')
-        csvLines.push('id,name,type,description,aliases,mention_count')
-        for (const entity of entities) {
-          csvLines.push(`"${entity.id}","${(entity.name || '').replace(/"/g, '""')}","${entity.type}","${(entity.description || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(entity.aliases_json)).replace(/"/g, '""')}",${entity.mention_count || 0}`)
-        }
-        csvLines.push('')
-
-        csvLines.push('=== Entity Relations ===')
-        csvLines.push('source_entity_id,target_entity_id,relation_type,description,confidence')
-        for (const rel of entityRelations) {
-          csvLines.push(`"${rel.source_entity_id}","${rel.target_entity_id}","${(rel.relation_type || '').replace(/"/g, '""')}","${(rel.description || '').replace(/"/g, '""')}",${rel.confidence || ''}`)
-        }
-        csvLines.push('')
-
-        csvLines.push('=== Chapters ===')
-        csvLines.push('document_id,title,summary,keywords')
-        for (const ch of chapters) {
-          csvLines.push(`"${ch.document_id}","${(ch.title || '').replace(/"/g, '""')}","${(ch.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(ch.keywords_json)).replace(/"/g, '""')}"`)
+        csvLines.push('=== Paragraphs ===')
+        csvLines.push('document_id,title,title_path,level,summary,keywords')
+        for (const p of paragraphs) {
+          csvLines.push(`"${p.document_id}","${(p.title || '').replace(/"/g, '""')}","${(p.title_path || '').replace(/"/g, '""')}",${p.level},"${(p.summary || '').replace(/"/g, '""')}","${JSON.stringify(this.safeJsonParse(p.keywords_json)).replace(/"/g, '""')}"`)
         }
 
         fs.writeFileSync(exportPath, csvLines.join('\n'), 'utf-8')
       }
 
-      onProgress?.('complete', `Summary export complete: ${entities.length} entities, ${entityRelations.length} relations`)
+      onProgress?.('complete', `Summary export complete: ${docSummaries.length} document summaries, ${paragraphs.length} paragraphs`)
       return { success: true }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -473,23 +405,26 @@ class KBExportService {
         }
       }
 
-      onProgress?.('importing_chapters', `Importing ${knowledgeData.chapters?.length || 0} chapters...`)
-      const chapters = knowledgeData.chapters || []
-      const chapterIdMap = new Map<string, string>()
-      for (let i = 0; i < chapters.length; i++) {
-        const ch = chapters[i]
-        const newDocId = docIdMap.get(ch.document_id)
+      onProgress?.('importing_paragraphs', `Importing ${knowledgeData.paragraphs?.length || 0} paragraphs...`)
+      const paragraphs = knowledgeData.paragraphs || []
+      for (let i = 0; i < paragraphs.length; i++) {
+        const p = paragraphs[i]
+        const newDocId = docIdMap.get(p.document_id)
         if (!newDocId) continue
 
-        const newChapterId = generateId()
-        chapterIdMap.set(ch.id, newChapterId)
+        const newParagraphId = generateId()
 
         this.db.prepare(`
-          INSERT INTO kb_chapters (id, kb_id, document_id, title, chapter_index, start_offset, end_offset, content, summary, keywords_json, entities_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(newChapterId, newKBId, newDocId, ch.title, ch.chapter_index,
-          ch.start_offset, ch.end_offset, ch.content || '',
-          ch.summary || null, ch.keywords_json || '[]', ch.entities_json || '[]')
+          INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        `).run(newParagraphId, newKBId, newDocId, p.title, p.title_path || '',
+          p.level || 1, p.paragraph_index,
+          p.start_offset, p.end_offset, p.content || '',
+          p.summary || null, p.keywords_json || '[]')
+
+        if ((i + 1) % 20 === 0 || i === paragraphs.length - 1) {
+          onProgress?.('importing_paragraphs', `Imported ${i + 1}/${paragraphs.length} paragraphs...`)
+        }
       }
 
       onProgress?.('importing_summaries', 'Importing document summaries...')
@@ -500,11 +435,10 @@ class KBExportService {
 
         const id = generateId()
         this.db.prepare(`
-          INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, key_entities_json, timeline_json, keywords_json, main_topics_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+          INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, toc_json, keywords_json, main_topics_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(id, newKBId, newDocId, ds.summary || '',
-          ds.key_entities_json || '[]', ds.timeline_json || '[]',
-          ds.keywords_json || '[]', ds.main_topics_json || '[]')
+          ds.toc_json || '[]', ds.keywords_json || '[]', ds.main_topics_json || '[]')
       }
 
       if (knowledgeData.globalSummary) {
@@ -512,62 +446,9 @@ class KBExportService {
         const gs = knowledgeData.globalSummary
         const id = generateId()
         this.db.prepare(`
-          INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, key_entities_json, global_timeline_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(id, newKBId, gs.summary || '',
-          gs.key_topics_json || '[]', gs.key_entities_json || '[]', gs.global_timeline_json || '[]')
-      }
-
-      onProgress?.('importing_entities', `Importing ${knowledgeData.entities?.length || 0} entities...`)
-      const entities = knowledgeData.entities || []
-      const entityIdMap = new Map<string, string>()
-      for (let i = 0; i < entities.length; i++) {
-        const entity = entities[i]
-        const newEntityId = generateId()
-        entityIdMap.set(entity.id, newEntityId)
-
-        this.db.prepare(`
-          INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, first_seen_doc_id, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(newEntityId, newKBId, entity.name, entity.type, entity.description,
-          entity.aliases_json || '[]', entity.attributes_json || '{}',
-          entity.mention_count || 0, docIdMap.get(entity.first_seen_doc_id) || null)
-
-        if ((i + 1) % 20 === 0 || i === entities.length - 1) {
-          onProgress?.('importing_entities', `Imported ${i + 1}/${entities.length} entities...`)
-        }
-      }
-
-      onProgress?.('importing_relations', `Importing ${knowledgeData.entityRelations?.length || 0} relations...`)
-      const relations = knowledgeData.entityRelations || []
-      for (const rel of relations) {
-        const newSourceId = entityIdMap.get(rel.source_entity_id)
-        const newTargetId = entityIdMap.get(rel.target_entity_id)
-        if (!newSourceId || !newTargetId) continue
-
-        const id = generateId()
-        this.db.prepare(`
-          INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, source_document_id, confidence, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
-        `).run(id, newKBId, newSourceId, newTargetId, rel.relation_type,
-          rel.description || null, docIdMap.get(rel.source_document_id) || null,
-          rel.confidence || null)
-      }
-
-      onProgress?.('importing_mentions', `Importing ${knowledgeData.entityMentions?.length || 0} entity mentions...`)
-      const mentions = knowledgeData.entityMentions || []
-      for (const m of mentions) {
-        const newEntityId = entityIdMap.get(m.entity_id)
-        const newDocId = docIdMap.get(m.document_id)
-        const newChapterId = chapterIdMap.get(m.chapter_id)
-        if (!newEntityId) continue
-
-        const id = generateId()
-        this.db.prepare(`
-          INSERT INTO kb_entity_mentions (id, entity_id, document_id, chapter_id, context_text, start_offset, end_offset, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
-        `).run(id, newEntityId, newDocId || null, newChapterId || null,
-          m.context_text || null, m.start_offset, m.end_offset)
+          INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, unixepoch(), unixepoch())
+        `).run(id, newKBId, gs.summary || '', gs.key_topics_json || '[]')
       }
 
       onProgress?.('building_index', 'Building search index...')
@@ -575,163 +456,8 @@ class KBExportService {
         await this.documentService.rebuildSearchIndex(newKBId)
       }
 
-      onProgress?.('complete', `Import complete: ${documents.length} documents, ${entities.length} entities`)
+      onProgress?.('complete', `Import complete: ${documents.length} documents, ${paragraphs.length} paragraphs`)
       return { success: true, kbId: newKBId }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      onProgress?.('error', errorMessage)
-      return { success: false, error: errorMessage }
-    }
-  }
-
-  async importKBGraph(
-    kbId: string,
-    importPath: string,
-    format: 'json-ld' | 'rdf',
-    conflictStrategy: 'skip' | 'overwrite' | 'merge' = 'merge',
-    onProgress?: (stage: string, detail: string) => void
-  ): Promise<{ success: boolean; error?: string; imported?: { entities: number; relations: number } }> {
-    const kb = this.getKBCallback(kbId)
-    if (!kb) return { success: false, error: 'Knowledge base not found' }
-
-    try {
-      if (!fs.existsSync(importPath)) {
-        return { success: false, error: 'Import file not found' }
-      }
-
-      onProgress?.('reading', 'Reading graph data...')
-      const content = fs.readFileSync(importPath, 'utf-8')
-
-      let importedEntities: Array<{ name: string; type: string; description: string; aliases: string[]; attributes: Record<string, string> }> = []
-      let importedRelations: Array<{ source: string; target: string; relationType: string; description: string }> = []
-
-      if (format === 'json-ld') {
-        let jsonLd: any
-        try {
-          jsonLd = JSON.parse(content)
-        } catch (e) {
-          return { success: false, error: `Invalid JSON-LD file: ${e instanceof Error ? e.message : String(e)}` }
-        }
-        const graph = jsonLd['@graph'] || []
-
-        for (const node of graph) {
-          if (node['@type'] === 'Entity') {
-            importedEntities.push({
-              name: node.name || '',
-              type: node.entityType || 'other',
-              description: node.description || '',
-              aliases: Array.isArray(node.aliases) ? node.aliases : [],
-              attributes: node.attributes && typeof node.attributes === 'object' ? node.attributes : {},
-            })
-          } else if (node['@type'] === 'Relation') {
-            const sourceId = node.source?.['@id']?.split('/').pop() || ''
-            const targetId = node.target?.['@id']?.split('/').pop() || ''
-            importedRelations.push({
-              source: sourceId,
-              target: targetId,
-              relationType: node.relationType || '',
-              description: node.description || '',
-            })
-          }
-        }
-      } else {
-        onProgress?.('parsing', 'Parsing RDF format...')
-        const lines = content.split('\n').filter((l: string) => l.trim() && !l.startsWith('#'))
-        for (const line of lines) {
-          const parts = line.split(/\s+/)
-          if (parts.length >= 3) {
-            const predicate = parts[1].replace(/[<>]/g, '')
-            const object = parts.slice(2).join(' ').replace(/[<>]/g, '').replace(/\.$/, '')
-
-            if (predicate.includes('name') || predicate.includes('label')) {
-              importedEntities.push({
-                name: object,
-                type: 'other',
-                description: '',
-                aliases: [],
-                attributes: {},
-              })
-            }
-          }
-        }
-      }
-
-      onProgress?.('importing_entities', `Importing ${importedEntities.length} entities...`)
-
-      const entityNameToId = new Map<string, string>()
-      const existingEntities = this.db.prepare(
-        'SELECT id, name FROM kb_entities WHERE kb_id = ?'
-      ).all(kbId) as any[]
-      for (const e of existingEntities) {
-        entityNameToId.set(e.name.toLowerCase(), e.id)
-      }
-
-      let entityCount = 0
-      for (const entity of importedEntities) {
-        const existingId = entityNameToId.get(entity.name.toLowerCase())
-
-        if (existingId) {
-          if (conflictStrategy === 'overwrite') {
-            this.db.prepare(`
-              UPDATE kb_entities SET type = ?, description = ?, aliases_json = ?, attributes_json = ?, updated_at = unixepoch()
-              WHERE id = ?
-            `).run(entity.type, entity.description, JSON.stringify(entity.aliases), JSON.stringify(entity.attributes), existingId)
-          } else if (conflictStrategy === 'merge') {
-            const existing = this.db.prepare('SELECT * FROM kb_entities WHERE id = ?').get(existingId) as any
-            if (existing) {
-              const existingAliases: string[] = this.safeJsonParse(existing.aliases_json)
-              const newAliases = entity.aliases.filter(a => !existingAliases.includes(a))
-              this.db.prepare(`
-                UPDATE kb_entities SET aliases_json = ?, mention_count = mention_count + 1, updated_at = unixepoch()
-                WHERE id = ?
-              `).run(JSON.stringify([...existingAliases, ...newAliases]), existingId)
-            }
-          }
-        } else {
-          const id = generateId()
-          this.db.prepare(`
-            INSERT INTO kb_entities (id, kb_id, name, type, description, aliases_json, attributes_json, mention_count, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, unixepoch(), unixepoch())
-          `).run(id, kbId, entity.name, entity.type, entity.description,
-            JSON.stringify(entity.aliases), JSON.stringify(entity.attributes))
-          entityNameToId.set(entity.name.toLowerCase(), id)
-          entityCount++
-        }
-      }
-
-      onProgress?.('importing_relations', `Importing ${importedRelations.length} relations...`)
-      let relationCount = 0
-
-      for (const relation of importedRelations) {
-        const sourceId = entityNameToId.get(relation.source.toLowerCase())
-        const targetId = entityNameToId.get(relation.target.toLowerCase())
-
-        if (!sourceId || !targetId) continue
-
-        const existingRelation = this.db.prepare(
-          'SELECT id FROM kb_entity_relations WHERE source_entity_id = ? AND target_entity_id = ? AND relation_type = ?'
-        ).get(sourceId, targetId, relation.relationType) as any
-
-        if (existingRelation) {
-          if (conflictStrategy === 'overwrite') {
-            this.db.prepare(`
-              UPDATE kb_entity_relations SET description = ?, created_at = unixepoch()
-              WHERE id = ?
-            `).run(relation.description, existingRelation.id)
-          }
-          continue
-        }
-
-        const id = generateId()
-        this.db.prepare(`
-          INSERT INTO kb_entity_relations (id, kb_id, source_entity_id, target_entity_id, relation_type, description, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, unixepoch())
-        `).run(id, kbId, sourceId, targetId, relation.relationType, relation.description)
-        relationCount++
-      }
-
-      onProgress?.('complete', `Import complete: ${entityCount} new entities, ${relationCount} new relations`)
-      return { success: true, imported: { entities: entityCount, relations: relationCount } }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       onProgress?.('error', errorMessage)

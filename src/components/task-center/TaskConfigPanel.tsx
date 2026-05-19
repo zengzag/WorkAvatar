@@ -475,8 +475,7 @@ const TaskConfigPanel: React.FC<TaskConfigPanelProps> = ({ employees, onTasksCha
               <LLMSelector
                 providerId={taskProviderId}
                 modelId={taskModelId}
-                onProviderChange={setTaskProviderId}
-                onModelChange={setTaskModelId}
+                onChange={(pId, mId) => { setTaskProviderId(pId); setTaskModelId(mId) }}
               />
               <Tooltip title={enableThinking ? t('empTask.thinkingEnabled') : t('empTask.thinkingDisabled')}>
                 <Button

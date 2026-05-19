@@ -70,14 +70,13 @@ const ParseDetailModal: React.FC<ParseDetailModalProps> = ({
   ]
 
   const knowledgeSteps = [
-    { key: 'chapter_identify', label: t('parseProgress.knowledgeChapterIdentify') },
-    { key: 'chapter_summary', label: t('parseProgress.knowledgeChapterSummary') },
+    { key: 'paragraph_identify', label: t('parseProgress.knowledgeParagraphIdentify') },
+    { key: 'paragraph_summary', label: t('parseProgress.knowledgeParagraphSummary') },
     { key: 'doc_summary', label: t('parseProgress.knowledgeDocSummary') },
-    { key: 'entity_extract', label: t('parseProgress.knowledgeEntityExtract') },
   ]
 
   const knowledgeProcessStageKeys = new Set([
-    'chapter_identify', 'chapter_summary', 'doc_summary', 'entity_extract',
+    'paragraph_identify', 'paragraph_summary', 'doc_summary',
     'knowledge_process', 'complete', 'global_summary',
   ])
 

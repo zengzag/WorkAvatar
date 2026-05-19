@@ -20,8 +20,9 @@ export default defineConfig({
               external: [
                 'electron',
                 'better-sqlite3',
-                'pdf-parse',
+                'file2md',
                 'mammoth',
+                'pdf-parse',
                 'xlsx',
                 'tesseract.js'
               ]

@@ -61,6 +61,149 @@ body {
   background-color: var(--bg-primary);
 }
 
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ant-table-wrapper .ant-table {
+  scrollbar-color: auto !important;
+}
+
+.ant-table-wrapper .ant-table::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ant-table-wrapper .ant-table::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ant-table-wrapper .ant-table::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.ant-table-wrapper .ant-table::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html.dark .ant-table-wrapper .ant-table::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.dark .ant-table-wrapper .ant-table::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ant-table-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ant-table-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ant-table-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.ant-table-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html.dark .ant-table-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.dark .ant-table-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.rc-virtual-list-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15) !important;
+  border-radius: 3px !important;
+}
+
+html.dark .rc-virtual-list-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+.ant-drawer-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ant-drawer-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ant-drawer-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.ant-drawer-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html.dark .ant-drawer-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.dark .ant-drawer-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ant-modal-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ant-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ant-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.ant-modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+html.dark .ant-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
 #root {
   width: 100vw;
   height: 100vh;

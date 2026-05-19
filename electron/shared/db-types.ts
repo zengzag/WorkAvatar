@@ -43,18 +43,19 @@ export interface DBKBDocument {
   updated_at: number
 }
 
-export interface DBKBChapter {
+export interface DBKBParagraph {
   id: string
   kb_id: string
   document_id: string
   title: string
-  chapter_index: number
+  title_path: string
+  level: number
+  paragraph_index: number
   start_offset: number
   end_offset: number
   content: string
   summary: string | null
   keywords_json: string
-  entities_json: string
   vector_id: string | null
   created_at: number
   updated_at: number
@@ -65,8 +66,7 @@ export interface DBKBDocumentSummary {
   kb_id: string
   document_id: string
   summary: string
-  key_entities_json: string
-  timeline_json: string
+  toc_json: string
   keywords_json: string
   main_topics_json: string
   vector_id: string | null
@@ -79,54 +79,9 @@ export interface DBKBGlobalSummary {
   kb_id: string
   summary: string
   key_topics_json: string
-  key_entities_json: string
-  global_timeline_json: string
   vector_id: string | null
   created_at: number
   updated_at: number
-}
-
-export interface DBKBEntity {
-  id: string
-  kb_id: string
-  name: string
-  type: string
-  description: string
-  aliases_json: string
-  attributes_json: string
-  mention_count: number
-  first_seen_doc_id: string | null
-  created_at: number
-  updated_at: number
-}
-
-export interface DBKBEntityRelation {
-  id: string
-  kb_id: string
-  source_entity_id: string
-  target_entity_id: string
-  relation_type: string
-  description: string
-  source_document_id: string | null
-  confidence: number
-  created_at: number
-  source_name: string
-  source_type: string
-  target_name: string
-  target_type: string
-}
-
-export interface DBKBEntityMention {
-  id: string
-  entity_id: string
-  document_id: string
-  chapter_id: string | null
-  context_text: string
-  start_offset: number
-  end_offset: number
-  created_at: number
-  document_name: string
-  chapter_title: string | null
 }
 
 export interface DBEmployeeTool {

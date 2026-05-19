@@ -37,15 +37,15 @@ interface KBContent {
   kbDescription: string
   globalSummary: string
   keyTopics: string[]
-  keyEntities: Array<{ name: string; type: string; description: string }>
   documentSummaries: Array<{
     docName: string
     summary: string
     mainTopics: string[]
   }>
-  chapterSamples: Array<{
+  paragraphSamples: Array<{
     docName: string
     title: string
+    titlePath: string
     content: string
   }>
 }
@@ -220,23 +220,14 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         kbDescription: kb.description || '',
         globalSummary: '',
         keyTopics: [],
-        keyEntities: [],
         documentSummaries: [],
-        chapterSamples: [],
+        paragraphSamples: [],
       }
 
       const globalSummary = this.kbDb.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
       if (globalSummary) {
         content.globalSummary = globalSummary.summary || ''
         try { content.keyTopics = JSON.parse(globalSummary.key_topics_json || '[]') } catch {}
-        try {
-          const entities = JSON.parse(globalSummary.key_entities_json || '[]')
-          content.keyEntities = entities.slice(0, 20).map((e: any) => ({
-            name: e.name || e,
-            type: e.type || 'other',
-            description: e.description || '',
-          }))
-        } catch {}
       }
 
       const docSummaries = this.kbDb.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
@@ -250,12 +241,13 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         content.documentSummaries.push(docSummary)
       }
 
-      const chapters = this.kbDb.getDb().prepare('SELECT c.*, d.original_name FROM kb_chapters c JOIN kb_documents d ON c.document_id = d.id WHERE c.kb_id = ? ORDER BY c.chapter_index LIMIT 30').all(kbId) as any[]
-      for (const ch of chapters) {
-        content.chapterSamples.push({
-          docName: ch.original_name,
-          title: ch.title,
-          content: (ch.content || '').substring(0, 500),
+      const paragraphs = this.kbDb.getDb().prepare('SELECT p.*, d.original_name FROM kb_paragraphs p JOIN kb_documents d ON p.document_id = d.id WHERE p.kb_id = ? ORDER BY p.paragraph_index LIMIT 30').all(kbId) as any[]
+      for (const p of paragraphs) {
+        content.paragraphSamples.push({
+          docName: p.original_name,
+          title: p.title,
+          titlePath: p.title_path || '',
+          content: (p.content || '').substring(0, 500),
         })
       }
 
@@ -302,7 +294,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
 ${truncatedText}${userGuidance}
 
 分析要求：
-1. 分析知识库中的业务领域、文档类型、关键实体和核心主题，确定该知识库的业务场景
+1. 分析知识库中的业务领域、文档类型和核心主题，确定该知识库的业务场景
 2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
 3. 基于知识库内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
 4. 根据业务特性确定工作流程和注意事项
@@ -429,13 +421,6 @@ ${toolsListText}
         parts.push(`\n[核心主题] ${kb.keyTopics.join(', ')}`)
       }
 
-      if (kb.keyEntities.length > 0) {
-        parts.push('\n[关键实体]')
-        for (const entity of kb.keyEntities) {
-          parts.push(`- ${entity.name} (${entity.type})${entity.description ? ': ' + entity.description : ''}`)
-        }
-      }
-
       if (kb.documentSummaries.length > 0) {
         parts.push('\n[文档摘要]')
         for (const doc of kb.documentSummaries) {
@@ -445,11 +430,11 @@ ${toolsListText}
         }
       }
 
-      if (kb.chapterSamples.length > 0) {
-        parts.push('\n[章节内容示例]')
-        for (const ch of kb.chapterSamples.slice(0, 10)) {
-          parts.push(`\n--- ${ch.docName} / ${ch.title} ---`)
-          parts.push(ch.content)
+      if (kb.paragraphSamples.length > 0) {
+        parts.push('\n[段落内容示例]')
+        for (const p of kb.paragraphSamples.slice(0, 10)) {
+          parts.push(`\n--- ${p.docName} / ${p.titlePath || p.title} ---`)
+          parts.push(p.content)
         }
       }
     }
@@ -500,7 +485,7 @@ ${toolsListText}
 原则：
 1. 只基于知识库回答，不编造
 2. 无相关信息时明确说明
-3. 引用来源文件和章节
+3. 引用来源文件和段落
 4. 专业、简洁、准确`,
         rules: [
           { description: '必须引用知识来源', condition: '回答问题时', action: '标注信息来源文件' },

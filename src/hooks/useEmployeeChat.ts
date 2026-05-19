@@ -39,10 +39,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     env_vars: t('workbench.toolNames.env_vars'),
     kb_overview: t('workbench.toolNames.kb_overview'),
     query_global_summary: t('workbench.toolNames.query_global_summary'),
-    query_knowledge_graph: t('workbench.toolNames.query_knowledge_graph'),
-    query_chapters: t('workbench.toolNames.query_chapters'),
+    query_paragraphs: t('workbench.toolNames.query_paragraphs'),
     query_fulltext: t('workbench.toolNames.query_fulltext'),
-    get_document_content: t('workbench.toolNames.get_document_content'),
+    kb_search: t('workbench.toolNames.kb_search'),
+    kb_advanced_search: t('workbench.toolNames.kb_advanced_search'),
+    kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
   }
@@ -79,16 +80,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return stored !== 'false'
   })
 
+  const handleLlmChange = useCallback((providerId: string, modelId: string) => {
+    setSelectedLlmProviderId(providerId)
+    setSelectedLlmModelId(modelId)
+  }, [])
+
   useEffect(() => {
     if (selectedLlmProviderIdKey) {
       localStorage.setItem(selectedLlmProviderIdKey, selectedLlmProviderId)
     }
-  }, [selectedLlmProviderId, selectedLlmProviderIdKey])
-  useEffect(() => {
     if (selectedLlmModelIdKey) {
       localStorage.setItem(selectedLlmModelIdKey, selectedLlmModelId)
     }
-  }, [selectedLlmModelId, selectedLlmModelIdKey])
+  }, [selectedLlmProviderId, selectedLlmModelId, selectedLlmProviderIdKey, selectedLlmModelIdKey])
   useEffect(() => {
     if (enableThinkingKey) {
       localStorage.setItem(enableThinkingKey, String(enableThinking))
@@ -810,9 +814,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     isCreatingConversation,
     providers,
     selectedLlmProviderId,
-    setSelectedLlmProviderId,
     selectedLlmModelId,
-    setSelectedLlmModelId,
+    handleLlmChange,
     enableThinking,
     setEnableThinking,
     kbEnabled,

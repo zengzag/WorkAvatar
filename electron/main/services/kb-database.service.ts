@@ -86,33 +86,33 @@ class KBDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(hash);
 
-      CREATE TABLE IF NOT EXISTS kb_chapters (
+      CREATE TABLE IF NOT EXISTS kb_paragraphs (
         id TEXT PRIMARY KEY,
         kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
         document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
         title TEXT NOT NULL,
-        chapter_index INTEGER NOT NULL DEFAULT 0,
+        title_path TEXT NOT NULL DEFAULT '',
+        level INTEGER NOT NULL DEFAULT 1,
+        paragraph_index INTEGER NOT NULL DEFAULT 0,
         start_offset INTEGER NOT NULL DEFAULT 0,
         end_offset INTEGER NOT NULL DEFAULT 0,
         content TEXT NOT NULL DEFAULT '',
         summary TEXT,
         keywords_json TEXT DEFAULT '[]',
-        entities_json TEXT DEFAULT '[]',
         vector_id TEXT,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE INDEX IF NOT EXISTS idx_kb_chapters_document ON kb_chapters(document_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_chapters_kb ON kb_chapters(kb_id);
+      CREATE INDEX IF NOT EXISTS idx_kb_paragraphs_document ON kb_paragraphs(document_id);
+      CREATE INDEX IF NOT EXISTS idx_kb_paragraphs_kb ON kb_paragraphs(kb_id);
 
       CREATE TABLE IF NOT EXISTS kb_document_summaries (
         id TEXT PRIMARY KEY,
         kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
         document_id TEXT NOT NULL UNIQUE REFERENCES kb_documents(id) ON DELETE CASCADE,
         summary TEXT NOT NULL DEFAULT '',
-        key_entities_json TEXT DEFAULT '[]',
-        timeline_json TEXT DEFAULT '[]',
+        toc_json TEXT DEFAULT '[]',
         keywords_json TEXT DEFAULT '[]',
         main_topics_json TEXT DEFAULT '[]',
         vector_id TEXT,
@@ -128,62 +128,12 @@ class KBDatabaseService {
         kb_id TEXT NOT NULL UNIQUE REFERENCES knowledge_bases(id) ON DELETE CASCADE,
         summary TEXT NOT NULL DEFAULT '',
         key_topics_json TEXT DEFAULT '[]',
-        key_entities_json TEXT DEFAULT '[]',
-        global_timeline_json TEXT DEFAULT '[]',
         vector_id TEXT,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
       CREATE INDEX IF NOT EXISTS idx_kb_global_summaries_kb ON kb_global_summaries(kb_id);
-
-      CREATE TABLE IF NOT EXISTS kb_entities (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        type TEXT NOT NULL DEFAULT 'other',
-        description TEXT DEFAULT '',
-        aliases_json TEXT DEFAULT '[]',
-        attributes_json TEXT DEFAULT '{}',
-        mention_count INTEGER NOT NULL DEFAULT 0,
-        first_seen_doc_id TEXT REFERENCES kb_documents(id) ON DELETE SET NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entities_kb ON kb_entities(kb_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entities_name ON kb_entities(kb_id, name);
-
-      CREATE TABLE IF NOT EXISTS kb_entity_relations (
-        id TEXT PRIMARY KEY,
-        kb_id TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-        source_entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        target_entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        relation_type TEXT NOT NULL DEFAULT 'related_to',
-        description TEXT DEFAULT '',
-        source_document_id TEXT REFERENCES kb_documents(id) ON DELETE SET NULL,
-        confidence REAL NOT NULL DEFAULT 1.0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_source ON kb_entity_relations(source_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_target ON kb_entity_relations(target_entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_relations_kb ON kb_entity_relations(kb_id);
-
-      CREATE TABLE IF NOT EXISTS kb_entity_mentions (
-        id TEXT PRIMARY KEY,
-        entity_id TEXT NOT NULL REFERENCES kb_entities(id) ON DELETE CASCADE,
-        document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
-        chapter_id TEXT REFERENCES kb_chapters(id) ON DELETE SET NULL,
-        context_text TEXT DEFAULT '',
-        start_offset INTEGER NOT NULL DEFAULT 0,
-        end_offset INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_entity ON kb_entity_mentions(entity_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_document ON kb_entity_mentions(document_id);
-      CREATE INDEX IF NOT EXISTS idx_kb_entity_mentions_chapter ON kb_entity_mentions(chapter_id);
 
       CREATE TABLE IF NOT EXISTS kb_processing_jobs (
         id TEXT PRIMARY KEY,
@@ -313,12 +263,9 @@ class KBDatabaseService {
       const KB_TABLES = [
         'knowledge_bases',
         'kb_documents',
-        'kb_chapters',
+        'kb_paragraphs',
         'kb_document_summaries',
         'kb_global_summaries',
-        'kb_entities',
-        'kb_entity_relations',
-        'kb_entity_mentions',
         'kb_processing_jobs',
         'wiki_compile_cache',
         'kb_search_index',

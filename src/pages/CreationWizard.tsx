@@ -78,12 +78,15 @@ const CreationWizard: React.FC = () => {
   const [builtinTools, setBuiltinTools] = useState<any[]>([])
   const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
 
+  const handleLlmChange = (pId: string, mId: string) => {
+    setSelectedProviderId(pId)
+    setSelectedModelId(mId)
+  }
+
   useEffect(() => {
     localStorage.setItem('creationWizard:selectedProviderId', selectedProviderId)
-  }, [selectedProviderId])
-  useEffect(() => {
     localStorage.setItem('creationWizard:selectedModelId', selectedModelId)
-  }, [selectedModelId])
+  }, [selectedProviderId, selectedModelId])
   useEffect(() => {
     localStorage.setItem('creationWizard:enableThinking', String(enableThinking))
   }, [enableThinking])
@@ -526,8 +529,7 @@ const CreationWizard: React.FC = () => {
                 <LLMSelector
                   providerId={selectedProviderId}
                   modelId={selectedModelId}
-                  onProviderChange={setSelectedProviderId}
-                  onModelChange={setSelectedModelId}
+                  onChange={handleLlmChange}
                 />
                 <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
                   <Button

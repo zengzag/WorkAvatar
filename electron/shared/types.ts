@@ -96,10 +96,5 @@ export interface ParseResult {
     rows: string[][]
     context: string
   }>
-  entities: Array<{
-    type: string
-    value: string
-    context: string
-  }>
   metadata: Record<string, any>
 }

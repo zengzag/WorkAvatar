@@ -5,15 +5,15 @@ import {
   Typography, Tooltip, Modal, theme, Alert,
 } from 'antd'
 import {
-  SearchOutlined, FileTextOutlined, NodeIndexOutlined,
-  ApartmentOutlined, GlobalOutlined, BookOutlined,
+  SearchOutlined, FileTextOutlined,
+  GlobalOutlined, BookOutlined,
   FilterOutlined, CopyOutlined, EyeOutlined, DatabaseOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
-type SearchMode = 'smart' | 'semantic' | 'advanced' | 'chapters' | 'fulltext' | 'entity' | 'graph' | 'globalSummary'
+type SearchMode = 'smart' | 'semantic' | 'advanced' | 'paragraphs' | 'fulltext' | 'globalSummary'
 
 interface KBSearchPanelProps {
   open: boolean
@@ -27,10 +27,9 @@ const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
   summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
   document_summary: { color: 'green', labelKey: 'kbSearch.matchTypeSummary' },
   keywords: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
-  chapter: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
+  paragraph: { color: 'orange', labelKey: 'kbSearch.matchTypeKeywords' },
   content: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
   content_paragraph: { color: 'purple', labelKey: 'kbSearch.matchTypeContent' },
-  entity: { color: 'red', labelKey: 'kbSearch.matchTypeEntity' },
   hybrid: { color: 'cyan', labelKey: 'kbSearch.matchTypeHybrid' },
 }
 
@@ -45,9 +44,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<any[]>([])
   const [globalSummaryResult, setGlobalSummaryResult] = useState<any>(null)
-  const [graphResult, setGraphResult] = useState<any>(null)
-  const [entityResults, setEntityResults] = useState<any[]>([])
-  const [entitySearchType, setEntitySearchType] = useState<string | undefined>(undefined)
   const [advancedDocType, setAdvancedDocType] = useState<string | undefined>(undefined)
   const [docContent, setDocContent] = useState<any>(null)
   const [docContentLoading, setDocContentLoading] = useState(false)
@@ -56,8 +52,10 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [docContentOffset, setDocContentOffset] = useState<{ start: number; end: number } | null>(null)
   const [searched, setSearched] = useState(false)
   const [semanticDegraded, setSemanticDegraded] = useState(false)
+  const [highlightParagraphId, setHighlightParagraphId] = useState<string | null>(null)
 
   const inputRef = useRef<any>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (open && kbList.length > 0 && !selectedKbId) {
@@ -71,11 +69,17 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
   }, [open, searchMode])
 
+  useEffect(() => {
+    if (docContentModalOpen && highlightRef.current) {
+      setTimeout(() => {
+        highlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 200)
+    }
+  }, [docContentModalOpen, docContent])
+
   const resetResults = useCallback(() => {
     setResults([])
     setGlobalSummaryResult(null)
-    setGraphResult(null)
-    setEntityResults([])
     setDocContent(null)
     setDocContentModalOpen(false)
     setSearched(false)
@@ -121,8 +125,8 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           setResults(data || [])
           break
         }
-        case 'chapters': {
-          const data = await window.electronAPI.kb.searchChapters({
+        case 'paragraphs': {
+          const data = await window.electronAPI.kb.searchParagraphs({
             kb_id: selectedKbId,
             query: query.trim(),
             top_k: topK,
@@ -139,41 +143,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           setResults((data || []).filter((r: any) => r.match_type === 'content' || r.match_type === 'content_paragraph'))
           break
         }
-        case 'entity': {
-          const data = await window.electronAPI.kb.getEntities({
-            kb_id: selectedKbId,
-            type: entitySearchType,
-          })
-          const filtered = (data || []).filter((e: any) => {
-            if (!query.trim()) return true
-            const q = query.toLowerCase()
-            if (e.name?.toLowerCase().includes(q)) return true
-            if ((e.description || '').toLowerCase().includes(q)) return true
-            try {
-              const aliases: string[] = JSON.parse(e.aliases_json || '[]')
-              return aliases.some((a: string) => a.toLowerCase().includes(q))
-            } catch { return false }
-          })
-          setEntityResults(filtered.slice(0, topK))
-          break
-        }
-        case 'graph': {
-          const entity = await window.electronAPI.kb.getEntity({
-            kb_id: selectedKbId,
-            name: query.trim(),
-          })
-          if (entity) {
-            const relations = await window.electronAPI.kb.getEntityRelations({
-              entity_id: entity.id,
-              depth: 2,
-            })
-            const mentions = await window.electronAPI.kb.getEntityMentions(entity.id)
-            setGraphResult({ entity, relations: relations || [], mentions: mentions || [] })
-          } else {
-            setGraphResult(null)
-          }
-          break
-        }
         case 'globalSummary': {
           const data = await window.electronAPI.kb.getGlobalSummary(selectedKbId)
           setGlobalSummaryResult(data)
@@ -185,13 +154,14 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     } finally {
       setLoading(false)
     }
-  }, [selectedKbId, query, searchMode, topK, advancedDocType, entitySearchType, resetResults])
+  }, [selectedKbId, query, searchMode, topK, advancedDocType, resetResults])
 
-  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }) => {
+  const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }, paragraphId?: string) => {
     setDocContentLoading(true)
     setDocContent(null)
     setDocContentTitle(docName)
     setDocContentOffset(offset || null)
+    setHighlightParagraphId(paragraphId || null)
     setDocContentModalOpen(true)
     try {
       const content = await window.electronAPI.kb.getDocContent(docId)
@@ -244,11 +214,11 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       ),
     },
     {
-      key: 'chapters',
+      key: 'paragraphs',
       label: (
         <Space>
           <BookOutlined />
-          <span>{t('kbSearch.modeChapters')}</span>
+          <span>{t('kbSearch.modeParagraphs')}</span>
         </Space>
       ),
     },
@@ -262,24 +232,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       ),
     },
     {
-      key: 'entity',
-      label: (
-        <Space>
-          <NodeIndexOutlined />
-          <span>{t('kbSearch.modeEntity')}</span>
-        </Space>
-      ),
-    },
-    {
-      key: 'graph',
-      label: (
-        <Space>
-          <ApartmentOutlined />
-          <span>{t('kbSearch.modeGraph')}</span>
-        </Space>
-      ),
-    },
-    {
       key: 'globalSummary',
       label: (
         <Space>
@@ -289,6 +241,63 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       ),
     },
   ]
+
+  const renderHighlightedContent = (content: string, offset: { start: number; end: number } | null, paragraphId: string | null) => {
+    if (!offset && !paragraphId) {
+      return (
+        <>
+          {content.substring(0, 10000)}
+          {content.length > 10000 && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+              ...({t('kbSearch.contentTruncated')})
+            </Text>
+          )}
+        </>
+      )
+    }
+
+    if (offset) {
+      const contextChars = 500
+      const start = Math.max(0, offset.start - contextChars)
+      const end = Math.min(content.length, offset.end + contextChars)
+      const beforeText = content.substring(start, offset.start)
+      const highlightText = content.substring(offset.start, offset.end)
+      const afterText = content.substring(offset.end, end)
+
+      return (
+        <>
+          {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
+          <span ref={highlightRef}>{beforeText}</span>
+          <mark style={{
+            background: token.colorWarningBg,
+            padding: '1px 2px',
+            borderRadius: 2,
+            fontWeight: 500,
+          }}>
+            {highlightText.substring(0, 5000)}
+          </mark>
+          {afterText.substring(0, 5000)}
+          {(highlightText.length > 5000 || afterText.length > 5000) && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+              ...({t('kbSearch.contentTruncated')})
+            </Text>
+          )}
+          {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
+        </>
+      )
+    }
+
+    return (
+      <>
+        {content.substring(0, 10000)}
+        {content.length > 10000 && (
+          <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
+            ...({t('kbSearch.contentTruncated')})
+          </Text>
+        )}
+      </>
+    )
+  }
 
   const renderResultItem = (item: any, index: number) => {
     const matchConfig = MATCH_TYPE_CONFIG[item.match_type] || { color: 'default', labelKey: 'kbSearch.matchTypeOther' }
@@ -312,7 +321,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
               size="small"
               icon={<CopyOutlined />}
               onClick={() => handleCopyResult(
-                `[${item.document_name}]${item.chapter_title ? ` > ${item.chapter_title}` : ''}\n${item.text}`
+                `[${item.document_name}]${item.paragraph_title ? ` > ${item.paragraph_title}` : ''}\n${item.text}`
               )}
             />
           </Tooltip>
@@ -322,9 +331,9 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           <Text strong style={{ fontSize: 13 }}>
             {item.document_name}
           </Text>
-          {item.chapter_title && (
+          {item.paragraph_title && (
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {' > '}{item.chapter_title}
+              {' > '}{item.paragraph_title}
             </Text>
           )}
           {item.document_type && (
@@ -356,10 +365,10 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 </Text>
               </Tooltip>
             )}
-            {item.chapter_id && (
-              <Tooltip title={item.chapter_id}>
-                <Text type="secondary" style={{ fontSize: 11 }} copyable={{ text: item.chapter_id, tooltips: [t('kbSearch.copyId'), t('kbSearch.copied')] }}>
-                  ch: ...{item.chapter_id.slice(-6)}
+            {item.paragraph_id && (
+              <Tooltip title={item.paragraph_id}>
+                <Text type="secondary" style={{ fontSize: 11 }} copyable={{ text: item.paragraph_id, tooltips: [t('kbSearch.copyId'), t('kbSearch.copied')] }}>
+                  p: ...{item.paragraph_id.slice(-6)}
                 </Text>
               </Tooltip>
             )}
@@ -383,7 +392,8 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 onClick={() => handleViewDocContent(item.document_id, item.document_name,
                   item.start_offset !== undefined && item.end_offset !== undefined
                     ? { start: item.start_offset, end: item.end_offset }
-                    : undefined
+                    : undefined,
+                  item.paragraph_id
                 )}
                 loading={docContentLoading}
               />
@@ -394,146 +404,12 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     )
   }
 
-  const renderEntityResults = () => {
-    if (entityResults.length === 0) {
-      return <Empty description={t('kbSearch.noResults')} />
-    }
-
-    return (
-      <div>
-        {entityResults.map((entity: any, index: number) => {
-          const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
-          return (
-            <Card
-              key={index}
-              size="small"
-              style={{ marginBottom: 8, borderLeft: `3px solid ${token.colorError}` }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <Space>
-                    <Text strong>{entity.name}</Text>
-                    <Tag color="red">{entity.type}</Tag>
-                    <Tag>{t('kbSearch.mentionCount', { count: entity.mention_count })}</Tag>
-                  </Space>
-                  {entity.description && (
-                    <Paragraph style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 0, marginTop: 4 }}>
-                      {entity.description}
-                    </Paragraph>
-                  )}
-                  {aliases.length > 0 && (
-                    <div style={{ marginTop: 4 }}>
-                      <Text type="secondary" style={{ fontSize: 11 }}>{t('knowledgeBase.aliases')}: </Text>
-                      {aliases.map((a, i) => (
-                        <Tag key={i} style={{ fontSize: 11 }}>{a}</Tag>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <Space>
-                  <Tooltip title={t('kbSearch.queryGraph')}>
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<ApartmentOutlined />}
-                      onClick={() => {
-                        setQuery(entity.name)
-                        setSearchMode('graph')
-                      }}
-                    />
-                  </Tooltip>
-                  <Tooltip title={t('kbSearch.copyResult')}>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<CopyOutlined />}
-                      onClick={() => handleCopyResult(`${entity.name}(${entity.type}): ${entity.description || ''}`)}
-                    />
-                  </Tooltip>
-                </Space>
-              </div>
-            </Card>
-          )
-        })}
-      </div>
-    )
-  }
-
-  const renderGraphResult = () => {
-    if (!graphResult) {
-      return <Empty description={t('kbSearch.entityNotFound')} />
-    }
-
-    const { entity, relations, mentions } = graphResult
-    const aliases: string[] = (() => { try { return JSON.parse(entity.aliases_json || '[]') } catch { return [] } })()
-
-    return (
-      <div>
-        <Card size="small" style={{ marginBottom: 12, borderLeft: `3px solid ${token.colorError}` }}>
-          <Space style={{ marginBottom: 8 }}>
-            <Text strong style={{ fontSize: 16 }}>{entity.name}</Text>
-            <Tag color="red">{entity.type}</Tag>
-            <Tag>{t('kbSearch.mentionCount', { count: entity.mention_count })}</Tag>
-          </Space>
-          {entity.description && (
-            <Paragraph style={{ fontSize: 13, marginBottom: 4 }}>{entity.description}</Paragraph>
-          )}
-          {aliases.length > 0 && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('knowledgeBase.aliases')}: </Text>
-              {aliases.map((a: string, i: number) => (
-                <Tag key={i} style={{ fontSize: 11 }}>{a}</Tag>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {relations.length > 0 && (
-          <Card size="small" title={t('kbSearch.relationNetwork', { count: relations.length })} style={{ marginBottom: 12 }}>
-            {relations.map((rel: any, i: number) => {
-              const isSource = rel.source_entity_id === entity.id
-              return (
-                <div key={i} style={{ padding: '4px 0', borderBottom: i < relations.length - 1 ? `1px solid ${token.colorBorderSecondary}` : 'none' }}>
-                  <Space>
-                    <Text type="secondary">{isSource ? '→' : '←'}</Text>
-                    <Text strong style={{ fontSize: 13 }}>{isSource ? rel.target_name : rel.source_name}</Text>
-                    <Tag style={{ fontSize: 11 }}>{isSource ? rel.target_type : rel.source_type}</Tag>
-                    <Tag color="processing" style={{ fontSize: 11 }}>{rel.relation_type}</Tag>
-                  </Space>
-                  {rel.description && (
-                    <div><Text type="secondary" style={{ fontSize: 11 }}>{rel.description}</Text></div>
-                  )}
-                </div>
-              )
-            })}
-          </Card>
-        )}
-
-        {mentions.length > 0 && (
-          <Card size="small" title={t('kbSearch.mentionRecords', { count: mentions.length })}>
-            {mentions.slice(0, 10).map((m: any, i: number) => (
-              <div key={i} style={{ padding: '4px 0', borderBottom: i < Math.min(mentions.length, 10) - 1 ? `1px solid ${token.colorBorderSecondary}` : 'none' }}>
-                <Text style={{ fontSize: 12 }}>{m.document_name}{m.chapter_title ? ` > ${m.chapter_title}` : ''}</Text>
-                {m.context_text && (
-                  <Paragraph style={{ fontSize: 11, color: token.colorTextSecondary, marginBottom: 0, marginTop: 2 }} ellipsis={{ rows: 2 }}>
-                    {m.context_text}
-                  </Paragraph>
-                )}
-              </div>
-            ))}
-          </Card>
-        )}
-      </div>
-    )
-  }
-
   const renderGlobalSummary = () => {
     if (!globalSummaryResult) {
       return <Empty description={t('kbSearch.noGlobalSummary')} />
     }
 
     const keyTopics: string[] = (() => { try { return JSON.parse(globalSummaryResult.key_topics_json || '[]') } catch { return [] } })()
-    const keyEntities: any[] = (() => { try { return JSON.parse(globalSummaryResult.key_entities_json || '[]') } catch { return [] } })()
 
     return (
       <div>
@@ -552,22 +428,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             </Space>
           </Card>
         )}
-
-        {keyEntities.length > 0 && (
-          <Card size="small" title={t('knowledgeBase.keyEntities')}>
-            {keyEntities.map((e, i) => (
-              <div key={i} style={{ padding: '4px 0', borderBottom: i < keyEntities.length - 1 ? `1px solid ${token.colorBorderSecondary}` : 'none' }}>
-                <Space>
-                  <Text strong style={{ fontSize: 13 }}>{e.name}</Text>
-                  <Tag style={{ fontSize: 11 }}>{e.type}</Tag>
-                </Space>
-                {e.description && (
-                  <div><Text type="secondary" style={{ fontSize: 11 }}>{e.description}</Text></div>
-                )}
-              </div>
-            ))}
-          </Card>
-        )}
       </div>
     )
   }
@@ -582,10 +442,15 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>
               - {t('kbSearch.docContent')}
             </Text>
+            {docContentOffset && (
+              <Tag color="orange" style={{ fontSize: 11 }}>
+                {t('kbSearch.locatedAt', { start: docContentOffset.start, end: docContentOffset.end })}
+              </Tag>
+            )}
           </Space>
         }
         open={docContentModalOpen}
-        onCancel={() => setDocContentModalOpen(false)}
+        onCancel={() => { setDocContentModalOpen(false); setHighlightParagraphId(null) }}
         footer={null}
         width={720}
         styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
@@ -596,33 +461,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           </div>
         ) : docContent ? (
           <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8, fontSize: 13, backgroundColor: token.colorBgLayout, padding: 16, borderRadius: 8 }}>
-            {docContentOffset
-              ? (() => {
-                  const content = docContent.content
-                  const contextChars = 500
-                  const start = Math.max(0, docContentOffset.start - contextChars)
-                  const end = Math.min(content.length, docContentOffset.end + contextChars)
-                  const displayText = content.substring(start, end)
-                  return (
-                    <>
-                      {start > 0 && <Text type="secondary" style={{ fontSize: 12 }}>... </Text>}
-                      {displayText.substring(0, 5000)}
-                      {displayText.length > 5000 && (
-                        <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-                          ...({t('kbSearch.contentTruncated')})
-                        </Text>
-                      )}
-                      {end < content.length && <Text type="secondary" style={{ fontSize: 12 }}> ...</Text>}
-                    </>
-                  )
-                })()
-              : docContent.content.substring(0, 5000)
-            }
-            {!docContentOffset && docContent.content.length > 5000 && (
-              <Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-                ...({t('kbSearch.contentTruncated')})
-              </Text>
-            )}
+            {renderHighlightedContent(docContent.content, docContentOffset, highlightParagraphId)}
           </div>
         ) : (
           <Empty description={t('kbSearch.noResults')} />
@@ -650,10 +489,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     }
 
     switch (searchMode) {
-      case 'entity':
-        return renderEntityResults()
-      case 'graph':
-        return renderGraphResult()
       case 'globalSummary':
         return renderGlobalSummary()
       default:
@@ -683,7 +518,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
 
   const showQueryInput = searchMode !== 'globalSummary'
 
-  const showAdvancedOptions = searchMode === 'advanced' || searchMode === 'entity'
+  const showAdvancedOptions = searchMode === 'advanced'
 
   return (
     <Drawer
@@ -742,9 +577,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             placeholder={
               searchMode === 'advanced'
                 ? t('kbSearch.advancedPlaceholder')
-                : searchMode === 'graph'
-                  ? t('kbSearch.graphPlaceholder')
-                  : t('kbSearch.searchPlaceholder')
+                : t('kbSearch.searchPlaceholder')
             }
             size="large"
             prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
@@ -776,26 +609,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
                 { value: 'xlsx', label: 'Excel' },
                 { value: 'txt', label: 'TXT' },
                 { value: 'md', label: 'Markdown' },
-              ]}
-            />
-          </div>
-        )}
-
-        {showAdvancedOptions && searchMode === 'entity' && (
-          <div style={{ marginTop: 8 }}>
-            <Select
-              value={entitySearchType}
-              onChange={setEntitySearchType}
-              allowClear
-              style={{ width: 140 }}
-              placeholder={t('knowledgeBase.filterByType')}
-              options={[
-                { value: 'person', label: t('knowledgeBase.entityTypePerson') },
-                { value: 'organization', label: t('knowledgeBase.entityTypeOrg') },
-                { value: 'location', label: t('knowledgeBase.entityTypeLocation') },
-                { value: 'event', label: t('knowledgeBase.entityTypeEvent') },
-                { value: 'concept', label: t('knowledgeBase.entityTypeConcept') },
-                { value: 'tool', label: t('knowledgeBase.entityTypeTool') },
               ]}
             />
           </div>

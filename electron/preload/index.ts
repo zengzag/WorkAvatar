@@ -36,7 +36,6 @@ import type {
   KBExportSummaryParams,
   KBExportDocumentsParams,
   KBImportFullParams,
-  KBImportGraphParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -214,15 +213,10 @@ const electronAPI = {
     processAll: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
     buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
     getStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_STATS, kbId),
-    getChapters: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_CHAPTERS, docId),
+    getParagraphs: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS, docId),
     getDocSummary: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_SUMMARY, docId),
-    getAllDocSummaries: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ALL_DOC_SUMMARIES, kbId),
     getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
-    getEntities: (params: { kb_id: string; type?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITIES, params),
-    getEntity: (params: { kb_id: string; name: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY, params),
-    getEntityRelations: (params: { entity_id: string; depth?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_RELATIONS, params),
-    getEntityMentions: (entityId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_ENTITY_MENTIONS, entityId),
-    searchChapters: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_CHAPTERS, params),
+    searchParagraphs: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_PARAGRAPHS, params),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
     onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
@@ -250,7 +244,6 @@ const electronAPI = {
     exportSummary: (params: KBExportSummaryParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_SUMMARY, params),
     exportDocuments: (params: KBExportDocumentsParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_DOCUMENTS, params),
     importFull: (params: KBImportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_FULL, params),
-    importGraph: (params: KBImportGraphParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_GRAPH, params),
     scanFolder: (params: { folder_path: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SCAN_FOLDER, params),
     onExportProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
       const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
@@ -267,6 +260,9 @@ const electronAPI = {
     searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
     searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
     rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),
+    updateParagraph: (params: { paragraph_id: string; updates: { summary?: string; keywords_json?: string; content?: string; title?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_PARAGRAPH, params),
+    updateDocSummary: (params: { document_id: string; updates: { summary?: string; keywords_json?: string; main_topics_json?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_DOC_SUMMARY, params),
+    getParagraphsByKb: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS_BY_KB, kbId),
   },
 
   interaction: {

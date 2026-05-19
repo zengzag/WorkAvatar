@@ -26,18 +26,11 @@ class KBSummaryService {
   }
 
   getKnowledgeStats(kbId: string): {
-    chapterCount: number
+    paragraphCount: number
     documentSummaryCount: number
     hasGlobalSummary: boolean
-    entityCount: number
-    relationCount: number
-    entityByType: Record<string, number>
   } {
     return this.processor.getKnowledgeStats(kbId)
-  }
-
-  getAllDocumentSummaries(kbId: string): DBKBDocumentSummary[] {
-    return this.processor.getAllDocumentSummaries(kbId) as DBKBDocumentSummary[]
   }
 
   getDocumentSummary(documentId: string): DBKBDocumentSummary | null {
@@ -46,10 +39,6 @@ class KBSummaryService {
 
   getGlobalSummary(kbId: string): DBKBGlobalSummary | null {
     return this.processor.getGlobalSummary(kbId) as DBKBGlobalSummary | null
-  }
-
-  generateTimeline(kbId: string, topic?: string): Array<{ time: string; event: string; source: string }> {
-    return this.processor.generateTimeline(kbId, topic)
   }
 
   getProcessingJobs(kbId: string, status?: string): DBKBProcessingJob[] {
@@ -97,14 +86,11 @@ class KBSummaryService {
       this.taskQueue.updateTask(taskId, { progress: 50, progressText: `Aggregating ${docSummaries.length} doc summaries...` })
 
       const summaryInputs = docSummaries.map(ds => {
-        let keyEntities: any[] = []
         let mainTopics: any[] = []
-        try { keyEntities = JSON.parse(ds.key_entities_json || '[]') } catch { keyEntities = [] }
         try { mainTopics = JSON.parse(ds.main_topics_json || '[]') } catch { mainTopics = [] }
         return {
           title: ds.title,
           summary: ds.summary,
-          keyEntities,
           mainTopics,
         }
       })

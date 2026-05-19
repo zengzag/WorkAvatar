@@ -51,34 +51,17 @@ export const useKnowledgeBase = () => {
   const [processingAll, setProcessingAll] = useState(false)
   const [buildingGlobal, setBuildingGlobal] = useState(false)
   const [processProgress, setProcessProgress] = useState({ stage: '', detail: '' })
-  const [entities, setEntities] = useState<any[]>([])
-  const [entityFilter, setEntityFilter] = useState<string>('')
-  const [selectedEntity, setSelectedEntity] = useState<any>(null)
-  const [entityRelations, setEntityRelations] = useState<any[]>([])
-  const [entityModalOpen, setEntityModalOpen] = useState(false)
   const [globalSummary, setGlobalSummary] = useState<any>(null)
-  const [docSummaries, setDocSummaries] = useState<any[]>([])
-  const [selectedDocSummary, setSelectedDocSummary] = useState<any>(null)
-  const [docChapters, setDocChapters] = useState<any[]>([])
-  const [chapterModalOpen, setChapterModalOpen] = useState(false)
-  const [allRelations, setAllRelations] = useState<any[]>([])
-  const [docContentModalOpen, setDocContentModalOpen] = useState(false)
-  const [docContent, setDocContent] = useState<string>('')
-  const [docContentTitle, setDocContentTitle] = useState<string>('')
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
   const [editKBModalOpen, setEditKBModalOpen] = useState(false)
   const [editKBName, setEditKBName] = useState('')
   const [editKBDesc, setEditKBDesc] = useState('')
   const [processedDocIds, setProcessedDocIds] = useState<Set<string>>(new Set())
   const [exportModalOpen, setExportModalOpen] = useState(false)
-  const [exportType, setExportType] = useState<'full' | 'summary' | 'documents'>('full')
-  const [exportFormat, setExportFormat] = useState<'json-ld' | 'csv'>('json-ld')
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState({ stage: '', detail: '' })
   const [importModalOpen, setImportModalOpen] = useState(false)
-  const [importType, setImportType] = useState<'full' | 'graph'>('full')
-  const [importFormat, setImportFormat] = useState<'json-ld' | 'rdf'>('json-ld')
-  const [importConflictStrategy, setImportConflictStrategy] = useState<'skip' | 'overwrite' | 'rename' | 'merge'>('skip')
+  const [importConflictStrategy, setImportConflictStrategy] = useState<'skip' | 'overwrite' | 'rename'>('skip')
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState({ stage: '', detail: '' })
   const [importKBName, setImportKBName] = useState('')
@@ -177,14 +160,6 @@ export const useKnowledgeBase = () => {
     } catch (e) { console.error('Failed to load knowledge stats:', e) }
   }
 
-  const loadEntities = async (kbId: string, type?: string) => {
-    try {
-      const result = await window.electronAPI.kb.getEntities({ kb_id: kbId, type })
-      if (activeKBRef.current !== kbId) return
-      setEntities(result)
-    } catch (e) { console.error('Failed to load entities:', e) }
-  }
-
   const loadGlobalSummary = async (kbId: string) => {
     try {
       const summary = await window.electronAPI.kb.getGlobalSummary(kbId)
@@ -193,55 +168,16 @@ export const useKnowledgeBase = () => {
     } catch (e) { console.error('Failed to load global summary:', e) }
   }
 
-  const loadDocSummaries = async (kbId: string) => {
-    try {
-      const summaries = await window.electronAPI.kb.getAllDocSummaries(kbId)
-      if (activeKBRef.current !== kbId) return
-      setDocSummaries(summaries)
-    } catch (e) { console.error('Failed to load doc summaries:', e) }
-  }
-
-  const loadAllRelations = async (kbId: string) => {
-    try {
-      const allEntities = await window.electronAPI.kb.getEntities({ kb_id: kbId })
-      if (activeKBRef.current !== kbId) return
-      const relations: any[] = []
-      const seen = new Set<string>()
-      for (const entity of allEntities) {
-        if (activeKBRef.current !== kbId) return
-        try {
-          const entityRels = await window.electronAPI.kb.getEntityRelations({ entity_id: entity.id, depth: 1 })
-          for (const rel of entityRels) {
-            const key = rel.id || `${rel.source_entity_id}-${rel.target_entity_id}-${rel.relation_type}`
-            if (!seen.has(key)) {
-              seen.add(key)
-              relations.push(rel)
-            }
-          }
-        } catch (e) { console.error('Failed to load entity relations:', e) }
-      }
-      if (activeKBRef.current !== kbId) return
-      setAllRelations(relations)
-    } catch (e) { console.error('Failed to load all relations:', e) }
-  }
-
   const handleSelectKB = useCallback((kb: KnowledgeBase) => {
     activeKBRef.current = kb.id
     setSelectedKB(kb)
     localStorage.setItem(KB_SELECTION_KEY, kb.id)
     setDocs([])
     setKnowledgeStats(null)
-    setEntities([])
     setGlobalSummary(null)
-    setDocSummaries([])
-    setAllRelations([])
-    setSelectedEntity(null)
     loadDocs(kb.id)
     loadKnowledgeStats(kb.id)
-    loadEntities(kb.id)
     loadGlobalSummary(kb.id)
-    loadDocSummaries(kb.id)
-    loadAllRelations(kb.id)
   }, [])
 
   useEffect(() => {
@@ -272,6 +208,10 @@ export const useKnowledgeBase = () => {
                 pollRef.current = null
                 setParsingAll(false)
                 loadDocProcessingStatus(result)
+                if (activeKBRef.current) {
+                  loadKnowledgeStats(activeKBRef.current)
+                  loadGlobalSummary(activeKBRef.current)
+                }
               }
             }).catch(() => {})
           }
@@ -305,7 +245,7 @@ export const useKnowledgeBase = () => {
       if (result.success) {
         message.success(t('knowledgeBase.knowledgeProcessed'))
         setProcessedDocIds(prev => new Set(prev).add(docId))
-        if (selectedKB) { loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadEntities(selectedKB.id) }
+        if (selectedKB) { loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id) }
       } else {
         message.error(result.error || t('knowledgeBase.processFailed'))
       }
@@ -332,7 +272,7 @@ export const useKnowledgeBase = () => {
         enable_thinking: enableThinking,
       })
       message.success(t('knowledgeBase.batchProcessResult', { success: result.success, failed: result.failed, skipped: result.skipped }))
-      loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadEntities(selectedKB.id)
+      loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id)
     } catch { message.error(t('knowledgeBase.batchProcessFailed')) }
     finally { cleanupAll(); cleanupProgress(); setProcessingAll(false); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
   }
@@ -351,39 +291,12 @@ export const useKnowledgeBase = () => {
       })
       if (result.success) {
         message.success(t('knowledgeBase.globalKnowledgeBuilt'))
-        loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id); loadEntities(selectedKB.id)
+        loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id)
       } else {
         message.error(result.error || t('knowledgeBase.buildFailed'))
       }
     } catch { message.error(t('knowledgeBase.globalBuildFailed')) }
     finally { cleanup(); setBuildingGlobal(false); setProcessProgress({ stage: '', detail: '' }) }
-  }
-
-  const handleViewChapters = async (docId: string, docName: string) => {
-    try {
-      const chapters = await window.electronAPI.kb.getChapters(docId)
-      setDocChapters(chapters || [])
-      setSelectedDocSummary(docName)
-      setChapterModalOpen(true)
-    } catch { setDocChapters([]) }
-  }
-
-  const handleViewDocContent = async (docId: string, docName: string) => {
-    try {
-      const content = await window.electronAPI.kb.getDocContent(docId)
-      setDocContent(content || t('knowledgeBase.docContentEmpty'))
-      setDocContentTitle(docName)
-      setDocContentModalOpen(true)
-    } catch { setDocContent(t('knowledgeBase.getDocContentFailed')) }
-  }
-
-  const handleViewEntity = async (entity: any) => {
-    setSelectedEntity(entity)
-    try {
-      const relations = await window.electronAPI.kb.getEntityRelations({ entity_id: entity.id, depth: 2 })
-      setEntityRelations(relations)
-    } catch { setEntityRelations([]) }
-    setEntityModalOpen(true)
   }
 
   const handleCreateKB = async () => {
@@ -682,38 +595,15 @@ export const useKnowledgeBase = () => {
       const now = new Date()
       const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
 
-      if (exportType === 'full') {
-        const result = await window.electronAPI.app.showSaveDialog({
-          title: t('knowledgeBase.exportSaveAs'),
-          defaultPath: `${selectedKB.name}_${dateStr}.zip`,
-          filters: [{ name: 'ZIP', extensions: ['zip'] }],
-        })
-        if (result.canceled || !result.filePath) { setExporting(false); cleanup(); return }
-        const res = await window.electronAPI.kb.exportFull({ kb_id: selectedKB.id, export_path: result.filePath })
-        if (res.success) { message.success(t('knowledgeBase.exportSuccess')); setExportModalOpen(false) }
-        else message.error(res.error || t('knowledgeBase.exportFailed'))
-      } else if (exportType === 'summary') {
-        const ext = exportFormat === 'json-ld' ? 'jsonld' : 'csv'
-        const result = await window.electronAPI.app.showSaveDialog({
-          title: t('knowledgeBase.exportSaveAs'),
-          defaultPath: `${selectedKB.name}_summary_${dateStr}.${ext}`,
-          filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
-        })
-        if (result.canceled || !result.filePath) { setExporting(false); cleanup(); return }
-        const res = await window.electronAPI.kb.exportSummary({ kb_id: selectedKB.id, export_path: result.filePath, format: exportFormat })
-        if (res.success) { message.success(t('knowledgeBase.exportSuccess')); setExportModalOpen(false) }
-        else message.error(res.error || t('knowledgeBase.exportFailed'))
-      } else if (exportType === 'documents') {
-        const result = await window.electronAPI.app.showSaveDialog({
-          title: t('knowledgeBase.exportSaveAs'),
-          defaultPath: `${selectedKB.name}_docs_${dateStr}.zip`,
-          filters: [{ name: 'ZIP', extensions: ['zip'] }],
-        })
-        if (result.canceled || !result.filePath) { setExporting(false); cleanup(); return }
-        const res = await window.electronAPI.kb.exportDocuments({ kb_id: selectedKB.id, export_path: result.filePath })
-        if (res.success) { message.success(t('knowledgeBase.exportSuccess')); setExportModalOpen(false) }
-        else message.error(res.error || t('knowledgeBase.exportFailed'))
-      }
+      const result = await window.electronAPI.app.showSaveDialog({
+        title: t('knowledgeBase.exportSaveAs'),
+        defaultPath: `${selectedKB.name}_${dateStr}.zip`,
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+      })
+      if (result.canceled || !result.filePath) { setExporting(false); cleanup(); return }
+      const res = await window.electronAPI.kb.exportFull({ kb_id: selectedKB.id, export_path: result.filePath })
+      if (res.success) { message.success(t('knowledgeBase.exportSuccess')); setExportModalOpen(false) }
+      else message.error(res.error || t('knowledgeBase.exportFailed'))
     } catch { message.error(t('knowledgeBase.exportFailed')) }
     finally { cleanup(); setExporting(false); setExportProgress({ stage: '', detail: '' }) }
   }
@@ -723,50 +613,27 @@ export const useKnowledgeBase = () => {
     setImportProgress({ stage: '', detail: '' })
     const cleanup = (window as any).electronAPI.kb.onImportProgress((p: any) => setImportProgress(p))
     try {
-      if (importType === 'full') {
-        const result = await window.electronAPI.app.showOpenDialog({
-          title: t('knowledgeBase.importSelectFile'),
-          filters: [{ name: 'ZIP', extensions: ['zip'] }],
-          properties: ['openFile'],
-        })
-        if (result.canceled || !result.filePaths.length) { setImporting(false); cleanup(); return }
-        const res = await window.electronAPI.kb.importFull({
-          import_path: result.filePaths[0],
-          kb_name: importKBName || undefined,
-          conflict_strategy: importConflictStrategy as 'skip' | 'overwrite' | 'rename',
-        })
-        if (res.success) {
-          message.success(t('knowledgeBase.importSuccess', { kbId: res.kbId || '' }))
-          setImportModalOpen(false)
-          const kbList = await loadKBs()
-          if (res.kbId) {
-            const newKB = kbList.find((kb: KnowledgeBase) => kb.id === res.kbId)
-            if (newKB) handleSelectKB(newKB)
-          }
-        } else {
-          message.error(res.error || t('knowledgeBase.importFailed'))
+      const result = await window.electronAPI.app.showOpenDialog({
+        title: t('knowledgeBase.importSelectFile'),
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+        properties: ['openFile'],
+      })
+      if (result.canceled || !result.filePaths.length) { setImporting(false); cleanup(); return }
+      const res = await window.electronAPI.kb.importFull({
+        import_path: result.filePaths[0],
+        kb_name: importKBName || undefined,
+        conflict_strategy: importConflictStrategy as 'skip' | 'overwrite' | 'rename',
+      })
+      if (res.success) {
+        message.success(t('knowledgeBase.importSuccess', { kbId: res.kbId || '' }))
+        setImportModalOpen(false)
+        const kbList = await loadKBs()
+        if (res.kbId) {
+          const newKB = kbList.find((kb: KnowledgeBase) => kb.id === res.kbId)
+          if (newKB) handleSelectKB(newKB)
         }
-      } else if (importType === 'graph') {
-        if (!selectedKB) { message.warning(t('knowledgeBase.selectKbFirst')); setImporting(false); cleanup(); return }
-        const result = await window.electronAPI.app.showOpenDialog({
-          title: t('knowledgeBase.importSelectFile'),
-          filters: [{ name: exportFormat === 'json-ld' ? 'JSON-LD' : 'RDF', extensions: [importFormat === 'json-ld' ? 'jsonld' : 'rdf'] }, { name: 'All Files', extensions: ['*'] }],
-          properties: ['openFile'],
-        })
-        if (result.canceled || !result.filePaths.length) { setImporting(false); cleanup(); return }
-        const res = await window.electronAPI.kb.importGraph({
-          kb_id: selectedKB.id,
-          import_path: result.filePaths[0],
-          format: importFormat,
-          conflict_strategy: importConflictStrategy as 'skip' | 'overwrite' | 'merge',
-        })
-        if (res.success) {
-          message.success(t('knowledgeBase.importGraphSuccess', { entities: res.imported?.entities || 0, relations: res.imported?.relations || 0 }))
-          setImportModalOpen(false)
-          if (selectedKB) { loadEntities(selectedKB.id); loadAllRelations(selectedKB.id) }
-        } else {
-          message.error(res.error || t('knowledgeBase.importFailed'))
-        }
+      } else {
+        message.error(res.error || t('knowledgeBase.importFailed'))
       }
     } catch { message.error(t('knowledgeBase.importFailed')) }
     finally { cleanup(); setImporting(false); setImportProgress({ stage: '', detail: '' }) }
@@ -833,32 +700,10 @@ export const useKnowledgeBase = () => {
     processProgress,
     knowledgeStats,
     globalSummary,
-    docSummaries,
-    allRelations,
     onProcessDocument: handleProcessDocument,
     onProcessAll: handleProcessAll,
     onBuildGlobal: handleBuildGlobal,
-    onViewChapters: handleViewChapters,
-    onViewDocContent: handleViewDocContent,
     onViewParseDetail: handleViewParseDetail,
-    docChapters,
-    chapterModalOpen,
-    selectedDocSummary,
-    onCloseChapterModal: () => setChapterModalOpen(false),
-    docContent,
-    docContentTitle,
-    docContentModalOpen,
-    onCloseDocContentModal: () => setDocContentModalOpen(false),
-
-    entities,
-    entityFilter,
-    selectedEntity,
-    entityRelations,
-    entityModalOpen,
-    onEntityFilterChange: setEntityFilter,
-    onLoadEntities: loadEntities,
-    onViewEntity: handleViewEntity,
-    onCloseEntityModal: () => setEntityModalOpen(false),
 
     createModalOpen,
     setCreateModalOpen,
@@ -883,26 +728,20 @@ export const useKnowledgeBase = () => {
     selectedProviderId,
     selectedModelId,
     enableThinking,
-    onProviderChange: setSelectedProviderId,
-    onModelChange: setSelectedModelId,
+    onLlmChange: (providerId: string, modelId: string) => {
+      setSelectedProviderId(providerId)
+      setSelectedModelId(modelId)
+    },
     onThinkingChange: setEnableThinking,
 
     exportModalOpen,
     setExportModalOpen,
-    exportType,
-    setExportType,
-    exportFormat,
-    setExportFormat,
     exporting,
     exportProgress,
     onExport: handleExport,
 
     importModalOpen,
     setImportModalOpen,
-    importType,
-    setImportType,
-    importFormat,
-    setImportFormat,
     importConflictStrategy,
     setImportConflictStrategy,
     importing,

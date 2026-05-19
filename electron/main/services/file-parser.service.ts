@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import pdf from 'pdf-parse'
+import { convert } from 'file2md'
 import mammoth from 'mammoth'
 import XLSX from 'xlsx'
 import type { ParseResult } from '../../shared/types'
@@ -23,18 +23,19 @@ class FileParserService {
   }
 
   private async parsePDF(filePath: string): Promise<ParseResult> {
-    const dataBuffer = await fs.promises.readFile(filePath)
-    const data = await pdf(dataBuffer)
+    const result = await convert(filePath, {
+      preserveLayout: true,
+      extractImages: false,
+      extractCharts: false,
+    })
 
     return {
       type: 'pdf',
-      fullText: data.text,
-      sections: this.splitIntoSections(data.text),
+      fullText: result.markdown,
+      sections: this.splitIntoSections(result.markdown),
       tables: [],
-      entities: [],
       metadata: {
-        pageCount: data.numpages,
-        info: data.info,
+        pageCount: result.metadata.pageCount,
       },
     }
   }
@@ -49,7 +50,6 @@ class FileParserService {
         fullText: result.value,
         sections: this.splitIntoSections(result.value),
         tables: [],
-        entities: [],
         metadata: {},
       }
     } catch (error) {
@@ -58,20 +58,40 @@ class FileParserService {
   }
 
   private async parseWord(filePath: string): Promise<ParseResult> {
-    const buffer = await fs.promises.readFile(filePath)
-    const result = await mammoth.extractRawText({ buffer })
+    const result = await convert(filePath, {
+      preserveLayout: true,
+      extractImages: false,
+      extractCharts: false,
+    })
 
     return {
       type: 'word',
-      fullText: result.value,
-      sections: this.splitIntoSections(result.value),
+      fullText: result.markdown,
+      sections: this.splitIntoSections(result.markdown),
       tables: [],
-      entities: [],
       metadata: {},
     }
   }
 
   private async parseExcel(filePath: string): Promise<ParseResult> {
+    const ext = path.extname(filePath).toLowerCase()
+
+    if (ext === '.xlsx') {
+      const result = await convert(filePath, {
+        preserveLayout: true,
+        extractImages: false,
+        extractCharts: false,
+      })
+
+      return {
+        type: 'excel',
+        fullText: result.markdown,
+        sections: this.splitIntoSections(result.markdown),
+        tables: [],
+        metadata: {},
+      }
+    }
+
     const workbook = XLSX.readFile(filePath)
     let fullText = ''
     const tables: ParseResult['tables'] = []
@@ -96,7 +116,6 @@ class FileParserService {
       fullText: fullText.trim(),
       sections: [],
       tables,
-      entities: [],
       metadata: { sheetNames: workbook.SheetNames },
     }
   }
@@ -109,7 +128,6 @@ class FileParserService {
       fullText: content,
       sections: this.splitIntoSections(content),
       tables: [],
-      entities: [],
       metadata: {},
     }
   }
@@ -122,7 +140,6 @@ class FileParserService {
       fullText: ocrResult.text,
       sections: this.splitIntoSections(ocrResult.text),
       tables: [],
-      entities: [],
       metadata: {
         ocrEngine: ocrResult.engine,
         confidence: ocrResult.confidence,
@@ -143,6 +160,7 @@ class FileParserService {
     let currentSection: ParseResult['sections'][0] | null = null
 
     const headingPatterns = [
+      /^#{1,6}\s+\S/,
       /^第[一二三四五六七八九十百千\d]+章\s*/,
       /^第[一二三四五六七八九十百千\d]+节\s*/,
       /^\d+\.\d+\s+/,
@@ -161,10 +179,19 @@ class FileParserService {
         if (currentSection) {
           sections.push(currentSection)
         }
+
+        let level = 2
+        const mdMatch = trimmedLine.match(/^(#{1,6})\s/)
+        if (mdMatch) {
+          level = mdMatch[1].length
+        } else if (trimmedLine.startsWith('第')) {
+          level = 1
+        }
+
         currentSection = {
           title: trimmedLine,
           content: '',
-          level: trimmedLine.startsWith('第') ? 1 : 2,
+          level,
         }
       } else if (currentSection) {
         currentSection.content += line + '\n'

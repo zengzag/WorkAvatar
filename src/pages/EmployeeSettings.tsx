@@ -91,7 +91,6 @@ const EmployeeSettings: React.FC = () => {
   const [employeeSkills, setEmployeeSkills] = useState<InstalledSkill[]>([])
   const [availableSkills, setAvailableSkills] = useState<InstalledSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
-  const [formLlmProviderId, setFormLlmProviderId] = useState<string>('')
 
   useEffect(() => {
     if (employee) {
@@ -103,7 +102,6 @@ const EmployeeSettings: React.FC = () => {
         llm_provider_id: employee.llm_provider_id,
         llm_model: employee.llm_model,
       })
-      setFormLlmProviderId(employee.llm_provider_id || '')
     }
   }, [employee])
 
@@ -558,8 +556,6 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <BasicInfoSection
                 form={form}
-                formLlmProviderId={formLlmProviderId}
-                setFormLlmProviderId={setFormLlmProviderId}
                 providers={providers}
                 loading={loading}
                 onSave={handleSaveBasic}

@@ -24,8 +24,8 @@ import {
   FolderOpenOutlined,
   DeleteOutlined,
 } from '@ant-design/icons'
+import LLMSelector from '../llm/LLMSelector'
 import type { LLMProvider } from '../../types'
-import { getProviderModelOptions } from '../../utils/llm'
 
 const { TextArea } = Input
 const { Text } = Typography
@@ -39,8 +39,6 @@ const AVATAR_OPTIONS = [
 
 interface BasicInfoSectionProps {
   form: ReturnType<typeof Form.useForm>[0]
-  formLlmProviderId: string
-  setFormLlmProviderId: (value: string) => void
   providers: LLMProvider[]
   loading: boolean
   onSave: (values: any) => void
@@ -51,8 +49,6 @@ interface BasicInfoSectionProps {
 
 const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   form,
-  formLlmProviderId,
-  setFormLlmProviderId,
   providers,
   loading,
   onSave,
@@ -88,6 +84,10 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
+  }
+
+  const handleLlmChange = (providerId: string, modelId: string) => {
+    form.setFieldsValue({ llm_provider_id: providerId, llm_model: modelId })
   }
 
   return (
@@ -152,39 +152,16 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           </Space.Compact>
         </Form.Item>
 
-        <Row gutter={24}>
-          <Col span={12}>
-            <Form.Item name="llm_provider_id" label={t('employeeSettings.llmProvider')}>
-              <Select
-                placeholder={t('employeeSettings.selectProvider')}
-                allowClear
-                onChange={(value) => {
-                  setFormLlmProviderId(value || '')
-                  form.setFieldValue('llm_model', undefined)
-                }}
-              >
-                {providers.map((p) => (
-                  <Select.Option key={p.id} value={p.id}>
-                    {p.name}{p.model ? ` (${p.model})` : ''}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="llm_model" label={t('employeeSettings.modelName')}>
-              {formLlmProviderId && getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!).length > 0 ? (
-                <Select
-                  placeholder={t('employeeSettings.selectModel')}
-                  allowClear
-                  options={getProviderModelOptions(providers.find(p => p.id === formLlmProviderId)!)}
-                />
-              ) : (
-                <Input placeholder={t('employeeSettings.modelPlaceholder')} />
-              )}
-            </Form.Item>
-          </Col>
-        </Row>
+        <Form.Item label={t('employeeSettings.llmModel')}>
+          <Form.Item name="llm_provider_id" hidden><Input /></Form.Item>
+          <Form.Item name="llm_model" hidden><Input /></Form.Item>
+          <LLMSelector
+            providerId={form.getFieldValue('llm_provider_id') || ''}
+            modelId={form.getFieldValue('llm_model') || ''}
+            onChange={handleLlmChange}
+            providers={providers}
+          />
+        </Form.Item>
 
         <Form.Item name="review_mode" valuePropName="checked" label={null}>
           <Switch checkedChildren={t('common.on')} unCheckedChildren={t('common.off')} />
