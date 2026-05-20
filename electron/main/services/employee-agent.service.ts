@@ -6,9 +6,7 @@ import KnowledgeBaseService from './kb.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools } from './agent/tools'
-import { createKBAgentTools } from './agent/tools/kb-agent-tools'
-import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
+import { allBuiltinTools, createKBAgentTools, createWorkspaceTools, getWorkspacePrompt, createOfficeGuideTool, officeExecTool } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import { KNOWLEDGE_QUERY_GUIDANCE } from './agent/business/prompts'
@@ -182,6 +180,9 @@ class EmployeeAgentService {
       agent.registerTools(workspaceTools)
     }
 
+    const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
+    agent.registerTools([officeGuideTool, officeExecTool])
+
     this.agents.set(cacheKey, agent)
     return agent
   }
@@ -216,6 +217,14 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
+    const officeToolIds = [
+      'office_exec',
+      'office_guide',
+    ]
+    for (const id of officeToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
     const enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
@@ -239,6 +248,11 @@ class EmployeeAgentService {
       }
     }
     for (const id of workspaceToolIds) {
+      if (!enabledRowIds.has(id)) {
+        result.add(id)
+      }
+    }
+    for (const id of officeToolIds) {
       if (!enabledRowIds.has(id)) {
         result.add(id)
       }
