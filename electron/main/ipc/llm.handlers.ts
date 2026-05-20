@@ -69,18 +69,18 @@ export function registerLLMHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: any) => {
     const abortController = new AbortController()
-    const sessionId = params.conversation_id || generateId()
+    const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
 
     interactionService.registerSession(sessionId, event.sender)
 
-    try {
-      await interactionContext.run(
-        {
-          sessionId,
-          employeeId: params.employee_id,
-        },
-        async () => {
+    interactionContext.run(
+      {
+        sessionId,
+        employeeId: params.employee_id,
+      },
+      async () => {
+        try {
           await employeeAgent.chatStream(
             {
               employee_id: params.employee_id,
@@ -99,25 +99,25 @@ export function registerLLMHandlers(
                 if (abortController.signal.aborted) return
                 event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...toolResult })
               },
-              onDone: () => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId }); activeSessions.delete(sessionId) },
+              onDone: (metadata?: any) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} }); activeSessions.delete(sessionId) },
               onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error }); activeSessions.delete(sessionId) },
             },
             abortController.signal
           )
+        } catch (error: any) {
+          if (abortController.signal.aborted) {
+            event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
+            activeSessions.delete(sessionId)
+            return
+          }
+          event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error.message || String(error) })
+          activeSessions.delete(sessionId)
+        } finally {
+          interactionService.unregisterSession(sessionId)
         }
-      )
-      return { success: true, sessionId }
-    } catch (error: any) {
-      if (abortController.signal.aborted) {
-        event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
-        activeSessions.delete(sessionId)
-        return { success: true, aborted: true }
       }
-      event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error.message || String(error) })
-      activeSessions.delete(sessionId)
-      return { success: false, error: error.message || String(error) }
-    } finally {
-      interactionService.unregisterSession(sessionId)
-    }
+    ).catch(() => {})
+
+    return { success: true, sessionId }
   })
 }

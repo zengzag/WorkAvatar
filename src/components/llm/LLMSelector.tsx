@@ -174,7 +174,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
       <Select
         size="small"
         placeholder={t('llmSelector.selectModel')}
-        style={{ minWidth: 160, maxWidth: 280 }}
+        style={{ minWidth: 107, maxWidth: 187 }}
         value={currentValue}
         onChange={handleSelectChange}
         showSearch
@@ -196,7 +196,7 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
           onChange={e => setCustomModel(e.target.value)}
           onPressEnter={handleCustomModelConfirm}
           onBlur={handleCustomModelConfirm}
-          style={{ minWidth: 90, maxWidth: 160 }}
+          style={{ minWidth: 60, maxWidth: 107 }}
         />
       )}
     </Space>

@@ -120,8 +120,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
-    onDone: (callback: (data: { sessionId: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string }) => callback(data)
+    onDone: (callback: (data: { sessionId: string; metadata?: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; metadata?: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_DONE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_DONE, handler)
     },

@@ -21,12 +21,32 @@ export interface MessageSegment {
   isToolComplete?: boolean
 }
 
+export interface TokenUsage {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+}
+
+export interface MessageBranch {
+  content: string
+  segments?: MessageSegment[]
+  thought?: string
+  tokenUsage?: TokenUsage
+  isError?: boolean
+}
+
 export interface MessageWithThought extends Message {
   thought?: string
   isStreamingThought?: boolean
   thoughtCollapsed?: boolean
   toolCalls?: ToolCallInfo[]
   segments?: MessageSegment[]
+  tokenUsage?: TokenUsage
+  branches?: MessageBranch[]
+  activeBranchIndex?: number
+  comparisonProviderId?: string
+  comparisonModelId?: string
+  images?: string[]
 }
 
 export function ensureSegments(msg: MessageWithThought): MessageWithThought {

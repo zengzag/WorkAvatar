@@ -20,7 +20,7 @@ interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
   model_id?: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string; images?: string[] }>
   options?: {
     temperature?: number
     max_tokens?: number
@@ -35,7 +35,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { name: string; args: any }) => void
   onToolResult: (toolResult: { name: string; result: any }) => void
-  onDone: () => void
+  onDone: (metadata?: any) => void
   onError: (error: string) => void
 }
 
@@ -304,9 +304,12 @@ class EmployeeAgentService {
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,
       content: m.content,
+      images: m.images,
     }))
 
-    const query = messages[messages.length - 1]?.content || ''
+    const lastMsg = messages[messages.length - 1]
+    const query = lastMsg?.content || ''
+    const queryImages = lastMsg?.images
 
     const config = await this.llmClient.getProviderConfig(provider_id)
     let maxIterations = 100
@@ -328,13 +331,16 @@ class EmployeeAgentService {
         history,
         useSkills: use_skills,
         maxIterations,
+        metadata: { queryImages },
       },
       {
         onChunk: callbacks.onChunk,
         onThought: callbacks.onThought,
         onToolCall: callbacks.onToolCall,
         onToolResult: callbacks.onToolResult,
-        onDone: callbacks.onDone,
+        onDone: (metadata?: any) => {
+          callbacks.onDone(metadata)
+        },
         onError: callbacks.onError,
       },
       signal

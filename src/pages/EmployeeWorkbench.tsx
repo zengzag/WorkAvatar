@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import 'katex/dist/katex.min.css'
 import {
   Button,
   Space,
@@ -30,6 +31,7 @@ import {
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
+import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import type { Employee } from '../types'
@@ -53,6 +55,8 @@ const EmployeeWorkbench: React.FC = () => {
   const [employeeSearchText, setEmployeeSearchText] = useState('')
   const [employeeSelectorOpen, setEmployeeSelectorOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
 
   useEffect(() => {
     loadEmployees()
@@ -228,6 +232,7 @@ const EmployeeWorkbench: React.FC = () => {
     inputValue,
     setInputValue,
     isStreaming,
+    providers,
     selectedLlmProviderId,
     selectedLlmModelId,
     handleLlmChange,
@@ -257,6 +262,12 @@ const EmployeeWorkbench: React.FC = () => {
     handleConversationListScroll,
     handleCopy,
     handleDeleteMessage,
+    handleRegenerate,
+    handleSwitchModelRegenerate,
+    handleEditAndResubmit,
+    handleCommand,
+    handleExportConversation,
+    handleSwitchBranch,
     handleToggleSegment,
     getToolDisplayName,
     isConversationStreaming,
@@ -634,6 +645,7 @@ const EmployeeWorkbench: React.FC = () => {
                 }
               } catch {}
             }}
+            onExport={handleExportConversation}
           />
         )}
 
@@ -642,7 +654,7 @@ const EmployeeWorkbench: React.FC = () => {
             style={{
               flex: 1,
               overflow: 'auto',
-              padding: '24px 10%',
+              padding: '24px 4%',
               display: 'flex',
               flexDirection: 'column',
               gap: 20,
@@ -661,8 +673,13 @@ const EmployeeWorkbench: React.FC = () => {
                 msg={msg}
                 onCopy={handleCopy}
                 onDeleteMessage={handleDeleteMessage}
+                onRegenerate={handleRegenerate}
+                onSwitchModelRegenerate={handleSwitchModelRegenerate}
+                onEditAndResubmit={handleEditAndResubmit}
                 onToggleSegment={handleToggleSegment}
+                onSwitchBranch={handleSwitchBranch}
                 getToolDisplayName={getToolDisplayName}
+                providers={providers}
               />
             ))}
             <div ref={messagesEndRef} />
@@ -671,10 +688,20 @@ const EmployeeWorkbench: React.FC = () => {
           <ChatInput
             value={inputValue}
             onChange={setInputValue}
-            onSend={handleSend}
+            onSend={(images, models) => {
+              setAttachedImages([])
+              setSelectedModels([])
+              handleSend(images, models)
+            }}
             onStop={handleStop}
+            onCommand={handleCommand}
             isStreaming={isStreaming}
             placeholder={t('workbench.inputPlaceholder')}
+            providers={providers}
+            attachedImages={attachedImages}
+            onImagesChange={setAttachedImages}
+            selectedModels={selectedModels}
+            onModelsChange={setSelectedModels}
           />
         </div>
       </div>
