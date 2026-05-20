@@ -295,7 +295,7 @@ const ChatInput: React.FC<{
                 trigger="click"
                 placement="topLeft"
                 arrow={false}
-                overlayInnerStyle={{ padding: 8 }}
+                styles={{ container: { padding: 8 } }}
                 onOpenChange={(open) => {
                   setShowModelPicker(open)
                   if (open) setModelSearchText('')

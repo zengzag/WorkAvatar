@@ -1,7 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Input, List, Card, Typography, Space, Tag, Button, Tabs, Tree,
+  Input, Card, Typography, Space, Tag, Button, Tabs, Tree,
   Empty, Spin, theme, Tooltip, message, Pagination,
 } from 'antd'
 import {
@@ -507,11 +507,10 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
           ) : filteredDocs.length === 0 ? (
             <Empty description={t('knowledgeBase.noDocs')} image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 40 }} />
           ) : (
-            <List
-              dataSource={filteredDocs}
-              size="small"
-              renderItem={(doc) => (
-                <List.Item
+            <div style={{ fontSize: 12 }}>
+              {filteredDocs.map((doc) => (
+                <div
+                  key={doc.id}
                   onClick={() => loadDocDetail(doc.id, doc.original_name)}
                   style={{
                     padding: '8px 12px',
@@ -532,9 +531,9 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
                       </Space>
                     </div>
                   </div>
-                </List.Item>
-              )}
-            />
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -557,7 +556,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
           </div>
         ) : detailLoading ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Spin tip={t('knowledgeBase.loading')} />
+            <Spin description={t('knowledgeBase.loading')} />
           </div>
         ) : (
           <>

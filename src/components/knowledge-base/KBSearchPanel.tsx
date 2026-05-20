@@ -455,7 +455,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     if (loading) {
       return (
         <div style={{ textAlign: 'center', padding: 40 }}>
-          <Spin tip={t('kbSearch.searching')} />
+          <Spin description={t('kbSearch.searching')} />
         </div>
       )
     }
@@ -504,7 +504,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       title={null}
       open={open}
       onClose={onClose}
-      width={680}
+      size={680}
       styles={{
         body: { padding: 0, display: 'flex', flexDirection: 'column' },
       }}

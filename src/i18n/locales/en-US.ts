@@ -206,6 +206,11 @@ export default {
     selectedModelCount: '{{count}}/{{max}} models selected',
     noMatchingModel: 'No matching models found',
     switchModelRegenerate: 'Switch model to regenerate',
+    multiModelComparison: 'Multi-Model Comparison',
+    models: 'models',
+    closeComparison: 'Close Comparison',
+    openComparison: 'View Comparison',
+    comparisonView: 'Comparison View',
   },
   employeeSettings: {
     subtitle: 'Digital Employee Configuration',

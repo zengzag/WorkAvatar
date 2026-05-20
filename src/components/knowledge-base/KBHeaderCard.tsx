@@ -61,7 +61,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
         </Tooltip>
       </div>
 
-      <Divider type="vertical" style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
+      <Divider vertical style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
 
       <Space size={4} style={{ flexShrink: 0 }}>
         <Button icon={<UploadOutlined />} onClick={onUploadFiles} loading={uploadLoading} type="primary" size="small">
@@ -84,7 +84,7 @@ const KBHeaderCard: React.FC<KBHeaderCardProps> = ({
         </Dropdown>
       </Space>
 
-      <Divider type="vertical" style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
+      <Divider vertical style={{ height: 24, margin: '0 4px', flexShrink: 0 }} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <LLMSelector

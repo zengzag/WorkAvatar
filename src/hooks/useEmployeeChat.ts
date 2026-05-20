@@ -22,6 +22,16 @@ interface ConversationStreamState {
   cleanupFns: (() => void)[]
 }
 
+const getActiveBranchContent = (m: MessageWithThought): string => {
+  if (m.role === 'assistant' && m.branches && m.branches.length > 0) {
+    const branchIndex = m.activeBranchIndex ?? m.branches.length
+    if (branchIndex < m.branches.length) {
+      return m.branches[branchIndex].content
+    }
+  }
+  return m.content
+}
+
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
@@ -58,6 +68,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
+  const [isComparisonMode, setIsComparisonMode] = useState(false)
+  const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
+  const [comparisonUserMessageId, setComparisonUserMessageId] = useState<string | null>(null)
   const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
   const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
   const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
@@ -461,6 +474,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setActiveConversationId(convId)
     activeConversationIdRef.current = convId
 
+    setIsComparisonMode(false)
+    setComparisonMessageIds([])
+    setComparisonUserMessageId(null)
+
     const streamState = streamStatesRef.current.get(convId)
     setIsStreaming(!!streamState?.isStreaming)
 
@@ -695,8 +712,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const targetModels = models && models.length > 0 ? models : null
 
     if (targetModels) {
+      const assistantIds: string[] = []
       for (const sel of targetModels) {
         const assistantMessageId = `msg_${generateId()}`
+        assistantIds.push(assistantMessageId)
         const assistantMessage: MessageWithThought = {
           id: assistantMessageId,
           role: 'assistant',
@@ -726,7 +745,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         try {
           const messageHistory = updatedMessagesRef.map((m) => ({
             role: m.role,
-            content: m.content,
+            content: getActiveBranchContent(m),
             images: m.images,
           }))
 
@@ -748,6 +767,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         } catch {
           streamState.isStreaming = false
         }
+      }
+
+      if (targetConvId === activeConversationId && assistantIds.length > 0) {
+        setIsComparisonMode(true)
+        setComparisonMessageIds(assistantIds)
+        setComparisonUserMessageId(userMessage.id)
       }
     } else {
       const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
@@ -784,7 +809,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       try {
         const messageHistory = updatedMessagesRef.map((m) => ({
           role: m.role,
-          content: m.content,
+          content: getActiveBranchContent(m),
           images: m.images,
         }))
 
@@ -857,6 +882,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       thought: targetMsg.thought,
       tokenUsage: targetMsg.tokenUsage,
       isError: targetMsg.isError,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
     }
     const allBranches = [...existingBranches, currentBranch]
     const newBranchIndex = allBranches.length
@@ -872,6 +899,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       isStreaming: true,
       isError: false,
       tokenUsage: undefined,
+      comparisonProviderId: undefined,
+      comparisonModelId: undefined,
     }
     setConvMessages(activeConversationId, newMessages)
     await window.electronAPI.conversation.update({
@@ -902,7 +931,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
         role: m.role,
-        content: m.content,
+        content: getActiveBranchContent(m),
         images: m.images,
       }))
 
@@ -946,6 +975,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       thought: targetMsg.thought,
       tokenUsage: targetMsg.tokenUsage,
       isError: targetMsg.isError,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
     }
     const allBranches = [...existingBranches, currentBranch]
     const newBranchIndex = allBranches.length
@@ -961,6 +992,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       isStreaming: true,
       isError: false,
       tokenUsage: undefined,
+      comparisonProviderId: providerId,
+      comparisonModelId: modelId,
     }
     setConvMessages(activeConversationId, newMessages)
     await window.electronAPI.conversation.update({
@@ -985,7 +1018,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
         role: m.role,
-        content: m.content,
+        content: getActiveBranchContent(m),
         images: m.images,
       }))
 
@@ -1041,6 +1074,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         thought: existingAssistantMsg.thought,
         tokenUsage: existingAssistantMsg.tokenUsage,
         isError: existingAssistantMsg.isError,
+        comparisonProviderId: existingAssistantMsg.comparisonProviderId,
+        comparisonModelId: existingAssistantMsg.comparisonModelId,
       }
       const allBranches = [...existingBranches, currentBranch]
       const newBranchIndex = allBranches.length
@@ -1056,6 +1091,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         isStreaming: true,
         isError: false,
         tokenUsage: undefined,
+        comparisonProviderId: undefined,
+        comparisonModelId: undefined,
       }
       newMessages.push(updatedAssistantMsg)
     } else {
@@ -1100,7 +1137,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const messageHistory = newMessages.slice(0, assistantMsgIndex).map((m) => ({
         role: m.role,
-        content: m.content,
+        content: getActiveBranchContent(m),
         images: m.images,
       }))
 
@@ -1161,6 +1198,149 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     })
   }
 
+  const handleCloseComparison = () => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+
+    const firstId = comparisonMessageIds[0]
+    const firstMsg = currentMsgs.find(m => m.id === firstId)
+
+    if (firstMsg?._comparisonBranchMsgs) {
+      updateConvMessages(activeConversationId, (prev) =>
+        prev.map(m => {
+          if (m.id !== firstId) return m
+          const { _comparisonBranchMsgs, ...rest } = m
+          return rest as MessageWithThought
+        })
+      )
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      setComparisonUserMessageId(null)
+      return
+    }
+
+    const comparisonMsgs = comparisonMessageIds
+      .map(id => currentMsgs.find(m => m.id === id))
+      .filter((m): m is MessageWithThought => !!m)
+
+    if (comparisonMsgs.length === 0) {
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      setComparisonUserMessageId(null)
+      return
+    }
+
+    const targetMsg = comparisonMsgs[0]
+    const branches: MessageBranch[] = comparisonMsgs.slice(1).map(m => ({
+      content: m.content,
+      segments: m.segments,
+      thought: m.thought,
+      tokenUsage: m.tokenUsage,
+      isError: m.isError,
+      comparisonProviderId: m.comparisonProviderId,
+      comparisonModelId: m.comparisonModelId,
+    }))
+
+    const aggregatedMsg: MessageWithThought = {
+      ...targetMsg,
+      branches,
+      activeBranchIndex: branches.length,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
+    }
+
+    const otherIds = new Set(comparisonMessageIds.slice(1))
+    const newMessages = currentMsgs
+      .filter(m => !otherIds.has(m.id))
+      .map(m => m.id === targetMsg.id ? aggregatedMsg : m)
+
+    setConvMessages(activeConversationId, newMessages)
+    window.electronAPI.conversation.update({
+      id: activeConversationId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+    }).catch(() => {})
+
+    setIsComparisonMode(false)
+    setComparisonMessageIds([])
+    setComparisonUserMessageId(null)
+  }
+
+  const handleOpenComparison = (msgId: string) => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const targetMsg = currentMsgs.find(m => m.id === msgId)
+    if (!targetMsg || !targetMsg.branches || targetMsg.branches.length === 0) return
+
+    const hasComparisonBranches = targetMsg.branches.some(
+      b => b.comparisonProviderId || b.comparisonModelId
+    ) || (targetMsg.comparisonProviderId || targetMsg.comparisonModelId)
+
+    if (!hasComparisonBranches) return
+
+    const userMsgIndex = currentMsgs.findIndex(m => m.id === msgId) - 1
+    const userMsg = userMsgIndex >= 0 ? currentMsgs[userMsgIndex] : null
+
+    const allBranchMsgs: MessageWithThought[] = []
+    for (let i = 0; i < targetMsg.branches.length; i++) {
+      const branch = targetMsg.branches[i]
+      allBranchMsgs.push({
+        ...targetMsg,
+        id: `${targetMsg.id}_branch_${i}`,
+        content: branch.content,
+        segments: branch.segments,
+        thought: branch.thought,
+        tokenUsage: branch.tokenUsage,
+        isError: branch.isError,
+        comparisonProviderId: branch.comparisonProviderId,
+        comparisonModelId: branch.comparisonModelId,
+        branches: undefined,
+        activeBranchIndex: undefined,
+        isStreaming: false,
+      })
+    }
+
+    allBranchMsgs.push({
+      ...targetMsg,
+      id: `${targetMsg.id}_branch_${targetMsg.branches.length}`,
+      branches: undefined,
+      activeBranchIndex: undefined,
+    })
+
+    setIsComparisonMode(true)
+    setComparisonMessageIds([msgId])
+    setComparisonUserMessageId(userMsg?.id || null)
+
+    updateConvMessages(activeConversationId, () => {
+      const msgs = conversationMessagesRef.current.get(activeConversationId) || []
+      return msgs.map(m => {
+        if (m.id !== msgId) return m
+        return { ...m, _comparisonBranchMsgs: allBranchMsgs }
+      })
+    })
+  }
+
+  const getComparisonMessages = (): MessageWithThought[] => {
+    if (!activeConversationId || comparisonMessageIds.length === 0) return []
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+
+    const firstId = comparisonMessageIds[0]
+    const firstMsg = currentMsgs.find(m => m.id === firstId)
+    if (firstMsg?._comparisonBranchMsgs) {
+      return firstMsg._comparisonBranchMsgs as MessageWithThought[]
+    }
+
+    return comparisonMessageIds
+      .map(id => currentMsgs.find(m => m.id === id))
+      .filter((m): m is MessageWithThought => !!m)
+  }
+
+  const getComparisonUserMessage = (): MessageWithThought | null => {
+    if (!activeConversationId || !comparisonUserMessageId) return null
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    return currentMsgs.find(m => m.id === comparisonUserMessageId) || null
+  }
+
   const handleExportConversation = (convId?: string) => {
     const targetConvId = convId || activeConversationId
     if (!targetConvId) return
@@ -1216,8 +1396,48 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   const handleToggleSegment = (msgId: string, segId: string) => {
     if (!activeConversationId) return
+
+    const branchMatch = msgId.match(/^(.+)_branch_(\d+)$/)
+    if (branchMatch) {
+      const originalMsgId = branchMatch[1]
+      const branchIndex = parseInt(branchMatch[2], 10)
+      updateConvMessages(activeConversationId, (prev) => prev.map(m => {
+        if (m.id !== originalMsgId || !m._comparisonBranchMsgs) return m
+        const newBranchMsgs = m._comparisonBranchMsgs.map((bm, idx) => {
+          if (idx !== branchIndex || !bm.segments) return bm
+          return {
+            ...bm,
+            segments: bm.segments.map(s =>
+              s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+            ),
+          }
+        })
+        return { ...m, _comparisonBranchMsgs: newBranchMsgs }
+      }))
+      return
+    }
+
     updateConvMessages(activeConversationId, (prev) => prev.map(m => {
-      if (m.id !== msgId || !m.segments) return m
+      if (m.id !== msgId) return m
+
+      const activeIdx = m.activeBranchIndex
+      const brs = m.branches
+      if (brs && brs.length > 0 && activeIdx !== undefined && activeIdx < brs.length) {
+        return {
+          ...m,
+          branches: brs.map((b, i) => {
+            if (i !== activeIdx || !b.segments) return b
+            return {
+              ...b,
+              segments: b.segments.map(s =>
+                s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+              ),
+            }
+          }),
+        }
+      }
+
+      if (!m.segments) return m
       const newSegs = m.segments.map(s =>
         s.id === segId ? { ...s, collapsed: !s.collapsed } : s
       )
@@ -1249,6 +1469,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setKbEnabled,
     showSidePanel,
     setShowSidePanel,
+    isComparisonMode,
+    comparisonMessageIds,
+    handleCloseComparison,
+    handleOpenComparison,
+    getComparisonMessages,
+    getComparisonUserMessage,
     editingConversationId,
     editingTitle,
     setEditingTitle,

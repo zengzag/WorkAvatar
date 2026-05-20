@@ -125,7 +125,7 @@ const ModelSwitchPopover: React.FC<{
   )
 
   return (
-    <Popover content={content} trigger="click" placement="bottomLeft" arrow={false} overlayInnerStyle={{ padding: 8 }}>
+    <Popover content={content} trigger="click" placement="bottomLeft" arrow={false} styles={{ container: { padding: 8 } }}>
       <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
         title={t('workbench.switchModelRegenerate')} />
     </Popover>
@@ -141,9 +141,10 @@ const MessageBubble: React.FC<{
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
   onSwitchBranch: (msgId: string, branchIndex: number) => void
+  onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, getToolDisplayName, providers }) => {
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [isEditing, setIsEditing] = useState(false)
@@ -180,6 +181,23 @@ const MessageBubble: React.FC<{
   const displayTokenUsage = branchData ? branchData.tokenUsage : msg.tokenUsage
   const displayIsError = branchData ? branchData.isError : msg.isError
   const displayIsStreaming = !showBranchContent && msg.isStreaming
+
+  const hasComparisonBranches = hasBranches && (
+    msg.branches!.some(b => b.comparisonProviderId || b.comparisonModelId) ||
+    msg.comparisonProviderId ||
+    msg.comparisonModelId
+  )
+
+  const currentBranchModelLabel = (() => {
+    if (!hasBranches) return null
+    const currentBranch = branchData || { comparisonProviderId: msg.comparisonProviderId, comparisonModelId: msg.comparisonModelId }
+    if (!currentBranch.comparisonProviderId || !currentBranch.comparisonModelId) return null
+    const provider = providers.find((p: any) => p.id === currentBranch.comparisonProviderId)
+    if (!provider) return currentBranch.comparisonModelId
+    const models = provider.models_json ? JSON.parse(provider.models_json) : []
+    const model = models.find((m: any) => m.model === currentBranch.comparisonModelId)
+    return model?.name || currentBranch.comparisonModelId
+  })()
 
   const displayMsg = msg.role === 'assistant'
     ? ensureSegments({ ...msg, content: displayContent, segments: displaySegments, thought: displayThought, isError: displayIsError, isStreaming: displayIsStreaming })
@@ -356,20 +374,30 @@ const MessageBubble: React.FC<{
             {!displayIsStreaming && (
               <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
                 {hasBranches && (
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 2,
-                    padding: '0 4px',
-                    borderRadius: 4,
-                    background: token.colorBgTextHover,
-                    fontSize: 11,
-                  }}>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 2,
+                      padding: '0 4px',
+                      borderRadius: 4,
+                      background: token.colorBgTextHover,
+                      fontSize: 11,
+                    }}
+                  >
                     <Button type="text" size="small" icon={<LeftOutlined style={{ fontSize: 9 }} />}
                       disabled={branchIndex === 0}
                       onClick={() => onSwitchBranch(msg.id, branchIndex - 1)}
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
-                    <Text style={{ fontSize: 11, color: token.colorTextSecondary, userSelect: 'none' }}>
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: hasComparisonBranches ? token.colorPrimary : token.colorTextSecondary,
+                        userSelect: 'none',
+                        cursor: hasComparisonBranches ? 'pointer' : 'default',
+                      }}
+                      onClick={() => { if (hasComparisonBranches) onOpenComparison(msg.id) }}
+                    >
                       {branchIndex + 1}/{totalBranches}
                     </Text>
                     <Button type="text" size="small" icon={<RightOutlined style={{ fontSize: 9 }} />}
@@ -377,6 +405,12 @@ const MessageBubble: React.FC<{
                       onClick={() => onSwitchBranch(msg.id, branchIndex + 1)}
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
                   </div>
+                )}
+                {currentBranchModelLabel && (
+                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
+                    onClick={() => onOpenComparison(msg.id)}>
+                    {currentBranchModelLabel}
+                  </Tag>
                 )}
                 {displayContent && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}

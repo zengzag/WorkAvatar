@@ -30,7 +30,7 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
-import { ConversationSidebar, MessageBubble, ChatInput } from '../components/workbench'
+import { ConversationSidebar, MessageBubble, ChatInput, MultiChatPanel } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
@@ -242,6 +242,11 @@ const EmployeeWorkbench: React.FC = () => {
     setKbEnabled,
     showSidePanel,
     setShowSidePanel,
+    isComparisonMode,
+    handleCloseComparison,
+    handleOpenComparison,
+    getComparisonMessages,
+    getComparisonUserMessage,
     editingConversationId,
     editingTitle,
     setEditingTitle,
@@ -562,7 +567,7 @@ const EmployeeWorkbench: React.FC = () => {
             onOpenChange={setEmployeeSelectorOpen}
             placement="bottomLeft"
             arrow={false}
-            overlayInnerStyle={{ padding: 8 }}
+            styles={{ container: { padding: 8 } }}
           >
             <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', height: 'auto' }}>
               <div style={{
@@ -650,6 +655,17 @@ const EmployeeWorkbench: React.FC = () => {
         )}
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {isComparisonMode ? (
+            <MultiChatPanel
+              comparisonMessages={getComparisonMessages()}
+              userMessage={getComparisonUserMessage()}
+              providers={providers}
+              onClose={handleCloseComparison}
+              onToggleSegment={handleToggleSegment}
+              onCopy={handleCopy}
+              getToolDisplayName={getToolDisplayName}
+            />
+          ) : (
           <div ref={chatContainerRef} onScroll={handleScroll}
             style={{
               flex: 1,
@@ -678,12 +694,14 @@ const EmployeeWorkbench: React.FC = () => {
                 onEditAndResubmit={handleEditAndResubmit}
                 onToggleSegment={handleToggleSegment}
                 onSwitchBranch={handleSwitchBranch}
+                onOpenComparison={handleOpenComparison}
                 getToolDisplayName={getToolDisplayName}
                 providers={providers}
               />
             ))}
             <div ref={messagesEndRef} />
           </div>
+          )}
 
           <ChatInput
             value={inputValue}

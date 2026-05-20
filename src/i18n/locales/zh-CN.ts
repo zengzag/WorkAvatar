@@ -365,6 +365,11 @@ export default {
     selectedModelCount: '已选 {{count}}/{{max}} 个模型',
     noMatchingModel: '未找到匹配的模型',
     switchModelRegenerate: '切换模型重新生成',
+    multiModelComparison: '多模型对比',
+    models: '个模型',
+    closeComparison: '关闭对比',
+    openComparison: '查看对比',
+    comparisonView: '对比视图',
   },
   employeeSettings: {
     subtitle: '数字员工配置管理',

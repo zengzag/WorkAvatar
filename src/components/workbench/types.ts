@@ -33,6 +33,8 @@ export interface MessageBranch {
   thought?: string
   tokenUsage?: TokenUsage
   isError?: boolean
+  comparisonProviderId?: string
+  comparisonModelId?: string
 }
 
 export interface MessageWithThought extends Message {
@@ -47,6 +49,7 @@ export interface MessageWithThought extends Message {
   comparisonProviderId?: string
   comparisonModelId?: string
   images?: string[]
+  _comparisonBranchMsgs?: MessageWithThought[]
 }
 
 export function ensureSegments(msg: MessageWithThought): MessageWithThought {
