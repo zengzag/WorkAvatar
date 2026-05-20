@@ -396,10 +396,23 @@ class KBDocumentService {
       this.parseTaskManager.completeTask(docId)
       onProgress?.('done', 'Parse completed')
       return { success: true }
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      this.parseTaskManager.failTask(docId, errorMessage)
-      return { success: false, error: errorMessage }
+      const originalErrorMsg = error?.originalError?.message || error?.originalError
+      const fullErrorDetail = originalErrorMsg
+        ? `${errorMessage} (cause: ${originalErrorMsg})`
+        : errorMessage
+      console.error('[KBDocument] Parse error:', {
+        docId,
+        docName: doc.original_name,
+        fileType: doc.type,
+        message: errorMessage,
+        code: error?.code,
+        originalError: originalErrorMsg || error?.originalError,
+        stack: error instanceof Error ? error.stack : undefined,
+      })
+      this.parseTaskManager.failTask(docId, fullErrorDetail)
+      return { success: false, error: fullErrorDetail }
     }
   }
 
@@ -752,10 +765,6 @@ class KBDocumentService {
     }
 
     return this.searchEngine.search(kbId, query, topK, documentIds, queryEmbedding || undefined)
-  }
-
-  advancedSearch(kbId: string, query: string, topK: number = 10): SearchResult[] {
-    return this.searchEngine.advancedFtsSearch(kbId, query, topK)
   }
 
   getSearchIndexStats(kbId: string): any {

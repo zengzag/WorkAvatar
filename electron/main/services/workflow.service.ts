@@ -3,6 +3,7 @@ import EmployeeAgentService from './employee-agent.service'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
 import type { DBEmployee } from '../../shared/db-types'
+import * as fs from 'fs'
 
 interface Workflow {
   id: string
@@ -27,13 +28,20 @@ interface WorkflowExecution {
 }
 
 interface NodeExecutionState {
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
   input: string
   output: string
   started_at: number | null
   completed_at: number | null
   error: string | null
   segments?: any[]
+}
+
+interface BranchRule {
+  type: 'json_key' | 'keyword'
+  jsonKey?: string
+  jsonValue?: string
+  keywords?: string
 }
 
 interface WorkflowNode {
@@ -46,12 +54,23 @@ interface WorkflowNode {
 interface WorkflowEdge {
   source: string
   target: string
+  sourceHandle?: string
+}
+
+interface DebugControl {
+  resolve: ((action: 'continue' | 'skip' | 'stop') => void) | null
+}
+
+interface RuntimeInputControl {
+  resolve: ((value: string) => void) | null
 }
 
 class WorkflowService {
   private db: DatabaseService
   private static instance: WorkflowService
   private activeExecutions: Map<string, AbortController> = new Map()
+  private debugControls: Map<string, DebugControl> = new Map()
+  private runtimeInputControls: Map<string, RuntimeInputControl> = new Map()
 
   private constructor() {
     this.db = DatabaseService.getInstance()
@@ -139,7 +158,42 @@ class WorkflowService {
 
     this.sendProgress(mainWindow, executionId, 'running', nodeExecutions)
 
-    this.executeWorkflowAsync(executionId, workflowId, nodes, edges, nodeExecutions, mainWindow)
+    this.executeWorkflowAsync(executionId, workflowId, nodes, edges, nodeExecutions, mainWindow, false)
+
+    return executionId
+  }
+
+  async executeWorkflowDebug(workflowId: string, mainWindow: Electron.BrowserWindow): Promise<string> {
+    const workflow = this.getWorkflow(workflowId)
+    if (!workflow) throw new Error(`Workflow ${workflowId} not found`)
+
+    const nodes: WorkflowNode[] = JSON.parse(workflow.nodes_json)
+    const edges: WorkflowEdge[] = JSON.parse(workflow.edges_json)
+
+    this.validateDAG(nodes, edges)
+
+    const executionId = generateId()
+    const now = Math.floor(Date.now() / 1000)
+    const nodeExecutions: Record<string, NodeExecutionState> = {}
+    for (const node of nodes) {
+      nodeExecutions[node.id] = {
+        status: 'pending',
+        input: '',
+        output: '',
+        started_at: null,
+        completed_at: null,
+        error: null,
+      }
+    }
+
+    this.db.getDb().prepare(
+      `INSERT INTO workflow_executions (id, workflow_id, status, node_executions_json, started_at, created_at)
+       VALUES (?, ?, 'running', ?, ?, ?)`
+    ).run(executionId, workflowId, JSON.stringify(nodeExecutions), now, now)
+
+    this.sendProgress(mainWindow, executionId, 'running', nodeExecutions)
+
+    this.executeWorkflowAsync(executionId, workflowId, nodes, edges, nodeExecutions, mainWindow, true)
 
     return executionId
   }
@@ -150,10 +204,15 @@ class WorkflowService {
     nodes: WorkflowNode[],
     edges: WorkflowEdge[],
     nodeExecutions: Record<string, NodeExecutionState>,
-    mainWindow: Electron.BrowserWindow
+    mainWindow: Electron.BrowserWindow,
+    debugMode: boolean
   ): Promise<void> {
     const abortController = new AbortController()
     this.activeExecutions.set(executionId, abortController)
+
+    if (debugMode) {
+      this.debugControls.set(executionId, { resolve: null })
+    }
 
     try {
       const adjacency = this.buildAdjacency(nodes, edges)
@@ -178,6 +237,30 @@ class WorkflowService {
         const node = nodeMap.get(nodeId)!
         const nodeExec = nodeExecutions[nodeId]
 
+        if (debugMode) {
+          this.sendDebugPaused(mainWindow, executionId, nodeId, nodeExec)
+          const action = await this.waitForDebugAction(executionId)
+          if (action === 'stop') {
+            throw new Error('Debug execution stopped by user')
+          }
+          if (action === 'skip') {
+            nodeExec.status = 'skipped'
+            nodeExec.output = ''
+            nodeExec.completed_at = Math.floor(Date.now() / 1000)
+            completedNodes.add(nodeId)
+            this.updateNodeExecution(executionId, nodeExecutions)
+            this.sendNodeUpdate(mainWindow, executionId, nodeId, nodeExec)
+            this.sendProgress(mainWindow, executionId, 'running', nodeExecutions)
+            for (const successor of adjacency.get(nodeId) || []) {
+              const allPredsComplete = (predecessors.get(successor) || []).every(pred => completedNodes.has(pred))
+              if (allPredsComplete) {
+                queue.push(successor)
+              }
+            }
+            continue
+          }
+        }
+
         nodeExec.status = 'running'
         nodeExec.started_at = Math.floor(Date.now() / 1000)
         this.updateNodeExecution(executionId, nodeExecutions)
@@ -186,41 +269,22 @@ class WorkflowService {
 
         try {
           if (node.type === 'input') {
-            const prompt = node.data?.prompt || node.data?.config_json?.prompt || ''
-            nodeExec.input = prompt
-            nodeExec.output = prompt
+            await this.executeInputNode(node, nodeExec, predecessors, nodeExecutions, mainWindow, executionId)
           } else if (node.type === 'employee') {
-            const employeeId = node.data?.employee_id || node.data?.config_json?.employee_id
-            if (!employeeId) throw new Error(`Employee node ${nodeId} has no employee_id configured`)
-
-            const nodeModelId = node.data?.model_id || node.data?.config_json?.model_id
-            const nodeProviderId = node.data?.provider_id || node.data?.config_json?.provider_id
-
-            const inputParts: string[] = []
-            for (const predId of predecessors.get(nodeId) || []) {
-              const predExec = nodeExecutions[predId]
-              if (predExec && predExec.output) {
-                inputParts.push(predExec.output)
-              }
-            }
-            const combinedInput = inputParts.join('\n\n')
-            nodeExec.input = combinedInput
-
-            const result = await this.executeEmployeeNode(employeeId, nodeProviderId, nodeModelId, combinedInput, abortController.signal, (segments) => {
-              nodeExec.segments = segments
-              this.sendNodeUpdate(mainWindow, executionId, nodeId, { ...nodeExec })
-            })
-            nodeExec.output = result
+            await this.executeEmployeeNodeLogic(node, nodeExec, predecessors, nodeExecutions, abortController.signal, mainWindow, executionId)
           } else if (node.type === 'output') {
-            const inputParts: string[] = []
-            for (const predId of predecessors.get(nodeId) || []) {
-              const predExec = nodeExecutions[predId]
-              if (predExec && predExec.output) {
-                inputParts.push(predExec.output)
-              }
-            }
-            nodeExec.input = inputParts.join('\n\n')
-            nodeExec.output = nodeExec.input
+            this.executeOutputNode(node, nodeExec, predecessors, nodeExecutions)
+          } else if (node.type === 'branch') {
+            this.executeBranchNode(node, nodeExec, predecessors, nodeExecutions, edges, adjacency, queue, completedNodes)
+            completedNodes.add(nodeId)
+            this.updateNodeExecution(executionId, nodeExecutions)
+            this.sendNodeUpdate(mainWindow, executionId, nodeId, nodeExec)
+            this.sendProgress(mainWindow, executionId, 'running', nodeExecutions)
+            continue
+          } else if (node.type === 'merge') {
+            this.executeMergeNode(node, nodeExec, predecessors, nodeExecutions)
+          } else if (node.type === 'extract') {
+            this.executeExtractNode(node, nodeExec, predecessors, nodeExecutions)
           }
 
           nodeExec.status = 'completed'
@@ -261,7 +325,329 @@ class WorkflowService {
       this.sendProgress(mainWindow, executionId, status, nodeExecutions)
     } finally {
       this.activeExecutions.delete(executionId)
+      this.debugControls.delete(executionId)
     }
+  }
+
+  private async executeInputNode(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    _predecessors: Map<string, string[]>,
+    _nodeExecutions: Record<string, NodeExecutionState>,
+    mainWindow: Electron.BrowserWindow,
+    executionId: string
+  ): Promise<void> {
+    const inputType = node.data?.inputType || 'fixed'
+
+    if (inputType === 'file') {
+      const filePath = node.data?.filePath || ''
+      if (!filePath) throw new Error(`Input node ${node.id} has no file path configured`)
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8')
+        nodeExec.input = filePath
+        nodeExec.output = content
+      } catch (err: any) {
+        throw new Error(`Failed to read file ${filePath}: ${err.message}`)
+      }
+    } else if (inputType === 'runtime') {
+      const value = await this.requestRuntimeInput(mainWindow, executionId, node.id)
+      nodeExec.input = value
+      nodeExec.output = value
+    } else {
+      const prompt = node.data?.prompt || node.data?.config_json?.prompt || ''
+      nodeExec.input = prompt
+      nodeExec.output = prompt
+    }
+  }
+
+  private async requestRuntimeInput(
+    mainWindow: Electron.BrowserWindow,
+    executionId: string,
+    nodeId: string
+  ): Promise<string> {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, {
+        executionId,
+        nodeId,
+      })
+    }
+
+    return new Promise<string>((resolve) => {
+      const key = `${executionId}:${nodeId}`
+      this.runtimeInputControls.set(key, { resolve })
+    })
+  }
+
+  respondRuntimeInput(executionId: string, nodeId: string, value: string): void {
+    const key = `${executionId}:${nodeId}`
+    const control = this.runtimeInputControls.get(key)
+    if (control && control.resolve) {
+      control.resolve(value)
+      this.runtimeInputControls.delete(key)
+    }
+  }
+
+  private async executeEmployeeNodeLogic(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    predecessors: Map<string, string[]>,
+    nodeExecutions: Record<string, NodeExecutionState>,
+    signal: AbortSignal,
+    mainWindow: Electron.BrowserWindow,
+    executionId: string
+  ): Promise<void> {
+    const employeeId = node.data?.employee_id || node.data?.config_json?.employee_id
+    if (!employeeId) throw new Error(`Employee node ${node.id} has no employee_id configured`)
+
+    const nodeModelId = node.data?.model_id || node.data?.config_json?.model_id
+    const nodeProviderId = node.data?.provider_id || node.data?.config_json?.provider_id
+
+    const inputParts: string[] = []
+    for (const predId of predecessors.get(node.id) || []) {
+      const predExec = nodeExecutions[predId]
+      if (predExec && predExec.output) {
+        inputParts.push(predExec.output)
+      }
+    }
+    const combinedInput = inputParts.join('\n\n')
+    nodeExec.input = combinedInput
+
+    const result = await this.executeEmployeeNode(employeeId, nodeProviderId, nodeModelId, combinedInput, signal, (segments) => {
+      nodeExec.segments = segments
+      this.sendNodeUpdate(mainWindow, executionId, node.id, { ...nodeExec })
+    })
+    nodeExec.output = result
+  }
+
+  private executeOutputNode(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    predecessors: Map<string, string[]>,
+    nodeExecutions: Record<string, NodeExecutionState>
+  ): void {
+    const inputParts: string[] = []
+    for (const predId of predecessors.get(node.id) || []) {
+      const predExec = nodeExecutions[predId]
+      if (predExec && predExec.output) {
+        inputParts.push(predExec.output)
+      }
+    }
+    nodeExec.input = inputParts.join('\n\n')
+    nodeExec.output = nodeExec.input
+  }
+
+  private executeBranchNode(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    predecessors: Map<string, string[]>,
+    nodeExecutions: Record<string, NodeExecutionState>,
+    edges: WorkflowEdge[],
+    _adjacency: Map<string, string[]>,
+    queue: string[],
+    _completedNodes: Set<string>
+  ): void {
+    const sourceNodeId = node.data?.sourceNodeId
+    const rules: BranchRule[] = node.data?.rules || []
+
+    let sourceOutput = ''
+    if (sourceNodeId) {
+      const sourceExec = nodeExecutions[sourceNodeId]
+      sourceOutput = sourceExec?.output || ''
+    } else {
+      const inputParts: string[] = []
+      for (const predId of predecessors.get(node.id) || []) {
+        const predExec = nodeExecutions[predId]
+        if (predExec && predExec.output) {
+          inputParts.push(predExec.output)
+        }
+      }
+      sourceOutput = inputParts.join('\n\n')
+    }
+
+    nodeExec.input = sourceOutput
+
+    const allRulesMatch = rules.length === 0 || rules.every((rule) => {
+      if (rule.type === 'json_key') {
+        try {
+          const parsed = JSON.parse(sourceOutput)
+          const value = this.getNestedValue(parsed, rule.jsonKey || '')
+          return String(value) === (rule.jsonValue || '')
+        } catch {
+          return false
+        }
+      } else if (rule.type === 'keyword') {
+        const keywords = (rule.keywords || '').split(',').map(k => k.trim()).filter(k => k)
+        return keywords.every(kw => sourceOutput.includes(kw))
+      }
+      return false
+    })
+
+    const branchResult = allRulesMatch ? 'yes' : 'no'
+    nodeExec.output = `Branch: ${branchResult}`
+
+    const successors = edges
+      .filter(e => e.source === node.id)
+      .filter(e => e.sourceHandle === branchResult || (!e.sourceHandle && branchResult === 'yes'))
+      .map(e => e.target)
+
+    for (const successor of successors) {
+      if (!queue.includes(successor)) {
+        queue.push(successor)
+      }
+    }
+  }
+
+  private executeMergeNode(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    predecessors: Map<string, string[]>,
+    nodeExecutions: Record<string, NodeExecutionState>
+  ): void {
+    const selectedUpstreamIds: string[] = node.data?.selectedUpstreamIds || []
+    const upstreamOrder: string[] = node.data?.upstreamOrder || []
+    const separator = node.data?.separator ?? '\n\n'
+    const prefix = node.data?.prefix || ''
+    const suffix = node.data?.suffix || ''
+
+    let upstreamIds = selectedUpstreamIds.length > 0
+      ? selectedUpstreamIds
+      : predecessors.get(node.id) || []
+
+    if (upstreamOrder.length > 0) {
+      const orderedIds: string[] = []
+      for (const id of upstreamOrder) {
+        if (upstreamIds.includes(id)) orderedIds.push(id)
+      }
+      for (const id of upstreamIds) {
+        if (!orderedIds.includes(id)) orderedIds.push(id)
+      }
+      upstreamIds = orderedIds
+    }
+
+    const parts: string[] = []
+    for (const predId of upstreamIds) {
+      const predExec = nodeExecutions[predId]
+      if (predExec && predExec.output) {
+        parts.push(predExec.output)
+      }
+    }
+
+    nodeExec.input = parts.join(separator)
+    nodeExec.output = prefix + parts.join(separator) + suffix
+  }
+
+  private executeExtractNode(
+    node: WorkflowNode,
+    nodeExec: NodeExecutionState,
+    predecessors: Map<string, string[]>,
+    nodeExecutions: Record<string, NodeExecutionState>
+  ): void {
+    const sourceNodeId = node.data?.sourceNodeId
+    const fields: Array<{ name: string; path: string; defaultValue?: string }> = node.data?.fields || []
+
+    let sourceOutput = ''
+    if (sourceNodeId) {
+      const sourceExec = nodeExecutions[sourceNodeId]
+      sourceOutput = sourceExec?.output || ''
+    } else {
+      const inputParts: string[] = []
+      for (const predId of predecessors.get(node.id) || []) {
+        const predExec = nodeExecutions[predId]
+        if (predExec && predExec.output) {
+          inputParts.push(predExec.output)
+        }
+      }
+      sourceOutput = inputParts.join('\n\n')
+    }
+
+    nodeExec.input = sourceOutput
+
+    if (fields.length === 0) {
+      nodeExec.output = sourceOutput
+      return
+    }
+
+    const extracted: Record<string, string> = {}
+    for (const field of fields) {
+      const fieldName = field.name || field.path || 'unknown'
+      const value = this.extractValue(sourceOutput, field.path, field.defaultValue)
+      extracted[fieldName] = value
+    }
+
+    nodeExec.output = JSON.stringify(extracted, null, 2)
+  }
+
+  private extractValue(input: string, path: string, defaultValue?: string): string {
+    if (!path) return defaultValue || ''
+
+    try {
+      const parsed = JSON.parse(input)
+      const value = this.getNestedValue(parsed, path)
+      if (value !== undefined && value !== null) {
+        return typeof value === 'object' ? JSON.stringify(value) : String(value)
+      }
+    } catch {}
+
+    const regexMatch = input.match(new RegExp(path))
+    if (regexMatch) {
+      return regexMatch[1] || regexMatch[0]
+    }
+
+    return defaultValue || ''
+  }
+
+  private getNestedValue(obj: any, keyPath: string): any {
+    const keys = keyPath.split('.')
+    let current = obj
+    for (const key of keys) {
+      if (current == null || typeof current !== 'object') return undefined
+      current = current[key]
+    }
+    return current
+  }
+
+  private async waitForDebugAction(executionId: string): Promise<'continue' | 'skip' | 'stop'> {
+    return new Promise((resolve) => {
+      const control = this.debugControls.get(executionId)
+      if (control) {
+        control.resolve = resolve
+      }
+    })
+  }
+
+  debugContinue(executionId: string): boolean {
+    const control = this.debugControls.get(executionId)
+    if (control && control.resolve) {
+      control.resolve('continue')
+      control.resolve = null
+      return true
+    }
+    return false
+  }
+
+  debugSkip(executionId: string): boolean {
+    const control = this.debugControls.get(executionId)
+    if (control && control.resolve) {
+      control.resolve('skip')
+      control.resolve = null
+      return true
+    }
+    return false
+  }
+
+  debugStop(executionId: string): boolean {
+    const control = this.debugControls.get(executionId)
+    if (control && control.resolve) {
+      control.resolve('stop')
+      control.resolve = null
+      return true
+    }
+    const abortController = this.activeExecutions.get(executionId)
+    if (abortController) {
+      abortController.abort()
+      return true
+    }
+    return false
   }
 
   private async executeEmployeeNode(
@@ -463,7 +849,10 @@ class WorkflowService {
     }
     for (const edge of edges) {
       if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
-        adjacency.get(edge.source)!.push(edge.target)
+        const targets = adjacency.get(edge.source)!
+        if (!targets.includes(edge.target)) {
+          targets.push(edge.target)
+        }
       }
     }
     return adjacency
@@ -475,7 +864,10 @@ class WorkflowService {
       if (!predecessors.has(edge.target)) {
         predecessors.set(edge.target, [])
       }
-      predecessors.get(edge.target)!.push(edge.source)
+      const sources = predecessors.get(edge.target)!
+      if (!sources.includes(edge.source)) {
+        sources.push(edge.source)
+      }
     }
     return predecessors
   }
@@ -499,6 +891,16 @@ class WorkflowService {
   private sendNodeUpdate(mainWindow: Electron.BrowserWindow, executionId: string, nodeId: string, nodeExecution: NodeExecutionState): void {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, {
+        executionId,
+        nodeId,
+        nodeExecution,
+      })
+    }
+  }
+
+  private sendDebugPaused(mainWindow: Electron.BrowserWindow, executionId: string, nodeId: string, nodeExecution: NodeExecutionState): void {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, {
         executionId,
         nodeId,
         nodeExecution,

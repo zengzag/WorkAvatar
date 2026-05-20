@@ -2,11 +2,13 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import type { Node, Edge } from '@xyflow/react'
 
-export type WorkflowNodeStatus = 'pending' | 'running' | 'completed' | 'failed'
+export type WorkflowNodeStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 
 export interface InputNodeData {
   label: string
   prompt?: string
+  inputType: 'fixed' | 'runtime' | 'file'
+  filePath?: string
   [key: string]: unknown
 }
 
@@ -22,6 +24,44 @@ export interface EmployeeNodeData {
   description?: string
   provider_id?: string
   model_id?: string
+  [key: string]: unknown
+}
+
+export interface BranchRule {
+  type: 'json_key' | 'keyword'
+  jsonKey?: string
+  jsonValue?: string
+  keywords?: string
+}
+
+export interface BranchNodeData {
+  label: string
+  sourceNodeId?: string
+  rules: BranchRule[]
+  [key: string]: unknown
+}
+
+export interface MergeNodeData {
+  label: string
+  selectedUpstreamIds: string[]
+  upstreamOrder: string[]
+  mergeMode: 'concat'
+  separator?: string
+  prefix?: string
+  suffix?: string
+  [key: string]: unknown
+}
+
+export interface ExtractField {
+  name: string
+  path: string
+  defaultValue?: string
+}
+
+export interface ExtractNodeData {
+  label: string
+  sourceNodeId?: string
+  fields: ExtractField[]
   [key: string]: unknown
 }
 
@@ -42,22 +82,33 @@ interface WorkflowExecution {
   startedAt: string | null
 }
 
+interface DebugState {
+  enabled: boolean
+  currentNodeId: string | null
+  paused: boolean
+}
+
 interface WorkflowState {
   nodes: Node[]
   edges: Edge[]
   selectedNodeId: string | null
   execution: WorkflowExecution | null
+  debug: DebugState
 
   setNodes: (nodes: Node[]) => void
   setEdges: (edges: Edge[]) => void
   addNode: (node: Node) => void
   addEdge: (edge: Edge) => void
   setSelectedNodeId: (id: string | null) => void
-  updateNodeData: (nodeId: string, data: Partial<InputNodeData | OutputNodeData | EmployeeNodeData>) => void
+  updateNodeData: (nodeId: string, data: Partial<InputNodeData | OutputNodeData | EmployeeNodeData | BranchNodeData | MergeNodeData | ExtractNodeData>) => void
 
   setExecution: (execution: WorkflowExecution | null) => void
   resetExecution: () => void
   updateNodeExecution: (nodeId: string, data: Partial<NodeExecutionRecord>) => void
+
+  setDebugEnabled: (enabled: boolean) => void
+  setDebugCurrentNode: (nodeId: string | null) => void
+  setDebugPaused: (paused: boolean) => void
 
   loadFromWorkflow: (workflow: { nodes_json: string; edges_json: string }) => void
 }
@@ -68,6 +119,11 @@ export const useWorkflowStore = create<WorkflowState>()(
     edges: [],
     selectedNodeId: null,
     execution: null,
+    debug: {
+      enabled: false,
+      currentNodeId: null,
+      paused: false,
+    },
 
     setNodes: (nodes) =>
       set((state) => {
@@ -110,6 +166,8 @@ export const useWorkflowStore = create<WorkflowState>()(
     resetExecution: () =>
       set((state) => {
         state.execution = null
+        state.debug.currentNodeId = null
+        state.debug.paused = false
       }),
 
     updateNodeExecution: (nodeId, data) =>
@@ -130,6 +188,25 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
       }),
 
+    setDebugEnabled: (enabled) =>
+      set((state) => {
+        state.debug.enabled = enabled
+        if (!enabled) {
+          state.debug.currentNodeId = null
+          state.debug.paused = false
+        }
+      }),
+
+    setDebugCurrentNode: (nodeId) =>
+      set((state) => {
+        state.debug.currentNodeId = nodeId
+      }),
+
+    setDebugPaused: (paused) =>
+      set((state) => {
+        state.debug.paused = paused
+      }),
+
     loadFromWorkflow: (workflow) =>
       set((state) => {
         try {
@@ -144,6 +221,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         }
         state.selectedNodeId = null
         state.execution = null
+        state.debug.currentNodeId = null
+        state.debug.paused = false
       }),
   }))
 )

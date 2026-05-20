@@ -8,6 +8,13 @@ export const WORKFLOW_CHANNELS = {
   WORKFLOW_ABORT_EXECUTION: 'workflow:abort-execution',
   WORKFLOW_EXECUTION_PROGRESS: 'workflow:execution-progress',
   WORKFLOW_NODE_EXECUTION_UPDATE: 'workflow:node-execution-update',
+  WORKFLOW_EXECUTE_DEBUG: 'workflow:execute-debug',
+  WORKFLOW_DEBUG_CONTINUE: 'workflow:debug-continue',
+  WORKFLOW_DEBUG_SKIP: 'workflow:debug-skip',
+  WORKFLOW_DEBUG_STOP: 'workflow:debug-stop',
+  WORKFLOW_DEBUG_PAUSED: 'workflow:debug-paused',
+  WORKFLOW_RUNTIME_INPUT: 'workflow:runtime-input',
+  WORKFLOW_RUNTIME_INPUT_RESPOND: 'workflow:runtime-input-respond',
 } as const
 
 export interface WorkflowCreateParams {

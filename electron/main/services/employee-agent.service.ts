@@ -194,7 +194,6 @@ class EmployeeAgentService {
     const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
     const kbToolIds = [
       'kb_search',
-      'kb_advanced_search',
       'kb_get_content',
       'kb_overview',
       'query_global_summary',

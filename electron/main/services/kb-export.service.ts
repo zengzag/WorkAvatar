@@ -106,12 +106,14 @@ class KBExportService {
       const knowledgeData = {
         documents: documents.map(d => ({
           id: d.id,
+          file_id: d.file_id,
           original_name: d.original_name,
           type: d.type,
           size: d.size,
           hash: d.hash,
           parsed_json: d.parsed_json_path ? this.readDocParsedJson(d.parsed_json_path) : null,
           parse_status: d.parse_status,
+          is_reused: d.is_reused,
           created_at: d.created_at,
           updated_at: d.updated_at,
         })),
@@ -394,10 +396,10 @@ class KBExportService {
         }
 
         this.db.prepare(`
-          INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parsed_json_path, parse_status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(newDocId, newKBId, doc.original_name, doc.type, doc.size, doc.hash,
-          parsedJsonPath, doc.parse_status || 'pending',
+          INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, parsed_json_path, parse_status, is_reused, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(newDocId, newKBId, doc.file_id || null, doc.original_name, doc.type, doc.size, doc.hash,
+          parsedJsonPath, doc.parse_status || 'pending', doc.is_reused || 0,
           doc.created_at || now, doc.updated_at || now)
 
         if ((i + 1) % 5 === 0 || i === documents.length - 1) {

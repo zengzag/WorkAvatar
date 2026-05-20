@@ -24,7 +24,9 @@ export default defineConfig({
                 'mammoth',
                 'pdf-parse',
                 'xlsx',
-                'tesseract.js'
+                'tesseract.js',
+                'unpdf',
+                'pdfjs-dist',
               ]
             }
           }

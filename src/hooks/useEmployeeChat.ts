@@ -42,7 +42,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     query_paragraphs: t('workbench.toolNames.query_paragraphs'),
     query_fulltext: t('workbench.toolNames.query_fulltext'),
     kb_search: t('workbench.toolNames.kb_search'),
-    kb_advanced_search: t('workbench.toolNames.kb_advanced_search'),
     kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),

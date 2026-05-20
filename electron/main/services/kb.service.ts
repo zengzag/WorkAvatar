@@ -194,7 +194,7 @@ class KnowledgeBaseService {
   searchDocumentSummaries(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchDocumentSummaries(kbId, query, topK) }
   search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] { return this.documentService.search(kbId, query, topK, documentIds) }
   async searchWithEmbedding(kbId: string, query: string, topK: number = 10, documentIds?: string[], providerId?: string) { return this.documentService.searchWithEmbedding(kbId, query, topK, documentIds, providerId) }
-  advancedSearch(kbId: string, query: string, topK: number = 10): SearchResult[] { return this.documentService.advancedSearch(kbId, query, topK) }
+
   getSearchIndexStats(kbId: string) { return this.documentService.getSearchIndexStats(kbId) }
   async rebuildSearchIndex(kbId: string) { return this.documentService.rebuildSearchIndex(kbId) }
   async rebuildEmbeddings(kbId: string) { return this.documentService.rebuildEmbeddings(kbId) }

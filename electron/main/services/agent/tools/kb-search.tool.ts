@@ -129,7 +129,6 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
         output += `### 下一步建议\n`
         output += `- 使用 kb_get_content 获取某个文档或段落的完整内容（支持 paragraph_id / start_offset+end_offset / start_line+end_line 精准定位）\n`
         output += `- 使用 query_paragraphs 按关键词检索相关段落摘要\n`
-        output += `- 使用 kb_advanced_search 进行更精确的高级检索\n`
         if (!args.use_semantic) {
           output += `- 启用语义搜索(use_semantic=true)可获取语义匹配结果，提升搜索召回率\n`
         }

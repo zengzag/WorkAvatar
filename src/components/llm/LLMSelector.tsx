@@ -143,7 +143,11 @@ const LLMSelector: React.FC<LLMSelectorProps> = ({
 
   const currentValue = providerId && modelId ? `${providerId}${SEP}${modelId}` : undefined
 
-  const handleSelectChange = (value: string) => {
+  const handleSelectChange = (value: string | undefined) => {
+    if (!value) {
+      handleClear()
+      return
+    }
     const { providerId: pId, modelId: mId } = parseCompositeValue(value)
     onChange(pId, mId)
     setCustomModel(mId)

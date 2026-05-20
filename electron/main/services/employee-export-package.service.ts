@@ -6,6 +6,7 @@ import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import KBDatabaseService from './kb-database.service'
 import PathService from './path.service'
+import KnowledgeBaseService from './kb.service'
 import { EmployeeExportConfigService, EXPORT_CONFIG_VERSION, EmployeeConfigExport } from './employee-export-config.service'
 
 export const EXPORT_PACKAGE_VERSION = '1.0.0'
@@ -163,12 +164,14 @@ export class EmployeeExportPackageService {
             }
             return {
               id: d.id,
+              file_id: d.file_id,
               original_name: d.original_name,
               type: d.type,
               size: d.size,
               hash: d.hash,
               parsed_json: parsedJson,
               parse_status: d.parse_status,
+              is_reused: d.is_reused,
               created_at: d.created_at,
               updated_at: d.updated_at,
             }
@@ -370,6 +373,8 @@ export class EmployeeExportPackageService {
         e.entryName.startsWith('knowledge-bases/') && e.entryName.endsWith('kb-data.json')
       )
 
+      const importedKBIds: string[] = []
+
       for (const kbEntry of kbEntries) {
         const kbData = JSON.parse(kbEntry.getData().toString('utf-8'))
 
@@ -384,6 +389,10 @@ export class EmployeeExportPackageService {
             warnings.push(`Knowledge base "${kbData.name}" already exists, skipped`)
             targetKBId = existingKB.id
           } else if (conflictStrategy === 'overwrite') {
+            const oldKbBasePath = PathService.getInstance().getKBBasePath(existingKB.id)
+            if (fs.existsSync(oldKbBasePath)) {
+              try { fs.rmSync(oldKbBasePath, { recursive: true, force: true }) } catch {}
+            }
             this.kbDb.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(existingKB.id)
             targetKBId = this.createKBFromData(kbData)
           } else {
@@ -392,6 +401,8 @@ export class EmployeeExportPackageService {
         } else {
           targetKBId = this.createKBFromData(kbData)
         }
+
+        importedKBIds.push(targetKBId)
 
         const kbBasePath = PathService.getInstance().getKBBasePath(targetKBId)
 
@@ -405,6 +416,20 @@ export class EmployeeExportPackageService {
           const destPath = path.join(kbBasePath, fileName)
           fs.writeFileSync(destPath, docFile.getData())
         }
+      }
+
+      for (const kbId of importedKBIds) {
+        this.db.getDb().prepare(
+          'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
+        ).run(employeeId, kbId)
+      }
+
+      onProgress?.('building_index', 'Building search indexes...')
+      const kbService = KnowledgeBaseService.getInstance()
+      for (const kbId of importedKBIds) {
+        try {
+          await kbService.rebuildSearchIndex(kbId)
+        } catch {}
       }
 
       onProgress?.('complete', 'Package import complete')
@@ -443,11 +468,11 @@ export class EmployeeExportPackageService {
       }
 
       this.kbDb.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, original_name, type, size, hash, parsed_json_path, parse_status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, parsed_json_path, parse_status, is_reused, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        newDocId, kbId, doc.original_name, doc.type, doc.size, doc.hash,
-        parsedJsonPath, doc.parse_status || 'pending',
+        newDocId, kbId, doc.file_id || null, doc.original_name, doc.type, doc.size, doc.hash,
+        parsedJsonPath, doc.parse_status || 'pending', doc.is_reused || 0,
         doc.created_at || now, doc.updated_at || now
       )
     }

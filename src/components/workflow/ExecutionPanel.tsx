@@ -1,216 +1,131 @@
-import { useEffect, useRef } from 'react'
-import { Tag, Collapse, Typography, Empty, theme } from 'antd'
-import {
-  ClockCircleOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  LoadingOutlined,
-} from '@ant-design/icons'
+import { useMemo } from 'react'
+import { Table, Tag, Typography, theme, Empty } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import { CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, ClockCircleOutlined, ForwardOutlined, MinusCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useWorkflowStore, type WorkflowNodeStatus } from '../../stores/workflow.store'
+import { useWorkflowStore, type WorkflowNodeStatus, type NodeExecutionRecord } from '../../stores/workflow.store'
 
-const { Text } = Typography
+const { Text, Paragraph } = Typography
 
-const STATUS_CONFIG: Record<WorkflowNodeStatus, { color: string; icon: React.ReactNode; i18nKey: string }> = {
-  pending: { color: 'default', icon: <ClockCircleOutlined />, i18nKey: 'workflow.statusPending' },
-  running: { color: 'processing', icon: <LoadingOutlined spin />, i18nKey: 'workflow.statusRunning' },
-  completed: { color: 'success', icon: <CheckCircleOutlined />, i18nKey: 'workflow.statusCompleted' },
-  failed: { color: 'error', icon: <CloseCircleOutlined />, i18nKey: 'workflow.statusFailed' },
-}
-
-function formatTimestamp(ts?: string): string {
-  if (!ts) return '-'
-  try {
-    return new Date(ts).toLocaleString()
-  } catch {
-    return ts
-  }
+const STATUS_CONFIG: Record<WorkflowNodeStatus, { color: string; icon: React.ReactNode }> = {
+  pending: { color: 'default', icon: <ClockCircleOutlined /> },
+  running: { color: 'processing', icon: <LoadingOutlined /> },
+  completed: { color: 'success', icon: <CheckCircleOutlined /> },
+  failed: { color: 'error', icon: <CloseCircleOutlined /> },
+  skipped: { color: 'warning', icon: <MinusCircleOutlined /> },
 }
 
 const ExecutionPanel: React.FC = () => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const execution = useWorkflowStore((s) => s.execution)
-  const updateNodeExecution = useWorkflowStore((s) => s.updateNodeExecution)
   const nodes = useWorkflowStore((s) => s.nodes)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const debug = useWorkflowStore((s) => s.debug)
 
-  useEffect(() => {
-    const cleanupProgress = window.electronAPI.workflow.onExecutionProgress((data: any) => {
-      updateNodeExecution(data.nodeId, {
-        status: data.status,
-        input: data.input,
-        output: data.output,
-        error: data.error,
-        startedAt: data.startedAt,
-        completedAt: data.completedAt,
-      })
-    })
-
-    const cleanupNodeUpdate = window.electronAPI.workflow.onNodeExecutionUpdate((data: any) => {
-      updateNodeExecution(data.nodeId, {
-        status: data.nodeExecution?.status || data.status,
-        input: data.nodeExecution?.input || data.input,
-        output: data.nodeExecution?.output || data.output,
-        error: data.nodeExecution?.error || data.error,
-        startedAt: data.nodeExecution?.started_at ? new Date(data.nodeExecution.started_at * 1000).toISOString() : data.startedAt,
-        completedAt: data.nodeExecution?.completed_at ? new Date(data.nodeExecution.completed_at * 1000).toISOString() : data.completedAt,
-      })
-    })
-
-    return () => {
-      cleanupProgress()
-      cleanupNodeUpdate()
-    }
-  }, [updateNodeExecution])
-
-  useEffect(() => {
-    if (execution?.status === 'running') {
-      intervalRef.current = setInterval(() => {}, 2000)
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
+  const dataSource = useMemo(() => {
+    if (!execution) return []
+    return Object.values(execution.nodeExecutions).map((exec) => {
+      const node = nodes.find((n) => n.id === exec.nodeId)
+      return {
+        ...exec,
+        label: (node?.data as any)?.label || exec.nodeId,
+        nodeType: node?.type || 'unknown',
       }
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-  }, [execution?.status])
+    })
+  }, [execution, nodes])
+
+  const columns: ColumnsType<NodeExecutionRecord & { label: string; nodeType: string }> = useMemo(
+    () => [
+      {
+        title: t('workflow.nodeLabel'),
+        dataIndex: 'label',
+        key: 'label',
+        width: 120,
+        render: (text: string, record) => (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {debug.enabled && debug.currentNodeId === record.nodeId && (
+              <ForwardOutlined style={{ color: '#1677ff', fontSize: 12 }} />
+            )}
+            <Text strong style={{ fontSize: 12 }}>{text}</Text>
+          </div>
+        ),
+      },
+      {
+        title: t('workflow.statusLabel'),
+        dataIndex: 'status',
+        key: 'status',
+        width: 90,
+        render: (status: WorkflowNodeStatus) => {
+          const config = STATUS_CONFIG[status]
+          return <Tag color={config.color} icon={config.icon} style={{ fontSize: 11 }}>{t(`workflow.status_${status}`)}</Tag>
+        },
+      },
+      {
+        title: t('workflow.inputLabel'),
+        dataIndex: 'input',
+        key: 'input',
+        width: 200,
+        render: (text: string) => (
+          <Paragraph
+            ellipsis={{ rows: 2, expandable: true, symbol: t('common.expand') }}
+            style={{ margin: 0, fontSize: 11, color: token.colorTextSecondary }}
+          >
+            {text || '-'}
+          </Paragraph>
+        ),
+      },
+      {
+        title: t('workflow.outputLabel'),
+        dataIndex: 'output',
+        key: 'output',
+        width: 200,
+        render: (text: string) => (
+          <Paragraph
+            ellipsis={{ rows: 2, expandable: true, symbol: t('common.expand') }}
+            style={{ margin: 0, fontSize: 11, color: token.colorTextSecondary }}
+          >
+            {text || '-'}
+          </Paragraph>
+        ),
+      },
+      {
+        title: t('workflow.errorLabel'),
+        dataIndex: 'error',
+        key: 'error',
+        width: 150,
+        render: (text: string | null) =>
+          text ? (
+            <Text type="danger" style={{ fontSize: 11 }}>{text}</Text>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 11 }}>-</Text>
+          ),
+      },
+    ],
+    [t, token.colorTextSecondary, debug]
+  )
 
   if (!execution) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <Empty description={t('workflow.noExecution')} />
+      <div style={{ padding: 16, textAlign: 'center' }}>
+        <Empty description={t('workflow.noExecution')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
       </div>
     )
   }
 
-  const overallStatusConfig = STATUS_CONFIG[execution.status]
-
-  const nodeExecutionEntries = Object.values(execution.nodeExecutions)
-
-  const collapseItems = nodeExecutionEntries.map((nodeExec) => {
-    const node = nodes.find((n) => n.id === nodeExec.nodeId)
-    const nodeLabel = node ? (node.data as any).label || nodeExec.nodeId : nodeExec.nodeId
-    const statusConfig = STATUS_CONFIG[nodeExec.status]
-
-    return {
-      key: nodeExec.nodeId,
-      label: (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Tag color={statusConfig.color} icon={statusConfig.icon}>
-            {t(statusConfig.i18nKey)}
-          </Tag>
-          <Text style={{ fontSize: 13 }}>{nodeLabel}</Text>
-        </div>
-      ),
-      children: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {nodeExec.startedAt && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('workflow.startedAt')}:
-              </Text>{' '}
-              <Text style={{ fontSize: 12 }}>{formatTimestamp(nodeExec.startedAt)}</Text>
-            </div>
-          )}
-          {nodeExec.completedAt && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('workflow.completedAt')}:
-              </Text>{' '}
-              <Text style={{ fontSize: 12 }}>{formatTimestamp(nodeExec.completedAt)}</Text>
-            </div>
-          )}
-          {nodeExec.input && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
-                {t('workflow.nodeInput')}:
-              </Text>
-              <div
-                style={{
-                  background: token.colorBgLayout,
-                  padding: '6px 8px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  maxHeight: 120,
-                  overflow: 'auto',
-                }}
-              >
-                {nodeExec.input}
-              </div>
-            </div>
-          )}
-          {nodeExec.output && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
-                {t('workflow.nodeOutput')}:
-              </Text>
-              <div
-                style={{
-                  background: token.colorBgLayout,
-                  padding: '6px 8px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  maxHeight: 120,
-                  overflow: 'auto',
-                }}
-              >
-                {nodeExec.output}
-              </div>
-            </div>
-          )}
-          {nodeExec.error && (
-            <div>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 2 }}>
-                {t('workflow.nodeError')}:
-              </Text>
-              <div
-                style={{
-                  background: '#fff2f0',
-                  padding: '6px 8px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  color: '#ff4d4f',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {nodeExec.error}
-              </div>
-            </div>
-          )}
-        </div>
-      ),
-    }
-  })
-
   return (
-    <div style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-        <Tag color={overallStatusConfig.color} icon={overallStatusConfig.icon} style={{ fontSize: 13, padding: '2px 8px' }}>
-          {t(overallStatusConfig.i18nKey)}
-        </Tag>
-        {execution.startedAt && (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {formatTimestamp(execution.startedAt)}
-          </Text>
-        )}
-      </div>
-
-      {nodeExecutionEntries.length > 0 ? (
-        <Collapse size="small" items={collapseItems} />
-      ) : (
-        <Empty description={t('workflow.noExecution')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-      )}
-    </div>
+    <Table
+      dataSource={dataSource}
+      columns={columns}
+      rowKey="nodeId"
+      size="small"
+      pagination={false}
+      scroll={{ y: 200 }}
+      rowClassName={(record) =>
+        debug.enabled && debug.currentNodeId === record.nodeId
+          ? 'debug-highlight-row'
+          : ''
+      }
+    />
   )
 }
 

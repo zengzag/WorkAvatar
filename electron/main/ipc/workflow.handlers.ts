@@ -38,4 +38,31 @@ export function registerWorkflowHandlers(workflowService: WorkflowService) {
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, (_, executionId: string) => {
     return workflowService.abortExecution(executionId)
   })
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_EXECUTE_DEBUG, async (event, workflowId: string) => {
+    try {
+      const mainWindow = BrowserWindow.fromWebContents(event.sender)!
+      const executionId = await workflowService.executeWorkflowDebug(workflowId, mainWindow)
+      return { success: true, executionId }
+    } catch (error: any) {
+      return { success: false, error: error.message || String(error) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_DEBUG_CONTINUE, (_, executionId: string) => {
+    return workflowService.debugContinue(executionId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_DEBUG_SKIP, (_, executionId: string) => {
+    return workflowService.debugSkip(executionId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_DEBUG_STOP, (_, executionId: string) => {
+    return workflowService.debugStop(executionId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT_RESPOND, (_, params: { executionId: string; nodeId: string; value: string }) => {
+    workflowService.respondRuntimeInput(params.executionId, params.nodeId, params.value)
+    return true
+  })
 }

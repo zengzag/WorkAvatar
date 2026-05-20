@@ -1,7 +1,7 @@
-// Preload pdf-parse in our module context so its debug mode detection
-// (!module.parent) evaluates to false. When file2md later requires it,
-// the cached version (with isDebugMode=false) is returned, preventing
-// the ENOENT crash on test/data/05-versions-space.pdf
+// pdf-parse 是 file2md 的传递依赖（file2md 仍用于 DOCX/XLSX 解析）。
+// pdf-parse 在 module.parent 为 falsy 时会进入 debug 模式，
+// 尝试读取 test/data/05-versions-space.pdf 导致 ENOENT 崩溃。
+// 在此预加载它使 module.parent 为真，后续 file2md require 时返回缓存的无害版本。
 import 'pdf-parse'
 
 import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'

@@ -10,6 +10,8 @@ import {
   Input,
   App,
   theme,
+  Switch,
+  Modal,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -17,6 +19,9 @@ import {
   PlayCircleOutlined,
   StopOutlined,
   LayoutOutlined,
+  BugOutlined,
+  StepForwardOutlined,
+  FastForwardOutlined,
 } from '@ant-design/icons'
 import { FlowCanvas, NodeConfigPanel, ExecutionPanel } from '../components/workflow'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +43,9 @@ const WorkflowEditor: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false)
   const [editingName, setEditingName] = useState(false)
   const [nameValue, setNameValue] = useState('')
+  const [runtimeInputValue, setRuntimeInputValue] = useState('')
+  const [runtimeInputModalOpen, setRuntimeInputModalOpen] = useState(false)
+  const [pendingRuntimeResolve, setPendingRuntimeResolve] = useState<((value: string) => void) | null>(null)
 
   const storeNodes = useWorkflowStore((s) => s.nodes)
   const storeEdges = useWorkflowStore((s) => s.edges)
@@ -46,6 +54,10 @@ const WorkflowEditor: React.FC = () => {
   const setExecution = useWorkflowStore((s) => s.setExecution)
   const resetExecution = useWorkflowStore((s) => s.resetExecution)
   const updateNodeExecution = useWorkflowStore((s) => s.updateNodeExecution)
+  const debug = useWorkflowStore((s) => s.debug)
+  const setDebugEnabled = useWorkflowStore((s) => s.setDebugEnabled)
+  const setDebugCurrentNode = useWorkflowStore((s) => s.setDebugCurrentNode)
+  const setDebugPaused = useWorkflowStore((s) => s.setDebugPaused)
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -88,6 +100,7 @@ const WorkflowEditor: React.FC = () => {
     const cleanupProgress = window.electronAPI.workflow.onExecutionProgress((data) => {
       if (data.status === 'completed' || data.status === 'failed' || data.status === 'aborted') {
         setIsRunning(false)
+        setDebugPaused(false)
       }
       if (execution?.id === data.executionId) {
         const nodeExecutions: Record<string, any> = {}
@@ -131,6 +144,42 @@ const WorkflowEditor: React.FC = () => {
     })
     return () => { cleanupNodeUpdate() }
   }, [execution?.id, updateNodeExecution])
+
+  useEffect(() => {
+    const cleanupDebugPaused = (window.electronAPI as any).workflow?.onDebugPaused?.((data: any) => {
+      if (execution?.id === data.executionId) {
+        setDebugCurrentNode(data.nodeId)
+        setDebugPaused(true)
+        if (data.nodeExecution) {
+          updateNodeExecution(data.nodeId, {
+            status: data.nodeExecution.status,
+            input: data.nodeExecution.input || '',
+            output: data.nodeExecution.output || '',
+            error: data.nodeExecution.error || null,
+            startedAt: data.nodeExecution.started_at ? new Date(data.nodeExecution.started_at * 1000).toISOString() : null,
+            completedAt: data.nodeExecution.completed_at ? new Date(data.nodeExecution.completed_at * 1000).toISOString() : null,
+          })
+        }
+      }
+    })
+    return () => { if (cleanupDebugPaused) cleanupDebugPaused() }
+  }, [execution?.id, setDebugCurrentNode, setDebugPaused, updateNodeExecution])
+
+  useEffect(() => {
+    const cleanupRuntimeInput = (window.electronAPI as any).workflow?.onRuntimeInput?.((data: any) => {
+      setRuntimeInputValue('')
+      setRuntimeInputModalOpen(true)
+      const resolve = (value: string) => {
+        (window.electronAPI as any).workflow.respondRuntimeInput({
+          executionId: data.executionId,
+          nodeId: data.nodeId,
+          value,
+        })
+      }
+      setPendingRuntimeResolve(() => resolve)
+    })
+    return () => { if (cleanupRuntimeInput) cleanupRuntimeInput() }
+  }, [])
 
   const loadWorkflow = async () => {
     if (!id) return
@@ -176,7 +225,9 @@ const WorkflowEditor: React.FC = () => {
   const handleRun = async () => {
     if (!id) return
     if (isRunning) {
-      if (execution?.id) {
+      if (debug.enabled && execution?.id) {
+        await (window.electronAPI as any).workflow?.debugStop?.(execution.id)
+      } else if (execution?.id) {
         await window.electronAPI.workflow.abortExecution(execution.id)
       }
       resetExecution()
@@ -186,7 +237,12 @@ const WorkflowEditor: React.FC = () => {
     try {
       setIsRunning(true)
       setExecutionPanelCollapsed(false)
-      const result = await window.electronAPI.workflow.execute(id)
+      let result
+      if (debug.enabled) {
+        result = await (window.electronAPI as any).workflow?.executeDebug?.(id)
+      } else {
+        result = await window.electronAPI.workflow.execute(id)
+      }
       if (result.success) {
         message.success(t('workflow.runSuccess'))
         setExecution({
@@ -204,6 +260,40 @@ const WorkflowEditor: React.FC = () => {
       message.error(t('workflow.runFailed'))
       setIsRunning(false)
     }
+  }
+
+  const handleDebugContinue = async () => {
+    if (!execution?.id) return
+    try {
+      await (window.electronAPI as any).workflow?.debugContinue?.(execution.id)
+      setDebugPaused(false)
+    } catch {}
+  }
+
+  const handleDebugSkip = async () => {
+    if (!execution?.id) return
+    try {
+      await (window.electronAPI as any).workflow?.debugSkip?.(execution.id)
+      setDebugPaused(false)
+    } catch {}
+  }
+
+  const handleDebugStop = async () => {
+    if (!execution?.id) return
+    try {
+      await (window.electronAPI as any).workflow?.debugStop?.(execution.id)
+      resetExecution()
+      setIsRunning(false)
+    } catch {}
+  }
+
+  const handleRuntimeInputSubmit = () => {
+    if (pendingRuntimeResolve) {
+      pendingRuntimeResolve(runtimeInputValue)
+      setPendingRuntimeResolve(null)
+    }
+    setRuntimeInputModalOpen(false)
+    setRuntimeInputValue('')
   }
 
   const handleNameSave = async () => {
@@ -270,6 +360,46 @@ const WorkflowEditor: React.FC = () => {
           )}
         </Space>
         <Space size={4}>
+          <Tooltip title={debug.enabled ? t('workflow.debugModeOn') : t('workflow.debugModeOff')}>
+            <Switch
+              checked={debug.enabled}
+              onChange={(checked) => setDebugEnabled(checked)}
+              checkedChildren={<BugOutlined />}
+              unCheckedChildren={<BugOutlined />}
+              disabled={isRunning}
+            />
+          </Tooltip>
+          {debug.enabled && isRunning && debug.paused && (
+            <>
+              <Tooltip title={t('workflow.debugContinue')}>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<StepForwardOutlined />}
+                  onClick={handleDebugContinue}
+                >
+                  {t('workflow.debugContinueBtn')}
+                </Button>
+              </Tooltip>
+              <Tooltip title={t('workflow.debugSkip')}>
+                <Button
+                  size="small"
+                  icon={<FastForwardOutlined />}
+                  onClick={handleDebugSkip}
+                >
+                  {t('workflow.debugSkipBtn')}
+                </Button>
+              </Tooltip>
+              <Button
+                size="small"
+                danger
+                icon={<StopOutlined />}
+                onClick={handleDebugStop}
+              >
+                {t('workflow.debugStopBtn')}
+              </Button>
+            </>
+          )}
           <Tooltip title={executionPanelCollapsed ? t('workflow.executionPanel') : t('workflow.executionPanel')}>
             <Button
               type="text"
@@ -309,6 +439,30 @@ const WorkflowEditor: React.FC = () => {
           <ExecutionPanel />
         </div>
       )}
+
+      <Modal
+        title={t('workflow.runtimeInputTitle')}
+        open={runtimeInputModalOpen}
+        onOk={handleRuntimeInputSubmit}
+        onCancel={() => {
+          if (pendingRuntimeResolve) {
+            pendingRuntimeResolve('')
+            setPendingRuntimeResolve(null)
+          }
+          setRuntimeInputModalOpen(false)
+          setRuntimeInputValue('')
+        }}
+        okText={t('workflow.runtimeInputSubmit')}
+        cancelText={t('common.cancel')}
+      >
+        <Input.TextArea
+          value={runtimeInputValue}
+          onChange={(e) => setRuntimeInputValue(e.target.value)}
+          rows={6}
+          placeholder={t('workflow.runtimeInputPlaceholder')}
+          autoFocus
+        />
+      </Modal>
     </div>
   )
 }

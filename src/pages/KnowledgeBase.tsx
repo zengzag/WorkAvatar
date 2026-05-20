@@ -114,6 +114,7 @@ const KnowledgeBasePage: React.FC = () => {
                         processingDocId={processingDocId}
                         knowledgeStats={knowledgeStats}
                         globalSummary={globalSummary}
+                        selectedKbId={selectedKB?.id || ''}
                         onParseAll={onParseAll}
                         onParseDocument={onParseDocument}
                         onProcessDocument={onProcessDocument}

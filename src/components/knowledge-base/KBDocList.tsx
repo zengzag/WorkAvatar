@@ -1,8 +1,9 @@
+import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Table, Tag, Button,
   Popconfirm, Empty, Statistic, Row, Col, Spin, Progress,
-  Tooltip, Dropdown, theme, Alert,
+  Tooltip, Dropdown, theme, Alert, message,
 } from 'antd'
 import {
   FileTextOutlined, SyncOutlined, ThunderboltOutlined,
@@ -10,7 +11,7 @@ import {
   ReloadOutlined, RedoOutlined, PauseOutlined, CaretRightOutlined,
   DownOutlined, PauseCircleOutlined, PlayCircleOutlined,
   StopOutlined, InfoCircleOutlined, ApartmentOutlined,
-  ReadOutlined,
+  ReadOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import { formatFileSize } from '../../utils/format'
 
@@ -52,6 +53,7 @@ interface KBDocListProps {
   processingDocId: string | null
   knowledgeStats: any
   globalSummary: any
+  selectedKbId: string
   onParseAll: () => void
   onParseDocument: (docId: string) => void
   onProcessDocument: (docId: string) => void
@@ -71,7 +73,7 @@ interface KBDocListProps {
 const KBDocList: React.FC<KBDocListProps> = ({
   docs, parsingAll, processingAll, buildingGlobal, processProgress,
   completedCount, pendingCount, failedCount, pausedCount,
-  processedDocIds, processingDocId, knowledgeStats, globalSummary,
+  processedDocIds, processingDocId, knowledgeStats, globalSummary, selectedKbId,
   onParseAll, onParseDocument, onProcessDocument, onProcessAll, onBuildGlobal,
   onDeleteDoc, onRefresh, onPauseParse, onResumeParse, onRetryParse,
   onPauseAll, onResumeAll, onCancelAll, onViewDetail,
@@ -88,6 +90,32 @@ const KBDocList: React.FC<KBDocListProps> = ({
   }
 
   const hasActiveTasks = docs.some(d => d.parse_status === 'parsing' || d.parse_status === 'paused')
+
+  const [searchIndexStats, setSearchIndexStats] = React.useState<any>(null)
+  const [rebuildingIndex, setRebuildingIndex] = React.useState(false)
+
+  React.useEffect(() => {
+    if (selectedKbId) {
+      window.electronAPI.kb.searchIndexStats(selectedKbId).then((stats: any) => {
+        setSearchIndexStats(stats)
+      }).catch(() => {})
+    }
+  }, [selectedKbId, knowledgeStats])
+
+  const handleRebuildIndex = async () => {
+    if (!selectedKbId) return
+    setRebuildingIndex(true)
+    try {
+      await window.electronAPI.kb.rebuildSearchIndex(selectedKbId)
+      const stats = await window.electronAPI.kb.searchIndexStats(selectedKbId)
+      setSearchIndexStats(stats)
+      message.success(t('knowledgeBase.rebuildIndexSuccess'))
+    } catch {
+      message.error(t('knowledgeBase.rebuildIndexFailed'))
+    } finally {
+      setRebuildingIndex(false)
+    }
+  }
 
   return (
     <div>
@@ -161,6 +189,58 @@ const KBDocList: React.FC<KBDocListProps> = ({
             <Col span={8}><Statistic title={t('knowledgeBase.docSummaries')} value={knowledgeStats.documentSummaryCount} prefix={<FileTextOutlined />} styles={{ content: { color: token.colorSuccess } }} /></Col>
             <Col span={8}><Statistic title={t('knowledgeBase.globalSummary')} value={knowledgeStats.hasGlobalSummary ? 1 : 0} prefix={<ApartmentOutlined />} styles={{ content: { color: '#722ed1' } }} /></Col>
           </Row>
+        )}
+
+        {searchIndexStats && (
+          <Card size="small" style={{ marginBottom: 16 }} title={
+            <Space>
+              <DatabaseOutlined style={{ color: token.colorPrimary }} />
+              <span>{t('knowledgeBase.searchIndexTitle')}</span>
+            </Space>
+          } extra={
+            <Tooltip title={t('knowledgeBase.rebuildIndexTip')}>
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                onClick={handleRebuildIndex}
+                loading={rebuildingIndex}
+              >
+                {t('knowledgeBase.rebuildIndex')}
+              </Button>
+            </Tooltip>
+          }>
+            <Row gutter={16}>
+              <Col span={6}>
+                <Statistic
+                  title={t('knowledgeBase.indexEntries')}
+                  value={searchIndexStats.totalEntries}
+                  prefix={<DatabaseOutlined />}
+                  styles={{ content: { color: token.colorPrimary, fontSize: 20 } }}
+                />
+              </Col>
+              <Col span={6}>
+                <Statistic
+                  title={t('knowledgeBase.embeddingCount')}
+                  value={searchIndexStats.embeddingCount}
+                  prefix={<ApartmentOutlined />}
+                  styles={{ content: { color: '#722ed1', fontSize: 20 } }}
+                />
+              </Col>
+              <Col span={12}>
+                <Space size={4} wrap>
+                  {Object.entries(searchIndexStats.byType || {}).map(([type, count]: [string, any]) => {
+                    const labelMap: Record<string, string> = {
+                      document_title: t('knowledgeBase.indexTypeDocTitle'),
+                      document_summary: t('knowledgeBase.indexTypeDocSummary'),
+                      paragraph: t('knowledgeBase.indexTypeParagraph'),
+                      content_paragraph: t('knowledgeBase.indexTypeContent'),
+                    }
+                    return <Tag key={type} color="blue">{labelMap[type] || type}: {count}</Tag>
+                  })}
+                </Space>
+              </Col>
+            </Row>
+          </Card>
         )}
 
         {globalSummary && (

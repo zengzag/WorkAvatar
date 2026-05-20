@@ -1,7 +1,7 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import type { NodeProps } from '@xyflow/react'
-import { PlayCircleOutlined } from '@ant-design/icons'
+import { PlayCircleOutlined, FileOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { theme } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useWorkflowStore, type InputNodeData, type WorkflowNodeStatus } from '../../../stores/workflow.store'
@@ -11,38 +11,61 @@ const STATUS_COLORS: Record<WorkflowNodeStatus, string> = {
   running: '#1677ff',
   completed: '#52c41a',
   failed: '#ff4d4f',
+  skipped: '#faad14',
 }
 
 function InputNode({ id, selected, data }: NodeProps) {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const execution = useWorkflowStore((s) => s.execution)
+  const debug = useWorkflowStore((s) => s.debug)
   const nodeExec = execution?.nodeExecutions[id]
   const status = nodeExec?.status || 'pending'
+  const isDebugHighlight = debug.enabled && debug.currentNodeId === id
 
   const nodeData = data as unknown as InputNodeData
-  const promptPreview = nodeData.prompt
-    ? nodeData.prompt.length > 40
-      ? nodeData.prompt.substring(0, 40) + '...'
-      : nodeData.prompt
-    : t('workflow.noPrompt')
+  const inputType = nodeData.inputType || 'fixed'
+
+  const getIcon = () => {
+    if (inputType === 'file') return <FileOutlined style={{ color: '#52c41a', fontSize: 18 }} />
+    if (inputType === 'runtime') return <QuestionCircleOutlined style={{ color: '#52c41a', fontSize: 18 }} />
+    return <PlayCircleOutlined style={{ color: '#52c41a', fontSize: 18 }} />
+  }
+
+  const getPreview = () => {
+    if (inputType === 'file') {
+      return nodeData.filePath ? (nodeData.filePath.length > 40 ? '...' + nodeData.filePath.slice(-37) : nodeData.filePath) : t('workflow.noFilePath')
+    }
+    if (inputType === 'runtime') {
+      return t('workflow.inputTypeRuntime')
+    }
+    return nodeData.prompt
+      ? nodeData.prompt.length > 40
+        ? nodeData.prompt.substring(0, 40) + '...'
+        : nodeData.prompt
+      : t('workflow.noPrompt')
+  }
 
   return (
     <div
       style={{
         position: 'relative',
         background: token.colorBgContainer,
-        border: `1px solid ${selected ? '#52c41a' : token.colorBorder}`,
+        border: `1px solid ${selected ? '#52c41a' : isDebugHighlight ? '#1677ff' : token.colorBorder}`,
         borderRadius: 8,
         padding: '8px 12px',
         minWidth: 180,
         maxWidth: 240,
-        boxShadow: selected ? '0 0 8px rgba(82, 196, 26, 0.3)' : 'none',
+        boxShadow: selected
+          ? '0 0 8px rgba(82, 196, 26, 0.3)'
+          : isDebugHighlight
+            ? '0 0 12px rgba(22, 119, 255, 0.5)'
+            : 'none',
       }}
     >
       <Handle type="source" position={Position.Right} style={{ background: '#52c41a', width: 12, height: 12, top: '50%', right: -6, transform: 'translateY(-50%)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <PlayCircleOutlined style={{ color: '#52c41a', fontSize: 18 }} />
+        {getIcon()}
         <span style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{nodeData.label}</span>
         <span
           style={{
@@ -56,7 +79,7 @@ function InputNode({ id, selected, data }: NodeProps) {
         />
       </div>
       <div style={{ fontSize: 11, color: token.colorTextQuaternary, marginTop: 4, lineHeight: 1.4 }}>
-        {promptPreview}
+        {getPreview()}
       </div>
     </div>
   )

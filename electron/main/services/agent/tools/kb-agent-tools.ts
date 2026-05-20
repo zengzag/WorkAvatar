@@ -3,7 +3,7 @@ import DatabaseService from '../../database.service'
 import KBDatabaseService from '../../kb-database.service'
 import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from './types'
-import { createKBSearchTool, createKBAdvancedSearchTool, createKBGetContentTool } from './index'
+import { createKBSearchTool, createKBGetContentTool } from './index'
 import { createKbIdValidator } from './utils'
 
 function formatKBOptions(kbs: any[]): string {
@@ -316,7 +316,6 @@ export function createKBAgentTools(
   tools.push(fulltextSearchTool)
 
   tools.push(createKBSearchTool(kbIds))
-  tools.push(createKBAdvancedSearchTool(kbIds))
   tools.push(createKBGetContentTool(kbIds))
 
   return tools

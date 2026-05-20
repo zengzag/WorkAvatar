@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<WorkflowNodeStatus, string> = {
   running: '#1677ff',
   completed: '#52c41a',
   failed: '#ff4d4f',
+  skipped: '#faad14',
 }
 
 function OutputNode({ id, selected, data }: NodeProps) {

@@ -29,6 +29,8 @@ import {
   DeleteOutlined,
   CopyOutlined,
   ScissorOutlined,
+  ForkOutlined,
+  MergeCellsOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { generateId } from '../../utils/format'
@@ -152,7 +154,6 @@ const FlowCanvas: React.FC = () => {
   const setStoreNodes = useWorkflowStore((s) => s.setNodes)
   const setStoreEdges = useWorkflowStore((s) => s.setEdges)
   const addStoreNode = useWorkflowStore((s) => s.addNode)
-  const addStoreEdge = useWorkflowStore((s) => s.addEdge)
   const setSelectedNodeId = useWorkflowStore((s) => s.setSelectedNodeId)
 
   const [nodes, setNodes] = useNodesState(storeNodes)
@@ -160,7 +161,7 @@ const FlowCanvas: React.FC = () => {
   const [employeeModalOpen, setEmployeeModalOpen] = useState(false)
   const [employees, setEmployees] = useState<any[]>([])
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0, type: 'pane' })
-  const reactFlowInstance = useRef<ReactFlowInstance | null>(null)
+  const reactFlowInstance = useRef<ReactFlowInstance<Node, Edge> | null>(null)
 
   useEffect(() => {
     setNodes(storeNodes)
@@ -208,17 +209,17 @@ const FlowCanvas: React.FC = () => {
         return
       }
       const newEdge: Edge = {
-        id: `e-${connection.source}-${connection.target}`,
+        id: `e-${generateId()}`,
         source: connection.source,
         target: connection.target,
+        sourceHandle: connection.sourceHandle || undefined,
         markerEnd: { type: MarkerType.ArrowClosed },
       }
       const updated = addEdge(newEdge, edges)
       setEdges(updated)
       setStoreEdges(updated)
-      addStoreEdge(newEdge)
     },
-    [nodes, edges, setEdges, setStoreEdges, addStoreEdge, message, t]
+    [nodes, edges, setEdges, setStoreEdges, message, t]
   )
 
   const handleNodeClick = useCallback(
@@ -282,12 +283,25 @@ const FlowCanvas: React.FC = () => {
         return
       }
       const id = `node-${generateId()}`
-      const label = type === 'input' ? t('workflow.inputNode') : t('workflow.outputNode')
+      const labelMap: Record<string, string> = {
+        input: t('workflow.inputNode'),
+        output: t('workflow.outputNode'),
+        branch: t('workflow.branchNode'),
+        merge: t('workflow.mergeNode'),
+        extract: t('workflow.extractNode'),
+      }
+      const dataMap: Record<string, any> = {
+        input: { label: labelMap.input, inputType: 'fixed' },
+        output: { label: labelMap.output },
+        branch: { label: labelMap.branch, rules: [] },
+        merge: { label: labelMap.merge, selectedUpstreamIds: [], upstreamOrder: [], mergeMode: 'concat' },
+        extract: { label: labelMap.extract, fields: [] },
+      }
       const newNode: Node = {
         id,
         type,
         position: position || { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
-        data: { label },
+        data: dataMap[type] || { label: labelMap[type] || type },
       }
       setNodes((nds) => [...nds, newNode])
       addStoreNode(newNode)
@@ -425,6 +439,24 @@ const FlowCanvas: React.FC = () => {
         icon: <PlusOutlined />,
         onClick: () => addNodeByType('employee'),
       },
+      {
+        key: 'branch',
+        label: t('workflow.addBranchNode'),
+        icon: <ForkOutlined />,
+        onClick: () => addNodeByType('branch'),
+      },
+      {
+        key: 'merge',
+        label: t('workflow.addMergeNode'),
+        icon: <MergeCellsOutlined />,
+        onClick: () => addNodeByType('merge'),
+      },
+      {
+        key: 'extract',
+        label: t('workflow.addExtractNode'),
+        icon: <ScissorOutlined />,
+        onClick: () => addNodeByType('extract'),
+      },
     ],
     [addNodeByType, t]
   )
@@ -449,6 +481,24 @@ const FlowCanvas: React.FC = () => {
         label: t('workflow.addEmployeeNode'),
         icon: <PlusOutlined />,
         onClick: () => addNodeByType('employee', flowPos),
+      },
+      {
+        key: 'branch',
+        label: t('workflow.addBranchNode'),
+        icon: <ForkOutlined />,
+        onClick: () => addNodeByType('branch', flowPos),
+      },
+      {
+        key: 'merge',
+        label: t('workflow.addMergeNode'),
+        icon: <MergeCellsOutlined />,
+        onClick: () => addNodeByType('merge', flowPos),
+      },
+      {
+        key: 'extract',
+        label: t('workflow.addExtractNode'),
+        icon: <ScissorOutlined />,
+        onClick: () => addNodeByType('extract', flowPos),
       },
     ]
   }, [addNodeByType, t, contextMenu.x, contextMenu.y])
@@ -513,6 +563,32 @@ const FlowCanvas: React.FC = () => {
 
   const bgColor = effectiveTheme === 'dark' ? '#1a1a2e' : '#f5f5f5'
 
+  const edgeColor = effectiveTheme === 'dark' ? '#555' : '#b1b1b7'
+
+  const styledEdges = useMemo(() =>
+    edges.map((edge) => {
+      let strokeColor = edgeColor
+      let label: string | undefined
+      if (edge.sourceHandle === 'yes') {
+        strokeColor = '#52c41a'
+        label = t('workflow.branchYes')
+      } else if (edge.sourceHandle === 'no') {
+        strokeColor = '#ff4d4f'
+        label = t('workflow.branchNo')
+      }
+      return {
+        ...edge,
+        style: { stroke: strokeColor, strokeWidth: 2 },
+        label,
+        labelStyle: { fill: strokeColor, fontWeight: 600, fontSize: 11 },
+        labelBgStyle: { fill: effectiveTheme === 'dark' ? '#1a1a2e' : '#fff', fillOpacity: 0.8 },
+        labelBgPadding: [4, 6] as [number, number],
+        labelBgBorderRadius: 4,
+      }
+    }),
+    [edges, edgeColor, effectiveTheme, t]
+  )
+
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div
@@ -537,9 +613,9 @@ const FlowCanvas: React.FC = () => {
 
       <div style={{ flex: 1 }}>
         <ReactFlow
-          onInit={(instance) => { reactFlowInstance.current = instance }}
+          onInit={(instance) => { reactFlowInstance.current = instance as any }}
           nodes={nodes}
-          edges={edges}
+          edges={styledEdges}
           onNodesChange={handleNodesChange}
           onEdgesChange={handleEdgesChange}
           onConnect={handleConnect}
@@ -555,6 +631,7 @@ const FlowCanvas: React.FC = () => {
           minZoom={0.2}
           maxZoom={2}
           colorMode={effectiveTheme}
+          proOptions={{ hideAttribution: true }}
         >
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} color={effectiveTheme === 'dark' ? '#333' : '#ddd'} />
           <Controls showInteractive={false} />
@@ -563,6 +640,9 @@ const FlowCanvas: React.FC = () => {
               if (node.type === 'input') return '#52c41a'
               if (node.type === 'output') return '#1677ff'
               if (node.type === 'employee') return '#722ed1'
+              if (node.type === 'branch') return '#fa8c16'
+              if (node.type === 'merge') return '#13c2c2'
+              if (node.type === 'extract') return '#eb2f96'
               return '#999'
             }}
           />

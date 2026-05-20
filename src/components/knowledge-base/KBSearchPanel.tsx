@@ -7,13 +7,13 @@ import {
 import {
   SearchOutlined, FileTextOutlined,
   GlobalOutlined, BookOutlined,
-  FilterOutlined, CopyOutlined, EyeOutlined, DatabaseOutlined,
+  CopyOutlined, EyeOutlined, DatabaseOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
-type SearchMode = 'smart' | 'semantic' | 'advanced' | 'paragraphs' | 'fulltext' | 'globalSummary'
+type SearchMode = 'smart' | 'semantic' | 'paragraphs' | 'fulltext' | 'globalSummary'
 
 interface KBSearchPanelProps {
   open: boolean
@@ -44,7 +44,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<any[]>([])
   const [globalSummaryResult, setGlobalSummaryResult] = useState<any>(null)
-  const [advancedDocType, setAdvancedDocType] = useState<string | undefined>(undefined)
+
   const [docContent, setDocContent] = useState<any>(null)
   const [docContentLoading, setDocContentLoading] = useState(false)
   const [docContentModalOpen, setDocContentModalOpen] = useState(false)
@@ -115,16 +115,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           setResults(data || [])
           break
         }
-        case 'advanced': {
-          const data = await window.electronAPI.kb.advancedSearch({
-            kb_id: selectedKbId,
-            query: query.trim(),
-            top_k: topK,
-            document_type: advancedDocType,
-          })
-          setResults(data || [])
-          break
-        }
         case 'paragraphs': {
           const data = await window.electronAPI.kb.searchParagraphs({
             kb_id: selectedKbId,
@@ -154,7 +144,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     } finally {
       setLoading(false)
     }
-  }, [selectedKbId, query, searchMode, topK, advancedDocType, resetResults])
+  }, [selectedKbId, query, searchMode, topK, resetResults])
 
   const handleViewDocContent = useCallback(async (docId: string, docName: string, offset?: { start: number; end: number }, paragraphId?: string) => {
     setDocContentLoading(true)
@@ -201,15 +191,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         <Space>
           <RobotOutlined />
           <span>{t('kbSearch.modeSemantic')}</span>
-        </Space>
-      ),
-    },
-    {
-      key: 'advanced',
-      label: (
-        <Space>
-          <FilterOutlined />
-          <span>{t('kbSearch.modeAdvanced')}</span>
         </Space>
       ),
     },
@@ -518,8 +499,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
 
   const showQueryInput = searchMode !== 'globalSummary'
 
-  const showAdvancedOptions = searchMode === 'advanced'
-
   return (
     <Drawer
       title={null}
@@ -574,11 +553,7 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              searchMode === 'advanced'
-                ? t('kbSearch.advancedPlaceholder')
-                : t('kbSearch.searchPlaceholder')
-            }
+            placeholder={t('kbSearch.searchPlaceholder')}
             size="large"
             prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
             suffix={
@@ -595,25 +570,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           />
         )}
 
-        {showAdvancedOptions && searchMode === 'advanced' && (
-          <div style={{ marginTop: 8 }}>
-            <Select
-              value={advancedDocType}
-              onChange={setAdvancedDocType}
-              allowClear
-              style={{ width: 140 }}
-              placeholder={t('kbSearch.docTypeFilter')}
-              options={[
-                { value: 'pdf', label: 'PDF' },
-                { value: 'docx', label: 'Word' },
-                { value: 'xlsx', label: 'Excel' },
-                { value: 'txt', label: 'TXT' },
-                { value: 'md', label: 'Markdown' },
-              ]}
-            />
-          </div>
-        )}
-
         {searchMode === 'globalSummary' && (
           <Button
             type="primary"
@@ -626,15 +582,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           </Button>
         )}
 
-        {searchMode === 'advanced' && (
-          <Alert
-            type="info"
-            title={t('kbSearch.advancedSyntaxTitle')}
-            description={t('kbSearch.advancedSyntaxDesc')}
-            style={{ marginTop: 8, fontSize: 12 }}
-            showIcon
-          />
-        )}
       </div>
 
       <div style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}>

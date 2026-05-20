@@ -67,6 +67,7 @@ class KnowledgeProcessorService {
 
   private static readonly MAX_PARAGRAPH_CHARS = 5000
   private static readonly PARAGRAPH_OVERLAP_CHARS = 500
+  private static readonly MAX_HEADING_LINE_RATIO = 0.25
   private static readonly TOC_CHUNK_LINES = 100
   private static readonly TOC_OVERLAP_LINES = 10
   private static readonly TOC_MIN_HEADING_DENSITY = 8000
@@ -92,21 +93,13 @@ class KnowledgeProcessorService {
     }
 
     if (headingPositions.length === 0) {
-      const chunkSize = KnowledgeProcessorService.MAX_PARAGRAPH_CHARS
-      const chunks = this.splitIntoChunks(text, chunkSize, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
-      for (let i = 0; i < chunks.length; i++) {
-        const startOff = text.indexOf(chunks[i])
-        paragraphs.push({
-          title: `段落 ${i + 1}`,
-          titlePath: `段落 ${i + 1}`,
-          index: i,
-          startOffset: startOff >= 0 ? startOff : i * (chunkSize - KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS),
-          endOffset: startOff >= 0 ? startOff + chunks[i].length : (i + 1) * chunkSize,
-          content: chunks[i],
-          level: 1,
-        })
-      }
-      return paragraphs
+      return this.chunkParagraphs(text)
+    }
+
+    const nonEmptyLines = lines.filter(l => l.trim().length > 0).length
+    const headingRatio = headingPositions.length / Math.max(nonEmptyLines, 1)
+    if (headingRatio > KnowledgeProcessorService.MAX_HEADING_LINE_RATIO) {
+      return this.chunkParagraphs(text)
     }
 
     const headingStack: Array<{ title: string; level: number }> = []
@@ -959,6 +952,23 @@ ${docsText.substring(0, 20000)}
       start = end - overlap
     }
     return chunks.filter(c => c.length > 50)
+  }
+
+  private chunkParagraphs(text: string): ParagraphInfo[] {
+    const chunkSize = KnowledgeProcessorService.MAX_PARAGRAPH_CHARS
+    const chunks = this.splitIntoChunks(text, chunkSize, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
+    return chunks.map((chunk, i) => {
+      const startOff = text.indexOf(chunk)
+      return {
+        title: `段落 ${i + 1}`,
+        titlePath: `段落 ${i + 1}`,
+        index: i,
+        startOffset: startOff >= 0 ? startOff : i * (chunkSize - KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS),
+        endOffset: startOff >= 0 ? startOff + chunk.length : (i + 1) * chunkSize,
+        content: chunk,
+        level: 1,
+      }
+    })
   }
 
   private parseJSON<T>(raw: string, fallback: T): T {

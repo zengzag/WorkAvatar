@@ -243,7 +243,11 @@ export class EmployeeExportConfigService {
           'SELECT id FROM knowledge_bases WHERE id = ?'
         ).get(kbRef.kb_id) as any
 
-        if (!kbExists) {
+        if (kbExists) {
+          this.db.getDb().prepare(
+            'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
+          ).run(employeeId, kbRef.kb_id)
+        } else {
           warnings.push(`Knowledge base "${kbRef.kb_name}" (${kbRef.kb_id}) not found, skipped`)
         }
       }
@@ -340,7 +344,11 @@ export class EmployeeExportConfigService {
 
     for (const kbRef of importData.knowledgeBases || []) {
       const kbExists = this.kbDb.getDb().prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
-      if (!kbExists) {
+      if (kbExists) {
+        this.db.getDb().prepare(
+          'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
+        ).run(employeeId, kbRef.kb_id)
+      } else {
         warnings.push(`Knowledge base "${kbRef.kb_name}" not found, skipped`)
       }
     }

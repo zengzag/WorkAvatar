@@ -3,6 +3,7 @@ import path from 'path'
 import { convert } from 'file2md'
 import mammoth from 'mammoth'
 import XLSX from 'xlsx'
+import { extractTextItems } from 'unpdf'
 import type { ParseResult } from '../../shared/types'
 import OCRService from './ocr.service'
 
@@ -23,20 +24,33 @@ class FileParserService {
   }
 
   private async parsePDF(filePath: string): Promise<ParseResult> {
-    const result = await convert(filePath, {
-      preserveLayout: true,
-      extractImages: false,
-      extractCharts: false,
-    })
+    try {
+      const buffer = await fs.promises.readFile(filePath)
+      const data = new Uint8Array(buffer)
+      const result = await extractTextItems(data)
+      const pages = result.items.map(pageItems =>
+        pageItems
+          .map(item => item.str + (item.hasEOL ? '\n' : ''))
+          .join('')
+      )
+      const fullText = pages.join('\n\n')
 
-    return {
-      type: 'pdf',
-      fullText: result.markdown,
-      sections: this.splitIntoSections(result.markdown),
-      tables: [],
-      metadata: {
-        pageCount: result.metadata.pageCount,
-      },
+      return {
+        type: 'pdf',
+        fullText,
+        sections: this.splitIntoSections(fullText),
+        tables: [],
+        metadata: {
+          pageCount: result.totalPages,
+        },
+      }
+    } catch (error: any) {
+      console.error('[FileParser] PDF parse error:', {
+        filePath,
+        message: error.message,
+        stack: error.stack,
+      })
+      throw error
     }
   }
 
@@ -52,31 +66,18 @@ class FileParserService {
         tables: [],
         metadata: {},
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[FileParser] DOC parse error:', {
+        filePath,
+        message: error.message,
+        stack: error.stack,
+      })
       throw new Error('.doc 文件格式解析失败，请转换为 .docx 格式后重试')
     }
   }
 
   private async parseWord(filePath: string): Promise<ParseResult> {
-    const result = await convert(filePath, {
-      preserveLayout: true,
-      extractImages: false,
-      extractCharts: false,
-    })
-
-    return {
-      type: 'word',
-      fullText: result.markdown,
-      sections: this.splitIntoSections(result.markdown),
-      tables: [],
-      metadata: {},
-    }
-  }
-
-  private async parseExcel(filePath: string): Promise<ParseResult> {
-    const ext = path.extname(filePath).toLowerCase()
-
-    if (ext === '.xlsx') {
+    try {
       const result = await convert(filePath, {
         preserveLayout: true,
         extractImages: false,
@@ -84,11 +85,72 @@ class FileParserService {
       })
 
       return {
-        type: 'excel',
+        type: 'word',
         fullText: result.markdown,
         sections: this.splitIntoSections(result.markdown),
         tables: [],
         metadata: {},
+      }
+    } catch (error: any) {
+      console.warn('[FileParser] DOCX file2md parse failed, falling back to mammoth:', {
+        filePath,
+        message: error.message,
+        code: error.code,
+        originalError: error.originalError?.message || error.originalError,
+      })
+
+      try {
+        const buffer = await fs.promises.readFile(filePath)
+        const result = await mammoth.convertToMarkdown({ buffer })
+        console.info('[FileParser] DOCX mammoth fallback succeeded:', { filePath })
+
+        const rawMarkdown = result.value || ''
+        const markdown = rawMarkdown
+          .replace(/<a\s+id="[^"]*"><\/a>/g, '')
+          .replace(/!\[[^\]]*\]\(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)/g, '')
+        return {
+          type: 'word',
+          fullText: markdown,
+          sections: this.splitIntoSections(markdown),
+          tables: [],
+          metadata: { fallbackParser: 'mammoth-markdown' },
+        }
+      } catch (mammothError: any) {
+        console.error('[FileParser] DOCX mammoth fallback also failed:', {
+          filePath,
+          originalError: error.message,
+          mammothError: mammothError.message,
+        })
+        throw error
+      }
+    }
+  }
+
+  private async parseExcel(filePath: string): Promise<ParseResult> {
+    const ext = path.extname(filePath).toLowerCase()
+
+    if (ext === '.xlsx') {
+      try {
+        const result = await convert(filePath, {
+          preserveLayout: true,
+          extractImages: false,
+          extractCharts: false,
+        })
+
+        return {
+          type: 'excel',
+          fullText: result.markdown,
+          sections: this.splitIntoSections(result.markdown),
+          tables: [],
+          metadata: {},
+        }
+      } catch (error: any) {
+        console.warn('[FileParser] XLSX file2md parse failed, falling back to SheetJS:', {
+          filePath,
+          message: error.message,
+          code: error.code,
+          originalError: error.originalError?.message || error.originalError,
+        })
       }
     }
 
@@ -155,10 +217,6 @@ class FileParserService {
   }
 
   private splitIntoSections(text: string): ParseResult['sections'] {
-    const sections: ParseResult['sections'] = []
-    const lines = text.split('\n')
-    let currentSection: ParseResult['sections'][0] | null = null
-
     const headingPatterns = [
       /^#{1,6}\s+\S/,
       /^第[一二三四五六七八九十百千\d]+章\s*/,
@@ -168,6 +226,27 @@ class FileParserService {
       /^[一二三四五六七八九十]+\、\s*/,
       /^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/,
     ]
+
+    const lines = text.split('\n')
+    const nonEmptyLines = lines.filter(l => l.trim().length > 0)
+    if (nonEmptyLines.length === 0) {
+      return text.trim().length > 0 ? [{ title: '全文', content: text, level: 1 }] : []
+    }
+
+    let headingCount = 0
+    for (const line of nonEmptyLines) {
+      const trimmed = line.trim()
+      if (trimmed.length < 100 && headingPatterns.some(p => p.test(trimmed))) {
+        headingCount++
+      }
+    }
+
+    if (headingCount / nonEmptyLines.length > 0.3) {
+      return [{ title: '全文', content: text, level: 1 }]
+    }
+
+    const sections: ParseResult['sections'] = []
+    let currentSection: ParseResult['sections'][0] | null = null
 
     for (const line of lines) {
       const trimmedLine = line.trim()

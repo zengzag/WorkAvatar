@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Input, List, Card, Typography, Space, Tag, Button, Tabs, Tree,
-  Empty, Spin, theme, Tooltip, message,
+  Empty, Spin, theme, Tooltip, message, Pagination,
 } from 'antd'
 import {
   FileTextOutlined, SearchOutlined, ReadOutlined,
@@ -13,6 +13,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 
 const { Text, Paragraph } = Typography
+const PARAGRAPHS_PER_PAGE = 30
 
 interface DocItem {
   id: string
@@ -66,6 +67,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
   const [editingParagraphId, setEditingParagraphId] = React.useState<string | null>(null)
   const [editParagraphSummary, setEditParagraphSummary] = React.useState('')
   const [editParagraphKeywords, setEditParagraphKeywords] = React.useState('')
+  const [paragraphPage, setParagraphPage] = React.useState(1)
 
   const filteredDocs = React.useMemo(() => {
     if (!searchText.trim()) return docs
@@ -113,6 +115,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
     setEditingSummary(false)
     setEditingKeywords(false)
     setEditingParagraphId(null)
+    setParagraphPage(1)
     try {
       const [content, summary, paragraphs] = await Promise.all([
         window.electronAPI.kb.getDocContent(docId).catch(() => null),
@@ -219,7 +222,19 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
     return colorMap[type] || token.colorPrimary
   }
 
-  const detailTabItems = [
+  const paginatedParagraphs = React.useMemo(() => {
+    const start = (paragraphPage - 1) * PARAGRAPHS_PER_PAGE
+    return docParagraphs.slice(start, start + PARAGRAPHS_PER_PAGE)
+  }, [docParagraphs, paragraphPage])
+
+  const totalParagraphPages = Math.max(1, Math.ceil(docParagraphs.length / PARAGRAPHS_PER_PAGE))
+
+  const mdContent = React.useMemo(() => {
+    if (!docContent) return null
+    return <ReactMarkdown>{docContent}</ReactMarkdown>
+  }, [docContent])
+
+  const detailTabItems = React.useMemo(() => [
     {
       key: 'content',
       label: <Space><ReadOutlined />{t('knowledgeBase.originalDoc')}</Space>,
@@ -233,7 +248,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
               maxHeight: 'calc(100vh - 320px)',
               overflow: 'auto',
             }}>
-              <ReactMarkdown>{docContent}</ReactMarkdown>
+              {mdContent}
             </div>
           ) : (
             <Empty description={t('knowledgeBase.docContentEmpty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -244,7 +259,7 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
     {
       key: 'toc',
       label: <Space><UnorderedListOutlined />{t('knowledgeBase.toc')}</Space>,
-      children: (
+      children: activeDetailTab === 'toc' ? (
         <div style={{ padding: '0 4px' }}>
           {tocData.length > 0 ? (
             <div style={{
@@ -254,20 +269,21 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
             }}>
               <Tree
                 defaultExpandAll
-                treeData={tocData}
+                treeData={tocData.slice(0, 500)}
                 showLine={{ showLeafIcon: false }}
+                style={{ maxHeight: 'calc(100vh - 320px)', overflow: 'auto' }}
               />
             </div>
           ) : (
             <Empty description={t('knowledgeBase.noToc')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </div>
-      ),
+      ) : <div />,
     },
     {
       key: 'summary',
       label: <Space><ProfileOutlined />{t('knowledgeBase.summary')}</Space>,
-      children: (
+      children: activeDetailTab === 'summary' ? (
         <div style={{ padding: '0 4px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {docSummary ? (
             <>
@@ -341,101 +357,125 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
             <Empty description={t('knowledgeBase.noSummary')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </div>
-      ),
+      ) : <div />,
     },
     {
       key: 'paragraphs',
       label: <Space><ApartmentOutlined />{t('knowledgeBase.paragraphs')} ({docParagraphs.length})</Space>,
-      children: (
-        <div style={{ padding: '0 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {docParagraphs.length > 0 ? docParagraphs.map(p => {
-            const level = p.level || 1
-            const keywords: string[] = (() => { try { return JSON.parse(p.keywords_json || '[]') } catch { return [] } })()
-            const isEditing = editingParagraphId === p.id
-            return (
-              <Card
-                key={p.id}
-                size="small"
-                style={{
-                  borderLeft: `3px solid ${level === 1 ? token.colorPrimary : level === 2 ? token.colorSuccess : token.colorWarning}`,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <Space>
-                    <Text strong>{p.title}</Text>
-                    <Tag style={{ fontSize: 10 }} color={level === 1 ? 'blue' : level === 2 ? 'green' : 'default'}>L{level}</Tag>
-                  </Space>
-                  <Space size={4}>
-                    {p.paragraph_index !== undefined && (
-                      <Text type="secondary" style={{ fontSize: 11 }}>#{p.paragraph_index}</Text>
-                    )}
-                    {!isEditing && (
-                      <Tooltip title={t('knowledgeBase.editParagraph')}>
-                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEditParagraph(p)} />
-                      </Tooltip>
-                    )}
-                  </Space>
-                </div>
-                {p.title_path && (
-                  <div style={{ marginBottom: 4 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{p.title_path}</Text>
-                  </div>
-                )}
-                <div style={{
-                  background: token.colorBgLayout,
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  marginBottom: 8,
-                }}>
-                  <Paragraph
-                    style={{ fontSize: 13, lineHeight: 1.8, margin: 0, whiteSpace: 'pre-wrap' }}
-                    ellipsis={{ rows: 5, expandable: 'collapsible', symbol: t('kbSearch.expand') }}
-                  >
-                    {p.content}
-                  </Paragraph>
-                </div>
-                {isEditing ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <Input.TextArea
-                      value={editParagraphSummary}
-                      onChange={e => setEditParagraphSummary(e.target.value)}
-                      placeholder={t('knowledgeBase.summaryEditPlaceholder')}
-                      rows={2}
-                    />
-                    <Input
-                      value={editParagraphKeywords}
-                      onChange={e => setEditParagraphKeywords(e.target.value)}
-                      placeholder={t('knowledgeBase.keywordsEditPlaceholder')}
-                    />
-                    <Space>
-                      <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => handleSaveParagraph(p.id)}>{t('common.save')}</Button>
-                      <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingParagraphId(null)}>{t('common.cancel')}</Button>
-                    </Space>
-                  </div>
-                ) : (
-                  <>
-                    {p.summary && (
-                      <div style={{ marginBottom: 4 }}>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{t('knowledgeBase.summary')}: </Text>
-                        <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{p.summary}</Text>
+      children: activeDetailTab === 'paragraphs' ? (
+        <div style={{ padding: '0 4px' }}>
+          {docParagraphs.length > 0 ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {paginatedParagraphs.map(p => {
+                  const level = p.level || 1
+                  const keywords: string[] = (() => { try { return JSON.parse(p.keywords_json || '[]') } catch { return [] } })()
+                  const isEditing = editingParagraphId === p.id
+                  return (
+                    <Card
+                      key={p.id}
+                      size="small"
+                      style={{
+                        borderLeft: `3px solid ${level === 1 ? token.colorPrimary : level === 2 ? token.colorSuccess : token.colorWarning}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Space>
+                          <Text strong>{p.title}</Text>
+                          <Tag style={{ fontSize: 10 }} color={level === 1 ? 'blue' : level === 2 ? 'green' : 'default'}>L{level}</Tag>
+                        </Space>
+                        <Space size={4}>
+                          {p.paragraph_index !== undefined && (
+                            <Text type="secondary" style={{ fontSize: 11 }}>#{p.paragraph_index}</Text>
+                          )}
+                          {!isEditing && (
+                            <Tooltip title={t('knowledgeBase.editParagraph')}>
+                              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => startEditParagraph(p)} />
+                            </Tooltip>
+                          )}
+                        </Space>
                       </div>
-                    )}
-                    {keywords.length > 0 && (
-                      <Space size={2} wrap>
-                        {keywords.map(k => <Tag key={k} style={{ fontSize: 11 }}>{k}</Tag>)}
-                      </Space>
-                    )}
-                  </>
-                )}
-              </Card>
-            )
-          }) : (
+                      {p.title_path && (
+                        <div style={{ marginBottom: 4 }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{p.title_path}</Text>
+                        </div>
+                      )}
+                      <div style={{
+                        background: token.colorBgLayout,
+                        padding: '8px 12px',
+                        borderRadius: 6,
+                        marginBottom: 8,
+                      }}>
+                        <Paragraph
+                          style={{ fontSize: 13, lineHeight: 1.8, margin: 0, whiteSpace: 'pre-wrap' }}
+                          ellipsis={{ rows: 5, expandable: 'collapsible', symbol: t('kbSearch.expand') }}
+                        >
+                          {p.content}
+                        </Paragraph>
+                      </div>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <Input.TextArea
+                            value={editParagraphSummary}
+                            onChange={e => setEditParagraphSummary(e.target.value)}
+                            placeholder={t('knowledgeBase.summaryEditPlaceholder')}
+                            rows={2}
+                          />
+                          <Input
+                            value={editParagraphKeywords}
+                            onChange={e => setEditParagraphKeywords(e.target.value)}
+                            placeholder={t('knowledgeBase.keywordsEditPlaceholder')}
+                          />
+                          <Space>
+                            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => handleSaveParagraph(p.id)}>{t('common.save')}</Button>
+                            <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingParagraphId(null)}>{t('common.cancel')}</Button>
+                          </Space>
+                        </div>
+                      ) : (
+                        <>
+                          {p.summary && (
+                            <div style={{ marginBottom: 4 }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>{t('knowledgeBase.summary')}: </Text>
+                              <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{p.summary}</Text>
+                            </div>
+                          )}
+                          {keywords.length > 0 && (
+                            <Space size={2} wrap>
+                              {keywords.map(k => <Tag key={k} style={{ fontSize: 11 }}>{k}</Tag>)}
+                            </Space>
+                          )}
+                        </>
+                      )}
+                    </Card>
+                  )
+                })}
+              </div>
+              {totalParagraphPages > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
+                  <Pagination
+                    current={paragraphPage}
+                    total={docParagraphs.length}
+                    pageSize={PARAGRAPHS_PER_PAGE}
+                    onChange={setParagraphPage}
+                    showSizeChanger={false}
+                    size="small"
+                    showTotal={(total, range) => `${range[0]}-${range[1]} / ${total}`}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
             <Empty description={t('knowledgeBase.noParagraphs')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           )}
         </div>
-      ),
+      ) : <div />,
     },
-  ]
+  ], [
+    activeDetailTab, docContent, mdContent, docSummary, docParagraphs, paginatedParagraphs,
+    totalParagraphPages, tocData, mainTopics, docKeywords, editingSummary, editingKeywords,
+    editSummaryText, editKeywordsText, editingParagraphId, editParagraphSummary,
+    editParagraphKeywords, paragraphPage, token, t,
+  ])
 
   return (
     <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 220px)', minHeight: 400 }}>

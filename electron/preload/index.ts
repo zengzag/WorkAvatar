@@ -256,7 +256,6 @@ const electronAPI = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
     },
     search: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH, params),
-    advancedSearch: (params: { kb_id: string; query: string; top_k?: number; document_type?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_ADVANCED_SEARCH, params),
     searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
     searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
     rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),
@@ -325,6 +324,11 @@ const electronAPI = {
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DELETE, id),
     execute: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE, workflowId),
     abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, executionId),
+    executeDebug: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE_DEBUG, workflowId),
+    debugContinue: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_CONTINUE, executionId),
+    debugSkip: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_SKIP, executionId),
+    debugStop: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_STOP, executionId),
+    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT_RESPOND, params),
     onExecutionProgress: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
@@ -334,6 +338,16 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
+    },
+    onDebugPaused: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
+    },
+    onRuntimeInput: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
     },
   },
 }
@@ -400,8 +414,15 @@ export type ElectronAPI = typeof electronAPI & {
     delete: (id: string) => Promise<boolean>
     execute: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
     abortExecution: (executionId: string) => Promise<boolean>
+    executeDebug: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
+    debugContinue: (executionId: string) => Promise<boolean>
+    debugSkip: (executionId: string) => Promise<boolean>
+    debugStop: (executionId: string) => Promise<boolean>
+    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => Promise<boolean>
     onExecutionProgress: (callback: (data: any) => void) => () => void
     onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
+    onDebugPaused: (callback: (data: any) => void) => () => void
+    onRuntimeInput: (callback: (data: any) => void) => () => void
   }
 }
 
