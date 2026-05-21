@@ -1,4 +1,4 @@
-import { Typography, Button, Input, theme, Dropdown, Checkbox, App } from 'antd'
+import { Typography, Button, Input, theme, Dropdown, Checkbox, Popconfirm, App } from 'antd'
 import {
   PlusOutlined,
   CheckOutlined,
@@ -8,6 +8,7 @@ import {
   CheckSquareOutlined,
   SelectOutlined,
   ThunderboltOutlined,
+  ExportOutlined,
 } from '@ant-design/icons'
 import { memo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -28,8 +29,8 @@ const ConversationItem = memo(({
   onEditTitleChange,
   onEditKeyDown,
   onDelete,
-  onDeleteWithConfirm,
   onGenerateTitle,
+  onExport,
   isSelectMode,
   isSelected,
   onToggleSelect,
@@ -46,8 +47,8 @@ const ConversationItem = memo(({
   onEditTitleChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onEditKeyDown: (e: React.KeyboardEvent) => void
   onDelete: (id: string, e?: React.MouseEvent) => void
-  onDeleteWithConfirm: (id: string) => void
   onGenerateTitle: (conv: Conversation) => void
+  onExport: (convId: string) => void
   isSelectMode: boolean
   isSelected: boolean
   onToggleSelect: (id: string) => void
@@ -68,6 +69,12 @@ const ConversationItem = memo(({
       label: t('common.editConversationName'),
       icon: <EditOutlined />,
       onClick: (e: any) => onStartEdit(conv, e.domEvent),
+    },
+    {
+      key: 'export',
+      label: t('workbench.exportConversation'),
+      icon: <ExportOutlined />,
+      onClick: () => onExport(conv.id),
     },
     {
       key: 'delete',
@@ -145,26 +152,34 @@ const ConversationItem = memo(({
           )}
         </div>
         {!isEditing && !isSelectMode && (
-          <DeleteOutlined
-            onClick={(e) => {
-              e.stopPropagation()
-              onDeleteWithConfirm(conv.id)
-            }}
-            style={{
-              fontSize: 13,
-              color: token.colorTextQuaternary,
-              cursor: 'pointer',
-              opacity: showDelete ? 1 : 0,
-              transition: 'opacity 0.2s',
-              flexShrink: 0,
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.color = token.colorError
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.color = token.colorTextQuaternary
-            }}
-          />
+          <Popconfirm
+            title={t('workbench.confirmDelete')}
+            onConfirm={(e) => { e?.stopPropagation(); onDelete(conv.id) }}
+            onCancel={(e) => e?.stopPropagation()}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+            okButtonProps={{ danger: true, size: 'small' }}
+            cancelButtonProps={{ size: 'small' }}
+            placement="left"
+          >
+            <DeleteOutlined
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                fontSize: 13,
+                color: token.colorTextQuaternary,
+                cursor: 'pointer',
+                opacity: showDelete ? 1 : 0,
+                transition: 'opacity 0.2s',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.color = token.colorError
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.color = token.colorTextQuaternary
+              }}
+            />
+          </Popconfirm>
         )}
       </div>
     </Dropdown>
@@ -190,6 +205,7 @@ const ConversationSidebar: React.FC<{
   onListScroll: (e: React.UIEvent<HTMLDivElement>) => void
   isConversationStreaming: (convId: string) => boolean
   onGenerateTitle: (conv: Conversation) => void
+  onExport: (convId: string) => void
 }> = ({
   conversations,
   allConversations,
@@ -209,6 +225,7 @@ const ConversationSidebar: React.FC<{
   onListScroll,
   isConversationStreaming,
   onGenerateTitle,
+  onExport,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -248,16 +265,6 @@ const ConversationSidebar: React.FC<{
       },
     })
   }, [selectedIds, onDeleteSelected, exitSelectMode, modal, t])
-
-  const handleInlineDelete = useCallback((convId: string) => {
-    modal.confirm({
-      title: t('workbench.confirmDeleteMsg'),
-      okText: t('common.confirm'),
-      cancelText: t('common.cancel'),
-      okButtonProps: { danger: true },
-      onOk: () => onDelete(convId),
-    })
-  }, [modal, onDelete, t])
 
   return (
     <div style={{
@@ -343,8 +350,8 @@ const ConversationSidebar: React.FC<{
             onEditTitleChange={onEditTitleChange}
             onEditKeyDown={onEditKeyDown}
             onDelete={onDelete}
-            onDeleteWithConfirm={handleInlineDelete}
             onGenerateTitle={onGenerateTitle}
+            onExport={onExport}
             isSelectMode={selectMode}
             isSelected={selectedIds.has(conv.id)}
             onToggleSelect={toggleSelect}

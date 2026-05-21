@@ -6,9 +6,7 @@ import KnowledgeBaseService from './kb.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools } from './agent/tools'
-import { createKBAgentTools } from './agent/tools/kb-agent-tools'
-import { createWorkspaceTools, getWorkspacePrompt } from './agent/tools/workspace-tools'
+import { allBuiltinTools, createKBAgentTools, createWorkspaceTools, getWorkspacePrompt, createOfficeGuideTool, officeExecTool } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import { KNOWLEDGE_QUERY_GUIDANCE } from './agent/business/prompts'
@@ -22,7 +20,7 @@ interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
   model_id?: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string; images?: string[] }>
   options?: {
     temperature?: number
     max_tokens?: number
@@ -37,7 +35,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { name: string; args: any }) => void
   onToolResult: (toolResult: { name: string; result: any }) => void
-  onDone: () => void
+  onDone: (metadata?: any) => void
   onError: (error: string) => void
 }
 
@@ -182,6 +180,9 @@ class EmployeeAgentService {
       agent.registerTools(workspaceTools)
     }
 
+    const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
+    agent.registerTools([officeGuideTool, officeExecTool])
+
     this.agents.set(cacheKey, agent)
     return agent
   }
@@ -216,6 +217,14 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
+    const officeToolIds = [
+      'office_exec',
+      'office_guide',
+    ]
+    for (const id of officeToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
     const enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
@@ -239,6 +248,11 @@ class EmployeeAgentService {
       }
     }
     for (const id of workspaceToolIds) {
+      if (!enabledRowIds.has(id)) {
+        result.add(id)
+      }
+    }
+    for (const id of officeToolIds) {
       if (!enabledRowIds.has(id)) {
         result.add(id)
       }
@@ -290,9 +304,12 @@ class EmployeeAgentService {
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,
       content: m.content,
+      images: m.images,
     }))
 
-    const query = messages[messages.length - 1]?.content || ''
+    const lastMsg = messages[messages.length - 1]
+    const query = lastMsg?.content || ''
+    const queryImages = lastMsg?.images
 
     const config = await this.llmClient.getProviderConfig(provider_id)
     let maxIterations = 100
@@ -314,13 +331,16 @@ class EmployeeAgentService {
         history,
         useSkills: use_skills,
         maxIterations,
+        metadata: { queryImages },
       },
       {
         onChunk: callbacks.onChunk,
         onThought: callbacks.onThought,
         onToolCall: callbacks.onToolCall,
         onToolResult: callbacks.onToolResult,
-        onDone: callbacks.onDone,
+        onDone: (metadata?: any) => {
+          callbacks.onDone(metadata)
+        },
         onError: callbacks.onError,
       },
       signal

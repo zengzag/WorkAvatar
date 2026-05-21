@@ -58,10 +58,19 @@ export interface ILLMProvider {
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | LLMMessageContentPart[]
   reasoning_content?: string
   tool_calls?: LLMToolCall[]
   tool_call_id?: string
+}
+
+export interface LLMMessageContentPart {
+  type: 'text' | 'image_url'
+  text?: string
+  image_url?: {
+    url: string
+    detail?: 'low' | 'high' | 'auto'
+  }
 }
 
 export interface LLMProviderConfig {

@@ -6,6 +6,8 @@ import {
   LLMStreamCallbacks,
   LLMMessage,
   LLMToolCall,
+  LLMMessageContentPart,
+  LLMUsage,
 } from './types'
 
 export class OpenAIProvider implements ILLMProvider {
@@ -95,11 +97,15 @@ export class OpenAIProvider implements ILLMProvider {
     const decoder = new TextDecoder()
     let buffer = ''
 
+    let fullBuffer = ''
+
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
+      const decoded = decoder.decode(value, { stream: true })
+      fullBuffer += decoded
+      buffer += decoded
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
 
@@ -149,12 +155,34 @@ export class OpenAIProvider implements ILLMProvider {
       callbacks.onToolCall(accumulatedToolCalls)
     }
 
+    const usage = this.extractUsageFromBuffer(fullBuffer)
+
     return {
       content: assistantContent,
       reasoningContent: assistantReasoning || undefined,
       toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
       latencyMs: Date.now() - startTime,
+      usage,
     }
+  }
+
+  private extractUsageFromBuffer(buffer: string): LLMUsage | undefined {
+    const lines = buffer.split('\n')
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.startsWith('data: ')) continue
+      const data = trimmed.slice(6)
+      if (data === '[DONE]') continue
+      try {
+        const parsed = JSON.parse(data)
+        if (parsed.usage) {
+          return parsed.usage
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return undefined
   }
 
   estimateTokens(messages: LLMMessage[]): number {
@@ -197,7 +225,7 @@ export class OpenAIProvider implements ILLMProvider {
       messages: messages.map(m => {
         const msg: any = {
           role: m.role,
-          content: m.content,
+          content: this.formatMessageContent(m.content),
           tool_calls: m.tool_calls,
           tool_call_id: m.tool_call_id,
         }
@@ -233,6 +261,16 @@ export class OpenAIProvider implements ILLMProvider {
     this.applyThinkingParams(body, providerType, enableThinking)
 
     return body
+  }
+
+  private formatMessageContent(content: string | LLMMessageContentPart[]): string | LLMMessageContentPart[] {
+    if (typeof content === 'string') {
+      return content
+    }
+    if (Array.isArray(content)) {
+      return content
+    }
+    return String(content)
   }
 
   private applyThinkingParams(body: any, providerType?: string, enableThinking?: boolean): void {

@@ -101,7 +101,7 @@ class FileParserService {
 
       try {
         const buffer = await fs.promises.readFile(filePath)
-        const result = await mammoth.convertToMarkdown({ buffer })
+        const result = await (mammoth as any).convertToMarkdown({ buffer })
         console.info('[FileParser] DOCX mammoth fallback succeeded:', { filePath })
 
         const rawMarkdown = result.value || ''

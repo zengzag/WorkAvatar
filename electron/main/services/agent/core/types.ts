@@ -6,6 +6,7 @@ export interface Message {
   toolCalls?: ToolCall[]
   timestamp?: number
   metadata?: MessageMetadata
+  images?: string[]
 }
 
 export interface ToolCall {

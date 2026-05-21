@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
-import type { MessageWithThought } from '../components/workbench'
+import type { MessageWithThought, MessageBranch } from '../components/workbench'
 import { ensureSegments } from '../components/workbench'
 import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 import { generateId } from '../utils/format'
@@ -14,11 +14,22 @@ interface UseEmployeeChatParams {
 
 interface ConversationStreamState {
   isStreaming: boolean
+  conversationId: string
   messages: MessageWithThought[]
   assistantMessageId: string | null
   segCounter: number
   toolCallCounter: number
   cleanupFns: (() => void)[]
+}
+
+const getActiveBranchContent = (m: MessageWithThought): string => {
+  if (m.role === 'assistant' && m.branches && m.branches.length > 0) {
+    const branchIndex = m.activeBranchIndex ?? m.branches.length
+    if (branchIndex < m.branches.length) {
+      return m.branches[branchIndex].content
+    }
+  }
+  return m.content
 }
 
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
@@ -57,6 +68,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
+  const [isComparisonMode, setIsComparisonMode] = useState(false)
+  const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
+  const [comparisonUserMessageId, setComparisonUserMessageId] = useState<string | null>(null)
   const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
   const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
   const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
@@ -180,7 +194,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) =>
+      updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
@@ -213,7 +227,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) =>
+      updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
@@ -247,7 +261,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) =>
+      updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
@@ -277,7 +291,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) =>
+      updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
@@ -292,12 +306,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       )
     })
 
-    const doneCleanup = window.electronAPI.llm.onDone((data: { sessionId: string }) => {
-      const { sessionId } = data
+    const doneCleanup = window.electronAPI.llm.onDone((data: { sessionId: string; metadata?: any }) => {
+      const { sessionId, metadata } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) => {
+      updateConvMessages(streamState.conversationId, (prev) => {
         const assistantMsg = prev.find((m) => m.id === streamState.assistantMessageId)
         if (!assistantMsg) return prev
         const segs = (assistantMsg.segments || []).map(s => ({
@@ -305,16 +319,23 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           isStreaming: false,
           ...(s.type === 'thinking' ? { collapsed: true } : {}),
         }))
+        const tokenUsage = metadata?.tokenUsage || metadata?.usage
         const savedAssistantMsg: MessageWithThought = {
           ...assistantMsg,
           isStreaming: false,
           segments: segs,
+          tokenUsage: tokenUsage ? {
+            promptTokens: tokenUsage.promptTokens ?? tokenUsage.prompt_tokens,
+            completionTokens: tokenUsage.completionTokens ?? tokenUsage.completion_tokens,
+            totalTokens: tokenUsage.totalTokens ?? tokenUsage.total_tokens,
+          } : undefined,
         }
-        const prevMsgs = prev.filter(m => m.role === 'user')
         window.electronAPI.conversation.update({
-          id: sessionId,
-          messages_json: JSON.stringify([...prevMsgs, savedAssistantMsg]),
-          message_count: prevMsgs.length + 1,
+          id: streamState.conversationId,
+          messages_json: JSON.stringify(prev.map((m) =>
+            m.id === streamState.assistantMessageId ? savedAssistantMsg : m
+          )),
+          message_count: prev.length,
         }).catch(() => {})
         return prev.map((m) =>
           m.id === streamState.assistantMessageId ? savedAssistantMsg : m
@@ -325,7 +346,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       streamState.cleanupFns.forEach(fn => fn())
       streamStatesRef.current.delete(sessionId)
 
-      if (sessionId === activeConversationId) {
+      const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
+      if (!anyStreaming) {
         setIsStreaming(false)
       }
     })
@@ -335,7 +357,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(sessionId, (prev) =>
+      updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) =>
           m.id === streamState.assistantMessageId
             ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
@@ -347,7 +369,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       streamState.cleanupFns.forEach(fn => fn())
       streamStatesRef.current.delete(sessionId)
 
-      if (sessionId === activeConversationId) {
+      const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
+      if (!anyStreaming) {
         setIsStreaming(false)
       }
     })
@@ -450,6 +473,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const selectConversation = async (convId: string) => {
     setActiveConversationId(convId)
     activeConversationIdRef.current = convId
+
+    setIsComparisonMode(false)
+    setComparisonMessageIds([])
+    setComparisonUserMessageId(null)
 
     const streamState = streamStatesRef.current.get(convId)
     setIsStreaming(!!streamState?.isStreaming)
@@ -633,9 +660,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
-  const handleSend = async () => {
+  const handleSend = async (images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
     const content = inputValue.trim()
-    if (!content) return
+    if (!content && (!images || images.length === 0)) return
 
     const currentConvId = activeConversationId
     if (!currentConvId) {
@@ -648,21 +675,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const streamState = streamStatesRef.current.get(currentConvId)
     if (streamState?.isStreaming) return
 
-    sendMessage(currentConvId)
+    sendMessage(currentConvId, images, models)
   }
 
-  const sendMessage = async (convId?: string) => {
+  const sendMessage = async (convId?: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
     const targetConvId = convId || activeConversationId
     if (!targetConvId) return
 
-    const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
-    if (!providerId) {
-      message.warning(t('workbench.noLlmProvider'))
-      return
-    }
-
     const content = inputValue.trim()
-    if (!content) return
+    if (!content && (!images || images.length === 0)) return
 
     const existingStream = streamStatesRef.current.get(targetConvId)
     if (existingStream?.isStreaming) return
@@ -681,56 +702,134 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       id: `msg_${generateId()}`,
       role: 'user',
       content,
+      images,
       timestamp: Date.now(),
     }
 
     const updatedMessagesRef = [...currentMsgs, userMessage]
     setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
-    const assistantMessageId = `msg_${generateId()}`
-    const assistantMessage: MessageWithThought = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      isStreaming: true,
-      segments: [],
-    }
-    updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
+    const targetModels = models && models.length > 0 ? models : null
 
-    if (targetConvId === activeConversationId) {
-      setIsStreaming(true)
-    }
+    if (targetModels) {
+      const assistantIds: string[] = []
+      for (const sel of targetModels) {
+        const assistantMessageId = `msg_${generateId()}`
+        assistantIds.push(assistantMessageId)
+        const assistantMessage: MessageWithThought = {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          isStreaming: true,
+          segments: [],
+          comparisonProviderId: sel.providerId,
+          comparisonModelId: sel.modelId,
+        }
+        updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
 
-    const streamState: ConversationStreamState = {
-      isStreaming: true,
-      messages: updatedMessagesRef,
-      assistantMessageId,
-      segCounter: 0,
-      toolCallCounter: 0,
-      cleanupFns: [],
-    }
-    streamStatesRef.current.set(targetConvId, streamState)
+        const streamState: ConversationStreamState = {
+          isStreaming: true,
+          conversationId: targetConvId,
+          messages: updatedMessagesRef,
+          assistantMessageId,
+          segCounter: 0,
+          toolCallCounter: 0,
+          cleanupFns: [],
+        }
 
-    try {
-      const messageHistory: Array<{ role: string; content: string }> = []
-      updatedMessagesRef.forEach((m) => messageHistory.push({ role: m.role, content: m.content }))
+        if (targetConvId === activeConversationId) {
+          setIsStreaming(true)
+        }
 
-      await window.electronAPI.llm.employeeChatStream({
-        employee_id: id!,
-        provider_id: providerId,
-        model_id: selectedLlmModelId || undefined,
-        messages: messageHistory,
-        options: { temperature: 0.3 },
-        use_skills: true,
-        use_kb: kbEnabled,
-        enable_thinking: enableThinking,
-        conversation_id: targetConvId,
-      })
-    } catch {
-      streamState.isStreaming = false
-      streamStatesRef.current.delete(targetConvId)
+        try {
+          const messageHistory = updatedMessagesRef.map((m) => ({
+            role: m.role,
+            content: getActiveBranchContent(m),
+            images: m.images,
+          }))
+
+          const result = await window.electronAPI.llm.employeeChatStream({
+            employee_id: id!,
+            provider_id: sel.providerId,
+            model_id: sel.modelId,
+            messages: messageHistory,
+            options: { temperature: 0.3 },
+            use_skills: true,
+            use_kb: kbEnabled,
+            enable_thinking: enableThinking,
+            conversation_id: targetConvId,
+          })
+
+          if (result?.sessionId) {
+            streamStatesRef.current.set(result.sessionId, streamState)
+          }
+        } catch {
+          streamState.isStreaming = false
+        }
+      }
+
+      if (targetConvId === activeConversationId && assistantIds.length > 0) {
+        setIsComparisonMode(true)
+        setComparisonMessageIds(assistantIds)
+        setComparisonUserMessageId(userMessage.id)
+      }
+    } else {
+      const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+      if (!providerId) {
+        message.warning(t('workbench.noLlmProvider'))
+        return
+      }
+
+      const assistantMessageId = `msg_${generateId()}`
+      const assistantMessage: MessageWithThought = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        segments: [],
+      }
+      updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
+
       if (targetConvId === activeConversationId) {
+        setIsStreaming(true)
+      }
+
+      const streamState: ConversationStreamState = {
+        isStreaming: true,
+        conversationId: targetConvId,
+        messages: updatedMessagesRef,
+        assistantMessageId,
+        segCounter: 0,
+        toolCallCounter: 0,
+        cleanupFns: [],
+      }
+
+      try {
+        const messageHistory = updatedMessagesRef.map((m) => ({
+          role: m.role,
+          content: getActiveBranchContent(m),
+          images: m.images,
+        }))
+
+        const result = await window.electronAPI.llm.employeeChatStream({
+          employee_id: id!,
+          provider_id: providerId,
+          model_id: selectedLlmModelId || undefined,
+          messages: messageHistory,
+          options: { temperature: 0.3 },
+          use_skills: true,
+          use_kb: kbEnabled,
+          enable_thinking: enableThinking,
+          conversation_id: targetConvId,
+        })
+
+        if (result?.sessionId) {
+          streamStatesRef.current.set(result.sessionId, streamState)
+        }
+      } catch {
+        streamState.isStreaming = false
         setIsStreaming(false)
       }
     }
@@ -746,7 +845,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const handleDeleteMessage = async (msgId: string) => {
     if (!activeConversationId) return
     try {
-      const newMessages = messages.filter((m) => m.id !== msgId)
+      const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+      const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
+      const newMessages = currentMsgs.filter((m) => m.id !== msgId)
+      if (msgIndex !== -1 && currentMsgs[msgIndex].role === 'user') {
+        const followingAssistant = currentMsgs[msgIndex + 1]
+        if (followingAssistant && followingAssistant.role === 'assistant') {
+          newMessages.splice(newMessages.indexOf(followingAssistant), 1)
+        }
+      }
       setConvMessages(activeConversationId, newMessages)
       await window.electronAPI.conversation.update({
         id: activeConversationId,
@@ -759,13 +866,517 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  const handleRegenerate = async (msgId: string) => {
+    if (!activeConversationId || isStreaming) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
+    if (msgIndex === -1) return
+
+    const targetMsg = currentMsgs[msgIndex]
+    if (targetMsg.role !== 'assistant') return
+
+    const existingBranches = targetMsg.branches || []
+    const currentBranch: MessageBranch = {
+      content: targetMsg.content,
+      segments: targetMsg.segments,
+      thought: targetMsg.thought,
+      tokenUsage: targetMsg.tokenUsage,
+      isError: targetMsg.isError,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
+    }
+    const allBranches = [...existingBranches, currentBranch]
+    const newBranchIndex = allBranches.length
+
+    const newMessages = [...currentMsgs]
+    newMessages[msgIndex] = {
+      ...targetMsg,
+      branches: allBranches,
+      activeBranchIndex: newBranchIndex,
+      content: '',
+      thought: '',
+      segments: [],
+      isStreaming: true,
+      isError: false,
+      tokenUsage: undefined,
+      comparisonProviderId: undefined,
+      comparisonModelId: undefined,
+    }
+    setConvMessages(activeConversationId, newMessages)
+    await window.electronAPI.conversation.update({
+      id: activeConversationId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+    })
+
+    const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) {
+      message.warning(t('workbench.noLlmProvider'))
+      return
+    }
+
+    setupGlobalListeners()
+    setIsStreaming(true)
+
+    const streamState: ConversationStreamState = {
+      isStreaming: true,
+      conversationId: activeConversationId,
+      messages: newMessages.slice(0, msgIndex),
+      assistantMessageId: msgId,
+      segCounter: 0,
+      toolCallCounter: 0,
+      cleanupFns: [],
+    }
+
+    try {
+      const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
+        role: m.role,
+        content: getActiveBranchContent(m),
+        images: m.images,
+      }))
+
+      const result = await window.electronAPI.llm.employeeChatStream({
+        employee_id: id!,
+        provider_id: providerId,
+        model_id: selectedLlmModelId || undefined,
+        messages: messageHistory,
+        options: { temperature: 0.3 },
+        use_skills: true,
+        use_kb: kbEnabled,
+        enable_thinking: enableThinking,
+        conversation_id: activeConversationId,
+      })
+
+      if (result?.sessionId) {
+        streamStatesRef.current.set(result.sessionId, streamState)
+      }
+    } catch {
+      streamState.isStreaming = false
+      streamStatesRef.current.delete(msgId)
+      setIsStreaming(false)
+    }
+  }
+
+  const handleSwitchModelRegenerate = async (msgId: string, providerId: string, modelId: string) => {
+    if (!activeConversationId || isStreaming) return
+    if (!providerId || !modelId) return
+
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
+    if (msgIndex === -1) return
+
+    const targetMsg = currentMsgs[msgIndex]
+    if (targetMsg.role !== 'assistant') return
+
+    const existingBranches = targetMsg.branches || []
+    const currentBranch: MessageBranch = {
+      content: targetMsg.content,
+      segments: targetMsg.segments,
+      thought: targetMsg.thought,
+      tokenUsage: targetMsg.tokenUsage,
+      isError: targetMsg.isError,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
+    }
+    const allBranches = [...existingBranches, currentBranch]
+    const newBranchIndex = allBranches.length
+
+    const newMessages = [...currentMsgs]
+    newMessages[msgIndex] = {
+      ...targetMsg,
+      branches: allBranches,
+      activeBranchIndex: newBranchIndex,
+      content: '',
+      thought: '',
+      segments: [],
+      isStreaming: true,
+      isError: false,
+      tokenUsage: undefined,
+      comparisonProviderId: providerId,
+      comparisonModelId: modelId,
+    }
+    setConvMessages(activeConversationId, newMessages)
+    await window.electronAPI.conversation.update({
+      id: activeConversationId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+    })
+
+    setupGlobalListeners()
+    setIsStreaming(true)
+
+    const streamState: ConversationStreamState = {
+      isStreaming: true,
+      conversationId: activeConversationId,
+      messages: newMessages.slice(0, msgIndex),
+      assistantMessageId: msgId,
+      segCounter: 0,
+      toolCallCounter: 0,
+      cleanupFns: [],
+    }
+
+    try {
+      const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
+        role: m.role,
+        content: getActiveBranchContent(m),
+        images: m.images,
+      }))
+
+      const result = await window.electronAPI.llm.employeeChatStream({
+        employee_id: id!,
+        provider_id: providerId,
+        model_id: modelId,
+        messages: messageHistory,
+        options: { temperature: 0.3 },
+        use_skills: true,
+        use_kb: kbEnabled,
+        enable_thinking: enableThinking,
+        conversation_id: activeConversationId,
+      })
+
+      if (result?.sessionId) {
+        streamStatesRef.current.set(result.sessionId, streamState)
+      }
+    } catch {
+      streamState.isStreaming = false
+      streamStatesRef.current.delete(msgId)
+      setIsStreaming(false)
+    }
+  }
+
+  const handleEditAndResubmit = async (msgId: string, newContent: string) => {
+    if (!activeConversationId || isStreaming) return
+    if (!newContent.trim()) return
+
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
+    if (msgIndex === -1) return
+
+    const targetMsg = currentMsgs[msgIndex]
+
+    const newMessages = currentMsgs.slice(0, msgIndex)
+    const editedUserMsg: MessageWithThought = {
+      ...targetMsg,
+      content: newContent.trim(),
+      timestamp: Date.now(),
+    }
+    newMessages.push(editedUserMsg)
+
+    const assistantMsgIndex = msgIndex + 1
+    const existingAssistantMsg = currentMsgs[assistantMsgIndex]
+    let assistantMessageId: string
+
+    if (existingAssistantMsg && existingAssistantMsg.role === 'assistant') {
+      const existingBranches = existingAssistantMsg.branches || []
+      const currentBranch: MessageBranch = {
+        content: existingAssistantMsg.content,
+        segments: existingAssistantMsg.segments,
+        thought: existingAssistantMsg.thought,
+        tokenUsage: existingAssistantMsg.tokenUsage,
+        isError: existingAssistantMsg.isError,
+        comparisonProviderId: existingAssistantMsg.comparisonProviderId,
+        comparisonModelId: existingAssistantMsg.comparisonModelId,
+      }
+      const allBranches = [...existingBranches, currentBranch]
+      const newBranchIndex = allBranches.length
+
+      assistantMessageId = existingAssistantMsg.id
+      const updatedAssistantMsg: MessageWithThought = {
+        ...existingAssistantMsg,
+        branches: allBranches,
+        activeBranchIndex: newBranchIndex,
+        content: '',
+        thought: '',
+        segments: [],
+        isStreaming: true,
+        isError: false,
+        tokenUsage: undefined,
+        comparisonProviderId: undefined,
+        comparisonModelId: undefined,
+      }
+      newMessages.push(updatedAssistantMsg)
+    } else {
+      assistantMessageId = `msg_${generateId()}`
+      const assistantMessage: MessageWithThought = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+        segments: [],
+      }
+      newMessages.push(assistantMessage)
+    }
+
+    setConvMessages(activeConversationId, newMessages)
+    await window.electronAPI.conversation.update({
+      id: activeConversationId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+    })
+
+    const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) {
+      message.warning(t('workbench.noLlmProvider'))
+      return
+    }
+
+    setupGlobalListeners()
+    setIsStreaming(true)
+
+    const streamState: ConversationStreamState = {
+      isStreaming: true,
+      conversationId: activeConversationId,
+      messages: newMessages.slice(0, assistantMsgIndex),
+      assistantMessageId,
+      segCounter: 0,
+      toolCallCounter: 0,
+      cleanupFns: [],
+    }
+
+    try {
+      const messageHistory = newMessages.slice(0, assistantMsgIndex).map((m) => ({
+        role: m.role,
+        content: getActiveBranchContent(m),
+        images: m.images,
+      }))
+
+      const result = await window.electronAPI.llm.employeeChatStream({
+        employee_id: id!,
+        provider_id: providerId,
+        model_id: selectedLlmModelId || undefined,
+        messages: messageHistory,
+        options: { temperature: 0.3 },
+        use_skills: true,
+        use_kb: kbEnabled,
+        enable_thinking: enableThinking,
+        conversation_id: activeConversationId,
+      })
+
+      if (result?.sessionId) {
+        streamStatesRef.current.set(result.sessionId, streamState)
+      }
+    } catch {
+      streamState.isStreaming = false
+      streamStatesRef.current.delete(assistantMessageId)
+      setIsStreaming(false)
+    }
+  }
+
+  const handleCommand = (command: string) => {
+    setInputValue('')
+    if (command === '/clear') {
+      if (activeConversationId) {
+        setConvMessages(activeConversationId, [])
+        window.electronAPI.conversation.update({
+          id: activeConversationId,
+          messages_json: JSON.stringify([]),
+          message_count: 0,
+        }).catch(() => {})
+      }
+    } else if (command === '/new') {
+      startNewConversation()
+    }
+  }
+
+  const handleSwitchBranch = (msgId: string, branchIndex: number) => {
+    if (!activeConversationId) return
+    updateConvMessages(activeConversationId, (prev) => {
+      const newMessages = prev.map(m => {
+        if (m.id !== msgId) return m
+        const branches = m.branches || []
+        const maxIndex = branches.length
+        if (branchIndex < 0 || branchIndex > maxIndex) return m
+        return { ...m, activeBranchIndex: branchIndex }
+      })
+      window.electronAPI.conversation.update({
+        id: activeConversationId,
+        messages_json: JSON.stringify(newMessages),
+        message_count: newMessages.length,
+      }).catch(() => {})
+      return newMessages
+    })
+  }
+
+  const handleCloseComparison = () => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+
+    const firstId = comparisonMessageIds[0]
+    const firstMsg = currentMsgs.find(m => m.id === firstId)
+
+    if (firstMsg?._comparisonBranchMsgs) {
+      updateConvMessages(activeConversationId, (prev) =>
+        prev.map(m => {
+          if (m.id !== firstId) return m
+          const { _comparisonBranchMsgs, ...rest } = m
+          return rest as MessageWithThought
+        })
+      )
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      setComparisonUserMessageId(null)
+      return
+    }
+
+    const comparisonMsgs = comparisonMessageIds
+      .map(id => currentMsgs.find(m => m.id === id))
+      .filter((m): m is MessageWithThought => !!m)
+
+    if (comparisonMsgs.length === 0) {
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      setComparisonUserMessageId(null)
+      return
+    }
+
+    const targetMsg = comparisonMsgs[0]
+    const branches: MessageBranch[] = comparisonMsgs.slice(1).map(m => ({
+      content: m.content,
+      segments: m.segments,
+      thought: m.thought,
+      tokenUsage: m.tokenUsage,
+      isError: m.isError,
+      comparisonProviderId: m.comparisonProviderId,
+      comparisonModelId: m.comparisonModelId,
+    }))
+
+    const aggregatedMsg: MessageWithThought = {
+      ...targetMsg,
+      branches,
+      activeBranchIndex: branches.length,
+      comparisonProviderId: targetMsg.comparisonProviderId,
+      comparisonModelId: targetMsg.comparisonModelId,
+    }
+
+    const otherIds = new Set(comparisonMessageIds.slice(1))
+    const newMessages = currentMsgs
+      .filter(m => !otherIds.has(m.id))
+      .map(m => m.id === targetMsg.id ? aggregatedMsg : m)
+
+    setConvMessages(activeConversationId, newMessages)
+    window.electronAPI.conversation.update({
+      id: activeConversationId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+    }).catch(() => {})
+
+    setIsComparisonMode(false)
+    setComparisonMessageIds([])
+    setComparisonUserMessageId(null)
+  }
+
+  const handleOpenComparison = (msgId: string) => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const targetMsg = currentMsgs.find(m => m.id === msgId)
+    if (!targetMsg || !targetMsg.branches || targetMsg.branches.length === 0) return
+
+    const hasComparisonBranches = targetMsg.branches.some(
+      b => b.comparisonProviderId || b.comparisonModelId
+    ) || (targetMsg.comparisonProviderId || targetMsg.comparisonModelId)
+
+    if (!hasComparisonBranches) return
+
+    const userMsgIndex = currentMsgs.findIndex(m => m.id === msgId) - 1
+    const userMsg = userMsgIndex >= 0 ? currentMsgs[userMsgIndex] : null
+
+    const allBranchMsgs: MessageWithThought[] = []
+    for (let i = 0; i < targetMsg.branches.length; i++) {
+      const branch = targetMsg.branches[i]
+      allBranchMsgs.push({
+        ...targetMsg,
+        id: `${targetMsg.id}_branch_${i}`,
+        content: branch.content,
+        segments: branch.segments,
+        thought: branch.thought,
+        tokenUsage: branch.tokenUsage,
+        isError: branch.isError,
+        comparisonProviderId: branch.comparisonProviderId,
+        comparisonModelId: branch.comparisonModelId,
+        branches: undefined,
+        activeBranchIndex: undefined,
+        isStreaming: false,
+      })
+    }
+
+    allBranchMsgs.push({
+      ...targetMsg,
+      id: `${targetMsg.id}_branch_${targetMsg.branches.length}`,
+      branches: undefined,
+      activeBranchIndex: undefined,
+    })
+
+    setIsComparisonMode(true)
+    setComparisonMessageIds([msgId])
+    setComparisonUserMessageId(userMsg?.id || null)
+
+    updateConvMessages(activeConversationId, () => {
+      const msgs = conversationMessagesRef.current.get(activeConversationId) || []
+      return msgs.map(m => {
+        if (m.id !== msgId) return m
+        return { ...m, _comparisonBranchMsgs: allBranchMsgs }
+      })
+    })
+  }
+
+  const getComparisonMessages = (): MessageWithThought[] => {
+    if (!activeConversationId || comparisonMessageIds.length === 0) return []
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+
+    const firstId = comparisonMessageIds[0]
+    const firstMsg = currentMsgs.find(m => m.id === firstId)
+    if (firstMsg?._comparisonBranchMsgs) {
+      return firstMsg._comparisonBranchMsgs as MessageWithThought[]
+    }
+
+    return comparisonMessageIds
+      .map(id => currentMsgs.find(m => m.id === id))
+      .filter((m): m is MessageWithThought => !!m)
+  }
+
+  const getComparisonUserMessage = (): MessageWithThought | null => {
+    if (!activeConversationId || !comparisonUserMessageId) return null
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    return currentMsgs.find(m => m.id === comparisonUserMessageId) || null
+  }
+
+  const handleExportConversation = (convId?: string) => {
+    const targetConvId = convId || activeConversationId
+    if (!targetConvId) return
+    const currentMsgs = conversationMessagesRef.current.get(targetConvId) || []
+    if (currentMsgs.length === 0) return
+
+    const lines: string[] = []
+    for (const msg of currentMsgs) {
+      const role = msg.role === 'user' ? '👤 User' : '🤖 Assistant'
+      lines.push(`### ${role}\n`)
+      lines.push(msg.content)
+      lines.push('')
+    }
+
+    const content = lines.join('\n')
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `conversation-${targetConvId}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleStop = async () => {
     if (!activeConversationId) return
-    const streamState = streamStatesRef.current.get(activeConversationId)
-    if (streamState) {
+    const activeStreamEntries = Array.from(streamStatesRef.current.entries()).filter(
+      ([_, s]) => s.conversationId === activeConversationId && s.isStreaming
+    )
+    for (const [sessionId, streamState] of activeStreamEntries) {
       streamState.isStreaming = false
       streamState.cleanupFns.forEach(fn => fn())
-      streamStatesRef.current.delete(activeConversationId)
+      streamStatesRef.current.delete(sessionId)
+      try {
+        await window.electronAPI.llm.abortChat(sessionId)
+      } catch (e) { console.error('Failed to abort chat:', e) }
     }
     setIsStreaming(false)
     setMessages((prev) =>
@@ -779,17 +1390,54 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           : m
       )
     )
-    try {
-      await window.electronAPI.llm.abortChat(activeConversationId)
-    } catch (e) { console.error('Failed to abort chat:', e) }
   }
 
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
 
   const handleToggleSegment = (msgId: string, segId: string) => {
     if (!activeConversationId) return
+
+    const branchMatch = msgId.match(/^(.+)_branch_(\d+)$/)
+    if (branchMatch) {
+      const originalMsgId = branchMatch[1]
+      const branchIndex = parseInt(branchMatch[2], 10)
+      updateConvMessages(activeConversationId, (prev) => prev.map(m => {
+        if (m.id !== originalMsgId || !m._comparisonBranchMsgs) return m
+        const newBranchMsgs = m._comparisonBranchMsgs.map((bm, idx) => {
+          if (idx !== branchIndex || !bm.segments) return bm
+          return {
+            ...bm,
+            segments: bm.segments.map(s =>
+              s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+            ),
+          }
+        })
+        return { ...m, _comparisonBranchMsgs: newBranchMsgs }
+      }))
+      return
+    }
+
     updateConvMessages(activeConversationId, (prev) => prev.map(m => {
-      if (m.id !== msgId || !m.segments) return m
+      if (m.id !== msgId) return m
+
+      const activeIdx = m.activeBranchIndex
+      const brs = m.branches
+      if (brs && brs.length > 0 && activeIdx !== undefined && activeIdx < brs.length) {
+        return {
+          ...m,
+          branches: brs.map((b, i) => {
+            if (i !== activeIdx || !b.segments) return b
+            return {
+              ...b,
+              segments: b.segments.map(s =>
+                s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+              ),
+            }
+          }),
+        }
+      }
+
+      if (!m.segments) return m
       const newSegs = m.segments.map(s =>
         s.id === segId ? { ...s, collapsed: !s.collapsed } : s
       )
@@ -821,6 +1469,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setKbEnabled,
     showSidePanel,
     setShowSidePanel,
+    isComparisonMode,
+    comparisonMessageIds,
+    handleCloseComparison,
+    handleOpenComparison,
+    getComparisonMessages,
+    getComparisonUserMessage,
     editingConversationId,
     editingTitle,
     setEditingTitle,
@@ -843,6 +1497,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleConversationListScroll,
     handleCopy,
     handleDeleteMessage,
+    handleRegenerate,
+    handleSwitchModelRegenerate,
+    handleEditAndResubmit,
+    handleCommand,
+    handleExportConversation,
+    handleSwitchBranch,
     handleToggleSegment,
     forceScrollToBottom,
     getToolDisplayName,

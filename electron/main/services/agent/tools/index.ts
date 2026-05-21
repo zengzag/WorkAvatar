@@ -29,7 +29,9 @@ export const allBuiltinTools: ToolDefinition[] = [
   askUserTool,
 ]
 
+export { officeExecTool } from './office-exec.tool'
 export { createKBSearchTool } from './kb-search.tool'
 export { createKBGetContentTool } from './kb-content.tool'
 export { createKBAgentTools } from './kb-agent-tools'
 export { createWorkspaceTools, getWorkspacePrompt } from './workspace-tools'
+export { createOfficeGuideTool } from './office-prompts'

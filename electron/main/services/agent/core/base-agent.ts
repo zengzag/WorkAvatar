@@ -14,8 +14,10 @@ import type {
   AgentRunOptions,
   AgentRunStreamCallbacks,
   AgentResponse,
+  AgentResponseMetadata,
   Message,
   ToolCallRecord,
+  TokenUsage,
 } from './types'
 
 const DEFAULT_MAX_ITERATIONS = 100
@@ -131,6 +133,14 @@ export abstract class BaseAgent {
         options.query
       )
 
+      const queryImages = options.metadata?.queryImages as string[] | undefined
+      if (queryImages && queryImages.length > 0 && messages.length > 0) {
+        const lastMsg = messages[messages.length - 1]
+        if (lastMsg.role === 'user') {
+          lastMsg.images = queryImages
+        }
+      }
+
       if (stats.wasCompressed) {
         this.eventEmitter.emit('memory:compressed', stats)
       }
@@ -189,6 +199,14 @@ export abstract class BaseAgent {
         options.query
       )
 
+      const queryImages = options.metadata?.queryImages as string[] | undefined
+      if (queryImages && queryImages.length > 0 && messages.length > 0) {
+        const lastMsg = messages[messages.length - 1]
+        if (lastMsg.role === 'user') {
+          lastMsg.images = queryImages
+        }
+      }
+
       if (stats.wasCompressed) {
         this.eventEmitter.emit('memory:compressed', stats)
       }
@@ -197,7 +215,7 @@ export abstract class BaseAgent {
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
-      await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal)
+      const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal)
 
       this.context.setState('completed')
       this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
@@ -205,6 +223,7 @@ export abstract class BaseAgent {
       callbacks.onDone?.({
         totalLatencyMs: Date.now() - startTime,
         iterations: this.context.getIterationCount(),
+        tokenUsage: streamMetadata?.tokenUsage,
       })
     } catch (error: any) {
       if (signal?.aborted) {
@@ -407,12 +426,13 @@ export abstract class BaseAgent {
     maxIterations: number,
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal
-  ): Promise<void> {
+  ): Promise<AgentResponseMetadata> {
     let currentMessages = [...messages]
     const usedToolCalls: ToolCallRecord[] = []
+    let totalTokenUsage: TokenUsage = {}
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
-      if (signal?.aborted) return
+      if (signal?.aborted) return { tokenUsage: totalTokenUsage }
 
       this.context.incrementIteration()
       this.eventEmitter.emit('iteration:start', { iteration })
@@ -448,12 +468,20 @@ export abstract class BaseAgent {
             model: this.config.model,
           },
         }
+
+        if (streamResponse.usage) {
+          totalTokenUsage = {
+            promptTokens: (totalTokenUsage.promptTokens || 0) + (streamResponse.usage.promptTokens || 0),
+            completionTokens: (totalTokenUsage.completionTokens || 0) + (streamResponse.usage.completionTokens || 0),
+            totalTokens: (totalTokenUsage.totalTokens || 0) + (streamResponse.usage.totalTokens || 0),
+          }
+        }
         currentMessages.push(assistantMessage)
 
         if (!streamResponse.toolCalls || streamResponse.toolCalls.length === 0) {
           this.eventEmitter.emit('iteration:end', { iteration })
           callbacks.onIterationEnd?.(iteration)
-          return
+          return { tokenUsage: totalTokenUsage }
         }
 
         this.context.setState('tool_calling')
@@ -497,7 +525,7 @@ export abstract class BaseAgent {
         this.eventEmitter.emit('iteration:end', { iteration, error: error.message })
         callbacks.onIterationEnd?.(iteration)
 
-        if (signal?.aborted) return
+        if (signal?.aborted) return { tokenUsage: totalTokenUsage }
 
         if (!this.isRetryableError(error)) {
           throw error
@@ -515,7 +543,7 @@ export abstract class BaseAgent {
       callbacks.onIterationEnd?.(iteration)
     }
 
-    throw new Error(`Max iterations (${maxIterations}) reached`)
+    return { tokenUsage: totalTokenUsage }
   }
 
   private convertToLLMMessages(messages: Message[]): any[] {
@@ -523,6 +551,19 @@ export abstract class BaseAgent {
       const msg: any = {
         role: m.role,
         content: m.content,
+      }
+      if (m.images && m.images.length > 0) {
+        const contentParts: any[] = []
+        if (m.content) {
+          contentParts.push({ type: 'text', text: m.content })
+        }
+        for (const imgUrl of m.images) {
+          contentParts.push({
+            type: 'image_url',
+            image_url: { url: imgUrl, detail: 'auto' }
+          })
+        }
+        msg.content = contentParts
       }
       if (m.toolCalls) {
         msg.tool_calls = m.toolCalls
