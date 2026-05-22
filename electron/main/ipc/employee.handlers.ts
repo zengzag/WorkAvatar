@@ -15,17 +15,24 @@ import type {
   EmployeeKBListParams,
   EmployeeKBLinkParams,
   EmployeeKBUnlinkParams,
+  EmployeeMemoryListParams,
+  EmployeeMemoryCreateParams,
+  EmployeeMemoryUpdateParams,
+  EmployeeMemorySearchParams,
+  EmployeeMemoryExtractParams,
 } from '../../shared/ipc-channels'
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
+import type EmployeeMemoryService from '../services/employee-memory.service'
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
   profilingService: EmployeeProfilingService,
   employeeExportService: EmployeeExportService,
-  employeeAgentService: EmployeeAgentService
+  employeeAgentService: EmployeeAgentService,
+  memoryService: EmployeeMemoryService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
     return workspaceManager.getEmployeeList(params?.status)
@@ -164,5 +171,47 @@ export function registerEmployeeHandlers(
       employeeAgentService.clearAgentCache(params.employee_id)
     }
     return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (_, params: EmployeeMemoryListParams) => {
+    return memoryService.listMemories(params.employee_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, (_, params: EmployeeMemoryCreateParams) => {
+    return memoryService.createMemory(params)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_UPDATE, (_, params: EmployeeMemoryUpdateParams) => {
+    const { id, ...data } = params
+    return memoryService.updateMemory(id, data)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_DELETE, (_, id: string) => {
+    return memoryService.deleteMemory(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_TOGGLE_PIN, (_, id: string) => {
+    return memoryService.togglePin(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, (_, params: EmployeeMemorySearchParams) => {
+    return memoryService.searchMemories(params.employee_id, params.query, params.limit)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, async (_, params: EmployeeMemoryExtractParams) => {
+    try {
+      const result = await memoryService.extractMemoriesFromConversation(
+        params.employee_id,
+        params.messages,
+        params.provider_id,
+        params.model_id
+      )
+      return { success: true, memories: result }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
   })
 }

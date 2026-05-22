@@ -10,6 +10,7 @@ export interface Employee {
   default_skill_id?: string
   llm_provider_id?: string
   llm_model?: string
+  memory_enabled: boolean
   arch_version: number
   total_tasks: number
   total_approvals: number

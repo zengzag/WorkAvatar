@@ -25,6 +25,7 @@ import {
   MCPServersSection,
   KnowledgeBaseSection,
   ExportImportSection,
+  MemorySection,
 } from '../components/employee-settings'
 import type { Employee, LLMProvider } from '../types'
 
@@ -297,6 +298,19 @@ const EmployeeSettings: React.FC = () => {
       message.error(t('common.saveFailed'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleMemoryEnabledChange = async (enabled: boolean) => {
+    try {
+      await window.electronAPI.employee.update({
+        id: id!,
+        memory_enabled: enabled,
+      })
+      message.success(t('common.saveSuccess'))
+      loadEmployee()
+    } catch {
+      message.error(t('common.saveFailed'))
     }
   }
 
@@ -623,6 +637,17 @@ const EmployeeSettings: React.FC = () => {
                 onRefresh={() => {
                   loadEmployeeKBs()
                 }}
+              />
+            )
+          },
+          {
+            key: 'memory',
+            label: t('employeeSettings.tabMemory'),
+            children: (
+              <MemorySection
+                employeeId={id!}
+                memoryEnabled={employee.memory_enabled}
+                onMemoryEnabledChange={handleMemoryEnabledChange}
               />
             )
           },

@@ -26,6 +26,14 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_KB_LIST: 'employee:kb-list',
   EMPLOYEE_KB_LINK: 'employee:kb-link',
   EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
+
+  EMPLOYEE_MEMORY_LIST: 'employee:memory-list',
+  EMPLOYEE_MEMORY_CREATE: 'employee:memory-create',
+  EMPLOYEE_MEMORY_UPDATE: 'employee:memory-update',
+  EMPLOYEE_MEMORY_DELETE: 'employee:memory-delete',
+  EMPLOYEE_MEMORY_TOGGLE_PIN: 'employee:memory-toggle-pin',
+  EMPLOYEE_MEMORY_SEARCH: 'employee:memory-search',
+  EMPLOYEE_MEMORY_EXTRACT: 'employee:memory-extract',
 } as const
 
 export interface EmployeeListParams {
@@ -51,6 +59,7 @@ export interface EmployeeUpdateParams {
   llm_model?: string
   workspace_path?: string
   avatar_type?: string
+  memory_enabled?: boolean
 }
 
 export interface ConversationListParams {
@@ -114,4 +123,38 @@ export interface EmployeeKBLinkParams {
 export interface EmployeeKBUnlinkParams {
   employee_id: string
   kb_id: string
+}
+
+export interface EmployeeMemoryListParams {
+  employee_id: string
+}
+
+export interface EmployeeMemoryCreateParams {
+  employee_id: string
+  key: string
+  topic: string
+  content: string
+  is_pinned?: boolean
+  source?: 'auto' | 'manual'
+}
+
+export interface EmployeeMemoryUpdateParams {
+  id: string
+  key?: string
+  topic?: string
+  content?: string
+  is_pinned?: boolean
+}
+
+export interface EmployeeMemorySearchParams {
+  employee_id: string
+  query: string
+  limit?: number
+}
+
+export interface EmployeeMemoryExtractParams {
+  employee_id: string
+  messages: Array<{ role: string; content: string }>
+  provider_id: string
+  model_id?: string
 }

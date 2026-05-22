@@ -47,6 +47,11 @@ import type {
   EmployeeKBListParams,
   EmployeeKBLinkParams,
   EmployeeKBUnlinkParams,
+  EmployeeMemoryListParams,
+  EmployeeMemoryCreateParams,
+  EmployeeMemoryUpdateParams,
+  EmployeeMemorySearchParams,
+  EmployeeMemoryExtractParams,
   WorkflowCreateParams,
   WorkflowUpdateParams,
 } from '../shared/ipc-channels'
@@ -94,6 +99,13 @@ const electronAPI = {
     listKBs: (params: EmployeeKBListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LIST, params),
     linkKB: (params: EmployeeKBLinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LINK, params),
     unlinkKB: (params: EmployeeKBUnlinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, params),
+    listMemories: (params: EmployeeMemoryListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, params),
+    createMemory: (params: EmployeeMemoryCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, params),
+    updateMemory: (params: EmployeeMemoryUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_UPDATE, params),
+    deleteMemory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_DELETE, id),
+    togglePinMemory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_TOGGLE_PIN, id),
+    searchMemories: (params: EmployeeMemorySearchParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, params),
+    extractMemories: (params: EmployeeMemoryExtractParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, params),
   },
 
   conversation: {

@@ -3,6 +3,7 @@ import LLMClientService from './llm-client.service'
 import ToolEngineService from './tool-engine.service'
 import SkillRegistryService from './skill-registry.service'
 import KnowledgeBaseService from './kb.service'
+import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -28,6 +29,7 @@ interface EmployeeChatStreamParams {
   use_skills?: boolean
   use_kb?: boolean
   enable_thinking?: boolean
+  conversation_id?: string
 }
 
 interface EmployeeChatCallbacks {
@@ -39,12 +41,18 @@ interface EmployeeChatCallbacks {
   onError: (error: string) => void
 }
 
+interface CachedAgentEntry {
+  agent: EmployeeAgent
+  conversationId: string | null
+}
+
 class EmployeeAgentService {
   private db: DatabaseService
   private llmClient: LLMClientService
   private skillRegistry: SkillRegistryService
   private kbService: KnowledgeBaseService
-  private agents: Map<string, EmployeeAgent> = new Map()
+  private memoryService: EmployeeMemoryService
+  private agentEntries: Map<string, CachedAgentEntry> = new Map()
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -52,6 +60,7 @@ class EmployeeAgentService {
     this.llmClient = LLMClientService.getInstance()
     this.skillRegistry = SkillRegistryService.getInstance()
     this.kbService = KnowledgeBaseService.getInstance()
+    this.memoryService = EmployeeMemoryService.getInstance()
   }
 
   static getInstance(): EmployeeAgentService {
@@ -61,10 +70,30 @@ class EmployeeAgentService {
     return EmployeeAgentService.instance
   }
 
-  private async getOrCreateAgent(employeeId: string, providerId: string, modelId?: string, enableThinking?: boolean, useKb?: boolean): Promise<EmployeeAgent> {
+  private async getOrCreateAgent(
+    employeeId: string,
+    providerId: string,
+    modelId?: string,
+    enableThinking?: boolean,
+    useKb?: boolean,
+    conversationId?: string
+  ): Promise<EmployeeAgent> {
     const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}:${useKb !== false ? 'kb' : 'no-kb'}`
-    if (this.agents.has(cacheKey)) {
-      return this.agents.get(cacheKey)!
+
+    const existing = this.agentEntries.get(cacheKey)
+    if (existing) {
+      if (conversationId && existing.conversationId !== conversationId) {
+        const employee = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(employeeId) as Pick<DBEmployee, 'memory_enabled'> | undefined
+        const memoryEnabled = employee?.memory_enabled === 1
+        if (memoryEnabled) {
+          const newMemoryPrompt = this.memoryService.formatMemoriesForPrompt(
+            this.memoryService.listMemories(employeeId)
+          ) || undefined
+          existing.agent.updateMemoryPrompt(newMemoryPrompt)
+        }
+        existing.conversationId = conversationId || null
+      }
+      return existing.agent
     }
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
@@ -89,7 +118,6 @@ class EmployeeAgentService {
           role = profile.roleName
         }
       } catch {
-        // ignore
       }
     } else if (employee.description) {
       instructions = employee.description
@@ -105,6 +133,13 @@ class EmployeeAgentService {
     const modelConfig = this.getModelConfig(config, modelId)
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
+
+    const memoryEnabled = employee.memory_enabled === 1
+    const memoryPrompt = memoryEnabled
+      ? (this.memoryService.formatMemoriesForPrompt(
+          this.memoryService.listMemories(employeeId)
+        ) || undefined)
+      : undefined
 
     const agentConfig: EmployeeAgentConfig = {
       name: employee.name,
@@ -127,6 +162,7 @@ class EmployeeAgentService {
       debug: modelConfig?.debug ?? false,
       knowledgeGuidance: useKb !== false ? `\n\n${KNOWLEDGE_QUERY_GUIDANCE}` : '',
       workspaceGuidance: workspaceGuidance || undefined,
+      memoryPrompt,
     }
 
     const agentOptions: BaseAgentOptions = {
@@ -183,7 +219,14 @@ class EmployeeAgentService {
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
-    this.agents.set(cacheKey, agent)
+    agent.getMemoryManager().setLLMSummaryFn(async (msgs) => {
+      return this.memoryService.generateLLMSummary(msgs, providerId, modelId)
+    })
+
+    this.agentEntries.set(cacheKey, {
+      agent,
+      conversationId: conversationId || null,
+    })
     return agent
   }
 
@@ -297,9 +340,9 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, use_kb = true, enable_thinking } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, use_kb = true, enable_thinking, conversation_id } = params
 
-    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, use_kb)
+    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, use_kb, conversation_id)
 
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,
@@ -325,6 +368,9 @@ class EmployeeAgentService {
       } catch {}
     }
 
+    const employee = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'memory_enabled'> | undefined
+    const memoryEnabled = employee?.memory_enabled === 1
+
     await agent.runStream(
       {
         query,
@@ -340,6 +386,9 @@ class EmployeeAgentService {
         onToolResult: callbacks.onToolResult,
         onDone: (metadata?: any) => {
           callbacks.onDone(metadata)
+          if (memoryEnabled) {
+            this.extractMemoriesAsync(employee_id, messages, provider_id, model_id)
+          }
         },
         onError: callbacks.onError,
       },
@@ -349,14 +398,35 @@ class EmployeeAgentService {
 
   clearAgentCache(employeeId?: string): void {
     if (employeeId) {
-      for (const key of this.agents.keys()) {
+      for (const key of this.agentEntries.keys()) {
         if (key.startsWith(`${employeeId}:`)) {
-          this.agents.delete(key)
+          this.agentEntries.delete(key)
         }
       }
     } else {
-      this.agents.clear()
+      this.agentEntries.clear()
     }
+  }
+
+  private extractMemoriesAsync(
+    employeeId: string,
+    messages: Array<{ role: string; content: string }>,
+    providerId: string,
+    modelId?: string
+  ): void {
+    this.memoryService.extractMemoriesFromConversation(
+      employeeId,
+      messages,
+      providerId,
+      modelId
+    ).catch(err => {
+      logger.error(`Background memory extraction failed: ${err.message}`)
+    })
+  }
+
+  getRelevantMemoriesForPrompt(employeeId: string, query: string): string {
+    const memories = this.memoryService.getRelevantMemories(employeeId, query)
+    return this.memoryService.formatMemoriesForPrompt(memories)
   }
 }
 

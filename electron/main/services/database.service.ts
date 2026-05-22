@@ -300,6 +300,21 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_employee_kb_links_employee ON employee_kb_links(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_kb_links_kb ON employee_kb_links(kb_id);
+
+      CREATE TABLE IF NOT EXISTS employee_memories (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        is_pinned BOOLEAN NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'auto',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
     `)
 
     this.addColumnIfNotExists('employee_tasks', 'llm_provider_id', 'TEXT')
@@ -314,6 +329,8 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
     this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'')
+
+    this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
 
     this.migrateEmployeeAddWorkspacePath()
     this.migrateWorkflowRemoveProjectId()

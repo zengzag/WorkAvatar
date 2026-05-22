@@ -25,6 +25,11 @@ export type {
   EmployeeKBListParams,
   EmployeeKBLinkParams,
   EmployeeKBUnlinkParams,
+  EmployeeMemoryListParams,
+  EmployeeMemoryCreateParams,
+  EmployeeMemoryUpdateParams,
+  EmployeeMemorySearchParams,
+  EmployeeMemoryExtractParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,

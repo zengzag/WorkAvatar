@@ -90,6 +90,7 @@ export function registerLLMHandlers(
               use_skills: params.use_skills !== false,
               use_kb: params.use_kb !== false,
               enable_thinking: params.enable_thinking,
+              conversation_id: params.conversation_id,
             },
             {
               onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunk }) },

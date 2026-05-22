@@ -21,6 +21,7 @@ export interface EmployeeAgentConfig extends AgentConfig {
   planningStrategy?: PlanningStrategy
   knowledgeGuidance?: string
   workspaceGuidance?: string
+  memoryPrompt?: string
 }
 
 export class EmployeeAgent extends BaseAgent {
@@ -51,6 +52,10 @@ export class EmployeeAgent extends BaseAgent {
     return { ...this.employeeConfig }
   }
 
+  updateMemoryPrompt(prompt: string | undefined): void {
+    this.employeeConfig.memoryPrompt = prompt
+  }
+
   protected buildSystemPrompt(options: AgentRunOptions): string {
     const useSkills = options.useSkills !== false
     const skillsXml = useSkills ? this.skillManager.getSkillsXml() : undefined
@@ -63,6 +68,7 @@ export class EmployeeAgent extends BaseAgent {
       activeSkillInstructions: this.getActiveSkillInstructions(),
       knowledgeGuidance: this.employeeConfig.knowledgeGuidance,
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
+      memoryPrompt: this.employeeConfig.memoryPrompt,
     })
   }
 

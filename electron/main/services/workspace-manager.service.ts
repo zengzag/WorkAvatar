@@ -70,6 +70,7 @@ class WorkspaceManagerService {
     llm_provider_id?: string
     llm_model?: string
     workspace_path?: string | null
+    memory_enabled?: boolean
   }): Employee | null {
     const employee = this.getEmployee(id)
     if (!employee) return null
@@ -83,12 +84,13 @@ class WorkspaceManagerService {
       'status', 'review_mode', 'avatar_url', 'prompt_template',
       'system_prompt', 'kb_id', 'kb_ids_json', 'tool_ids_json',
       'mcp_server_ids_json', 'skill_ids_json', 'workspace_dir',
-      'llm_provider_id', 'llm_model', 'enable_thinking', 'description'
+      'llm_provider_id', 'llm_model', 'enable_thinking', 'description',
+      'memory_enabled'
     ]
 
     Object.entries(data).forEach(([key, value]) => {
       if (value !== undefined && ALLOWED_COLUMNS.includes(key)) {
-        if (key === 'review_mode') {
+        if (key === 'review_mode' || key === 'memory_enabled') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
         } else {

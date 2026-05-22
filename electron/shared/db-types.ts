@@ -10,6 +10,7 @@ export interface DBEmployee {
   llm_provider_id: string | null
   llm_model: string | null
   profile_json: string
+  memory_enabled: number
   arch_version: number
   total_tasks: number
   total_approvals: number

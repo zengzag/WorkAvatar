@@ -6,6 +6,7 @@ export function buildEmployeeSystemPrompt(options: {
   activeSkillInstructions?: string[]
   knowledgeGuidance?: string
   workspaceGuidance?: string
+  memoryPrompt?: string
 }): string {
   const parts: string[] = []
 
@@ -20,6 +21,10 @@ export function buildEmployeeSystemPrompt(options: {
     '逐步分析问题，按需调用工具获取信息，直至完整回答用户问题。',
     '可调用知识库工具查询相关知识。'
   )
+
+  if (options.memoryPrompt) {
+    parts.push(options.memoryPrompt)
+  }
 
   if (options.knowledgeGuidance) {
     parts.push(options.knowledgeGuidance)

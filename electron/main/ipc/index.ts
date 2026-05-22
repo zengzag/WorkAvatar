@@ -19,6 +19,7 @@ import EmployeeExportService from '../services/employee-export.service'
 import EmployeeTaskService from '../services/employee-task.service'
 import SchedulerService from '../services/scheduler.service'
 import WorkflowService from '../services/workflow.service'
+import EmployeeMemoryService from '../services/employee-memory.service'
 
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
@@ -32,10 +33,11 @@ export function registerIpcHandlers() {
   const employeeTaskService = EmployeeTaskService.getInstance()
   const schedulerService = SchedulerService.getInstance()
   const workflowService = WorkflowService.getInstance()
+  const memoryService = EmployeeMemoryService.getInstance()
   const db = DatabaseService.getInstance().getDb()
 
   registerWorkspaceHandlers(workspaceManager)
-  registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService, employeeAgent)
+  registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService, employeeAgent, memoryService)
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db)
   registerToolHandlers(db, toolEngine, skillRegistry)
