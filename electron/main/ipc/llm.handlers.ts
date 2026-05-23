@@ -5,6 +5,7 @@ import type {
   LLMProviderUpdateParams,
   LLMTestConnectionParams,
   LLMChatParams,
+  EmployeeChatStreamParams,
 } from '../../shared/ipc-channels'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
@@ -67,7 +68,7 @@ export function registerLLMHandlers(
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: any) => {
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: EmployeeChatStreamParams) => {
     const abortController = new AbortController()
     const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
@@ -98,7 +99,8 @@ export function registerLLMHandlers(
               onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, ...toolCall }) },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
                 if (abortController.signal.aborted) return
-                event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...toolResult })
+                const { rawResult: _, ...safeResult } = toolResult
+                event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
               },
               onDone: (metadata?: any) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} }); activeSessions.delete(sessionId) },
               onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error }); activeSessions.delete(sessionId) },

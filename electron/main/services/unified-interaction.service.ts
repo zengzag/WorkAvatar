@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import { ipcMain } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
 
 export interface InteractionOption {
@@ -102,7 +103,7 @@ class UnifiedInteractionService {
       session.pendingRequests.set(id, { resolve, timer })
 
       try {
-        session.webContents.send('interaction:request', fullRequest)
+        session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
       } catch {
         clearTimeout(timer)
         session.pendingRequests.delete(id)
@@ -139,8 +140,9 @@ class UnifiedInteractionService {
     if (this.ipcRegistered) return
     this.ipcRegistered = true
 
-    ipcMain.handle('interaction:response', (_event, response: InteractionResponse) => {
+    ipcMain.handle(IPC_CHANNELS.INTERACTION_RESPONSE, (event, response: InteractionResponse) => {
       for (const [, session] of this.sessions) {
+        if (session.webContents !== event.sender) continue
         const pending = session.pendingRequests.get(response.id)
         if (pending) {
           if (pending.timer) clearTimeout(pending.timer)

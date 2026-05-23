@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
@@ -35,7 +35,7 @@ const getActiveBranchContent = (m: MessageWithThought): string => {
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
-  const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
     calculator: t('workbench.toolNames.calculator'),
     date_time: t('workbench.toolNames.date_time'),
     shell_exec: t('workbench.toolNames.shell_exec'),
@@ -56,7 +56,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
-  }
+  }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -130,6 +130,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const conversationMessagesRef = useRef<Map<string, MessageWithThought[]>>(new Map())
   const globalListenersCleanupRef = useRef<(() => void) | null>(null)
   const activeConversationIdRef = useRef<string | null>(null)
+  const initVersionRef = useRef(0)
+  const selectConvVersionRef = useRef(0)
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
     conversationMessagesRef.current.set(convId, updater(conversationMessagesRef.current.get(convId) || []))
@@ -147,6 +149,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     if (id) {
+      initVersionRef.current++
       initEmployee()
     }
     return () => {
@@ -155,14 +158,17 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }, [id])
 
   const initEmployee = async () => {
+    const version = initVersionRef.current
     try {
       const result = await window.electronAPI.employee.get(id!)
+      if (version !== initVersionRef.current) return
       setEmployee(result)
       if (result.llm_provider_id && !localStorage.getItem(selectedLlmProviderIdKey)) setSelectedLlmProviderId(result.llm_provider_id)
       if (result.llm_model && !localStorage.getItem(selectedLlmModelIdKey)) setSelectedLlmModelId(result.llm_model)
       loadConversations()
       loadProviders()
     } catch {
+      if (version !== initVersionRef.current) return
       setEmployee(null)
     }
   }
@@ -474,9 +480,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       forceScrollToBottom()
 
       if (pendingMessage) {
-        setInputValue(pendingMessage)
+        const msgContent = pendingMessage
+        setInputValue('')
         setPendingMessage(null)
-        setTimeout(() => sendMessage(convId), 0)
+        setTimeout(() => sendMessage(convId, undefined, undefined, msgContent), 0)
       }
 
       return convId
@@ -489,6 +496,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const selectConversation = async (convId: string) => {
+    selectConvVersionRef.current++
+    const version = selectConvVersionRef.current
     setActiveConversationId(convId)
     activeConversationIdRef.current = convId
 
@@ -515,6 +524,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     } else {
       try {
         const fullConv = await window.electronAPI.conversation.get(convId)
+        if (version !== selectConvVersionRef.current) return
         if (fullConv) {
           const parsedMsgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
           const msgs = parsedMsgs
@@ -530,6 +540,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           setConvMessages(convId, msgs)
         }
       } catch {
+        if (version !== selectConvVersionRef.current) return
         setConvMessages(convId, [])
       }
     }
@@ -715,11 +726,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     sendMessage(currentConvId, images, models)
   }
 
-  const sendMessage = async (convId?: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
+  const sendMessage = async (convId?: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, overrideContent?: string) => {
     const targetConvId = convId || activeConversationId
     if (!targetConvId) return
 
-    const content = inputValue.trim()
+    const content = (overrideContent ?? inputValue).trim()
     if (!content && (!images || images.length === 0)) return
 
     const existingStream = streamStatesRef.current.get(targetConvId)
@@ -803,6 +814,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           }
         } catch {
           streamState.isStreaming = false
+          const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
+          if (!anyStreaming) {
+            setIsStreaming(false)
+          }
         }
       }
 
@@ -989,7 +1004,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }
     } catch {
       streamState.isStreaming = false
-      streamStatesRef.current.delete(msgId)
+      for (const [sid, ss] of streamStatesRef.current) {
+        if (ss === streamState) {
+          streamStatesRef.current.delete(sid)
+          break
+        }
+      }
       setIsStreaming(false)
     }
   }
@@ -1076,7 +1096,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }
     } catch {
       streamState.isStreaming = false
-      streamStatesRef.current.delete(msgId)
+      for (const [sid, ss] of streamStatesRef.current) {
+        if (ss === streamState) {
+          streamStatesRef.current.delete(sid)
+          break
+        }
+      }
       setIsStreaming(false)
     }
   }
@@ -1195,7 +1220,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }
     } catch {
       streamState.isStreaming = false
-      streamStatesRef.current.delete(assistantMessageId)
+      for (const [sid, ss] of streamStatesRef.current) {
+        if (ss === streamState) {
+          streamStatesRef.current.delete(sid)
+          break
+        }
+      }
       setIsStreaming(false)
     }
   }
@@ -1416,7 +1446,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       } catch (e) { console.error('Failed to abort chat:', e) }
     }
     setIsStreaming(false)
-    setMessages((prev) =>
+    updateConvMessages(activeConversationId, (prev) =>
       prev.map((m) =>
         m.isStreaming
           ? {
@@ -1427,6 +1457,14 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           : m
       )
     )
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId)
+    if (currentMsgs) {
+      window.electronAPI.conversation.update({
+        id: activeConversationId,
+        messages_json: JSON.stringify(currentMsgs),
+        message_count: currentMsgs.length,
+      }).catch(() => {})
+    }
   }
 
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name

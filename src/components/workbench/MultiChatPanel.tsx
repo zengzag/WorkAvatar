@@ -39,7 +39,8 @@ function getModelLabel(msg: MessageWithThought, providers: any[]): string {
   if (!msg.comparisonProviderId || !msg.comparisonModelId) return ''
   const provider = providers.find((p: any) => p.id === msg.comparisonProviderId)
   if (!provider) return msg.comparisonModelId
-  const models = provider.models_json ? JSON.parse(provider.models_json) : []
+  let models: any[] = []
+  try { models = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { models = [] }
   const model = models.find((m: any) => m.model === msg.comparisonModelId)
   return model?.name || msg.comparisonModelId
 }

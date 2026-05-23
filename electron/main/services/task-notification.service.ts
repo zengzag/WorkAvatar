@@ -1,4 +1,5 @@
 import { BrowserWindow, Notification as ElectronNotification } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 export interface TaskCompletionNotification {
   executionId: string
@@ -36,7 +37,7 @@ class TaskNotificationService {
   private sendToRenderer(notification: TaskCompletionNotification): void {
     const window = BrowserWindow.getAllWindows()[0]
     if (window && !window.isDestroyed()) {
-      window.webContents.send('task-notification:completion', notification)
+      window.webContents.send(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, notification)
     }
   }
 
@@ -76,7 +77,7 @@ class TaskNotificationService {
         if (window.isMinimized()) window.restore()
         window.show()
         window.focus()
-        window.webContents.send('task-notification:click', {
+        window.webContents.send(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, {
           executionId: notification.executionId,
           taskId: notification.taskId,
           employeeId: notification.employeeId,

@@ -27,7 +27,10 @@ export function registerWorkflowHandlers(workflowService: WorkflowService) {
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_EXECUTE, async (event, workflowId: string) => {
     try {
-      const mainWindow = BrowserWindow.fromWebContents(event.sender)!
+      const mainWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!mainWindow) {
+        return { success: false, error: 'Window not found' }
+      }
       const executionId = await workflowService.executeWorkflow(workflowId, mainWindow)
       return { success: true, executionId }
     } catch (error: any) {
@@ -41,7 +44,10 @@ export function registerWorkflowHandlers(workflowService: WorkflowService) {
 
   ipcMain.handle(IPC_CHANNELS.WORKFLOW_EXECUTE_DEBUG, async (event, workflowId: string) => {
     try {
-      const mainWindow = BrowserWindow.fromWebContents(event.sender)!
+      const mainWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!mainWindow) {
+        return { success: false, error: 'Window not found' }
+      }
       const executionId = await workflowService.executeWorkflowDebug(workflowId, mainWindow)
       return { success: true, executionId }
     } catch (error: any) {

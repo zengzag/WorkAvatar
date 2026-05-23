@@ -133,9 +133,15 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
   }, [t])
 
   React.useEffect(() => {
-    if (selectedDocId && kbId) {
-      loadDocDetail(selectedDocId, selectedDocName)
-    }
+    setSelectedDocId(null)
+    setSelectedDocName('')
+    setDocContent(null)
+    setDocSummary(null)
+    setDocParagraphs([])
+    setEditingSummary(false)
+    setEditingKeywords(false)
+    setEditingParagraphId(null)
+    setParagraphPage(1)
   }, [kbId])
 
   const handleSaveSummary = async () => {

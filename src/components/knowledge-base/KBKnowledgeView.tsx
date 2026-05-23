@@ -163,8 +163,8 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
             {globalSummary.key_topics_json && (
               <div style={{ marginTop: 12 }}>
                 <Text type="secondary">{t('knowledgeBase.coreTopics')} </Text>
-                {JSON.parse(globalSummary.key_topics_json || '[]').map((t: string) => (
-                  <Tag key={t} color="purple">{t}</Tag>
+                {(() => { try { return JSON.parse(globalSummary.key_topics_json || '[]') } catch { return [] } })().map((topic: string) => (
+                  <Tag key={topic} color="purple">{topic}</Tag>
                 ))}
               </div>
             )}

@@ -172,6 +172,7 @@ const FlowCanvas: React.FC = () => {
   }, [])
 
   const skipStoreSyncRef = useRef(false)
+  const skipEdgeStoreSyncRef = useRef(false)
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -195,10 +196,19 @@ const FlowCanvas: React.FC = () => {
     (changes: EdgeChange[]) => {
       const updated = applyEdgeChanges(changes, edges)
       setEdges(updated)
+      skipEdgeStoreSyncRef.current = true
       setStoreEdges(updated)
     },
     [edges, setEdges, setStoreEdges]
   )
+
+  useEffect(() => {
+    if (skipEdgeStoreSyncRef.current) {
+      skipEdgeStoreSyncRef.current = false
+      return
+    }
+    setEdges(storeEdges)
+  }, [storeEdges])
 
   const handleConnect: OnConnect = useCallback(
     (connection: Connection) => {

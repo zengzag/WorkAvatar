@@ -131,13 +131,13 @@ const ChatInput: React.FC<{
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
 
-  const modelTags = selectedModels.map((sel, i) => {
+  const modelTags = useMemo(() => selectedModels.map((sel, i) => {
     const p = providers.find((p: any) => p.id === sel.providerId)
     const models = p ? getProviderModels(p) : []
     const m = models.find((m: any) => m.model === sel.modelId)
     const label = m?.name || sel.modelId
     return { key: i, label, providerName: p?.name || '' }
-  })
+  }), [selectedModels, providers])
 
   const isModelSelected = useCallback((providerId: string, modelId: string) => {
     return selectedModels.some(s => s.providerId === providerId && s.modelId === modelId)

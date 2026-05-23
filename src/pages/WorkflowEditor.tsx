@@ -45,7 +45,7 @@ const WorkflowEditor: React.FC = () => {
   const [nameValue, setNameValue] = useState('')
   const [runtimeInputValue, setRuntimeInputValue] = useState('')
   const [runtimeInputModalOpen, setRuntimeInputModalOpen] = useState(false)
-  const [pendingRuntimeResolve, setPendingRuntimeResolve] = useState<((value: string) => void) | null>(null)
+  const pendingRuntimeResolveRef = useRef<((value: string) => void) | null>(null)
 
   const storeNodes = useWorkflowStore((s) => s.nodes)
   const storeEdges = useWorkflowStore((s) => s.edges)
@@ -176,7 +176,7 @@ const WorkflowEditor: React.FC = () => {
           value,
         })
       }
-      setPendingRuntimeResolve(() => resolve)
+      pendingRuntimeResolveRef.current = resolve
     })
     return () => { if (cleanupRuntimeInput) cleanupRuntimeInput() }
   }, [])
@@ -288,9 +288,9 @@ const WorkflowEditor: React.FC = () => {
   }
 
   const handleRuntimeInputSubmit = () => {
-    if (pendingRuntimeResolve) {
-      pendingRuntimeResolve(runtimeInputValue)
-      setPendingRuntimeResolve(null)
+    if (pendingRuntimeResolveRef.current) {
+      pendingRuntimeResolveRef.current(runtimeInputValue)
+      pendingRuntimeResolveRef.current = null
     }
     setRuntimeInputModalOpen(false)
     setRuntimeInputValue('')
@@ -445,9 +445,9 @@ const WorkflowEditor: React.FC = () => {
         open={runtimeInputModalOpen}
         onOk={handleRuntimeInputSubmit}
         onCancel={() => {
-          if (pendingRuntimeResolve) {
-            pendingRuntimeResolve('')
-            setPendingRuntimeResolve(null)
+          if (pendingRuntimeResolveRef.current) {
+            pendingRuntimeResolveRef.current('')
+            pendingRuntimeResolveRef.current = null
           }
           setRuntimeInputModalOpen(false)
           setRuntimeInputValue('')

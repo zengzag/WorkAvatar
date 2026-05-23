@@ -76,6 +76,8 @@ export const useKnowledgeBase = () => {
   const activeKBRef = useRef<string>('')
   const autoRestoredRef = useRef(false)
   const loadDocsRef = useRef<((kbId: string) => Promise<void>) | null>(null)
+  const docsRef = useRef<KBDocument[]>([])
+  docsRef.current = docs
 
   const loadKBs = useCallback(async () => {
     try {
@@ -95,6 +97,8 @@ export const useKnowledgeBase = () => {
       const hasActiveParsing = result.some((d: KBDocument) => d.parse_status === 'parsing' || d.parse_status === 'paused')
       if (hasActiveParsing) {
         setParsingAll(true)
+        const activeIds = new Set<string>(result.filter((d: KBDocument) => d.parse_status === 'parsing' || d.parse_status === 'paused').map((d: KBDocument) => d.id))
+        setParsingDocIds(activeIds)
       }
 
       const pausedDocs = result.filter((d: KBDocument) => d.parse_status === 'paused')
@@ -194,9 +198,10 @@ export const useKnowledgeBase = () => {
     })
   }, [loadKBs])
 
+  const [parsingDocIds, setParsingDocIds] = useState<Set<string>>(new Set())
+
   useEffect(() => {
-    const hasActiveParsing = docs.some(d => d.parse_status === 'parsing' || d.parse_status === 'paused')
-    if (hasActiveParsing && selectedKB) {
+    if (parsingDocIds.size > 0 && selectedKB) {
       if (!pollRef.current) {
         pollRef.current = setInterval(() => {
           if (activeKBRef.current) {
@@ -207,6 +212,7 @@ export const useKnowledgeBase = () => {
                 clearInterval(pollRef.current)
                 pollRef.current = null
                 setParsingAll(false)
+                setParsingDocIds(new Set())
                 loadDocProcessingStatus(result)
                 if (activeKBRef.current) {
                   loadKnowledgeStats(activeKBRef.current)
@@ -229,7 +235,7 @@ export const useKnowledgeBase = () => {
         pollRef.current = null
       }
     }
-  }, [docs, selectedKB])
+  }, [parsingDocIds, selectedKB])
 
   const handleProcessDocument = async (docId: string) => {
     setProcessingDocId(docId)

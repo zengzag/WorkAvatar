@@ -188,20 +188,23 @@ const MessageBubble: React.FC<{
     msg.comparisonModelId
   )
 
-  const currentBranchModelLabel = (() => {
+  const currentBranchModelLabel = useMemo(() => {
     if (!hasBranches) return null
     const currentBranch = branchData || { comparisonProviderId: msg.comparisonProviderId, comparisonModelId: msg.comparisonModelId }
     if (!currentBranch.comparisonProviderId || !currentBranch.comparisonModelId) return null
     const provider = providers.find((p: any) => p.id === currentBranch.comparisonProviderId)
     if (!provider) return currentBranch.comparisonModelId
-    const models = provider.models_json ? JSON.parse(provider.models_json) : []
+    let models: any[] = []
+    try { models = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { models = [] }
     const model = models.find((m: any) => m.model === currentBranch.comparisonModelId)
     return model?.name || currentBranch.comparisonModelId
-  })()
+  }, [hasBranches, branchData, msg.comparisonProviderId, msg.comparisonModelId, providers])
 
-  const displayMsg = msg.role === 'assistant'
-    ? ensureSegments({ ...msg, content: displayContent, segments: displaySegments, thought: displayThought, isError: displayIsError, isStreaming: displayIsStreaming })
-    : msg
+  const displayMsg = useMemo(() =>
+    msg.role === 'assistant'
+      ? ensureSegments({ ...msg, content: displayContent, segments: displaySegments, thought: displayThought, isError: displayIsError, isStreaming: displayIsStreaming })
+      : msg
+  , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
 
   return (
     <div
