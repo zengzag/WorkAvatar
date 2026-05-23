@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState } from 'react'
 import { getProviderModels } from '../../utils/llm'
@@ -33,7 +33,10 @@ const ChatInput: React.FC<{
   onImagesChange: (images: AttachedImage[]) => void
   selectedModels: ModelSelection[]
   onModelsChange: (models: ModelSelection[]) => void
-}> = ({ value, onChange, onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange }) => {
+  selectedKbIds: string[]
+  onSelectedKbIdsChange: (ids: string[]) => void
+  allKBs: any[]
+}> = ({ value, onChange, onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -130,6 +133,7 @@ const ChatInput: React.FC<{
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
+  const [showKbPicker, setShowKbPicker] = useState(false)
 
   const modelTags = useMemo(() => selectedModels.map((sel, i) => {
     const p = providers.find((p: any) => p.id === sel.providerId)
@@ -232,6 +236,65 @@ const ChatInput: React.FC<{
     </div>
   )
 
+  const kbPickerContent = (
+    <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
+        <span>{t('workbench.selectedKbCount', { count: selectedKbIds.length })}</span>
+        {allKBs.length > 0 && (
+          <>
+            <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
+              onClick={() => onSelectedKbIdsChange(allKBs.map((kb: any) => kb.id))}>
+              {t('common.selectAll')}
+            </Button>
+            <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
+              onClick={() => onSelectedKbIdsChange([])}>
+              {t('common.clearAll')}
+            </Button>
+          </>
+        )}
+      </div>
+      <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {allKBs.map((kb: any) => {
+          const selected = selectedKbIds.includes(kb.id)
+          return (
+            <div
+              key={kb.id}
+              onClick={() => {
+                if (selected) {
+                  onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kb.id))
+                } else {
+                  onSelectedKbIdsChange([...selectedKbIds, kb.id])
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 8px',
+                borderRadius: 4,
+                cursor: 'pointer',
+                background: selected ? token.colorPrimaryBg : 'transparent',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = token.colorBgTextHover }}
+              onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = selected ? token.colorPrimaryBg : 'transparent' }}
+            >
+              <Checkbox checked={selected} style={{ pointerEvents: 'none' }} />
+              <DatabaseOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
+              <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{kb.name}</span>
+              {selected && <CheckOutlined style={{ fontSize: 11, color: token.colorPrimary }} />}
+            </div>
+          )
+        })}
+        {allKBs.length === 0 && (
+          <div style={{ padding: '16px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+            {t('creationWizard.noKbAvailable')}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
   return (
     <div style={{ padding: '12px 4% 20px 4%', flexShrink: 0 }}>
       {attachedImages.length > 0 && (
@@ -255,6 +318,21 @@ const ChatInput: React.FC<{
               <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onModelsChange(selectedModels.filter((_, i) => i !== tag.key))} />
             </div>
           ))}
+        </div>
+      )}
+      {selectedKbIds.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
+          {selectedKbIds.map(kbId => {
+            const kb = allKBs.find((k: any) => k.id === kbId)
+            if (!kb) return null
+            return (
+              <div key={kbId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
+                <DatabaseOutlined style={{ fontSize: 10 }} />
+                <span>{kb.name}</span>
+                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kbId))} />
+              </div>
+            )
+          })}
         </div>
       )}
       {value.startsWith('/') && currentSlashItems.length > 0 && (
@@ -305,6 +383,19 @@ const ChatInput: React.FC<{
                 <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
                   style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                   title={t('workbench.compareModels')} />
+              </Popover>
+              <Popover
+                content={kbPickerContent}
+                trigger="click"
+                placement="topLeft"
+                arrow={false}
+                styles={{ container: { padding: 8 } }}
+                onOpenChange={setShowKbPicker}
+                open={showKbPicker}
+              >
+                <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
+                  style={{ color: selectedKbIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                  title={t('workbench.knowledgeBase')} />
               </Popover>
               <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => onCommand(cmd.key) })) }} trigger={['click']}>
                 <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}

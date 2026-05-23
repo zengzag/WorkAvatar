@@ -57,7 +57,6 @@ export class EmployeeExportPackageService {
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
 
-      const linkedKBs = this.configService.getEmployeeKnowledgeBases(employeeId)
       const mcpServers = this.configService.getEmployeeMCPServers(employeeId)
       const installedSkills = this.db.getDb().prepare(
         'SELECT es.skill_id, es.is_enabled, sk.name as skill_name FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
@@ -95,10 +94,6 @@ export class EmployeeExportPackageService {
           is_enabled: !!t.is_enabled,
           config_json: t.config_json || '{}',
         })),
-        knowledgeBases: linkedKBs.map(kb => ({
-          kb_id: kb.kb_id,
-          kb_name: kb.kb_name,
-        })),
         mcpServers: mcpServers.map(mcp => ({
           mcp_server_id: mcp.server_id,
           mcp_server_name: mcp.server_name,
@@ -131,73 +126,6 @@ export class EmployeeExportPackageService {
         }
       }
 
-      onProgress?.('adding_knowledge', 'Adding knowledge base data...')
-      let docCount = 0
-      for (const kbRef of linkedKBs) {
-        const kb = this.kbDb.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
-        if (!kb) continue
-
-        const kbDocuments = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_documents WHERE kb_id = ?'
-        ).all(kbRef.kb_id) as any[]
-
-        const kbParagraphs = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_paragraphs WHERE kb_id = ?'
-        ).all(kbRef.kb_id) as any[]
-
-        const kbDocSummaries = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
-        ).all(kbRef.kb_id) as any[]
-
-        const kbGlobalSummary = this.kbDb.getDb().prepare(
-          'SELECT * FROM kb_global_summaries WHERE kb_id = ?'
-        ).get(kbRef.kb_id) as any
-
-        const kbData = {
-          id: kb.id,
-          name: kb.name,
-          description: kb.description,
-          documents: kbDocuments.map(d => {
-            let parsedJson: string | null = null
-            if (d.parsed_json_path && fs.existsSync(d.parsed_json_path)) {
-              try { parsedJson = fs.readFileSync(d.parsed_json_path, 'utf-8') } catch {}
-            }
-            return {
-              id: d.id,
-              file_id: d.file_id,
-              original_name: d.original_name,
-              type: d.type,
-              size: d.size,
-              hash: d.hash,
-              parsed_json: parsedJson,
-              parse_status: d.parse_status,
-              is_reused: d.is_reused,
-              created_at: d.created_at,
-              updated_at: d.updated_at,
-            }
-          }),
-          paragraphs: kbParagraphs,
-          docSummaries: kbDocSummaries,
-          globalSummary: kbGlobalSummary || null,
-        }
-
-        const safeKbName = kb.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')
-        zip.addFile(
-          `knowledge-bases/${safeKbName}/kb-data.json`,
-          Buffer.from(JSON.stringify(kbData, null, 2))
-        )
-
-        const kbBasePath = PathService.getInstance().getKBBasePath(kb.id)
-
-        for (const doc of kbDocuments) {
-          const filePath = path.join(kbBasePath, doc.original_name)
-          if (fs.existsSync(filePath)) {
-            zip.addLocalFile(filePath, `knowledge-bases/${safeKbName}/documents`)
-            docCount++
-          }
-        }
-      }
-
       onProgress?.('generating_checksum', 'Generating checksum...')
       const manifest: PackageManifest = {
         version: EXPORT_PACKAGE_VERSION,
@@ -208,10 +136,10 @@ export class EmployeeExportPackageService {
         contents: {
           hasConfig: true,
           hasSkills: skillCount > 0,
-          hasKnowledgeBases: linkedKBs.length > 0,
+          hasKnowledgeBases: false,
           skillCount,
-          kbCount: linkedKBs.length,
-          docCount,
+          kbCount: 0,
+          docCount: 0,
         },
       }
 
@@ -222,7 +150,7 @@ export class EmployeeExportPackageService {
 
       onProgress?.('saving', 'Saving package...')
       zip.writeZip(exportPath)
-      onProgress?.('complete', `Package exported: ${skillCount} skills, ${linkedKBs.length} knowledge bases, ${docCount} documents`)
+      onProgress?.('complete', `Package exported: ${skillCount} skills`)
 
       return { success: true }
     } catch (error) {
@@ -416,12 +344,6 @@ export class EmployeeExportPackageService {
           const destPath = path.join(kbBasePath, fileName)
           fs.writeFileSync(destPath, docFile.getData())
         }
-      }
-
-      for (const kbId of importedKBIds) {
-        this.db.getDb().prepare(
-          'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
-        ).run(employeeId, kbId)
       }
 
       onProgress?.('building_index', 'Building search indexes...')

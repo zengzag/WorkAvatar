@@ -2,7 +2,6 @@ import crypto from 'crypto'
 import { generateId } from './common-utils'
 import fs from 'fs'
 import DatabaseService from './database.service'
-import KBDatabaseService from './kb-database.service'
 
 export const EXPORT_CONFIG_VERSION = '1.0.0'
 
@@ -38,10 +37,6 @@ export interface EmployeeConfigExport {
     is_enabled: boolean
     config_json: string
   }>
-  knowledgeBases: Array<{
-    kb_id: string
-    kb_name: string
-  }>
   mcpServers: Array<{
     mcp_server_id: string
     mcp_server_name: string
@@ -54,12 +49,10 @@ export interface EmployeeConfigExport {
 }
 
 export class EmployeeExportConfigService {
-  private kbDb: KBDatabaseService
   private db: DatabaseService
 
-  constructor(db: DatabaseService, kbDb: KBDatabaseService) {
+  constructor(db: DatabaseService) {
     this.db = db
-    this.kbDb = kbDb
   }
 
   exportConfig(
@@ -77,8 +70,6 @@ export class EmployeeExportConfigService {
       const employeeTools = this.db.getDb().prepare(
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
-
-      const linkedKBs = this.getEmployeeKnowledgeBases(employeeId)
 
       const mcpServers = this.getEmployeeMCPServers(employeeId)
 
@@ -117,10 +108,6 @@ export class EmployeeExportConfigService {
           tool_id: t.tool_id,
           is_enabled: !!t.is_enabled,
           config_json: t.config_json || '{}',
-        })),
-        knowledgeBases: linkedKBs.map(kb => ({
-          kb_id: kb.kb_id,
-          kb_name: kb.kb_name,
         })),
         mcpServers: mcpServers.map(mcp => ({
           mcp_server_id: mcp.server_id,
@@ -238,20 +225,6 @@ export class EmployeeExportConfigService {
         }
       }
 
-      for (const kbRef of importData.knowledgeBases || []) {
-        const kbExists = this.kbDb.getDb().prepare(
-          'SELECT id FROM knowledge_bases WHERE id = ?'
-        ).get(kbRef.kb_id) as any
-
-        if (kbExists) {
-          this.db.getDb().prepare(
-            'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
-          ).run(employeeId, kbRef.kb_id)
-        } else {
-          warnings.push(`Knowledge base "${kbRef.kb_name}" (${kbRef.kb_id}) not found, skipped`)
-        }
-      }
-
       for (const mcpRef of importData.mcpServers || []) {
         const mcpExists = this.db.getDb().prepare(
           'SELECT id FROM mcp_servers WHERE id = ?'
@@ -342,17 +315,6 @@ export class EmployeeExportConfigService {
       `).run(etId, employeeId, tool.tool_id, tool.is_enabled ? 1 : 0, tool.config_json || '{}', now)
     }
 
-    for (const kbRef of importData.knowledgeBases || []) {
-      const kbExists = this.kbDb.getDb().prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(kbRef.kb_id) as any
-      if (kbExists) {
-        this.db.getDb().prepare(
-          'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
-        ).run(employeeId, kbRef.kb_id)
-      } else {
-        warnings.push(`Knowledge base "${kbRef.kb_name}" not found, skipped`)
-      }
-    }
-
     for (const skillRef of importData.installedSkills || []) {
       const skillExists = this.db.getDb().prepare('SELECT id FROM installed_skills WHERE id = ?').get(skillRef.skill_id) as any
       if (skillExists) {
@@ -367,22 +329,6 @@ export class EmployeeExportConfigService {
     }
 
     return { success: true, employeeId, warnings }
-  }
-
-  getEmployeeKnowledgeBases(employeeId: string): Array<{ kb_id: string; kb_name: string }> {
-    const links = this.db.getDb().prepare(
-      'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
-    ).all(employeeId) as any[]
-
-    const kbIds = links.map((l) => l.kb_id)
-    if (kbIds.length === 0) return []
-
-    const placeholders = kbIds.map(() => '?').join(',')
-    return this.kbDb.getDb().prepare(`
-      SELECT kb.id as kb_id, kb.name as kb_name
-      FROM knowledge_bases kb
-      WHERE kb.id IN (${placeholders})
-    `).all(...kbIds) as Array<{ kb_id: string; kb_name: string }>
   }
 
   getEmployeeMCPServers(_employeeId: string): Array<{ server_id: string; server_name: string }> {

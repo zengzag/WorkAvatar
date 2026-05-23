@@ -43,14 +43,10 @@ function parseSearchIn(value: string | undefined): { sourceTypes: SourceType[]; 
   return { sourceTypes: ['document_title', 'document_summary', 'paragraph', 'content_paragraph'], label: SEARCH_IN_LABELS.all }
 }
 
-export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
+export function createKBSearchTool(kbIdsRef: { current: string[] }): ToolDefinition {
   const kbService = KnowledgeBaseService.getInstance()
   const searchEngine = SearchEngineService.getInstance()
-  const validateKbId = createKbIdValidator(allowedKbIds)
-
-  const kbOptionsDesc = allowedKbIds.length > 0
-    ? `可选值: ${allowedKbIds.join(', ')}`
-    : '当前员工未关联知识库'
+  const validateKbId = createKbIdValidator(kbIdsRef)
 
   return {
     id: 'kb_search',
@@ -73,7 +69,7 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
         },
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选，不提供则使用默认知识库）。${kbOptionsDesc}`
+          description: '知识库ID（可选，不提供则使用默认知识库）。请先使用 kb_list 查看可用的知识库ID'
         },
         document_ids: {
           type: 'array',
@@ -98,7 +94,7 @@ export function createKBSearchTool(allowedKbIds: string[]): ToolDefinition {
       try {
         const targetKbId = validateKbId(args.kb_id)
         if (!targetKbId) {
-          return { success: true, output: '未关联知识库或无权访问该知识库，无法进行检索。' }
+          return { success: true, output: '当前对话未选择任何知识库，无法进行检索。' }
         }
 
         const query = String(args.query || '').trim()

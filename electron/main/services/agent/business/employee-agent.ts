@@ -5,7 +5,7 @@ import { SkillManager } from '../skill-manager'
 import type { ToolDefinition } from '../tools/types'
 import { PlannerFactory } from '../planning/planner'
 import type { PlanningStrategy } from '../planning/types'
-import { buildEmployeeSystemPrompt, KNOWLEDGE_QUERY_GUIDANCE } from './prompts'
+import { buildEmployeeSystemPrompt } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
   treeOfThought?: boolean
@@ -19,9 +19,7 @@ export interface EmployeeAgentConfig extends AgentConfig {
   autoDiscoverSkills?: boolean
   selfLearning?: boolean
   planningStrategy?: PlanningStrategy
-  knowledgeGuidance?: string
   workspaceGuidance?: string
-  memoryPrompt?: string
 }
 
 export class EmployeeAgent extends BaseAgent {
@@ -52,8 +50,14 @@ export class EmployeeAgent extends BaseAgent {
     return { ...this.employeeConfig }
   }
 
+  private memoryPrompt: string | undefined
+
   updateMemoryPrompt(prompt: string | undefined): void {
-    this.employeeConfig.memoryPrompt = prompt
+    this.memoryPrompt = prompt
+  }
+
+  getMemoryPrompt(): string | undefined {
+    return this.memoryPrompt
   }
 
   protected buildSystemPrompt(options: AgentRunOptions): string {
@@ -65,41 +69,41 @@ export class EmployeeAgent extends BaseAgent {
       instructions: this.config.instructions || '',
       role: this.config.role,
       skillsXml: skillsXml || undefined,
-      activeSkillInstructions: this.getActiveSkillInstructions(),
-      knowledgeGuidance: this.employeeConfig.knowledgeGuidance,
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
-      memoryPrompt: this.employeeConfig.memoryPrompt,
     })
   }
 
   protected async resolveActiveTools(runtimeToolNames?: string[]): Promise<any[]> {
-    if (this.employeeConfig.treeOfThought || this.employeeConfig.planningStrategy) {
-      const strategy = this.employeeConfig.planningStrategy || 'tool_filter'
-      const planner = PlannerFactory.create(
-        strategy,
-        this.getLLMProvider(),
-        this.employeeConfig.totModel ? {
-          model: this.employeeConfig.totModel,
-          apiKey: this.employeeConfig.totApiKey,
-          baseUrl: this.employeeConfig.totBaseUrl,
-          providerType: this.employeeConfig.totProviderType,
-        } : undefined
-      )
+    return super.resolveActiveTools(runtimeToolNames)
+  }
 
-      const allTools = this.getToolRegistry().getOpenAISchemas()
-      const plan = await planner.plan(
-        this.getContext().getMetadata('currentQuery') || '',
-        allTools
-      )
-
-      this.getEventEmitter().emit('plan:generated', plan)
-
-      if (plan.selectedToolNames && plan.selectedToolNames.length > 0) {
-        return this.getToolRegistry().getOpenAISchemasByNames(plan.selectedToolNames)
-      }
+  public async buildToolPlanningHint(query: string): Promise<string | null> {
+    if (!this.employeeConfig.treeOfThought && !this.employeeConfig.planningStrategy) {
+      return null
     }
 
-    return super.resolveActiveTools(runtimeToolNames)
+    const strategy = this.employeeConfig.planningStrategy || 'tool_filter'
+    const planner = PlannerFactory.create(
+      strategy,
+      this.getLLMProvider(),
+      this.employeeConfig.totModel ? {
+        model: this.employeeConfig.totModel,
+        apiKey: this.employeeConfig.totApiKey,
+        baseUrl: this.employeeConfig.totBaseUrl,
+        providerType: this.employeeConfig.totProviderType,
+      } : undefined
+    )
+
+    const allTools = this.getToolRegistry().getOpenAISchemas()
+    const plan = await planner.plan(query, allTools)
+
+    this.getEventEmitter().emit('plan:generated', plan)
+
+    if (plan.selectedToolNames && plan.selectedToolNames.length > 0) {
+      return `建议优先使用以下工具: ${plan.selectedToolNames.join(', ')}`
+    }
+
+    return null
   }
 
   async runStream(
@@ -192,7 +196,6 @@ export class EmployeeAgent extends BaseAgent {
       skillsDirectories: config.skillsDirectories || ['skills'],
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
-      knowledgeGuidance: config.knowledgeGuidance ?? `\n\n${KNOWLEDGE_QUERY_GUIDANCE}`,
     }
   }
 }

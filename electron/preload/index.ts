@@ -44,9 +44,6 @@ import type {
   EmployeeTaskUpdateParams,
   EmployeeScheduleCreateParams,
   EmployeeScheduleUpdateParams,
-  EmployeeKBListParams,
-  EmployeeKBLinkParams,
-  EmployeeKBUnlinkParams,
   EmployeeMemoryListParams,
   EmployeeMemoryCreateParams,
   EmployeeMemoryUpdateParams,
@@ -96,9 +93,6 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, handler)
     },
-    listKBs: (params: EmployeeKBListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LIST, params),
-    linkKB: (params: EmployeeKBLinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_LINK, params),
-    unlinkKB: (params: EmployeeKBUnlinkParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, params),
     listMemories: (params: EmployeeMemoryListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, params),
     createMemory: (params: EmployeeMemoryCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, params),
     updateMemory: (params: EmployeeMemoryUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_UPDATE, params),

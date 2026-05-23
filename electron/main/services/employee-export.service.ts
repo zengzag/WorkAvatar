@@ -11,7 +11,7 @@ class EmployeeExportService {
   private constructor() {
     const db = DatabaseService.getInstance()
     const kbDb = KBDatabaseService.getInstance()
-    this.configService = new EmployeeExportConfigService(db, kbDb)
+    this.configService = new EmployeeExportConfigService(db)
     this.packageService = new EmployeeExportPackageService(db, kbDb, this.configService)
   }
 

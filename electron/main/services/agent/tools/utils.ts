@@ -23,8 +23,9 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5)
 }
 
-export function createKbIdValidator(allowedKbIds: string[]) {
+export function createKbIdValidator(kbIdsRef: { current: string[] }) {
   return (kbId: string | undefined): string | null => {
+    const allowedKbIds = kbIdsRef.current
     if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
     if (!allowedKbIds.includes(kbId)) return null
     return kbId

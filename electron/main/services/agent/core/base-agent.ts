@@ -261,7 +261,7 @@ export abstract class BaseAgent {
     }
   }
 
-  protected getActiveSkillInstructions(): string[] {
+  public getActiveSkillInstructions(): string[] {
     return [...this.activeSkillInstructions]
   }
 

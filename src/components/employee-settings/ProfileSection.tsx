@@ -1,21 +1,20 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Row, Col, Statistic } from 'antd'
-import { BarChartOutlined, CheckCircleOutlined, DatabaseOutlined } from '@ant-design/icons'
+import { BarChartOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import type { Employee } from '../../types'
 
 interface ProfileSectionProps {
   employee: Employee
-  linkedKBCount: number
 }
 
-const ProfileSection: React.FC<ProfileSectionProps> = ({ employee, linkedKBCount }) => {
+const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
   const { t } = useTranslation()
 
   return (
     <>
       <Row gutter={16}>
-        <Col span={6}>
+        <Col span={8}>
           <Card>
             <Statistic
               title={t('employeeSettings.totalTasks')}
@@ -24,18 +23,13 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({ employee, linkedKBCount
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={8}>
           <Card>
             <Statistic
               title={t('employeeSettings.userApprovals')}
               value={employee.total_approvals}
               prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
             />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic title={t('employeeSettings.linkedKb')} value={linkedKBCount} prefix={<DatabaseOutlined />} />
           </Card>
         </Col>
       </Row>

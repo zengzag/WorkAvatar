@@ -87,11 +87,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const stored = enableThinkingKey ? localStorage.getItem(enableThinkingKey) : null
     return stored === 'true'
   })
-  const kbEnabledKey = id ? `employeeWorkbench:kbEnabled:${id}` : 'employeeWorkbench:kbEnabled'
-  const [kbEnabled, setKbEnabled] = useState<boolean>(() => {
-    const stored = kbEnabledKey ? localStorage.getItem(kbEnabledKey) : null
-    return stored !== 'false'
-  })
+  const [selectedKbIds, setSelectedKbIds] = useState<string[]>([])
 
   const handleLlmChange = useCallback((providerId: string, modelId: string) => {
     setSelectedLlmProviderId(providerId)
@@ -111,11 +107,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       localStorage.setItem(enableThinkingKey, String(enableThinking))
     }
   }, [enableThinking, enableThinkingKey])
-  useEffect(() => {
-    if (kbEnabledKey) {
-      localStorage.setItem(kbEnabledKey, String(kbEnabled))
-    }
-  }, [kbEnabled, kbEnabledKey])
 
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
@@ -804,7 +795,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             messages: messageHistory,
             options: { temperature: 0.3 },
             use_skills: true,
-            use_kb: kbEnabled,
+            kb_ids: selectedKbIds,
             enable_thinking: enableThinking,
             conversation_id: targetConvId,
           })
@@ -872,7 +863,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           messages: messageHistory,
           options: { temperature: 0.3 },
           use_skills: true,
-          use_kb: kbEnabled,
+          kb_ids: selectedKbIds,
           enable_thinking: enableThinking,
           conversation_id: targetConvId,
         })
@@ -994,7 +985,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        use_kb: kbEnabled,
+        kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
       })
@@ -1086,7 +1077,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        use_kb: kbEnabled,
+        kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
       })
@@ -1210,7 +1201,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        use_kb: kbEnabled,
+        kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
       })
@@ -1540,8 +1531,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleLlmChange,
     enableThinking,
     setEnableThinking,
-    kbEnabled,
-    setKbEnabled,
+    selectedKbIds,
+    setSelectedKbIds,
     showSidePanel,
     setShowSidePanel,
     isComparisonMode,

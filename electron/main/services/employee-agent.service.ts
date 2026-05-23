@@ -9,8 +9,8 @@ import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKBAgentTools, createWorkspaceTools, getWorkspacePrompt, createOfficeGuideTool, officeExecTool } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
+import type { KbIdsRef } from './agent/tools/kb-agent-tools'
 import type { Message } from './agent/core/types'
-import { KNOWLEDGE_QUERY_GUIDANCE } from './agent/business/prompts'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import { createLogger } from './logger'
@@ -27,7 +27,7 @@ interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
-  use_kb?: boolean
+  kb_ids?: string[]
   enable_thinking?: boolean
   conversation_id?: string
 }
@@ -44,6 +44,7 @@ interface EmployeeChatCallbacks {
 interface CachedAgentEntry {
   agent: EmployeeAgent
   conversationId: string | null
+  kbIdsRef: KbIdsRef
 }
 
 class EmployeeAgentService {
@@ -75,10 +76,9 @@ class EmployeeAgentService {
     providerId: string,
     modelId?: string,
     enableThinking?: boolean,
-    useKb?: boolean,
     conversationId?: string
-  ): Promise<EmployeeAgent> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}:${useKb !== false ? 'kb' : 'no-kb'}`
+  ): Promise<CachedAgentEntry> {
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
@@ -93,7 +93,7 @@ class EmployeeAgentService {
         }
         existing.conversationId = conversationId || null
       }
-      return existing.agent
+      return existing
     }
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
@@ -160,9 +160,7 @@ class EmployeeAgentService {
       allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      knowledgeGuidance: useKb !== false ? `\n\n${KNOWLEDGE_QUERY_GUIDANCE}` : '',
       workspaceGuidance: workspaceGuidance || undefined,
-      memoryPrompt,
     }
 
     const agentOptions: BaseAgentOptions = {
@@ -206,9 +204,8 @@ class EmployeeAgentService {
     const employeeTools = this.getEmployeeTools(employeeId)
     agent.registerTools(employeeTools)
 
-    const knowledgeTools = useKb !== false
-      ? this.getKnowledgeTools(employee.id).filter(t => enabledToolIds.has(t.id))
-      : []
+    const kbIdsRef: KbIdsRef = { current: [] }
+    const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
 
     const workspaceTools = createWorkspaceTools(employee.workspace_path || '')
@@ -223,15 +220,20 @@ class EmployeeAgentService {
       return this.memoryService.generateLLMSummary(msgs, providerId, modelId)
     })
 
+    if (memoryPrompt) {
+      agent.updateMemoryPrompt(memoryPrompt)
+    }
+
     this.agentEntries.set(cacheKey, {
       agent,
       conversationId: conversationId || null,
+      kbIdsRef,
     })
-    return agent
+    return { agent, conversationId: conversationId || null, kbIdsRef }
   }
 
-  private getKnowledgeTools(employeeId?: string): ToolDefinition[] {
-    return createKBAgentTools(this.kbService, this.db, employeeId)
+  private getKnowledgeTools(kbIdsRef: KbIdsRef): ToolDefinition[] {
+    return createKBAgentTools(this.kbService, kbIdsRef)
   }
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
@@ -340,9 +342,11 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, use_kb = true, enable_thinking, conversation_id } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, kb_ids = [], enable_thinking, conversation_id } = params
 
-    const agent = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, use_kb, conversation_id)
+    const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+    const agent = entry.agent
+    entry.kbIdsRef.current = kb_ids || []
 
     const history: Message[] = messages.slice(0, -1).map(m => ({
       role: m.role as any,
@@ -351,8 +355,33 @@ class EmployeeAgentService {
     }))
 
     const lastMsg = messages[messages.length - 1]
-    const query = lastMsg?.content || ''
+    let query = lastMsg?.content || ''
     const queryImages = lastMsg?.images
+
+    if (kb_ids.length > 0) {
+      const kbDb = require('./kb-database.service').default.getInstance()
+      const placeholders = kb_ids.map(() => '?').join(',')
+      const kbList = kbDb.getDb().prepare(
+        `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
+      ).all(...kb_ids) as any[]
+      const kbNames = kbList.map((kb: any) => kb.name).join('、')
+      query = `[当前对话可使用的知识库: ${kbNames}]\n\n${query}`
+    }
+
+    const memoryPrompt = agent.getMemoryPrompt()
+    if (memoryPrompt) {
+      query = `[跨会话记忆]\n${memoryPrompt}\n\n${query}`
+    }
+
+    const activeSkillInstructions = agent.getActiveSkillInstructions()
+    if (activeSkillInstructions.length > 0) {
+      query = `[已激活技能指令]\n${activeSkillInstructions.join('\n\n---\n\n')}\n\n${query}`
+    }
+
+    const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
+    if (toolPlanningHint) {
+      query = `[${toolPlanningHint}]\n\n${query}`
+    }
 
     const config = await this.llmClient.getProviderConfig(provider_id)
     let maxIterations = 100

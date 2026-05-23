@@ -372,12 +372,6 @@ const CreationWizard: React.FC = () => {
         } catch {}
       }
 
-      for (const kbId of selectedKBIds) {
-        try {
-          await window.electronAPI.employee.linkKB({ employee_id: employee.id, kb_id: kbId })
-        } catch {}
-      }
-
       navigate(`/employee/${employee.id}`)
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
@@ -421,12 +415,6 @@ const CreationWizard: React.FC = () => {
             tool_id: toolId,
             is_enabled: true,
           })
-        } catch {}
-      }
-
-      for (const kbId of selectedKBIds) {
-        try {
-          await window.electronAPI.employee.linkKB({ employee_id: employee.id, kb_id: kbId })
         } catch {}
       }
 

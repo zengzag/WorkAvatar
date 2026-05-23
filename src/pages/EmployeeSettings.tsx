@@ -23,7 +23,6 @@ import {
   ToolsSection,
   SkillsSection,
   MCPServersSection,
-  KnowledgeBaseSection,
   ExportImportSection,
   MemorySection,
 } from '../components/employee-settings'
@@ -75,8 +74,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
-  const [employeeKBs, setEmployeeKBs] = useState<any[]>([])
-  const [allKBs, setAllKBs] = useState<any[]>([])
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
@@ -119,21 +116,6 @@ const EmployeeSettings: React.FC = () => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
-    } catch {}
-  }, [])
-
-  const loadEmployeeKBs = useCallback(async () => {
-    if (!id) return
-    try {
-      const result = await window.electronAPI.employee.listKBs({ employee_id: id })
-      setEmployeeKBs(result)
-    } catch {}
-  }, [id])
-
-  const loadAllKBs = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.kb.list()
-      setAllKBs(result)
     } catch {}
   }, [])
 
@@ -182,10 +164,8 @@ const EmployeeSettings: React.FC = () => {
       loadMCPServers()
       loadInstalledSkills()
       loadEmployeeSkills()
-      loadEmployeeKBs()
-      loadAllKBs()
     }
-  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills, loadEmployeeKBs, loadAllKBs])
+  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -627,20 +607,6 @@ const EmployeeSettings: React.FC = () => {
             )
           },
           {
-            key: 'knowledge',
-            label: t('employeeSettings.tabKnowledge'),
-            children: (
-              <KnowledgeBaseSection
-                employeeKBs={employeeKBs}
-                allKBs={allKBs}
-                employeeId={id!}
-                onRefresh={() => {
-                  loadEmployeeKBs()
-                }}
-              />
-            )
-          },
-          {
             key: 'memory',
             label: t('employeeSettings.tabMemory'),
             children: (
@@ -657,7 +623,6 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <ProfileSection
                 employee={employee}
-                linkedKBCount={employeeKBs.length}
               />
             )
           },

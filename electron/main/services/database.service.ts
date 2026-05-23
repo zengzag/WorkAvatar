@@ -291,16 +291,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_task_executions_task ON employee_task_executions(task_id);
       CREATE INDEX IF NOT EXISTS idx_employee_task_executions_status ON employee_task_executions(status);
 
-      CREATE TABLE IF NOT EXISTS employee_kb_links (
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        kb_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        PRIMARY KEY (employee_id, kb_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_employee_kb_links_employee ON employee_kb_links(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_employee_kb_links_kb ON employee_kb_links(kb_id);
-
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
         employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,

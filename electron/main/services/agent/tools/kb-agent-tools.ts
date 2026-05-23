@@ -1,45 +1,21 @@
 import KnowledgeBaseService from '../../kb.service'
-import DatabaseService from '../../database.service'
 import KBDatabaseService from '../../kb-database.service'
 import { ToolDefinition } from './types'
 import { createKBSearchTool, createKBGetContentTool } from './index'
 import { createKbIdValidator } from './utils'
 
-function formatKBOptions(kbs: any[]): string {
-  return kbs.map(kb => `${kb.id}(${kb.name})`).join(', ')
+export interface KbIdsRef {
+  current: string[]
 }
 
 export function createKBAgentTools(
     kbService: KnowledgeBaseService,
-    db: DatabaseService,
-    employeeId?: string
+    kbIdsRef: KbIdsRef
 ): ToolDefinition[] {
   const tools: ToolDefinition[] = []
-  if (!employeeId) return tools
 
-  const kbDb = KBDatabaseService.getInstance()
-  const links = db.getDb().prepare(
-    'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
-  ).all(employeeId) as any[]
+  const validateKbId = createKbIdValidator(kbIdsRef)
 
-  const linkedKbIds = links.map((l) => l.kb_id)
-  let allKBs: any[] = []
-  if (linkedKbIds.length > 0) {
-    const placeholders = linkedKbIds.map(() => '?').join(',')
-    allKBs = kbDb.getDb().prepare(`
-      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
-      FROM knowledge_bases kb
-      WHERE kb.id IN (${placeholders})
-      ORDER BY kb.name
-    `).all(...linkedKbIds) as any[]
-  }
-
-  const kbIds = allKBs.map((kb: any) => kb.id)
-  const validateKbId = createKbIdValidator(kbIds)
-
-  // ============================================================
-  // kb_list - 知识库列表
-  // ============================================================
   const kbListTool: ToolDefinition = {
     id: 'kb_list',
     name: 'kb_list',
@@ -52,8 +28,22 @@ export function createKBAgentTools(
     },
     handler: async () => {
       try {
+        const currentKbIds = kbIdsRef.current
+        if (!currentKbIds || currentKbIds.length === 0) {
+          return { success: true, output: '当前对话未选择任何知识库。' }
+        }
+
+        const kbDb = KBDatabaseService.getInstance()
+        const placeholders = currentKbIds.map(() => '?').join(',')
+        const allKBs = kbDb.getDb().prepare(`
+          SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
+          FROM knowledge_bases kb
+          WHERE kb.id IN (${placeholders})
+          ORDER BY kb.name
+        `).all(...currentKbIds) as any[]
+
         if (allKBs.length === 0) {
-          return { success: true, output: '当前员工未关联任何知识库。' }
+          return { success: true, output: '当前对话未选择任何知识库。' }
         }
 
         let output = `## 可访问的知识库\n\n`
@@ -88,9 +78,6 @@ export function createKBAgentTools(
   }
   tools.push(kbListTool)
 
-  // ============================================================
-  // kb_overview - 知识库概览（需传kb_id）
-  // ============================================================
   const kbOverviewTool: ToolDefinition = {
     id: 'kb_overview',
     name: 'kb_overview',
@@ -101,7 +88,7 @@ export function createKBAgentTools(
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（必需）。可选值: ${formatKBOptions(allKBs)}`
+          description: '知识库ID（必需）。请先使用 kb_list 查看可用的知识库ID'
         }
       },
       required: ['kb_id']
@@ -110,7 +97,7 @@ export function createKBAgentTools(
       try {
         const targetKbId = validateKbId(args.kb_id)
         if (!targetKbId) {
-          return { success: true, output: '未关联知识库或无权访问该知识库。' }
+          return { success: true, output: '当前对话未选择任何知识库，或无权访问该知识库。' }
         }
 
         const kb = kbService.getKB(targetKbId)
@@ -169,9 +156,6 @@ export function createKBAgentTools(
   }
   tools.push(kbOverviewTool)
 
-  // ============================================================
-  // kb_get_toc - 获取文档目录
-  // ============================================================
   const kbGetTocTool: ToolDefinition = {
     id: 'kb_get_toc',
     name: 'kb_get_toc',
@@ -189,12 +173,14 @@ export function createKBAgentTools(
     },
     handler: async (args: any) => {
       try {
+        const kbDb = KBDatabaseService.getInstance()
         const doc = kbDb.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
         if (!doc) {
           return { success: false, error: '文档不存在' }
         }
 
-        if (!kbIds.includes(doc.kb_id)) {
+        const currentKbIds = kbIdsRef.current
+        if (!currentKbIds.includes(doc.kb_id)) {
           return { success: false, error: '无权访问该文档' }
         }
 
@@ -242,9 +228,6 @@ export function createKBAgentTools(
   }
   tools.push(kbGetTocTool)
 
-  // ============================================================
-  // kb_get_paragraphs - 批量获取段落摘要
-  // ============================================================
   const kbGetParagraphsTool: ToolDefinition = {
     id: 'kb_get_paragraphs',
     name: 'kb_get_paragraphs',
@@ -268,6 +251,7 @@ export function createKBAgentTools(
           return { success: true, output: '请提供至少一个段落ID。' }
         }
 
+        const kbDb = KBDatabaseService.getInstance()
         const placeholders = ids.map(() => '?').join(',')
         const paragraphs = kbDb.getDb().prepare(
           `SELECT p.*, d.original_name as document_name
@@ -310,8 +294,8 @@ export function createKBAgentTools(
   }
   tools.push(kbGetParagraphsTool)
 
-  tools.push(createKBSearchTool(kbIds))
-  tools.push(createKBGetContentTool(kbIds))
+  tools.push(createKBSearchTool(kbIdsRef))
+  tools.push(createKBGetContentTool(kbIdsRef))
 
   return tools
 }

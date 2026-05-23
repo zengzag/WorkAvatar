@@ -23,10 +23,6 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_EXPORT_PROGRESS: 'employee:export-progress',
   EMPLOYEE_IMPORT_PROGRESS: 'employee:import-progress',
 
-  EMPLOYEE_KB_LIST: 'employee:kb-list',
-  EMPLOYEE_KB_LINK: 'employee:kb-link',
-  EMPLOYEE_KB_UNLINK: 'employee:kb-unlink',
-
   EMPLOYEE_MEMORY_LIST: 'employee:memory-list',
   EMPLOYEE_MEMORY_CREATE: 'employee:memory-create',
   EMPLOYEE_MEMORY_UPDATE: 'employee:memory-update',
@@ -109,20 +105,6 @@ export interface EmployeeExportPackageParams {
 export interface EmployeeImportPackageParams {
   import_path: string
   conflict_strategy: 'skip' | 'overwrite' | 'merge'
-}
-
-export interface EmployeeKBListParams {
-  employee_id: string
-}
-
-export interface EmployeeKBLinkParams {
-  employee_id: string
-  kb_id: string
-}
-
-export interface EmployeeKBUnlinkParams {
-  employee_id: string
-  kb_id: string
 }
 
 export interface EmployeeMemoryListParams {

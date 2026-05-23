@@ -2,7 +2,7 @@ import type { ToolDefinition } from './types'
 import KBDatabaseService from '../../kb-database.service'
 import KnowledgeBaseService from '../../kb.service'
 
-export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
+export function createKBGetContentTool(kbIdsRef: { current: string[] }): ToolDefinition {
   const kbDb = KBDatabaseService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
 
@@ -53,8 +53,9 @@ export function createKBGetContentTool(allowedKbIds: string[]): ToolDefinition {
           return { success: false, error: '文档不存在' }
         }
 
-        if (!allowedKbIds.includes(doc.kb_id)) {
-          return { success: false, error: '无权访问该文档，文档不属于当前数字员工可访问的知识库' }
+        const currentKbIds = kbIdsRef.current
+        if (!currentKbIds.includes(doc.kb_id)) {
+          return { success: false, error: '无权访问该文档，文档不属于当前对话可访问的知识库' }
         }
 
         if (doc.parse_status !== 'completed') {

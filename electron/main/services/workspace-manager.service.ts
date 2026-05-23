@@ -2,18 +2,15 @@ import fs from 'fs'
 import path from 'path'
 import type { Employee, Skill, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
-import KBDatabaseService from './kb-database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
 
 class WorkspaceManagerService {
   private db: DatabaseService
-  private kbDb: KBDatabaseService
   private static instance: WorkspaceManagerService
 
   private constructor() {
     this.db = DatabaseService.getInstance()
-    this.kbDb = KBDatabaseService.getInstance()
   }
 
   static getInstance(): WorkspaceManagerService {
@@ -137,41 +134,6 @@ class WorkspaceManagerService {
 
     this.db.getDb().prepare('UPDATE employees SET workspace_path = NULL, updated_at = unixepoch() WHERE id = ?').run(id)
     return true
-  }
-
-  getKBsForEmployee(employeeId: string): any[] {
-    const links = this.db.getDb().prepare(
-      'SELECT kb_id FROM employee_kb_links WHERE employee_id = ?'
-    ).all(employeeId) as any[]
-
-    const kbIds = links.map((l) => l.kb_id)
-    if (kbIds.length === 0) return []
-
-    const placeholders = kbIds.map(() => '?').join(',')
-    return this.kbDb.getDb().prepare(`
-      SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
-      FROM knowledge_bases kb
-      WHERE kb.id IN (${placeholders})
-      ORDER BY kb.name
-    `).all(...kbIds)
-  }
-
-  linkKBToEmployee(employeeId: string, kbId: string): boolean {
-    try {
-      this.db.getDb().prepare(
-        'INSERT OR IGNORE INTO employee_kb_links (employee_id, kb_id) VALUES (?, ?)'
-      ).run(employeeId, kbId)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  unlinkKBFromEmployee(employeeId: string, kbId: string): boolean {
-    const result = this.db.getDb().prepare(
-      'DELETE FROM employee_kb_links WHERE employee_id = ? AND kb_id = ?'
-    ).run(employeeId, kbId)
-    return result.changes > 0
   }
 
   getSkillList(employeeId: string): Skill[] {

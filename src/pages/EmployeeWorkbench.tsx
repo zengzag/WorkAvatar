@@ -19,7 +19,6 @@ import {
   SettingOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  DatabaseOutlined,
   BulbOutlined,
   BulbFilled,
   PlusOutlined,
@@ -57,9 +56,11 @@ const EmployeeWorkbench: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
+  const [allKBs, setAllKBs] = useState<any[]>([])
 
   useEffect(() => {
     loadEmployees()
+    loadAllKBs()
   }, [])
 
   useEffect(() => {
@@ -77,6 +78,13 @@ const EmployeeWorkbench: React.FC = () => {
     } catch {
       message.error(t('digitalEmployees.loadEmployeesFailed'))
     }
+  }
+
+  const loadAllKBs = async () => {
+    try {
+      const result = await window.electronAPI.kb.list()
+      setAllKBs(result)
+    } catch {}
   }
 
   const isEmptyRoute = routeId === '_empty'
@@ -238,8 +246,8 @@ const EmployeeWorkbench: React.FC = () => {
     handleLlmChange,
     enableThinking,
     setEnableThinking,
-    kbEnabled,
-    setKbEnabled,
+    selectedKbIds,
+    setSelectedKbIds,
     showSidePanel,
     setShowSidePanel,
     isComparisonMode,
@@ -582,21 +590,6 @@ const EmployeeWorkbench: React.FC = () => {
           </Popover>
         </Space>
         <Space size={4}>
-          <Tooltip title={kbEnabled ? t('workbench.kbEnabled') : t('workbench.kbDisabled')}>
-            <Tag
-              color={kbEnabled ? 'green' : 'default'}
-              style={{
-                cursor: 'pointer',
-                fontSize: 12,
-                borderRadius: 12,
-                opacity: kbEnabled ? 1 : 0.5,
-                marginRight: 0,
-              }}
-              onClick={() => setKbEnabled(!kbEnabled)}
-            >
-              <DatabaseOutlined /> {t('workbench.knowledgeBase')}
-            </Tag>
-          </Tooltip>
           <LLMSelector
             providerId={selectedLlmProviderId}
             modelId={selectedLlmModelId}
@@ -720,6 +713,9 @@ const EmployeeWorkbench: React.FC = () => {
             onImagesChange={setAttachedImages}
             selectedModels={selectedModels}
             onModelsChange={setSelectedModels}
+            selectedKbIds={selectedKbIds}
+            onSelectedKbIdsChange={setSelectedKbIds}
+            allKBs={allKBs}
           />
         </div>
       </div>

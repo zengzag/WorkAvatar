@@ -12,9 +12,6 @@ import type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
-  EmployeeKBListParams,
-  EmployeeKBLinkParams,
-  EmployeeKBUnlinkParams,
   EmployeeMemoryListParams,
   EmployeeMemoryCreateParams,
   EmployeeMemoryUpdateParams,
@@ -24,14 +21,12 @@ import type {
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
-import type EmployeeAgentService from '../services/employee-agent.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
   profilingService: EmployeeProfilingService,
   employeeExportService: EmployeeExportService,
-  employeeAgentService: EmployeeAgentService,
   memoryService: EmployeeMemoryService
 ) {
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
@@ -151,26 +146,6 @@ export function registerEmployeeHandlers(
         event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
       }
     )
-  })
-
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LIST, (_, params: EmployeeKBListParams) => {
-    return workspaceManager.getKBsForEmployee(params.employee_id)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_LINK, (_, params: EmployeeKBLinkParams) => {
-    const result = workspaceManager.linkKBToEmployee(params.employee_id, params.kb_id)
-    if (result) {
-      employeeAgentService.clearAgentCache(params.employee_id)
-    }
-    return result
-  })
-
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_KB_UNLINK, (_, params: EmployeeKBUnlinkParams) => {
-    const result = workspaceManager.unlinkKBFromEmployee(params.employee_id, params.kb_id)
-    if (result) {
-      employeeAgentService.clearAgentCache(params.employee_id)
-    }
-    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (_, params: EmployeeMemoryListParams) => {
