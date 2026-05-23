@@ -6,14 +6,14 @@ import {
 } from 'antd'
 import {
   SearchOutlined, FileTextOutlined,
-  GlobalOutlined, BookOutlined,
+  BookOutlined,
   CopyOutlined, EyeOutlined, DatabaseOutlined,
   RobotOutlined,
 } from '@ant-design/icons'
 
 const { Text, Paragraph } = Typography
 
-type SearchMode = 'smart' | 'semantic' | 'paragraphs' | 'fulltext' | 'globalSummary'
+type SearchMode = 'smart' | 'semantic' | 'paragraphs' | 'fulltext'
 
 interface KBSearchPanelProps {
   open: boolean
@@ -40,10 +40,9 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
   const [selectedKbId, setSelectedKbId] = useState<string | undefined>(undefined)
   const [searchMode, setSearchMode] = useState<SearchMode>('smart')
   const [query, setQuery] = useState('')
-  const [topK, setTopK] = useState(10)
+  const [topK, setTopK] = useState(5)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<any[]>([])
-  const [globalSummaryResult, setGlobalSummaryResult] = useState<any>(null)
 
   const [docContent, setDocContent] = useState<any>(null)
   const [docContentLoading, setDocContentLoading] = useState(false)
@@ -79,7 +78,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
 
   const resetResults = useCallback(() => {
     setResults([])
-    setGlobalSummaryResult(null)
     setDocContent(null)
     setDocContentModalOpen(false)
     setSearched(false)
@@ -129,13 +127,9 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
             kb_id: selectedKbId,
             query: query.trim(),
             top_k: topK,
+            source_types: ['content_paragraph'],
           })
-          setResults((data || []).filter((r: any) => r.match_type === 'content' || r.match_type === 'content_paragraph'))
-          break
-        }
-        case 'globalSummary': {
-          const data = await window.electronAPI.kb.getGlobalSummary(selectedKbId)
-          setGlobalSummaryResult(data)
+          setResults(data || [])
           break
         }
       }
@@ -209,15 +203,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
         <Space>
           <FileTextOutlined />
           <span>{t('kbSearch.modeFulltext')}</span>
-        </Space>
-      ),
-    },
-    {
-      key: 'globalSummary',
-      label: (
-        <Space>
-          <GlobalOutlined />
-          <span>{t('kbSearch.modeGlobalSummary')}</span>
         </Space>
       ),
     },
@@ -385,34 +370,6 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
     )
   }
 
-  const renderGlobalSummary = () => {
-    if (!globalSummaryResult) {
-      return <Empty description={t('kbSearch.noGlobalSummary')} />
-    }
-
-    const keyTopics: string[] = (() => { try { return JSON.parse(globalSummaryResult.key_topics_json || '[]') } catch { return [] } })()
-
-    return (
-      <div>
-        <Card size="small" style={{ marginBottom: 12, borderLeft: `3px solid ${token.colorPrimary}` }}>
-          <Paragraph style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>
-            {globalSummaryResult.summary}
-          </Paragraph>
-        </Card>
-
-        {keyTopics.length > 0 && (
-          <Card size="small" title={t('knowledgeBase.coreTopics')} style={{ marginBottom: 12 }}>
-            <Space wrap>
-              {keyTopics.map((topic, i) => (
-                <Tag key={i} color="blue">{topic}</Tag>
-              ))}
-            </Space>
-          </Card>
-        )}
-      </div>
-    )
-  }
-
   const renderDocContentModal = () => {
     return (
       <Modal
@@ -469,35 +426,28 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
       )
     }
 
-    switch (searchMode) {
-      case 'globalSummary':
-        return renderGlobalSummary()
-      default:
-        if (results.length === 0) {
-          return <Empty description={t('kbSearch.noResults')} />
-        }
-        return (
-          <div>
-            {semanticDegraded && searchMode === 'semantic' && (
-              <Alert
-                type="warning"
-                showIcon
-                style={{ marginBottom: 12 }}
-                title={t('kbSearch.semanticDegraded')}
-              />
-            )}
-            <div style={{ marginBottom: 8 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('kbSearch.resultCount', { count: results.length })}
-              </Text>
-            </div>
-            {results.map((item, index) => renderResultItem(item, index))}
-          </div>
-        )
+    if (results.length === 0) {
+      return <Empty description={t('kbSearch.noResults')} />
     }
+    return (
+      <div>
+        {semanticDegraded && searchMode === 'semantic' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('kbSearch.semanticDegraded')}
+          />
+        )}
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {t('kbSearch.resultCount', { count: results.length })}
+          </Text>
+        </div>
+        {results.map((item, index) => renderResultItem(item, index))}
+      </div>
+    )
   }
-
-  const showQueryInput = searchMode !== 'globalSummary'
 
   return (
     <Drawer
@@ -547,40 +497,26 @@ const KBSearchPanel: React.FC<KBSearchPanelProps> = ({ open, onClose, kbList }) 
           />
         </div>
 
-        {showQueryInput && (
-          <Input
-            ref={inputRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t('kbSearch.searchPlaceholder')}
-            size="large"
-            prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
-            suffix={
-              <Button
-                type="primary"
-                size="small"
-                icon={<SearchOutlined />}
-                onClick={handleSearch}
-                loading={loading}
-              >
-                {t('kbSearch.search')}
-              </Button>
-            }
-          />
-        )}
-
-        {searchMode === 'globalSummary' && (
-          <Button
-            type="primary"
-            icon={<GlobalOutlined />}
-            onClick={handleSearch}
-            loading={loading}
-            block
-          >
-            {t('kbSearch.queryGlobalSummary')}
-          </Button>
-        )}
+        <Input
+          ref={inputRef}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={t('kbSearch.searchPlaceholder')}
+          size="large"
+          prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+          suffix={
+            <Button
+              type="primary"
+              size="small"
+              icon={<SearchOutlined />}
+              onClick={handleSearch}
+              loading={loading}
+            >
+              {t('kbSearch.search')}
+            </Button>
+          }
+        />
 
       </div>
 

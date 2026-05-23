@@ -12,6 +12,7 @@ export interface MessageSegment {
   type: 'thinking' | 'answer' | 'tool_call'
   id: string
   timestamp?: number
+  completedAt?: number
   content?: string
   isStreaming?: boolean
   collapsed?: boolean
@@ -25,6 +26,7 @@ export interface TokenUsage {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  totalChars?: number
 }
 
 export interface MessageBranch {
@@ -91,4 +93,54 @@ export function ensureSegments(msg: MessageWithThought): MessageWithThought {
   }
 
   return { ...msg, segments }
+}
+
+function isSegmentComplete(s: MessageSegment): boolean {
+  if (s.type === 'tool_call') return !!s.isToolComplete
+  return s.isStreaming === false
+}
+
+function patchSegmentsArr(segs: MessageSegment[]): { result: MessageSegment[]; patched: boolean } {
+  let patched = false
+  const result = segs.map(s => {
+    if (s.completedAt || !s.timestamp) return s
+    if (!isSegmentComplete(s)) return s
+    patched = true
+    return { ...s, completedAt: Date.now() }
+  })
+  return { result: patched ? result : segs, patched }
+}
+
+export function patchMissingCompletedAt(msg: MessageWithThought): MessageWithThought {
+  if (msg.role !== 'assistant') return msg
+
+  let anyPatched = false
+  const newMsg = { ...msg }
+
+  if (msg.segments) {
+    const { result, patched } = patchSegmentsArr(msg.segments)
+    if (patched) {
+      newMsg.segments = result
+      anyPatched = true
+    }
+  }
+
+  if (msg.branches) {
+    let branchesPatched = false
+    const newBranches = msg.branches.map(b => {
+      if (!b.segments) return b
+      const { result, patched } = patchSegmentsArr(b.segments)
+      if (patched) {
+        branchesPatched = true
+        return { ...b, segments: result }
+      }
+      return b
+    })
+    if (branchesPatched) {
+      newMsg.branches = newBranches
+      anyPatched = true
+    }
+  }
+
+  return anyPatched ? newMsg : msg
 }

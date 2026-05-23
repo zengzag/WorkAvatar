@@ -95,6 +95,7 @@ const ThinkingSegment: React.FC<{
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
+  const fallbackRef = useRef<number | undefined>(undefined)
   const [contentHeight, setContentHeight] = useState(0)
 
   const steps = useMemo(() => {
@@ -113,9 +114,13 @@ const ThinkingSegment: React.FC<{
 
   useEffect(() => {
     if (!isStreaming && seg.timestamp) {
-      setElapsed(((Date.now() - seg.timestamp) / 1000))
+      if (!seg.completedAt && !fallbackRef.current) {
+        fallbackRef.current = Date.now()
+      }
+      const endTime = seg.completedAt ?? fallbackRef.current ?? Date.now()
+      setElapsed(((endTime - seg.timestamp) / 1000))
     }
-  }, [isStreaming, seg.timestamp])
+  }, [isStreaming, seg.timestamp, seg.completedAt])
 
   useEffect(() => {
     if (contentRef.current) {

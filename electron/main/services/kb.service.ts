@@ -192,7 +192,7 @@ class KnowledgeBaseService {
   async importOrSyncToKB(filePath: string, options?: { contentText?: string; parsedJson?: string }) { return this.documentService.importOrSyncToKB(filePath, options) }
   searchParagraphs(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchParagraphs(kbId, query, topK) }
   searchDocumentSummaries(kbId: string, query: string, topK: number = 5): SearchResult[] { return this.documentService.searchDocumentSummaries(kbId, query, topK) }
-  search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] { return this.documentService.search(kbId, query, topK, documentIds) }
+  search(kbId: string, query: string, topK: number = 10, documentIds?: string[], sourceTypes?: string[]): SearchResult[] { return this.documentService.search(kbId, query, topK, documentIds, sourceTypes) }
   async searchWithEmbedding(kbId: string, query: string, topK: number = 10, documentIds?: string[], providerId?: string) { return this.documentService.searchWithEmbedding(kbId, query, topK, documentIds, providerId) }
 
   getSearchIndexStats(kbId: string) { return this.documentService.getSearchIndexStats(kbId) }

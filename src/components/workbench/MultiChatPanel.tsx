@@ -207,28 +207,37 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
           </div>
         )}
 
-        {msg.tokenUsage && !msg.isStreaming && (
+        {!msg.isStreaming && (
           <div style={{
             marginTop: 4,
             display: 'flex',
             gap: 8,
             alignItems: 'center',
           }}>
-            {msg.tokenUsage.promptTokens !== undefined && (
+            {msg.tokenUsage && msg.tokenUsage.totalTokens === undefined && msg.tokenUsage.totalChars !== undefined ? (
               <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                {t('workbench.promptTokens')}: {msg.tokenUsage.promptTokens}
+                {t('workbench.outputChars')}: {msg.tokenUsage.totalChars}
               </Text>
-            )}
-            {msg.tokenUsage.completionTokens !== undefined && (
-              <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                {t('workbench.completionTokens')}: {msg.tokenUsage.completionTokens}
-              </Text>
-            )}
-            {msg.tokenUsage.totalTokens !== undefined && (
-              <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                {t('workbench.totalTokens')}: {msg.tokenUsage.totalTokens}
-              </Text>
-            )}
+            ) : null}
+            {msg.tokenUsage && msg.tokenUsage.totalTokens !== undefined ? (
+              <>
+                {msg.tokenUsage.promptTokens !== undefined && (
+                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                    {t('workbench.promptTokens')}: {msg.tokenUsage.promptTokens}
+                  </Text>
+                )}
+                {msg.tokenUsage.completionTokens !== undefined && (
+                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                    {t('workbench.completionTokens')}: {msg.tokenUsage.completionTokens}
+                  </Text>
+                )}
+                {msg.tokenUsage.totalTokens !== undefined && (
+                  <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                    {t('workbench.totalTokens')}: {msg.tokenUsage.totalTokens}
+                  </Text>
+                )}
+              </>
+            ) : null}
           </div>
         )}
       </div>

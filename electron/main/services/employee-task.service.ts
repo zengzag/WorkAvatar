@@ -57,6 +57,7 @@ interface MessageSegment {
   type: 'thinking' | 'answer' | 'tool_call'
   id: string
   timestamp?: number
+  completedAt?: number
   content?: string
   isStreaming?: boolean
   collapsed?: boolean

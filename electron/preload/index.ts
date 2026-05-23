@@ -267,7 +267,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
     },
-    search: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH, params),
+    search: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; source_types?: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH, params),
     searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
     searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
     rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),

@@ -46,4 +46,4 @@ export function buildEmployeeSystemPrompt(options: {
   return parts.join('\n')
 }
 
-export const KNOWLEDGE_QUERY_GUIDANCE = '查询知识时遵循：先概览 → 再检索 → 最后精准定位。'
+export const KNOWLEDGE_QUERY_GUIDANCE = '查询知识时遵循渐进式检索：kb_list 了解知识库 → kb_overview 确定目标文档 → kb_get_toc 查看目录 → kb_get_paragraphs 获取相关章节摘要 → kb_get_content 读取完整内容。信息不足时用 kb_search 补充搜索。'

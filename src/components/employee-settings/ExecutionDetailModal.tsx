@@ -139,6 +139,12 @@ const ExecutionDetailModal: React.FC<ExecutionDetailModalProps> = ({ open, execu
       list_directory: 'List Dir',
       web_search: 'Web Search',
       knowledge_search: 'Knowledge Search',
+      kb_list: 'Knowledge Base List',
+      kb_overview: 'Knowledge Base Overview',
+      kb_search: 'Smart KB Search',
+      kb_get_toc: 'View Document TOC',
+      kb_get_paragraphs: 'View Paragraphs',
+      kb_get_content: 'Get Document Content',
     }
     return map[name] || name
   }

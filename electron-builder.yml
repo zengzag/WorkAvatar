@@ -2,6 +2,8 @@ appId: com.workavatar.desktop
 productName: WorkAvatar
 copyright: Copyright © 2024 WorkAvatar
 
+npmRebuild: false
+
 directories:
   output: release/${version}
 
@@ -22,7 +24,6 @@ asarUnpack:
 
 win:
   target:
-    - nsis
     - portable
   icon: resources/icons/icon.ico
   artifactName: '${productName}-Setup-${version}.${ext}'

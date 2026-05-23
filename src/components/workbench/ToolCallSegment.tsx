@@ -86,30 +86,41 @@ function highlightJson(
   return parts
 }
 
-function useElapsedTime(startTime: number | undefined, isComplete: boolean): string | null {
+function useElapsedTime(startTime: number | undefined, isComplete: boolean, completedAt?: number): string | null {
   const [elapsed, setElapsed] = useState<number | null>(null)
   const rafRef = useRef<number | null>(null)
+  const fallbackRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     if (!startTime) return
 
+    let stopped = false
+
     if (isComplete) {
-      setElapsed((Date.now() - startTime) / 1000)
+      if (!completedAt && !fallbackRef.current) {
+        fallbackRef.current = Date.now()
+      }
+      const endTime = completedAt ?? fallbackRef.current ?? Date.now()
+      const finalTime = (endTime - startTime) / 1000
+      setElapsed(finalTime)
       return
     }
 
     const tick = () => {
+      if (stopped) return
       setElapsed((Date.now() - startTime) / 1000)
       rafRef.current = requestAnimationFrame(tick)
     }
-    tick()
+    rafRef.current = requestAnimationFrame(tick)
 
     return () => {
+      stopped = true
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
       }
     }
-  }, [startTime, isComplete])
+  }, [startTime, isComplete, completedAt])
 
   if (elapsed === null) return null
   return elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed).toString()
@@ -128,7 +139,7 @@ const ToolCallSegment: React.FC<{
   const isToolPending = !seg.isToolComplete
   const isExpanded = !seg.collapsed
 
-  const duration = useElapsedTime(seg.timestamp, !!seg.isToolComplete)
+  const duration = useElapsedTime(seg.timestamp, !!seg.isToolComplete, seg.completedAt)
 
   const resultStr = seg.toolResult !== undefined
     ? (typeof seg.toolResult === 'string' ? seg.toolResult : JSON.stringify(seg.toolResult, null, 2))
@@ -225,9 +236,16 @@ const ToolCallSegment: React.FC<{
               <LoadingOutlined spin /> {t('workbench.executing')}
             </Tag>
           ) : (
-            <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
-              <CheckCircleOutlined /> {t('workbench.completed')}
-            </Tag>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {resultStr && (
+                <Text type="secondary" style={{ fontSize: 10 }}>
+                  {t('workbench.outputChars')}: {resultStr.length}
+                </Text>
+              )}
+              <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
+                <CheckCircleOutlined /> {t('workbench.completed')}
+              </Tag>
+            </div>
           )}
         </div>
         <div

@@ -737,8 +737,8 @@ class KBDocumentService {
     })
   }
 
-  search(kbId: string, query: string, topK: number = 10, documentIds?: string[]): SearchResult[] {
-    return this.searchEngine.search(kbId, query, topK, documentIds)
+  search(kbId: string, query: string, topK: number = 10, documentIds?: string[], sourceTypes?: string[]): SearchResult[] {
+    return this.searchEngine.ftsSearch(kbId, query, topK, { documentIds, sourceTypes: sourceTypes as any })
   }
 
   async searchWithEmbedding(kbId: string, query: string, topK: number = 10, documentIds?: string[], providerId?: string): Promise<SearchResult[]> {

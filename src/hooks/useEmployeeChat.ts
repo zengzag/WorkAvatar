@@ -3,7 +3,7 @@ import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
 import type { MessageWithThought, MessageBranch } from '../components/workbench'
-import { ensureSegments } from '../components/workbench'
+import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 import { generateId } from '../utils/format'
 
@@ -49,9 +49,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     random_utils: t('workbench.toolNames.random_utils'),
     env_vars: t('workbench.toolNames.env_vars'),
     kb_overview: t('workbench.toolNames.kb_overview'),
-    query_global_summary: t('workbench.toolNames.query_global_summary'),
-    query_paragraphs: t('workbench.toolNames.query_paragraphs'),
-    query_fulltext: t('workbench.toolNames.query_fulltext'),
+    kb_list: t('workbench.toolNames.kb_list'),
+    kb_get_toc: t('workbench.toolNames.kb_get_toc'),
+    kb_get_paragraphs: t('workbench.toolNames.kb_get_paragraphs'),
     kb_search: t('workbench.toolNames.kb_search'),
     kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
@@ -186,6 +186,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }, [])
 
+  const calcTotalOutputChars = (segs: any[], content?: string): number => {
+    let total = (content || '').length
+    for (const s of segs || []) {
+      if (s.type === 'answer' && s.content) {
+        total += (typeof s.content === 'string' ? s.content.length : 0)
+      }
+    }
+    return total
+  }
+
   const setupGlobalListeners = useCallback(() => {
     if (globalListenersCleanupRef.current) return
 
@@ -202,7 +212,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].type === 'thinking' && segs[i].isStreaming) {
-              segs[i] = { ...segs[i], isStreaming: false, collapsed: true }
+              segs[i] = { ...segs[i], isStreaming: false, collapsed: true, completedAt: Date.now() }
             }
           }
 
@@ -235,7 +245,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].isStreaming && segs[i].type !== 'thinking') {
-              segs[i] = { ...segs[i], isStreaming: false }
+              segs[i] = { ...segs[i], isStreaming: false, completedAt: Date.now() }
             }
           }
 
@@ -267,10 +277,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           const segs = [...(m.segments || [])]
           const lastSeg = segs[segs.length - 1]
           if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false }
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
           }
           if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true }
+            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
           }
           segs.push({
             type: 'tool_call',
@@ -278,7 +288,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             toolName: name,
             toolArgs: args,
             isToolComplete: false,
-            collapsed: false,
+            collapsed: true,
             timestamp: Date.now(),
           })
           return { ...m, segments: segs }
@@ -300,7 +310,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           )
           if (lastIncompleteIndex === -1) return m
           const actualIndex = segs.length - 1 - lastIncompleteIndex
-          segs[actualIndex] = { ...segs[actualIndex], toolResult: result, isToolComplete: true, collapsed: true }
+          segs[actualIndex] = { ...segs[actualIndex], toolResult: result, isToolComplete: true, collapsed: true, completedAt: Date.now() }
           return { ...m, segments: segs }
         })
       )
@@ -314,21 +324,29 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       updateConvMessages(streamState.conversationId, (prev) => {
         const assistantMsg = prev.find((m) => m.id === streamState.assistantMessageId)
         if (!assistantMsg) return prev
-        const segs = (assistantMsg.segments || []).map(s => ({
-          ...s,
-          isStreaming: false,
-          ...(s.type === 'thinking' ? { collapsed: true } : {}),
-        }))
-        const tokenUsage = metadata?.tokenUsage || metadata?.usage
+        const segs = (assistantMsg.segments || []).map(s => {
+          const completedAt = s.completedAt || Date.now()
+          return {
+            ...s,
+            isStreaming: false,
+            completedAt: s.isStreaming ? completedAt : s.completedAt,
+            ...(s.type === 'thinking' ? { collapsed: true } : {}),
+          }
+        })
+        const apiTokenUsage = metadata?.tokenUsage || metadata?.usage
+        const totalChars = calcTotalOutputChars(segs, assistantMsg.content)
+        const tokenUsage = apiTokenUsage
+          ? {
+              promptTokens: apiTokenUsage.promptTokens ?? apiTokenUsage.prompt_tokens,
+              completionTokens: apiTokenUsage.completionTokens ?? apiTokenUsage.completion_tokens,
+              totalTokens: apiTokenUsage.totalTokens ?? apiTokenUsage.total_tokens,
+            }
+          : (totalChars > 0 ? { totalChars } : undefined)
         const savedAssistantMsg: MessageWithThought = {
           ...assistantMsg,
           isStreaming: false,
           segments: segs,
-          tokenUsage: tokenUsage ? {
-            promptTokens: tokenUsage.promptTokens ?? tokenUsage.prompt_tokens,
-            completionTokens: tokenUsage.completionTokens ?? tokenUsage.completion_tokens,
-            totalTokens: tokenUsage.totalTokens ?? tokenUsage.total_tokens,
-          } : undefined,
+          tokenUsage,
         }
         window.electronAPI.conversation.update({
           id: streamState.conversationId,
@@ -360,7 +378,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) =>
           m.id === streamState.assistantMessageId
-            ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })) }
+            ? { ...m, content: t('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false, completedAt: s.completedAt || Date.now() })) }
             : m
         )
       )
@@ -483,13 +501,32 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
-      setMessages(cachedMsgs)
+      const patchedCached = cachedMsgs.map(patchMissingCompletedAt)
+      const cachePatched = patchedCached.some((m, i) => m !== cachedMsgs[i])
+      if (cachePatched) {
+        conversationMessagesRef.current.set(convId, patchedCached)
+        window.electronAPI.conversation.update({
+          id: convId,
+          messages_json: JSON.stringify(patchedCached),
+          message_count: patchedCached.length,
+        }).catch(() => {})
+      }
+      setMessages(cachePatched ? patchedCached : cachedMsgs)
     } else {
       try {
         const fullConv = await window.electronAPI.conversation.get(convId)
         if (fullConv) {
-          const msgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
+          const parsedMsgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
+          const msgs = parsedMsgs
             .map(ensureSegments)
+            .map(patchMissingCompletedAt)
+          if (msgs.some((m, i) => m !== parsedMsgs[i])) {
+            window.electronAPI.conversation.update({
+              id: convId,
+              messages_json: JSON.stringify(msgs),
+              message_count: msgs.length,
+            }).catch(() => {})
+          }
           setConvMessages(convId, msgs)
         }
       } catch {

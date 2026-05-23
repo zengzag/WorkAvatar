@@ -237,12 +237,12 @@ class EmployeeAgentService {
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
     const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
     const kbToolIds = [
-      'kb_search',
-      'kb_get_content',
+      'kb_list',
       'kb_overview',
-      'query_global_summary',
-      'query_paragraphs',
-      'query_fulltext',
+      'kb_search',
+      'kb_get_toc',
+      'kb_get_paragraphs',
+      'kb_get_content',
     ]
     for (const id of kbToolIds) {
       allBuiltinToolIds.add(id)

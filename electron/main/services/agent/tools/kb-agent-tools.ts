@@ -1,7 +1,6 @@
 import KnowledgeBaseService from '../../kb.service'
 import DatabaseService from '../../database.service'
 import KBDatabaseService from '../../kb-database.service'
-import SearchEngineService from '../../search-engine.service'
 import { ToolDefinition } from './types'
 import { createKBSearchTool, createKBGetContentTool } from './index'
 import { createKbIdValidator } from './utils'
@@ -9,6 +8,7 @@ import { createKbIdValidator } from './utils'
 function formatKBOptions(kbs: any[]): string {
   return kbs.map(kb => `${kb.id}(${kb.name})`).join(', ')
 }
+
 export function createKBAgentTools(
     kbService: KnowledgeBaseService,
     db: DatabaseService,
@@ -23,10 +23,10 @@ export function createKBAgentTools(
   ).all(employeeId) as any[]
 
   const linkedKbIds = links.map((l) => l.kb_id)
-  let employeeKBs: any[] = []
+  let allKBs: any[] = []
   if (linkedKbIds.length > 0) {
     const placeholders = linkedKbIds.map(() => '?').join(',')
-    employeeKBs = kbDb.getDb().prepare(`
+    allKBs = kbDb.getDb().prepare(`
       SELECT kb.*, (SELECT COUNT(*) FROM kb_documents WHERE kb_id = kb.id) as doc_count
       FROM knowledge_bases kb
       WHERE kb.id IN (${placeholders})
@@ -34,67 +34,83 @@ export function createKBAgentTools(
     `).all(...linkedKbIds) as any[]
   }
 
-  const allKBs = employeeKBs
-
   const kbIds = allKBs.map((kb: any) => kb.id)
-
   const validateKbId = createKbIdValidator(kbIds)
 
+  // ============================================================
+  // kb_list - 知识库列表
+  // ============================================================
+  const kbListTool: ToolDefinition = {
+    id: 'kb_list',
+    name: 'kb_list',
+    title: '知识库列表',
+    description: '列出当前可访问的所有知识库，了解各知识库的主题和文档规模。',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: []
+    },
+    handler: async () => {
+      try {
+        if (allKBs.length === 0) {
+          return { success: true, output: '当前员工未关联任何知识库。' }
+        }
+
+        let output = `## 可访问的知识库\n\n`
+        output += `当前可访问 ${allKBs.length} 个知识库：\n\n`
+
+        for (let i = 0; i < allKBs.length; i++) {
+          const kb = allKBs[i]
+          output += `[${i + 1}] **${kb.name}**\n`
+          output += `- ID: ${kb.id}\n`
+          if (kb.description) {
+            output += `- 描述: ${kb.description}\n`
+          }
+          output += `- 文档数: ${kb.doc_count || 0}\n`
+
+          const globalSummary = kbService.getGlobalSummary(kb.id)
+          if (globalSummary) {
+            const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
+            if (keyTopics.length > 0) {
+              output += `- 核心主题: ${keyTopics.join('、')}\n`
+            }
+          }
+          output += '\n'
+        }
+
+        output += `请使用 kb_overview 并传入 kb_id 查看知识库详情和文档列表。`
+        return { success: true, output }
+      } catch (error: any) {
+        return { success: false, error: `知识库列表获取失败: ${error.message}` }
+      }
+    },
+    source: 'builtin'
+  }
+  tools.push(kbListTool)
+
+  // ============================================================
+  // kb_overview - 知识库概览（需传kb_id）
+  // ============================================================
   const kbOverviewTool: ToolDefinition = {
     id: 'kb_overview',
     name: 'kb_overview',
     title: '知识库概览',
-    description: `获取知识库概览。不传kb_id返回知识库列表，传入则返回该知识库文档详情。`,
+    description: '查看知识库的全局摘要、核心主题和文档摘要列表，帮助确定要深入的目标文档。',
     parameters: {
       type: 'object',
       properties: {
         kb_id: {
           type: 'string',
-          description: `知识库ID（可选）。不传则返回所有可访问知识库列表；传入则返回该知识库的文档详情。可选值: ${formatKBOptions(allKBs)}`
+          description: `知识库ID（必需）。可选值: ${formatKBOptions(allKBs)}`
         }
       },
-      required: []
+      required: ['kb_id']
     },
     handler: async (args: any) => {
       try {
-        if (!args.kb_id) {
-          if (allKBs.length === 0) {
-            return { success: true, output: '当前员工未关联任何知识库。' }
-          }
-
-          let output = `## 可访问的知识库列表\n\n`
-          output += `当前数字员工可访问 ${allKBs.length} 个知识库，请根据问题选择最合适的知识库进行查询：\n\n`
-
-          for (let i = 0; i < allKBs.length; i++) {
-            const kb = allKBs[i]
-            output += `[${i + 1}] **${kb.name}**\n`
-            output += `- **知识库ID**: ${kb.id}\n`
-            if (kb.description) {
-              output += `- **介绍**: ${kb.description}\n`
-            }
-            output += `- **文档数量**: ${kb.doc_count || 0}\n`
-
-            const globalSummary = kbService.getGlobalSummary(kb.id)
-            if (globalSummary) {
-              const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
-              if (keyTopics.length > 0) {
-                output += `- **核心主题**: ${keyTopics.join('、')}\n`
-              }
-            }
-            output += '\n'
-          }
-
-          output += `### 使用建议\n`
-          output += `- 请根据用户问题选择最相关的知识库，传入其 kb_id 获取详细文档列表\n`
-          output += `- 如果不确定哪个知识库包含答案，可以依次查询每个知识库\n`
-          output += `- 也可以使用 kb_search 工具直接在所有知识库中搜索（会自动选择第一个知识库）\n`
-
-          return { success: true, output }
-        }
-
         const targetKbId = validateKbId(args.kb_id)
         if (!targetKbId) {
-          return { success: true, output: '未关联知识库或无权访问该知识库，无法获取概览。' }
+          return { success: true, output: '未关联知识库或无权访问该知识库。' }
         }
 
         const kb = kbService.getKB(targetKbId)
@@ -102,50 +118,48 @@ export function createKBAgentTools(
           return { success: true, output: '知识库不存在。' }
         }
 
+        let output = `## ${kb.name}\n\n`
+        if (kb.description) {
+          output += `${kb.description}\n\n`
+        }
+
+        const globalSummary = kbService.getGlobalSummary(targetKbId)
+        if (globalSummary) {
+          const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
+          output += `### 全局摘要\n${globalSummary.summary}\n\n`
+          if (keyTopics.length > 0) {
+            output += `### 核心主题\n${keyTopics.map(t => `- ${t}`).join('\n')}\n\n`
+          }
+        }
+
         const docs = kbService.getDocumentList(targetKbId) as any[]
         const completedDocs = docs.filter((d: any) => d.parse_status === 'completed')
 
         if (completedDocs.length === 0) {
-          return { success: true, output: `知识库"${kb.name}"中暂无已解析的文档。` }
+          output += `该知识库中暂无已解析的文档。`
+          return { success: true, output }
         }
 
-        let output = `## 知识库概览: ${kb.name}\n\n`
-        if (kb.description) {
-          output += `**描述**: ${kb.description}\n\n`
-        }
-        output += `**文档总数**: ${completedDocs.length}\n\n`
-        output += `### 文档列表\n\n`
-
+        output += `### 文档列表（${completedDocs.length}个）\n\n`
         for (const doc of completedDocs) {
-          output += `#### ${doc.original_name}\n`
-          output += `- **文档ID**: ${doc.id}\n`
-          output += `- **类型**: ${doc.type}\n`
+          output += `[${completedDocs.indexOf(doc) + 1}] **${doc.original_name}**\n`
+          output += `- ID: ${doc.id}\n`
+          output += `- 类型: ${doc.type}\n`
 
           const docSummary = kbService.getDocumentSummary(doc.id)
           if (docSummary) {
             const topics: string[] = JSON.parse(docSummary.main_topics_json || '[]')
-            output += `- **摘要**: ${docSummary.summary || '无摘要'}\n`
+            output += `- 摘要: ${docSummary.summary || '无摘要'}\n`
             if (topics.length > 0) {
-              output += `- **主题**: ${topics.join('、')}\n`
+              output += `- 主题: ${topics.join('、')}\n`
             }
           } else {
-            output += `- **摘要**: 尚未进行知识处理，请先处理文档\n`
+            output += `- 摘要: 尚未进行知识处理\n`
           }
-
-          const paragraphs = kbService.getParagraphs(doc.id)
-          if (paragraphs.length > 0) {
-            output += `- **段落**: ${paragraphs.map((p: any) => p.title_path || p.title).join('、')}\n`
-          }
-
           output += '\n'
         }
 
-        output += `### 下一步查询建议\n`
-        output += `- 使用 kb_get_content 并传入 document_id 可获取某个文件的完整内容或指定区间\n`
-        output += `- 使用 kb_search 进行智能综合检索快速定位相关内容\n`
-        output += `- 使用 query_paragraphs 按关键词检索相关段落摘要\n`
-        output += `- 使用 query_global_summary 获取知识库的全局摘要和核心主题\n`
-
+        output += `请使用 kb_get_toc 并传入 document_id 查看文档目录结构，或使用 kb_search 检索具体内容。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `知识库概览获取失败: ${error.message}` }
@@ -155,165 +169,146 @@ export function createKBAgentTools(
   }
   tools.push(kbOverviewTool)
 
-  const globalSummaryTool: ToolDefinition = {
-    id: 'query_global_summary',
-    name: 'query_global_summary',
-    title: '查询全局知识摘要',
-    description: '查询知识库全局摘要和核心主题。',
+  // ============================================================
+  // kb_get_toc - 获取文档目录
+  // ============================================================
+  const kbGetTocTool: ToolDefinition = {
+    id: 'kb_get_toc',
+    name: 'kb_get_toc',
+    title: '获取文档目录',
+    description: '获取文档的层级目录结构，包含每个章节的 paragraph_id、标题路径和内容偏移范围。',
     parameters: {
       type: 'object',
       properties: {
-        kb_id: {
+        document_id: {
           type: 'string',
-          description: `知识库ID（可选，不提供则使用默认知识库）。可选值: ${formatKBOptions(allKBs)}`
+          description: '文档ID（必需）'
         }
       },
-      required: []
+      required: ['document_id']
     },
     handler: async (args: any) => {
       try {
-        const targetKbId = validateKbId(args.kb_id)
-        if (!targetKbId) {
-          return { success: true, output: '未关联知识库，无法查询全局摘要。' }
+        const doc = kbDb.getDb().prepare('SELECT * FROM kb_documents WHERE id = ?').get(args.document_id) as any
+        if (!doc) {
+          return { success: false, error: '文档不存在' }
         }
-        const globalSummary = kbService.getGlobalSummary(targetKbId)
-        if (!globalSummary) {
-          return { success: true, output: '知识库尚未生成全局摘要，请先处理文档并构建全局知识。' }
+
+        if (!kbIds.includes(doc.kb_id)) {
+          return { success: false, error: '无权访问该文档' }
         }
-        const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
-        const output = `## 全局知识摘要\n\n${globalSummary.summary}\n\n### 核心主题\n${keyTopics.map(t => `- ${t}`).join('\n')}\n\n### 下一步查询建议\n- 如果需要定位具体段落，请使用 query_paragraphs 按关键词检索\n- 如果需要查看原始文档内容，请使用 kb_get_content 获取完整文档或指定文本区间`
+
+        if (doc.parse_status !== 'completed') {
+          return { success: false, error: '文档尚未解析完成' }
+        }
+
+        const paragraphs = kbDb.getDb().prepare(
+          'SELECT * FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
+        ).all(args.document_id) as any[]
+
+        if (paragraphs.length === 0) {
+          return { success: true, output: '该文档暂无段落目录。' }
+        }
+
+        let output = `## 文档目录: ${doc.original_name}\n\n`
+        output += `共 ${paragraphs.length} 个段落：\n\n`
+
+        const indent = (level: number): string => {
+          const depth = Math.max(0, level - 1)
+          return '│  '.repeat(depth)
+        }
+
+        for (const p of paragraphs) {
+          const prefix = indent(p.level)
+          const branch = p.level > 1 ? '├── ' : ''
+          const levelTag = `L${p.level}`
+          const line = `${prefix}${branch}[${p.paragraph_index}] ${p.title}`
+          output += line + '\n'
+          output += `${prefix}    [${levelTag}] paragraph_id: ${p.id}, offset: ${p.start_offset}-${p.end_offset}\n`
+          if (p.summary) {
+            const shortSummary = p.summary.length > 80 ? p.summary.substring(0, 80) + '...' : p.summary
+            output += `${prefix}    摘要: ${shortSummary}\n`
+          }
+          output += '\n'
+        }
+
+        output += `请使用 kb_get_paragraphs 传入感兴趣的 paragraph_id 数组获取详细摘要，或使用 kb_get_content 传入 paragraph_id 获取完整内容。`
         return { success: true, output }
       } catch (error: any) {
-        return { success: false, error: `全局摘要查询失败: ${error.message}` }
+        return { success: false, error: `获取文档目录失败: ${error.message}` }
       }
     },
     source: 'builtin'
   }
-  tools.push(globalSummaryTool)
+  tools.push(kbGetTocTool)
 
-  const paragraphSearchTool: ToolDefinition = {
-    id: 'query_paragraphs',
-    name: 'query_paragraphs',
-    title: '检索段落摘要',
-    description: '按关键词检索相关段落摘要，定位文档内容。',
+  // ============================================================
+  // kb_get_paragraphs - 批量获取段落摘要
+  // ============================================================
+  const kbGetParagraphsTool: ToolDefinition = {
+    id: 'kb_get_paragraphs',
+    name: 'kb_get_paragraphs',
+    title: '获取段落摘要',
+    description: '批量获取多个段落的详细摘要和内容预览，用于在了解目录结构后深入查看感兴趣章节。',
     parameters: {
       type: 'object',
       properties: {
-        query: {
-          type: 'string',
-          description: '查询关键词或问题'
-        },
-        top_k: {
-          type: 'number',
-          description: '返回最相关的段落数量（1-10，默认5）',
-          minimum: 1,
-          maximum: 10
-        },
-        kb_id: {
-          type: 'string',
-          description: `知识库ID（可选）。可选值: ${formatKBOptions(allKBs)}`
-        }
-      },
-      required: ['query']
-    },
-    handler: async (args: any) => {
-      try {
-        const targetKbId = validateKbId(args.kb_id)
-        if (!targetKbId) {
-          return { success: true, output: '未关联知识库，无法检索段落。' }
-        }
-        const paragraphs = kbService.searchParagraphs(targetKbId, args.query, args.top_k || 5)
-        if (paragraphs.length === 0) {
-          return { success: true, output: '未找到相关段落摘要。你可以用 query_fulltext 进行语义检索。' }
-        }
-        const output = paragraphs.map((p: any, i: number) => {
-          const titlePath = p.title_path || p.paragraph_title || p.title || ''
-          return `[${i + 1}] 文档: ${p.document_name} | 路径: ${titlePath}\n摘要: ${p.text || '无摘要'}\n[document_id: ${p.document_id}${p.paragraph_id ? `, paragraph_id: ${p.paragraph_id}` : ''}]`
-        }).join('\n\n---\n\n')
-        return { success: true, output: output + '\n\n提示: 使用 kb_get_content 并传入 document_id 可获取完整内容；传入 start_offset/end_offset 或 start_line/end_line 可获取指定文本区间。' }
-      } catch (error: any) {
-        return { success: false, error: `段落检索失败: ${error.message}` }
-      }
-    },
-    source: 'builtin'
-  }
-  tools.push(paragraphSearchTool)
-
-  const fulltextSearchTool: ToolDefinition = {
-    id: 'query_fulltext',
-    name: 'query_fulltext',
-    title: '全文关键词检索',
-    description: '在文档内容中检索关键词，返回匹配的文本片段。基于FTS5全文索引，支持大规模数据毫秒级检索。',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: '检索查询语句（支持空格分隔多个关键词）'
-        },
-        top_k: {
-          type: 'number',
-          description: '返回结果数量（1-10，默认5）',
-          minimum: 1,
-          maximum: 10,
-          default: 5
-        },
-        document_ids: {
+        paragraph_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定检索的文档ID列表（可选）'
-        },
-        kb_id: {
-          type: 'string',
-          description: `知识库ID（可选）。可选值: ${formatKBOptions(allKBs)}`
+          description: '段落ID数组（必需），从 kb_get_toc 或 kb_search 结果中获取'
         }
       },
-      required: ['query']
+      required: ['paragraph_ids']
     },
     handler: async (args: any) => {
       try {
-        const targetKbId = validateKbId(args.kb_id)
-        if (!targetKbId) {
-          return { success: true, output: '未关联知识库，无法进行全文检索。' }
+        const ids: string[] = args.paragraph_ids || []
+        if (ids.length === 0) {
+          return { success: true, output: '请提供至少一个段落ID。' }
         }
 
-        const query = String(args.query || '').trim()
-        if (!query || query.length < 2) {
-          return { success: true, output: '请输入有效的查询关键词（至少2个字符）。' }
+        const placeholders = ids.map(() => '?').join(',')
+        const paragraphs = kbDb.getDb().prepare(
+          `SELECT p.*, d.original_name as document_name
+           FROM kb_paragraphs p
+           LEFT JOIN kb_documents d ON d.id = p.document_id
+           WHERE p.id IN (${placeholders})
+           ORDER BY p.document_id, p.paragraph_index`
+        ).all(...ids) as any[]
+
+        if (paragraphs.length === 0) {
+          return { success: true, output: '未找到匹配的段落。请检查 paragraph_id 是否正确。' }
         }
 
-        const topK = Math.min(Math.max(args.top_k || 5, 1), 10)
-        const searchEngine = SearchEngineService.getInstance()
+        let output = `## 段落摘要\n\n`
 
-        const results = searchEngine.ftsSearch(targetKbId, query, topK, {
-          documentIds: args.document_ids,
-          sourceTypes: ['content_paragraph']
-        })
-
-        if (results.length === 0) {
-          return { success: true, output: '全文检索未找到相关内容。' }
-        }
-
-        const output = results.map((r, i) => {
-          const locParts: string[] = []
-          if (r.start_line !== undefined && r.end_line !== undefined) {
-            locParts.push(`line: ${r.start_line}-${r.end_line}`)
+        for (let i = 0; i < paragraphs.length; i++) {
+          const p = paragraphs[i]
+          output += `[${i + 1}] **${p.title_path || p.title}** (L${p.level})\n`
+          output += `- 文档: ${p.document_name}\n`
+          if (p.summary) {
+            output += `- 摘要: ${p.summary}\n`
+          } else {
+            output += `- 摘要: (无)\n`
           }
-          if (r.start_offset !== undefined && r.end_offset !== undefined) {
-            locParts.push(`offset: ${r.start_offset}-${r.end_offset}`)
+          const preview = p.content ? p.content.substring(0, 200) : ''
+          if (preview) {
+            output += `- 预览: ${preview}${p.content.length > 200 ? '...' : ''}\n`
           }
-          const locStr = locParts.length > 0 ? ` [${locParts.join(', ')}]` : ''
-          return `[${i + 1}] ${r.document_name}\n${r.text}\n[document_id: ${r.document_id}]${locStr}`
-        }).join('\n\n---\n\n')
+          output += `[document_id: ${p.document_id}, paragraph_id: ${p.id}, offset: ${p.start_offset}-${p.end_offset}]\n\n`
+          output += '---\n\n'
+        }
 
-        return { success: true, output: output + '\n\n提示: 使用 kb_get_content 并传入 document_id 可获取完整文档；传入 start_offset/end_offset 或 start_line/end_line 可获取指定文本区间。' }
+        output += `共 ${paragraphs.length} 个段落。请使用 kb_get_content 传入 paragraph_id 获取完整内容。`
+        return { success: true, output }
       } catch (error: any) {
-        return { success: false, error: `全文检索失败: ${error.message}` }
+        return { success: false, error: `获取段落摘要失败: ${error.message}` }
       }
     },
     source: 'builtin'
   }
-  tools.push(fulltextSearchTool)
+  tools.push(kbGetParagraphsTool)
 
   tools.push(createKBSearchTool(kbIds))
   tools.push(createKBGetContentTool(kbIds))

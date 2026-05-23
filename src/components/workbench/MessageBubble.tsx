@@ -428,7 +428,7 @@ const MessageBubble: React.FC<{
                 </Popconfirm>
               </Space>
             )}
-            {displayTokenUsage && !displayIsStreaming && (
+            {!displayIsStreaming && (
               <div style={{
                 marginTop: 4,
                 marginLeft: 2,
@@ -436,21 +436,30 @@ const MessageBubble: React.FC<{
                 gap: 8,
                 alignItems: 'center',
               }}>
-                {displayTokenUsage.promptTokens !== undefined && (
+                {displayTokenUsage && displayTokenUsage.totalTokens === undefined && displayTokenUsage.totalChars !== undefined ? (
                   <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                    {t('workbench.promptTokens')}: {displayTokenUsage.promptTokens}
+                    {t('workbench.outputChars')}: {displayTokenUsage.totalChars}
                   </Text>
-                )}
-                {displayTokenUsage.completionTokens !== undefined && (
-                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                    {t('workbench.completionTokens')}: {displayTokenUsage.completionTokens}
-                  </Text>
-                )}
-                {displayTokenUsage.totalTokens !== undefined && (
-                  <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                    {t('workbench.totalTokens')}: {displayTokenUsage.totalTokens}
-                  </Text>
-                )}
+                ) : null}
+                {displayTokenUsage && displayTokenUsage.totalTokens !== undefined ? (
+                  <>
+                    {displayTokenUsage.promptTokens !== undefined && (
+                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                        {t('workbench.promptTokens')}: {displayTokenUsage.promptTokens}
+                      </Text>
+                    )}
+                    {displayTokenUsage.completionTokens !== undefined && (
+                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                        {t('workbench.completionTokens')}: {displayTokenUsage.completionTokens}
+                      </Text>
+                    )}
+                    {displayTokenUsage.totalTokens !== undefined && (
+                      <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                        {t('workbench.totalTokens')}: {displayTokenUsage.totalTokens}
+                      </Text>
+                    )}
+                  </>
+                ) : null}
               </div>
             )}
           </div>
