@@ -14,7 +14,6 @@ export interface EmployeeAgentConfig extends AgentConfig {
   totApiKey?: string
   totBaseUrl?: string
   totProviderType?: string
-  skillsDirectories?: string[]
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
   selfLearning?: boolean
@@ -30,7 +29,6 @@ export class EmployeeAgent extends BaseAgent {
     super(config, options)
     this.employeeConfig = this.normalizeEmployeeConfig(config)
     this.skillManager = new SkillManager(
-      this.employeeConfig.skillsDirectories || [],
       this.employeeConfig.allowedSkillPaths,
       this.employeeConfig.debug ? this.log.bind(this) : undefined
     )
@@ -193,7 +191,6 @@ export class EmployeeAgent extends BaseAgent {
       treeOfThought: config.treeOfThought || false,
       filterTools: config.filterTools !== false,
       selfLearning: config.selfLearning || false,
-      skillsDirectories: config.skillsDirectories || ['skills'],
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
     }

@@ -32,8 +32,7 @@ export interface ToolDefinition {
     required?: string[]
   }
   handler: (args: Record<string, any>) => Promise<any> | any
-  source: 'builtin' | 'mcp' | 'skill' | 'dynamic' | 'workspace'
-  mcpServerId?: string
+  source: 'builtin' | 'skill' | 'dynamic' | 'workspace'
   permission?: ToolPermission
   timeoutMs?: number
   metadata?: Record<string, any>

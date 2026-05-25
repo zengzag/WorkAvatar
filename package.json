@@ -20,7 +20,6 @@
   "license": "ISC",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@xyflow/react": "^12.10.2",
     "adm-zip": "^0.5.17",
@@ -48,6 +47,7 @@
     "remark-math": "^6.0.0",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",
+    "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.13"
   },

@@ -507,7 +507,8 @@ class KBDocumentService {
             const newParagraphs = this.processor.identifyParagraphsFromLLMToc(content, restoredToc)
             this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, newParagraphs)
 
-            const tocForSave = this.processor.buildTocWithPath(restoredToc)
+            const filteredToc = this.processor.filterTocByContentVolume(content, restoredToc)
+            const tocForSave = this.processor.buildTocWithPath(filteredToc)
             this.processor.saveTocOnly(doc.kb_id, docId, tocForSave)
 
             onProgress?.('toc_restore', `TOC restored: ${restoredToc.length} entries, ${newParagraphs.length} paragraphs`)

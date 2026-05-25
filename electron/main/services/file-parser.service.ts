@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { convert } from 'file2md'
 import mammoth from 'mammoth'
+import WordExtractor from 'word-extractor'
 import XLSX from 'xlsx'
 import { extractTextItems } from 'unpdf'
 import type { ParseResult } from '../../shared/types'
@@ -56,13 +57,14 @@ class FileParserService {
 
   private async parseDoc(filePath: string): Promise<ParseResult> {
     try {
-      const buffer = await fs.promises.readFile(filePath)
-      const result = await mammoth.extractRawText({ buffer })
+      const extractor = new WordExtractor()
+      const doc = await extractor.extract(filePath)
+      const bodyText = doc.getBody()
 
       return {
         type: 'word',
-        fullText: result.value,
-        sections: this.splitIntoSections(result.value),
+        fullText: bodyText,
+        sections: this.splitIntoSections(bodyText),
         tables: [],
         metadata: {},
       }
@@ -72,7 +74,7 @@ class FileParserService {
         message: error.message,
         stack: error.stack,
       })
-      throw new Error('.doc 文件格式解析失败，请转换为 .docx 格式后重试')
+      throw error
     }
   }
 

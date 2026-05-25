@@ -22,7 +22,6 @@ import {
   ProfileSection,
   ToolsSection,
   SkillsSection,
-  MCPServersSection,
   ExportImportSection,
   MemorySection,
 } from '../components/employee-settings'
@@ -36,14 +35,6 @@ interface ToolInfo {
   category: string
   is_enabled: boolean
   is_assigned: boolean
-}
-
-interface MCPServer {
-  id: string
-  name: string
-  command: string
-  status: string
-  last_error?: string
 }
 
 interface InstalledSkill {
@@ -79,11 +70,6 @@ const EmployeeSettings: React.FC = () => {
   const [form] = Form.useForm()
 
   const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
-  const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
-  const [isMcpModalOpen, setIsMcpModalOpen] = useState(false)
-  const [mcpForm] = Form.useForm()
-  const [editingMcpServer, setEditingMcpServer] = useState<MCPServer | null>(null)
-  const [connectingMcp, setConnectingMcp] = useState<string | null>(null)
 
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [employeeSkills, setEmployeeSkills] = useState<InstalledSkill[]>([])
@@ -128,15 +114,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }, [id])
 
-  const loadMCPServers = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.mcp.listServers()
-      setMcpServers(result || [])
-    } catch {
-      console.error('加载 MCP 服务器失败')
-    }
-  }, [])
-
   const loadInstalledSkills = useCallback(async () => {
     try {
       const result = await window.electronAPI.skillRegistry.list()
@@ -161,11 +138,10 @@ const EmployeeSettings: React.FC = () => {
       loadEmployee()
       loadProviders()
       loadTools()
-      loadMCPServers()
       loadInstalledSkills()
       loadEmployeeSkills()
     }
-  }, [id, loadEmployee, loadProviders, loadTools, loadMCPServers, loadInstalledSkills, loadEmployeeSkills])
+  }, [id, loadEmployee, loadProviders, loadTools, loadInstalledSkills, loadEmployeeSkills])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -433,86 +409,6 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleCreateMCPServer = async (values: any) => {
-    try {
-      if (editingMcpServer) {
-        await window.electronAPI.mcp.updateServer({
-          id: editingMcpServer.id,
-          ...values,
-        })
-        message.success(t('employeeSettings.mcpUpdated'))
-      } else {
-        await window.electronAPI.mcp.createServer({
-          name: values.name,
-          command: values.command,
-          args: values.args ? values.args.split('\n').filter((s: string) => s.trim()) : [],
-          env: values.env ? (() => { try { return JSON.parse(values.env) } catch { message.error(t('employeeSettings.invalidJson')); throw new Error('invalid_json') } })() : {},
-        })
-        message.success(t('employeeSettings.mcpCreated'))
-      }
-      setIsMcpModalOpen(false)
-      setEditingMcpServer(null)
-      mcpForm.resetFields()
-      loadMCPServers()
-    } catch {
-      message.error(t('common.saveFailed'))
-    }
-  }
-
-  const handleConnectMCPServer = async (serverId: string) => {
-    setConnectingMcp(serverId)
-    try {
-      const result = await window.electronAPI.mcp.connectServer(serverId)
-      if (result.success) {
-        message.success(t('employeeSettings.mcpConnected'))
-        if (result.tools) {
-          message.info(t('employeeSettings.mcpToolsFound', { count: result.tools.length }))
-        }
-      } else {
-        message.error(result.error || t('employeeSettings.mcpConnectFailed'))
-      }
-      loadMCPServers()
-    } catch {
-      message.error(t('employeeSettings.mcpConnectFailed'))
-    } finally {
-      setConnectingMcp(null)
-    }
-  }
-
-  const handleDisconnectMCPServer = async (serverId: string) => {
-    try {
-      await window.electronAPI.mcp.disconnectServer(serverId)
-      message.success(t('employeeSettings.mcpDisconnected'))
-      loadMCPServers()
-    } catch {
-      message.error(t('employeeSettings.mcpDisconnectFailed'))
-    }
-  }
-
-  const handleDeleteMCPServer = async (serverId: string) => {
-    try {
-      await window.electronAPI.mcp.deleteServer(serverId)
-      message.success(t('common.deleted'))
-      loadMCPServers()
-    } catch {
-      message.error(t('common.deleteFailed'))
-    }
-  }
-
-  const openMcpEditor = (server?: MCPServer) => {
-    if (server) {
-      setEditingMcpServer(server)
-      mcpForm.setFieldsValue({
-        name: server.name,
-        command: server.command,
-      })
-    } else {
-      setEditingMcpServer(null)
-      mcpForm.resetFields()
-    }
-    setIsMcpModalOpen(true)
-  }
-
   if (!employee) {
     return (
       <div style={{ padding: 24 }}>
@@ -583,26 +479,6 @@ const EmployeeSettings: React.FC = () => {
                 onUninstallSkill={handleUninstallSkill}
                 onAssignSkill={handleAssignSkill}
                 onRemoveSkill={handleRemoveSkill}
-              />
-            )
-          },
-          {
-            key: 'mcp',
-            label: t('employeeSettings.tabMcp'),
-            children: (
-              <MCPServersSection
-                mcpServers={mcpServers}
-                isMcpModalOpen={isMcpModalOpen}
-                setIsMcpModalOpen={setIsMcpModalOpen}
-                mcpForm={mcpForm}
-                editingMcpServer={editingMcpServer}
-                setEditingMcpServer={setEditingMcpServer}
-                connectingMcp={connectingMcp}
-                onCreateMCPServer={handleCreateMCPServer}
-                onConnectMCPServer={handleConnectMCPServer}
-                onDisconnectMCPServer={handleDisconnectMCPServer}
-                onDeleteMCPServer={handleDeleteMCPServer}
-                onOpenMcpEditor={openMcpEditor}
               />
             )
           },

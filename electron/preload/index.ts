@@ -27,8 +27,6 @@ import type {
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   ToolAssignParams,
-  MCPServerCreateParams,
-  MCPServerUpdateParams,
   KBCreateParams,
   KBUpdateParams,
   KBDocParseParams,
@@ -169,15 +167,6 @@ const electronAPI = {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
-  },
-
-  mcp: {
-    listServers: () => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_LIST),
-    createServer: (params: MCPServerCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_CREATE, params),
-    updateServer: (params: MCPServerUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_UPDATE, params),
-    deleteServer: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_DELETE, id),
-    connectServer: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_CONNECT, id),
-    disconnectServer: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVER_DISCONNECT, id),
   },
 
   skillRegistry: {

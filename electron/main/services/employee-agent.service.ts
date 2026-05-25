@@ -125,7 +125,6 @@ class EmployeeAgentService {
 
     const workspaceGuidance = getWorkspacePrompt(employee.workspace_path || '')
 
-    const skillsDir = this.skillRegistry.getSkillsDir()
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
 
     const assignedSkillPaths = employeeSkills.assigned.map(skill => skill.installPath)
@@ -156,7 +155,6 @@ class EmployeeAgentService {
       totBaseUrl: modelConfig?.tot_base_url ?? (config.base_url || this.llmClient.getBaseURL(config)),
       totProviderType: modelConfig?.tot_provider_type ?? config.provider_type,
       planningStrategy: modelConfig?.planning_strategy,
-      skillsDirectories: [skillsDir],
       allowedSkillPaths: assignedSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
@@ -324,7 +322,7 @@ class EmployeeAgentService {
         const result = await toolEngine.executeTool(t.id, args)
         return result.success ? result.output : { error: result.error }
       },
-      source: t.source as any,
+      source: t.source as ToolDefinition['source'],
     }))
   }
 

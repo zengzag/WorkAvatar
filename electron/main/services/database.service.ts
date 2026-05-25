@@ -180,19 +180,6 @@ class DatabaseService {
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_tools_unique ON employee_tools(employee_id, tool_id);
 
-      CREATE TABLE IF NOT EXISTS mcp_servers (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        command TEXT NOT NULL,
-        args_json TEXT NOT NULL DEFAULT '[]',
-        env_json TEXT DEFAULT '{}',
-        is_enabled BOOLEAN NOT NULL DEFAULT 1,
-        status TEXT DEFAULT 'disconnected',
-        last_error TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
       CREATE INDEX IF NOT EXISTS idx_employee_tools_employee ON employee_tools(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_tools_tool ON employee_tools(tool_id);
 

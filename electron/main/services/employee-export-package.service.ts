@@ -57,7 +57,6 @@ export class EmployeeExportPackageService {
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
 
-      const mcpServers = this.configService.getEmployeeMCPServers(employeeId)
       const installedSkills = this.db.getDb().prepare(
         'SELECT es.skill_id, es.is_enabled, sk.name as skill_name FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
       ).all(employeeId) as any[]
@@ -93,10 +92,6 @@ export class EmployeeExportPackageService {
           tool_id: t.tool_id,
           is_enabled: !!t.is_enabled,
           config_json: t.config_json || '{}',
-        })),
-        mcpServers: mcpServers.map(mcp => ({
-          mcp_server_id: mcp.server_id,
-          mcp_server_name: mcp.server_name,
         })),
         installedSkills: installedSkills.map(sk => ({
           skill_id: sk.skill_id,

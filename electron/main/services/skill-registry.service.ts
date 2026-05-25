@@ -12,7 +12,6 @@ export interface ClaudeSkillManifest {
   author?: string
   tags?: string[]
   tools?: string[]
-  mcp_servers?: string[]
 }
 
 export interface ClaudeSkill {
@@ -146,7 +145,6 @@ class SkillRegistryService {
       author: '',
       tags: [],
       tools: [],
-      mcp_servers: [],
     }
 
     let inFrontMatter = false
@@ -190,9 +188,6 @@ class SkillRegistryService {
             break
           case 'tools':
             manifest.tools = value.split(',').map((t) => t.trim()).filter(Boolean)
-            break
-          case 'mcp_servers':
-            manifest.mcp_servers = value.split(',').map((t) => t.trim()).filter(Boolean)
             break
         }
       }

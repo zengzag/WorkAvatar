@@ -71,6 +71,16 @@ class KnowledgeProcessorService {
   private static readonly TOC_CHUNK_LINES = 100
   private static readonly TOC_OVERLAP_LINES = 10
   private static readonly TOC_MIN_HEADING_DENSITY = 8000
+  private static readonly MIN_CONTENT_WORDS = 50
+
+  private countWords(text: string): number {
+    const trimmed = text.trim()
+    if (!trimmed) return 0
+    const cjkCount = (trimmed.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g) || []).length
+    const nonCjkText = trimmed.replace(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/g, ' ')
+    const latinWords = nonCjkText.split(/\s+/).filter(w => w.length > 0).length
+    return cjkCount + latinWords
+  }
 
   identifyParagraphs(text: string): ParagraphInfo[] {
     const paragraphs: ParagraphInfo[] = []
@@ -119,7 +129,7 @@ class KnowledgeProcessorService {
       const endOff = nextHeading ? nextHeading.offset : text.length
       const content = text.substring(startOff, endOff).trim()
 
-      if (content.length > 50) {
+      if (this.countWords(content) >= KnowledgeProcessorService.MIN_CONTENT_WORDS) {
         if (content.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
           const subChunks = this.splitIntoChunks(content, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
           for (let si = 0; si < subChunks.length; si++) {
@@ -231,6 +241,7 @@ class KnowledgeProcessorService {
    - 无编号型：独立成行的概括性短语，后续跟随详细说明内容
 4. level表示层级深度：1=最高级（章/部分），2=次级（节），3=更次级（小节），4=最细粒度
 5. lineNumber必须精确对应内容中的行号标记[L数字]
+6. 标题对应的正文内容太少（例如小于50词）时，忽略该标题
 
 输出要求：
 - 严格按照JSON格式输出
@@ -431,7 +442,7 @@ ${numberedContent}
       const endOff = nextEntry ? nextEntry.offset : text.length
       const content = text.substring(startOff, endOff).trim()
 
-      if (content.length > 10) {
+      if (this.countWords(content) >= KnowledgeProcessorService.MIN_CONTENT_WORDS) {
         if (content.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
           const subChunks = this.splitIntoChunks(content, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
           for (let si = 0; si < subChunks.length; si++) {
@@ -466,6 +477,18 @@ ${numberedContent}
     }
 
     return paragraphs
+  }
+
+  filterTocByContentVolume(text: string, entries: ValidatedTocEntry[]): ValidatedTocEntry[] {
+    if (entries.length === 0) return entries
+    const sorted = [...entries].sort((a, b) => a.offset - b.offset)
+    return sorted.filter((entry, i) => {
+      const nextEntry = sorted[i + 1]
+      const startOff = entry.offset
+      const endOff = nextEntry ? nextEntry.offset : text.length
+      const content = text.substring(startOff, endOff).trim()
+      return this.countWords(content) >= KnowledgeProcessorService.MIN_CONTENT_WORDS
+    })
   }
 
   buildTocWithPath(entries: ValidatedTocEntry[]): Array<{ title: string; level: number; path: string; offset: number }> {

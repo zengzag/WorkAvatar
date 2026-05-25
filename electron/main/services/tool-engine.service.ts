@@ -1,5 +1,3 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import DatabaseService from './database.service'
 import { safeCalculate, formatDate } from './common-utils'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
@@ -10,17 +8,7 @@ export interface ToolDefinition {
   description: string
   parameters: Record<string, any>
   handler: (args: Record<string, any>) => Promise<any>
-  source: 'builtin' | 'mcp' | 'skill'
-  mcpServerId?: string
-}
-
-export interface MCPServerConfig {
-  id: string
-  name: string
-  command: string
-  args: string[]
-  env?: Record<string, string>
-  enabled: boolean
+  source: 'builtin' | 'skill'
 }
 
 export interface ToolCallResult {
@@ -32,8 +20,6 @@ export interface ToolCallResult {
 class ToolEngineService {
   private db: DatabaseService
   private tools: Map<string, ToolDefinition> = new Map()
-  private mcpClients: Map<string, Client> = new Map()
-  private mcpTransports: Map<string, StdioClientTransport> = new Map()
   private static instance: ToolEngineService
 
   private constructor() {
@@ -156,84 +142,6 @@ class ToolEngineService {
       return { success: true, output }
     } catch (error: any) {
       return { success: false, error: error.message || 'Tool execution failed' }
-    }
-  }
-
-  async connectMCPServer(config: MCPServerConfig): Promise<{ success: boolean; error?: string; tools?: any[] }> {
-    try {
-      if (this.mcpClients.has(config.id)) {
-        await this.disconnectMCPServer(config.id)
-      }
-
-      const transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        env: config.env as Record<string, string>,
-      })
-
-      const client = new Client(
-        { name: 'workavatar-mcp-client', version: '1.0.0' },
-        { capabilities: {} }
-      )
-
-      await client.connect(transport)
-
-      this.mcpClients.set(config.id, client)
-      this.mcpTransports.set(config.id, transport)
-
-      const toolsResponse = await client.listTools()
-      const mcpTools = (toolsResponse.tools || []).map((t: any) => ({
-        id: `${config.id}_${t.name}`,
-        name: t.name,
-        description: t.description || '',
-        parameters: t.inputSchema || {},
-      }))
-
-      for (const tool of mcpTools) {
-        this.tools.set(tool.id, {
-          ...tool,
-          handler: async (args) => {
-            const c = this.mcpClients.get(config.id)
-            if (!c) throw new Error('MCP client disconnected')
-            const result = await c.callTool({ name: tool.name, arguments: args })
-            return result
-          },
-          source: 'mcp',
-          mcpServerId: config.id,
-        })
-      }
-
-      return { success: true, tools: mcpTools }
-    } catch (error: any) {
-      return { success: false, error: error.message }
-    }
-  }
-
-  async disconnectMCPServer(serverId: string): Promise<void> {
-    const client = this.mcpClients.get(serverId)
-    if (client) {
-      try {
-        await client.close()
-      } catch {
-        // Ignore
-      }
-      this.mcpClients.delete(serverId)
-    }
-
-    const transport = this.mcpTransports.get(serverId)
-    if (transport) {
-      try {
-        await transport.close()
-      } catch {
-        // Ignore
-      }
-      this.mcpTransports.delete(serverId)
-    }
-
-    for (const [toolId, tool] of this.tools.entries()) {
-      if (tool.mcpServerId === serverId) {
-        this.tools.delete(toolId)
-      }
     }
   }
 }

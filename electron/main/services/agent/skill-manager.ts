@@ -1,5 +1,3 @@
-import fs from 'fs'
-import path from 'path'
 import SkillRegistryService from '../skill-registry.service'
 
 interface DiscoveredSkill {
@@ -10,18 +8,15 @@ interface DiscoveredSkill {
 }
 
 export class SkillManager {
-  private skillsDirectories: string[]
   private allowedSkillPaths: string[] | undefined
   private debugLog: ((...args: any[]) => void) | undefined
   private discoveredSkills: Map<string, DiscoveredSkill> = new Map()
   private activeSkills: Set<string> = new Set()
 
   constructor(
-    skillsDirectories: string[],
     allowedSkillPaths?: string[],
     debugLog?: (...args: any[]) => void
   ) {
-    this.skillsDirectories = skillsDirectories
     this.allowedSkillPaths = allowedSkillPaths
     this.debugLog = debugLog
   }
@@ -34,7 +29,7 @@ export class SkillManager {
 
     for (const skill of installedSkills) {
       if (!skill.is_enabled) continue
-      if (this.allowedSkillPaths && !this.allowedSkillPaths.includes(skill.installPath)) continue
+      if (this.allowedSkillPaths && this.allowedSkillPaths.length > 0 && !this.allowedSkillPaths.includes(skill.installPath)) continue
 
       const references = new Map<string, string>()
       for (const ref of skill.references) {
@@ -49,81 +44,9 @@ export class SkillManager {
       })
     }
 
-    for (const dir of this.skillsDirectories) {
-      this.discoverFromDirectory(dir)
-    }
-
     if (this.debugLog) {
       this.debugLog(`[SkillManager] Discovered ${this.discoveredSkills.size} skills`)
     }
-  }
-
-  private discoverFromDirectory(dir: string): void {
-    if (!fs.existsSync(dir)) return
-
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const skillDir = path.join(dir, entry.name)
-        const skillMdPath = path.join(skillDir, 'SKILL.md')
-
-        if (fs.existsSync(skillMdPath)) {
-          const content = fs.readFileSync(skillMdPath, 'utf-8')
-          const { name, description } = this.parseSkillMd(content)
-
-          if (name && !this.discoveredSkills.has(name)) {
-            const references = new Map<string, string>()
-            const refsDir = path.join(skillDir, 'references')
-            if (fs.existsSync(refsDir)) {
-              const refFiles = fs.readdirSync(refsDir)
-              for (const refFile of refFiles) {
-                const refPath = path.join(refsDir, refFile)
-                if (fs.statSync(refPath).isFile()) {
-                  references.set(refFile, fs.readFileSync(refPath, 'utf-8'))
-                }
-              }
-            }
-
-            this.discoveredSkills.set(name, {
-              name,
-              description,
-              instructions: content,
-              references,
-            })
-          }
-        }
-      }
-    } catch {
-      // Skip unreadable directories
-    }
-  }
-
-  private parseSkillMd(content: string): { name: string; description: string } {
-    let name = ''
-    let description = ''
-
-    const titleMatch = content.match(/^#\s+(.+)$/m)
-    if (titleMatch) {
-      name = titleMatch[1].trim()
-    }
-
-    const descPatterns = [
-      /^#\s+.+\n\n(.+?)(?:\n\n|\n#{1,6}\s|$)/ms,
-      /^#\s+.+\n(.+?)(?:\n\n|\n#{1,6}\s|$)/ms,
-    ]
-    for (const pattern of descPatterns) {
-      const descMatch = content.match(pattern)
-      if (descMatch) {
-        const desc = descMatch[1].trim()
-        if (desc.length >= 5) {
-          description = desc
-          break
-        }
-      }
-    }
-
-    return { name, description }
   }
 
   getSkillsXml(): string {

@@ -37,10 +37,6 @@ export interface EmployeeConfigExport {
     is_enabled: boolean
     config_json: string
   }>
-  mcpServers: Array<{
-    mcp_server_id: string
-    mcp_server_name: string
-  }>
   installedSkills: Array<{
     skill_id: string
     skill_name: string
@@ -70,8 +66,6 @@ export class EmployeeExportConfigService {
       const employeeTools = this.db.getDb().prepare(
         'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
       ).all(employeeId) as any[]
-
-      const mcpServers = this.getEmployeeMCPServers(employeeId)
 
       const installedSkills = this.db.getDb().prepare(
         'SELECT es.skill_id, es.is_enabled, sk.name as skill_name FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
@@ -108,10 +102,6 @@ export class EmployeeExportConfigService {
           tool_id: t.tool_id,
           is_enabled: !!t.is_enabled,
           config_json: t.config_json || '{}',
-        })),
-        mcpServers: mcpServers.map(mcp => ({
-          mcp_server_id: mcp.server_id,
-          mcp_server_name: mcp.server_name,
         })),
         installedSkills: installedSkills.map(sk => ({
           skill_id: sk.skill_id,
@@ -225,16 +215,6 @@ export class EmployeeExportConfigService {
         }
       }
 
-      for (const mcpRef of importData.mcpServers || []) {
-        const mcpExists = this.db.getDb().prepare(
-          'SELECT id FROM mcp_servers WHERE id = ?'
-        ).get(mcpRef.mcp_server_id) as any
-
-        if (!mcpExists) {
-          warnings.push(`MCP server "${mcpRef.mcp_server_name}" (${mcpRef.mcp_server_id}) not found, skipped`)
-        }
-      }
-
       for (const skillRef of importData.installedSkills || []) {
         const skillExists = this.db.getDb().prepare(
           'SELECT id FROM installed_skills WHERE id = ?'
@@ -329,14 +309,6 @@ export class EmployeeExportConfigService {
     }
 
     return { success: true, employeeId, warnings }
-  }
-
-  getEmployeeMCPServers(_employeeId: string): Array<{ server_id: string; server_name: string }> {
-    return this.db.getDb().prepare(`
-      SELECT DISTINCT ms.id as server_id, ms.name as server_name
-      FROM mcp_servers ms
-      WHERE ms.is_enabled = 1
-    `).all() as Array<{ server_id: string; server_name: string }>
   }
 
   checkVersionCompatibility(version: string): { compatible: boolean; message?: string } {
