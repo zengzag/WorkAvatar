@@ -18,7 +18,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { useTranslation } from 'react-i18next'
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, memo } from 'react'
 import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import ThinkingSegment from './ThinkingSegment'
@@ -472,4 +472,6 @@ const MessageBubble: React.FC<{
   )
 }
 
-export default MessageBubble
+export default memo(MessageBubble, (prev, next) => {
+  return prev.msg === next.msg && prev.providers === next.providers
+})

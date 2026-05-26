@@ -237,8 +237,6 @@ const EmployeeWorkbench: React.FC = () => {
     allConversations,
     activeConversationId,
     messages,
-    inputValue,
-    setInputValue,
     isStreaming,
     providers,
     selectedLlmProviderId,
@@ -697,12 +695,10 @@ const EmployeeWorkbench: React.FC = () => {
           )}
 
           <ChatInput
-            value={inputValue}
-            onChange={setInputValue}
-            onSend={(images, models) => {
+            onSend={(content, images, models) => {
               setAttachedImages([])
               setSelectedModels([])
-              handleSend(images, models)
+              handleSend(content, images, models)
             }}
             onStop={handleStop}
             onCommand={handleCommand}

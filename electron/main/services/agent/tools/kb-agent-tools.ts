@@ -189,7 +189,7 @@ export function createKBAgentTools(
         }
 
         const paragraphs = kbDb.getDb().prepare(
-          'SELECT * FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
+          'SELECT id, title, level FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
         ).all(args.document_id) as any[]
 
         if (paragraphs.length === 0) {
@@ -197,7 +197,7 @@ export function createKBAgentTools(
         }
 
         let output = `## 文档目录: ${doc.original_name}\n\n`
-        output += `共 ${paragraphs.length} 个段落：\n\n`
+        output += `共 ${paragraphs.length} 个段落（#后为段落ID，用于 kb_get_paragraphs/kb_get_content 定位）：\n\n`
 
         const indent = (level: number): string => {
           const depth = Math.max(0, level - 1)
@@ -207,18 +207,10 @@ export function createKBAgentTools(
         for (const p of paragraphs) {
           const prefix = indent(p.level)
           const branch = p.level > 1 ? '├── ' : ''
-          const levelTag = `L${p.level}`
-          const line = `${prefix}${branch}[${p.paragraph_index}] ${p.title}`
-          output += line + '\n'
-          output += `${prefix}    [${levelTag}] paragraph_id: ${p.id}, offset: ${p.start_offset}-${p.end_offset}\n`
-          if (p.summary) {
-            const shortSummary = p.summary.length > 80 ? p.summary.substring(0, 80) + '...' : p.summary
-            output += `${prefix}    摘要: ${shortSummary}\n`
-          }
-          output += '\n'
+          output += `${prefix}${branch}${p.title} #${p.id}\n`
         }
 
-        output += `请使用 kb_get_paragraphs 传入感兴趣的 paragraph_id 数组获取详细摘要，或使用 kb_get_content 传入 paragraph_id 获取完整内容。`
+        output += `\n请使用 kb_get_paragraphs 传入 # 后的段落ID数组获取详细摘要，或使用 kb_get_content 传入段落ID获取完整内容。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `获取文档目录失败: ${error.message}` }

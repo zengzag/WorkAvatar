@@ -21,9 +21,7 @@ export interface ModelSelection {
 }
 
 const ChatInput: React.FC<{
-  value: string
-  onChange: (value: string) => void
-  onSend: (images: string[], models: ModelSelection[]) => void
+  onSend: (content: string, images: string[], models: ModelSelection[]) => void
   onStop: () => void
   onCommand: (command: string) => void
   isStreaming: boolean
@@ -36,10 +34,11 @@ const ChatInput: React.FC<{
   selectedKbIds: string[]
   onSelectedKbIdsChange: (ids: string[]) => void
   allKBs: any[]
-}> = ({ value, onChange, onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs }) => {
+}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [localValue, setLocalValue] = useState('')
 
   const slashCommands = useMemo(() => [
     { key: '/clear', label: '/clear', description: t('workbench.cmdClear') },
@@ -47,15 +46,16 @@ const ChatInput: React.FC<{
   ], [t])
 
   const currentSlashItems = useMemo(() => {
-    if (!value.startsWith('/')) return []
-    return slashCommands.filter(cmd => cmd.key.startsWith(value.toLowerCase()))
-  }, [value, slashCommands])
+    if (!localValue.startsWith('/')) return []
+    return slashCommands.filter(cmd => cmd.key.startsWith(localValue.toLowerCase()))
+  }, [localValue, slashCommands])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (value.startsWith('/') && currentSlashItems.length === 1) {
+      if (localValue.startsWith('/') && currentSlashItems.length === 1) {
         onCommand(currentSlashItems[0].key)
+        setLocalValue('')
         return
       }
       handleSend()
@@ -63,10 +63,11 @@ const ChatInput: React.FC<{
   }
 
   const handleSend = useCallback(() => {
-    if (!value.trim() && attachedImages.length === 0) return
+    if (!localValue.trim() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
-    onSend(imageUrls, selectedModels)
-  }, [value, attachedImages, selectedModels, onSend])
+    onSend(localValue.trim(), imageUrls, selectedModels)
+    setLocalValue('')
+  }, [localValue, attachedImages, selectedModels, onSend])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -129,7 +130,7 @@ const ChatInput: React.FC<{
     onImagesChange(attachedImages.filter(img => img.id !== id))
   }, [attachedImages, onImagesChange])
 
-  const charCount = value.length
+  const charCount = localValue.length
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
@@ -335,7 +336,7 @@ const ChatInput: React.FC<{
           })}
         </div>
       )}
-      {value.startsWith('/') && currentSlashItems.length > 0 && (
+      {localValue.startsWith('/') && currentSlashItems.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 0', flexWrap: 'wrap' }}>
           {currentSlashItems.map(cmd => (
             <div key={cmd.key} onClick={() => onCommand(cmd.key)}
@@ -353,8 +354,8 @@ const ChatInput: React.FC<{
         onBlurCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Input.TextArea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+            value={localValue}
+            onChange={(e) => setLocalValue(e.target.value)}
             onPressEnter={handleKeyDown}
             onPaste={handlePaste}
             placeholder={placeholder}
@@ -397,7 +398,7 @@ const ChatInput: React.FC<{
                   style={{ color: selectedKbIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                   title={t('workbench.knowledgeBase')} />
               </Popover>
-              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => onCommand(cmd.key) })) }} trigger={['click']}>
+              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => { onCommand(cmd.key); setLocalValue('') } })) }} trigger={['click']}>
                 <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Dropdown>
@@ -412,7 +413,7 @@ const ChatInput: React.FC<{
           <Button icon={<StopOutlined />} danger onClick={onStop} shape="circle" size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
-            disabled={!value.trim() && attachedImages.length === 0}
+            disabled={!localValue.trim() && attachedImages.length === 0}
             shape="circle" size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>

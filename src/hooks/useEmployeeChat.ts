@@ -69,7 +69,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
-  const [inputValue, setInputValue] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
@@ -545,9 +544,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
       if (pendingMessage) {
         const msgContent = pendingMessage
-        setInputValue('')
         setPendingMessage(null)
-        setTimeout(() => sendMessage(convId, undefined, undefined, msgContent), 0)
+        setTimeout(() => sendMessage(convId, msgContent), 0)
       }
 
       return convId
@@ -772,14 +770,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
-  const handleSend = async (images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
-    const content = inputValue.trim()
-    if (!content && (!images || images.length === 0)) return
+  const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
+    if (!content.trim() && (!images || images.length === 0)) return
 
     const currentConvId = activeConversationId
     if (!currentConvId) {
       if (isCreatingConversation) return
-      setPendingMessage(content)
+      setPendingMessage(content.trim())
       await startNewConversation()
       return
     }
@@ -787,20 +784,17 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === currentConvId && s.isStreaming)
     if (hasActiveStream) return
 
-    sendMessage(currentConvId, images, models)
+    sendMessage(currentConvId, content.trim(), images, models)
   }
 
-  const sendMessage = async (convId?: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, overrideContent?: string) => {
+  const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
     const targetConvId = convId || activeConversationId
     if (!targetConvId) return
 
-    const content = (overrideContent ?? inputValue).trim()
-    if (!content && (!images || images.length === 0)) return
+    if (!content.trim() && (!images || images.length === 0)) return
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
     if (hasActiveStream) return
-
-    setInputValue('')
 
     setupGlobalListeners()
 
@@ -1295,7 +1289,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleCommand = (command: string) => {
-    setInputValue('')
     if (command === '/clear') {
       if (activeConversationId) {
         setConvMessages(activeConversationId, [])
@@ -1597,8 +1590,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     allConversations,
     activeConversationId,
     messages,
-    inputValue,
-    setInputValue,
     isStreaming,
     isCreatingConversation,
     providers,
