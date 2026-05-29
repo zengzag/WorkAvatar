@@ -2,12 +2,12 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Tag, Button,
-  Statistic, Row, Col, Alert, theme, Tooltip, message,
+  Statistic, Row, Col, theme, Tooltip, message,
 } from 'antd'
 import {
   FileTextOutlined, ThunderboltOutlined, ApartmentOutlined,
   ReadOutlined,
-  InfoCircleOutlined, DatabaseOutlined, ReloadOutlined,
+  DatabaseOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 
 
@@ -16,23 +16,19 @@ const { Text } = Typography
 interface KBKnowledgeViewProps {
   knowledgeStats: any
   globalSummary: any
-  processingDocId: string | null
   processingAll: boolean
   buildingGlobal: boolean
-  processProgress: { stage: string; detail: string }
   selectedKbId: string
 
   onProcessAll: () => void
   onBuildGlobal: () => void
-  onViewParseDetail?: (docId: string, docName: string) => void
 }
 
 const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
   knowledgeStats, globalSummary,
-  processingDocId, processingAll, buildingGlobal, processProgress,
+  processingAll, buildingGlobal,
   selectedKbId,
   onProcessAll, onBuildGlobal,
-  onViewParseDetail,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -75,25 +71,6 @@ const KBKnowledgeView: React.FC<KBKnowledgeViewProps> = ({
             <Button type="primary" icon={<ApartmentOutlined />} onClick={onBuildGlobal} loading={buildingGlobal}>{t('knowledgeBase.buildGlobalKnowledge')}</Button>
           </Space>
         </div>
-
-        {(processingAll || buildingGlobal) && processProgress.stage && (
-          <Alert
-            type="info"
-            title={processProgress.stage}
-            description={processProgress.detail}
-            style={{ marginBottom: 16 }}
-            showIcon
-            action={
-              onViewParseDetail && processingDocId ? (
-                <Button size="small" icon={<InfoCircleOutlined />} onClick={() => {
-                  onViewParseDetail(processingDocId, '')
-                }}>
-                  {t('parseProgress.detail')}
-                </Button>
-              ) : undefined
-            }
-          />
-        )}
 
         {knowledgeStats && (
           <Row gutter={16} style={{ marginBottom: 16 }}>

@@ -47,13 +47,10 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return result
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_DOC_PARSE, async (event, params: KBDocParseParams) => {
+  ipcMain.handle(IPC_CHANNELS.KB_DOC_PARSE, async (_, params: KBDocParseParams) => {
     const result = await kbService.parseDocument(
       params.doc_id,
       false,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.KB_PARSE_PROGRESS, { doc_id: params.doc_id, stage, detail })
-      }
     )
     return result
   })
@@ -66,49 +63,37 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
     return kbService.getDocumentList(params.kb_id, params.status)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_PARSE_ALL, async (event, params: { kb_id: string }) => {
+  ipcMain.handle(IPC_CHANNELS.KB_PARSE_ALL, async (_, params: { kb_id: string }) => {
     const result = await kbService.parseAllDocuments(
       params.kb_id,
-      (current, total, docName) => {
-        event.sender.send(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, { current, total, docName })
-      }
     )
     return result
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_PROCESS_DOCUMENT, async (event, params: KBProcessDocumentParams) => {
+  ipcMain.handle(IPC_CHANNELS.KB_PROCESS_DOCUMENT, async (_, params: KBProcessDocumentParams) => {
     return kbService.processDocument(
       params.doc_id,
       params.provider_id,
       params.model_id,
       params.enable_thinking,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.KB_PROCESS_PROGRESS, { doc_id: params.doc_id, stage, detail })
-      }
     )
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_PROCESS_ALL, async (event, params: KBProcessAllParams) => {
+  ipcMain.handle(IPC_CHANNELS.KB_PROCESS_ALL, async (_, params: KBProcessAllParams) => {
     return kbService.processAllDocuments(
       params.kb_id,
       params.provider_id,
       params.model_id,
       params.enable_thinking,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, { kb_id: params.kb_id, stage, detail })
-      }
     )
   })
 
-  ipcMain.handle(IPC_CHANNELS.KB_BUILD_GLOBAL, async (event, params: KBBuildGlobalParams) => {
+  ipcMain.handle(IPC_CHANNELS.KB_BUILD_GLOBAL, async (_, params: KBBuildGlobalParams) => {
     return kbService.buildGlobalKnowledge(
       params.kb_id,
       params.provider_id,
       params.model_id,
       params.enable_thinking,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, { kb_id: params.kb_id, stage, detail })
-      }
     )
   })
 
@@ -146,10 +131,6 @@ export function registerKBHandlers(kbService: KnowledgeBaseService) {
 
   ipcMain.handle(IPC_CHANNELS.KB_RETRY_PARSE, (_, docId: string) => {
     return kbService.retryParse(docId)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.KB_GET_PARSE_DETAIL, (_, docId: string) => {
-    return kbService.getDocParseDetail(docId)
   })
 
   ipcMain.handle(IPC_CHANNELS.KB_PAUSE_ALL_PARSES, () => {

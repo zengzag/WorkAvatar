@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { App, Button, notification } from 'antd'
-import { useTaskDetailStore } from '../stores/task-detail.store'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import type { KBDocument, KnowledgeBase, ScanTreeNode } from '../components/knowledge-base/types'
 
@@ -15,7 +14,6 @@ export const useKnowledgeBase = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const navigate = useNavigate()
-  const openDetail = useTaskDetailStore((s) => s.openDetail)
 
   const [kbs, setKBs] = useState<KnowledgeBase[]>([])
   const [selectedKB, setSelectedKB] = useState<KnowledgeBase | null>(null)
@@ -50,7 +48,7 @@ export const useKnowledgeBase = () => {
   const [processingDocId, setProcessingDocId] = useState<string | null>(null)
   const [processingAll, setProcessingAll] = useState(false)
   const [buildingGlobal, setBuildingGlobal] = useState(false)
-  const [processProgress, setProcessProgress] = useState({ stage: '', detail: '' })
+  const [docProcessProgress, setDocProcessProgress] = useState<Record<string, { progress: number; status: string; progressText: string }>>({})
   const [globalSummary, setGlobalSummary] = useState<any>(null)
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
   const [editKBModalOpen, setEditKBModalOpen] = useState(false)
@@ -237,10 +235,72 @@ export const useKnowledgeBase = () => {
     }
   }, [parsingDocIds, selectedKB])
 
+  useEffect(() => {
+    const cleanup = window.electronAPI.tasks.onTasksUpdated((tasks: any[]) => {
+      if (!selectedKB) return
+
+      const kbProcessTasks = tasks.filter((t: any) =>
+        t.type === 'process' && t.metadata?.kbId === selectedKB.id
+      )
+
+      const buildGlobalTask = kbProcessTasks.find((t: any) => t.id?.startsWith('build-global-'))
+      const docProcessTasks = kbProcessTasks.filter((t: any) => t.id?.startsWith('process-') && !t.id?.startsWith('process-all-') && !t.id?.startsWith('build-global-'))
+
+      const hasActiveBatch = docProcessTasks.some((t: any) => t.status === 'running' || t.status === 'pending' || t.status === 'paused')
+      if (hasActiveBatch && !processingAll) {
+        setProcessingAll(true)
+      } else if (!hasActiveBatch && processingAll) {
+        setProcessingAll(false)
+      }
+
+      if (buildGlobalTask) {
+        const isActive = buildGlobalTask.status === 'running' || buildGlobalTask.status === 'pending' || buildGlobalTask.status === 'paused'
+        if (!isActive && buildingGlobal) {
+          setBuildingGlobal(false)
+        } else if (isActive && !buildingGlobal) {
+          setBuildingGlobal(true)
+        }
+      } else if (buildingGlobal) {
+        setBuildingGlobal(false)
+      }
+
+      const newDocProgress: Record<string, { progress: number; status: string; progressText: string }> = {}
+      let activeDocProcessTask: any = null
+      for (const t of docProcessTasks) {
+        if (t.status === 'running' || t.status === 'paused') {
+          activeDocProcessTask = t
+          if (t.metadata?.docId) {
+            newDocProgress[t.metadata.docId] = {
+              progress: t.progress,
+              status: t.status,
+              progressText: t.progressText || '',
+            }
+          }
+        } else if (t.status === 'pending' && t.metadata?.docId) {
+          newDocProgress[t.metadata.docId] = {
+            progress: 0,
+            status: 'pending',
+            progressText: t.progressText || 'Queued',
+          }
+        }
+      }
+
+      setDocProcessProgress(newDocProgress)
+
+      if (activeDocProcessTask?.metadata?.docId) {
+        if (processingDocId !== activeDocProcessTask.metadata.docId) {
+          setProcessingDocId(activeDocProcessTask.metadata.docId)
+        }
+      } else if (processingDocId) {
+        setProcessingDocId(null)
+      }
+    })
+
+    return cleanup
+  }, [selectedKB, processingAll, buildingGlobal, processingDocId])
+
   const handleProcessDocument = async (docId: string) => {
     setProcessingDocId(docId)
-    setProcessProgress({ stage: '', detail: '' })
-    const cleanup = (window as any).electronAPI.kb.onProcessProgress((p: any) => setProcessProgress(p))
     try {
       const result = await window.electronAPI.kb.processDocument({
         doc_id: docId,
@@ -256,20 +316,12 @@ export const useKnowledgeBase = () => {
         message.error(result.error || t('knowledgeBase.processFailed'))
       }
     } catch { message.error(t('knowledgeBase.knowledgeProcessFailed')) }
-    finally { cleanup(); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
+    finally { setProcessingDocId(null); setDocProcessProgress(prev => { const next = { ...prev }; delete next[docId]; return next }) }
   }
 
   const handleProcessAll = async () => {
     if (!selectedKB) return
     setProcessingAll(true)
-    setProcessProgress({ stage: '', detail: '' })
-    const cleanupAll = (window as any).electronAPI.kb.onProcessAllProgress((p: any) => setProcessProgress(p))
-    const cleanupProgress = (window as any).electronAPI.kb.onProcessProgress((p: any) => {
-      if (p.doc_id) {
-        setProcessingDocId(p.doc_id)
-        if (p.stage) setProcessProgress({ stage: p.stage, detail: p.detail || '' })
-      }
-    })
     try {
       const result = await window.electronAPI.kb.processAll({
         kb_id: selectedKB.id,
@@ -280,14 +332,12 @@ export const useKnowledgeBase = () => {
       message.success(t('knowledgeBase.batchProcessResult', { success: result.success, failed: result.failed, skipped: result.skipped }))
       loadDocs(selectedKB.id); loadKnowledgeStats(selectedKB.id); loadGlobalSummary(selectedKB.id)
     } catch { message.error(t('knowledgeBase.batchProcessFailed')) }
-    finally { cleanupAll(); cleanupProgress(); setProcessingAll(false); setProcessingDocId(null); setProcessProgress({ stage: '', detail: '' }) }
+    finally { setProcessingAll(false); setProcessingDocId(null); setDocProcessProgress({}) }
   }
 
   const handleBuildGlobal = async () => {
     if (!selectedKB) return
     setBuildingGlobal(true)
-    setProcessProgress({ stage: '', detail: '' })
-    const cleanup = (window as any).electronAPI.kb.onBuildGlobalProgress((p: any) => setProcessProgress(p))
     try {
       const result = await window.electronAPI.kb.buildGlobal({
         kb_id: selectedKB.id,
@@ -302,7 +352,7 @@ export const useKnowledgeBase = () => {
         message.error(result.error || t('knowledgeBase.buildFailed'))
       }
     } catch { message.error(t('knowledgeBase.globalBuildFailed')) }
-    finally { cleanup(); setBuildingGlobal(false); setProcessProgress({ stage: '', detail: '' }) }
+    finally { setBuildingGlobal(false) }
   }
 
   const handleCreateKB = async () => {
@@ -561,10 +611,6 @@ export const useKnowledgeBase = () => {
     } catch { message.error(t('parseProgress.cancelFailed')) }
   }
 
-  const handleViewParseDetail = (docId: string, docName: string) => {
-    openDetail(docId, docName)
-  }
-
   const handleEditKB = () => {
     if (!selectedKB) return
     setEditKBName(selectedKB.name)
@@ -703,13 +749,12 @@ export const useKnowledgeBase = () => {
     processingDocId,
     processingAll,
     buildingGlobal,
-    processProgress,
+    docProcessProgress,
     knowledgeStats,
     globalSummary,
     onProcessDocument: handleProcessDocument,
     onProcessAll: handleProcessAll,
     onBuildGlobal: handleBuildGlobal,
-    onViewParseDetail: handleViewParseDetail,
 
     createModalOpen,
     setCreateModalOpen,

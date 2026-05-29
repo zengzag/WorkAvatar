@@ -401,7 +401,7 @@ class LLMClientService {
   async chat(
     providerId: string,
     messages: ChatMessage[],
-    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean }
+    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; signal?: AbortSignal }
   ): Promise<string> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
@@ -431,6 +431,7 @@ class LLMClientService {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      signal: options?.signal,
     })
 
     if (!response.ok) {

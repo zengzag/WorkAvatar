@@ -181,10 +181,10 @@ class KnowledgeBaseService {
   async getExistingDocByName(kbId: string, originalName: string) { return this.documentService.getExistingDocByName(kbId, originalName) }
   async scanFolder(folderPath: string) { return this.documentService.scanFolder(folderPath) }
   async uploadDocuments(kbId: string, filePaths: string[], onProgress?: (current: number, total: number, fileName: string) => void) { return this.documentService.uploadDocuments(kbId, filePaths, onProgress) }
-  async parseDocument(docId: string, isResume: boolean = false, onProgress?: (stage: string, detail: string) => void) { return this.documentService.parseDocument(docId, isResume, onProgress) }
-  async parseAllDocuments(kbId: string, onProgress?: (current: number, total: number, docName: string) => void) { return this.documentService.parseAllDocuments(kbId, onProgress) }
-  async processDocument(docId: string, providerId?: string, modelId?: string, enableThinking?: boolean, onProgress?: (stage: string, detail: string) => void) { return this.documentService.processDocument(docId, providerId, modelId, enableThinking, onProgress) }
-  async processAllDocuments(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean, onProgress?: (stage: string, detail: string) => void) { return this.documentService.processAllDocuments(kbId, providerId, modelId, enableThinking, onProgress) }
+  async parseDocument(docId: string, isResume: boolean = false) { return this.documentService.parseDocument(docId, isResume) }
+  async parseAllDocuments(kbId: string) { return this.documentService.parseAllDocuments(kbId) }
+  async processDocument(docId: string, providerId?: string, modelId?: string, enableThinking?: boolean) { return this.documentService.processDocument(docId, providerId, modelId, enableThinking) }
+  async processAllDocuments(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean) { return this.documentService.processAllDocuments(kbId, providerId, modelId, enableThinking) }
   deleteDocument(docId: string) { return this.documentService.deleteDocument(docId) }
   getDocumentList(kbId: string, status?: string) { return this.documentService.getDocumentList(kbId, status) }
   getDocumentContent(docId: string) { return this.documentService.getDocumentContent(docId) }
@@ -202,7 +202,6 @@ class KnowledgeBaseService {
   resumeParse(docId: string) { return this.documentService.resumeParse(docId) }
   retryParse(docId: string) { return this.documentService.retryParse(docId) }
   getParseProgress(docId: string) { return this.documentService.getParseProgress(docId) }
-  getDocParseDetail(docId: string) { return this.documentService.getDocParseDetail(docId) }
   pauseAllParses() { return this.documentService.pauseAllParses() }
   resumeAllParses() { return this.documentService.resumeAllParses() }
   cancelAllParses() { return this.documentService.cancelAllParses() }
@@ -217,10 +216,10 @@ class KnowledgeBaseService {
   getDocumentSummary(documentId: string) { return this.summaryService.getDocumentSummary(documentId) }
   getGlobalSummary(kbId: string) { return this.summaryService.getGlobalSummary(kbId) }
   getProcessingJobs(kbId: string, status?: string) { return this.summaryService.getProcessingJobs(kbId, status) }
-  async buildGlobalKnowledge(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean, onProgress?: (stage: string, detail: string) => void) {
+  async buildGlobalKnowledge(kbId: string, providerId?: string, modelId?: string, enableThinking?: boolean) {
     const kb = this.getKB(kbId)
     if (!kb) return { success: false, error: 'Knowledge base not found' }
-    return this.summaryService.buildGlobalKnowledge(kbId, kb.name, providerId, modelId, enableThinking, onProgress)
+    return this.summaryService.buildGlobalKnowledge(kbId, kb.name, providerId, modelId, enableThinking)
   }
 
   async exportKBFull(kbId: string, exportPath: string, onProgress?: (stage: string, detail: string) => void) { return this.exportService.exportKBFull(kbId, exportPath, onProgress) }

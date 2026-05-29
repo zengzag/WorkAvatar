@@ -51,7 +51,6 @@ class KBSummaryService {
     providerId?: string,
     modelId?: string,
     enableThinking?: boolean,
-    onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     const provider = providerId || getDefaultProviderId(this.mainDb)
     if (!provider) {
@@ -59,20 +58,49 @@ class KBSummaryService {
     }
 
     const taskId = `build-global-${kbId}`
-    this.taskQueue.addTask({
-      id: taskId,
-      type: 'process',
-      title: `Global Knowledge Build: ${kbName}`,
-      status: 'running',
-      progress: 0,
-      progressText: 'Starting global knowledge build...',
-      createdAt: Date.now(),
-      metadata: { kbId, kbName },
-    })
+    const abortController = new AbortController()
+
+    const existingTask = this.taskQueue.getTask(taskId)
+    const existingController = this.taskQueue.getPauseController(taskId)
+    if (existingController?.abortController && !existingController.abortController.signal.aborted) {
+      return { success: false, error: 'Already running' }
+    }
+    if (!existingTask || existingTask.status === 'completed' || existingTask.status === 'failed' || existingTask.status === 'cancelled') {
+      this.taskQueue.addTask({
+        id: taskId,
+        type: 'process',
+        title: `Global Knowledge Build: ${kbName}`,
+        status: 'running',
+        progress: 0,
+        progressText: 'Starting global knowledge build...',
+        createdAt: Date.now(),
+        metadata: { kbId, kbName, providerId: provider, modelId, enableThinking },
+      })
+    } else {
+      this.taskQueue.updateTask(taskId, { status: 'running' })
+    }
+
+    this.taskQueue.setAbortController(taskId, abortController)
+
+    const checkPaused = async (): Promise<boolean> => {
+      if (this.taskQueue.isTaskPaused(taskId)) {
+        this.taskQueue.updateTask(taskId, { status: 'paused' })
+        while (this.taskQueue.isTaskPaused(taskId)) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          if (abortController.signal.aborted) return true
+        }
+        this.taskQueue.updateTask(taskId, { status: 'running' })
+      }
+      return abortController.signal.aborted
+    }
 
     try {
-      onProgress?.('global_summary', 'Generating global knowledge summary...')
       this.taskQueue.updateTask(taskId, { progress: 20, progressText: 'Generating global summary...' })
+
+      if (await checkPaused()) {
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
 
       const docSummaries = this.db.prepare(
         'SELECT ds.*, d.original_name as title FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?'
@@ -84,6 +112,11 @@ class KBSummaryService {
       }
 
       this.taskQueue.updateTask(taskId, { progress: 50, progressText: `Aggregating ${docSummaries.length} doc summaries...` })
+
+      if (await checkPaused()) {
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
 
       const summaryInputs = docSummaries.map(ds => {
         let mainTopics: any[] = []
@@ -98,15 +131,24 @@ class KBSummaryService {
       this.taskQueue.updateTask(taskId, { progress: 70, progressText: 'Calling LLM to generate global summary...' })
 
       const globalSummary = await this.processor.generateGlobalSummary(
-        summaryInputs, kbName, provider, modelId, enableThinking, onProgress
+        summaryInputs, kbName, provider, modelId, enableThinking, undefined, abortController.signal
       )
+
+      if (await checkPaused()) {
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
 
       this.processor.saveGlobalSummary(kbId, globalSummary)
 
-      onProgress?.('complete', 'Global knowledge build complete')
       this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: 'Global knowledge build complete' })
       return { success: true }
-    } catch (error) {
+    } catch (error: any) {
+      const isAbortError = error?.name === 'AbortError' || error?.message?.includes('cancelled')
+      if (isAbortError) {
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       this.taskQueue.updateTask(taskId, { status: 'failed', error: errorMessage, progressText: `Failed: ${errorMessage}` })
       return { success: false, error: errorMessage }

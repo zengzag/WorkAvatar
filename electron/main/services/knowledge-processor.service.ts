@@ -82,15 +82,20 @@ class KnowledgeProcessorService {
     return cjkCount + latinWords
   }
 
-  identifyParagraphs(text: string): ParagraphInfo[] {
+  async identifyParagraphs(text: string, signal?: AbortSignal): Promise<ParagraphInfo[]> {
+    const YIELD_INTERVAL = 5000
     const paragraphs: ParagraphInfo[] = []
     const lines = text.split('\n')
     let currentOffset = 0
     const headingPositions: Array<{ title: string; offset: number; level: number; lineIndex: number }> = []
 
     for (let i = 0; i < lines.length; i++) {
+      if (i > 0 && i % YIELD_INTERVAL === 0) {
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+        await new Promise(resolve => setImmediate(resolve))
+      }
       const line = lines[i]
-      const match = line.match(/^(#{1,4})\s+(.+)/)
+      const match = line.match(/^(#{1,3})\s+(.+)/)
       if (match) {
         headingPositions.push({
           title: match[2].trim(),
@@ -114,7 +119,42 @@ class KnowledgeProcessorService {
 
     const headingStack: Array<{ title: string; level: number }> = []
 
+    const firstHeadingOffset = headingPositions[0].offset
+    if (firstHeadingOffset > 0) {
+      const prefaceContent = text.substring(0, firstHeadingOffset).trim()
+      if (this.countWords(prefaceContent) >= KnowledgeProcessorService.MIN_CONTENT_WORDS) {
+        if (prefaceContent.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
+          const subChunks = this.splitIntoChunks(prefaceContent, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
+          for (let si = 0; si < subChunks.length; si++) {
+            paragraphs.push({
+              title: subChunks.length > 1 ? `前言 (${si + 1})` : '前言',
+              titlePath: subChunks.length > 1 ? `前言 (${si + 1})` : '前言',
+              index: paragraphs.length,
+              startOffset: 0,
+              endOffset: firstHeadingOffset,
+              content: subChunks[si],
+              level: 1,
+            })
+          }
+        } else {
+          paragraphs.push({
+            title: '前言',
+            titlePath: '前言',
+            index: paragraphs.length,
+            startOffset: 0,
+            endOffset: firstHeadingOffset,
+            content: prefaceContent,
+            level: 1,
+          })
+        }
+      }
+    }
+
     for (let i = 0; i < headingPositions.length; i++) {
+      if (i > 0 && i % YIELD_INTERVAL === 0) {
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+        await new Promise(resolve => setImmediate(resolve))
+      }
       const heading = headingPositions[i]
 
       while (headingStack.length > 0 && headingStack[headingStack.length - 1].level >= heading.level) {
@@ -174,14 +214,19 @@ class KnowledgeProcessorService {
     return paragraphs
   }
 
-  extractToc(text: string): Array<{ title: string; level: number; path: string; offset: number }> {
+  async extractToc(text: string, signal?: AbortSignal): Promise<Array<{ title: string; level: number; path: string; offset: number }>> {
+    const YIELD_INTERVAL = 5000
     const lines = text.split('\n')
     let currentOffset = 0
     const headings: Array<{ title: string; level: number; offset: number }> = []
 
     for (let i = 0; i < lines.length; i++) {
+      if (i > 0 && i % YIELD_INTERVAL === 0) {
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+        await new Promise(resolve => setImmediate(resolve))
+      }
       const line = lines[i]
-      const match = line.match(/^(#{1,4})\s+(.+)/)
+      const match = line.match(/^(#{1,3})\s+(.+)/)
       if (match) {
         headings.push({
           title: match[2].trim(),
@@ -211,7 +256,7 @@ class KnowledgeProcessorService {
     const lines = text.split('\n')
     let headingCount = 0
     for (const line of lines) {
-      if (/^#{1,4}\s+/.test(line.trim())) {
+      if (/^#{1,3}\s+/.test(line.trim())) {
         headingCount++
       }
     }
@@ -229,7 +274,9 @@ class KnowledgeProcessorService {
     numberedContent: string,
     providerId: string,
     modelId?: string,
-    enableThinking?: boolean
+    enableThinking?: boolean,
+    existingTocContext?: string,
+    signal?: AbortSignal
   ): Promise<LLMTocEntry[]> {
     const systemPrompt = `你是一个专业的文档结构分析专家。你的任务是分析文档内容，精确识别其中的章节标题、层级关系和位置。
 
@@ -239,9 +286,10 @@ class KnowledgeProcessorService {
 3. 常见标题模式：
    - 编号型："第X章/节/部分"、"1."/"1.1"/"1.1.1"、"一、"/"二、"
    - 无编号型：独立成行的概括性短语，后续跟随详细说明内容
-4. level表示层级深度：1=最高级（章/部分），2=次级（节），3=更次级（小节），4=最细粒度
+4. level表示层级深度，最多3级：1=最高级（章/部分），2=次级（节），3=最细粒度（小节），不允许超过3级
 5. lineNumber必须精确对应内容中的行号标记[L数字]
 6. 标题对应的正文内容太少（例如小于50词）时，忽略该标题
+7. 如果提供了已识别的上层目录上下文，请参考该上下文来确定当前标题的层级，避免将低层级标题误判为高层级${existingTocContext ? `\n\n已识别的上层目录上下文（供参考）：\n${existingTocContext}` : ''}
 
 输出要求：
 - 严格按照JSON格式输出
@@ -264,6 +312,7 @@ ${numberedContent}
         temperature: 0.1,
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
+        signal,
       })
 
       const parsed = this.parseJSON<{ toc: LLMTocEntry[] }>(result, { toc: [] })
@@ -304,7 +353,7 @@ ${numberedContent}
 
     for (const entry of entries) {
       if (!entry.title || entry.lineNumber == null || entry.level == null) continue
-      if (entry.level < 1 || entry.level > 4) continue
+      if (entry.level < 1 || entry.level > 3) continue
 
       const targetLineIndex = entry.lineNumber - 1
       let foundLineIndex = -1
@@ -379,7 +428,9 @@ ${numberedContent}
     providerId: string,
     modelId?: string,
     enableThinking?: boolean,
-    onProgress?: (stage: string, detail: string) => void
+    onProgress?: (stage: string, detail: string) => void,
+    signal?: AbortSignal,
+    checkPaused?: () => Promise<boolean>,
   ): Promise<ValidatedTocEntry[]> {
     const lines = text.split('\n')
 
@@ -387,7 +438,7 @@ ${numberedContent}
 
     if (lines.length <= KnowledgeProcessorService.TOC_CHUNK_LINES) {
       const numberedContent = this.addLineNumbers(text)
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking)
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking, undefined, signal)
       return this.validateTocEntries(text, entries)
     }
 
@@ -395,14 +446,33 @@ ${numberedContent}
     let startLine = 0
     let chunkIndex = 0
 
+    let totalChunks = 0
+    {
+      let s = 0
+      while (s < lines.length) {
+        totalChunks++
+        const e = Math.min(s + KnowledgeProcessorService.TOC_CHUNK_LINES, lines.length)
+        if (e >= lines.length) break
+        s = e - KnowledgeProcessorService.TOC_OVERLAP_LINES
+      }
+    }
+
     while (startLine < lines.length) {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+
+      if (checkPaused && await checkPaused()) {
+        throw new DOMException('Parse cancelled', 'AbortError')
+      }
+
       const endLine = Math.min(startLine + KnowledgeProcessorService.TOC_CHUNK_LINES, lines.length)
       const chunkLines = lines.slice(startLine, endLine)
       const numberedContent = this.addLineNumbers(chunkLines.join('\n'), startLine + 1)
 
-      onProgress?.('toc_restore', `Analyzing chunk ${chunkIndex + 1} for TOC structure...`)
+      const existingTocContext = this.buildTocContext(allEntries)
 
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking)
+      onProgress?.('toc_restore', `TOC analysis: chunk ${chunkIndex + 1}/${totalChunks} (lines ${startLine + 1}-${endLine})`)
+
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, enableThinking, existingTocContext, signal)
       allEntries.push(...entries)
 
       chunkIndex++
@@ -418,15 +488,53 @@ ${numberedContent}
     return validated
   }
 
-  identifyParagraphsFromLLMToc(text: string, tocEntries: ValidatedTocEntry[]): ParagraphInfo[] {
+  private buildTocContext(entries: LLMTocEntry[]): string {
+    if (entries.length === 0) return ''
+    const recentEntries = entries.slice(-5)
+    const contextLines = recentEntries.map(e => `${'  '.repeat(e.level - 1)}[L${e.level}] ${e.title}`)
+    return contextLines.join('\n')
+  }
+
+  async identifyParagraphsFromLLMToc(text: string, tocEntries: ValidatedTocEntry[], signal?: AbortSignal): Promise<ParagraphInfo[]> {
     if (tocEntries.length === 0) {
-      return this.identifyParagraphs(text)
+      return this.identifyParagraphs(text, signal)
     }
 
     const paragraphs: ParagraphInfo[] = []
     const sortedEntries = [...tocEntries].sort((a, b) => a.offset - b.offset)
 
     const headingStack: Array<{ title: string; level: number }> = []
+
+    const firstEntryOffset = sortedEntries[0].offset
+    if (firstEntryOffset > 0) {
+      const prefaceContent = text.substring(0, firstEntryOffset).trim()
+      if (this.countWords(prefaceContent) >= KnowledgeProcessorService.MIN_CONTENT_WORDS) {
+        if (prefaceContent.length > KnowledgeProcessorService.MAX_PARAGRAPH_CHARS) {
+          const subChunks = this.splitIntoChunks(prefaceContent, KnowledgeProcessorService.MAX_PARAGRAPH_CHARS, KnowledgeProcessorService.PARAGRAPH_OVERLAP_CHARS)
+          for (let si = 0; si < subChunks.length; si++) {
+            paragraphs.push({
+              title: subChunks.length > 1 ? `前言 (${si + 1})` : '前言',
+              titlePath: subChunks.length > 1 ? `前言 (${si + 1})` : '前言',
+              index: paragraphs.length,
+              startOffset: 0,
+              endOffset: firstEntryOffset,
+              content: subChunks[si],
+              level: 1,
+            })
+          }
+        } else {
+          paragraphs.push({
+            title: '前言',
+            titlePath: '前言',
+            index: paragraphs.length,
+            startOffset: 0,
+            endOffset: firstEntryOffset,
+            content: prefaceContent,
+            level: 1,
+          })
+        }
+      }
+    }
 
     for (let i = 0; i < sortedEntries.length; i++) {
       const entry = sortedEntries[i]
@@ -473,7 +581,7 @@ ${numberedContent}
     }
 
     if (paragraphs.length === 0) {
-      return this.identifyParagraphs(text)
+      return this.identifyParagraphs(text, signal)
     }
 
     return paragraphs
@@ -534,6 +642,7 @@ ${numberedContent}
     modelId?: string,
     enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
+    signal?: AbortSignal,
   ): Promise<ParagraphSummary> {
     onProgress?.('paragraph_summary', `Generating paragraph summary: ${paragraphTitle}`)
 
@@ -557,6 +666,7 @@ ${paragraphContent.substring(0, 8000)}
       ], {
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
+        signal,
       })
 
       return this.parseJSON<ParagraphSummary>(result, {
@@ -577,6 +687,7 @@ ${paragraphContent.substring(0, 8000)}
     modelId?: string,
     enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
+    signal?: AbortSignal,
   ): Promise<DocumentSummary> {
     onProgress?.('doc_summary', `Generating document summary: ${documentTitle}`)
 
@@ -604,6 +715,7 @@ ${summariesText.substring(0, 15000)}
       ], {
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
+        signal,
       })
 
       const parsed = this.parseJSON<Omit<DocumentSummary, 'toc'>>(result, {
@@ -625,6 +737,7 @@ ${summariesText.substring(0, 15000)}
     modelId?: string,
     enableThinking?: boolean,
     onProgress?: (stage: string, detail: string) => void,
+    signal?: AbortSignal,
   ): Promise<{
     summary: string
     keyTopics: string[]
@@ -654,6 +767,7 @@ ${docsText.substring(0, 20000)}
       ], {
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
+        signal,
       })
 
       return this.parseJSON(result, {
@@ -933,7 +1047,7 @@ ${docsText.substring(0, 20000)}
     if (currentStep !== undefined) { updates.push('current_step = ?'); values.push(currentStep) }
     if (errorMessage !== undefined) { updates.push('error_message = ?'); values.push(errorMessage) }
     if (status === 'running') { updates.push('started_at = unixepoch()') }
-    if (status === 'completed' || status === 'failed') { updates.push('completed_at = unixepoch()') }
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') { updates.push('completed_at = unixepoch()') }
 
     values.push(jobId)
     this.db.prepare(`UPDATE kb_processing_jobs SET ${updates.join(', ')} WHERE id = ?`).run(...values)

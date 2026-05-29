@@ -24,11 +24,14 @@ class FileParserService {
     return FileParserService.instance
   }
 
-  private async parsePDF(filePath: string): Promise<ParseResult> {
+  private async parsePDF(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     try {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const buffer = await fs.promises.readFile(filePath)
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const data = new Uint8Array(buffer)
       const result = await extractTextItems(data)
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const pages = result.items.map(pageItems =>
         pageItems
           .map(item => item.str + (item.hasEOL ? '\n' : ''))
@@ -55,10 +58,12 @@ class FileParserService {
     }
   }
 
-  private async parseDoc(filePath: string): Promise<ParseResult> {
+  private async parseDoc(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     try {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const extractor = new WordExtractor()
       const doc = await extractor.extract(filePath)
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const bodyText = doc.getBody()
 
       return {
@@ -78,13 +83,15 @@ class FileParserService {
     }
   }
 
-  private async parseWord(filePath: string): Promise<ParseResult> {
+  private async parseWord(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     try {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const result = await convert(filePath, {
         preserveLayout: true,
         extractImages: false,
         extractCharts: false,
       })
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
       return {
         type: 'word',
@@ -102,8 +109,10 @@ class FileParserService {
       })
 
       try {
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
         const buffer = await fs.promises.readFile(filePath)
         const result = await (mammoth as any).convertToMarkdown({ buffer })
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
         console.info('[FileParser] DOCX mammoth fallback succeeded:', { filePath })
 
         const rawMarkdown = result.value || ''
@@ -128,7 +137,8 @@ class FileParserService {
     }
   }
 
-  private async parseExcel(filePath: string): Promise<ParseResult> {
+  private async parseExcel(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const ext = path.extname(filePath).toLowerCase()
 
     if (ext === '.xlsx') {
@@ -138,6 +148,7 @@ class FileParserService {
           extractImages: false,
           extractCharts: false,
         })
+        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
         return {
           type: 'excel',
@@ -157,10 +168,12 @@ class FileParserService {
     }
 
     const workbook = XLSX.readFile(filePath)
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     let fullText = ''
     const tables: ParseResult['tables'] = []
 
     for (const sheetName of workbook.SheetNames) {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const sheet = workbook.Sheets[sheetName]
       const csvData = XLSX.utils.sheet_to_csv(sheet)
       fullText += `\n--- Sheet: ${sheetName} ---\n${csvData}`
@@ -184,8 +197,10 @@ class FileParserService {
     }
   }
 
-  private async parseText(filePath: string, type: string): Promise<ParseResult> {
+  private async parseText(filePath: string, type: string, signal?: AbortSignal): Promise<ParseResult> {
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const content = await fs.promises.readFile(filePath, 'utf-8')
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
     return {
       type,
@@ -196,8 +211,10 @@ class FileParserService {
     }
   }
 
-  private async parseImage(filePath: string): Promise<ParseResult> {
+  private async parseImage(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const ocrResult = await this.ocr.recognize(filePath)
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
     return {
       type: 'image',
@@ -294,29 +311,29 @@ class FileParserService {
     return sections
   }
 
-  async parseFilePath(filePath: string): Promise<ParseResult> {
+  async parseFilePath(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     const fileType = this.getFileType(filePath)
     let result: ParseResult
 
     switch (fileType) {
       case 'pdf':
-        result = await this.parsePDF(filePath)
+        result = await this.parsePDF(filePath, signal)
         break
       case 'doc':
-        result = await this.parseDoc(filePath)
+        result = await this.parseDoc(filePath, signal)
         break
       case 'docx':
-        result = await this.parseWord(filePath)
+        result = await this.parseWord(filePath, signal)
         break
       case 'xlsx':
       case 'xls':
       case 'csv':
-        result = await this.parseExcel(filePath)
+        result = await this.parseExcel(filePath, signal)
         break
       case 'txt':
       case 'md':
       case 'html':
-        result = await this.parseText(filePath, fileType)
+        result = await this.parseText(filePath, fileType, signal)
         break
       case 'png':
       case 'jpg':
@@ -324,7 +341,7 @@ class FileParserService {
       case 'bmp':
       case 'tiff':
       case 'webp':
-        result = await this.parseImage(filePath)
+        result = await this.parseImage(filePath, signal)
         break
       default:
         throw new Error(`Unsupported file type: ${fileType}`)

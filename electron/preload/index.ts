@@ -191,11 +191,6 @@ const electronAPI = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
     },
     parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
-    onParseProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_PROGRESS, handler)
-    },
     deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
     getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
     parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
@@ -213,25 +208,9 @@ const electronAPI = {
     getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
     searchParagraphs: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_PARAGRAPHS, params),
     getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
-    onProcessProgress: (callback: (progress: { doc_id: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { doc_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_PROCESS_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PROCESS_PROGRESS, handler)
-    },
-    onProcessAllProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PROCESS_ALL_PROGRESS, handler)
-    },
-    onBuildGlobalProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_BUILD_GLOBAL_PROGRESS, handler)
-    },
     pauseParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_PARSE, docId),
     resumeParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_PARSE, docId),
     retryParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RETRY_PARSE, docId),
-    getParseDetail: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARSE_DETAIL, docId),
     pauseAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_ALL_PARSES),
     resumeAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_ALL_PARSES),
     cancelAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_CANCEL_ALL_PARSES),

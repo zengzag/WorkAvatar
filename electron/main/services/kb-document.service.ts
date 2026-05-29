@@ -290,7 +290,6 @@ class KBDocumentService {
   async parseDocument(
     docId: string,
     isResume: boolean = false,
-    onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as DBKBDocument | undefined
     if (!doc) {
@@ -317,7 +316,6 @@ class KBDocumentService {
         progress: 5,
         detail: `Reading: ${doc.original_name}`,
       })
-      onProgress?.('reading', `Reading: ${doc.original_name}`)
 
       if (await this.parseTaskManager.checkPaused(docId)) {
         return { success: false, error: 'Cancelled' }
@@ -329,9 +327,9 @@ class KBDocumentService {
         progress: 10,
         detail: `Parsing: ${doc.original_name}`,
       })
-      onProgress?.('parsing', `Parsing: ${doc.original_name}`)
 
-      const parseResult = await this.fileParser.parseFilePath(filePath)
+      const abortController = this.parseTaskManager.getAbortController(docId)
+      const parseResult = await this.fileParser.parseFilePath(filePath, abortController?.signal)
 
       if (await this.parseTaskManager.checkPaused(docId)) {
         return { success: false, error: 'Cancelled' }
@@ -352,7 +350,6 @@ class KBDocumentService {
         processedChunks,
         totalChunks,
       })
-      onProgress?.('chunking', `Chunking: ${totalChunks} sections`)
 
       if (await this.parseTaskManager.checkPaused(docId)) {
         return { success: false, error: 'Cancelled' }
@@ -364,11 +361,34 @@ class KBDocumentService {
         progress: 90,
         detail: 'Saving parse results...',
       })
-      onProgress?.('saving', 'Saving parse results...')
 
       const parsedJson = JSON.stringify(parseResult)
 
       const parsedJsonPath = this.saveDocParsedJson(docId, doc.kb_id, parsedJson)
+
+      this.searchEngine.indexDocumentTitle(doc.kb_id, docId, doc.original_name)
+      const content = this.readDocContentFromParsedJson(parsedJsonPath)
+      if (content) {
+        this.searchEngine.indexContentParagraphs(doc.kb_id, docId, content, doc.original_name)
+
+        this.parseTaskManager.updateProgress(docId, {
+          stage: 'chunking',
+          stageLabel: 'Paragraph Identify',
+          progress: 80,
+          detail: 'Identifying paragraphs...',
+        })
+
+        if (await this.parseTaskManager.checkPaused(docId)) {
+          return { success: false, error: 'Cancelled' }
+        }
+
+        const paragraphs = await this.processor.identifyParagraphs(content, abortController?.signal)
+        const toc = await this.processor.extractToc(content, abortController?.signal)
+        this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, paragraphs)
+        if (toc.length > 0) {
+          this.processor.saveTocOnly(doc.kb_id, docId, toc)
+        }
+      }
 
       this.db.prepare(`
         UPDATE kb_documents 
@@ -380,23 +400,23 @@ class KBDocumentService {
         WHERE id = ?
       `).run(parsedJsonPath, processedPages, totalPages, processedChunks, totalChunks, docId)
 
-      this.searchEngine.indexDocumentTitle(doc.kb_id, docId, doc.original_name)
-      const content = this.readDocContentFromParsedJson(parsedJsonPath)
-      if (content) {
-        this.searchEngine.indexContentParagraphs(doc.kb_id, docId, content, doc.original_name)
-
-        const paragraphs = this.processor.identifyParagraphs(content)
-        const toc = this.processor.extractToc(content)
-        this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, paragraphs)
-        if (toc.length > 0) {
-          this.processor.saveTocOnly(doc.kb_id, docId, toc)
-        }
-      }
-
       this.parseTaskManager.completeTask(docId)
-      onProgress?.('done', 'Parse completed')
       return { success: true }
     } catch (error: any) {
+      const isAbortError = error?.name === 'AbortError' || error?.message?.includes('Parse cancelled')
+      if (isAbortError) {
+        this.parseTaskManager.updateProgress(docId, {
+          stage: 'done',
+          stageLabel: 'Cancelled',
+          progress: 0,
+          detail: 'Parse cancelled',
+        })
+        this.parseTaskManager.completeTask(docId)
+        this.db.prepare(
+          "UPDATE kb_documents SET parse_status = 'pending', parse_progress = 0, parse_stage = '', parse_detail = '', updated_at = unixepoch() WHERE id = ?"
+        ).run(docId)
+        return { success: false, error: 'Cancelled' }
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       const originalErrorMsg = error?.originalError?.message || error?.originalError
       const fullErrorDetail = originalErrorMsg
@@ -418,7 +438,6 @@ class KBDocumentService {
 
   async parseAllDocuments(
     kbId: string,
-    onProgress?: (current: number, total: number, docName: string) => void
   ): Promise<{ success: number; failed: number }> {
     const docs = this.db.prepare(
       "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status IN ('pending', 'failed')"
@@ -429,7 +448,6 @@ class KBDocumentService {
 
     for (let i = 0; i < docs.length; i++) {
       const doc = docs[i]
-      onProgress?.(i + 1, docs.length, doc.original_name)
 
       const kbBasePath = this.getKBBasePath(kbId)
       const filePath = path.join(kbBasePath, doc.original_name)
@@ -438,12 +456,12 @@ class KBDocumentService {
         continue
       }
 
-      const result = await this.parseDocument(doc.id, false, (_stage, detail) => {
-        onProgress?.(i + 1, docs.length, `${doc.original_name} - ${detail}`)
-      })
+      const result = await this.parseDocument(doc.id, false)
 
       if (result.success) {
         successCount++
+      } else if (result.error === 'Cancelled') {
+        break
       } else {
         failedCount++
       }
@@ -457,7 +475,8 @@ class KBDocumentService {
     providerId?: string,
     modelId?: string,
     enableThinking?: boolean,
-    onProgress?: (stage: string, detail: string) => void
+    parentSignal?: AbortSignal,
+    skipTaskCreation?: boolean,
   ): Promise<{ success: boolean; error?: string }> {
     const doc = this.db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(docId) as DBKBDocument | undefined
     if (!doc) {
@@ -476,50 +495,99 @@ class KBDocumentService {
 
     const jobId = this.processor.createProcessingJob(kbId, docId, 'full_process', 3)
     const taskId = `process-${docId}`
+    const abortController = new AbortController()
 
-    this.taskQueue.addTask({
-      id: taskId,
-      type: 'process',
-      title: `Knowledge Processing: ${doc.original_name}`,
-      status: 'running',
-      progress: 0,
-      progressText: 'Starting process...',
-      createdAt: Date.now(),
-      metadata: { docId, kbId, docName: doc.original_name },
-    })
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        return { success: false, error: 'Cancelled' }
+      }
+      parentSignal.addEventListener('abort', () => abortController.abort(), { once: true })
+    }
+
+    const existingTask = this.taskQueue.getTask(taskId)
+    if (skipTaskCreation && existingTask) {
+      this.taskQueue.updateTask(taskId, { status: 'running', progressText: 'Starting process...' })
+    } else if (!existingTask || existingTask.status === 'completed' || existingTask.status === 'failed' || existingTask.status === 'cancelled') {
+      this.taskQueue.addTask({
+        id: taskId,
+        type: 'process',
+        title: `Knowledge Processing: ${doc.original_name}`,
+        status: 'running',
+        progress: 0,
+        progressText: 'Starting process...',
+        createdAt: Date.now(),
+        metadata: { docId, kbId, docName: doc.original_name, providerId: provider, modelId, enableThinking },
+      })
+    } else {
+      this.taskQueue.updateTask(taskId, { status: 'running' })
+    }
+
+    this.taskQueue.setAbortController(taskId, abortController)
+
+    const checkCancelled = (): boolean => {
+      return abortController.signal.aborted
+    }
+
+    const checkPaused = async (): Promise<boolean> => {
+      if (this.taskQueue.isTaskPaused(taskId)) {
+        this.taskQueue.updateTask(taskId, { status: 'paused' })
+        while (this.taskQueue.isTaskPaused(taskId)) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          if (checkCancelled()) return true
+        }
+        this.taskQueue.updateTask(taskId, { status: 'running' })
+      }
+      return checkCancelled()
+    }
 
     try {
       this.processor.updateProcessingJob(jobId, 'running', 0, 'toc_restore')
-      onProgress?.('toc_restore', `Checking TOC restoration need: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { progress: 5, progressText: `Checking TOC: ${doc.original_name}` })
+
+      if (await checkPaused()) {
+        this.processor.updateProcessingJob(jobId, 'cancelled')
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
 
       const content = this.getDocumentContent(docId)
       if (content && this.processor.needsTocRestoration(content)) {
-        onProgress?.('toc_restore', `Restoring TOC for: ${doc.original_name}`)
         this.taskQueue.updateTask(taskId, { progress: 8, progressText: `Restoring TOC: ${doc.original_name}` })
 
         try {
           const restoredToc = await this.processor.restoreTocWithLLM(
-            content, provider, modelId, enableThinking, onProgress
+            content, provider, modelId, enableThinking,
+            (_stage, detail) => {
+              this.taskQueue.updateTask(taskId, { progressText: detail })
+            },
+            abortController.signal, checkPaused
           )
 
+          if (await checkPaused()) {
+            this.processor.updateProcessingJob(jobId, 'cancelled')
+            this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+            return { success: false, error: 'Cancelled' }
+          }
+
           if (restoredToc.length > 0) {
-            const newParagraphs = this.processor.identifyParagraphsFromLLMToc(content, restoredToc)
+            const newParagraphs = await this.processor.identifyParagraphsFromLLMToc(content, restoredToc, abortController.signal)
             this.processor.saveParagraphsWithoutSummary(doc.kb_id, docId, newParagraphs)
 
             const filteredToc = this.processor.filterTocByContentVolume(content, restoredToc)
             const tocForSave = this.processor.buildTocWithPath(filteredToc)
             this.processor.saveTocOnly(doc.kb_id, docId, tocForSave)
-
-            onProgress?.('toc_restore', `TOC restored: ${restoredToc.length} entries, ${newParagraphs.length} paragraphs`)
           }
         } catch (tocError) {
-          onProgress?.('toc_restore', `TOC restoration failed, using default chunking: ${tocError instanceof Error ? tocError.message : 'Unknown'}`)
         }
       }
 
+      if (await checkPaused()) {
+        this.processor.updateProcessingJob(jobId, 'cancelled')
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
+
       this.processor.updateProcessingJob(jobId, 'running', 0, 'paragraph_summary')
-      onProgress?.('paragraph_summary', `Generating paragraph summaries: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { progress: 10, progressText: `Paragraph summary: ${doc.original_name}` })
 
       const existingParagraphs = this.processor.getParagraphs(docId)
@@ -531,14 +599,29 @@ class KBDocumentService {
 
       const paragraphSummaries = []
       for (let i = 0; i < existingParagraphs.length; i++) {
+        if (await checkPaused()) {
+          if (paragraphSummaries.length > 0) {
+            this.processor.updateParagraphSummaries(docId, paragraphSummaries)
+          }
+          this.processor.updateProcessingJob(jobId, 'cancelled')
+          this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+          return { success: false, error: 'Cancelled' }
+        }
+
         const paragraph = existingParagraphs[i]
         const progressPercent = 10 + Math.round((i + 1) / existingParagraphs.length * 40)
-        onProgress?.('paragraph_summary', `Generating paragraph summary (${i + 1}/${existingParagraphs.length}): ${paragraph.title}`)
         this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Paragraph summary (${i + 1}/${existingParagraphs.length}): ${paragraph.title}` })
         const summary = await this.processor.generateParagraphSummary(
-          paragraph.content, paragraph.title, provider, modelId, enableThinking, onProgress
+          paragraph.content, paragraph.title, provider, modelId, enableThinking, undefined, abortController.signal
         )
         paragraphSummaries.push(summary)
+      }
+
+      if (await checkPaused()) {
+        this.processor.updateParagraphSummaries(docId, paragraphSummaries)
+        this.processor.updateProcessingJob(jobId, 'cancelled')
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
       }
 
       this.processor.updateParagraphSummaries(docId, paragraphSummaries)
@@ -549,16 +632,21 @@ class KBDocumentService {
       this.processor.updateProcessingJob(jobId, 'running', 2, 'doc_summary')
       this.taskQueue.updateTask(taskId, { progress: 60, progressText: `Doc summary: ${doc.original_name}` })
       const docSummary = await this.processor.generateDocumentSummary(
-        paragraphSummaries, doc.original_name, tocData, provider, modelId, enableThinking, onProgress
+        paragraphSummaries, doc.original_name, tocData, provider, modelId, enableThinking, undefined, abortController.signal
       )
       this.processor.saveDocumentSummary(kbId, docId, docSummary)
 
       this.processor.updateProcessingJob(jobId, 'completed', 3, 'complete')
-      onProgress?.('complete', `Document processing completed: ${doc.original_name}`)
       this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: `Processing completed: ${doc.original_name}` })
 
       return { success: true }
-    } catch (error) {
+    } catch (error: any) {
+      const isAbortError = error?.name === 'AbortError' || error?.message?.includes('cancelled')
+      if (isAbortError) {
+        this.processor.updateProcessingJob(jobId, 'cancelled')
+        this.taskQueue.updateTask(taskId, { status: 'cancelled', progressText: 'Cancelled' })
+        return { success: false, error: 'Cancelled' }
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       this.processor.updateProcessingJob(jobId, 'failed', undefined, undefined, errorMessage)
       this.taskQueue.updateTask(taskId, { status: 'failed', error: errorMessage, progressText: `Failed: ${errorMessage}` })
@@ -571,49 +659,94 @@ class KBDocumentService {
     providerId?: string,
     modelId?: string,
     enableThinking?: boolean,
-    onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: number; failed: number; skipped: number }> {
     const docs = this.db.prepare(
       "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
     ).all(kbId) as DBKBDocument[]
 
     const toProcess = docs.filter(doc => !this.processor.getDocumentSummary(doc.id))
-    const taskId = `process-all-${kbId}`
+    const skippedCount = docs.length - toProcess.length
 
-    if (toProcess.length > 0) {
-      this.taskQueue.addTask({
-        id: taskId,
-        type: 'process',
-        title: `Batch Knowledge Processing (${toProcess.length} docs)`,
-        status: 'running',
-        progress: 0,
-        progressText: 'Starting batch processing...',
-        createdAt: Date.now(),
-        metadata: { kbId },
-      })
+    if (toProcess.length === 0) {
+      return { success: 0, failed: 0, skipped: skippedCount }
+    }
+
+    const batchAbortController = new AbortController()
+
+    for (const doc of toProcess) {
+      const taskId = `process-${doc.id}`
+      const existingTask = this.taskQueue.getTask(taskId)
+      if (!existingTask || existingTask.status === 'completed' || existingTask.status === 'failed' || existingTask.status === 'cancelled') {
+        this.taskQueue.addTask({
+          id: taskId,
+          type: 'process',
+          title: `Knowledge Processing: ${doc.original_name}`,
+          status: 'pending',
+          progress: 0,
+          progressText: 'Queued',
+          createdAt: Date.now(),
+          metadata: { docId: doc.id, kbId, docName: doc.original_name, providerId, modelId, enableThinking, batchKbId: kbId },
+        })
+      }
+      this.taskQueue.setAbortController(taskId, new AbortController())
     }
 
     let successCount = 0
     let failedCount = 0
-    let skippedCount = docs.length - toProcess.length
 
     for (let i = 0; i < toProcess.length; i++) {
-      const doc = toProcess[i]
-      const progressPercent = Math.round((i / toProcess.length) * 100)
-      onProgress?.('processing_docs', `Processing doc ${i + 1}/${toProcess.length}: ${doc.original_name}`)
-      this.taskQueue.updateTask(taskId, { progress: progressPercent, progressText: `Processing (${i + 1}/${toProcess.length}): ${doc.original_name}` })
+      if (batchAbortController.signal.aborted) break
 
-      const result = await this.processDocument(doc.id, providerId, modelId, enableThinking, onProgress)
+      const doc = toProcess[i]
+      const taskId = `process-${doc.id}`
+
+      if (this.taskQueue.isTaskPaused(taskId)) {
+        this.taskQueue.updateTask(taskId, { status: 'paused' })
+        while (this.taskQueue.isTaskPaused(taskId)) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          if (batchAbortController.signal.aborted) break
+        }
+        if (batchAbortController.signal.aborted) {
+          for (let j = i; j < toProcess.length; j++) {
+            const remainingId = `process-${toProcess[j].id}`
+            const rt = this.taskQueue.getTask(remainingId)
+            if (rt && rt.status === 'pending') {
+              this.taskQueue.updateTask(remainingId, { status: 'cancelled', progressText: 'Cancelled' })
+            }
+          }
+          break
+        }
+        this.taskQueue.updateTask(taskId, { status: 'running' })
+      }
+
+      const existingTask = this.taskQueue.getTask(taskId)
+      if (existingTask?.status === 'cancelled') {
+        for (let j = i + 1; j < toProcess.length; j++) {
+          const remainingId = `process-${toProcess[j].id}`
+          const rt = this.taskQueue.getTask(remainingId)
+          if (rt && rt.status === 'pending') {
+            this.taskQueue.updateTask(remainingId, { status: 'cancelled', progressText: 'Cancelled' })
+          }
+        }
+        break
+      }
+
+      const result = await this.processDocument(doc.id, providerId, modelId, enableThinking, batchAbortController.signal, true)
 
       if (result.success) {
         successCount++
+      } else if (result.error === 'Cancelled') {
+        for (let j = i + 1; j < toProcess.length; j++) {
+          const remainingId = `process-${toProcess[j].id}`
+          const rt = this.taskQueue.getTask(remainingId)
+          if (rt && rt.status === 'pending') {
+            this.taskQueue.updateTask(remainingId, { status: 'cancelled', progressText: 'Cancelled' })
+          }
+        }
+        break
       } else {
         failedCount++
       }
-    }
-
-    if (toProcess.length > 0) {
-      this.taskQueue.updateTask(taskId, { status: 'completed', progress: 100, progressText: `Batch processing complete: ${successCount} success, ${failedCount} failed` })
     }
 
     return { success: successCount, failed: failedCount, skipped: skippedCount }
@@ -903,29 +1036,6 @@ class KBDocumentService {
 
   getParseProgress(docId: string) {
     return this.parseTaskManager.getProgress(docId)
-  }
-
-  getDocParseDetail(docId: string): Record<string, unknown> | null {
-    const doc = this.db.prepare(
-      'SELECT id, original_name, parse_status, parse_progress, parse_stage, parse_detail, processed_pages, total_pages, processed_chunks, total_chunks, parse_speed, parse_eta, parse_error FROM kb_documents WHERE id = ?'
-    ).get(docId) as Record<string, unknown> | undefined
-
-    if (doc?.parse_status === 'completed') {
-      const processTaskId = `process-${docId}`
-      const processTask = this.taskQueue.getTask(processTaskId)
-      if (processTask) {
-        return {
-          ...doc,
-          parse_status: processTask.status === 'running' ? 'parsing' : processTask.status === 'paused' ? 'paused' : processTask.status === 'failed' ? 'failed' : 'completed',
-          parse_progress: processTask.progress,
-          parse_stage: 'knowledge_process',
-          parse_detail: processTask.progressText,
-          parse_error: processTask.error,
-        }
-      }
-    }
-
-    return doc || null
   }
 
   pauseAllParses(): number {

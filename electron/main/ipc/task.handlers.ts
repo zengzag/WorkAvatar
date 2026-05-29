@@ -33,13 +33,26 @@ export function registerTaskHandlers() {
 
     if (task.type === 'parse' && task.metadata?.docId) {
       kbService.resumeParse(task.metadata.docId)
-    } else if (task.type === 'process' && task.metadata?.docId) {
-      kbService.processDocument(
-        task.metadata.docId,
-        task.metadata.providerId,
-        task.metadata.modelId,
-        task.metadata.enableThinking,
-      ).catch(() => {})
+    } else if (task.type === 'process') {
+      const controller = taskService.getPauseController(taskId)
+      const isHandlerActive = !!controller?.abortController && !controller.abortController.signal.aborted
+      if (!isHandlerActive) {
+        if (task.metadata?.docId) {
+          kbService.processDocument(
+            task.metadata.docId,
+            task.metadata.providerId,
+            task.metadata.modelId,
+            task.metadata.enableThinking,
+          ).catch(() => {})
+        } else if (task.metadata?.kbId && task.id?.startsWith('build-global-')) {
+          kbService.buildGlobalKnowledge(
+            task.metadata.kbId,
+            task.metadata.providerId,
+            task.metadata.modelId,
+            task.metadata.enableThinking,
+          ).catch(() => {})
+        }
+      }
     }
 
     return true

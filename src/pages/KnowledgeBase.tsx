@@ -25,10 +25,9 @@ const KnowledgeBasePage: React.FC = () => {
     onPauseParse, onResumeParse, onRetryParse,
     onPauseAll, onResumeAll, onCancelAll,
     onUploadFiles, onUploadFolder, onRefreshDocs,
-    processingDocId, processingAll, buildingGlobal, processProgress,
+    processingDocId, processingAll, buildingGlobal, docProcessProgress,
     knowledgeStats, globalSummary,
     onProcessDocument, onProcessAll, onBuildGlobal,
-    onViewParseDetail,
     createModalOpen, setCreateModalOpen, newKBName, setNewKBName, newKBDesc, setNewKBDesc, onCreateKB,
     editKBModalOpen, setEditKBModalOpen, editKBName, setEditKBName, editKBDesc, setEditKBDesc, onConfirmEditKB, onEditKB,
     activeTab, onTabChange,
@@ -105,13 +104,13 @@ const KnowledgeBasePage: React.FC = () => {
                         parsingAll={parsingAll}
                         processingAll={processingAll}
                         buildingGlobal={buildingGlobal}
-                        processProgress={processProgress}
                         completedCount={completedCount}
                         pendingCount={pendingCount}
                         failedCount={failedCount}
                         pausedCount={pausedCount}
                         processedDocIds={processedDocIds}
                         processingDocId={processingDocId}
+                        docProcessProgress={docProcessProgress}
                         knowledgeStats={knowledgeStats}
                         globalSummary={globalSummary}
                         selectedKbId={selectedKB?.id || ''}
@@ -128,7 +127,6 @@ const KnowledgeBasePage: React.FC = () => {
                         onPauseAll={onPauseAll}
                         onResumeAll={onResumeAll}
                         onCancelAll={onCancelAll}
-                        onViewDetail={onViewParseDetail}
                       />
                     ),
                   },

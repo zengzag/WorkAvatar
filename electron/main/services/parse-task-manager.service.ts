@@ -1,5 +1,3 @@
-import { BrowserWindow } from 'electron'
-import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import KBDatabaseService from './kb-database.service'
 import TaskQueueService, { type BackgroundTask } from './task-queue.service'
 
@@ -136,7 +134,6 @@ class ParseTaskManager {
     })
 
     this.updateDocParseProgress(docId, updatedProgress)
-    this.sendProgressToRenderer(docId, updatedProgress)
   }
 
   async checkPaused(docId: string): Promise<boolean> {
@@ -163,6 +160,10 @@ class ParseTaskManager {
     }
 
     return false
+  }
+
+  getAbortController(docId: string): AbortController | undefined {
+    return this.activeTasks.get(docId)?.abortController
   }
 
   isAborted(docId: string): boolean {
@@ -404,25 +405,6 @@ class ParseTaskManager {
       progress.processedChunks, progress.totalChunks,
       progress.speed, progress.eta, docId
     )
-  }
-
-  private sendProgressToRenderer(docId: string, progress: ParseProgress) {
-    const window = BrowserWindow.getAllWindows()[0]
-    if (window && !window.isDestroyed()) {
-      window.webContents.send(IPC_CHANNELS.KB_PARSE_PROGRESS, {
-        doc_id: docId,
-        stage: progress.stage,
-        detail: progress.detail,
-        progress: progress.progress,
-        processedPages: progress.processedPages,
-        totalPages: progress.totalPages,
-        processedChunks: progress.processedChunks,
-        totalChunks: progress.totalChunks,
-        speed: progress.speed,
-        eta: progress.eta,
-        stageLabel: progress.stageLabel,
-      })
-    }
   }
 
   getPausedDocIds(): string[] {

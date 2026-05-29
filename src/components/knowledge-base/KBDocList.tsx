@@ -2,15 +2,15 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Typography, Space, Table, Tag, Button,
-  Popconfirm, Empty, Statistic, Row, Col, Spin, Progress,
-  Tooltip, Dropdown, theme, Alert, message,
+  Popconfirm, Empty, Statistic, Row, Col,
+  Tooltip, Dropdown, theme, message, Progress,
 } from 'antd'
 import {
   FileTextOutlined, SyncOutlined, ThunderboltOutlined,
   CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined,
   ReloadOutlined, RedoOutlined, PauseOutlined, CaretRightOutlined,
   DownOutlined, PauseCircleOutlined, PlayCircleOutlined,
-  StopOutlined, InfoCircleOutlined, ApartmentOutlined,
+  StopOutlined, ApartmentOutlined,
   ReadOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import { formatFileSize } from '../../utils/format'
@@ -26,15 +26,6 @@ interface KBDocument {
   hash: string
   parse_status: 'pending' | 'parsing' | 'paused' | 'completed' | 'failed'
   parse_error?: string
-  parse_progress?: number
-  parse_stage?: string
-  parse_detail?: string
-  processed_pages?: number
-  total_pages?: number
-  processed_chunks?: number
-  total_chunks?: number
-  parse_speed?: number
-  parse_eta?: number
   is_reused?: number
   created_at: number
 }
@@ -44,13 +35,13 @@ interface KBDocListProps {
   parsingAll: boolean
   processingAll: boolean
   buildingGlobal: boolean
-  processProgress: { stage: string; detail: string }
   completedCount: number
   pendingCount: number
   failedCount: number
   pausedCount: number
   processedDocIds: Set<string>
   processingDocId: string | null
+  docProcessProgress: Record<string, { progress: number; status: string; progressText: string }>
   knowledgeStats: any
   globalSummary: any
   selectedKbId: string
@@ -67,16 +58,15 @@ interface KBDocListProps {
   onPauseAll: () => void
   onResumeAll: () => void
   onCancelAll: () => void
-  onViewDetail: (docId: string, docName: string) => void
 }
 
 const KBDocList: React.FC<KBDocListProps> = ({
-  docs, parsingAll, processingAll, buildingGlobal, processProgress,
+  docs, parsingAll, processingAll, buildingGlobal,
   completedCount, pendingCount, failedCount, pausedCount,
-  processedDocIds, processingDocId, knowledgeStats, globalSummary, selectedKbId,
+  processedDocIds, processingDocId, docProcessProgress, knowledgeStats, globalSummary, selectedKbId,
   onParseAll, onParseDocument, onProcessDocument, onProcessAll, onBuildGlobal,
   onDeleteDoc, onRefresh, onPauseParse, onResumeParse, onRetryParse,
-  onPauseAll, onResumeAll, onCancelAll, onViewDetail,
+  onPauseAll, onResumeAll, onCancelAll,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -119,41 +109,6 @@ const KBDocList: React.FC<KBDocListProps> = ({
 
   return (
     <div>
-      {(parsingAll || processingAll || buildingGlobal) && (
-        <Card size="small" style={{ marginBottom: 16, border: `1px solid ${token.colorPrimary}` }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <Space>
-              <Spin size="small" />
-              <Text strong>
-                {parsingAll ? t('knowledgeBase.batchParsing') : buildingGlobal ? t('knowledgeBase.buildGlobalKnowledge') : t('knowledgeBase.batchKnowledgeProcessing')}
-              </Text>
-              {processProgress.stage && <Text type="secondary">{processProgress.stage}: {processProgress.detail}</Text>}
-            </Space>
-            {parsingAll && (() => {
-              const activeDocs = docs.filter(d => d.parse_status === 'parsing')
-              return activeDocs.length > 0 ? (
-                <Space>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{t('parseProgress.currentDoc')}:</Text>
-                  {activeDocs.map(doc => (
-                    <Button key={doc.id} size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(doc.id, doc.original_name)}>
-                      {doc.original_name.length > 20 ? doc.original_name.substring(0, 20) + '...' : doc.original_name}
-                    </Button>
-                  ))}
-                </Space>
-              ) : null
-            })()}
-            {(processingAll || buildingGlobal) && processingDocId && (() => {
-              const procDoc = docs.find(d => d.id === processingDocId)
-              return procDoc ? (
-                <Button size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(procDoc.id, procDoc.original_name)}>
-                  {t('parseProgress.detail')}
-                </Button>
-              ) : null
-            })()}
-          </div>
-        </Card>
-      )}
-
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Space>
@@ -165,23 +120,6 @@ const KBDocList: React.FC<KBDocListProps> = ({
             <Button type="primary" icon={<ApartmentOutlined />} onClick={onBuildGlobal} loading={buildingGlobal}>{t('knowledgeBase.buildGlobalKnowledge')}</Button>
           </Space>
         </div>
-
-        {(processingAll || buildingGlobal) && processProgress.stage && (
-          <Alert
-            type="info"
-            title={processProgress.stage}
-            description={processProgress.detail}
-            style={{ marginBottom: 16 }}
-            showIcon
-            action={
-              processingDocId ? (
-                <Button size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(processingDocId, '')}>
-                  {t('parseProgress.detail')}
-                </Button>
-              ) : undefined
-            }
-          />
-        )}
 
         {knowledgeStats && (
           <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -308,30 +246,39 @@ const KBDocList: React.FC<KBDocListProps> = ({
                 const c = statusConfig[status] || { color: 'default', textKey: status, icon: null }
                 const isProcessed = status === 'completed' && processedDocIds.has(record.id)
                 const isUpToDate = status === 'completed' && !!record.is_reused
+                const processProgress = docProcessProgress[record.id]
+                const isPending = processProgress?.status === 'pending'
+                const isRunning = processProgress?.status === 'running' || processProgress?.status === 'paused'
                 return (
-                  <Space orientation="vertical" size={2} style={{ width: '100%' }}>
+                  <Space size={4} direction="vertical" style={{ width: '100%' }}>
                     <Space size={4}>
                       <Tag color={c.color} icon={c.icon}>{t(c.textKey)}</Tag>
                       {isUpToDate && <Tag color="cyan" style={{ fontSize: 10 }}>{t('parseProgress.upToDate')}</Tag>}
                       {isProcessed && !isUpToDate && <Tag color="purple" icon={<ThunderboltOutlined />} style={{ fontSize: 10 }}>{t('knowledgeBase.processed')}</Tag>}
+                      {isRunning && (
+                        <Tag color="processing" icon={<ThunderboltOutlined />} style={{ fontSize: 10 }}>
+                          {t('knowledgeBase.processing')}
+                        </Tag>
+                      )}
+                      {isPending && (
+                        <Tag color="default" icon={<ClockCircleOutlined />} style={{ fontSize: 10 }}>
+                          {t('knowledgeBase.queued')}
+                        </Tag>
+                      )}
                     </Space>
-                    {(status === 'parsing' || status === 'paused') && (record.parse_progress ?? 0) > 0 && (
+                    {isRunning && processProgress.progress > 0 && (
                       <Progress
-                        percent={Math.round(record.parse_progress || 0)}
+                        percent={processProgress.progress}
                         size="small"
-                        status={status === 'paused' ? 'normal' : 'active'}
-                        strokeColor={status === 'paused' ? token.colorWarning : undefined}
-                        style={{ margin: 0, width: '100%' }}
+                        status={processProgress.status === 'paused' ? 'normal' : 'active'}
+                        style={{ marginBottom: 0, marginTop: 0, width: '100%' }}
                       />
-                    )}
-                    {record.parse_detail && (status === 'parsing' || status === 'paused') && (
-                      <Text type="secondary" style={{ fontSize: 11 }}>{record.parse_detail}</Text>
                     )}
                   </Space>
                 )
               },
             },
-            { title: t('common.action'), key: 'action', width: 320,
+            { title: t('common.action'), key: 'action', width: 280,
               render: (_: any, record: KBDocument) => {
                 const isProcessing = processingDocId === record.id
                 return (
@@ -339,19 +286,11 @@ const KBDocList: React.FC<KBDocListProps> = ({
                     {record.parse_status === 'pending' && !isProcessing && (
                       <Button type="link" size="small" onClick={() => onParseDocument(record.id)}>{t('knowledgeBase.parse')}</Button>
                     )}
-                    {(record.parse_status === 'parsing' || (record.parse_status === 'completed' && isProcessing)) && (
-                      <>
-                        {record.parse_status === 'parsing' && (
-                          <Button type="link" size="small" icon={<PauseOutlined />} onClick={() => onPauseParse(record.id)}>{t('parseProgress.pause')}</Button>
-                        )}
-                        <Button type="link" size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(record.id, record.original_name)}>{t('parseProgress.detail')}</Button>
-                      </>
+                    {record.parse_status === 'parsing' && (
+                      <Button type="link" size="small" icon={<PauseOutlined />} onClick={() => onPauseParse(record.id)}>{t('parseProgress.pause')}</Button>
                     )}
                     {record.parse_status === 'paused' && !isProcessing && (
-                      <>
-                        <Button type="link" size="small" icon={<CaretRightOutlined />} onClick={() => onResumeParse(record.id)} style={{ color: token.colorSuccess }}>{t('parseProgress.resume')}</Button>
-                        <Button type="link" size="small" icon={<InfoCircleOutlined />} onClick={() => onViewDetail(record.id, record.original_name)}>{t('parseProgress.detail')}</Button>
-                      </>
+                      <Button type="link" size="small" icon={<CaretRightOutlined />} onClick={() => onResumeParse(record.id)} style={{ color: token.colorSuccess }}>{t('parseProgress.resume')}</Button>
                     )}
                     {record.parse_status === 'failed' && !isProcessing && (
                       <>
