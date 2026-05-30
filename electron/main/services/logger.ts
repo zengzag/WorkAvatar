@@ -12,6 +12,7 @@ const LOG_PREFIXES: Record<string, string> = {
   LLM: '[LLM]',
   Export: '[Export]',
   Search: '[Search]',
+  InternetSearch: '[InternetSearch]',
 }
 
 class Logger {

@@ -6,10 +6,7 @@ export interface Employee {
   profile_json: string
   avatar_type: string
   status: 'draft' | 'active' | 'paused' | 'error'
-  review_mode: boolean
   default_skill_id?: string
-  llm_provider_id?: string
-  llm_model?: string
   memory_enabled: boolean
   arch_version: number
   total_tasks: number

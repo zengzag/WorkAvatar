@@ -71,9 +71,6 @@ export class EmployeeExportPackageService {
           description: employee.description,
           avatar_type: employee.avatar_type,
           profile_json: employee.profile_json || '',
-          review_mode: !!employee.review_mode,
-          llm_provider_id: employee.llm_provider_id || undefined,
-          llm_model: employee.llm_model || undefined,
         },
         skills: skills.map(s => ({
           type: s.type,

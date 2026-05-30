@@ -29,7 +29,7 @@ export class SkillManager {
 
     for (const skill of installedSkills) {
       if (!skill.is_enabled) continue
-      if (this.allowedSkillPaths && this.allowedSkillPaths.length > 0 && !this.allowedSkillPaths.includes(skill.installPath)) continue
+      if (this.allowedSkillPaths !== undefined && !this.allowedSkillPaths.includes(skill.installPath)) continue
 
       const references = new Map<string, string>()
       for (const ref of skill.references) {

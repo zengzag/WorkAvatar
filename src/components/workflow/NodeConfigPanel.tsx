@@ -103,13 +103,9 @@ const NodeConfigPanel: React.FC = () => {
           employee_id: emp.id,
           employee_name: emp.name,
           label: emp.name,
-          provider_id: emp.llm_provider_id || undefined,
-          model_id: emp.llm_model || undefined,
         } as Partial<EmployeeNodeData>)
         setLocalEmployeeId(emp.id)
         setLocalLabel(emp.name)
-        setLocalProviderId(emp.llm_provider_id || undefined)
-        setLocalModelId(emp.llm_model || undefined)
       }
     },
     [selectedNodeId, employees, updateNodeData]

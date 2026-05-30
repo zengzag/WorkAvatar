@@ -39,6 +39,8 @@ export type {
 } from './channels/llm'
 export type {
   ToolAssignParams,
+  SearchOpenWindowParams,
+  SearchCloseWindowParams,
 } from './channels/tool'
 export type {
   SettingsGetParams,

@@ -51,10 +51,7 @@ export interface EmployeeUpdateParams {
   description?: string
   profile_json?: string
   status?: 'draft' | 'active' | 'paused' | 'error'
-  review_mode?: boolean
   default_skill_id?: string
-  llm_provider_id?: string
-  llm_model?: string
   workspace_path?: string
   avatar_type?: string
   memory_enabled?: boolean

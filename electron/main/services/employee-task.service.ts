@@ -268,7 +268,7 @@ class EmployeeTaskService {
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(task.employee_id) as DBEmployee | undefined
     if (!employee) throw new Error(`Employee ${task.employee_id} not found`)
 
-    const providerId = task.llm_provider_id || employee.llm_provider_id
+    const providerId = task.llm_provider_id
     if (!providerId) throw new Error('No LLM provider configured')
 
     const executionId = generateId()

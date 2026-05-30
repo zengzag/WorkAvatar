@@ -84,20 +84,10 @@ class EmployeeAgentService {
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
       if (conversationId && existing.conversationId !== conversationId) {
-        const employee = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(employeeId) as Pick<DBEmployee, 'memory_enabled'> | undefined
-        const memoryEnabled = employee?.memory_enabled === 1
-        if (memoryEnabled) {
-          const newMemoryPrompt = this.memoryService.formatMemoriesForPrompt(
-            this.memoryService.listMemories(employeeId)
-          ) || undefined
-          existing.agent.updateMemoryPrompt(newMemoryPrompt)
-        }
-        existing.agent.updateKBContextPrompt(undefined)
-        existing.agent.updateToolPlanningPrompt(null)
-        existing.agent.resetPersistedSkillInstructions()
-        existing.conversationId = conversationId || null
+        this.agentEntries.delete(cacheKey)
+      } else {
+        return existing
       }
-      return existing
     }
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
@@ -131,7 +121,7 @@ class EmployeeAgentService {
 
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
 
-    const assignedSkillPaths = employeeSkills.assigned.map(skill => skill.installPath)
+    const enabledSkillPaths = employeeSkills.enabled.map(skill => skill.installPath)
 
     const modelConfig = this.getModelConfig(config, modelId)
 
@@ -159,7 +149,7 @@ class EmployeeAgentService {
       totBaseUrl: modelConfig?.tot_base_url ?? (config.base_url || this.llmClient.getBaseURL(config)),
       totProviderType: modelConfig?.tot_provider_type ?? config.provider_type,
       planningStrategy: modelConfig?.planning_strategy,
-      allowedSkillPaths: assignedSkillPaths,
+      allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: workspaceGuidance || undefined,
@@ -181,7 +171,7 @@ class EmployeeAgentService {
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
 
-    for (const skill of employeeSkills.assigned) {
+    for (const skill of employeeSkills.enabled) {
       const skillDef: ToolDefinition = {
         id: `skill_${skill.id}`,
         name: `skill_${skill.name}`,
@@ -289,17 +279,7 @@ class EmployeeAgentService {
       }
     }
 
-    for (const id of kbToolIds) {
-      if (!enabledRowIds.has(id)) {
-        result.add(id)
-      }
-    }
-    for (const id of workspaceToolIds) {
-      if (!enabledRowIds.has(id)) {
-        result.add(id)
-      }
-    }
-    for (const id of officeToolIds) {
+    for (const id of allBuiltinToolIds) {
       if (!enabledRowIds.has(id)) {
         result.add(id)
       }

@@ -25,7 +25,7 @@ import {
   ExportImportSection,
   MemorySection,
 } from '../components/employee-settings'
-import type { Employee, LLMProvider } from '../types'
+import type { Employee } from '../types'
 
 interface ToolInfo {
   id: string
@@ -49,6 +49,10 @@ interface InstalledSkill {
   skillMdContent?: string
 }
 
+interface EmployeeSkill extends InstalledSkill {
+  enabled: boolean
+}
+
 const EmployeeSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
@@ -65,15 +69,13 @@ const EmployeeSettings: React.FC = () => {
     }
   }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
-  const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
 
   const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
 
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
-  const [employeeSkills, setEmployeeSkills] = useState<InstalledSkill[]>([])
-  const [availableSkills, setAvailableSkills] = useState<InstalledSkill[]>([])
+  const [employeeSkills, setEmployeeSkills] = useState<EmployeeSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
 
   useEffect(() => {
@@ -82,9 +84,6 @@ const EmployeeSettings: React.FC = () => {
         name: employee.name,
         description: employee.description,
         avatar_type: employee.avatar_type,
-        review_mode: employee.review_mode,
-        llm_provider_id: employee.llm_provider_id,
-        llm_model: employee.llm_model,
       })
     }
   }, [employee])
@@ -97,13 +96,6 @@ const EmployeeSettings: React.FC = () => {
       message.error(t('employeeSettings.loadFailed'))
     }
   }, [id, message, t])
-
-  const loadProviders = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.llm.getProviders()
-      setProviders(result as LLMProvider[])
-    } catch {}
-  }, [])
 
   const loadTools = useCallback(async () => {
     try {
@@ -126,8 +118,11 @@ const EmployeeSettings: React.FC = () => {
   const loadEmployeeSkills = useCallback(async () => {
     try {
       const result = await window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: id! })
-      setEmployeeSkills(result.assigned || [])
-      setAvailableSkills(result.available || [])
+      const allSkills: EmployeeSkill[] = [
+        ...result.enabled.map((s: InstalledSkill) => ({ ...s, enabled: true })),
+        ...result.disabled.map((s: InstalledSkill) => ({ ...s, enabled: false })),
+      ]
+      setEmployeeSkills(allSkills)
     } catch {
       console.error('加载员工 Skills 失败')
     }
@@ -136,12 +131,11 @@ const EmployeeSettings: React.FC = () => {
   useEffect(() => {
     if (id) {
       loadEmployee()
-      loadProviders()
       loadTools()
       loadInstalledSkills()
       loadEmployeeSkills()
     }
-  }, [id, loadEmployee, loadProviders, loadTools, loadInstalledSkills, loadEmployeeSkills])
+  }, [id, loadEmployee, loadTools, loadInstalledSkills, loadEmployeeSkills])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -215,29 +209,18 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const handleAssignSkill = async (skillId: string) => {
+  const handleToggleSkill = async (skillId: string, enabled: boolean) => {
     try {
-      await window.electronAPI.skillRegistry.assignToEmployee({
+      await window.electronAPI.skillRegistry.toggleForEmployee({
         employee_id: id!,
         skill_id: skillId,
+        enabled,
       })
-      message.success(t('employeeSettings.skillAssigned'))
-      loadEmployeeSkills()
+      setEmployeeSkills((prev) =>
+        prev.map((s) => (s.id === skillId ? { ...s, enabled } : s))
+      )
     } catch {
-      message.error(t('employeeSettings.assignFailed'))
-    }
-  }
-
-  const handleRemoveSkill = async (skillId: string) => {
-    try {
-      await window.electronAPI.skillRegistry.removeFromEmployee({
-        employee_id: id!,
-        skill_id: skillId,
-      })
-      message.success(t('employeeSettings.skillRemoved'))
-      loadEmployeeSkills()
-    } catch {
-      message.error(t('employeeSettings.removeFailed'))
+      message.error(t('employeeSettings.toggleFailed'))
     }
   }
 
@@ -446,7 +429,6 @@ const EmployeeSettings: React.FC = () => {
             children: (
               <BasicInfoSection
                 form={form}
-                providers={providers}
                 loading={loading}
                 onSave={handleSaveBasic}
                 onDelete={handleDeleteEmployee}
@@ -472,13 +454,11 @@ const EmployeeSettings: React.FC = () => {
               <SkillsSection
                 installedSkills={installedSkills}
                 employeeSkills={employeeSkills}
-                availableSkills={availableSkills}
                 installingSkill={installingSkill}
                 onInstallFromDir={handleInstallSkillFromDir}
                 onInstallFromZip={handleInstallSkillFromZip}
                 onUninstallSkill={handleUninstallSkill}
-                onAssignSkill={handleAssignSkill}
-                onRemoveSkill={handleRemoveSkill}
+                onToggleSkill={handleToggleSkill}
               />
             )
           },
@@ -490,8 +470,6 @@ const EmployeeSettings: React.FC = () => {
                 employeeId={id!}
                 memoryEnabled={employee.memory_enabled}
                 onMemoryEnabledChange={handleMemoryEnabledChange}
-                providerId={employee.llm_provider_id}
-                modelId={employee.llm_model}
               />
             )
           },

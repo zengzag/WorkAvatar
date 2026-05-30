@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   Card,
   Button,
+  Switch,
   Space,
   Avatar,
   Tag,
@@ -15,9 +16,6 @@ import {
 import {
   BookOutlined,
   DeleteOutlined,
-  PlusOutlined,
-  ImportOutlined,
-  ThunderboltOutlined,
   FolderOpenOutlined,
   FileZipOutlined,
 } from '@ant-design/icons'
@@ -36,31 +34,33 @@ interface InstalledSkill {
   skillMdContent?: string
 }
 
+interface EmployeeSkill extends InstalledSkill {
+  enabled: boolean
+}
+
 interface SkillsSectionProps {
   installedSkills: InstalledSkill[]
-  employeeSkills: InstalledSkill[]
-  availableSkills: InstalledSkill[]
+  employeeSkills: EmployeeSkill[]
   installingSkill: boolean
   onInstallFromDir: () => void
   onInstallFromZip: () => void
   onUninstallSkill: (skillId: string) => void
-  onAssignSkill: (skillId: string) => void
-  onRemoveSkill: (skillId: string) => void
+  onToggleSkill: (skillId: string, enabled: boolean) => void
 }
 
 const SkillsSection: React.FC<SkillsSectionProps> = ({
   installedSkills,
   employeeSkills,
-  availableSkills,
   installingSkill,
   onInstallFromDir,
   onInstallFromZip,
   onUninstallSkill,
-  onAssignSkill,
-  onRemoveSkill,
+  onToggleSkill,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+
+  const enabledSkillIds = new Set(employeeSkills.filter((s) => s.enabled).map((s) => s.id))
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
@@ -140,13 +140,13 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
       <Card
         title={
           <Space>
-            <ImportOutlined />
-            <span>{t('employeeSettings.assignedSkills', { count: employeeSkills.length })}</span>
+            <BookOutlined />
+            <span>{t('employeeSettings.availableSkills', { count: employeeSkills.length })}</span>
           </Space>
         }
       >
         {employeeSkills.length === 0 ? (
-          <Empty description={t('employeeSettings.noAssignedSkills')} />
+          <Empty description={t('employeeSettings.noInstalledSkills')} />
         ) : (
           <div>
             {employeeSkills.map((skill) => (
@@ -161,7 +161,13 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                  <Avatar style={{ backgroundColor: token.colorPrimary, flexShrink: 0 }} icon={<BookOutlined />} />
+                  <Avatar
+                    style={{
+                      backgroundColor: enabledSkillIds.has(skill.id) ? token.colorPrimary : token.colorBgContainer,
+                      flexShrink: 0,
+                    }}
+                    icon={<BookOutlined />}
+                  />
                   <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                     <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
@@ -170,61 +176,12 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
                   </div>
                 </div>
-                <Popconfirm
-                  title={t('employeeSettings.confirmRemoveSkill')}
-                  description={t('employeeSettings.removeSkillDesc')}
-                  onConfirm={() => onRemoveSkill(skill.id)}
-                >
-                  <Button type="text" danger icon={<DeleteOutlined />}>
-                    {t('common.remove')}
-                  </Button>
-                </Popconfirm>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card
-        title={
-          <Space>
-            <ThunderboltOutlined />
-            <span>{t('employeeSettings.availableSkills', { count: availableSkills.length })}</span>
-          </Space>
-        }
-      >
-        {availableSkills.length === 0 ? (
-          <Empty description={t('employeeSettings.noAvailableSkills')} />
-        ) : (
-          <div>
-            {availableSkills.map((skill) => (
-              <div
-                key={skill.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 0',
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                  <Avatar style={{ backgroundColor: token.colorSuccess, flexShrink: 0 }} icon={<BookOutlined />} />
-                  <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                    <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
-                      <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
-                    </div>
-                    <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
-                  </div>
-                </div>
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={() => onAssignSkill(skill.id)}
-                >
-                  {t('common.assign')}
-                </Button>
+                <Switch
+                  checked={skill.enabled}
+                  onChange={(checked) => onToggleSkill(skill.id, checked)}
+                  checkedChildren={t('common.enable')}
+                  unCheckedChildren={t('common.disable')}
+                />
               </div>
             ))}
           </div>

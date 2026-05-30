@@ -172,8 +172,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const result = await window.electronAPI.employee.get(id!)
       if (version !== initVersionRef.current) return
       setEmployee(result)
-      if (result.llm_provider_id && !localStorage.getItem(selectedLlmProviderIdKey)) setSelectedLlmProviderId(result.llm_provider_id)
-      if (result.llm_model && !localStorage.getItem(selectedLlmModelIdKey)) setSelectedLlmModelId(result.llm_model)
       loadConversations()
       loadProviders()
     } catch {
@@ -886,7 +884,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setComparisonUserMessageId(userMessage.id)
       }
     } else {
-      const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+      const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
       if (!providerId) {
         message.warning(t('workbench.noLlmProvider'))
         return
@@ -1020,7 +1018,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       message_count: newMessages.length,
     })
 
-    const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
     if (!providerId) {
       message.warning(t('workbench.noLlmProvider'))
       return
@@ -1236,7 +1234,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       message_count: newMessages.length,
     })
 
-    const providerId = selectedLlmProviderId || employee?.llm_provider_id || providers.find((p: any) => p.is_default)?.id
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
     if (!providerId) {
       message.warning(t('workbench.noLlmProvider'))
       return

@@ -5,10 +5,7 @@ export interface DBEmployee {
   description: string
   avatar_type: string
   status: string
-  review_mode: number
   default_skill_id: string | null
-  llm_provider_id: string | null
-  llm_model: string | null
   profile_json: string
   memory_enabled: number
   arch_version: number

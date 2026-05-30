@@ -245,7 +245,6 @@ const KBDocList: React.FC<KBDocListProps> = ({
               render: (status: string, record: KBDocument) => {
                 const c = statusConfig[status] || { color: 'default', textKey: status, icon: null }
                 const isProcessed = status === 'completed' && processedDocIds.has(record.id)
-                const isUpToDate = status === 'completed' && !!record.is_reused
                 const processProgress = docProcessProgress[record.id]
                 const isPending = processProgress?.status === 'pending'
                 const isRunning = processProgress?.status === 'running' || processProgress?.status === 'paused'
@@ -253,8 +252,7 @@ const KBDocList: React.FC<KBDocListProps> = ({
                   <Space size={4} direction="vertical" style={{ width: '100%' }}>
                     <Space size={4}>
                       <Tag color={c.color} icon={c.icon}>{t(c.textKey)}</Tag>
-                      {isUpToDate && <Tag color="cyan" style={{ fontSize: 10 }}>{t('parseProgress.upToDate')}</Tag>}
-                      {isProcessed && !isUpToDate && <Tag color="purple" icon={<ThunderboltOutlined />} style={{ fontSize: 10 }}>{t('knowledgeBase.processed')}</Tag>}
+                      {isProcessed && <Tag color="purple" icon={<ThunderboltOutlined />} style={{ fontSize: 10 }}>{t('knowledgeBase.processed')}</Tag>}
                       {isRunning && (
                         <Tag color="processing" icon={<ThunderboltOutlined />} style={{ fontSize: 10 }}>
                           {t('knowledgeBase.processing')}

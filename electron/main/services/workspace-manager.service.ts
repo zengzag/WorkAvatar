@@ -50,8 +50,8 @@ class WorkspaceManagerService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, workspace_path, name, description, profile_json, status, avatar_type, review_mode, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'draft', 'default', 0, 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, workspace_path, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'draft', 'default', 1, 0, 0, ?, ?)
     `).run(employeeId, workspacePath, name, description, profileJson, now, now)
 
     return this.getEmployee(employeeId)!
@@ -62,10 +62,7 @@ class WorkspaceManagerService {
     description?: string
     profile_json?: string
     status?: 'draft' | 'active' | 'paused' | 'error'
-    review_mode?: boolean
     default_skill_id?: string
-    llm_provider_id?: string
-    llm_model?: string
     workspace_path?: string | null
     memory_enabled?: boolean
   }): Employee | null {
@@ -78,16 +75,16 @@ class WorkspaceManagerService {
     const ALLOWED_COLUMNS = [
       'name', 'role_name', 'role_description', 'responsibilities_json',
       'personality_traits_json', 'working_style', 'suggested_tools_json',
-      'status', 'review_mode', 'avatar_url', 'prompt_template',
+      'status', 'avatar_url', 'prompt_template',
       'system_prompt', 'kb_id', 'kb_ids_json', 'tool_ids_json',
       'mcp_server_ids_json', 'skill_ids_json', 'workspace_dir',
-      'llm_provider_id', 'llm_model', 'enable_thinking', 'description',
-      'memory_enabled'
+      'enable_thinking', 'description',
+      'memory_enabled', 'workspace_path'
     ]
 
     Object.entries(data).forEach(([key, value]) => {
       if (value !== undefined && ALLOWED_COLUMNS.includes(key)) {
-        if (key === 'review_mode' || key === 'memory_enabled') {
+        if (key === 'memory_enabled') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
         } else {

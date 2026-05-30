@@ -15,9 +15,6 @@ export interface EmployeeConfigExport {
     description: string
     avatar_type: string
     profile_json: string
-    review_mode: boolean
-    llm_provider_id?: string
-    llm_model?: string
   }
   skills: Array<{
     type: string
@@ -81,9 +78,6 @@ export class EmployeeExportConfigService {
           description: employee.description,
           avatar_type: employee.avatar_type,
           profile_json: employee.profile_json || '',
-          review_mode: !!employee.review_mode,
-          llm_provider_id: employee.llm_provider_id || undefined,
-          llm_model: employee.llm_model || undefined,
         },
         skills: skills.map(s => ({
           type: s.type,
@@ -163,17 +157,14 @@ export class EmployeeExportConfigService {
       const now = Math.floor(Date.now() / 1000)
 
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
         importData.employee.description || '',
         importData.employee.profile_json || '',
         importData.employee.avatar_type || 'default',
-        importData.employee.review_mode ? 1 : 0,
-        importData.employee.llm_provider_id || null,
-        importData.employee.llm_model || null,
         now, now
       )
 
@@ -259,17 +250,14 @@ export class EmployeeExportConfigService {
     const employeeId = generateId()
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, name, description, profile_json, status, avatar_type, review_mode, llm_provider_id, llm_model, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, 1, 0, 0, ?, ?)
     `).run(
       employeeId,
       importData.employee.name,
       importData.employee.description || '',
       importData.employee.profile_json || '',
       importData.employee.avatar_type || 'default',
-      importData.employee.review_mode ? 1 : 0,
-      importData.employee.llm_provider_id || null,
-      importData.employee.llm_model || null,
       now, now
     )
 

@@ -356,8 +356,6 @@ const CreationWizard: React.FC = () => {
       if (selectedProviderId) {
         await window.electronAPI.employee.update({
           id: employee.id,
-          llm_provider_id: selectedProviderId,
-          llm_model: selectedModelId,
           status: 'active',
         })
       }
@@ -402,8 +400,6 @@ const CreationWizard: React.FC = () => {
       if (selectedProviderId) {
         await window.electronAPI.employee.update({
           id: employee.id,
-          llm_provider_id: selectedProviderId,
-          llm_model: selectedModelId,
           status: 'active',
         })
       }

@@ -58,8 +58,6 @@ interface MemorySectionProps {
   employeeId: string
   memoryEnabled: boolean
   onMemoryEnabledChange: (enabled: boolean) => void
-  providerId?: string
-  modelId?: string
 }
 
 const topicColors: Record<string, string> = {
@@ -72,8 +70,6 @@ const MemorySection: React.FC<MemorySectionProps> = ({
   employeeId,
   memoryEnabled,
   onMemoryEnabledChange,
-  providerId,
-  modelId,
 }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
@@ -197,6 +193,19 @@ const MemorySection: React.FC<MemorySectionProps> = ({
   }
 
   const handleConsolidate = async () => {
+    let providerId: string | undefined
+    let modelId: string | undefined
+    try {
+      const providers = await window.electronAPI.llm.getProviders()
+      const defaultProvider = (providers && providers.length > 0)
+        ? (providers.find((p: any) => p.is_default) || providers[0])
+        : null
+      if (defaultProvider) {
+        providerId = defaultProvider.id
+        modelId = defaultProvider.model
+      }
+    } catch {}
+
     if (!providerId) {
       message.warning(t('employeeSettings.memoryNoProvider'))
       return
@@ -318,7 +327,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                     icon={<CompressOutlined />}
                     onClick={handleConsolidate}
                     loading={consolidating}
-                    disabled={!providerId || consolidating}
+                    disabled={consolidating}
                   >
                     {t('employeeSettings.consolidateMemories')}
                   </Button>

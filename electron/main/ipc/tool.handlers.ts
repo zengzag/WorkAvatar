@@ -2,12 +2,15 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   ToolAssignParams,
+  SearchOpenWindowParams,
+  SearchCloseWindowParams,
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type ToolEngineService from '../services/tool-engine.service'
 import type SkillRegistryService from '../services/skill-registry.service'
 import { allBuiltinTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
+import { internetSearchService } from '../services/internet-search.service'
 
 function getUnifiedBuiltinToolCatalog() {
   const agentTools = allBuiltinTools.map(t => ({
@@ -117,6 +120,29 @@ export function registerToolHandlers(
 
   ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, (_, params: { employee_id: string; skill_id: string }) => {
     skillRegistry.removeSkillFromEmployee(params.skill_id, params.employee_id)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, (_, params: { employee_id: string; skill_id: string; enabled: boolean }) => {
+    skillRegistry.toggleSkillForEmployee(params.skill_id, params.employee_id, params.enabled)
+    return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_GET_ENGINES, () => {
+    return internetSearchService.getAvailableEngines()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_OPEN_WINDOW, async (_, params: SearchOpenWindowParams) => {
+    try {
+      await internetSearchService.openSearchWindow(params.engine as any)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_CLOSE_WINDOW, (_, params: SearchCloseWindowParams) => {
+    internetSearchService.closeSearchWindow(params.engine as any)
     return { success: true }
   })
 }

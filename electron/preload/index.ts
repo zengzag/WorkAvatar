@@ -173,6 +173,12 @@ const electronAPI = {
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
   },
 
+  searchWindow: {
+    getEngines: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_GET_ENGINES),
+    open: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_OPEN_WINDOW, { engine }),
+    close: (engine: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_CLOSE_WINDOW, { engine }),
+  },
+
   skillRegistry: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_LIST),
     install: (params: { source: 'directory' | 'zip'; path: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_INSTALL, params),
@@ -180,6 +186,7 @@ const electronAPI = {
     getEmployeeSkills: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_GET_EMPLOYEE_SKILLS, params),
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
+    toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
   },
 
   kb: {

@@ -4,6 +4,7 @@ import {
   SaveOutlined,
   SettingOutlined,
   RobotOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +15,7 @@ import {
   StorageSettings,
   AboutSection,
   DefaultModelSettings,
+  InternetSearchSettings,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -59,13 +61,22 @@ const Settings: React.FC = () => {
       children: <AppearanceSettings />,
     },
     {
+      key: 'internetSearch',
+      label: (
+        <span>
+          <GlobalOutlined /> {t('settings.tabInternetSearch')}
+        </span>
+      ),
+      children: <InternetSearchSettings />,
+    },
+    {
       key: 'about',
       label: t('settings.tabAbout'),
       children: <AboutSection />,
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'storage', 'appearance', 'about']
+  const validTabs = ['llm', 'defaultModel', 'storage', 'appearance', 'internetSearch', 'about']
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (

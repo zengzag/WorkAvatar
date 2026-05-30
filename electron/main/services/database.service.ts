@@ -52,14 +52,12 @@ class DatabaseService {
         description TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
         status TEXT NOT NULL DEFAULT 'draft',
-        review_mode BOOLEAN NOT NULL DEFAULT 0,
         default_skill_id TEXT,
-        llm_provider_id TEXT,
-        llm_model TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
         total_tasks INTEGER DEFAULT 0,
         total_approvals INTEGER DEFAULT 0,
+        memory_enabled BOOLEAN NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -334,19 +332,17 @@ class DatabaseService {
           description TEXT DEFAULT '',
           avatar_type TEXT DEFAULT 'default',
           status TEXT NOT NULL DEFAULT 'draft',
-          review_mode BOOLEAN NOT NULL DEFAULT 0,
           default_skill_id TEXT,
-          llm_provider_id TEXT,
-          llm_model TEXT,
           profile_json TEXT DEFAULT '',
           arch_version INTEGER NOT NULL DEFAULT 1,
           total_tasks INTEGER DEFAULT 0,
           total_approvals INTEGER DEFAULT 0,
+          memory_enabled BOOLEAN NOT NULL DEFAULT 0,
           created_at INTEGER NOT NULL DEFAULT (unixepoch()),
           updated_at INTEGER NOT NULL DEFAULT (unixepoch())
         );
-        INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, review_mode, default_skill_id, llm_provider_id, llm_model, profile_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
-          SELECT id, '', name, description, avatar_type, status, review_mode, default_skill_id, llm_provider_id, llm_model, profile_json, arch_version, total_tasks, total_approvals, created_at, updated_at FROM employees;
+        INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+          SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
         DROP TABLE employees;
         ALTER TABLE employees_new RENAME TO employees;
         CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);

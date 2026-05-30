@@ -661,10 +661,10 @@ class WorkflowService {
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
     if (!employee) throw new Error(`Employee ${employeeId} not found`)
 
-    const providerId = overrideProviderId || employee.llm_provider_id
+    const providerId = overrideProviderId
     if (!providerId) throw new Error(`Employee ${employeeId} has no LLM provider configured`)
 
-    const resolvedModelId = modelId || employee.llm_model || undefined
+    const resolvedModelId = modelId || undefined
 
     const agentService = EmployeeAgentService.getInstance()
 

@@ -397,19 +397,38 @@ class SkillRegistryService {
     db.prepare('DELETE FROM employee_skills WHERE employee_id = ? AND skill_id = ?').run(employeeId, skillId)
   }
 
-  getEmployeeSkills(employeeId: string): { assigned: ClaudeSkill[]; available: ClaudeSkill[] } {
+  toggleSkillForEmployee(skillId: string, employeeId: string, enabled: boolean): void {
+    const db = this.db.getDb()
+    const existing = db.prepare(
+      'SELECT id FROM employee_skills WHERE employee_id = ? AND skill_id = ?'
+    ).get(employeeId, skillId) as any
+
+    if (existing) {
+      db.prepare('UPDATE employee_skills SET is_enabled = ? WHERE id = ?').run(enabled ? 1 : 0, existing.id)
+    } else {
+      const id = generateId()
+      db.prepare(
+        'INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled) VALUES (?, ?, ?, ?)'
+      ).run(id, employeeId, skillId, enabled ? 1 : 0)
+    }
+  }
+
+  getEmployeeSkills(employeeId: string): { enabled: ClaudeSkill[]; disabled: ClaudeSkill[] } {
     const db = this.db.getDb()
     const allSkills = this.getInstalledSkills()
 
-    const assignedRows = db.prepare(
-      'SELECT skill_id FROM employee_skills WHERE employee_id = ? AND is_enabled = 1'
+    const employeeRows = db.prepare(
+      'SELECT skill_id, is_enabled FROM employee_skills WHERE employee_id = ?'
     ).all(employeeId) as any[]
 
-    const assignedIds = new Set(assignedRows.map((r) => r.skill_id))
+    const skillStateMap = new Map<string, boolean>()
+    for (const row of employeeRows) {
+      skillStateMap.set(row.skill_id, row.is_enabled === 1)
+    }
 
     return {
-      assigned: allSkills.filter((s) => assignedIds.has(s.id)),
-      available: allSkills.filter((s) => !assignedIds.has(s.id)),
+      enabled: allSkills.filter((s) => skillStateMap.get(s.id) === true),
+      disabled: allSkills.filter((s) => skillStateMap.get(s.id) !== true),
     }
   }
 }

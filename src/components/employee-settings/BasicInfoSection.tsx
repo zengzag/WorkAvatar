@@ -6,11 +6,9 @@ import {
   Input,
   Button,
   Select,
-  Switch,
   Space,
   Avatar,
   Divider,
-  Typography,
   Row,
   Col,
   App,
@@ -24,11 +22,8 @@ import {
   FolderOpenOutlined,
   DeleteOutlined,
 } from '@ant-design/icons'
-import LLMSelector from '../llm/LLMSelector'
-import type { LLMProvider } from '../../types'
 
 const { TextArea } = Input
-const { Text } = Typography
 
 const AVATAR_OPTIONS = [
   { value: 'default', icon: <RobotOutlined />, color: '#1677ff' },
@@ -39,7 +34,6 @@ const AVATAR_OPTIONS = [
 
 interface BasicInfoSectionProps {
   form: ReturnType<typeof Form.useForm>[0]
-  providers: LLMProvider[]
   loading: boolean
   onSave: (values: any) => void
   onDelete: (workspacePath?: string) => void
@@ -49,7 +43,6 @@ interface BasicInfoSectionProps {
 
 const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   form,
-  providers,
   loading,
   onSave,
   onDelete,
@@ -84,10 +77,6 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
-  }
-
-  const handleLlmChange = (providerId: string, modelId: string) => {
-    form.setFieldsValue({ llm_provider_id: providerId, llm_model: modelId })
   }
 
   return (
@@ -151,22 +140,6 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
             )}
           </Space.Compact>
         </Form.Item>
-
-        <Form.Item label={t('employeeSettings.llmModel')}>
-          <Form.Item name="llm_provider_id" hidden><Input /></Form.Item>
-          <Form.Item name="llm_model" hidden><Input /></Form.Item>
-          <LLMSelector
-            providerId={form.getFieldValue('llm_provider_id') || ''}
-            modelId={form.getFieldValue('llm_model') || ''}
-            onChange={handleLlmChange}
-            providers={providers}
-          />
-        </Form.Item>
-
-        <Form.Item name="review_mode" valuePropName="checked" label={null}>
-          <Switch checkedChildren={t('common.on')} unCheckedChildren={t('common.off')} />
-        </Form.Item>
-        <Text type="secondary">{t('employeeSettings.manualReviewDesc')}</Text>
 
         <Divider />
 
