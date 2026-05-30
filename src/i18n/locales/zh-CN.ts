@@ -350,6 +350,7 @@ export default {
     exportConversation: '导出对话',
     promptTokens: '输入',
     completionTokens: '输出',
+    cachedTokens: '缓存',
     totalTokens: '总Token',
     outputChars: '输出字符数',
     compareModels: '对比模型',

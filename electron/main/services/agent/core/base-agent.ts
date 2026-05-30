@@ -474,6 +474,7 @@ export abstract class BaseAgent {
             promptTokens: (totalTokenUsage.promptTokens || 0) + (streamResponse.usage.promptTokens || 0),
             completionTokens: (totalTokenUsage.completionTokens || 0) + (streamResponse.usage.completionTokens || 0),
             totalTokens: (totalTokenUsage.totalTokens || 0) + (streamResponse.usage.totalTokens || 0),
+            cachedTokens: (totalTokenUsage.cachedTokens || 0) + (streamResponse.usage.cachedTokens || 0),
           }
         }
         currentMessages.push(assistantMessage)

@@ -225,16 +225,16 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
                 {msg.tokenUsage.promptTokens !== undefined && (
                   <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
                     {t('workbench.promptTokens')}: {msg.tokenUsage.promptTokens}
+                    {msg.tokenUsage.cachedTokens != null && msg.tokenUsage.cachedTokens > 0 && (
+                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                        {' '}({t('workbench.cachedTokens')}: {msg.tokenUsage.cachedTokens})
+                      </Text>
+                    )}
                   </Text>
                 )}
                 {msg.tokenUsage.completionTokens !== undefined && (
                   <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
                     {t('workbench.completionTokens')}: {msg.tokenUsage.completionTokens}
-                  </Text>
-                )}
-                {msg.tokenUsage.totalTokens !== undefined && (
-                  <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                    {t('workbench.totalTokens')}: {msg.tokenUsage.totalTokens}
                   </Text>
                 )}
               </>

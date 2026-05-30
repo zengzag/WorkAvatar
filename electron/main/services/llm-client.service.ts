@@ -186,6 +186,7 @@ function buildRequestBody(
     temperature: overrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
     max_tokens: overrides?.max_tokens ?? modelConfig?.max_tokens ?? config.max_tokens,
     stream,
+    ...(stream ? { stream_options: { include_usage: true } } : {}),
   }
 
   if (modelConfig?.top_p != null) {

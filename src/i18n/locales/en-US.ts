@@ -191,6 +191,7 @@ export default {
     exportConversation: 'Export Conversation',
     promptTokens: 'Input',
     completionTokens: 'Output',
+    cachedTokens: 'Cached',
     totalTokens: 'Total Tokens',
     outputChars: 'Output chars',
     compareModels: 'Compare Models',

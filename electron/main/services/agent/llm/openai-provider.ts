@@ -72,6 +72,8 @@ export class OpenAIProvider implements ILLMProvider {
       const choice = data.choices?.[0]?.message
       const latencyMs = Date.now() - startTime
 
+      const usage = this.normalizeUsage(data.usage)
+
       LLMLoggerService.getInstance().logCall({
         type: 'chat',
         source: logSource,
@@ -89,7 +91,7 @@ export class OpenAIProvider implements ILLMProvider {
           reasoningContent: choice?.reasoning_content,
           toolCalls: choice?.tool_calls,
           finishReason: data.choices?.[0]?.finish_reason,
-          usage: data.usage,
+          usage,
           latencyMs,
         },
       })
@@ -99,7 +101,7 @@ export class OpenAIProvider implements ILLMProvider {
         reasoningContent: choice?.reasoning_content,
         toolCalls: choice?.tool_calls,
         finishReason: data.choices?.[0]?.finish_reason,
-        usage: data.usage,
+        usage,
         latencyMs,
       }
     } catch (error: any) {
@@ -282,6 +284,20 @@ export class OpenAIProvider implements ILLMProvider {
     }
   }
 
+  private normalizeUsage(raw: any): LLMUsage | undefined {
+    if (!raw) return undefined
+    const cachedTokens =
+      raw.prompt_tokens_details?.cached_tokens ??
+      raw.prompt_cache_hit_tokens ??
+      undefined
+    return {
+      promptTokens: raw.promptTokens ?? raw.prompt_tokens,
+      completionTokens: raw.completionTokens ?? raw.completion_tokens,
+      totalTokens: raw.totalTokens ?? raw.total_tokens,
+      ...(cachedTokens != null ? { cachedTokens } : {}),
+    }
+  }
+
   private extractUsageFromBuffer(buffer: string): LLMUsage | undefined {
     const lines = buffer.split('\n')
     for (const line of lines) {
@@ -292,10 +308,9 @@ export class OpenAIProvider implements ILLMProvider {
       try {
         const parsed = JSON.parse(data)
         if (parsed.usage) {
-          return parsed.usage
+          return this.normalizeUsage(parsed.usage)
         }
       } catch {
-        // ignore
       }
     }
     return undefined
@@ -354,6 +369,7 @@ export class OpenAIProvider implements ILLMProvider {
 
     if (stream) {
       body.stream = true
+      body.stream_options = { include_usage: true }
     }
 
     if (tools && tools.length > 0) {

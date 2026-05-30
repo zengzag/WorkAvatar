@@ -367,6 +367,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
               promptTokens: apiTokenUsage.promptTokens ?? apiTokenUsage.prompt_tokens,
               completionTokens: apiTokenUsage.completionTokens ?? apiTokenUsage.completion_tokens,
               totalTokens: apiTokenUsage.totalTokens ?? apiTokenUsage.total_tokens,
+              cachedTokens: apiTokenUsage.cachedTokens ?? apiTokenUsage.cached_tokens ?? apiTokenUsage.prompt_tokens_details?.cached_tokens ?? apiTokenUsage.prompt_cache_hit_tokens,
             }
           : (totalChars > 0 ? { totalChars } : undefined)
         const savedAssistantMsg: MessageWithThought = {

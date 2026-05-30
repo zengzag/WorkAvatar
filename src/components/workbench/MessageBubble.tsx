@@ -289,6 +289,10 @@ const MessageBubble: React.FC<{
             )}
             {!msg.isStreaming && !isEditing && (
               <Space size={4} style={{ marginTop: 2, marginLeft: 2, justifyContent: 'flex-end', display: 'flex' }}>
+                {msg.content && (
+                  <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
+                    onClick={() => onCopy(msg.content)} />
+                )}
                 <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
                   onClick={handleStartEdit} title={t('workbench.editMessage')} />
                 <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
@@ -449,16 +453,16 @@ const MessageBubble: React.FC<{
                     {displayTokenUsage.promptTokens !== undefined && (
                       <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
                         {t('workbench.promptTokens')}: {displayTokenUsage.promptTokens}
+                        {displayTokenUsage.cachedTokens != null && displayTokenUsage.cachedTokens > 0 && (
+                          <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+                            {' '}({t('workbench.cachedTokens')}: {displayTokenUsage.cachedTokens})
+                          </Text>
+                        )}
                       </Text>
                     )}
                     {displayTokenUsage.completionTokens !== undefined && (
                       <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
                         {t('workbench.completionTokens')}: {displayTokenUsage.completionTokens}
-                      </Text>
-                    )}
-                    {displayTokenUsage.totalTokens !== undefined && (
-                      <Text style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                        {t('workbench.totalTokens')}: {displayTokenUsage.totalTokens}
                       </Text>
                     )}
                   </>

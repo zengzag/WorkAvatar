@@ -30,6 +30,7 @@ export interface LLMUsage {
   promptTokens?: number
   completionTokens?: number
   totalTokens?: number
+  cachedTokens?: number
 }
 
 export interface LLMStreamCallbacks {
