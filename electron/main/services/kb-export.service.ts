@@ -398,8 +398,8 @@ class KBExportService {
         this.db.prepare(`
           INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, parsed_json_path, parse_status, is_reused, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(newDocId, newKBId, doc.file_id || null, doc.original_name, doc.type, doc.size, doc.hash,
-          parsedJsonPath, doc.parse_status || 'pending', doc.is_reused || 0,
+        `).run(newDocId, newKBId, null, doc.original_name, doc.type, doc.size, doc.hash,
+          parsedJsonPath, doc.parse_status || 'pending', 0,
           doc.created_at || now, doc.updated_at || now)
 
         if ((i + 1) % 5 === 0 || i === documents.length - 1) {

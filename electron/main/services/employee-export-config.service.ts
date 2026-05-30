@@ -15,6 +15,8 @@ export interface EmployeeConfigExport {
     description: string
     avatar_type: string
     profile_json: string
+    memory_enabled: boolean
+    default_skill_id: string | null
   }
   skills: Array<{
     type: string
@@ -78,6 +80,8 @@ export class EmployeeExportConfigService {
           description: employee.description,
           avatar_type: employee.avatar_type,
           profile_json: employee.profile_json || '',
+          memory_enabled: !!employee.memory_enabled,
+          default_skill_id: employee.default_skill_id || null,
         },
         skills: skills.map(s => ({
           type: s.type,
@@ -157,14 +161,16 @@ export class EmployeeExportConfigService {
       const now = Math.floor(Date.now() / 1000)
 
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
         importData.employee.description || '',
         importData.employee.profile_json || '',
         importData.employee.avatar_type || 'default',
+        importData.employee.memory_enabled ? 1 : 0,
+        importData.employee.default_skill_id || null,
         now, now
       )
 
@@ -250,14 +256,16 @@ export class EmployeeExportConfigService {
     const employeeId = generateId()
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'draft', ?, 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, name, description, profile_json, status, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 1, 0, 0, ?, ?)
     `).run(
       employeeId,
       importData.employee.name,
       importData.employee.description || '',
       importData.employee.profile_json || '',
       importData.employee.avatar_type || 'default',
+      importData.employee.memory_enabled ? 1 : 0,
+      importData.employee.default_skill_id || null,
       now, now
     )
 
