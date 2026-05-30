@@ -261,7 +261,7 @@ class WorkspaceManagerService {
     `).all(limit) as Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }>
   }
 
-  private resolveWorkspacePath(workspacePath: string, relativePath?: string): { fullPath: string; error?: string } {
+  resolveWorkspacePath(workspacePath: string, relativePath?: string): { fullPath: string; error?: string } {
     if (!workspacePath) return { fullPath: '', error: '工作区路径未设置' }
 
     const workspaceRoot = path.resolve(workspacePath)

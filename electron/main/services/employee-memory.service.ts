@@ -5,7 +5,7 @@ import { createLogger } from './logger'
 
 const logger = createLogger('Memory')
 
-const MEMORY_MAX_CHARS = 3000
+const MEMORY_MAX_CHARS = 8000
 const MEMORY_MAX_COUNT = 50
 const MEMORY_CONSOLIDATION_THRESHOLD = 0.8
 const STALE_MEMORY_DAYS = 90

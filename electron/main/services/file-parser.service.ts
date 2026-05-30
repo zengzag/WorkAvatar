@@ -211,6 +211,33 @@ class FileParserService {
     }
   }
 
+  private async parsePPTX(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+    try {
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+      const result = await convert(filePath, {
+        preserveLayout: true,
+        extractImages: false,
+        extractCharts: false,
+      })
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+
+      return {
+        type: 'pptx',
+        fullText: result.markdown,
+        sections: this.splitIntoSections(result.markdown),
+        tables: [],
+        metadata: {},
+      }
+    } catch (error: any) {
+      console.error('[FileParser] PPTX parse error:', {
+        filePath,
+        message: error.message,
+        stack: error.stack,
+      })
+      throw error
+    }
+  }
+
   private async parseImage(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const ocrResult = await this.ocr.recognize(filePath)
@@ -231,7 +258,7 @@ class FileParserService {
 
   private getFileType(filePath: string): string {
     const ext = path.extname(filePath).toLowerCase().slice(1)
-    const supportedTypes = ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'txt', 'md', 'html', 'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp']
+    const supportedTypes = ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx', 'txt', 'md', 'html', 'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp']
     return supportedTypes.includes(ext) ? ext : 'unknown'
   }
 
@@ -329,6 +356,9 @@ class FileParserService {
       case 'xls':
       case 'csv':
         result = await this.parseExcel(filePath, signal)
+        break
+      case 'pptx':
+        result = await this.parsePPTX(filePath, signal)
         break
       case 'txt':
       case 'md':

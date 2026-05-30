@@ -1,7 +1,18 @@
 import type { ToolDefinition } from './types'
+import * as fs from 'fs'
+import * as path from 'path'
 import WorkspaceManagerService from '../../workspace-manager.service'
 import UnifiedInteractionService from '../../unified-interaction.service'
 import { interactionContext } from '../../unified-interaction.service'
+import FileParserService from '../../file-parser.service'
+
+const PARSABLE_EXTENSIONS = new Set([
+  'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
+  'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
+])
+
+const DEFAULT_MAX_LENGTH = 5000
+const MAX_LENGTH_LIMIT = 50000
 
 export function createWorkspaceTools(workspacePath: string): ToolDefinition[] {
   if (!workspacePath) return []
@@ -31,16 +42,77 @@ export function createWorkspaceTools(workspacePath: string): ToolDefinition[] {
     id: 'workspace_read_file',
     name: 'workspace_read_file',
     title: '读取工作区文件',
-    description: '读取工作区指定文件内容，路径为工作区相对路径。',
+    description: '读取工作区指定文件内容，支持多种格式（PDF、DOCX、DOC、XLSX、XLS、CSV、PPTX、图片OCR）。默认最多返回5000字符，可通过offset和max_length参数分段读取大文件。',
     parameters: {
       type: 'object',
       properties: {
         file_path: { type: 'string', description: '相对于工作区的文件路径' },
+        offset: { type: 'number', description: '起始字符偏移量（默认0）', minimum: 0 },
+        max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，最大${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
       },
       required: ['file_path'],
     },
-    handler: (args: any) => {
-      return workspaceManager.readWorkspaceFile(workspacePath, args.file_path)
+    handler: async (args: any) => {
+      const { fullPath, error: resolveError } = workspaceManager.resolveWorkspacePath(workspacePath, args.file_path)
+      if (resolveError) return { success: false, error: resolveError }
+      if (!fs.existsSync(fullPath)) return { success: false, error: '文件不存在' }
+      if (!fs.statSync(fullPath).isFile()) return { success: false, error: '路径不是文件' }
+
+      const offset = Math.max(0, args.offset || 0)
+      const maxLength = Math.min(Math.max(args.max_length || DEFAULT_MAX_LENGTH, 1), MAX_LENGTH_LIMIT)
+      const ext = path.extname(fullPath).toLowerCase().slice(1)
+
+      try {
+        if (PARSABLE_EXTENSIONS.has(ext)) {
+          const parser = FileParserService.getInstance()
+          const result = await parser.parseFilePath(fullPath)
+          const fullText = result.fullText
+          const totalChars = fullText.length
+
+          if (offset >= totalChars) {
+            return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
+          }
+
+          const end = Math.min(offset + maxLength, totalChars)
+          const content = fullText.slice(offset, end)
+
+          let output = content
+          if (end < totalChars) {
+            output += `\n\n(显示字符 ${offset + 1}-${end}，共 ${totalChars} 字符。使用 offset=${end} 继续读取)`
+          } else {
+            output += `\n\n(文件结束 — 共 ${totalChars} 字符)`
+          }
+
+          return { success: true, output }
+        }
+
+        const content = fs.readFileSync(fullPath, 'utf-8').replace(/\r\n/g, '\n')
+        const totalChars = content.length
+
+        if (offset >= totalChars) {
+          return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
+        }
+
+        const end = Math.min(offset + maxLength, totalChars)
+        const sliced = content.slice(offset, end)
+
+        const beforeOffset = content.slice(0, offset)
+        const startLine = (beforeOffset.match(/\n/g) || []).length + 1
+        const lines = sliced.split('\n')
+        const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
+        let output = numbered.join('\n')
+
+        const totalLines = (content.match(/\n/g) || []).length + 1
+        if (end < totalChars) {
+          output += `\n\n(显示字符 ${offset + 1}-${end}，第 ${startLine}-${startLine + lines.length - 1} 行，共 ${totalChars} 字符 ${totalLines} 行。使用 offset=${end} 继续读取)`
+        } else {
+          output += `\n\n(文件结束 — 共 ${totalChars} 字符，${totalLines} 行)`
+        }
+
+        return { success: true, output }
+      } catch (e: any) {
+        return { success: false, error: `读取文件失败: ${e.message}` }
+      }
     },
     source: 'workspace',
   }

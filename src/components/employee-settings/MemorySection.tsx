@@ -261,7 +261,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     } catch {}
   }
 
-  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / 3000) * 100)) : 0
+  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / 8000) * 100)) : 0
   const capacityStatus: 'normal' | 'success' | 'exception' | undefined = capacityPercent > 80 ? 'exception' : capacityPercent > 60 ? 'normal' : 'normal'
 
   return (
@@ -305,7 +305,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                     {t('employeeSettings.memoryCapacity')}
                   </Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {stats.totalChars} / 3000
+                    {stats.totalChars} / 8000
                   </Text>
                 </div>
                 <Progress
