@@ -17,6 +17,8 @@ import type {
   EmployeeMemoryUpdateParams,
   EmployeeMemorySearchParams,
   EmployeeMemoryExtractParams,
+  EmployeeMemoryConsolidateParams,
+  EmployeeMemoryStatsParams,
 } from '../../shared/ipc-channels'
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
@@ -179,7 +181,8 @@ export function registerEmployeeHandlers(
         params.employee_id,
         params.messages,
         params.provider_id,
-        params.model_id
+        params.model_id,
+        params.conversation_id
       )
       return { success: true, memories: result }
     } catch (error) {
@@ -188,5 +191,25 @@ export function registerEmployeeHandlers(
         error: error instanceof Error ? error.message : 'Unknown error',
       }
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_CONSOLIDATE, async (_, params: EmployeeMemoryConsolidateParams) => {
+    try {
+      const result = await memoryService.consolidateMemories(
+        params.employee_id,
+        params.provider_id,
+        params.model_id
+      )
+      return { success: true, ...result }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, (_, params: EmployeeMemoryStatsParams) => {
+    return memoryService.getMemoryStats(params.employee_id)
   })
 }

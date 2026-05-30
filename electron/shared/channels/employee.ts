@@ -30,6 +30,8 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_MEMORY_TOGGLE_PIN: 'employee:memory-toggle-pin',
   EMPLOYEE_MEMORY_SEARCH: 'employee:memory-search',
   EMPLOYEE_MEMORY_EXTRACT: 'employee:memory-extract',
+  EMPLOYEE_MEMORY_CONSOLIDATE: 'employee:memory-consolidate',
+  EMPLOYEE_MEMORY_STATS: 'employee:memory-stats',
 } as const
 
 export interface EmployeeListParams {
@@ -118,6 +120,7 @@ export interface EmployeeMemoryCreateParams {
   content: string
   is_pinned?: boolean
   source?: 'auto' | 'manual'
+  importance?: 'critical' | 'normal' | 'low'
 }
 
 export interface EmployeeMemoryUpdateParams {
@@ -126,6 +129,7 @@ export interface EmployeeMemoryUpdateParams {
   topic?: string
   content?: string
   is_pinned?: boolean
+  importance?: 'critical' | 'normal' | 'low'
 }
 
 export interface EmployeeMemorySearchParams {
@@ -139,4 +143,15 @@ export interface EmployeeMemoryExtractParams {
   messages: Array<{ role: string; content: string }>
   provider_id: string
   model_id?: string
+  conversation_id?: string
+}
+
+export interface EmployeeMemoryConsolidateParams {
+  employee_id: string
+  provider_id: string
+  model_id?: string
+}
+
+export interface EmployeeMemoryStatsParams {
+  employee_id: string
 }

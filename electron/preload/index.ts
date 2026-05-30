@@ -47,6 +47,8 @@ import type {
   EmployeeMemoryUpdateParams,
   EmployeeMemorySearchParams,
   EmployeeMemoryExtractParams,
+  EmployeeMemoryConsolidateParams,
+  EmployeeMemoryStatsParams,
   WorkflowCreateParams,
   WorkflowUpdateParams,
 } from '../shared/ipc-channels'
@@ -98,6 +100,8 @@ const electronAPI = {
     togglePinMemory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_TOGGLE_PIN, id),
     searchMemories: (params: EmployeeMemorySearchParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, params),
     extractMemories: (params: EmployeeMemoryExtractParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, params),
+    consolidateMemories: (params: EmployeeMemoryConsolidateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_CONSOLIDATE, params),
+    getMemoryStats: (params: EmployeeMemoryStatsParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, params),
   },
 
   conversation: {

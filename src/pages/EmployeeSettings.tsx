@@ -490,6 +490,8 @@ const EmployeeSettings: React.FC = () => {
                 employeeId={id!}
                 memoryEnabled={employee.memory_enabled}
                 onMemoryEnabledChange={handleMemoryEnabledChange}
+                providerId={employee.llm_provider_id}
+                modelId={employee.llm_model}
               />
             )
           },

@@ -91,6 +91,9 @@ class EmployeeAgentService {
           ) || undefined
           existing.agent.updateMemoryPrompt(newMemoryPrompt)
         }
+        existing.agent.updateKBContextPrompt(undefined)
+        existing.agent.updateToolPlanningPrompt(null)
+        existing.agent.resetPersistedSkillInstructions()
         existing.conversationId = conversationId || null
       }
       return existing
@@ -353,7 +356,7 @@ class EmployeeAgentService {
     }))
 
     const lastMsg = messages[messages.length - 1]
-    let query = lastMsg?.content || ''
+    const query = lastMsg?.content || ''
     const queryImages = lastMsg?.images
 
     if (kb_ids.length > 0) {
@@ -363,23 +366,13 @@ class EmployeeAgentService {
         `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
       ).all(...kb_ids) as any[]
       const kbNames = kbList.map((kb: any) => kb.name).join('、')
-      query = `[当前对话可使用的知识库: ${kbNames}]\n\n${query}`
-    }
-
-    const memoryPrompt = agent.getMemoryPrompt()
-    if (memoryPrompt) {
-      query = `[跨会话记忆]\n${memoryPrompt}\n\n${query}`
-    }
-
-    const activeSkillInstructions = agent.getActiveSkillInstructions()
-    if (activeSkillInstructions.length > 0) {
-      query = `[已激活技能指令]\n${activeSkillInstructions.join('\n\n---\n\n')}\n\n${query}`
+      agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
+    } else {
+      agent.updateKBContextPrompt(undefined)
     }
 
     const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
-    if (toolPlanningHint) {
-      query = `[${toolPlanningHint}]\n\n${query}`
-    }
+    agent.updateToolPlanningPrompt(toolPlanningHint)
 
     const config = await this.llmClient.getProviderConfig(provider_id)
     let maxIterations = 100
@@ -414,7 +407,7 @@ class EmployeeAgentService {
         onDone: (metadata?: any) => {
           callbacks.onDone(metadata)
           if (memoryEnabled) {
-            this.extractMemoriesAsync(employee_id, messages, provider_id, model_id)
+            this.extractMemoriesAsync(employee_id, messages, provider_id, model_id, conversation_id)
           }
         },
         onError: callbacks.onError,
@@ -439,14 +432,19 @@ class EmployeeAgentService {
     employeeId: string,
     messages: Array<{ role: string; content: string }>,
     providerId: string,
-    modelId?: string
+    modelId?: string,
+    conversationId?: string
   ): void {
     this.memoryService.extractMemoriesFromConversation(
       employeeId,
       messages,
       providerId,
-      modelId
-    ).catch(err => {
+      modelId,
+      conversationId
+    ).then(() => {
+      this.memoryService.removeStaleMemories(employeeId)
+      return this.memoryService.autoConsolidateIfNeeded(employeeId, providerId, modelId)
+    }).catch(err => {
       logger.error(`Background memory extraction failed: ${err.message}`)
     })
   }

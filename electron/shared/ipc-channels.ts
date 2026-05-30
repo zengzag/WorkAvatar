@@ -27,6 +27,8 @@ export type {
   EmployeeMemoryUpdateParams,
   EmployeeMemorySearchParams,
   EmployeeMemoryExtractParams,
+  EmployeeMemoryConsolidateParams,
+  EmployeeMemoryStatsParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,

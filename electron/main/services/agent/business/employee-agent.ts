@@ -2,7 +2,7 @@ import { BaseAgent } from '../core/base-agent'
 import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
-import type { ToolDefinition } from '../tools/types'
+import type { ToolDefinition, ToolCallResult } from '../tools/types'
 import { PlannerFactory } from '../planning/planner'
 import type { PlanningStrategy } from '../planning/types'
 import { buildEmployeeSystemPrompt } from './prompts'
@@ -49,6 +49,9 @@ export class EmployeeAgent extends BaseAgent {
   }
 
   private memoryPrompt: string | undefined
+  private kbContextPrompt: string | undefined
+  private toolPlanningPrompt: string | undefined
+  private persistedSkillInstructions: string[] = []
 
   updateMemoryPrompt(prompt: string | undefined): void {
     this.memoryPrompt = prompt
@@ -56,6 +59,33 @@ export class EmployeeAgent extends BaseAgent {
 
   getMemoryPrompt(): string | undefined {
     return this.memoryPrompt
+  }
+
+  updateKBContextPrompt(prompt: string | undefined): void {
+    this.kbContextPrompt = prompt
+  }
+
+  updateToolPlanningPrompt(prompt: string | null): void {
+    this.toolPlanningPrompt = prompt || undefined
+  }
+
+  resetPersistedSkillInstructions(): void {
+    this.persistedSkillInstructions = []
+  }
+
+  getPersistedSkillInstructions(): string[] {
+    return [...this.persistedSkillInstructions]
+  }
+
+  protected async onToolCallExecuted(toolName: string, args: any, result: ToolCallResult): Promise<void> {
+    await super.onToolCallExecuted(toolName, args, result)
+    if (toolName === 'activate_skill' && result.success) {
+      const rawOutput = result.rawOutput as Record<string, any> | undefined
+      const skillInstructions = rawOutput?.instructions as string | undefined
+      if (skillInstructions && !this.persistedSkillInstructions.includes(skillInstructions)) {
+        this.persistedSkillInstructions.push(skillInstructions)
+      }
+    }
   }
 
   protected buildSystemPrompt(options: AgentRunOptions): string {
@@ -68,6 +98,12 @@ export class EmployeeAgent extends BaseAgent {
       role: this.config.role,
       skillsXml: skillsXml || undefined,
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
+      memoryPrompt: this.memoryPrompt,
+      kbContextPrompt: this.kbContextPrompt,
+      skillInstructions: this.persistedSkillInstructions.length > 0
+        ? this.persistedSkillInstructions
+        : undefined,
+      toolPlanningHint: this.toolPlanningPrompt,
     })
   }
 
