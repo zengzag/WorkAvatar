@@ -46,29 +46,22 @@ export function createKBAgentTools(
           return { success: true, output: '当前对话未选择任何知识库。' }
         }
 
-        let output = `## 可访问的知识库\n\n`
-        output += `当前可访问 ${allKBs.length} 个知识库：\n\n`
-
+        let output = `${allKBs.length}个知识库:\n`
         for (let i = 0; i < allKBs.length; i++) {
           const kb = allKBs[i]
-          output += `[${i + 1}] **${kb.name}**\n`
-          output += `- ID: ${kb.id}\n`
-          if (kb.description) {
-            output += `- 描述: ${kb.description}\n`
-          }
-          output += `- 文档数: ${kb.doc_count || 0}\n`
-
+          output += `${i + 1}. ${kb.name} [${kb.id}] ${kb.doc_count || 0}篇`
           const globalSummary = kbService.getGlobalSummary(kb.id)
           if (globalSummary) {
             const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
             if (keyTopics.length > 0) {
-              output += `- 核心主题: ${keyTopics.join('、')}\n`
+              output += ` | ${keyTopics.join('、')}`
             }
+          }
+          if (kb.description) {
+            output += `\n   ${kb.description}`
           }
           output += '\n'
         }
-
-        output += `请使用 kb_overview 并传入 kb_id 查看知识库详情和文档列表。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `知识库列表获取失败: ${error.message}` }
@@ -105,17 +98,18 @@ export function createKBAgentTools(
           return { success: true, output: '知识库不存在。' }
         }
 
-        let output = `## ${kb.name}\n\n`
+        let output = kb.name
         if (kb.description) {
-          output += `${kb.description}\n\n`
+          output += ` - ${kb.description}`
         }
+        output += '\n'
 
         const globalSummary = kbService.getGlobalSummary(targetKbId)
         if (globalSummary) {
+          output += `摘要: ${globalSummary.summary}\n`
           const keyTopics: string[] = JSON.parse(globalSummary.key_topics_json || '[]')
-          output += `### 全局摘要\n${globalSummary.summary}\n\n`
           if (keyTopics.length > 0) {
-            output += `### 核心主题\n${keyTopics.map(t => `- ${t}`).join('\n')}\n\n`
+            output += `主题: ${keyTopics.join('、')}\n`
           }
         }
 
@@ -123,30 +117,23 @@ export function createKBAgentTools(
         const completedDocs = docs.filter((d: any) => d.parse_status === 'completed')
 
         if (completedDocs.length === 0) {
-          output += `该知识库中暂无已解析的文档。`
+          output += '暂无已解析文档。'
           return { success: true, output }
         }
 
-        output += `### 文档列表（${completedDocs.length}个）\n\n`
+        output += `\n${completedDocs.length}篇文档:\n`
         for (const doc of completedDocs) {
-          output += `[${completedDocs.indexOf(doc) + 1}] **${doc.original_name}**\n`
-          output += `- ID: ${doc.id}\n`
-          output += `- 类型: ${doc.type}\n`
-
+          output += `- ${doc.original_name} [${doc.id}]`
           const docSummary = kbService.getDocumentSummary(doc.id)
           if (docSummary) {
+            if (docSummary.summary) output += ` ${docSummary.summary}`
             const topics: string[] = JSON.parse(docSummary.main_topics_json || '[]')
-            output += `- 摘要: ${docSummary.summary || '无摘要'}\n`
             if (topics.length > 0) {
-              output += `- 主题: ${topics.join('、')}\n`
+              output += ` | ${topics.join('、')}`
             }
-          } else {
-            output += `- 摘要: 尚未进行知识处理\n`
           }
           output += '\n'
         }
-
-        output += `请使用 kb_get_toc 并传入 document_id 查看文档目录结构，或使用 kb_search 检索具体内容。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `知识库概览获取失败: ${error.message}` }
@@ -196,21 +183,12 @@ export function createKBAgentTools(
           return { success: true, output: '该文档暂无段落目录。' }
         }
 
-        let output = `## 文档目录: ${doc.original_name}\n\n`
-        output += `共 ${paragraphs.length} 个段落（#后为段落ID，用于 kb_get_paragraphs/kb_get_content 定位）：\n\n`
-
-        const indent = (level: number): string => {
-          const depth = Math.max(0, level - 1)
-          return '│  '.repeat(depth)
-        }
+        let output = `${doc.original_name} (${paragraphs.length}段, #后为段落ID):\n`
 
         for (const p of paragraphs) {
-          const prefix = indent(p.level)
-          const branch = p.level > 1 ? '├── ' : ''
-          output += `${prefix}${branch}${p.title} #${p.id}\n`
+          const indent = '  '.repeat(Math.max(0, p.level - 1))
+          output += `${indent}${p.title} #${p.id}\n`
         }
-
-        output += `\n请使用 kb_get_paragraphs 传入 # 后的段落ID数组获取详细摘要，或使用 kb_get_content 传入段落ID获取完整内容。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `获取文档目录失败: ${error.message}` }
@@ -257,26 +235,20 @@ export function createKBAgentTools(
           return { success: true, output: '未找到匹配的段落。请检查 paragraph_id 是否正确。' }
         }
 
-        let output = `## 段落摘要\n\n`
+        let output = `${paragraphs.length}个段落:\n`
 
         for (let i = 0; i < paragraphs.length; i++) {
           const p = paragraphs[i]
-          output += `[${i + 1}] **${p.title_path || p.title}** (L${p.level})\n`
-          output += `- 文档: ${p.document_name}\n`
+          output += `[${i + 1}] ${p.title_path || p.title} [${p.id}]`
           if (p.summary) {
-            output += `- 摘要: ${p.summary}\n`
-          } else {
-            output += `- 摘要: (无)\n`
+            output += ` ${p.summary}`
           }
           const preview = p.content ? p.content.substring(0, 200) : ''
           if (preview) {
-            output += `- 预览: ${preview}${p.content.length > 200 ? '...' : ''}\n`
+            output += `\n    ${preview}${p.content.length > 200 ? '...' : ''}`
           }
-          output += `[document_id: ${p.document_id}, paragraph_id: ${p.id}, offset: ${p.start_offset}-${p.end_offset}]\n\n`
-          output += '---\n\n'
+          output += `\n    doc:${p.document_id} off:${p.start_offset}-${p.end_offset}\n`
         }
-
-        output += `共 ${paragraphs.length} 个段落。请使用 kb_get_content 传入 paragraph_id 获取完整内容。`
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `获取段落摘要失败: ${error.message}` }

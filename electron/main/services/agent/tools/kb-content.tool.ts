@@ -74,18 +74,16 @@ export function createKBGetContentTool(kbIdsRef: { current: string[] }): ToolDef
             return { success: false, error: '段落不存在' }
           }
 
-          let output = `## ${paragraph.title_path || paragraph.title}\n\n`
-          output += paragraph.content
+          let output = `${paragraph.title_path || paragraph.title}\n\n${paragraph.content}`
 
           const paragraphIndex = paragraphs.findIndex((p: any) => p.id === args.paragraph_id)
-          output += '\n\n### 段落导航\n'
           if (paragraphIndex > 0) {
             const prev = paragraphs[paragraphIndex - 1]
-            output += `← 上一段: ${prev.title_path || prev.title} [paragraph_id: ${prev.id}]\n`
+            output += `\n← ${prev.title_path || prev.title} [${prev.id}]`
           }
           if (paragraphIndex < paragraphs.length - 1) {
             const next = paragraphs[paragraphIndex + 1]
-            output += `→ 下一段: ${next.title_path || next.title} [paragraph_id: ${next.id}]\n`
+            output += `\n→ ${next.title_path || next.title} [${next.id}]`
           }
 
           return { success: true, output }
@@ -115,7 +113,7 @@ export function createKBGetContentTool(kbIdsRef: { current: string[] }): ToolDef
 
           return {
             success: true,
-            output: `## 内容片段 [${doc.original_name}]\n\n**行号范围**: ${startLine}-${endLine}\n**字符位置**: ${actualStart}-${actualEnd}\n\n${output}\n\n[document_id: ${args.document_id}]`
+            output: `${doc.original_name} L${startLine}-${endLine} off:${actualStart}-${actualEnd}\n\n${output}\n\nd:${args.document_id}`
           }
         }
 
@@ -133,23 +131,23 @@ export function createKBGetContentTool(kbIdsRef: { current: string[] }): ToolDef
 
           return {
             success: true,
-            output: `## 内容片段 [${doc.original_name}]\n\n**字符范围**: ${startOffset}-${endOffset}\n**实际展示**: ${actualStart}-${actualEnd}\n\n${output}\n\n[document_id: ${args.document_id}]`
+            output: `${doc.original_name} off:${startOffset}-${endOffset}(show:${actualStart}-${actualEnd})\n\n${output}\n\nd:${args.document_id}`
           }
         }
 
         let output = content.substring(0, 10000)
         if (content.length > 10000) {
-          output += '\n\n...(内容过长，已截断至前10000字符。如需查看特定部分，请使用 paragraph_id、start_offset/end_offset 或 start_line/end_line 参数精准定位)'
+          output += '\n\n...(截断至前10000字符，用paragraph_id/start_offset/start_line定位)'
         }
 
         const paragraphs = kbService.getParagraphs(args.document_id)
         if (paragraphs.length > 0) {
-          output += `\n\n### 文档段落列表\n${paragraphs.map((p: any) => `- ${p.title_path || p.title} [paragraph_id: ${p.id}, offset: ${p.start_offset}-${p.end_offset}]`).join('\n')}`
+          output += `\n\n段落: ${paragraphs.map((p: any) => `${p.title_path || p.title} [${p.id} off:${p.start_offset}-${p.end_offset}]`).join(' | ')}`
         }
 
         return {
           success: true,
-          output: `## ${doc.original_name}\n\n${output}\n\n[document_id: ${args.document_id}]`
+          output: `${doc.original_name}\n\n${output}\n\nd:${args.document_id}`
         }
       } catch (error: any) {
         return { success: false, error: `获取文档内容失败: ${error.message}` }

@@ -5,6 +5,7 @@ export interface LLMCallOptions {
   stopSequences?: string[]
   enableThinking?: boolean
   providerType?: string
+  logSource?: string
 }
 
 export interface LLMResponse {

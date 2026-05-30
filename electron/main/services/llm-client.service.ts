@@ -2,6 +2,7 @@ import DatabaseService from './database.service'
 import { safeStorage } from 'electron'
 import type { LLMModelConfig } from '../../shared/types'
 import { generateId } from './common-utils'
+import LLMLoggerService from './llm-logger.service'
 
 interface LLMProviderConfig {
   id: string
@@ -401,7 +402,7 @@ class LLMClientService {
   async chat(
     providerId: string,
     messages: ChatMessage[],
-    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; signal?: AbortSignal }
+    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; signal?: AbortSignal; logSource?: string }
   ): Promise<string> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
@@ -426,22 +427,77 @@ class LLMClientService {
 
     const modelName = this.resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, false, options)
+    const logSource = options?.logSource || 'unknown'
+    const startTime = Date.now()
 
-    const response = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: options?.signal,
-    })
+    try {
+      const response = await fetch(`${baseURL}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: options?.signal,
+      })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`LLM API error (${response.status}): ${errorText}`)
+      if (!response.ok) {
+        const errorText = await response.text()
+        LLMLoggerService.getInstance().logCall({
+          type: 'chat',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: {
+            messages,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: false,
+          },
+          error: `${response.status} - ${errorText}`,
+        })
+        throw new Error(`LLM API error (${response.status}): ${errorText}`)
+      }
+
+      const data = await response.json()
+      const fullContent = data.choices?.[0]?.message?.content || ''
+      const result = fullContent.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
+      const latencyMs = Date.now() - startTime
+
+      LLMLoggerService.getInstance().logCall({
+        type: 'chat',
+        source: logSource,
+        model: modelName,
+        providerType: config.provider_type,
+        request: {
+          messages,
+          temperature: body.temperature,
+          max_tokens: body.max_tokens,
+          stream: false,
+        },
+        response: {
+          content: result,
+          usage: data.usage,
+          latencyMs,
+        },
+      })
+
+      return result
+    } catch (error: any) {
+      if (!error.message?.includes('LLM API error')) {
+        LLMLoggerService.getInstance().logCall({
+          type: 'chat',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: {
+            messages,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: false,
+          },
+          error: error.message,
+        })
+      }
+      throw error
     }
-
-    const data = await response.json()
-    const fullContent = data.choices?.[0]?.message?.content || ''
-    return fullContent.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
   }
 
   async chatStream(
@@ -450,7 +506,7 @@ class LLMClientService {
     onChunk: (chunk: string) => void,
     onDone: () => void,
     onError: (error: Error) => void,
-    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean },
+    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; logSource?: string },
     signal?: AbortSignal,
     onThought?: (thoughtChunk: string) => void
   ): Promise<void> {
@@ -478,6 +534,8 @@ class LLMClientService {
 
     const modelName = this.resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, true, options)
+    const logSource = options?.logSource || 'unknown'
+    const startTime = Date.now()
 
     try {
       const thinkProcessor = createThinkProcessor()
@@ -490,6 +548,19 @@ class LLMClientService {
 
       if (!response.ok) {
         const errorText = await response.text()
+        LLMLoggerService.getInstance().logCall({
+          type: 'chatStream',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: {
+            messages,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: true,
+          },
+          error: `${response.status} - ${errorText}`,
+        })
         throw new Error(`LLM API error (${response.status}): ${errorText}`)
       }
 
@@ -500,6 +571,8 @@ class LLMClientService {
 
       const decoder = new TextDecoder()
       let buffer = ''
+      let fullContent = ''
+      let fullThought = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -515,6 +588,24 @@ class LLMClientService {
 
           const data = trimmed.slice(6)
           if (data === '[DONE]') {
+            const latencyMs = Date.now() - startTime
+            LLMLoggerService.getInstance().logCall({
+              type: 'chatStream',
+              source: logSource,
+              model: modelName,
+              providerType: config.provider_type,
+              request: {
+                messages,
+                temperature: body.temperature,
+                max_tokens: body.max_tokens,
+                stream: true,
+              },
+              response: {
+                content: fullContent,
+                reasoningContent: fullThought || undefined,
+                latencyMs,
+              },
+            })
             onDone()
             return
           }
@@ -524,6 +615,7 @@ class LLMClientService {
             const delta = parsed.choices?.[0]?.delta
 
             if (delta?.reasoning_content && onThought) {
+              fullThought += delta.reasoning_content
               onThought(delta.reasoning_content)
             }
 
@@ -531,9 +623,11 @@ class LLMClientService {
             if (content) {
               const result = thinkProcessor.processChunk(content)
               if (result.thought && onThought) {
+                fullThought += result.thought
                 onThought(result.thought)
               }
               if (result.content) {
+                fullContent += result.content
                 onChunk(result.content)
               }
             }
@@ -544,14 +638,48 @@ class LLMClientService {
 
       const finalResult = thinkProcessor.finalize()
       if (finalResult.thought && onThought) {
+        fullThought += finalResult.thought
         onThought(finalResult.thought)
       }
       if (finalResult.content) {
+        fullContent += finalResult.content
         onChunk(finalResult.content)
       }
 
+      const latencyMs = Date.now() - startTime
+      LLMLoggerService.getInstance().logCall({
+        type: 'chatStream',
+        source: logSource,
+        model: modelName,
+        providerType: config.provider_type,
+        request: {
+          messages,
+          temperature: body.temperature,
+          max_tokens: body.max_tokens,
+          stream: true,
+        },
+        response: {
+          content: fullContent,
+          reasoningContent: fullThought || undefined,
+          latencyMs,
+        },
+      })
+
       onDone()
     } catch (err: any) {
+      LLMLoggerService.getInstance().logCall({
+        type: 'chatStream',
+        source: logSource,
+        model: modelName,
+        providerType: config.provider_type,
+        request: {
+          messages,
+          temperature: body.temperature,
+          max_tokens: body.max_tokens,
+          stream: true,
+        },
+        error: err.message,
+      })
       onError(err)
     }
   }

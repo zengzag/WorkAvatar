@@ -161,7 +161,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         (error: Error) => {
           streamError = error
         },
-        { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}) },
+        { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource: 'profiling_refine' },
         undefined,
         (thoughtChunk: string) => {
           onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
@@ -353,7 +353,7 @@ ${toolsListText}
       (error: Error) => {
         streamError = error
       },
-      { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}) },
+      { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource: 'profiling_analyze' },
       undefined,
       (thoughtChunk: string) => {
         onProgress?.({ stage: 'thinking', chunk: thoughtChunk })

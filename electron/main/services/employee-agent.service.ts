@@ -14,6 +14,7 @@ import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import { createLogger } from './logger'
+import LLMLoggerService from './llm-logger.service'
 
 const logger = createLogger('AgentEvent')
 
@@ -345,75 +346,86 @@ class EmployeeAgentService {
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
     const { employee_id, provider_id, model_id, messages, use_skills = true, kb_ids = [], enable_thinking, conversation_id } = params
 
-    const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
-    const agent = entry.agent
-    entry.kbIdsRef.current = kb_ids || []
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
+    const employeeName = employee?.name || 'unknown'
 
-    const history: Message[] = messages.slice(0, -1).map(m => ({
-      role: m.role as any,
-      content: m.content,
-      images: m.images,
-    }))
-
-    const lastMsg = messages[messages.length - 1]
-    const query = lastMsg?.content || ''
-    const queryImages = lastMsg?.images
-
-    if (kb_ids.length > 0) {
-      const kbDb = require('./kb-database.service').default.getInstance()
-      const placeholders = kb_ids.map(() => '?').join(',')
-      const kbList = kbDb.getDb().prepare(
-        `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
-      ).all(...kb_ids) as any[]
-      const kbNames = kbList.map((kb: any) => kb.name).join('、')
-      agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
-    } else {
-      agent.updateKBContextPrompt(undefined)
+    const logCtx = {
+      employeeId: employee_id,
+      employeeName,
+      conversationId: conversation_id,
+      source: 'chat',
     }
 
-    const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
-    agent.updateToolPlanningPrompt(toolPlanningHint)
+    await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const agent = entry.agent
+      entry.kbIdsRef.current = kb_ids || []
 
-    const config = await this.llmClient.getProviderConfig(provider_id)
-    let maxIterations = 100
-    if (config?.models_json) {
-      try {
-        const models: LLMModelConfig[] = JSON.parse(config.models_json)
-        const matched = model_id
-          ? models.find(m => m.id === model_id) || models.find(m => m.model === model_id)
-          : models.find(m => m.is_default)
-        if (matched?.max_retry !== undefined) {
-          maxIterations = matched.max_retry
-        }
-      } catch {}
-    }
+      const history: Message[] = messages.slice(0, -1).map(m => ({
+        role: m.role as any,
+        content: m.content,
+        images: m.images,
+      }))
 
-    const employee = this.db.getDb().prepare('SELECT memory_enabled FROM employees WHERE id = ?').get(employee_id) as Pick<DBEmployee, 'memory_enabled'> | undefined
-    const memoryEnabled = employee?.memory_enabled === 1
+      const lastMsg = messages[messages.length - 1]
+      const query = lastMsg?.content || ''
+      const queryImages = lastMsg?.images
 
-    await agent.runStream(
-      {
-        query,
-        history,
-        useSkills: use_skills,
-        maxIterations,
-        metadata: { queryImages },
-      },
-      {
-        onChunk: callbacks.onChunk,
-        onThought: callbacks.onThought,
-        onToolCall: callbacks.onToolCall,
-        onToolResult: callbacks.onToolResult,
-        onDone: (metadata?: any) => {
-          callbacks.onDone(metadata)
-          if (memoryEnabled) {
-            this.extractMemoriesAsync(employee_id, messages, provider_id, model_id, conversation_id)
+      if (kb_ids.length > 0) {
+        const kbDb = require('./kb-database.service').default.getInstance()
+        const placeholders = kb_ids.map(() => '?').join(',')
+        const kbList = kbDb.getDb().prepare(
+          `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
+        ).all(...kb_ids) as any[]
+        const kbNames = kbList.map((kb: any) => kb.name).join('、')
+        agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
+      } else {
+        agent.updateKBContextPrompt(undefined)
+      }
+
+      const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
+      agent.updateToolPlanningPrompt(toolPlanningHint)
+
+      const config = await this.llmClient.getProviderConfig(provider_id)
+      let maxIterations = 100
+      if (config?.models_json) {
+        try {
+          const models: LLMModelConfig[] = JSON.parse(config.models_json)
+          const matched = model_id
+            ? models.find(m => m.id === model_id) || models.find(m => m.model === model_id)
+            : models.find(m => m.is_default)
+          if (matched?.max_retry !== undefined) {
+            maxIterations = matched.max_retry
           }
+        } catch {}
+      }
+
+      const memoryEnabled = employee?.memory_enabled === 1
+
+      await agent.runStream(
+        {
+          query,
+          history,
+          useSkills: use_skills,
+          maxIterations,
+          metadata: { queryImages },
         },
-        onError: callbacks.onError,
-      },
-      signal
-    )
+        {
+          onChunk: callbacks.onChunk,
+          onThought: callbacks.onThought,
+          onToolCall: callbacks.onToolCall,
+          onToolResult: callbacks.onToolResult,
+          onDone: (metadata?: any) => {
+            callbacks.onDone(metadata)
+            if (memoryEnabled) {
+              this.extractMemoriesAsync(employee_id, messages, provider_id, model_id, conversation_id, employeeName)
+            }
+          },
+          onError: callbacks.onError,
+        },
+        signal
+      )
+    })
   }
 
   clearAgentCache(employeeId?: string): void {
@@ -433,19 +445,28 @@ class EmployeeAgentService {
     messages: Array<{ role: string; content: string }>,
     providerId: string,
     modelId?: string,
-    conversationId?: string
+    conversationId?: string,
+    employeeName?: string
   ): void {
-    this.memoryService.extractMemoriesFromConversation(
+    const logCtx = {
       employeeId,
-      messages,
-      providerId,
-      modelId,
-      conversationId
-    ).then(() => {
-      this.memoryService.removeStaleMemories(employeeId)
-      return this.memoryService.autoConsolidateIfNeeded(employeeId, providerId, modelId)
-    }).catch(err => {
-      logger.error(`Background memory extraction failed: ${err.message}`)
+      employeeName: employeeName || 'unknown',
+      conversationId,
+      source: 'memory',
+    }
+    LLMLoggerService.getInstance().runWithContext(logCtx, () => {
+      this.memoryService.extractMemoriesFromConversation(
+        employeeId,
+        messages,
+        providerId,
+        modelId,
+        conversationId
+      ).then(() => {
+        this.memoryService.removeStaleMemories(employeeId)
+        return this.memoryService.autoConsolidateIfNeeded(employeeId, providerId, modelId)
+      }).catch(err => {
+        logger.error(`Background memory extraction failed: ${err.message}`)
+      })
     })
   }
 

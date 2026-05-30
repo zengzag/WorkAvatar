@@ -119,51 +119,45 @@ export function createKBSearchTool(kbIdsRef: { current: string[] }): ToolDefinit
         }
 
         if (results.length === 0) {
-          const searchScope = args.search_in && !args.use_semantic ? `（范围: ${label}）` : ''
+          const searchScope = args.search_in && !args.use_semantic ? `(${label})` : ''
           return {
             success: true,
-            output: `未找到与"${query}"相关的内容${searchScope}。建议：\n1. 尝试使用更通用的关键词\n2. 扩大搜索范围（search_in: "all"）\n3. 启用语义搜索(use_semantic=true)获取语义匹配结果\n4. 使用 kb_list 查看可访问的知识库\n5. 使用 kb_overview 查看知识库中的文档列表\n6. 检查文档是否已完成解析和知识处理`
+            output: `无结果"${query}"${searchScope}。建议: 扩大搜索范围(search_in:"all")或启用语义搜索(use_semantic:true)`
           }
         }
 
-        let output = `## 知识库检索结果: "${query}"\n\n`
-        output += `共找到 ${results.length} 条相关结果（${args.use_semantic ? '语义搜索' : `范围: ${label}, 关键词搜索`}）:\n\n`
+        let output = `${results.length}条结果`
+        if (!args.use_semantic) {
+          output += `(${label})`
+        }
+        output += ':\n'
 
         for (let i = 0; i < results.length; i++) {
           const r = results[i]
           const typeLabel = {
-            document_title: '文档标题',
+            document_title: '标题',
             document_summary: '文档摘要',
             paragraph: '段落摘要',
-            content_paragraph: '原文内容',
-            hybrid: '混合匹配',
+            content_paragraph: '原文',
+            hybrid: '混合',
           }[r.match_type] || r.match_type
 
-          output += `[${i + 1}] **${typeLabel}**\n`
-          output += `来源: ${r.document_name}${r.paragraph_title ? ` > ${r.paragraph_title}` : ''}\n`
+          output += `[${i + 1}] ${typeLabel} | ${r.document_name}${r.paragraph_title ? ` > ${r.paragraph_title}` : ''}\n`
           output += `${r.text}\n`
 
           const locParts: string[] = []
-          if (r.document_id) locParts.push(`document_id: ${r.document_id}`)
-          if (r.paragraph_id) locParts.push(`paragraph_id: ${r.paragraph_id}`)
+          if (r.document_id) locParts.push(`d:${r.document_id}`)
+          if (r.paragraph_id) locParts.push(`p:${r.paragraph_id}`)
           if (r.start_line !== undefined && r.end_line !== undefined) {
-            locParts.push(`line: ${r.start_line}-${r.end_line}`)
+            locParts.push(`L${r.start_line}-${r.end_line}`)
           }
           if (r.start_offset !== undefined && r.end_offset !== undefined) {
-            locParts.push(`offset: ${r.start_offset}-${r.end_offset}`)
+            locParts.push(`off:${r.start_offset}-${r.end_offset}`)
           }
           if (locParts.length > 0) {
-            output += `[${locParts.join(', ')}]\n`
+            output += `[${locParts.join(' ')}]\n`
           }
-          output += '\n---\n\n'
-        }
-
-        output += `### 下一步建议\n`
-        output += `- 使用 kb_get_toc 获取相关文档的目录结构，了解文档章节组织\n`
-        output += `- 使用 kb_get_paragraphs 批量获取感兴趣的段落详细摘要\n`
-        output += `- 使用 kb_get_content 获取完整文档或段落内容（支持 paragraph_id / start_offset+end_offset / start_line+end_line 精准定位）\n`
-        if (!args.use_semantic) {
-          output += `- 启用语义搜索(use_semantic=true)可获取语义匹配结果，提升搜索召回率\n`
+          output += '\n'
         }
 
         return { success: true, output }

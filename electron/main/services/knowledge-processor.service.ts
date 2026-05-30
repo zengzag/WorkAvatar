@@ -313,6 +313,7 @@ ${numberedContent}
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
         signal,
+        logSource: 'knowledge_toc',
       })
 
       const parsed = this.parseJSON<{ toc: LLMTocEntry[] }>(result, { toc: [] })
@@ -667,6 +668,7 @@ ${paragraphContent.substring(0, 8000)}
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
         signal,
+        logSource: 'knowledge_paragraph_summary',
       })
 
       return this.parseJSON<ParagraphSummary>(result, {
@@ -716,6 +718,7 @@ ${summariesText.substring(0, 15000)}
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
         signal,
+        logSource: 'knowledge_document_summary',
       })
 
       const parsed = this.parseJSON<Omit<DocumentSummary, 'toc'>>(result, {
@@ -768,6 +771,7 @@ ${docsText.substring(0, 20000)}
         ...(modelId ? { model: modelId } : {}),
         enable_thinking: enableThinking,
         signal,
+        logSource: 'knowledge_global_summary',
       })
 
       return this.parseJSON(result, {
