@@ -252,7 +252,6 @@ const EmployeeWorkbench: React.FC = () => {
     handleCloseComparison,
     handleOpenComparison,
     getComparisonMessages,
-    getComparisonUserMessage,
     editingConversationId,
     editingTitle,
     setEditingTitle,
@@ -649,7 +648,6 @@ const EmployeeWorkbench: React.FC = () => {
           {isComparisonMode ? (
             <MultiChatPanel
               comparisonMessages={getComparisonMessages()}
-              userMessage={getComparisonUserMessage()}
               providers={providers}
               onClose={handleCloseComparison}
               onToggleSegment={handleToggleSegment}

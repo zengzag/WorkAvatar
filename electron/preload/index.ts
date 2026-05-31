@@ -51,6 +51,7 @@ import type {
   EmployeeMemoryStatsParams,
   WorkflowCreateParams,
   WorkflowUpdateParams,
+  KBMCPSetConfigParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -249,6 +250,14 @@ const electronAPI = {
     getParagraphsByKb: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS_BY_KB, kbId),
   },
 
+  kbMcp: {
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_START),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_STOP),
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_STATUS),
+    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_CONFIG),
+    setConfig: (params: KBMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_SET_CONFIG, params),
+  },
+
   interaction: {
     onRequest: (callback: (request: any) => void) => {
       const handler = (_event: any, request: any) => callback(request)
@@ -408,6 +417,13 @@ export type ElectronAPI = typeof electronAPI & {
     onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
     onDebugPaused: (callback: (data: any) => void) => () => void
     onRuntimeInput: (callback: (data: any) => void) => () => void
+  }
+  kbMcp: {
+    start: () => Promise<{ success: boolean; error?: string }>
+    stop: () => Promise<{ success: boolean }>
+    getStatus: () => Promise<{ running: boolean; port: number; url: string }>
+    getConfig: () => Promise<{ enabled: boolean; port: number; allowedKbIds: string[]; apiKey: string }>
+    setConfig: (params: KBMCPSetConfigParams) => Promise<{ success: boolean }>
   }
 }
 

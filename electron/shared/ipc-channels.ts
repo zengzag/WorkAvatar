@@ -70,3 +70,6 @@ export type {
   WorkflowCreateParams,
   WorkflowUpdateParams,
 } from './channels/workflow'
+export type {
+  KBMCPSetConfigParams,
+} from './channels/kb-mcp'

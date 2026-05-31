@@ -74,7 +74,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
-  const [comparisonUserMessageId, setComparisonUserMessageId] = useState<string | null>(null)
+  const [pendingComparisonAggregation, setPendingComparisonAggregation] = useState<string[] | null>(null)
   const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
   const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
   const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
@@ -564,7 +564,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     setIsComparisonMode(false)
     setComparisonMessageIds([])
-    setComparisonUserMessageId(null)
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
     setIsStreaming(hasActiveStream)
@@ -881,7 +880,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       if (targetConvId === activeConversationId && assistantIds.length > 0) {
         setIsComparisonMode(true)
         setComparisonMessageIds(assistantIds)
-        setComparisonUserMessageId(userMessage.id)
       }
     } else {
       const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
@@ -1321,37 +1319,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     })
   }
 
-  const handleCloseComparison = () => {
-    if (!activeConversationId) return
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
-
-    const firstId = comparisonMessageIds[0]
-    const firstMsg = currentMsgs.find(m => m.id === firstId)
-
-    if (firstMsg?._comparisonBranchMsgs) {
-      updateConvMessages(activeConversationId, (prev) =>
-        prev.map(m => {
-          if (m.id !== firstId) return m
-          const { _comparisonBranchMsgs, ...rest } = m
-          return rest as MessageWithThought
-        })
-      )
-      setIsComparisonMode(false)
-      setComparisonMessageIds([])
-      setComparisonUserMessageId(null)
-      return
-    }
-
-    const comparisonMsgs = comparisonMessageIds
+  const aggregateComparisonMessages = (convId: string, msgIds: string[]) => {
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
+    const comparisonMsgs = msgIds
       .map(id => currentMsgs.find(m => m.id === id))
       .filter((m): m is MessageWithThought => !!m)
 
-    if (comparisonMsgs.length === 0) {
-      setIsComparisonMode(false)
-      setComparisonMessageIds([])
-      setComparisonUserMessageId(null)
-      return
-    }
+    if (comparisonMsgs.length === 0) return
 
     const targetMsg = comparisonMsgs[0]
     const branches: MessageBranch[] = comparisonMsgs.slice(1).map(m => ({
@@ -1372,22 +1346,64 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       comparisonModelId: targetMsg.comparisonModelId,
     }
 
-    const otherIds = new Set(comparisonMessageIds.slice(1))
+    const otherIds = new Set(msgIds.slice(1))
     const newMessages = currentMsgs
       .filter(m => !otherIds.has(m.id))
       .map(m => m.id === targetMsg.id ? aggregatedMsg : m)
 
-    setConvMessages(activeConversationId, newMessages)
+    setConvMessages(convId, newMessages)
     window.electronAPI.conversation.update({
-      id: activeConversationId,
+      id: convId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
     }).catch(() => {})
+  }
+
+  const handleCloseComparison = () => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+
+    const firstId = comparisonMessageIds[0]
+    const firstMsg = currentMsgs.find(m => m.id === firstId)
+
+    if (firstMsg?._comparisonBranchMsgs) {
+      updateConvMessages(activeConversationId, (prev) =>
+        prev.map(m => {
+          if (m.id !== firstId) return m
+          const { _comparisonBranchMsgs, ...rest } = m
+          return rest as MessageWithThought
+        })
+      )
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      return
+    }
+
+    const hasStreaming = comparisonMessageIds.some(id => {
+      const msg = currentMsgs.find(m => m.id === id)
+      return msg?.isStreaming
+    })
+
+    if (hasStreaming) {
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      setPendingComparisonAggregation(comparisonMessageIds)
+      return
+    }
+
+    aggregateComparisonMessages(activeConversationId, comparisonMessageIds)
 
     setIsComparisonMode(false)
     setComparisonMessageIds([])
-    setComparisonUserMessageId(null)
   }
+
+  useEffect(() => {
+    if (!pendingComparisonAggregation || isStreaming) return
+    const ids = pendingComparisonAggregation
+    setPendingComparisonAggregation(null)
+    if (!activeConversationId) return
+    aggregateComparisonMessages(activeConversationId, ids)
+  }, [isStreaming, pendingComparisonAggregation])
 
   const handleOpenComparison = (msgId: string) => {
     if (!activeConversationId) return
@@ -1400,9 +1416,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     ) || (targetMsg.comparisonProviderId || targetMsg.comparisonModelId)
 
     if (!hasComparisonBranches) return
-
-    const userMsgIndex = currentMsgs.findIndex(m => m.id === msgId) - 1
-    const userMsg = userMsgIndex >= 0 ? currentMsgs[userMsgIndex] : null
 
     const allBranchMsgs: MessageWithThought[] = []
     for (let i = 0; i < targetMsg.branches.length; i++) {
@@ -1432,7 +1445,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     setIsComparisonMode(true)
     setComparisonMessageIds([msgId])
-    setComparisonUserMessageId(userMsg?.id || null)
 
     updateConvMessages(activeConversationId, () => {
       const msgs = conversationMessagesRef.current.get(activeConversationId) || []
@@ -1456,12 +1468,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return comparisonMessageIds
       .map(id => currentMsgs.find(m => m.id === id))
       .filter((m): m is MessageWithThought => !!m)
-  }
-
-  const getComparisonUserMessage = (): MessageWithThought | null => {
-    if (!activeConversationId || !comparisonUserMessageId) return null
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
-    return currentMsgs.find(m => m.id === comparisonUserMessageId) || null
   }
 
   const handleExportConversation = (convId?: string) => {
@@ -1606,7 +1612,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleCloseComparison,
     handleOpenComparison,
     getComparisonMessages,
-    getComparisonUserMessage,
     editingConversationId,
     editingTitle,
     setEditingTitle,

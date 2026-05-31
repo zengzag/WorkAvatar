@@ -248,7 +248,6 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
 
 interface MultiChatPanelProps {
   comparisonMessages: MessageWithThought[]
-  userMessage: MessageWithThought | null
   providers: any[]
   onClose: () => void
   onToggleSegment: (msgId: string, segId: string) => void
@@ -258,7 +257,6 @@ interface MultiChatPanelProps {
 
 const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
   comparisonMessages,
-  userMessage,
   providers,
   onClose,
   onToggleSegment,
@@ -301,36 +299,6 @@ const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
           {t('workbench.closeComparison')}
         </Button>
       </div>
-
-      {userMessage && (
-        <div style={{
-          padding: '10px 16px',
-          background: token.colorBgLayout,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          flexShrink: 0,
-        }}>
-          <div style={{
-            display: 'flex',
-            gap: 8,
-            alignItems: 'flex-start',
-            justifyContent: 'flex-end',
-          }}>
-            <div style={{
-              maxWidth: '80%',
-              padding: '8px 14px',
-              borderRadius: 12,
-              background: token.colorPrimary,
-              color: '#fff',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              lineHeight: 1.6,
-              fontSize: 14,
-            }}>
-              {userMessage.content}
-            </div>
-          </div>
-        </div>
-      )}
 
       <div style={{
         flex: 1,
