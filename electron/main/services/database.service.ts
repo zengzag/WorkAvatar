@@ -308,6 +308,7 @@ class DatabaseService {
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
+    this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
 
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")

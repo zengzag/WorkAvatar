@@ -93,6 +93,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return stored === 'true'
   })
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([])
+  const [minimalMode, setMinimalMode] = useState(false)
 
   const handleLlmChange = useCallback((providerId: string, modelId: string) => {
     setSelectedLlmProviderId(providerId)
@@ -531,6 +532,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const result = await window.electronAPI.conversation.create({
         employee_id: id!,
         title: t('workbench.defaultConvTitle', { date: dayjs().format('MM/DD HH:mm') }),
+        minimal_mode: minimalMode,
       })
       const convId = (result as Conversation).id
       setAllConversations((prev) => [(result as Conversation), ...prev])
@@ -586,6 +588,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         const fullConv = await window.electronAPI.conversation.get(convId)
         if (version !== selectConvVersionRef.current) return
         if (fullConv) {
+          setMinimalMode(!!fullConv.minimal_mode)
           const parsedMsgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
           const msgs = parsedMsgs
             .map(ensureSegments)
@@ -603,6 +606,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (version !== selectConvVersionRef.current) return
         setConvMessages(convId, [])
       }
+    }
+
+    const convData = allConversations.find(c => c.id === convId)
+    if (convData) {
+      setMinimalMode(!!(convData as any).minimal_mode)
     }
   }
 
@@ -863,6 +871,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             kb_ids: selectedKbIds,
             enable_thinking: enableThinking,
             conversation_id: targetConvId,
+            minimal_mode: minimalMode,
           })
 
           if (result?.sessionId) {
@@ -930,6 +939,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           kb_ids: selectedKbIds,
           enable_thinking: enableThinking,
           conversation_id: targetConvId,
+          minimal_mode: minimalMode,
         })
 
         if (result?.sessionId) {
@@ -1052,6 +1062,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
+        minimal_mode: minimalMode,
       })
 
       if (result?.sessionId) {
@@ -1144,6 +1155,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
+        minimal_mode: minimalMode,
       })
 
       if (result?.sessionId) {
@@ -1268,6 +1280,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
         conversation_id: activeConversationId,
+        minimal_mode: minimalMode,
       })
 
       if (result?.sessionId) {
@@ -1299,6 +1312,17 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       startNewConversation()
     }
   }
+
+  const handleToggleMinimalMode = useCallback((enabled: boolean) => {
+    if (!activeConversationId) return
+    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    if (currentMsgs.length > 0) return
+    setMinimalMode(enabled)
+    window.electronAPI.conversation.update({
+      id: activeConversationId,
+      minimal_mode: enabled,
+    }).catch(() => {})
+  }, [activeConversationId])
 
   const handleSwitchBranch = (msgId: string, branchIndex: number) => {
     if (!activeConversationId) return
@@ -1605,6 +1629,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setEnableThinking,
     selectedKbIds,
     setSelectedKbIds,
+    minimalMode,
+    handleToggleMinimalMode,
     showSidePanel,
     setShowSidePanel,
     isComparisonMode,

@@ -8,6 +8,7 @@ export function buildEmployeeSystemPrompt(options: {
   kbContextPrompt?: string
   skillInstructions?: string[]
   toolPlanningHint?: string
+  minimalMode?: boolean
 }): string {
   const parts: string[] = []
 
@@ -16,6 +17,10 @@ export function buildEmployeeSystemPrompt(options: {
 
   if (options.role) {
     parts.push(`## 身份：${options.role}`)
+  }
+
+  if (options.minimalMode) {
+    return parts.join('\n')
   }
 
   parts.push(

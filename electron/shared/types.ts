@@ -40,6 +40,7 @@ export interface Conversation {
   messages_json: string
   message_count: number
   summary: string
+  minimal_mode: boolean
   status: 'active' | 'archived'
   created_at: number
   updated_at: number

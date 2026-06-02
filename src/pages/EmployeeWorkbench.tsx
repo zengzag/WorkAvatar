@@ -246,6 +246,8 @@ const EmployeeWorkbench: React.FC = () => {
     setEnableThinking,
     selectedKbIds,
     setSelectedKbIds,
+    minimalMode,
+    handleToggleMinimalMode,
     showSidePanel,
     setShowSidePanel,
     isComparisonMode,
@@ -710,6 +712,9 @@ const EmployeeWorkbench: React.FC = () => {
             selectedKbIds={selectedKbIds}
             onSelectedKbIdsChange={setSelectedKbIds}
             allKBs={allKBs}
+            minimalMode={minimalMode}
+            onMinimalModeChange={handleToggleMinimalMode}
+            canToggleMinimalMode={messages.length === 0}
           />
         </div>
       </div>

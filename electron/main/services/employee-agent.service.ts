@@ -31,6 +31,7 @@ interface EmployeeChatStreamParams {
   kb_ids?: string[]
   enable_thinking?: boolean
   conversation_id?: string
+  minimal_mode?: boolean
 }
 
 interface EmployeeChatCallbacks {
@@ -324,7 +325,7 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, kb_ids = [], enable_thinking, conversation_id } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, kb_ids = [], enable_thinking, conversation_id, minimal_mode = false } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
     const employeeName = employee?.name || 'unknown'
@@ -339,6 +340,7 @@ class EmployeeAgentService {
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
       const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
       const agent = entry.agent
+      agent.setMinimalMode(minimal_mode)
       entry.kbIdsRef.current = kb_ids || []
 
       const history: Message[] = messages.slice(0, -1).map(m => ({
@@ -351,20 +353,25 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      if (kb_ids.length > 0) {
-        const kbDb = require('./kb-database.service').default.getInstance()
-        const placeholders = kb_ids.map(() => '?').join(',')
-        const kbList = kbDb.getDb().prepare(
-          `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
-        ).all(...kb_ids) as any[]
-        const kbNames = kbList.map((kb: any) => kb.name).join('、')
-        agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
-      } else {
+      if (minimal_mode) {
         agent.updateKBContextPrompt(undefined)
-      }
+        agent.updateToolPlanningPrompt(null)
+      } else {
+        if (kb_ids.length > 0) {
+          const kbDb = require('./kb-database.service').default.getInstance()
+          const placeholders = kb_ids.map(() => '?').join(',')
+          const kbList = kbDb.getDb().prepare(
+            `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
+          ).all(...kb_ids) as any[]
+          const kbNames = kbList.map((kb: any) => kb.name).join('、')
+          agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
+        } else {
+          agent.updateKBContextPrompt(undefined)
+        }
 
-      const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
-      agent.updateToolPlanningPrompt(toolPlanningHint)
+        const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
+        agent.updateToolPlanningPrompt(toolPlanningHint)
+      }
 
       const config = await this.llmClient.getProviderConfig(provider_id)
       let maxIterations = 100

@@ -211,6 +211,9 @@ export default {
     closeComparison: 'Close Comparison',
     openComparison: 'View Comparison',
     comparisonView: 'Comparison View',
+    minimalMode: 'Minimal Mode',
+    minimalModeTooltip: 'When enabled, no tools, skills, or knowledge bases are used; pure conversation only',
+    minimalModeDisabledTooltip: 'Cannot toggle minimal mode when conversation has messages',
   },
   employeeSettings: {
     subtitle: 'Digital Employee Configuration',

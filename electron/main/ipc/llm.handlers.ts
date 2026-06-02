@@ -92,6 +92,7 @@ export function registerLLMHandlers(
               kb_ids: params.kb_ids || [],
               enable_thinking: params.enable_thinking,
               conversation_id: params.conversation_id,
+              minimal_mode: params.minimal_mode,
             },
             {
               onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunk }) },

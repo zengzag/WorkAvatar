@@ -190,7 +190,7 @@ class WorkspaceManagerService {
 
   getConversationList(employeeId: string): Conversation[] {
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, status, created_at, updated_at FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
+      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
     ).all(employeeId) as Conversation[]
   }
 
@@ -198,7 +198,7 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation || null
   }
 
-  createConversation(employeeId: string, skillId?: string, title: string = ''): Conversation {
+  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean): Conversation {
     const employee = this.db.getDb().prepare('SELECT id FROM employees WHERE id = ?').get(employeeId)
     if (!employee) {
       throw new Error(`Employee not found: ${employeeId}`)
@@ -208,14 +208,14 @@ class WorkspaceManagerService {
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().prepare(`
-      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, '[]', 0, 'active', ?, ?)
-    `).run(conversationId, employeeId, skillId || null, title, now, now)
+      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?)
+    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, now, now)
 
     return this.getConversation(conversationId)!
   }
 
-  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string }): Conversation | null {
+  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean }): Conversation | null {
     const conversation = this.getConversation(id)
     if (!conversation) return null
 

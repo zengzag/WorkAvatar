@@ -64,10 +64,10 @@ export function registerEmployeeHandlers(
   })
 
   ipcMain.handle(IPC_CHANNELS.CONVERSATION_CREATE, (_, params: ConversationCreateParams) => {
-    return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title)
+    return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_UPDATE, (_, params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string }) => {
+  ipcMain.handle(IPC_CHANNELS.CONVERSATION_UPDATE, (_, params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean }) => {
     const { id, ...data } = params
     return workspaceManager.updateConversation(id, data)
   })

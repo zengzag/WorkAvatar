@@ -65,6 +65,7 @@ export interface ConversationCreateParams {
   employee_id: string
   skill_id?: string
   title?: string
+  minimal_mode?: boolean
 }
 
 export interface EmployeeProfileAnalyzeParams {

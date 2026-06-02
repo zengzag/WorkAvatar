@@ -52,6 +52,7 @@ export class EmployeeAgent extends BaseAgent {
   private kbContextPrompt: string | undefined
   private toolPlanningPrompt: string | undefined
   private persistedSkillInstructions: string[] = []
+  private minimalMode: boolean = false
 
   updateMemoryPrompt(prompt: string | undefined): void {
     this.memoryPrompt = prompt
@@ -67,6 +68,14 @@ export class EmployeeAgent extends BaseAgent {
 
   updateToolPlanningPrompt(prompt: string | null): void {
     this.toolPlanningPrompt = prompt || undefined
+  }
+
+  setMinimalMode(enabled: boolean): void {
+    this.minimalMode = enabled
+  }
+
+  getMinimalMode(): boolean {
+    return this.minimalMode
   }
 
   resetPersistedSkillInstructions(): void {
@@ -104,10 +113,14 @@ export class EmployeeAgent extends BaseAgent {
         ? this.persistedSkillInstructions
         : undefined,
       toolPlanningHint: this.toolPlanningPrompt,
+      minimalMode: this.minimalMode,
     })
   }
 
   protected async resolveActiveTools(runtimeToolNames?: string[]): Promise<any[]> {
+    if (this.minimalMode) {
+      return []
+    }
     return super.resolveActiveTools(runtimeToolNames)
   }
 

@@ -1,5 +1,5 @@
-import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons'
+import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState } from 'react'
 import { getProviderModels } from '../../utils/llm'
@@ -34,7 +34,10 @@ const ChatInput: React.FC<{
   selectedKbIds: string[]
   onSelectedKbIdsChange: (ids: string[]) => void
   allKBs: any[]
-}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs }) => {
+  minimalMode: boolean
+  onMinimalModeChange: (enabled: boolean) => void
+  canToggleMinimalMode: boolean
+}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs, minimalMode, onMinimalModeChange, canToggleMinimalMode }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -398,8 +401,13 @@ const ChatInput: React.FC<{
                   style={{ color: selectedKbIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                   title={t('workbench.knowledgeBase')} />
               </Popover>
-              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => { onCommand(cmd.key); setLocalValue('') } })) }} trigger={['click']}>
+              <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
                 <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
+                  style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
+              </Tooltip>
+              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => { onCommand(cmd.key); setLocalValue('') } })) }} trigger={['click']}>
+                <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Dropdown>
             </div>

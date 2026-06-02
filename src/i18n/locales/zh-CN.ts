@@ -370,6 +370,9 @@ export default {
     closeComparison: '关闭对比',
     openComparison: '查看对比',
     comparisonView: '对比视图',
+    minimalMode: '极简模式',
+    minimalModeTooltip: '开启后不使用任何工具、技能和知识库，仅进行纯对话',
+    minimalModeDisabledTooltip: '对话已有内容，无法切换极简模式',
   },
   employeeSettings: {
     subtitle: '数字员工配置管理',
