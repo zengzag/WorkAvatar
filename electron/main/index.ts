@@ -15,6 +15,8 @@ if (!gotTheLock) {
   app.quit()
 }
 
+app.setAppUserModelId('com.workavatar.desktop')
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
@@ -42,6 +44,16 @@ function getResourcePath(...paths: string[]): string {
   return path.join(process.resourcesPath, ...paths)
 }
 
+function getAppIconPath(): string {
+  if (process.platform === 'win32') {
+    return getResourcePath('resources', 'icons', 'icon.ico')
+  }
+  if (process.platform === 'darwin') {
+    return getResourcePath('resources', 'icons', 'icon.icns')
+  }
+  return getResourcePath('resources', 'icons', 'icon.png')
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'WorkAvatar 数字员工平台',
@@ -49,7 +61,7 @@ async function createWindow() {
     height: 720,
     minWidth: 1024,
     minHeight: 640,
-    icon: getResourcePath('resources', 'icons', 'icon.png'),
+    icon: getAppIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
       nodeIntegration: false,

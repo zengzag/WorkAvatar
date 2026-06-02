@@ -26,6 +26,7 @@ win:
   target:
     - portable
   icon: resources/icons/icon.ico
+  signAndEditExecutable: false
   artifactName: '${productName}-Setup-${version}.${ext}'
 
 nsis:
