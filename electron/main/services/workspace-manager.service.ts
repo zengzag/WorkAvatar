@@ -190,7 +190,7 @@ class WorkspaceManagerService {
 
   getConversationList(employeeId: string): Conversation[] {
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at FROM conversations WHERE employee_id = ? ORDER BY updated_at DESC'
+      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
     ).all(employeeId) as Conversation[]
   }
 
@@ -215,7 +215,7 @@ class WorkspaceManagerService {
     return this.getConversation(conversationId)!
   }
 
-  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean }): Conversation | null {
+  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }): Conversation | null {
     const conversation = this.getConversation(id)
     if (!conversation) return null
 
@@ -251,14 +251,14 @@ class WorkspaceManagerService {
     return result.changes
   }
 
-  getAllRecentConversations(limit: number = 20): Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }> {
+  getAllRecentConversations(limit: number = 20): Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; last_message_at: number | null; employee_name: string | null }> {
     return this.db.getDb().prepare(`
-      SELECT c.id, c.employee_id, c.title, c.message_count, c.status, c.created_at, c.updated_at, e.name as employee_name
+      SELECT c.id, c.employee_id, c.title, c.message_count, c.status, c.created_at, c.updated_at, c.last_message_at, e.name as employee_name
       FROM conversations c
       LEFT JOIN employees e ON c.employee_id = e.id
-      ORDER BY c.updated_at DESC
+      ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
       LIMIT ?
-    `).all(limit) as Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; employee_name: string | null }>
+    `).all(limit) as Array<{ id: string; employee_id: string; title: string; message_count: number; status: string; created_at: number; updated_at: number; last_message_at: number | null; employee_name: string | null }>
   }
 
   resolveWorkspacePath(workspacePath: string, relativePath?: string): { fullPath: string; error?: string } {

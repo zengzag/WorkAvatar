@@ -381,6 +381,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             m.id === streamState.assistantMessageId ? savedAssistantMsg : m
           )),
           message_count: prev.length,
+          last_message_at: Math.floor(Date.now() / 1000),
         }).catch(() => {})
         return prev.map((m) =>
           m.id === streamState.assistantMessageId ? savedAssistantMsg : m
@@ -397,6 +398,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
+        // 对话结束后刷新列表排序
+        refreshConversationList()
       }
     })
 
@@ -423,6 +426,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
+        // 对话结束后刷新列表排序
+        refreshConversationList()
       }
     })
 
@@ -477,29 +482,32 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
 
-      const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
-      let sortedResult = result
-      if (savedConvId) {
-        const activeIndex = result.findIndex((c: Conversation) => c.id === savedConvId)
-        if (activeIndex > 0) {
-          sortedResult = [result[activeIndex], ...result.slice(0, activeIndex), ...result.slice(activeIndex + 1)]
-        }
-      }
-
-      setAllConversations(sortedResult)
-      setConversations(sortedResult.slice(0, displayedCount))
+      // 直接使用后端 updated_at DESC 排序，不做二次排序
+      setAllConversations(result)
+      setConversations(result.slice(0, displayedCount))
 
       if (!initializedRef.current) {
         initializedRef.current = true
-        if (sortedResult.length > 0) {
-          const targetConv = savedConvId ? sortedResult.find((c: Conversation) => c.id === savedConvId) : null
-          selectConversation(targetConv ? savedConvId! : sortedResult[0].id)
+        const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
+        if (result.length > 0) {
+          const targetConv = savedConvId ? result.find((c: Conversation) => c.id === savedConvId) : null
+          selectConversation(targetConv ? savedConvId! : result[0].id)
         } else {
           await startNewConversation()
         }
       }
     } catch (e) {
       console.error('[Frontend] 加载对话列表失败', e)
+    }
+  }
+
+  const refreshConversationList = async () => {
+    try {
+      const result = await window.electronAPI.conversation.list({ employee_id: id! })
+      setAllConversations(result)
+      setConversations(result.slice(0, displayedCount))
+    } catch {
+      // 静默失败，不影响用户体验
     }
   }
 
@@ -821,6 +829,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const updatedMessagesRef = [...currentMsgs, userMessage]
     setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
+    // 用户发消息时更新 last_message_at，触发列表重新排序
+    window.electronAPI.conversation.update({
+      id: targetConvId,
+      last_message_at: Math.floor(Date.now() / 1000),
+    }).then(() => refreshConversationList()).catch(() => {})
+
     const targetModels = models && models.length > 0 ? models : null
 
     if (targetModels) {
@@ -1024,6 +1038,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       id: activeConversationId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
+      last_message_at: Math.floor(Date.now() / 1000),
     })
 
     const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
@@ -1123,6 +1138,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       id: activeConversationId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
+      last_message_at: Math.floor(Date.now() / 1000),
     })
 
     setupGlobalListeners()
@@ -1242,6 +1258,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       id: activeConversationId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
+      last_message_at: Math.floor(Date.now() / 1000),
     })
 
     const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id

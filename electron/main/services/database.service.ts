@@ -309,6 +309,10 @@ class DatabaseService {
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
+
+    // 迁移：为已有对话填充 last_message_at，确保排序正确
+    this.migrateConversationLastMessageAt()
 
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
@@ -349,6 +353,14 @@ class DatabaseService {
         CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       `)
       logger.info('Migration completed: employees.project_id removed, workspace_path added')
+    }
+  }
+
+  /** 为已有对话填充 last_message_at = updated_at，确保排序正确 */
+  private migrateConversationLastMessageAt(): void {
+    const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
+    if (result.changes > 0) {
+      logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
     }
   }
 

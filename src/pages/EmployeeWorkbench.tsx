@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import {
@@ -34,6 +34,7 @@ import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import type { Employee } from '../types'
+import { formatMessageTime, shouldShowTimeSeparator } from '../utils/format'
 
 const { Text, Paragraph } = Typography
 
@@ -674,22 +675,39 @@ const EmployeeWorkbench: React.FC = () => {
               </div>
             )}
 
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                msg={msg}
-                onCopy={handleCopy}
-                onDeleteMessage={handleDeleteMessage}
-                onRegenerate={handleRegenerate}
-                onSwitchModelRegenerate={handleSwitchModelRegenerate}
-                onEditAndResubmit={handleEditAndResubmit}
-                onToggleSegment={handleToggleSegment}
-                onSwitchBranch={handleSwitchBranch}
-                onOpenComparison={handleOpenComparison}
-                getToolDisplayName={getToolDisplayName}
-                providers={providers}
-              />
-            ))}
+            {messages.map((msg, index) => {
+              const prevMsg = index > 0 ? messages[index - 1] : null
+              const showTime = index === 0 || (prevMsg && shouldShowTimeSeparator(prevMsg.timestamp, msg.timestamp))
+
+              return (
+                <Fragment key={msg.id}>
+                  {showTime && (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '4px 0',
+                      color: token.colorTextQuaternary,
+                      fontSize: 12,
+                      userSelect: 'none',
+                    }}>
+                      {formatMessageTime(msg.timestamp, t)}
+                    </div>
+                  )}
+                  <MessageBubble
+                    msg={msg}
+                    onCopy={handleCopy}
+                    onDeleteMessage={handleDeleteMessage}
+                    onRegenerate={handleRegenerate}
+                    onSwitchModelRegenerate={handleSwitchModelRegenerate}
+                    onEditAndResubmit={handleEditAndResubmit}
+                    onToggleSegment={handleToggleSegment}
+                    onSwitchBranch={handleSwitchBranch}
+                    onOpenComparison={handleOpenComparison}
+                    getToolDisplayName={getToolDisplayName}
+                    providers={providers}
+                  />
+                </Fragment>
+              )
+            })}
             <div ref={messagesEndRef} />
           </div>
           )}

@@ -16,7 +16,10 @@ const CONSOLIDATION_CANDIDATE_MAX = 20
 
 const TRIVIAL_PATTERNS = [
   /^(你好|hi|hello|hey|谢谢|感谢|好的|ok|嗯|是|否|对|不|行|可以|再见|拜)/i,
-  /^(请继续|继续|还有吗|then\?|and\?)/i,
+  /^(请继续|继续|还有吗|then\?|and\?|next|go on)/i,
+  /^(这段代码|这个|这是什么|什么意思|怎么用|帮我看看|解释一下|帮我改)/i,
+  /^(运行|执行|测试|编译|构建|部署|安装|启动|停止|重启)(一下|这个)?$/i,
+  /^(报错|出错|error|错误|失败)了?/i,
 ]
 
 export interface EmployeeMemory {
@@ -370,18 +373,40 @@ class EmployeeMemoryService {
       contextParts.push(existingMemoriesText)
     }
 
-    const prompt = `Extract persistent facts from dialog, review existing memories, generate summary.
+    const prompt = `你是全局记忆提取器。从对话中提取关于"用户自身"的持久信息，而非临时业务细节。如果对话中没有任何值得持久记录的内容，返回空结果。
 
-Rules:
-- Extract: user preferences, decisions, stable facts (tech stack, background, rules)
-- Skip: temp state, 7-day expiring info, already-known info, imperative sentences
-- Review existing: identify contradicted/outdated memories
+## 需要提取的内容（用户长期特征）
+① 用户个人信息：职业、行业、岗位、常用办公工具/平台、工作场景等固定信息。
+② 用户长期偏好：写作风格、文档格式要求、汇报偏好、沟通风格、工作节奏、审批习惯等办公场景下长期稳定的偏好。
+③ 硬性禁忌/约束：用户明确表示"不要"/"禁止"的做法、工作流程限制、合规要求等不可违背的规则。
+④ 用户自定义回答规则：用户要求助手始终遵守的回复格式、语气、风格等行为规范。
+⑤ 确定落地的长期计划/关键方案：用户已确认并执行的长期工作计划、关键业务方案或工作决策。
+⑥ 踩坑经验：办公工具/流程执行失败的原因及最终解决方案，下次可用以避免重复踩坑。
 
-Context(summary|dialog|existing key|topic|content):
+## 不提取的内容（临时对话噪声）
+✗ 临时闲聊：问候、道谢、闲谈等无长期价值的内容。
+✗ 一次性临时提问：仅当前上下文有效的临时问题（如"这个数据怎么填"、"帮我查一下这个信息"）。
+✗ 随口临时想法：用户随口说的、未确认的想法或计划。
+✗ 临时业务细节：只在当前对话中有意义的业务数据、临时配置、一次性操作等。
+✗ 可推导的通用知识：LLM 本身已具备的通用办公知识。
+✗ 已在现有记忆中存在且未变化的信息。
+
+## 审查现有记忆
+- 如果新信息与已有记忆矛盾，将过时的 key 加入 delete_keys。
+- 如果新信息是对已有记忆的补充/更新，将更新后的内容加入 update_memories。
+
+## 重要原则
+- 宁缺毋滥：不确定是否值得长期保存的内容，不要提取。
+- 允许空结果：如果对话没有任何值得持久记录的内容，返回空的 memories 数组。
+- key 需短小唯一，如 "writing_style"、"report_format"、"no_ppt_animation"、"excel_pitfall"。
+- content 需简洁具体，1-2句话即可。
+- summary 用简短中文概括本轮对话要点（不超过200字）。
+
+上下文（摘要|对话|现有记忆 key|topic|content）：
 ${contextParts.join('\n---\n')}
 
-Output JSON:
-{"memories":[{"key":"id","topic":"cat","content":"fact"}],"delete_keys":[],"update_memories":[{"key":"k","content":"c"}],"summary":"brief summary<200chars"}`
+输出 JSON：
+{"memories":[{"key":"唯一标识","topic":"分类标签","content":"具体事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容","topic":"可选新topic"}],"summary":"对话摘要（中文，<200字）"}`
 
     try {
       const response = await this.llmClient.chat(
@@ -512,7 +537,16 @@ Output JSON:
       return `${m.key}|${m.topic}|${m.content}|${m.importance}|${daysSinceUpdate}d|ref:${refDays}d|${m.source}|pin:${m.is_pinned}`
     }).join('\n')
 
-    const prompt = `Consolidate memories. Rules: pinned(pin:1) no delete; manual source cautious delete; >${STALE_MEMORY_DAYS}d unreferenced+unpinned prioritize delete; merge overlapping; simplify verbose.
+    const prompt = `你是全局记忆合并整理器。对用户记忆进行去重、合并和清理，保持记忆库精简有用。
+
+## 规则
+- pinned(pin:1) 标记的记忆不允许删除。
+- manual source 的记忆谨慎删除，除非明确过时。
+- >${STALE_MEMORY_DAYS}天未引用且非 pinned 的记忆优先删除。
+- 合并内容重叠/高度相似的记忆为一条。
+- 简化冗余啰嗦的内容，保持简洁。
+- 重要性评估：critical=核心用户特征/硬性约束/关键踩坑；normal=常规偏好/计划；low=次要信息。
+- 优先保留关于用户自身特征、偏好、踩坑经验的记忆，清理纯临时业务细节的记忆。
 
 ${memoriesText}
 

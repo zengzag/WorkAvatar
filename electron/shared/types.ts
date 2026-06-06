@@ -44,6 +44,7 @@ export interface Conversation {
   status: 'active' | 'archived'
   created_at: number
   updated_at: number
+  last_message_at: number | null
 }
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'

@@ -262,6 +262,10 @@ export default {
     mergeOrderHint: '拖动上下箭头调整上游节点的拼接顺序',
   },
   workbench: {
+    justNow: '刚刚',
+    yesterday: '昨天',
+    monthDay: '{{month}}月{{day}}日',
+    yearMonthDay: '{{year}}年{{month}}月{{day}}日',
     defaultConvTitle: '对话 {{date}}',
     confirmDelete: '确认删除',
     loadEmployeeFailed: '加载员工信息失败',

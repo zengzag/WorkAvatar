@@ -103,6 +103,10 @@ export default {
     deleteFailed: 'Failed to delete digital employee',
   },
   workbench: {
+    justNow: 'Just now',
+    yesterday: 'Yesterday',
+    monthDay: '{{month}}/{{day}}',
+    yearMonthDay: '{{year}}/{{month}}/{{day}}',
     defaultConvTitle: 'Chat {{date}}',
     confirmDelete: 'Confirm Delete',
     loadEmployeeFailed: 'Failed to load employee info',
