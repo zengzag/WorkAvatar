@@ -6,6 +6,12 @@ import type { MessageWithThought, MessageBranch } from '../components/workbench'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 import { generateId } from '../utils/format'
+import { LRUCache } from '../utils/lru-cache'
+
+// 对话消息内存缓存最大容量，超过时按 LRU 淘汰，防止长时间使用积累导致内存泄漏
+const MESSAGES_CACHE_MAX_SIZE = 20
+// 加载状态的最短展示时间（毫秒），避免加载完成太快时 spinner 闪烁
+const MIN_LOADING_DISPLAY_MS = 120
 
 interface UseEmployeeChatParams {
   id: string | undefined
@@ -32,10 +38,13 @@ const getActiveBranchContent = (m: MessageWithThought): string => {
   return m.content
 }
 
-const _persistentMessages = new Map<string, MessageWithThought[]>()
+const _persistentMessages = new LRUCache<string, MessageWithThought[]>(MESSAGES_CACHE_MAX_SIZE)
 const _persistentStreamStates = new Map<string, ConversationStreamState>()
 let _persistentListenersCleanup: (() => void) | null = null
 let _persistentEmployeeId: string | null = null
+
+// 让出主线程一小段时间，让 React 有机会渲染 loading 状态
+const yieldToBrowser = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
@@ -64,7 +73,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
-  const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
@@ -118,22 +126,52 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [editingTitle, setEditingTitle] = useState('')
   const [displayedCount, setDisplayedCount] = useState(10)
   const [allConversations, setAllConversations] = useState<Conversation[]>([])
+
+  // 本地排序：按 COALESCE(last_message_at, created_at) DESC，避免每次重新排序都请求后端
+  const conversations = useMemo(() => {
+    const sorted = [...allConversations].sort((a, b) => {
+      const aTime = a.last_message_at ?? a.created_at
+      const bTime = b.last_message_at ?? b.created_at
+      return bTime - aTime
+    })
+    return sorted.slice(0, displayedCount)
+  }, [allConversations, displayedCount])
+
+  // 本地更新 last_message_at，避免重新请求后端仅为了列表排序
+  const updateConvLastMessageAt = useCallback((convId: string, timestamp: number) => {
+    setAllConversations(prev => {
+      let found = false
+      const updated = prev.map(c => {
+        if (c.id === convId) {
+          found = true
+          return { ...c, last_message_at: timestamp }
+        }
+        return c
+      })
+      return found ? updated : prev
+    })
+  }, [])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
   const initializedRef = useRef(false)
 
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(_persistentStreamStates)
-  const conversationMessagesRef = useRef<Map<string, MessageWithThought[]>>(_persistentMessages)
+  const conversationMessagesRef = useRef<LRUCache<string, MessageWithThought[]>>(_persistentMessages)
   const globalListenersCleanupRef = useRef<(() => void) | null>(_persistentListenersCleanup)
   const activeConversationIdRef = useRef<string | null>(null)
   const initVersionRef = useRef(0)
   const selectConvVersionRef = useRef(0)
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
-    conversationMessagesRef.current.set(convId, updater(conversationMessagesRef.current.get(convId) || []))
+    const prev = conversationMessagesRef.current.get(convId)
+    const base = prev || []
+    const next = updater(base)
+    if (next !== base) {
+      conversationMessagesRef.current.set(convId, next)
+    }
     if (convId === activeConversationIdRef.current) {
-      setMessages(conversationMessagesRef.current.get(convId) || [])
+      setMessages(next)
     }
   }
 
@@ -142,6 +180,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     if (convId === activeConversationIdRef.current) {
       setMessages(msgs)
     }
+  }
+
+  // 删除对话消息缓存（用于删除/清空对话时）
+  const deleteConvMessages = (convId: string) => {
+    conversationMessagesRef.current.delete(convId)
   }
 
   useEffect(() => {
@@ -193,9 +236,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
       }
 
-      for (const [convId, msgs] of conversationMessagesRef.current) {
+      const entries: [string, MessageWithThought[]][] = []
+      for (const entry of conversationMessagesRef.current.entries()) {
+        entries.push(entry as [string, MessageWithThought[]])
+      }
+      for (const [convId, msgs] of entries) {
         if (msgs && msgs.length > 0) {
-          const hasStreaming = msgs.some(m => m.isStreaming)
+          const hasStreaming = msgs.some((m: MessageWithThought) => m.isStreaming)
           if (hasStreaming) continue
 
           window.electronAPI.conversation.update({
@@ -347,6 +394,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
+      const doneLastMsgTime = Math.floor(Date.now() / 1000)
+
       updateConvMessages(streamState.conversationId, (prev) => {
         const assistantMsg = prev.find((m) => m.id === streamState.assistantMessageId)
         if (!assistantMsg) return prev
@@ -381,7 +430,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             m.id === streamState.assistantMessageId ? savedAssistantMsg : m
           )),
           message_count: prev.length,
-          last_message_at: Math.floor(Date.now() / 1000),
+          last_message_at: doneLastMsgTime,
         }).catch(() => {})
         return prev.map((m) =>
           m.id === streamState.assistantMessageId ? savedAssistantMsg : m
@@ -398,8 +447,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
-        // 对话结束后刷新列表排序
-        refreshConversationList()
+        // 对话结束后更新 last_message_at 触发本地排序
+        updateConvLastMessageAt(streamState.conversationId, doneLastMsgTime)
       }
     })
 
@@ -426,8 +475,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
-        // 对话结束后刷新列表排序
-        refreshConversationList()
+        // 对话出错后更新 last_message_at 触发本地排序
+        updateConvLastMessageAt(streamState.conversationId, Math.floor(Date.now() / 1000))
       }
     })
 
@@ -481,10 +530,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const loadConversations = async () => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
-
-      // 直接使用后端 updated_at DESC 排序，不做二次排序
       setAllConversations(result)
-      setConversations(result.slice(0, displayedCount))
 
       if (!initializedRef.current) {
         initializedRef.current = true
@@ -505,16 +551,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
       setAllConversations(result)
-      setConversations(result.slice(0, displayedCount))
     } catch {
       // 静默失败，不影响用户体验
     }
   }
 
   const loadMoreConversations = () => {
-    const nextCount = displayedCount + 10
-    setDisplayedCount(nextCount)
-    setConversations(allConversations.slice(0, nextCount))
+    setDisplayedCount(prev => prev + 10)
   }
 
   const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -543,13 +586,14 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         minimal_mode: minimalMode,
       })
       const convId = (result as Conversation).id
-      setAllConversations((prev) => [(result as Conversation), ...prev])
-      setConversations((prev) => [(result as Conversation), ...prev])
       setActiveConversationId(convId)
       activeConversationIdRef.current = convId
       setMessages([])
       setConvMessages(convId, [])
       forceScrollToBottom()
+
+      // 从后端刷新列表以获取正确的排序
+      refreshConversationList()
 
       if (pendingMessage) {
         const msgContent = pendingMessage
@@ -566,6 +610,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null)
+
   const selectConversation = async (convId: string) => {
     selectConvVersionRef.current++
     const version = selectConvVersionRef.current
@@ -578,43 +624,125 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
     setIsStreaming(hasActiveStream)
 
+    // 命中 LRU 缓存：同样先展示 loading 过渡，避免 React 一次性 mount 大量 MessageBubble 卡死
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
-      const patchedCached = cachedMsgs.map(patchMissingCompletedAt)
-      const cachePatched = patchedCached.some((m, i) => m !== cachedMsgs[i])
-      if (cachePatched) {
-        conversationMessagesRef.current.set(convId, patchedCached)
-        window.electronAPI.conversation.update({
-          id: convId,
-          messages_json: JSON.stringify(patchedCached),
-          message_count: patchedCached.length,
-        }).catch(() => {})
+      const cachedLoadingStart = Date.now()
+      setLoadingConversationId(convId)
+      setMessages([])
+
+      // 让出主线程，让 spinner 先渲染出来再切入实际内容
+      await yieldToBrowser()
+      if (version !== selectConvVersionRef.current) {
+        setLoadingConversationId(prev => prev === convId ? null : prev)
+        return
       }
-      setMessages(cachePatched ? patchedCached : cachedMsgs)
-    } else {
-      try {
-        const fullConv = await window.electronAPI.conversation.get(convId)
-        if (version !== selectConvVersionRef.current) return
-        if (fullConv) {
-          setMinimalMode(!!fullConv.minimal_mode)
-          const parsedMsgs = (JSON.parse(fullConv.messages_json || '[]') as MessageWithThought[])
-          const msgs = parsedMsgs
-            .map(ensureSegments)
-            .map(patchMissingCompletedAt)
-          if (msgs.some((m, i) => m !== parsedMsgs[i])) {
-            window.electronAPI.conversation.update({
-              id: convId,
-              messages_json: JSON.stringify(msgs),
-              message_count: msgs.length,
-            }).catch(() => {})
-          }
-          setConvMessages(convId, msgs)
+
+      // 保证 loading 至少展示 MIN_LOADING_DISPLAY_MS，避免一闪而过
+      const cachedElapsed = Date.now() - cachedLoadingStart
+      if (cachedElapsed < MIN_LOADING_DISPLAY_MS) {
+        await new Promise(resolve => setTimeout(resolve, MIN_LOADING_DISPLAY_MS - cachedElapsed))
+        if (version !== selectConvVersionRef.current) {
+          setLoadingConversationId(prev => prev === convId ? null : prev)
+          return
         }
-      } catch {
-        if (version !== selectConvVersionRef.current) return
-        setConvMessages(convId, [])
+      }
+
+      setMessages(cachedMsgs)
+      setLoadingConversationId(null)
+      const convData = allConversations.find(c => c.id === convId)
+      if (convData) {
+        setMinimalMode(!!(convData as any).minimal_mode)
+      }
+      return
+    }
+
+    // 缓存未命中：先切换 UI 状态，再异步加载并显示 loading
+    const loadingStart = Date.now()
+    setLoadingConversationId(convId)
+    setMessages([])
+
+    let fullConv: any = null
+    try {
+      fullConv = await window.electronAPI.conversation.get(convId)
+    } catch {
+      if (version !== selectConvVersionRef.current) {
+        setLoadingConversationId(prev => prev === convId ? null : prev)
+        return
+      }
+      conversationMessagesRef.current.set(convId, [])
+      setLoadingConversationId(null)
+      const convData = allConversations.find(c => c.id === convId)
+      if (convData) {
+        setMinimalMode(!!(convData as any).minimal_mode)
+      }
+      return
+    }
+
+    if (version !== selectConvVersionRef.current) {
+      setLoadingConversationId(prev => prev === convId ? null : prev)
+      return
+    }
+
+    if (fullConv) {
+      setMinimalMode(!!fullConv.minimal_mode)
+    }
+
+    // 让出主线程，让 loading 状态先渲染出来
+    await yieldToBrowser()
+
+    if (version !== selectConvVersionRef.current) {
+      setLoadingConversationId(prev => prev === convId ? null : prev)
+      return
+    }
+
+    // 解析 JSON（这一步对长对话是耗时大头）
+    let parsedMsgs: MessageWithThought[] = []
+    try {
+      parsedMsgs = (JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[])
+    } catch {
+      parsedMsgs = []
+    }
+
+    // 再次让出主线程，避免后续处理阻塞渲染
+    await yieldToBrowser()
+
+    if (version !== selectConvVersionRef.current) {
+      setLoadingConversationId(prev => prev === convId ? null : prev)
+      return
+    }
+
+    // 构造 segments / 补齐 completedAt
+    const msgs = parsedMsgs.map(ensureSegments).map(patchMissingCompletedAt)
+
+    if (msgs.some((m, i) => m !== parsedMsgs[i])) {
+      window.electronAPI.conversation.update({
+        id: convId,
+        messages_json: JSON.stringify(msgs),
+        message_count: msgs.length,
+      }).catch(() => {})
+    }
+
+    // 缓存最终处理后的消息，LRU 自动淘汰冷数据
+    conversationMessagesRef.current.set(convId, msgs)
+
+    if (version !== selectConvVersionRef.current) {
+      setLoadingConversationId(prev => prev === convId ? null : prev)
+      return
+    }
+
+    // 保证 loading 至少展示 MIN_LOADING_DISPLAY_MS，避免一闪而过
+    const elapsed = Date.now() - loadingStart
+    if (elapsed < MIN_LOADING_DISPLAY_MS) {
+      await new Promise(resolve => setTimeout(resolve, MIN_LOADING_DISPLAY_MS - elapsed))
+      if (version !== selectConvVersionRef.current) {
+        setLoadingConversationId(prev => prev === convId ? null : prev)
+        return
       }
     }
+
+    setMessages(msgs)
+    setLoadingConversationId(null)
 
     const convData = allConversations.find(c => c.id === convId)
     if (convData) {
@@ -630,11 +758,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         state.cleanupFns.forEach(fn => fn())
         streamStatesRef.current.delete(sessionId)
       }
-      conversationMessagesRef.current.delete(convId)
+      deleteConvMessages(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
-      setConversations((prev) => prev.filter((c) => c.id !== convId))
       if (activeConversationId === convId) {
         setActiveConversationId(null)
         activeConversationIdRef.current = null
@@ -655,11 +782,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           state.cleanupFns.forEach(fn => fn())
           streamStatesRef.current.delete(sessionId)
         }
-        conversationMessagesRef.current.delete(convId)
+        deleteConvMessages(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
-      setConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
       if (convIds.includes(activeConversationId || '')) {
         setActiveConversationId(null)
         setMessages([])
@@ -682,7 +808,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
       await window.electronAPI.conversation.deleteAll(id)
       setAllConversations([])
-      setConversations([])
       setActiveConversationId(null)
       activeConversationIdRef.current = null
       setMessages([])
@@ -710,13 +835,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         title: editingTitle.trim()
       })
       setAllConversations((prev) =>
-        prev.map((c) =>
-          c.id === editingConversationId
-            ? { ...c, title: editingTitle.trim() }
-            : c
-        )
-      )
-      setConversations((prev) =>
         prev.map((c) =>
           c.id === editingConversationId
             ? { ...c, title: editingTitle.trim() }
@@ -776,9 +894,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           setAllConversations((prev) =>
             prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
           )
-          setConversations((prev) =>
-            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
-          )
         }
       }
     } catch (e) { console.error('Failed to generate conversation title:', e) }
@@ -830,10 +945,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
     // 用户发消息时更新 last_message_at，触发列表重新排序
+    const lastMsgTime = Math.floor(Date.now() / 1000)
     window.electronAPI.conversation.update({
       id: targetConvId,
-      last_message_at: Math.floor(Date.now() / 1000),
-    }).then(() => refreshConversationList()).catch(() => {})
+      last_message_at: lastMsgTime,
+    }).catch(() => {})
+    updateConvLastMessageAt(targetConvId, lastMsgTime)
 
     const targetModels = models && models.length > 0 ? models : null
 
@@ -1626,9 +1743,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }))
   }
 
-  const isConversationStreaming = (convId: string) => {
+  const isConversationStreaming = useCallback((convId: string) => {
     return Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
-  }
+  }, [])
 
   return {
     employee,
@@ -1638,6 +1755,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     messages,
     isStreaming,
     isCreatingConversation,
+    loadingConversationId,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,

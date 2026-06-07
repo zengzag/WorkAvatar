@@ -130,6 +130,8 @@ export default {
     loadMore: 'Load more ({{current}}/{{total}})',
     noConv: 'No conversations',
     startConvHint: 'Type a message below to start a conversation',
+    loadingMessages: 'Loading conversation history...',
+    loadOlderMessages: 'Load older {{count}} messages',
     noEmployeeHint: 'No digital employees yet. Create one to start chatting.',
     createEmployee: 'New Employee',
     multiSelect: 'Multi-Select',

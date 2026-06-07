@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback, useLayoutEffect, useRef, Fragment } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import {
@@ -58,6 +58,14 @@ const EmployeeWorkbench: React.FC = () => {
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
   const [allKBs, setAllKBs] = useState<any[]>([])
+
+  // 消息列表窗口化：长对话只渲染最后 N 条，避免一次性 mount 数百个 MessageBubble
+  // + ReactMarkdown + CodeBlock 导致切换对话卡顿
+  const INITIAL_VISIBLE_COUNT = 30
+  const VISIBLE_INCREMENT = 30
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
+  const prevScrollHeightRef = useRef(0)
+  const lastConvIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     loadEmployees()
@@ -239,6 +247,7 @@ const EmployeeWorkbench: React.FC = () => {
     activeConversationId,
     messages,
     isStreaming,
+    loadingConversationId,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -286,6 +295,48 @@ const EmployeeWorkbench: React.FC = () => {
     isConversationStreaming,
     generateConversationTitle,
   } = chatHook
+
+  // 切换对话时重置可见窗口、强制滚到底部，让用户看到最新消息
+  useLayoutEffect(() => {
+    if (activeConversationId !== lastConvIdRef.current) {
+      lastConvIdRef.current = activeConversationId
+      setVisibleCount(INITIAL_VISIBLE_COUNT)
+      prevScrollHeightRef.current = 0
+      // 下一帧再滚到底部，确保新内容已完成布局
+      requestAnimationFrame(() => {
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
+        }
+      })
+    }
+  }, [activeConversationId])
+
+  // 加载更多历史消息后保持滚动位置（不出现跳动）
+  useEffect(() => {
+    if (prevScrollHeightRef.current > 0 && chatContainerRef.current) {
+      const newScrollHeight = chatContainerRef.current.scrollHeight
+      const scrollDiff = newScrollHeight - prevScrollHeightRef.current
+      chatContainerRef.current.scrollTop += scrollDiff
+      prevScrollHeightRef.current = 0
+    }
+  }, [visibleCount])
+
+  // 计算当前可见的消息窗口：始终展示最后 visibleCount 条
+  const visibleStartIndex = useMemo(
+    () => Math.max(0, messages.length - visibleCount),
+    [messages.length, visibleCount]
+  )
+  const visibleMessages = useMemo(
+    () => messages.slice(visibleStartIndex),
+    [messages, visibleStartIndex]
+  )
+
+  const handleLoadMoreOlder = useCallback(() => {
+    if (!chatContainerRef.current) return
+    // 记录加载前的滚动高度，加载完成后补偿回去，避免跳动
+    prevScrollHeightRef.current = chatContainerRef.current.scrollHeight
+    setVisibleCount(prev => Math.min(prev + VISIBLE_INCREMENT, messages.length))
+  }, [messages.length])
 
   const workbenchStyle = useMemo(() => `
         .cursor-blink { animation: blink 1s infinite; }
@@ -668,47 +719,83 @@ const EmployeeWorkbench: React.FC = () => {
               gap: 20,
             }}
           >
-            {messages.length === 0 && activeConversationId && (
-              <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-                <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
-                <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
+            {loadingConversationId && loadingConversationId === activeConversationId ? (
+              <div
+                key={`loading-${loadingConversationId}`}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 12,
+                  minHeight: 240,
+                }}
+              >
+                <Spin size="large" />
+                <Text type="secondary" style={{ fontSize: 13 }}>
+                  {t('workbench.loadingMessages')}
+                </Text>
               </div>
+            ) : (
+              <>
+                {messages.length === 0 && activeConversationId && (
+                  <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
+                    <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
+                    <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
+                  </div>
+                )}
+
+                {visibleStartIndex > 0 && (
+                  <div style={{ textAlign: 'center', padding: '4px 0 8px' }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={handleLoadMoreOlder}
+                      style={{ fontSize: 13, color: token.colorTextSecondary }}
+                    >
+                      {t('workbench.loadOlderMessages', { count: visibleStartIndex })}
+                    </Button>
+                  </div>
+                )}
+
+                {visibleMessages.map((msg, visibleIndex) => {
+                  const fullIndex = visibleStartIndex + visibleIndex
+                  const prevMsg = fullIndex > 0 ? messages[fullIndex - 1] : null
+                  const showTime = fullIndex === 0 || (prevMsg && shouldShowTimeSeparator(prevMsg.timestamp, msg.timestamp))
+
+                  return (
+                    <Fragment key={msg.id}>
+                      {showTime && (
+                        <div style={{
+                          textAlign: 'center',
+                          padding: '4px 0',
+                          color: token.colorTextQuaternary,
+                          fontSize: 12,
+                          userSelect: 'none',
+                        }}>
+                          {formatMessageTime(msg.timestamp, t)}
+                        </div>
+                      )}
+                      <MessageBubble
+                        msg={msg}
+                        onCopy={handleCopy}
+                        onDeleteMessage={handleDeleteMessage}
+                        onRegenerate={handleRegenerate}
+                        onSwitchModelRegenerate={handleSwitchModelRegenerate}
+                        onEditAndResubmit={handleEditAndResubmit}
+                        onToggleSegment={handleToggleSegment}
+                        onSwitchBranch={handleSwitchBranch}
+                        onOpenComparison={handleOpenComparison}
+                        getToolDisplayName={getToolDisplayName}
+                        providers={providers}
+                      />
+                    </Fragment>
+                  )
+                })}
+                <div ref={messagesEndRef} />
+              </>
             )}
-
-            {messages.map((msg, index) => {
-              const prevMsg = index > 0 ? messages[index - 1] : null
-              const showTime = index === 0 || (prevMsg && shouldShowTimeSeparator(prevMsg.timestamp, msg.timestamp))
-
-              return (
-                <Fragment key={msg.id}>
-                  {showTime && (
-                    <div style={{
-                      textAlign: 'center',
-                      padding: '4px 0',
-                      color: token.colorTextQuaternary,
-                      fontSize: 12,
-                      userSelect: 'none',
-                    }}>
-                      {formatMessageTime(msg.timestamp, t)}
-                    </div>
-                  )}
-                  <MessageBubble
-                    msg={msg}
-                    onCopy={handleCopy}
-                    onDeleteMessage={handleDeleteMessage}
-                    onRegenerate={handleRegenerate}
-                    onSwitchModelRegenerate={handleSwitchModelRegenerate}
-                    onEditAndResubmit={handleEditAndResubmit}
-                    onToggleSegment={handleToggleSegment}
-                    onSwitchBranch={handleSwitchBranch}
-                    onOpenComparison={handleOpenComparison}
-                    getToolDisplayName={getToolDisplayName}
-                    providers={providers}
-                  />
-                </Fragment>
-              )
-            })}
-            <div ref={messagesEndRef} />
           </div>
           )}
 
