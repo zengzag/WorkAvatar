@@ -496,7 +496,7 @@ export abstract class BaseAgent {
           }
 
           this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
-          callbacks.onToolCall?.({ name: toolName, args })
+          callbacks.onToolCall?.({ id: toolCall.id, name: toolName, args })
 
           const result = await this.toolDispatcher.dispatch(toolName, args)
           usedToolCalls.push({

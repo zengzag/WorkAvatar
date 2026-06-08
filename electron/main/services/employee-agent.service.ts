@@ -22,7 +22,20 @@ interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
   model_id?: string
-  messages: Array<{ role: string; content: string; images?: string[] }>
+  messages: Array<{
+    role: string
+    content: string
+    images?: string[]
+    reasoning_content?: string
+    toolCalls?: Array<{
+      id: string
+      name: string
+      args: any
+      result?: any
+      isComplete?: boolean
+    }>
+    toolCallId?: string
+  }>
   options?: {
     temperature?: number
     max_tokens?: number
@@ -37,7 +50,7 @@ interface EmployeeChatStreamParams {
 interface EmployeeChatCallbacks {
   onChunk: (chunk: string) => void
   onThought: (thought: string) => void
-  onToolCall: (toolCall: { name: string; args: any }) => void
+  onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolResult: (toolResult: { name: string; result: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -343,20 +356,29 @@ class EmployeeAgentService {
       agent.setMinimalMode(minimal_mode)
       entry.kbIdsRef.current = kb_ids || []
 
-      const history: Message[] = messages.slice(0, -1).map(m => ({
-        role: m.role as any,
-        content: m.content,
-        images: m.images,
-      }))
+      const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
 
       const lastMsg = messages[messages.length - 1]
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
+      // 尝试从 DB 加载对话级系统提示词缓存（首次消息后锁死，后续复用）
+      let systemPromptCached = false
+      if (conversation_id) {
+        const conv = this.db.getDb().prepare(
+          `SELECT system_prompt FROM conversations WHERE id = ?`
+        ).get(conversation_id) as { system_prompt?: string } | undefined
+        if (conv?.system_prompt) {
+          agent.setCachedSystemPrompt(conv.system_prompt)
+          systemPromptCached = true
+        }
+      }
+
       if (minimal_mode) {
         agent.updateKBContextPrompt(undefined)
         agent.updateToolPlanningPrompt(null)
-      } else {
+      } else if (!systemPromptCached) {
+        // 只有未缓存时才需要构建 KB 上下文和工具规划提示（首次消息）
         if (kb_ids.length > 0) {
           const kbDb = require('./kb-database.service').default.getInstance()
           const placeholders = kb_ids.map(() => '?').join(',')
@@ -371,6 +393,10 @@ class EmployeeAgentService {
 
         const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
         agent.updateToolPlanningPrompt(toolPlanningHint)
+      } else {
+        // 已有缓存，跳过 KB 和工具规划，省的 token
+        agent.updateKBContextPrompt(undefined)
+        agent.updateToolPlanningPrompt(null)
       }
 
       const config = await this.llmClient.getProviderConfig(provider_id)
@@ -412,6 +438,16 @@ class EmployeeAgentService {
         },
         signal
       )
+
+      // 首次构建的系统提示词持久化到 DB，后续同一对话直接复用
+      if (conversation_id && !systemPromptCached) {
+        const cachedPrompt = agent.getCachedSystemPrompt()
+        if (cachedPrompt) {
+          this.db.getDb().prepare(
+            `UPDATE conversations SET system_prompt = ? WHERE id = ?`
+          ).run(cachedPrompt, conversation_id)
+        }
+      }
     })
   }
 
@@ -425,6 +461,59 @@ class EmployeeAgentService {
     } else {
       this.agentEntries.clear()
     }
+  }
+
+  /**
+   * 将前端消息格式展开为后端 Message[]，把嵌入在 assistant 消息中的 toolCalls
+   * 展开为 assistant + tool 消息序列，以保持与同对话迭代一致的 KV cache 命中。
+   */
+  private expandFrontendMessages(
+    messages: EmployeeChatStreamParams['messages']
+  ): Message[] {
+    const result: Message[] = []
+    for (const m of messages) {
+      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // 构建 assistant 消息：content + reasoning_content + tool_calls
+        const assistantMsg: Message = {
+          role: 'assistant',
+          content: m.content,
+          images: m.images,
+          reasoning_content: m.reasoning_content,
+          toolCalls: m.toolCalls
+            .filter(tc => tc.id && tc.name) // 必须有 id 和 name
+            .map(tc => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: {
+                name: tc.name,
+                arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args),
+              },
+            })),
+        }
+        result.push(assistantMsg)
+
+        // 为每个已完成的工具调用追加 tool 消息
+        for (const tc of m.toolCalls) {
+          if (tc.isComplete !== false && tc.result !== undefined && tc.id) {
+            result.push({
+              role: 'tool',
+              toolCallId: tc.id,
+              content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result),
+            })
+          }
+        }
+      } else {
+        // user / tool 消息直接透传
+        result.push({
+          role: m.role as Message['role'],
+          content: m.content,
+          images: m.images,
+          reasoning_content: m.reasoning_content,
+          toolCallId: m.toolCallId,
+        })
+      }
+    }
+    return result
   }
 
   private extractMemoriesAsync(

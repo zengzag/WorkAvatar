@@ -20,6 +20,7 @@ export interface MessageSegment {
   toolArgs?: any
   toolResult?: any
   isToolComplete?: boolean
+  toolCallId?: string
 }
 
 export interface TokenUsage {

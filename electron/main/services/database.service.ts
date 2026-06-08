@@ -310,6 +310,7 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
+    this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
 
     // 迁移：为已有对话填充 last_message_at，确保排序正确
     this.migrateConversationLastMessageAt()

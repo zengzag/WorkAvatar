@@ -53,6 +53,7 @@ export class EmployeeAgent extends BaseAgent {
   private toolPlanningPrompt: string | undefined
   private persistedSkillInstructions: string[] = []
   private minimalMode: boolean = false
+  private cachedSystemPrompt: string | undefined = undefined
 
   updateMemoryPrompt(prompt: string | undefined): void {
     this.memoryPrompt = prompt
@@ -78,6 +79,16 @@ export class EmployeeAgent extends BaseAgent {
     return this.minimalMode
   }
 
+  /** 设置对话级系统提示词缓存，后续 buildSystemPrompt 直接返回该缓存 */
+  setCachedSystemPrompt(prompt: string | undefined): void {
+    this.cachedSystemPrompt = prompt
+  }
+
+  /** 获取当前对话缓存的系统提示词（如果有的话） */
+  getCachedSystemPrompt(): string | undefined {
+    return this.cachedSystemPrompt
+  }
+
   resetPersistedSkillInstructions(): void {
     this.persistedSkillInstructions = []
   }
@@ -98,10 +109,15 @@ export class EmployeeAgent extends BaseAgent {
   }
 
   protected buildSystemPrompt(options: AgentRunOptions): string {
+    // 如果已有对话级缓存，直接返回，确保同一对话上下文内系统提示词不变
+    if (this.cachedSystemPrompt) {
+      return this.cachedSystemPrompt
+    }
+
     const useSkills = options.useSkills !== false
     const skillsXml = useSkills ? this.skillManager.getSkillsXml() : undefined
 
-    return buildEmployeeSystemPrompt({
+    const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',
       instructions: this.config.instructions || '',
       role: this.config.role,
@@ -115,6 +131,10 @@ export class EmployeeAgent extends BaseAgent {
       toolPlanningHint: this.toolPlanningPrompt,
       minimalMode: this.minimalMode,
     })
+
+    // 首次构建后缓存，后续直接复用
+    this.cachedSystemPrompt = prompt
+    return prompt
   }
 
   protected async resolveActiveTools(runtimeToolNames?: string[]): Promise<any[]> {

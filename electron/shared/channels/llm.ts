@@ -62,7 +62,20 @@ export interface EmployeeChatStreamParams {
   employee_id: string
   provider_id: string
   model_id?: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{
+    role: string
+    content: string
+    images?: string[]
+    reasoning_content?: string
+    toolCalls?: Array<{
+      id: string
+      name: string
+      args: any
+      result?: any
+      isComplete?: boolean
+    }>
+    toolCallId?: string
+  }>
   options?: {
     temperature?: number
     max_tokens?: number

@@ -84,7 +84,7 @@ export interface TokenUsage {
 export interface AgentRunStreamCallbacks {
   onChunk?: (chunk: string) => void
   onThought?: (thought: string) => void
-  onToolCall?: (toolCall: { name: string; args: any }) => void
+  onToolCall?: (toolCall: { id: string; name: string; args: any }) => void
   onToolResult?: (toolResult: { name: string; result: any; rawResult?: any }) => void
   onDone?: (metadata?: AgentResponseMetadata) => void
   onError?: (error: string) => void

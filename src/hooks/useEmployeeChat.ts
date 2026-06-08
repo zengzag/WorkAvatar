@@ -28,14 +28,81 @@ interface ConversationStreamState {
   cleanupFns: (() => void)[]
 }
 
-const getActiveBranchContent = (m: MessageWithThought): string => {
+/**
+ * 从消息当前活跃分支获取 content / thought / segments。
+ * 当分支存在且活跃分支指向旧分支时，使用旧分支数据而非最新执行数据，
+ * 确保切换分支后新消息的上下文与当前展示的分支内容一致。
+ */
+const getActiveBranchData = (m: MessageWithThought): {
+  content: string
+  thought?: string
+  segments?: MessageWithThought['segments']
+} => {
   if (m.role === 'assistant' && m.branches && m.branches.length > 0) {
     const branchIndex = m.activeBranchIndex ?? m.branches.length
     if (branchIndex < m.branches.length) {
-      return m.branches[branchIndex].content
+      const branch = m.branches[branchIndex]
+      return {
+        content: branch.content,
+        thought: branch.thought,
+        segments: branch.segments,
+      }
     }
   }
-  return m.content
+  return {
+    content: m.content,
+    thought: m.thought,
+    segments: m.segments,
+  }
+}
+
+/**
+ * 从 segments 提取 toolCalls 信息，用于跨对话重建同对话内迭代一样的消息格式，
+ * 保留 toolCalls 和 reasoning_content 以提升 KV cache 命中率。
+ */
+const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
+  id: string
+  name: string
+  args: any
+  result?: any
+  isComplete?: boolean
+}> | undefined => {
+  if (m.role !== 'assistant' || !m.segments) return undefined
+  const toolSegs = m.segments.filter(s => s.type === 'tool_call' && s.toolName)
+  if (toolSegs.length === 0) return undefined
+  return toolSegs.map(s => ({
+    id: s.toolCallId || s.id,
+    name: s.toolName!,
+    args: s.toolArgs,
+    result: s.toolResult,
+    isComplete: s.isToolComplete,
+  }))
+}
+
+const buildEnrichedHistory = (msgs: MessageWithThought[]): Array<{
+  role: string
+  content: string
+  images?: string[]
+  reasoning_content?: string
+  toolCalls?: Array<{
+    id: string
+    name: string
+    args: any
+    result?: any
+    isComplete?: boolean
+  }>
+  toolCallId?: string
+}> => {
+  return msgs.map(m => {
+    const branch = getActiveBranchData(m)
+    return {
+      role: m.role,
+      content: branch.content,
+      images: m.images,
+      reasoning_content: branch.thought,
+      toolCalls: extractToolCallsFromSegments({ ...m, segments: branch.segments }),
+    }
+  })
 }
 
 const _persistentMessages = new LRUCache<string, MessageWithThought[]>(MESSAGES_CACHE_MAX_SIZE)
@@ -339,8 +406,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       )
     })
 
-    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; name: string; args: any }) => {
-      const { sessionId, name, args } = data
+    const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any }) => {
+      const { sessionId, id: toolCallId, name, args } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -360,6 +427,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             id: `${streamState.assistantMessageId}_tool_${streamState.toolCallCounter++}`,
             toolName: name,
             toolArgs: args,
+            toolCallId,
             isToolComplete: false,
             collapsed: true,
             timestamp: Date.now(),
@@ -986,11 +1054,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         }
 
         try {
-          const messageHistory = updatedMessagesRef.map((m) => ({
-            role: m.role,
-            content: getActiveBranchContent(m),
-            images: m.images,
-          }))
+          const messageHistory = buildEnrichedHistory(
+            updatedMessagesRef
+          )
 
           const result = await window.electronAPI.llm.employeeChatStream({
             employee_id: id!,
@@ -1054,11 +1120,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }
 
       try {
-        const messageHistory = updatedMessagesRef.map((m) => ({
-          role: m.role,
-          content: getActiveBranchContent(m),
-          images: m.images,
-        }))
+        const messageHistory = buildEnrichedHistory(updatedMessagesRef)
 
         const result = await window.electronAPI.llm.employeeChatStream({
           employee_id: id!,
@@ -1178,11 +1240,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
 
     try {
-      const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
-        role: m.role,
-        content: getActiveBranchContent(m),
-        images: m.images,
-      }))
+      const messageHistory = buildEnrichedHistory(newMessages.slice(0, msgIndex))
 
       const result = await window.electronAPI.llm.employeeChatStream({
         employee_id: id!,
@@ -1272,11 +1330,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
 
     try {
-      const messageHistory = newMessages.slice(0, msgIndex).map((m) => ({
-        role: m.role,
-        content: getActiveBranchContent(m),
-        images: m.images,
-      }))
+      const messageHistory = buildEnrichedHistory(newMessages.slice(0, msgIndex))
 
       const result = await window.electronAPI.llm.employeeChatStream({
         employee_id: id!,
@@ -1398,11 +1452,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
 
     try {
-      const messageHistory = newMessages.slice(0, assistantMsgIndex).map((m) => ({
-        role: m.role,
-        content: getActiveBranchContent(m),
-        images: m.images,
-      }))
+      const messageHistory = buildEnrichedHistory(newMessages.slice(0, assistantMsgIndex))
 
       const result = await window.electronAPI.llm.employeeChatStream({
         employee_id: id!,

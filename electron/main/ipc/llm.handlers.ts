@@ -97,7 +97,7 @@ export function registerLLMHandlers(
             {
               onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunk }) },
               onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
-              onToolCall: (toolCall: { name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, ...toolCall }) },
+              onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
                 if (abortController.signal.aborted) return
                 const { rawResult: _, ...safeResult } = toolResult
