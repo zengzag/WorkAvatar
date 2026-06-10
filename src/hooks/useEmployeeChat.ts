@@ -123,6 +123,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     read_file: t('workbench.toolNames.read_file'),
     write_file: t('workbench.toolNames.write_file'),
     list_dir: t('workbench.toolNames.list_dir'),
+    create_folder: t('workbench.toolNames.create_folder'),
+    delete_item: t('workbench.toolNames.delete_item'),
+    rename_item: t('workbench.toolNames.rename_item'),
+    move_item: t('workbench.toolNames.move_item'),
+    copy_item: t('workbench.toolNames.copy_item'),
+    get_file_info: t('workbench.toolNames.get_file_info'),
+    search_files: t('workbench.toolNames.search_files'),
     system_info: t('workbench.toolNames.system_info'),
     web_search: t('workbench.toolNames.web_search'),
     web_fetch: t('workbench.toolNames.web_fetch'),
@@ -137,6 +144,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
+    ask_user: t('workbench.toolNames.ask_user'),
   }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
@@ -191,7 +199,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [displayedCount, setDisplayedCount] = useState(10)
+  const [displayedCount, setDisplayedCount] = useState(20)
   const [allConversations, setAllConversations] = useState<Conversation[]>([])
 
   // 本地排序：按 COALESCE(last_message_at, created_at) DESC，避免每次重新排序都请求后端
@@ -625,7 +633,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const loadMoreConversations = () => {
-    setDisplayedCount(prev => prev + 10)
+    setDisplayedCount(prev => prev + 20)
   }
 
   const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {

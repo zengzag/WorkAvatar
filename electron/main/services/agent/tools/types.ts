@@ -32,7 +32,7 @@ export interface ToolDefinition {
     required?: string[]
   }
   handler: (args: Record<string, any>) => Promise<any> | any
-  source: 'builtin' | 'skill' | 'dynamic' | 'workspace'
+  source: 'builtin' | 'skill' | 'dynamic'
   permission?: ToolPermission
   timeoutMs?: number
   metadata?: Record<string, any>

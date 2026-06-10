@@ -7,7 +7,7 @@ import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKBAgentTools, createWorkspaceTools, getWorkspacePrompt, createOfficeGuideTool, officeExecTool } from './agent/tools'
+import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { KbIdsRef } from './agent/tools/kb-agent-tools'
 import type { Message } from './agent/core/types'
@@ -131,8 +131,6 @@ class EmployeeAgentService {
       instructions = employee.description
     }
 
-    const workspaceGuidance = getWorkspacePrompt(employee.workspace_path || '')
-
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
 
     const enabledSkillPaths = employeeSkills.enabled.map(skill => skill.installPath)
@@ -166,7 +164,7 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      workspaceGuidance: workspaceGuidance || undefined,
+      workspaceGuidance: employee.workspace_path ? `\n## 工作区\n工作区根目录：${employee.workspace_path}` : undefined,
     }
 
     const agentOptions: BaseAgentOptions = {
@@ -214,11 +212,6 @@ class EmployeeAgentService {
     const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
 
-    const workspaceTools = createWorkspaceTools(employee.workspace_path || '')
-    if (workspaceTools.length > 0) {
-      agent.registerTools(workspaceTools)
-    }
-
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
@@ -253,18 +246,6 @@ class EmployeeAgentService {
       'kb_get_content',
     ]
     for (const id of kbToolIds) {
-      allBuiltinToolIds.add(id)
-    }
-
-    const workspaceToolIds = [
-      'workspace_list_files',
-      'workspace_read_file',
-      'workspace_write_file',
-      'workspace_create_folder',
-      'workspace_delete_item',
-      'workspace_rename_item',
-    ]
-    for (const id of workspaceToolIds) {
       allBuiltinToolIds.add(id)
     }
 
