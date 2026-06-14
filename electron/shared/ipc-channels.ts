@@ -61,15 +61,5 @@ export type {
   KBImportFullParams,
 } from './channels/kb'
 export type {
-  EmployeeTaskCreateParams,
-  EmployeeTaskUpdateParams,
-  EmployeeScheduleCreateParams,
-  EmployeeScheduleUpdateParams,
-} from './channels/employee-task'
-export type {
-  WorkflowCreateParams,
-  WorkflowUpdateParams,
-} from './channels/workflow'
-export type {
   KBMCPSetConfigParams,
 } from './channels/kb-mcp'

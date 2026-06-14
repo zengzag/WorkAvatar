@@ -21,7 +21,6 @@
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@xyflow/react": "^12.10.2",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",

@@ -2,15 +2,12 @@ import { useState } from 'react'
 import { Layout, Menu, Typography, theme } from 'antd'
 import {
   RobotOutlined,
-  FieldTimeOutlined,
-  ApartmentOutlined,
   SettingOutlined,
   BookOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
-import TaskNotificationHandler from './components/common/TaskNotificationHandler'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 
 const { Sider, Content } = Layout
@@ -27,9 +24,7 @@ const App: React.FC = () => {
 
   const getSelectedKey = () => {
     const path = location.pathname
-    if (path === '/' || path.startsWith('/digital-employees') || path.startsWith('/employee') || path.startsWith('/conversation-center')) return 'digital-employees'
-    if (path === '/task-center') return 'task-center'
-    if (path === '/workflows' || path.startsWith('/workflow/')) return 'workflows'
+    if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
     return 'digital-employees'
@@ -47,18 +42,6 @@ const App: React.FC = () => {
       icon: <BookOutlined />,
       label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
-    },
-    {
-      key: 'task-center',
-      icon: <FieldTimeOutlined />,
-      label: t('nav.taskCenter'),
-      onClick: () => navigate('/task-center'),
-    },
-    {
-      key: 'workflows',
-      icon: <ApartmentOutlined />,
-      label: t('nav.workflows'),
-      onClick: () => navigate('/workflows'),
     },
     {
       key: 'settings',
@@ -115,7 +98,6 @@ const App: React.FC = () => {
         </Content>
       </Layout>
       <UnifiedInteractionModal />
-      <TaskNotificationHandler />
     </Layout>
   )
 }

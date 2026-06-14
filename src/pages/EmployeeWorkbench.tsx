@@ -26,7 +26,6 @@ import {
   DeleteOutlined,
   FolderOutlined,
   FolderOpenOutlined,
-  WarningOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
 import { ConversationSidebar, MessageBubble, ChatInput, MultiChatPanel } from '../components/workbench'
@@ -115,15 +114,6 @@ const EmployeeWorkbench: React.FC = () => {
     let deleteWorkspace = false
     const workspacePath = emp.workspace_path
 
-    let tasks: any[] = []
-    let schedules: any[] = []
-    try {
-      tasks = await window.electronAPI.employeeTask.list(emp.id)
-      schedules = await window.electronAPI.employeeTask.listSchedules(emp.id)
-    } catch {}
-
-    const hasBoundTasks = tasks.length > 0 || schedules.length > 0
-
     const handleOpenExplorer = (path: string) => {
       window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
     }
@@ -168,43 +158,6 @@ const EmployeeWorkbench: React.FC = () => {
                 onClick={() => handleOpenExplorer(workspacePath)}
                 style={{ flexShrink: 0, padding: 0 }}
               />
-            </div>
-          )}
-          {hasBoundTasks && (
-            <div style={{
-              marginTop: 12,
-              padding: '10px 12px',
-              background: token.colorWarningBg,
-              border: `1px solid ${token.colorWarningBorder}`,
-              borderRadius: 6,
-            }}>
-              <div style={{ fontWeight: 600, marginBottom: 6, color: token.colorWarningText, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <WarningOutlined />
-                {t('employeeSettings.boundTasksWarning')}
-              </div>
-              {tasks.length > 0 && (
-                <div style={{ fontSize: 13, color: token.colorTextSecondary }}>
-                  {t('employeeSettings.boundTaskCount', { count: tasks.length })}
-                  {tasks.length <= 5 && (
-                    <span style={{ marginLeft: 4 }}>
-                      ({tasks.map((t: any) => t.name).join(', ')})
-                    </span>
-                  )}
-                </div>
-              )}
-              {schedules.length > 0 && (
-                <div style={{ fontSize: 13, color: token.colorTextSecondary, marginTop: 2 }}>
-                  {t('employeeSettings.boundScheduleCount', { count: schedules.length })}
-                  {schedules.length <= 5 && (
-                    <span style={{ marginLeft: 4 }}>
-                      ({schedules.map((s: any) => s.name).join(', ')})
-                    </span>
-                  )}
-                </div>
-              )}
-              <div style={{ fontSize: 12, marginTop: 6, color: token.colorTextTertiary }}>
-                {t('employeeSettings.boundTasksDeleteHint')}
-              </div>
             </div>
           )}
           {workspacePath && (

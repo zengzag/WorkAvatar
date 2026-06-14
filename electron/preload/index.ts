@@ -38,10 +38,6 @@ import type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
-  EmployeeTaskCreateParams,
-  EmployeeTaskUpdateParams,
-  EmployeeScheduleCreateParams,
-  EmployeeScheduleUpdateParams,
   EmployeeMemoryListParams,
   EmployeeMemoryCreateParams,
   EmployeeMemoryUpdateParams,
@@ -49,8 +45,6 @@ import type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
-  WorkflowCreateParams,
-  WorkflowUpdateParams,
   KBMCPSetConfigParams,
 } from '../shared/ipc-channels'
 
@@ -267,83 +261,6 @@ const electronAPI = {
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
   },
-
-  employeeTask: {
-    list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
-    listAll: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL),
-    get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
-    create: (params: EmployeeTaskCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_CREATE, params),
-    update: (params: EmployeeTaskUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_UPDATE, params),
-    delete: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_DELETE, taskId),
-    execute: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, taskId),
-    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_ABORT_EXECUTION, executionId),
-    listSchedules: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, employeeId),
-    listAllSchedules: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL),
-    createSchedule: (params: EmployeeScheduleCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, params),
-    updateSchedule: (params: EmployeeScheduleUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_UPDATE, params),
-    deleteSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_DELETE, scheduleId),
-    validateCron: (cronExpr: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, cronExpr),
-    listExecutionsForTask: (params: { task_id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, params),
-    getExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_GET, executionId),
-    allRecentExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_ALL_RECENT, limit),
-    failedExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_FAILED, limit),
-    deleteExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_DELETE, executionId),
-    onTaskCompletion: (callback: (notification: any) => void) => {
-      const handler = (_event: any, notification: any) => callback(notification)
-      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
-    },
-    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => {
-      const handler = (_event: any, data: { executionId: string; taskId: string; employeeId: string }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
-    },
-    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => {
-      const handler = (_event: any, data: { executionId: string; segments: any[]; isStreaming: boolean }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
-    },
-    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => {
-      const handler = (_event: any, data: { executionId: string; status: string; errorMessage: string | null }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
-    },
-  },
-
-  workflow: {
-    list: (params?: Record<string, never>) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET, id),
-    create: (params: WorkflowCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CREATE, params),
-    update: (params: WorkflowUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DELETE, id),
-    execute: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE, workflowId),
-    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, executionId),
-    executeDebug: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE_DEBUG, workflowId),
-    debugContinue: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_CONTINUE, executionId),
-    debugSkip: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_SKIP, executionId),
-    debugStop: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_STOP, executionId),
-    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT_RESPOND, params),
-    onExecutionProgress: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
-    },
-    onNodeExecutionUpdate: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
-    },
-    onDebugPaused: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
-    },
-    onRuntimeInput: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
-    },
-  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -374,49 +291,6 @@ export type ElectronAPI = typeof electronAPI & {
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>
-  }
-  employeeTask: {
-    list: (employeeId: string) => Promise<any[]>
-    listAll: () => Promise<any[]>
-    get: (taskId: string) => Promise<any>
-    create: (params: any) => Promise<any>
-    update: (params: any) => Promise<any>
-    delete: (taskId: string) => Promise<boolean>
-    execute: (taskId: string) => Promise<{ success: boolean; execution?: any; error?: string }>
-    abortExecution: (executionId: string) => Promise<boolean>
-    listSchedules: (employeeId: string) => Promise<any[]>
-    listAllSchedules: () => Promise<any[]>
-    createSchedule: (params: any) => Promise<any>
-    updateSchedule: (params: any) => Promise<any>
-    deleteSchedule: (scheduleId: string) => Promise<boolean>
-    validateCron: (cronExpr: string) => Promise<{ valid: boolean; error?: string; nextRun?: string }>
-    listExecutionsForTask: (params: { task_id: string; limit?: number }) => Promise<any[]>
-    getExecution: (executionId: string) => Promise<any>
-    allRecentExecutions: (limit?: number) => Promise<any[]>
-    failedExecutions: (limit?: number) => Promise<any[]>
-    deleteExecution: (executionId: string) => Promise<boolean>
-    onTaskCompletion: (callback: (notification: any) => void) => () => void
-    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => () => void
-    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => () => void
-    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
-  }
-  workflow: {
-    list: (params?: Record<string, never>) => Promise<any[]>
-    get: (id: string) => Promise<any>
-    create: (params: WorkflowCreateParams) => Promise<any>
-    update: (params: WorkflowUpdateParams) => Promise<any>
-    delete: (id: string) => Promise<boolean>
-    execute: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
-    abortExecution: (executionId: string) => Promise<boolean>
-    executeDebug: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
-    debugContinue: (executionId: string) => Promise<boolean>
-    debugSkip: (executionId: string) => Promise<boolean>
-    debugStop: (executionId: string) => Promise<boolean>
-    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => Promise<boolean>
-    onExecutionProgress: (callback: (data: any) => void) => () => void
-    onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
-    onDebugPaused: (callback: (data: any) => void) => () => void
-    onRuntimeInput: (callback: (data: any) => void) => () => void
   }
   kbMcp: {
     start: () => Promise<{ success: boolean; error?: string }>

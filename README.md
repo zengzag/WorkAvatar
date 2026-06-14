@@ -66,8 +66,6 @@ LLM 提供商对请求前缀进行 KV cache，相同前缀可复用缓存避免�
 - **智能员工画像生成**：基于知识库内容自动分析生成员工角色、职责和技能建议
 - **LightAgent 智能代理**：自研代理系统，支持工具调用、流式响应、多步推理（ReAct/PlanExecute/ToolFilter）
 - **知识库管理**：独立知识库模块，支持导入导出、文档→目录→段落的层级知识浏览
-- **工作流编排**：可视化 DAG 编排器，支持多员工协同，含调试模式
-- **定时任务调度**：Cron 定时调度，系统托盘驻留后台运行
 - **数字员工导入导出**：配置导出（JSON）和完整包打包（.avatar），含 SHA-256 校验
 - **LLM 调用日志**：所有 LLM 交互自动记录，便于回溯排查
 
@@ -84,7 +82,6 @@ LLM 提供商对请求前缀进行 KV cache，相同前缀可复用缓存避免�
 | UI 组件库 | Ant Design 6 |
 | 数据库 | better-sqlite3（含 FTS5 全文索引） |
 | 文件解析 | file2md, unpdf, mammoth, SheetJS, Tesseract.js |
-| 流程编排 | @xyflow/react |
 | 国际化 | i18next |
 
 ---
@@ -125,8 +122,8 @@ npm run build
 
 项目采用 Electron 双进程架构：
 
-- **主进程**（`electron/main/`）：Node.js 环境，包含所有后端服务——数据库、文件解析、知识处理、搜索引擎、LLM 客户端、Agent 系统、任务调度等。服务层采用单例模式 + 外观模式，Agent 子系统（LightAgent）独立实现工具注册/调度/中间件链
-- **渲染进程**（`src/`）：React 前端，通过 `contextBridge` 暴露的 IPC API 与主进程通信。核心业务逻辑集中在自定义 Hook 中，全局状态仅管理外观偏好、交互队列和工作流画布
+- **主进程**（`electron/main/`）：Node.js 环境，包含所有后端服务——数据库、文件解析、知识处理、搜索引擎、LLM 客户端、Agent 系统等。服务层采用单例模式 + 外观模式，Agent 子系统（LightAgent）独立实现工具注册/调度/中间件链
+- **渲染进程**（`src/`）：React 前端，通过 `contextBridge` 暴露的 IPC API 与主进程通信。核心业务逻辑集中在自定义 Hook 中，全局状态仅管理外观偏好和交互队列
 - **共享层**（`electron/shared/`）：IPC 通道定义和类型，主进程与渲染进程共享
 
 ---

@@ -35,27 +35,23 @@ interface AppearanceState {
   themeMode: ThemeMode
   fontSizeLevel: FontSizeLevel
   locale: AppLocale
-  taskNotifications: boolean
   initialized: boolean
 
   setThemeMode: (mode: ThemeMode) => void
   setFontSizeLevel: (level: FontSizeLevel) => void
   setLocale: (locale: AppLocale) => void
-  setTaskNotifications: (enabled: boolean) => void
   initialize: () => Promise<void>
 }
 
 const SETTINGS_KEY_THEME = 'appearance_theme'
 const SETTINGS_KEY_FONT_SIZE = 'appearance_font_size'
 const SETTINGS_KEY_LOCALE = 'appearance_locale'
-const SETTINGS_KEY_TASK_NOTIFICATIONS = 'appearance_task_notifications'
 
 export const useAppearanceStore = create<AppearanceState>()(
   immer((set, get) => ({
     themeMode: 'light',
     fontSizeLevel: 'medium',
     locale: 'zh-CN',
-    taskNotifications: true,
     initialized: false,
 
     setThemeMode: (mode) => {
@@ -83,35 +79,23 @@ export const useAppearanceStore = create<AppearanceState>()(
       document.documentElement.setAttribute('data-locale', locale)
     },
 
-    setTaskNotifications: (enabled) => {
-      set((state) => {
-        state.taskNotifications = enabled
-      })
-      window.electronAPI.settings.set({ key: SETTINGS_KEY_TASK_NOTIFICATIONS, value: String(enabled) })
-    },
-
     initialize: async () => {
       if (get().initialized) return
       try {
-        const [savedTheme, savedFontSize, savedLocale, savedTaskNotifications] = await Promise.all([
+        const [savedTheme, savedFontSize, savedLocale] = await Promise.all([
           window.electronAPI.settings.get({ key: SETTINGS_KEY_THEME }),
           window.electronAPI.settings.get({ key: SETTINGS_KEY_FONT_SIZE }),
           window.electronAPI.settings.get({ key: SETTINGS_KEY_LOCALE }),
-          window.electronAPI.settings.get({ key: SETTINGS_KEY_TASK_NOTIFICATIONS }),
         ])
 
         const themeMode = (savedTheme as ThemeMode) || 'light'
         const fontSizeLevel = (savedFontSize as FontSizeLevel) || 'medium'
         const locale = (savedLocale as AppLocale) || 'zh-CN'
-        const taskNotifications = savedTaskNotifications !== null && savedTaskNotifications !== undefined
-          ? savedTaskNotifications === true || savedTaskNotifications === 'true'
-          : true
 
         set((state) => {
           state.themeMode = themeMode
           state.fontSizeLevel = fontSizeLevel
           state.locale = locale
-          state.taskNotifications = taskNotifications
           state.initialized = true
         })
 
