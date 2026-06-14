@@ -234,7 +234,11 @@ const ExecutionDetailModal: React.FC<ExecutionDetailModalProps> = ({ open, execu
                       wordBreak: 'break-word',
                     }}>
                       <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                          a({ href, children, ...props }: any) {
+                            return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+                          },
+                        }}>
                           {seg.content || (seg.isStreaming ? '▊' : '')}
                         </ReactMarkdown>
                       </div>
@@ -267,7 +271,11 @@ const ExecutionDetailModal: React.FC<ExecutionDetailModalProps> = ({ open, execu
                 lineHeight: 1.7,
               }}>
                 <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+                    a({ href, children, ...props }: any) {
+                      return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+                    },
+                  }}>
                     {execution.result_text}
                   </ReactMarkdown>
                 </div>

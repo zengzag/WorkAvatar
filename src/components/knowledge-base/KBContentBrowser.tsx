@@ -237,7 +237,11 @@ const KBContentBrowser: React.FC<KBContentBrowserProps> = ({
 
   const mdContent = React.useMemo(() => {
     if (!docContent) return null
-    return <ReactMarkdown>{docContent}</ReactMarkdown>
+    return <ReactMarkdown components={{
+      a({ href, children, ...props }: any) {
+        return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+      },
+    }}>{docContent}</ReactMarkdown>
   }, [docContent])
 
   const detailTabItems = React.useMemo(() => [

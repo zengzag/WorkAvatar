@@ -18,7 +18,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { useTranslation } from 'react-i18next'
-import { useState, useCallback, useMemo, memo } from 'react'
+import { useState, useCallback, useMemo, memo, useRef, useEffect } from 'react'
 import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import ThinkingSegment from './ThinkingSegment'
@@ -43,6 +43,13 @@ const markdownComponents = {
       <code className={className} {...props}>
         {children}
       </code>
+    )
+  },
+  a({ href, children, ...props }: any) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+        {children}
+      </a>
     )
   },
 }
@@ -132,6 +139,15 @@ const ModelSwitchPopover: React.FC<{
   )
 }
 
+function isColorDark(hex: string): boolean {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance < 0.5
+}
+
 const MessageBubble: React.FC<{
   msg: MessageWithThought
   onCopy: (content: string) => void
@@ -147,8 +163,16 @@ const MessageBubble: React.FC<{
 }> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const isDark = isColorDark(token.colorBgContainer)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const bubbleRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (isEditing && bubbleRef.current) {
+      bubbleRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isEditing])
 
   const handleStartEdit = useCallback(() => {
     setEditValue(msg.content)
@@ -161,12 +185,12 @@ const MessageBubble: React.FC<{
   }, [])
 
   const handleSubmitEdit = useCallback(() => {
-    if (editValue.trim() && editValue.trim() !== msg.content) {
+    if (editValue.trim()) {
       onEditAndResubmit(msg.id, editValue.trim())
     }
     setIsEditing(false)
     setEditValue('')
-  }, [editValue, msg.id, msg.content, onEditAndResubmit])
+  }, [editValue, msg.id, onEditAndResubmit])
 
   const branchCount = msg.branches?.length ?? 0
   const hasBranches = branchCount > 0
@@ -208,6 +232,7 @@ const MessageBubble: React.FC<{
 
   return (
     <div
+      ref={bubbleRef}
       style={{
         display: 'flex',
         gap: 12,
@@ -230,7 +255,7 @@ const MessageBubble: React.FC<{
           : <UserOutlined style={{ color: '#1677ff', fontSize: 18 }} />}
       </div>
 
-      <div style={{ maxWidth: '80%', minWidth: 0 }}>
+      <div style={{ maxWidth: '80%', minWidth: 0, width: isEditing ? '90%' : undefined }}>
         {msg.role === 'user' && (
           <div>
             {isEditing ? (
@@ -238,11 +263,12 @@ const MessageBubble: React.FC<{
                 <Input.TextArea
                   value={editValue}
                   onChange={(e) => setEditValue(e.target.value)}
-                  autoSize={{ minRows: 1, maxRows: 5 }}
+                  autoSize={{ minRows: 3, maxRows: 15 }}
                   style={{
                     fontSize: 14,
                     lineHeight: 1.7,
                     borderRadius: 12,
+                    width: '100%',
                   }}
                   onPressEnter={(e) => {
                     if (!e.shiftKey) {
@@ -260,13 +286,13 @@ const MessageBubble: React.FC<{
               <div style={{
                 padding: '10px 16px',
                 borderRadius: 12,
-                background: token.colorPrimary,
-                color: '#fff',
+                background: isDark ? '#1a3a5c' : '#d6e8fa',
+                color: isDark ? '#dce6f0' : '#1a1a1a',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 lineHeight: 1.7,
               }}>
-                <Text style={{ color: '#fff', fontSize: 14 }}>{msg.content}</Text>
+                <Text style={{ color: isDark ? '#dce6f0' : '#1a1a1a', fontSize: 14 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     {msg.images.map((img, i) => (

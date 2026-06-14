@@ -1378,19 +1378,23 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     const targetMsg = currentMsgs[msgIndex]
 
-    const newMessages = currentMsgs.slice(0, msgIndex)
+    // 编辑用户消息内容
     const editedUserMsg: MessageWithThought = {
       ...targetMsg,
       content: newContent.trim(),
       timestamp: Date.now(),
     }
-    newMessages.push(editedUserMsg)
 
+    // 检查紧随其后的 assistant 消息
     const assistantMsgIndex = msgIndex + 1
     const existingAssistantMsg = currentMsgs[assistantMsgIndex]
     let assistantMessageId: string
 
+    const newMessages = [...currentMsgs]
+    newMessages[msgIndex] = editedUserMsg
+
     if (existingAssistantMsg && existingAssistantMsg.role === 'assistant') {
+      // 将当前 assistant 回复保存为分支，重置为空流式状态以重新生成
       const existingBranches = existingAssistantMsg.branches || []
       const currentBranch: MessageBranch = {
         content: existingAssistantMsg.content,
@@ -1405,7 +1409,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const newBranchIndex = allBranches.length
 
       assistantMessageId = existingAssistantMsg.id
-      const updatedAssistantMsg: MessageWithThought = {
+      newMessages[assistantMsgIndex] = {
         ...existingAssistantMsg,
         branches: allBranches,
         activeBranchIndex: newBranchIndex,
@@ -1418,8 +1422,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         comparisonProviderId: undefined,
         comparisonModelId: undefined,
       }
-      newMessages.push(updatedAssistantMsg)
     } else {
+      // 没有 assistant 消息，创建新的
       assistantMessageId = `msg_${generateId()}`
       const assistantMessage: MessageWithThought = {
         id: assistantMessageId,
@@ -1429,7 +1433,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         isStreaming: true,
         segments: [],
       }
-      newMessages.push(assistantMessage)
+      // 插入到编辑的用户消息之后
+      newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }
 
     setConvMessages(activeConversationId, newMessages)
@@ -1449,10 +1454,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setupGlobalListeners()
     setIsStreaming(true)
 
+    // 上下文只使用被编辑消息及其上方的消息（不包含 assistant 回复及之后的消息）
+    const contextMessages = newMessages.slice(0, assistantMsgIndex)
+
     const streamState: ConversationStreamState = {
       isStreaming: true,
       conversationId: activeConversationId,
-      messages: newMessages.slice(0, assistantMsgIndex),
+      messages: contextMessages,
       assistantMessageId,
       segCounter: 0,
       toolCallCounter: 0,
@@ -1460,7 +1468,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
 
     try {
-      const messageHistory = buildEnrichedHistory(newMessages.slice(0, assistantMsgIndex))
+      const messageHistory = buildEnrichedHistory(contextMessages)
 
       const result = await window.electronAPI.llm.employeeChatStream({
         employee_id: id!,
