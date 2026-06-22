@@ -264,10 +264,13 @@ const electronAPI = {
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
-    buildIndex: (providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_BUILD_INDEX, providerId),
-    incrementalIndex: (providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId),
-    rebuildDirIndex: (dirId: string, providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId),
-    cancelIndex: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CANCEL_INDEX),
+    getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
+    openFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE, filePath),
+    openFileDir: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE_DIR, filePath),
+    buildIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId); return Promise.resolve({ success: true }) },
+    incrementalIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId); return Promise.resolve({ success: true }) },
+    rebuildDirIndex: (dirId: string, providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId); return Promise.resolve({ success: true }) },
+    cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
     onIndexProgress: (callback: (progress: { phase: string; current: number; total: number; message: string }) => void) => {
       const handler = (_event: any, progress: { phase: string; current: number; total: number; message: string }) => callback(progress)

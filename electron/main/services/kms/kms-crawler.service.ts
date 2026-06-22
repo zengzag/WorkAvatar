@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
+import KMSSearchEngineService from './kms-search-engine.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
 
@@ -336,25 +337,57 @@ class KMSCrawlerService {
 
   /**
    * 注册新文件到数据库
+   * 如果相同MD5的文件已存在（不同目录），直接复用索引数据，避免重复计算
    */
   private async registerFile(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }): Promise<void> {
     const id = generateId()
     const ext = path.extname(diskFile.fileName).toLowerCase().slice(1)
     const hash = await calculateFileHash(diskFile.filePath)
 
-    this.db.prepare(`
-      INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
-    `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
+    // 检查是否已有相同hash的文件（不同位置的同内容文件）
+    const existingFile = this.db.prepare('SELECT id FROM kms_files WHERE file_hash = ? LIMIT 1').get(hash) as any
+
+    if (existingFile) {
+      // 相同内容文件已存在，直接标记为completed并复制索引
+      this.db.prepare(`
+        INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'cold')
+      `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
+
+      // 复制索引数据
+      KMSSearchEngineService.getInstance().cloneIndexData(existingFile.id, id)
+      logger.info(`Deduplicated file "${diskFile.fileName}" (hash: ${hash.substring(0, 8)}...) from existing file ${existingFile.id}`)
+    } else {
+      // 新文件，正常注册
+      this.db.prepare(`
+        INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
+      `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
+    }
   }
 
   /**
    * 更新文件hash（文件内容已变更）
+   * 检查新hash是否与其他文件重复，若重复则复用索引
    */
   private updateFileHash(fileId: string, newHash: string, modifiedTime: number, fileSize: number): void {
-    this.db.prepare(`
-      UPDATE kms_files SET file_hash = ?, modified_time = ?, file_size = ?, index_status = 'modified', updated_at = unixepoch() WHERE id = ?
-    `).run(newHash, modifiedTime, fileSize, fileId)
+    // 检查是否有其他文件已有相同hash
+    const existingFile = this.db.prepare('SELECT id FROM kms_files WHERE file_hash = ? AND id != ? LIMIT 1').get(newHash, fileId) as any
+
+    if (existingFile) {
+      // 新hash与其他文件重复，复用索引
+      const searchEngine = KMSSearchEngineService.getInstance()
+      searchEngine.deleteIndexByFile(fileId)
+      this.db.prepare(`
+        UPDATE kms_files SET file_hash = ?, modified_time = ?, file_size = ?, index_status = 'completed', updated_at = unixepoch() WHERE id = ?
+      `).run(newHash, modifiedTime, fileSize, fileId)
+      searchEngine.cloneIndexData(existingFile.id, fileId)
+      logger.info(`Deduplicated modified file ${fileId} (hash: ${newHash.substring(0, 8)}...) from existing file ${existingFile.id}`)
+    } else {
+      this.db.prepare(`
+        UPDATE kms_files SET file_hash = ?, modified_time = ?, file_size = ?, index_status = 'modified', updated_at = unixepoch() WHERE id = ?
+      `).run(newHash, modifiedTime, fileSize, fileId)
+    }
   }
 
   /**

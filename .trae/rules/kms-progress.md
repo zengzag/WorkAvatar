@@ -6,7 +6,7 @@
 
 ## 三阶段计划
 
-### 第一阶段：独立搜索引擎（当前阶段）
+### 第一阶段：独立搜索引擎
 
 **目标**：构建高性能底层搜索引擎，独立文件夹放置，功能无耦合。
 
@@ -76,14 +76,56 @@
 
 **目标**：基于Electron提供独立UI面板，放到导航中知识库下面。
 
-**状态**：⬜ 未开始
+**状态**：✅ 已完成
 
-#### 计划功能
+#### 已完成文件
 
-- 目录管理：添加/移除需索引的本地文件夹
-- 索引控制：一键构建或增量更新索引
-- 搜索视图：支持切换"普通模式（仅列表）"与"AI模式（展示子智能体最终结论与引用出处）"
-- 统计面板：文件数量、索引状态、冷热数据分布
+| 文件 | 职责 |
+|---|---|
+| `src/pages/KMS.tsx` | KMS主页面，搜索为主视图 + 设置Drawer（目录管理/索引管理） + 文件预览Modal |
+| `src/hooks/useKMS.ts` | KMS业务逻辑Hook，封装所有IPC调用和状态管理，含openFile/openFileDir/getFileFullContent/previewFile |
+| `src/components/kms/HighlightText.tsx` | 关键词高亮组件，支持highlights范围和keywords关键词数组两种模式 |
+| `src/components/kms/KMSSearchPanel.tsx` | 搜索面板，搜索输入/模式选择/高级筛选（目录/格式/时间范围）/结果列表（含高亮、操作按钮） |
+| `src/components/kms/KMSFilePreview.tsx` | 文件预览Modal，全文本展示+关键词高亮+自动定位到搜索结果位置 |
+| `src/components/kms/KMSDirPanel.tsx` | 索引目录管理面板，目录列表/添加/删除/启用禁用 |
+| `src/components/kms/KMSIndexPanel.tsx` | 索引管理面板，统计卡片/构建索引/增量更新/进度显示 |
+| `src/components/kms/index.ts` | 组件统一导出 |
+| `src/router/index.tsx` | 新增`/kms`路由 |
+| `src/App.tsx` | 侧边栏新增"本地搜索"导航项 |
+| `src/i18n/locales/zh-CN.ts` | 新增`kms.*`共50+个中文翻译键 |
+| `src/i18n/locales/en-US.ts` | 新增`kms.*`共50+个英文翻译键 |
+
+#### 第一阶段优化（UI开发中发现并完善）
+
+- **搜索引擎增强**：`SearchResult`新增`highlights`（高亮范围数组）和`matched_keywords`（匹配关键词列表）字段
+- **高亮计算**：新增`computeHighlights()`方法，在文本中定位所有关键词出现位置，合并重叠范围
+- **FTS搜索**：`ftsSearch`和`fallbackKeywordSearch`均返回高亮信息
+- **混合搜索**：`hybridSearch`结果同样包含高亮信息
+- **MD5去重**：文件注册和更新时检查相同hash，相同内容文件复用索引数据（`cloneIndexData`），避免重复计算
+- **增量索引独立**：`incrementalIndex`不再委托`buildFullIndex`，独立实现并先删除modified文件旧索引
+- **目录重建优化**：`rebuildDirIndex`不再调用`buildFullIndex`全量重建，只处理指定目录文件
+- **IPC防克隆错误**：索引操作改用`ipcMain.on`/`ipcRenderer.send`（fire-and-forget），`safeHandle`返回值用`JSON.parse(JSON.stringify())`净化
+
+#### UI功能
+
+1. **搜索面板（主视图）**：
+   - 搜索输入框 + Enter快捷搜索
+   - 三种搜索模式切换（关键词/语义/混合）
+   - 高级筛选（可折叠）：目录多选、文件格式多选、时间范围日期选择
+   - 搜索结果卡片：文件图标、可点击文件名、路径、匹配类型标签、高亮文本、行号范围、匹配关键词标签
+   - 结果操作按钮：打开文件（系统默认程序）、打开目录（资源管理器定位）、预览
+   - 混合搜索模式显示分数条
+   - 加载中/无结果空状态
+
+2. **文件预览**：
+   - 全屏Modal展示文件完整文本内容
+   - 所有搜索关键词高亮
+   - 自动滚动到搜索结果命中位置（start_line/start_offset）
+   - 预览头部含打开文件/打开目录按钮
+
+3. **设置Drawer**（齿轮按钮触发）：
+   - 索引目录管理：目录列表、添加/删除、启用开关
+   - 索引管理：8个统计卡片、构建/增量/重建索引、进度显示、取消
 
 ---
 

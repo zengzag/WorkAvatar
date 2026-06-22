@@ -12,6 +12,9 @@ export const KMS_CHANNELS = {
   KMS_CANCEL_INDEX: 'kms:cancel-index',
   KMS_GET_STATS: 'kms:get-stats',
   KMS_INDEX_PROGRESS: 'kms:index-progress',
+  KMS_OPEN_FILE: 'kms:open-file',
+  KMS_OPEN_FILE_DIR: 'kms:open-file-dir',
+  KMS_GET_FILE_FULL_CONTENT: 'kms:get-file-full-content',
 } as const
 
 export interface KMSAddDirParams {
@@ -38,6 +41,7 @@ export interface KMSSearchParams {
   timeRangeStart?: number
   timeRangeEnd?: number
   fileExtensions?: string[]
+  dirIds?: string[]
 }
 
 export interface KMSGetFileContentParams {

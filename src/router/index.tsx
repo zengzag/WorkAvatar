@@ -6,6 +6,7 @@ import EmployeeWorkbench from '../pages/EmployeeWorkbench'
 import EmployeeSettings from '../pages/EmployeeSettings'
 import Settings from '../pages/Settings'
 import KnowledgeBasePage from '../pages/KnowledgeBase'
+import KMSPage from '../pages/KMS'
 
 const router = createHashRouter([
   {
@@ -35,6 +36,10 @@ const router = createHashRouter([
       {
         path: 'knowledge-base',
         element: <KnowledgeBasePage />,
+      },
+      {
+        path: 'kms',
+        element: <KMSPage />,
       },
     ],
   },

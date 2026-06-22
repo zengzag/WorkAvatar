@@ -82,6 +82,9 @@ class KMSIndexManagerService {
         try {
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
 
+          // 先删除旧索引（处理modified文件的情况）
+          searchEngine.deleteIndexByFile(file.id)
+
           // 解析文件
           const parseResult = await fileParser.parseFilePath(file.filePath, signal)
           if (signal.aborted) break
@@ -145,27 +148,119 @@ class KMSIndexManagerService {
   }
 
   /**
-   * 增量索引（仅处理新增和修改的文件）
+   * 增量索引（仅处理新增和修改的文件，不重新扫描全部目录）
    */
   async incrementalIndex(providerId?: string, onProgress?: ProgressCallback): Promise<void> {
-    return this.buildFullIndex(providerId, onProgress)
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    try {
+      // 增量扫描：只检测变更（新增/修改/删除），不重新注册已存在的文件
+      onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在检测文件变更...' })
+      await KMSCrawlerService.getInstance().crawlAllDirectories(signal)
+
+      if (signal.aborted) return
+
+      // 只处理 pending 和 modified 状态的文件
+      const pendingFiles = KMSCrawlerService.getInstance().getPendingFiles()
+      const total = pendingFiles.length
+
+      if (total === 0) {
+        onProgress?.({ phase: 'done', current: 0, total: 0, message: '没有需要更新的文件' })
+        return
+      }
+
+      onProgress?.({ phase: 'parsing', current: 0, total, message: `增量解析 ${total} 个文件...` })
+
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const fileParser = FileParserService.getInstance()
+      const llmClient = LLMClientService.getInstance()
+
+      let processed = 0
+      for (const file of pendingFiles) {
+        if (signal.aborted) break
+
+        try {
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
+
+          // 先删除旧索引（处理modified文件的情况）
+          searchEngine.deleteIndexByFile(file.id)
+
+          // 解析文件
+          const parseResult = await fileParser.parseFilePath(file.filePath, signal)
+          if (signal.aborted) break
+
+          onProgress?.({
+            phase: 'indexing',
+            current: processed + 1,
+            total,
+            message: `索引: ${file.fileName}`,
+          })
+
+          // 索引文件标题
+          searchEngine.indexFileTitle(file.id, file.fileName)
+
+          // 索引原文内容段落
+          if (parseResult.fullText) {
+            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
+          }
+
+          // 热数据：额外生成摘要
+          const isHot = file.dataTier === 'hot'
+          if (isHot && providerId) {
+            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+          }
+
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+        } catch (err: any) {
+          if (signal.aborted) break
+          logger.error(`Failed to index file "${file.fileName}":`, err)
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
+        }
+
+        processed++
+        onProgress?.({
+          phase: 'parsing',
+          current: processed,
+          total,
+          message: `已处理 ${processed}/${total} 个文件`,
+        })
+      }
+
+      // 生成向量嵌入
+      if (providerId && !signal.aborted) {
+        await this.generateEmbeddings(providerId, onProgress, signal)
+      }
+
+      // 冷热数据评估
+      if (!signal.aborted) {
+        this.evaluateDataTiers()
+      }
+
+      onProgress?.({ phase: 'done', current: processed, total, message: `增量索引完成，共处理 ${processed} 个文件` })
+    } catch (err: any) {
+      logger.error('Incremental index failed:', err)
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: err.message })
+    } finally {
+      this.abortController = null
+    }
   }
 
   /**
-   * 重建指定目录的索引
+   * 重建指定目录的索引（只处理该目录的文件）
    */
   async rebuildDirIndex(dirId: string, providerId?: string, onProgress?: ProgressCallback): Promise<void> {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
     try {
-      // 爬取目录
+      // 爬取目录（检测变更）
       onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在扫描目录...' })
       await KMSCrawlerService.getInstance().crawlDirectory(dirId, signal)
 
       if (signal.aborted) return
 
-      // 删除该目录下所有旧索引
+      // 获取该目录下所有文件，重置为pending状态
       const files = KMSCrawlerService.getInstance().getFilesByDir(dirId)
       const searchEngine = KMSSearchEngineService.getInstance()
 
@@ -174,8 +269,69 @@ class KMSIndexManagerService {
         KMSCrawlerService.getInstance().updateFileStatus(file.id, 'pending')
       }
 
-      // 重新构建
-      await this.buildFullIndex(providerId, onProgress)
+      // 获取pending文件并索引
+      const pendingFiles = KMSCrawlerService.getInstance().getPendingFiles()
+      const total = pendingFiles.length
+
+      if (total === 0) {
+        onProgress?.({ phase: 'done', current: 0, total: 0, message: '没有需要索引的文件' })
+        return
+      }
+
+      onProgress?.({ phase: 'parsing', current: 0, total, message: `重建索引 ${total} 个文件...` })
+
+      const fileParser = FileParserService.getInstance()
+      const llmClient = LLMClientService.getInstance()
+
+      let processed = 0
+      for (const file of pendingFiles) {
+        if (signal.aborted) break
+
+        try {
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
+
+          const parseResult = await fileParser.parseFilePath(file.filePath, signal)
+          if (signal.aborted) break
+
+          onProgress?.({
+            phase: 'indexing',
+            current: processed + 1,
+            total,
+            message: `索引: ${file.fileName}`,
+          })
+
+          searchEngine.indexFileTitle(file.id, file.fileName)
+
+          if (parseResult.fullText) {
+            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
+          }
+
+          const isHot = file.dataTier === 'hot'
+          if (isHot && providerId) {
+            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+          }
+
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+        } catch (err: any) {
+          if (signal.aborted) break
+          logger.error(`Failed to index file "${file.fileName}":`, err)
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
+        }
+
+        processed++
+        onProgress?.({
+          phase: 'parsing',
+          current: processed,
+          total,
+          message: `已处理 ${processed}/${total} 个文件`,
+        })
+      }
+
+      if (providerId && !signal.aborted) {
+        await this.generateEmbeddings(providerId, onProgress, signal)
+      }
+
+      onProgress?.({ phase: 'done', current: processed, total, message: `重建索引完成，共处理 ${processed} 个文件` })
     } catch (err: any) {
       logger.error('Rebuild dir index failed:', err)
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err.message })

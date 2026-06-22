@@ -4,6 +4,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   BookOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
@@ -27,6 +28,7 @@ const App: React.FC = () => {
     if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
+    if (path.startsWith('/kms')) return 'kms'
     return 'digital-employees'
   }
 
@@ -42,6 +44,12 @@ const App: React.FC = () => {
       icon: <BookOutlined />,
       label: t('nav.knowledgeBase'),
       onClick: () => navigate('/knowledge-base'),
+    },
+    {
+      key: 'kms',
+      icon: <SearchOutlined />,
+      label: t('nav.kms'),
+      onClick: () => navigate('/kms'),
     },
     {
       key: 'settings',

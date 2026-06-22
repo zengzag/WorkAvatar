@@ -4,6 +4,11 @@ import { generateId } from '../common-utils'
 
 type SourceType = 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph'
 
+export interface HighlightRange {
+  start: number
+  end: number
+}
+
 export interface SearchResult {
   file_id: string
   file_name: string
@@ -17,6 +22,8 @@ export interface SearchResult {
   start_line?: number
   end_line?: number
   score?: number
+  highlights?: HighlightRange[]
+  matched_keywords?: string[]
 }
 
 export interface SearchOptions {
@@ -252,6 +259,37 @@ class KMSSearchEngineService {
     ).run(fileId, sourceType)
   }
 
+  /**
+   * 克隆索引数据（用于MD5去重：相同内容文件复用索引）
+   */
+  cloneIndexData(sourceFileId: string, targetFileId: string): void {
+    const sourceRows = this.db.prepare(
+      'SELECT * FROM kms_search_index WHERE file_id = ?'
+    ).all(sourceFileId) as any[]
+
+    if (sourceRows.length === 0) return
+
+    const transaction = this.db.transaction(() => {
+      for (const row of sourceRows) {
+        const newId = generateId()
+        this.db.prepare(`
+          INSERT INTO kms_search_index (id, file_id, source_type, source_id, paragraph_index, title, content, keywords_json, metadata_json, start_offset, end_offset, start_line, end_line, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+        `).run(
+          newId, targetFileId, row.source_type, generateId(),
+          row.paragraph_index, row.title, row.content,
+          row.keywords_json, row.metadata_json,
+          row.start_offset, row.end_offset, row.start_line, row.end_line
+        )
+
+        this.insertFtsRow(newId, targetFileId, row.source_type as SourceType, newId, row.title, row.content, '')
+      }
+    })
+
+    transaction()
+    this.invalidateCache()
+  }
+
   // ==================== 搜索操作 ====================
 
   /**
@@ -263,8 +301,8 @@ class KMSSearchEngineService {
     const cached = this.getFromCache(cacheKey)
     if (cached) return cached
 
-    const escapedQuery = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
-      .map(w => `${w}*`).join(' OR ')
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+    const escapedQuery = queryWords.map(w => `${w}*`).join(' OR ')
 
     if (!escapedQuery) return []
 
@@ -281,7 +319,7 @@ class KMSSearchEngineService {
         LIMIT ?
       `).all(escapedQuery, ...params, topK * 2) as any[]
 
-      const results = this.convertFtsResultsToSearchResults(ftsResults, topK)
+      const results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
       this.putToCache(cacheKey, results)
       return results
     } catch {
@@ -337,6 +375,7 @@ class KMSSearchEngineService {
     const keywordWeight = 0.6
     const vectorWeight = 0.4
     const useVector = options?.useVector !== false && queryEmbedding !== null
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
 
     // FTS5 关键词搜索
     const ftsResults = this.ftsSearch(query, { ...options, topK: topK * 2 })
@@ -411,7 +450,11 @@ class KMSSearchEngineService {
     }
 
     hybridResults.sort((a, b) => b.sortKey - a.sortKey)
-    return hybridResults.slice(0, topK).map(h => h.result)
+    return hybridResults.slice(0, topK).map(h => ({
+      ...h.result,
+      highlights: this.computeHighlights(h.result.text, queryWords),
+      matched_keywords: queryWords,
+    }))
   }
 
   /**
@@ -554,7 +597,7 @@ class KMSSearchEngineService {
     return { whereClause, params }
   }
 
-  private convertFtsResultsToSearchResults(ftsResults: any[], topK: number): SearchResult[] {
+  private convertFtsResultsToSearchResults(ftsResults: any[], topK: number, queryWords?: string[]): SearchResult[] {
     const fileCache: Map<string, { name: string; path: string }> = new Map()
     const getFile = (fileId: string) => {
       if (fileCache.has(fileId)) return fileCache.get(fileId)!
@@ -633,6 +676,14 @@ class KMSSearchEngineService {
       results.push(result)
     }
 
+    // 计算关键词高亮
+    if (queryWords && queryWords.length > 0) {
+      for (const r of results) {
+        r.highlights = this.computeHighlights(r.text, queryWords)
+        r.matched_keywords = queryWords
+      }
+    }
+
     return results.slice(0, topK)
   }
 
@@ -671,7 +722,7 @@ class KMSSearchEngineService {
     }).filter(r => r.keywordScore > 0)
 
     scored.sort((a, b) => b.keywordScore - a.keywordScore)
-    return this.convertFtsResultsToSearchResults(scored.slice(0, topK), topK)
+    return this.convertFtsResultsToSearchResults(scored.slice(0, topK), topK, queryWords)
   }
 
   private loadAllEmbeddings(): EmbeddingEntry[] {
@@ -749,6 +800,43 @@ class KMSSearchEngineService {
     } catch {
       return fallback
     }
+  }
+
+  /**
+   * 计算文本中关键词的高亮范围
+   */
+  private computeHighlights(text: string, queryWords: string[]): HighlightRange[] {
+    if (!text || !queryWords.length) return []
+
+    const ranges: HighlightRange[] = []
+    const textLower = text.toLowerCase()
+
+    for (const word of queryWords) {
+      if (!word) continue
+      let startPos = 0
+      while (startPos < textLower.length) {
+        const idx = textLower.indexOf(word, startPos)
+        if (idx === -1) break
+        ranges.push({ start: idx, end: idx + word.length })
+        startPos = idx + 1
+      }
+    }
+
+    // 合并重叠的范围
+    if (ranges.length === 0) return []
+
+    ranges.sort((a, b) => a.start - b.start)
+    const merged: HighlightRange[] = [ranges[0]]
+    for (let i = 1; i < ranges.length; i++) {
+      const last = merged[merged.length - 1]
+      if (ranges[i].start <= last.end) {
+        last.end = Math.max(last.end, ranges[i].end)
+      } else {
+        merged.push(ranges[i])
+      }
+    }
+
+    return merged
   }
 }
 

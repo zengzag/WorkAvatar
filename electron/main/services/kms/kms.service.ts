@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import fs from 'fs'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
@@ -36,7 +37,7 @@ class KMSService {
    * 添加索引目录
    */
   addIndexDir(dirPath: string, displayName?: string, recursive: boolean = true, fileExtensions?: string[]): any {
-    if (!require('fs').existsSync(dirPath)) {
+    if (!fs.existsSync(dirPath)) {
       throw new Error(`目录不存在: ${dirPath}`)
     }
 
@@ -185,6 +186,29 @@ class KMSService {
     crawler.logFileAccess(fileId, 'summary_view')
 
     return this.db.prepare('SELECT * FROM kms_file_summaries WHERE file_id = ?').get(fileId)
+  }
+
+  /**
+   * 获取文件完整文本内容（用于预览）
+   */
+  async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string }> {
+    const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
+    if (!file) throw new Error('File not found')
+
+    const crawler = KMSCrawlerService.getInstance()
+    crawler.logFileAccess(fileId, 'read')
+
+    try {
+      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
+      return {
+        content: parseResult.fullText,
+        fileName: file.file_name,
+        filePath: file.file_path,
+      }
+    } catch (err) {
+      logger.error(`Failed to read file content for ${file.file_path}:`, err)
+      throw err
+    }
   }
 
   // ==================== 索引管理 ====================
