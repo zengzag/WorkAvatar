@@ -6,6 +6,7 @@ import { registerToolHandlers } from './tool.handlers'
 import { registerKBHandlers } from './kb.handlers'
 import { registerTaskHandlers } from './task.handlers'
 import { registerKBMCPHandlers } from './kb-mcp.handlers'
+import { registerKMSHandlers } from './kms.handlers'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
 import DatabaseService from '../services/database.service'
@@ -39,4 +40,5 @@ export function registerIpcHandlers() {
   registerKBHandlers(kbService)
   registerTaskHandlers()
   registerKBMCPHandlers(mcpService)
+  registerKMSHandlers()
 }

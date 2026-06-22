@@ -63,3 +63,9 @@ export type {
 export type {
   KBMCPSetConfigParams,
 } from './channels/kb-mcp'
+export type {
+  KMSAddDirParams,
+  KMSUpdateDirParams,
+  KMSSearchParams,
+  KMSGetFileContentParams,
+} from './channels/kms'

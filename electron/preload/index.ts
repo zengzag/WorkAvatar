@@ -46,6 +46,10 @@ import type {
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
   KBMCPSetConfigParams,
+  KMSAddDirParams,
+  KMSUpdateDirParams,
+  KMSSearchParams,
+  KMSGetFileContentParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -250,6 +254,26 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_STATUS),
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_CONFIG),
     setConfig: (params: KBMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_SET_CONFIG, params),
+  },
+
+  kms: {
+    listDirs: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_DIRS),
+    addDir: (params: KMSAddDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_DIR, params),
+    updateDir: (params: KMSUpdateDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_DIR, params),
+    deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
+    search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
+    getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
+    getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
+    buildIndex: (providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_BUILD_INDEX, providerId),
+    incrementalIndex: (providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId),
+    rebuildDirIndex: (dirId: string, providerId?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId),
+    cancelIndex: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CANCEL_INDEX),
+    getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
+    onIndexProgress: (callback: (progress: { phase: string; current: number; total: number; message: string }) => void) => {
+      const handler = (_event: any, progress: { phase: string; current: number; total: number; message: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
+    },
   },
 
   interaction: {
