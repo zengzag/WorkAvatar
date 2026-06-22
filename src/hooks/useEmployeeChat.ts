@@ -235,8 +235,17 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const conversationMessagesRef = useRef<LRUCache<string, MessageWithThought[]>>(_persistentMessages)
   const globalListenersCleanupRef = useRef<(() => void) | null>(_persistentListenersCleanup)
   const activeConversationIdRef = useRef<string | null>(null)
+  const isStreamingRef = useRef<boolean>(false)
   const initVersionRef = useRef(0)
   const selectConvVersionRef = useRef(0)
+
+  // 将 state 同步到 ref，避免闭包陈旧问题
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId
+  }, [activeConversationId])
+  useEffect(() => {
+    isStreamingRef.current = isStreaming
+  }, [isStreaming])
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
     const prev = conversationMessagesRef.current.get(convId)
@@ -520,6 +529,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
       if (!anyStreaming) {
         setIsStreaming(false)
+        isStreamingRef.current = false
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
@@ -548,6 +558,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
       if (!anyStreaming) {
         setIsStreaming(false)
+        isStreamingRef.current = false
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
@@ -699,6 +710,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
     setIsStreaming(hasActiveStream)
+    isStreamingRef.current = hasActiveStream
 
     // 命中 LRU 缓存：同样先展示 loading 过渡，避免 React 一次性 mount 大量 MessageBubble 卡死
     const cachedMsgs = conversationMessagesRef.current.get(convId)
@@ -993,7 +1005,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
-    const targetConvId = convId || activeConversationId
+    const targetConvId = convId || activeConversationIdRef.current
     if (!targetConvId) return
 
     if (!content.trim() && (!images || images.length === 0)) return
@@ -1057,8 +1069,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           cleanupFns: [],
         }
 
-        if (targetConvId === activeConversationId) {
+        if (targetConvId === activeConversationIdRef.current) {
           setIsStreaming(true)
+          isStreamingRef.current = true
         }
 
         try {
@@ -1087,11 +1100,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
           if (!anyStreaming) {
             setIsStreaming(false)
+            isStreamingRef.current = false
           }
         }
       }
 
-      if (targetConvId === activeConversationId && assistantIds.length > 0) {
+      if (targetConvId === activeConversationIdRef.current && assistantIds.length > 0) {
         setIsComparisonMode(true)
         setComparisonMessageIds(assistantIds)
       }
@@ -1113,8 +1127,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }
       updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
 
-      if (targetConvId === activeConversationId) {
+      if (targetConvId === activeConversationIdRef.current) {
         setIsStreaming(true)
+        isStreamingRef.current = true
       }
 
       const streamState: ConversationStreamState = {
@@ -1149,6 +1164,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       } catch {
         streamState.isStreaming = false
         setIsStreaming(false)
+        isStreamingRef.current = false
       }
     }
   }
@@ -1161,9 +1177,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleDeleteMessage = async (msgId: string) => {
-    if (!activeConversationId) return
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
+    if (hasActiveStream) return
     try {
-      const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+      const currentMsgs = conversationMessagesRef.current.get(convId) || []
       const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
       const newMessages = currentMsgs.filter((m) => m.id !== msgId)
       if (msgIndex !== -1 && currentMsgs[msgIndex].role === 'user') {
@@ -1172,9 +1191,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           newMessages.splice(newMessages.indexOf(followingAssistant), 1)
         }
       }
-      setConvMessages(activeConversationId, newMessages)
+      setConvMessages(convId, newMessages)
       await window.electronAPI.conversation.update({
-        id: activeConversationId,
+        id: convId,
         messages_json: JSON.stringify(newMessages),
         message_count: newMessages.length,
       })
@@ -1185,8 +1204,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleRegenerate = async (msgId: string) => {
-    if (!activeConversationId || isStreaming) return
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
+    if (hasActiveStream) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
     const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
     if (msgIndex === -1) return
 
@@ -1220,9 +1242,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       comparisonProviderId: undefined,
       comparisonModelId: undefined,
     }
-    setConvMessages(activeConversationId, newMessages)
+    setConvMessages(convId, newMessages)
     await window.electronAPI.conversation.update({
-      id: activeConversationId,
+      id: convId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
       last_message_at: Math.floor(Date.now() / 1000),
@@ -1236,10 +1258,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     setupGlobalListeners()
     setIsStreaming(true)
+    isStreamingRef.current = true
 
     const streamState: ConversationStreamState = {
       isStreaming: true,
-      conversationId: activeConversationId,
+      conversationId: convId,
       messages: newMessages.slice(0, msgIndex),
       assistantMessageId: msgId,
       segCounter: 0,
@@ -1259,7 +1282,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         use_skills: true,
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
-        conversation_id: activeConversationId,
+        conversation_id: convId,
         minimal_mode: minimalMode,
       })
 
@@ -1275,14 +1298,18 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         }
       }
       setIsStreaming(false)
+      isStreamingRef.current = false
     }
   }
 
   const handleSwitchModelRegenerate = async (msgId: string, providerId: string, modelId: string) => {
-    if (!activeConversationId || isStreaming) return
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
+    if (hasActiveStream) return
     if (!providerId || !modelId) return
 
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
     const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
     if (msgIndex === -1) return
 
@@ -1316,9 +1343,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       comparisonProviderId: providerId,
       comparisonModelId: modelId,
     }
-    setConvMessages(activeConversationId, newMessages)
+    setConvMessages(convId, newMessages)
     await window.electronAPI.conversation.update({
-      id: activeConversationId,
+      id: convId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
       last_message_at: Math.floor(Date.now() / 1000),
@@ -1326,10 +1353,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     setupGlobalListeners()
     setIsStreaming(true)
+    isStreamingRef.current = true
 
     const streamState: ConversationStreamState = {
       isStreaming: true,
-      conversationId: activeConversationId,
+      conversationId: convId,
       messages: newMessages.slice(0, msgIndex),
       assistantMessageId: msgId,
       segCounter: 0,
@@ -1349,7 +1377,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         use_skills: true,
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
-        conversation_id: activeConversationId,
+        conversation_id: convId,
         minimal_mode: minimalMode,
       })
 
@@ -1365,14 +1393,18 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         }
       }
       setIsStreaming(false)
+      isStreamingRef.current = false
     }
   }
 
   const handleEditAndResubmit = async (msgId: string, newContent: string) => {
-    if (!activeConversationId || isStreaming) return
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
+    if (hasActiveStream) return
     if (!newContent.trim()) return
 
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
     const msgIndex = currentMsgs.findIndex((m) => m.id === msgId)
     if (msgIndex === -1) return
 
@@ -1437,9 +1469,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }
 
-    setConvMessages(activeConversationId, newMessages)
+    setConvMessages(convId, newMessages)
     await window.electronAPI.conversation.update({
-      id: activeConversationId,
+      id: convId,
       messages_json: JSON.stringify(newMessages),
       message_count: newMessages.length,
       last_message_at: Math.floor(Date.now() / 1000),
@@ -1453,13 +1485,14 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     setupGlobalListeners()
     setIsStreaming(true)
+    isStreamingRef.current = true
 
     // 上下文只使用被编辑消息及其上方的消息（不包含 assistant 回复及之后的消息）
     const contextMessages = newMessages.slice(0, assistantMsgIndex)
 
     const streamState: ConversationStreamState = {
       isStreaming: true,
-      conversationId: activeConversationId,
+      conversationId: convId,
       messages: contextMessages,
       assistantMessageId,
       segCounter: 0,
@@ -1479,7 +1512,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         use_skills: true,
         kb_ids: selectedKbIds,
         enable_thinking: enableThinking,
-        conversation_id: activeConversationId,
+        conversation_id: convId,
         minimal_mode: minimalMode,
       })
 
@@ -1495,15 +1528,17 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         }
       }
       setIsStreaming(false)
+      isStreamingRef.current = false
     }
   }
 
   const handleCommand = (command: string) => {
     if (command === '/clear') {
-      if (activeConversationId) {
-        setConvMessages(activeConversationId, [])
+      const convId = activeConversationIdRef.current
+      if (convId) {
+        setConvMessages(convId, [])
         window.electronAPI.conversation.update({
-          id: activeConversationId,
+          id: convId,
           messages_json: JSON.stringify([]),
           message_count: 0,
         }).catch(() => {})
@@ -1514,19 +1549,21 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleToggleMinimalMode = useCallback((enabled: boolean) => {
-    if (!activeConversationId) return
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
     if (currentMsgs.length > 0) return
     setMinimalMode(enabled)
     window.electronAPI.conversation.update({
-      id: activeConversationId,
+      id: convId,
       minimal_mode: enabled,
     }).catch(() => {})
-  }, [activeConversationId])
+  }, [])
 
   const handleSwitchBranch = (msgId: string, branchIndex: number) => {
-    if (!activeConversationId) return
-    updateConvMessages(activeConversationId, (prev) => {
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    updateConvMessages(convId, (prev) => {
       const newMessages = prev.map(m => {
         if (m.id !== msgId) return m
         const branches = m.branches || []
@@ -1535,7 +1572,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         return { ...m, activeBranchIndex: branchIndex }
       })
       window.electronAPI.conversation.update({
-        id: activeConversationId,
+        id: convId,
         messages_json: JSON.stringify(newMessages),
         message_count: newMessages.length,
       }).catch(() => {})
@@ -1584,14 +1621,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleCloseComparison = () => {
-    if (!activeConversationId) return
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
 
     const firstId = comparisonMessageIds[0]
     const firstMsg = currentMsgs.find(m => m.id === firstId)
 
     if (firstMsg?._comparisonBranchMsgs) {
-      updateConvMessages(activeConversationId, (prev) =>
+      updateConvMessages(convId, (prev) =>
         prev.map(m => {
           if (m.id !== firstId) return m
           const { _comparisonBranchMsgs, ...rest } = m
@@ -1615,7 +1653,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    aggregateComparisonMessages(activeConversationId, comparisonMessageIds)
+    aggregateComparisonMessages(convId, comparisonMessageIds)
 
     setIsComparisonMode(false)
     setComparisonMessageIds([])
@@ -1625,13 +1663,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     if (!pendingComparisonAggregation || isStreaming) return
     const ids = pendingComparisonAggregation
     setPendingComparisonAggregation(null)
-    if (!activeConversationId) return
-    aggregateComparisonMessages(activeConversationId, ids)
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    aggregateComparisonMessages(convId, ids)
   }, [isStreaming, pendingComparisonAggregation])
 
   const handleOpenComparison = (msgId: string) => {
-    if (!activeConversationId) return
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
     const targetMsg = currentMsgs.find(m => m.id === msgId)
     if (!targetMsg || !targetMsg.branches || targetMsg.branches.length === 0) return
 
@@ -1670,8 +1710,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setIsComparisonMode(true)
     setComparisonMessageIds([msgId])
 
-    updateConvMessages(activeConversationId, () => {
-      const msgs = conversationMessagesRef.current.get(activeConversationId) || []
+    updateConvMessages(convId, () => {
+      const msgs = conversationMessagesRef.current.get(convId) || []
       return msgs.map(m => {
         if (m.id !== msgId) return m
         return { ...m, _comparisonBranchMsgs: allBranchMsgs }
@@ -1680,8 +1720,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const getComparisonMessages = (): MessageWithThought[] => {
-    if (!activeConversationId || comparisonMessageIds.length === 0) return []
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId) || []
+    const convId = activeConversationIdRef.current
+    if (!convId || comparisonMessageIds.length === 0) return []
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
 
     const firstId = comparisonMessageIds[0]
     const firstMsg = currentMsgs.find(m => m.id === firstId)
@@ -1695,7 +1736,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleExportConversation = (convId?: string) => {
-    const targetConvId = convId || activeConversationId
+    const targetConvId = convId || activeConversationIdRef.current
     if (!targetConvId) return
     const currentMsgs = conversationMessagesRef.current.get(targetConvId) || []
     if (currentMsgs.length === 0) return
@@ -1719,9 +1760,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const handleStop = async () => {
-    if (!activeConversationId) return
+    const convId = activeConversationIdRef.current
+    if (!convId) return
     const activeStreamEntries = Array.from(streamStatesRef.current.entries()).filter(
-      ([_, s]) => s.conversationId === activeConversationId && s.isStreaming
+      ([_, s]) => s.conversationId === convId && s.isStreaming
     )
     for (const [sessionId, streamState] of activeStreamEntries) {
       streamState.isStreaming = false
@@ -1732,10 +1774,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       } catch (e) { console.error('Failed to abort chat:', e) }
     }
     setIsStreaming(false)
-    if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === activeConversationId) {
+    isStreamingRef.current = false
+    if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === convId) {
       localStorage.removeItem(activeConvIdStorageKey)
     }
-    updateConvMessages(activeConversationId, (prev) =>
+    updateConvMessages(convId, (prev) =>
       prev.map((m) =>
         m.isStreaming
           ? {
@@ -1746,10 +1789,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           : m
       )
     )
-    const currentMsgs = conversationMessagesRef.current.get(activeConversationId)
+    const currentMsgs = conversationMessagesRef.current.get(convId)
     if (currentMsgs) {
       window.electronAPI.conversation.update({
-        id: activeConversationId,
+        id: convId,
         messages_json: JSON.stringify(currentMsgs),
         message_count: currentMsgs.length,
       }).catch(() => {})
@@ -1759,13 +1802,14 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
 
   const handleToggleSegment = (msgId: string, segId: string) => {
-    if (!activeConversationId) return
+    const convId = activeConversationIdRef.current
+    if (!convId) return
 
     const branchMatch = msgId.match(/^(.+)_branch_(\d+)$/)
     if (branchMatch) {
       const originalMsgId = branchMatch[1]
       const branchIndex = parseInt(branchMatch[2], 10)
-      updateConvMessages(activeConversationId, (prev) => prev.map(m => {
+      updateConvMessages(convId, (prev) => prev.map(m => {
         if (m.id !== originalMsgId || !m._comparisonBranchMsgs) return m
         const newBranchMsgs = m._comparisonBranchMsgs.map((bm, idx) => {
           if (idx !== branchIndex || !bm.segments) return bm
@@ -1781,7 +1825,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    updateConvMessages(activeConversationId, (prev) => prev.map(m => {
+    updateConvMessages(convId, (prev) => prev.map(m => {
       if (m.id !== msgId) return m
 
       const activeIdx = m.activeBranchIndex
@@ -1789,16 +1833,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       if (brs && brs.length > 0 && activeIdx !== undefined && activeIdx < brs.length) {
         return {
           ...m,
-          branches: brs.map((b, i) => {
-            if (i !== activeIdx || !b.segments) return b
-            return {
-              ...b,
-              segments: b.segments.map(s =>
-                s.id === segId ? { ...s, collapsed: !s.collapsed } : s
-              ),
-            }
-          }),
-        }
+        branches: brs.map((b, i) => {
+          if (i !== activeIdx || !b.segments) return b
+          return {
+            ...b,
+            segments: b.segments.map(s =>
+              s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+            ),
+          }
+        }),
+      }
       }
 
       if (!m.segments) return m
