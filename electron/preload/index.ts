@@ -49,7 +49,9 @@ import type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
+  KMSAgentSearchParams,
   KMSGetFileContentParams,
+  KMSMCPSetConfigParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -262,6 +264,7 @@ const electronAPI = {
     updateDir: (params: KMSUpdateDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_DIR, params),
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
+    agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
@@ -277,6 +280,14 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
     },
+  },
+
+  kmsMcp: {
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_START),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_STOP),
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
+    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
+    setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
   },
 
   interaction: {

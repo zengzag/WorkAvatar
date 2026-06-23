@@ -46,6 +46,29 @@ interface KMSStats {
   index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
 }
 
+export interface AgentSearchSource {
+  fileId: string
+  fileName: string
+  filePath: string
+  paragraphId?: string
+  paragraphTitle?: string
+  snippet: string
+  startLine?: number
+  endLine?: number
+  startOffset?: number
+  endOffset?: number
+  score?: number
+}
+
+export interface AgentSearchResult {
+  queryType: 'locate' | 'concept' | 'trend' | 'analysis'
+  queryTypeLabel: string
+  conclusion: string
+  sources: AgentSearchSource[]
+  searchRounds: number
+  searchTrace: string[]
+}
+
 export interface SearchFilters {
   dirIds?: string[]
   fileExtensions?: string[]
@@ -56,8 +79,9 @@ export interface SearchFilters {
 export function useKMS() {
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid'>('keyword')
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('keyword')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
   const [isSearching, setIsSearching] = useState(false)
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null)
   const [isIndexing, setIsIndexing] = useState(false)
@@ -121,27 +145,50 @@ export function useKMS() {
   }, [loadDirs, loadStats])
 
   // 搜索
-  const search = useCallback(async (query: string, mode?: 'keyword' | 'semantic' | 'hybrid', filters?: SearchFilters) => {
+  const search = useCallback(async (query: string, mode?: 'keyword' | 'semantic' | 'hybrid' | 'ai', filters?: SearchFilters) => {
     if (!query.trim()) {
       setSearchResults([])
+      setAgentResult(null)
       return
     }
     setIsSearching(true)
     try {
-      const useSemantic = mode === 'semantic' || mode === 'hybrid'
-      const results = await window.electronAPI.kms.search({
-        query,
-        useSemantic,
-        topK: 20,
-        fileExtensions: filters?.fileExtensions,
-        timeRangeStart: filters?.timeRangeStart,
-        timeRangeEnd: filters?.timeRangeEnd,
-        dirIds: filters?.dirIds,
-      })
-      setSearchResults(results || [])
+      if (mode === 'ai') {
+        // AI 智能检索：通过子智能体自主规划+提纯
+        const result = await window.electronAPI.kms.agentSearch({
+          query,
+          topK: 10,
+          maxRounds: 3,
+          dirIds: filters?.dirIds,
+          fileExtensions: filters?.fileExtensions,
+          timeRangeStart: filters?.timeRangeStart,
+          timeRangeEnd: filters?.timeRangeEnd,
+        })
+        if (result && !result.error) {
+          setAgentResult(result)
+          setSearchResults([])
+        } else {
+          setAgentResult(null)
+          setSearchResults([])
+        }
+      } else {
+        const useSemantic = mode === 'semantic' || mode === 'hybrid'
+        const results = await window.electronAPI.kms.search({
+          query,
+          useSemantic,
+          topK: 20,
+          fileExtensions: filters?.fileExtensions,
+          timeRangeStart: filters?.timeRangeStart,
+          timeRangeEnd: filters?.timeRangeEnd,
+          dirIds: filters?.dirIds,
+        })
+        setAgentResult(null)
+        setSearchResults(results || [])
+      }
     } catch (err) {
       console.error('KMS search failed:', err)
       setSearchResults([])
+      setAgentResult(null)
     } finally {
       setIsSearching(false)
     }
@@ -258,6 +305,7 @@ export function useKMS() {
     searchMode,
     setSearchMode,
     searchResults,
+    agentResult,
     isSearching,
     indexProgress,
     isIndexing,

@@ -4,6 +4,7 @@ import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress } from './kms-index-manager.service'
+import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import LLMClientService from '../llm-client.service'
 import FileParserService from '../file-parser.service'
 import { generateId } from '../common-utils'
@@ -186,6 +187,14 @@ class KMSService {
     crawler.logFileAccess(fileId, 'summary_view')
 
     return this.db.prepare('SELECT * FROM kms_file_summaries WHERE file_id = ?').get(fileId)
+  }
+
+  /**
+   * AI 智能检索（通过检索子智能体）
+   * 自主规划检索路径、多轮补充查找、筛选提纯内容，输出核心结论+精准溯源
+   */
+  async agentSearch(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
+    return KMSSearchAgentService.getInstance().search(query, options)
   }
 
   /**

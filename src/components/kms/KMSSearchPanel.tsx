@@ -7,12 +7,13 @@ import {
 import {
   SearchOutlined, FileTextOutlined, FilePdfOutlined, FileExcelOutlined,
   FileWordOutlined, FileMarkdownOutlined, FileOutlined, CodeOutlined,
-  FolderOpenOutlined, EyeOutlined, FilterOutlined,
+  FolderOpenOutlined, EyeOutlined, FilterOutlined, RobotOutlined,
+  BulbOutlined, CompressOutlined, RiseOutlined, AimOutlined,
 } from '@ant-design/icons'
 import HighlightText from './HighlightText'
-import type { SearchFilters } from '../../hooks/useKMS'
+import type { SearchFilters, AgentSearchResult, AgentSearchSource } from '../../hooks/useKMS'
 
-const { Text } = Typography
+const { Text, Paragraph } = Typography
 const { RangePicker } = DatePicker
 
 interface HighlightRange {
@@ -51,11 +52,12 @@ interface IndexDir {
 interface KMSSearchPanelProps {
   searchQuery: string
   onSearchQueryChange: (query: string) => void
-  searchMode: 'keyword' | 'semantic' | 'hybrid'
-  onSearchModeChange: (mode: 'keyword' | 'semantic' | 'hybrid') => void
+  searchMode: 'keyword' | 'semantic' | 'hybrid' | 'ai'
+  onSearchModeChange: (mode: 'keyword' | 'semantic' | 'hybrid' | 'ai') => void
   searchResults: SearchResult[]
+  agentResult: AgentSearchResult | null
   isSearching: boolean
-  onSearch: (query: string, mode?: 'keyword' | 'semantic' | 'hybrid', filters?: SearchFilters) => void
+  onSearch: (query: string, mode?: 'keyword' | 'semantic' | 'hybrid' | 'ai', filters?: SearchFilters) => void
   dirs: IndexDir[]
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
@@ -68,6 +70,13 @@ const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
   paragraph: { color: 'orange', labelKey: 'kms.matchParagraph' },
   content: { color: 'purple', labelKey: 'kms.matchContent' },
   hybrid: { color: 'cyan', labelKey: 'kms.matchHybrid' },
+}
+
+const QUERY_TYPE_CONFIG: Record<string, { color: string; icon: React.ReactNode; labelKey: string }> = {
+  locate: { color: 'blue', icon: <AimOutlined />, labelKey: 'kms.queryTypeLocate' },
+  concept: { color: 'green', icon: <BulbOutlined />, labelKey: 'kms.queryTypeConcept' },
+  trend: { color: 'orange', icon: <RiseOutlined />, labelKey: 'kms.queryTypeTrend' },
+  analysis: { color: 'purple', icon: <CompressOutlined />, labelKey: 'kms.queryTypeAnalysis' },
 }
 
 const FILE_FORMAT_OPTIONS = [
@@ -116,6 +125,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   searchMode,
   onSearchModeChange,
   searchResults,
+  agentResult,
   isSearching,
   onSearch,
   dirs,
@@ -174,6 +184,24 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       setFilterTimeRange(null)
     }
   }, [])
+
+  const handleSourcePreview = useCallback((source: AgentSearchSource) => {
+    // 将 AgentSearchSource 转换为 SearchResult 格式以便预览
+    onPreview({
+      file_id: source.fileId,
+      file_name: source.fileName,
+      file_path: source.filePath,
+      paragraph_id: source.paragraphId,
+      paragraph_title: source.paragraphTitle,
+      text: source.snippet,
+      match_type: 'content',
+      start_offset: source.startOffset,
+      end_offset: source.endOffset,
+      start_line: source.startLine,
+      end_line: source.endLine,
+      score: source.score,
+    })
+  }, [onPreview])
 
   const renderScoreBar = (score?: number) => {
     if (score === undefined || score === null) return null
@@ -308,6 +336,180 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     )
   }
 
+  const renderAgentResult = () => {
+    if (!agentResult) return null
+
+    const typeConfig = QUERY_TYPE_CONFIG[agentResult.queryType] || QUERY_TYPE_CONFIG.locate
+
+    return (
+      <div>
+        {/* AI 结论卡片 */}
+        <Card
+          size="small"
+          style={{
+            marginBottom: 12,
+            borderLeft: `3px solid ${token.colorPrimary}`,
+            backgroundColor: token.colorPrimaryBg,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Space size={6}>
+              <RobotOutlined style={{ color: token.colorPrimary }} />
+              <Text strong style={{ fontSize: 13 }}>
+                {t('kms.aiConclusion')}
+              </Text>
+              <Tag color={typeConfig.color} style={{ fontSize: 11 }}>
+                {typeConfig.icon}
+                <span style={{ marginLeft: 4 }}>{t(typeConfig.labelKey)}</span>
+              </Tag>
+            </Space>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {t('kms.searchRounds', { count: agentResult.searchRounds })}
+            </Text>
+          </div>
+
+          <Paragraph
+            style={{
+              fontSize: 13,
+              lineHeight: 1.7,
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {agentResult.conclusion}
+          </Paragraph>
+        </Card>
+
+        {/* 溯源信息 */}
+        {agentResult.sources.length > 0 && (
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              {t('kms.sources', { count: agentResult.sources.length })}
+            </Text>
+            {agentResult.sources.map((source, index) => (
+              <Card
+                key={`${source.fileId}-${index}`}
+                size="small"
+                style={{
+                  marginBottom: 6,
+                  borderLeft: `2px solid ${token.colorBorder}`,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Space size={6} style={{ flex: 1, minWidth: 0 }}>
+                    <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+                      [{index + 1}]
+                    </Text>
+                    {getFileIcon(source.fileName)}
+                    <Text
+                      strong
+                      style={{ fontSize: 12, cursor: 'pointer' }}
+                      ellipsis
+                      onClick={() => handleSourcePreview(source)}
+                      title={t('kms.preview')}
+                    >
+                      {source.fileName}
+                    </Text>
+                    {source.paragraphTitle && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        {source.paragraphTitle}
+                      </Text>
+                    )}
+                  </Space>
+                  <Space size={2}>
+                    <Tooltip title={t('kms.preview')}>
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<EyeOutlined />}
+                        onClick={() => handleSourcePreview(source)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t('kms.openFile')}>
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<FileOutlined />}
+                        onClick={() => onOpenFile(source.filePath)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t('kms.openDir')}>
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<FolderOpenOutlined />}
+                        onClick={() => onOpenFileDir(source.filePath)}
+                      />
+                    </Tooltip>
+                  </Space>
+                </div>
+
+                <Tooltip title={source.filePath}>
+                  <Text
+                    type="secondary"
+                    style={{ fontSize: 10, display: 'block', marginTop: 4 }}
+                    ellipsis
+                  >
+                    {source.filePath}
+                  </Text>
+                </Tooltip>
+
+                <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                  {source.startLine !== undefined && source.endLine !== undefined && (
+                    <Text type="secondary" style={{ fontSize: 10 }}>
+                      L{source.startLine}-{source.endLine}
+                    </Text>
+                  )}
+                  {source.startOffset !== undefined && source.endOffset !== undefined && (
+                    <Text type="secondary" style={{ fontSize: 10 }}>
+                      off:{source.startOffset}-{source.endOffset}
+                    </Text>
+                  )}
+                </div>
+
+                {source.snippet && (
+                  <div style={{
+                    fontSize: 11,
+                    color: token.colorTextTertiary,
+                    marginTop: 4,
+                    lineHeight: 1.5,
+                    maxHeight: 40,
+                    overflow: 'hidden',
+                  }}>
+                    {source.snippet}
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {/* 检索过程（可折叠） */}
+        {agentResult.searchTrace.length > 0 && (
+          <Collapse
+            size="small"
+            style={{ marginTop: 12 }}
+            items={[{
+              key: 'trace',
+              label: (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {t('kms.searchTrace')}
+                </Text>
+              ),
+              children: (
+                <div style={{ fontSize: 11, color: token.colorTextTertiary, lineHeight: 1.6 }}>
+                  {agentResult.searchTrace.map((trace, i) => (
+                    <div key={i}>• {trace}</div>
+                  ))}
+                </div>
+              ),
+            }]}
+          />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 搜索输入栏 */}
@@ -323,7 +525,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
             <Button
               type="primary"
               size="small"
-              icon={<SearchOutlined />}
+              icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
               onClick={handleSearch}
               loading={isSearching}
             >
@@ -346,6 +548,10 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
           <Radio.Button value="keyword">{t('kms.keywordSearch')}</Radio.Button>
           <Radio.Button value="semantic">{t('kms.semanticSearch')}</Radio.Button>
           <Radio.Button value="hybrid">{t('kms.hybridSearch')}</Radio.Button>
+          <Radio.Button value="ai">
+            <RobotOutlined style={{ marginRight: 4 }} />
+            {t('kms.aiSearch')}
+          </Radio.Button>
         </Radio.Group>
 
         <Collapse
@@ -414,8 +620,19 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {isSearching ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
-            <Spin size="large" />
+            <Spin size="large" tip={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
           </div>
+        ) : searchMode === 'ai' ? (
+          agentResult ? (
+            <div>
+              {renderAgentResult()}
+            </div>
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={t('kms.noAiResult')}
+            />
+          )
         ) : searchResults.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}

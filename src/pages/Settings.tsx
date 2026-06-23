@@ -6,6 +6,7 @@ import {
   RobotOutlined,
   GlobalOutlined,
   CloudServerOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +19,7 @@ import {
   DefaultModelSettings,
   InternetSearchSettings,
   KBMCPSettings,
+  KMSMCPSettings,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -54,6 +56,15 @@ const Settings: React.FC = () => {
       children: <KBMCPSettings />,
     },
     {
+      key: 'kmsMcp',
+      label: (
+        <span>
+          <SearchOutlined /> {t('settings.tabKmsMcp')}
+        </span>
+      ),
+      children: <KMSMCPSettings />,
+    },
+    {
       key: 'storage',
       label: (
         <span>
@@ -87,7 +98,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'kbMcp', 'storage', 'appearance', 'internetSearch', 'about']
+  const validTabs = ['llm', 'defaultModel', 'kbMcp', 'kmsMcp', 'storage', 'appearance', 'internetSearch', 'about']
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (

@@ -4,9 +4,12 @@ import type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
+  KMSAgentSearchParams,
   KMSGetFileContentParams,
+  KMSMCPSetConfigParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
+import KMSMCPService from '../services/kms/kms-mcp.service'
 import type { IndexProgress } from '../services/kms/kms-index-manager.service'
 import { createLogger } from '../services/logger'
 
@@ -32,6 +35,7 @@ function safeHandle(channel: string, handler: (...args: any[]) => Promise<any>):
 
 export function registerKMSHandlers(): void {
   const kmsService = KMSService.getInstance()
+  const kmsMcpService = KMSMCPService.getInstance()
 
   // 索引目录管理
   safeHandle(IPC_CHANNELS.KMS_LIST_DIRS, async () => {
@@ -61,6 +65,18 @@ export function registerKMSHandlers(): void {
       timeRangeStart: params.timeRangeStart,
       timeRangeEnd: params.timeRangeEnd,
       fileExtensions: params.fileExtensions,
+    })
+  })
+
+  // AI 智能检索（子智能体）
+  safeHandle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (params: KMSAgentSearchParams) => {
+    return kmsService.agentSearch(params.query, {
+      maxRounds: params.maxRounds,
+      topK: params.topK,
+      dirIds: params.dirIds,
+      fileExtensions: params.fileExtensions,
+      timeRangeStart: params.timeRangeStart,
+      timeRangeEnd: params.timeRangeEnd,
     })
   })
 
@@ -143,5 +159,27 @@ export function registerKMSHandlers(): void {
         message: progress.message,
       })
     }
+  })
+
+  // ==================== KMS MCP 服务 ====================
+  safeHandle(IPC_CHANNELS.KMS_MCP_START, async () => {
+    return kmsMcpService.start()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_MCP_STOP, async () => {
+    return kmsMcpService.stop()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_MCP_GET_STATUS, async () => {
+    return kmsMcpService.getStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_MCP_GET_CONFIG, async () => {
+    return kmsMcpService.getConfig()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_MCP_SET_CONFIG, async (params: KMSMCPSetConfigParams) => {
+    kmsMcpService.updateConfig(params)
+    return { success: true }
   })
 }

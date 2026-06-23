@@ -67,5 +67,7 @@ export type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
+  KMSAgentSearchParams,
   KMSGetFileContentParams,
+  KMSMCPSetConfigParams,
 } from './channels/kms'

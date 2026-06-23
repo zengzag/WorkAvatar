@@ -4,6 +4,7 @@ export const KMS_CHANNELS = {
   KMS_UPDATE_DIR: 'kms:update-dir',
   KMS_DELETE_DIR: 'kms:delete-dir',
   KMS_SEARCH: 'kms:search',
+  KMS_AGENT_SEARCH: 'kms:agent-search',
   KMS_GET_FILE_CONTENT: 'kms:get-file-content',
   KMS_GET_FILE_SUMMARY: 'kms:get-file-summary',
   KMS_BUILD_INDEX: 'kms:build-index',
@@ -15,6 +16,12 @@ export const KMS_CHANNELS = {
   KMS_OPEN_FILE: 'kms:open-file',
   KMS_OPEN_FILE_DIR: 'kms:open-file-dir',
   KMS_GET_FILE_FULL_CONTENT: 'kms:get-file-full-content',
+  // KMS MCP 服务
+  KMS_MCP_START: 'kms-mcp:start',
+  KMS_MCP_STOP: 'kms-mcp:stop',
+  KMS_MCP_GET_STATUS: 'kms-mcp:get-status',
+  KMS_MCP_GET_CONFIG: 'kms-mcp:get-config',
+  KMS_MCP_SET_CONFIG: 'kms-mcp:set-config',
 } as const
 
 export interface KMSAddDirParams {
@@ -44,6 +51,16 @@ export interface KMSSearchParams {
   dirIds?: string[]
 }
 
+export interface KMSAgentSearchParams {
+  query: string
+  maxRounds?: number
+  topK?: number
+  dirIds?: string[]
+  fileExtensions?: string[]
+  timeRangeStart?: number
+  timeRangeEnd?: number
+}
+
 export interface KMSGetFileContentParams {
   fileId: string
   paragraphId?: string
@@ -51,4 +68,10 @@ export interface KMSGetFileContentParams {
   endOffset?: number
   startLine?: number
   maxChars?: number
+}
+
+export interface KMSMCPSetConfigParams {
+  enabled?: boolean
+  port?: number
+  apiKey?: string
 }
