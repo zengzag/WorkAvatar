@@ -301,11 +301,11 @@ class KMSSearchEngineService {
     const cached = this.getFromCache(cacheKey)
     if (cached) return cached
 
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
-    const escapedQuery = queryWords.map(w => `${w}*`).join(' OR ')
+    // 预处理查询：提取关键词并构建 FTS5 查询表达式
+    const queryWords = this.extractQueryKeywords(query)
+    if (queryWords.length === 0) return []
 
-    if (!escapedQuery) return []
-
+    const ftsQuery = this.buildFtsQuery(queryWords)
     const { whereClause, params } = this.buildFtsWhereClause(options)
 
     try {
@@ -317,14 +317,171 @@ class KMSSearchEngineService {
         WHERE kms_fts MATCH ? AND ${whereClause}
         ORDER BY fts.rank
         LIMIT ?
-      `).all(escapedQuery, ...params, topK * 2) as any[]
+      `).all(ftsQuery, ...params, topK * 2) as any[]
 
-      const results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
+      let results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
+
+      // FTS5 无结果时，降级到 LIKE 模糊匹配（参考搜索引擎的容错机制）
+      if (results.length === 0) {
+        results = this.likeSearch(query, options, topK)
+      }
+
       this.putToCache(cacheKey, results)
       return results
     } catch {
-      return this.fallbackKeywordSearch(query, options)
+      // FTS5 查询语法错误时，降级到 LIKE 模糊匹配
+      const results = this.likeSearch(query, options, topK)
+      this.putToCache(cacheKey, results)
+      return results
     }
+  }
+
+  /**
+   * 从查询文本中提取关键词（支持中英文混合）
+   * - 英文/数字：按空格和标点分词
+   * - 中文：按2-4字符粒度切分为bigram（参考搜索引擎中文分词的简化方案）
+   */
+  private extractQueryKeywords(query: string): string[] {
+    const lower = query.toLowerCase().trim()
+    if (!lower) return []
+
+    // 中文停用词
+    const stopWords = new Set([
+      '的', '了', '和', '是', '在', '我', '有', '这', '不', '为', '之', '与', '或', '也', '都',
+      '如何', '怎么', '什么', '为什么', '哪里', '哪个', '吗', '呢', '吧', '啊', '哦', '嗯',
+      '可以', '能够', '应该', '需要', '关于', '对于', '通过', '进行', '以及', '但是', '因为',
+      'the', 'a', 'an', 'is', 'are', 'was', 'were', 'how', 'what', 'why', 'where', 'which', 'to', 'of', 'in', 'on', 'for', 'and', 'or',
+    ])
+
+    const keywords = new Set<string>()
+
+    // 1. 先按空格/标点分词（处理英文和已分词的中文）
+    const tokens = lower.split(/[\s,，。.!！?？;；:：、""''()（）\[\]【】{}]+/).filter(t => t.length > 0)
+    for (const token of tokens) {
+      if (stopWords.has(token)) continue
+      // 纯英文/数字 token，长度>1 才保留
+      if (/^[a-z0-9_\-\.]+$/i.test(token)) {
+        if (token.length > 1) keywords.add(token)
+        continue
+      }
+      // 中文 token：切分为 bigram（2-gram）以提升 FTS5 匹配率
+      const chars = token.replace(/[^\u4e00-\u9fa5a-z0-9]/gi, '')
+      if (chars.length <= 2) {
+        if (chars.length > 0 && !stopWords.has(chars)) keywords.add(chars)
+      } else if (chars.length <= 4) {
+        // 2-4字符：整体作为一个关键词
+        keywords.add(chars)
+        // 同时加入 bigram 提升召回率
+        for (let i = 0; i < chars.length - 1; i++) {
+          const bigram = chars.substring(i, i + 2)
+          if (!stopWords.has(bigram)) keywords.add(bigram)
+        }
+      } else {
+        // 长文本：切分为 bigram
+        for (let i = 0; i < chars.length - 1; i++) {
+          const bigram = chars.substring(i, i + 2)
+          if (!stopWords.has(bigram)) keywords.add(bigram)
+        }
+        // 同时尝试提取3-gram 提升精确度
+        for (let i = 0; i < chars.length - 2; i++) {
+          const trigram = chars.substring(i, i + 3)
+          keywords.add(trigram)
+        }
+      }
+    }
+
+    return Array.from(keywords).filter(k => k.length > 0)
+  }
+
+  /**
+   * 构建 FTS5 MATCH 查询表达式
+   * 使用 OR 连接所有关键词，每个关键词加前缀匹配 *
+   */
+  private buildFtsQuery(keywords: string[]): string {
+    // FTS5 中特殊字符需要转义或用引号包裹
+    const escaped = keywords.map(k => {
+      // 用双引号包裹，避免 FTS5 语法错误
+      return `"${k.replace(/"/g, '""')}"*`
+    })
+    return escaped.join(' OR ')
+  }
+
+  /**
+   * LIKE 模糊匹配（FTS5 无结果时的降级方案）
+   * 参考搜索引擎的容错机制，对每个关键词做子串匹配
+   */
+  private likeSearch(query: string, options: SearchOptions | undefined, topK: number): SearchResult[] {
+    const queryWords = this.extractQueryKeywords(query)
+    if (queryWords.length === 0) return []
+
+    const { whereClause, params } = this.buildLikeWhereClause(options)
+
+    // 取所有索引记录，用 LIKE 匹配
+    const rows = this.db.prepare(`
+      SELECT si.* FROM kms_search_index si
+      JOIN kms_files f ON si.file_id = f.id
+      WHERE ${whereClause}
+    `).all(...params) as any[]
+
+    // 对每条记录计算匹配分数
+    const scored = rows.map(row => {
+      const text = `${row.title || ''} ${row.content || ''} ${row.keywords_json || ''}`.toLowerCase()
+      let score = 0
+      let matchCount = 0
+      for (const word of queryWords) {
+        if (text.includes(word)) {
+          score += word.length * 2  // 长词权重更高
+          matchCount++
+        }
+      }
+      // 匹配的关键词越多，分数越高（乘以匹配率）
+      const matchRatio = matchCount / queryWords.length
+      return { row, score: score * (0.5 + matchRatio * 0.5), matchCount }
+    }).filter(r => r.score > 0)
+
+    scored.sort((a, b) => b.score - a.score)
+    const topResults = scored.slice(0, topK).map(s => s.row)
+
+    return this.convertFtsResultsToSearchResults(topResults, topK, queryWords)
+  }
+
+  /**
+   * 构建 LIKE 查询的 WHERE 子句
+   */
+  private buildLikeWhereClause(options?: SearchOptions): { whereClause: string; params: any[] } {
+    let whereClause = '1=1'
+    const params: any[] = []
+
+    if (options?.fileIds && options.fileIds.length > 0) {
+      const placeholders = options.fileIds.map(() => '?').join(',')
+      whereClause += ` AND si.file_id IN (${placeholders})`
+      params.push(...options.fileIds)
+    }
+
+    if (options?.sourceTypes && options.sourceTypes.length > 0) {
+      const placeholders = options.sourceTypes.map(() => '?').join(',')
+      whereClause += ` AND si.source_type IN (${placeholders})`
+      params.push(...options.sourceTypes)
+    }
+
+    if (options?.timeRangeStart || options?.timeRangeEnd) {
+      if (options.timeRangeStart) {
+        whereClause += ' AND f.modified_time >= ?'
+        params.push(options.timeRangeStart)
+      }
+      if (options.timeRangeEnd) {
+        whereClause += ' AND f.modified_time <= ?'
+        params.push(options.timeRangeEnd)
+      }
+    }
+
+    if (options?.fileExtensions && options.fileExtensions.length > 0) {
+      const placeholders = options.fileExtensions.map(() => '?').join(',')
+      whereClause += ` AND f.file_ext IN (${placeholders})`
+      params.push(...options.fileExtensions)
+    }
+
+    return { whereClause, params }
   }
 
   /**
@@ -375,7 +532,7 @@ class KMSSearchEngineService {
     const keywordWeight = 0.6
     const vectorWeight = 0.4
     const useVector = options?.useVector !== false && queryEmbedding !== null
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 0)
+    const queryWords = this.extractQueryKeywords(query)
 
     // FTS5 关键词搜索
     const ftsResults = this.ftsSearch(query, { ...options, topK: topK * 2 })
@@ -685,44 +842,6 @@ class KMSSearchEngineService {
     }
 
     return results.slice(0, topK)
-  }
-
-  private fallbackKeywordSearch(query: string, options?: SearchOptions): SearchResult[] {
-    const topK = options?.topK || 10
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 1)
-    if (queryWords.length === 0) return []
-
-    let whereClause = '1=1'
-    const params: any[] = []
-
-    if (options?.fileIds && options.fileIds.length > 0) {
-      const placeholders = options.fileIds.map(() => '?').join(',')
-      whereClause += ` AND file_id IN (${placeholders})`
-      params.push(...options.fileIds)
-    }
-
-    if (options?.sourceTypes && options.sourceTypes.length > 0) {
-      const placeholders = options.sourceTypes.map(() => '?').join(',')
-      whereClause += ` AND source_type IN (${placeholders})`
-      params.push(...options.sourceTypes)
-    }
-
-    const rows = this.db.prepare(
-      `SELECT * FROM kms_search_index WHERE ${whereClause}`
-    ).all(...params) as any[]
-
-    const scored = rows.map(row => {
-      const text = `${row.title} ${row.content} ${row.keywords_json || ''}`.toLowerCase()
-      let score = 0
-      for (const word of queryWords) {
-        const count = (text.match(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length
-        score += count
-      }
-      return { ...row, keywordScore: score }
-    }).filter(r => r.keywordScore > 0)
-
-    scored.sort((a, b) => b.keywordScore - a.keywordScore)
-    return this.convertFtsResultsToSearchResults(scored.slice(0, topK), topK, queryWords)
   }
 
   private loadAllEmbeddings(): EmbeddingEntry[] {

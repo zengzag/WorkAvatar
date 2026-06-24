@@ -7,6 +7,8 @@ import type {
   KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
+  KMSGetFileSummariesParams,
+  KMSSetSettingsParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -68,16 +70,30 @@ export function registerKMSHandlers(): void {
     })
   })
 
-  // AI 智能检索（子智能体）
-  safeHandle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (params: KMSAgentSearchParams) => {
-    return kmsService.agentSearch(params.query, {
-      maxRounds: params.maxRounds,
-      topK: params.topK,
-      dirIds: params.dirIds,
-      fileExtensions: params.fileExtensions,
-      timeRangeStart: params.timeRangeStart,
-      timeRangeEnd: params.timeRangeEnd,
-    })
+  // AI 智能检索（带实时进度推送）
+  ipcMain.handle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (event, params: KMSAgentSearchParams) => {
+    try {
+      const sender = event.sender
+      const result = await kmsService.agentSearch(params.query, {
+        maxRounds: params.maxRounds,
+        topK: params.topK,
+        dirIds: params.dirIds,
+        fileExtensions: params.fileExtensions,
+        timeRangeStart: params.timeRangeStart,
+        timeRangeEnd: params.timeRangeEnd,
+        onProgress: (step) => {
+          try {
+            if (!sender.isDestroyed()) {
+              sender.send(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, step)
+            }
+          } catch {}
+        },
+      })
+      return JSON.parse(JSON.stringify(result))
+    } catch (err: any) {
+      logger.error(`IPC handler error [KMS_AGENT_SEARCH]:`, err?.message || err)
+      return { error: err?.message || 'Unknown error' }
+    }
   })
 
   // 文件内容
@@ -159,6 +175,25 @@ export function registerKMSHandlers(): void {
         message: progress.message,
       })
     }
+  })
+
+  // ==================== KMS 设置 ====================
+  safeHandle(IPC_CHANNELS.KMS_GET_SETTINGS, async () => {
+    return kmsService.getKmsSettings()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SET_SETTINGS, async (params: KMSSetSettingsParams) => {
+    kmsService.setKmsSettings(params)
+    return { success: true }
+  })
+
+  // ==================== 知识沉淀（摘要查看） ====================
+  safeHandle(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES, async () => {
+    return kmsService.getDirSummaries()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, async (params: KMSGetFileSummariesParams) => {
+    return kmsService.getFileSummaries(params)
   })
 
   // ==================== KMS MCP 服务 ====================

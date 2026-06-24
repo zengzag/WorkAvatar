@@ -1,15 +1,14 @@
 import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Drawer, Button, Typography, Space, theme } from 'antd'
-import { SettingOutlined, FolderOpenOutlined, DatabaseOutlined } from '@ant-design/icons'
-import { KMSSearchPanel, KMSDirPanel, KMSIndexPanel, KMSFilePreview } from '../components/kms'
+import { Drawer, Button, Segmented } from 'antd'
+import { SettingOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons'
+import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView } from '../components/kms'
 import { useKMS } from '../hooks/useKMS'
 
-const { Title } = Typography
+type ViewMode = 'search' | 'knowledge'
 
 const KMSPage: React.FC = () => {
   const { t } = useTranslation()
-  const { token } = theme.useToken()
 
   const {
     dirs,
@@ -19,10 +18,20 @@ const KMSPage: React.FC = () => {
     setSearchMode,
     searchResults,
     agentResult,
+    liveSteps,
     isSearching,
     indexProgress,
     isIndexing,
     stats,
+    // KMS 设置
+    kmsSettings,
+    saveKmsSettings,
+    // 知识沉淀
+    dirSummaries,
+    fileSummaries,
+    isLoadingSummaries,
+    loadDirSummaries,
+    loadFileSummaries,
     addDir,
     updateDir,
     deleteDir,
@@ -37,6 +46,7 @@ const KMSPage: React.FC = () => {
   } = useKMS()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('search')
 
   const handlePreview = useCallback((result: any) => {
     setPreviewFile(result)
@@ -64,14 +74,38 @@ const KMSPage: React.FC = () => {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 16 }}>
-      {/* 顶部工具栏 */}
+      {/* 顶部工具栏：视图切换 + 设置 */}
       <div style={{
         display: 'flex',
-        justifyContent: 'flex-end',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 12,
         flexShrink: 0,
       }}>
+        <Segmented
+          value={viewMode}
+          onChange={(v) => setViewMode(v as ViewMode)}
+          options={[
+            {
+              label: (
+                <span>
+                  <SearchOutlined style={{ marginRight: 4 }} />
+                  {t('kms.searchView')}
+                </span>
+              ),
+              value: 'search',
+            },
+            {
+              label: (
+                <span>
+                  <DatabaseOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledgeView')}
+                </span>
+              ),
+              value: 'knowledge',
+            },
+          ]}
+        />
         <Button
           type="text"
           icon={<SettingOutlined />}
@@ -81,64 +115,61 @@ const KMSPage: React.FC = () => {
         </Button>
       </div>
 
-      {/* 搜索面板（主体，占满剩余空间） */}
+      {/* 主体内容区 */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        <KMSSearchPanel
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          searchMode={searchMode}
-          onSearchModeChange={setSearchMode}
-          searchResults={searchResults}
-          agentResult={agentResult}
-          isSearching={isSearching}
-          onSearch={search}
-          dirs={dirs}
-          onOpenFile={openFile}
-          onOpenFileDir={openFileDir}
-          onPreview={handlePreview}
-        />
+        {viewMode === 'search' ? (
+          <KMSSearchPanel
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            searchMode={searchMode}
+            onSearchModeChange={setSearchMode}
+            searchResults={searchResults}
+            agentResult={agentResult}
+            liveSteps={liveSteps}
+            isSearching={isSearching}
+            onSearch={search}
+            dirs={dirs}
+            onOpenFile={openFile}
+            onOpenFileDir={openFileDir}
+            onPreview={handlePreview}
+          />
+        ) : (
+          <KMSKnowledgeView
+            dirs={dirs}
+            dirSummaries={dirSummaries}
+            fileSummaries={fileSummaries}
+            isLoadingSummaries={isLoadingSummaries}
+            onLoadDirSummaries={loadDirSummaries}
+            onLoadFileSummaries={loadFileSummaries}
+            onOpenFile={openFile}
+            onOpenFileDir={openFileDir}
+          />
+        )}
       </div>
 
-      {/* 设置抽屉 */}
+      {/* 设置抽屉（分Tab结构） */}
       <Drawer
         title={t('kms.settings')}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        width={520}
+        width={640}
         styles={{ body: { padding: 16, overflow: 'auto' } }}
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          {/* 目录管理 */}
-          <div>
-            <Space style={{ marginBottom: 12 }}>
-              <FolderOpenOutlined style={{ color: token.colorPrimary }} />
-              <Title level={5} style={{ margin: 0 }}>{t('kms.dirs')}</Title>
-            </Space>
-            <KMSDirPanel
-              dirs={dirs}
-              onUpdateDir={updateDir}
-              onDeleteDir={deleteDir}
-              onAddDir={addDir}
-            />
-          </div>
-
-          {/* 索引管理 */}
-          <div>
-            <Space style={{ marginBottom: 12 }}>
-              <DatabaseOutlined style={{ color: token.colorPrimary }} />
-              <Title level={5} style={{ margin: 0 }}>{t('kms.indexSettings')}</Title>
-            </Space>
-            <KMSIndexPanel
-              stats={stats}
-              isIndexing={isIndexing}
-              indexProgress={indexProgress}
-              onBuildIndex={buildIndex}
-              onIncrementalIndex={incrementalIndex}
-              onRebuildIndex={buildIndex}
-              onCancelIndex={cancelIndex}
-            />
-          </div>
-        </div>
+        <KMSSettingsPanel
+          settings={kmsSettings}
+          onSaveSettings={saveKmsSettings}
+          dirs={dirs}
+          onAddDir={addDir}
+          onUpdateDir={updateDir}
+          onDeleteDir={deleteDir}
+          stats={stats}
+          isIndexing={isIndexing}
+          indexProgress={indexProgress}
+          onBuildIndex={buildIndex}
+          onIncrementalIndex={incrementalIndex}
+          onRebuildIndex={buildIndex}
+          onCancelIndex={cancelIndex}
+        />
       </Drawer>
 
       {/* 文件预览弹窗 */}

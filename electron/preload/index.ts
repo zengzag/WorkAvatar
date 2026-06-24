@@ -52,6 +52,8 @@ import type {
   KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
+  KMSGetFileSummariesParams,
+  KMSSetSettingsParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -265,6 +267,11 @@ const electronAPI = {
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
     agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
+    onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
+      const handler = (_event: any, step: any) => callback(step)
+      ipcRenderer.on(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
+    },
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
@@ -280,6 +287,12 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
     },
+    // KMS 设置
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SETTINGS),
+    setSettings: (params: KMSSetSettingsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_SETTINGS, params),
+    // 知识沉淀（摘要查看）
+    getDirSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES),
+    getFileSummaries: (params: KMSGetFileSummariesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, params),
   },
 
   kmsMcp: {

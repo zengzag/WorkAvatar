@@ -11,7 +11,7 @@ import {
   BulbOutlined, CompressOutlined, RiseOutlined, AimOutlined,
 } from '@ant-design/icons'
 import HighlightText from './HighlightText'
-import type { SearchFilters, AgentSearchResult, AgentSearchSource } from '../../hooks/useKMS'
+import type { SearchFilters, AgentSearchResult, AgentSearchSource, SearchTraceStep } from '../../hooks/useKMS'
 
 const { Text, Paragraph } = Typography
 const { RangePicker } = DatePicker
@@ -56,6 +56,7 @@ interface KMSSearchPanelProps {
   onSearchModeChange: (mode: 'keyword' | 'semantic' | 'hybrid' | 'ai') => void
   searchResults: SearchResult[]
   agentResult: AgentSearchResult | null
+  liveSteps: SearchTraceStep[]
   isSearching: boolean
   onSearch: (query: string, mode?: 'keyword' | 'semantic' | 'hybrid' | 'ai', filters?: SearchFilters) => void
   dirs: IndexDir[]
@@ -126,6 +127,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   onSearchModeChange,
   searchResults,
   agentResult,
+  liveSteps,
   isSearching,
   onSearch,
   dirs,
@@ -484,8 +486,8 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
           </div>
         )}
 
-        {/* 检索过程（可折叠） */}
-        {agentResult.searchTrace.length > 0 && (
+        {/* 检索过程（可折叠，展示结构化中间步骤） */}
+        {((agentResult.searchSteps && agentResult.searchSteps.length > 0) || agentResult.searchTrace.length > 0) && (
           <Collapse
             size="small"
             style={{ marginTop: 12 }}
@@ -497,10 +499,48 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                 </Text>
               ),
               children: (
-                <div style={{ fontSize: 11, color: token.colorTextTertiary, lineHeight: 1.6 }}>
-                  {agentResult.searchTrace.map((trace, i) => (
-                    <div key={i}>• {trace}</div>
-                  ))}
+                <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                  {(agentResult.searchSteps || []).map((step, i) => {
+                    const typeColors: Record<string, string> = {
+                      info: token.colorTextTertiary,
+                      llm: '#722ed1',
+                      search: '#1677ff',
+                      read: '#fa8c16',
+                      plan: '#13c2c2',
+                      result: '#52c41a',
+                    }
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                          padding: '3px 0',
+                          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                        }}
+                      >
+                        <span style={{ color: typeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
+                          [{step.phase}]
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ color: token.colorTextSecondary }}>{step.action}</span>
+                          {step.detail && (
+                            <span style={{ color: token.colorTextTertiary, marginLeft: 4 }}>— {step.detail}</span>
+                          )}
+                          {step.durationMs !== undefined && (
+                            <span style={{ color: token.colorTextQuaternary, marginLeft: 6 }}>{step.durationMs}ms</span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {/* 兼容旧格式 */}
+                  {(!agentResult.searchSteps || agentResult.searchSteps.length === 0) &&
+                    agentResult.searchTrace.map((trace, i) => (
+                      <div key={`old-${i}`} style={{ color: token.colorTextTertiary }}>• {trace}</div>
+                    ))
+                  }
                 </div>
               ),
             }]}
@@ -619,9 +659,68 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       {/* 搜索结果列表 */}
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {isSearching ? (
-          <div style={{ textAlign: 'center', padding: 60 }}>
-            <Spin size="large" tip={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
-          </div>
+          searchMode === 'ai' && liveSteps.length > 0 ? (
+            <div style={{ padding: '12px 4px' }}>
+              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Spin size="small" />
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.aiSearching')}</Text>
+              </div>
+              {liveSteps.map((step, i) => {
+                const typeColors: Record<string, string> = {
+                  info: token.colorTextTertiary,
+                  llm: '#722ed1',
+                  search: '#1677ff',
+                  read: '#fa8c16',
+                  plan: '#13c2c2',
+                  result: '#52c41a',
+                }
+                const typeIcons: Record<string, string> = {
+                  info: '•',
+                  llm: '🤖',
+                  search: '🔍',
+                  read: '📄',
+                  plan: '📋',
+                  result: '✓',
+                }
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      padding: '4px 0',
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                      color: token.colorTextSecondary,
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                    }}
+                  >
+                    <span style={{ color: typeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
+                      {typeIcons[step.type] || '•'}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div>
+                        <Text style={{ fontSize: 12, fontWeight: 500 }}>{step.action}</Text>
+                        {step.durationMs !== undefined && (
+                          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>{step.durationMs}ms</Text>
+                        )}
+                      </div>
+                      {step.detail && (
+                        <Text type="secondary" style={{ fontSize: 11, wordBreak: 'break-all' }}>
+                          {step.detail}
+                        </Text>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', padding: 60 }}>
+              <Spin size="large" tip={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
+            </div>
+          )
         ) : searchMode === 'ai' ? (
           agentResult ? (
             <div>

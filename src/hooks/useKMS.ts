@@ -67,6 +67,15 @@ export interface AgentSearchResult {
   sources: AgentSearchSource[]
   searchRounds: number
   searchTrace: string[]
+  searchSteps?: SearchTraceStep[]
+}
+
+export interface SearchTraceStep {
+  phase: string
+  action: string
+  detail?: string
+  durationMs?: number
+  type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result'
 }
 
 export interface SearchFilters {
@@ -76,12 +85,65 @@ export interface SearchFilters {
   timeRangeEnd?: number
 }
 
+/** KMS 模型设置 */
+export interface KMSModelConfig {
+  provider_id: string
+  model_id: string
+}
+
+/** KMS 设置（模型 + 检索参数） */
+export interface KMSSettings {
+  model: KMSModelConfig | null
+  embeddingModel: KMSModelConfig | null
+  searchParams: {
+    maxRounds?: number
+    topK?: number
+  }
+}
+
+/** 目录摘要 */
+export interface DirSummary {
+  dir_id: string
+  dir_path: string
+  display_name?: string
+  enabled?: number
+  summary: string
+  file_count: number
+  keywords_json: string
+  updated_at: number
+}
+
+/** 文件摘要项 */
+export interface FileSummaryItem {
+  id: string
+  file_name: string
+  file_path: string
+  file_ext: string
+  file_size: number
+  data_tier: 'hot' | 'cold'
+  index_status: string
+  modified_time: number
+  updated_at: number
+  summary: string
+  light_summary: string
+  preview_text: string
+  keywords_json: string
+  main_topics_json: string
+  dir_name?: string
+}
+
+export interface FileSummariesResult {
+  items: FileSummaryItem[]
+  total: number
+}
+
 export function useKMS() {
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('keyword')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
+  const [liveSteps, setLiveSteps] = useState<SearchTraceStep[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null)
   const [isIndexing, setIsIndexing] = useState(false)
@@ -89,6 +151,16 @@ export function useKMS() {
   const [fileContent, setFileContent] = useState<{ fileId: string; content: string; fileName: string } | null>(null)
   const [fileSummary, setFileSummary] = useState<any>(null)
   const [previewFile, setPreviewFile] = useState<SearchResult | null>(null)
+  // KMS 设置
+  const [kmsSettings, setKmsSettings] = useState<KMSSettings>({
+    model: null,
+    embeddingModel: null,
+    searchParams: { maxRounds: 3, topK: 10 },
+  })
+  // 知识沉淀
+  const [dirSummaries, setDirSummaries] = useState<DirSummary[]>([])
+  const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
+  const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
   const progressUnsubscribe = useRef<(() => void) | null>(null)
 
   // 加载目录列表
@@ -149,9 +221,20 @@ export function useKMS() {
     if (!query.trim()) {
       setSearchResults([])
       setAgentResult(null)
+      setLiveSteps([])
       return
     }
     setIsSearching(true)
+    setLiveSteps([])
+
+    // 订阅 AI 检索实时进度
+    let unsubscribe: (() => void) | null = null
+    if (mode === 'ai') {
+      unsubscribe = window.electronAPI.kms.onAgentSearchProgress((step: SearchTraceStep) => {
+        setLiveSteps(prev => [...prev, step])
+      })
+    }
+
     try {
       if (mode === 'ai') {
         // AI 智能检索：通过子智能体自主规划+提纯
@@ -168,7 +251,17 @@ export function useKMS() {
           setAgentResult(result)
           setSearchResults([])
         } else {
-          setAgentResult(null)
+          // 显示错误信息作为结论
+          const errorMsg = result?.error || 'Unknown error'
+          setAgentResult({
+            queryType: 'locate',
+            queryTypeLabel: '定位查找',
+            conclusion: `AI 检索失败：${errorMsg}${errorMsg.includes('LLM provider') ? '\n\n请在设置中配置 LLM 提供商后再使用 AI 搜索。' : ''}`,
+            sources: [],
+            searchRounds: 0,
+            searchTrace: [],
+            searchSteps: [],
+          })
           setSearchResults([])
         }
       } else {
@@ -190,6 +283,7 @@ export function useKMS() {
       setSearchResults([])
       setAgentResult(null)
     } finally {
+      if (unsubscribe) unsubscribe()
       setIsSearching(false)
     }
   }, [])
@@ -272,6 +366,80 @@ export function useKMS() {
     await window.electronAPI.kms.cancelIndex()
   }, [])
 
+  // ==================== KMS 设置 ====================
+
+  // 加载 KMS 设置
+  const loadKmsSettings = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kms.getSettings()
+      if (result && !result.error) {
+        setKmsSettings({
+          model: result.model || null,
+          embeddingModel: result.embeddingModel || null,
+          searchParams: {
+            maxRounds: result.searchParams?.maxRounds ?? 3,
+            topK: result.searchParams?.topK ?? 10,
+          },
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load KMS settings:', err)
+    }
+  }, [])
+
+  // 保存 KMS 设置
+  const saveKmsSettings = useCallback(async (params: {
+    model?: KMSModelConfig | null
+    embeddingModel?: KMSModelConfig | null
+    searchParams?: { maxRounds?: number; topK?: number }
+  }) => {
+    try {
+      await window.electronAPI.kms.setSettings(params)
+      // 重新加载设置
+      await loadKmsSettings()
+      return true
+    } catch (err) {
+      console.error('Failed to save KMS settings:', err)
+      return false
+    }
+  }, [loadKmsSettings])
+
+  // ==================== 知识沉淀（摘要查看） ====================
+
+  // 加载目录摘要
+  const loadDirSummaries = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kms.getDirSummaries()
+      setDirSummaries(result || [])
+    } catch (err) {
+      console.error('Failed to load dir summaries:', err)
+    }
+  }, [])
+
+  // 加载文件摘要列表
+  const loadFileSummaries = useCallback(async (params?: {
+    dirId?: string
+    dataTier?: 'cold' | 'hot'
+    keyword?: string
+    page?: number
+    pageSize?: number
+  }) => {
+    setIsLoadingSummaries(true)
+    try {
+      const result = await window.electronAPI.kms.getFileSummaries(params || {})
+      if (result && !result.error) {
+        setFileSummaries({
+          items: result.items || [],
+          total: result.total || 0,
+        })
+      }
+    } catch (err) {
+      console.error('Failed to load file summaries:', err)
+    } finally {
+      setIsLoadingSummaries(false)
+    }
+  }, [])
+
   // 监听索引进度
   useEffect(() => {
     if (progressUnsubscribe.current) {
@@ -296,7 +464,8 @@ export function useKMS() {
   useEffect(() => {
     loadDirs()
     loadStats()
-  }, [loadDirs, loadStats])
+    loadKmsSettings()
+  }, [loadDirs, loadStats, loadKmsSettings])
 
   return {
     dirs,
@@ -306,6 +475,7 @@ export function useKMS() {
     setSearchMode,
     searchResults,
     agentResult,
+    liveSteps,
     isSearching,
     indexProgress,
     isIndexing,
@@ -313,6 +483,12 @@ export function useKMS() {
     fileContent,
     fileSummary,
     previewFile,
+    // KMS 设置
+    kmsSettings,
+    // 知识沉淀
+    dirSummaries,
+    fileSummaries,
+    isLoadingSummaries,
     setFileContent: (v: null) => setFileContent(v),
     setFileSummary: (v: null) => setFileSummary(v),
     setPreviewFile: (v: SearchResult | null) => setPreviewFile(v),
@@ -331,5 +507,11 @@ export function useKMS() {
     incrementalIndex,
     rebuildDirIndex,
     cancelIndex,
+    // KMS 设置
+    loadKmsSettings,
+    saveKmsSettings,
+    // 知识沉淀
+    loadDirSummaries,
+    loadFileSummaries,
   }
 }

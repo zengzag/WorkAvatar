@@ -70,4 +70,6 @@ export type {
   KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
+  KMSGetFileSummariesParams,
+  KMSSetSettingsParams,
 } from './channels/kms'

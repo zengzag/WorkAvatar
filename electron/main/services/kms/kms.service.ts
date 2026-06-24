@@ -6,6 +6,7 @@ import KMSSearchEngineService, { type SearchResult, type SearchOptions } from '.
 import KMSIndexManagerService, { type IndexProgress } from './kms-index-manager.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import LLMClientService from '../llm-client.service'
+import DatabaseService from '../database.service'
 import FileParserService from '../file-parser.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
@@ -118,12 +119,12 @@ class KMSService {
 
     if (options?.useSemantic) {
       try {
-        const defaultConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
-        if (defaultConfig) {
+        const embConfig = this.getKmsEmbeddingConfig()
+        if (embConfig) {
           queryEmbedding = await LLMClientService.getInstance().createEmbedding(
-            defaultConfig.providerId,
+            embConfig.providerId,
             query,
-            defaultConfig.modelName
+            embConfig.modelName
           )
         }
       } catch (err) {
@@ -144,14 +145,53 @@ class KMSService {
   }
 
   /**
+   * 获取 KMS Embedding 配置（优先 KMS 专属设置，回退到默认设置）
+   */
+  private getKmsEmbeddingConfig(): { providerId: string; modelName: string } | null {
+    const llmClient = LLMClientService.getInstance()
+    const mainDb = DatabaseService.getInstance().getDb()
+
+    // 1. 优先使用 KMS 专属 Embedding 模型设置
+    try {
+      const kmsEmbRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
+      if (kmsEmbRow?.value) {
+        const config = JSON.parse(kmsEmbRow.value)
+        if (config.provider_id) {
+          const provider = llmClient.getProvider(config.provider_id) as any
+          if (provider) {
+            let modelName = ''
+            if (config.model_id && provider.models_json) {
+              try {
+                const models = JSON.parse(provider.models_json)
+                const model = models.find((m: any) => m.id === config.model_id)
+                if (model) {
+                  modelName = model.model
+                }
+              } catch {}
+            }
+            if (!modelName) {
+              modelName = provider.embedding_model || 'text-embedding-3-small'
+            }
+            return { providerId: config.provider_id, modelName }
+          }
+        }
+      }
+    } catch {}
+
+    // 2. 回退到默认 Embedding 配置
+    return llmClient.getDefaultEmbeddingConfig()
+  }
+
+  /**
    * 获取文件内容（按段落/偏移/行号定位）
    */
   async getFileContent(fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }): Promise<string> {
-    const crawler = KMSCrawlerService.getInstance()
-    crawler.logFileAccess(fileId, 'read')
-
     const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
     if (!file) throw new Error('File not found')
+
+    // 文件存在后再记录访问日志（避免外键约束失败）
+    const crawler = KMSCrawlerService.getInstance()
+    crawler.logFileAccess(fileId, 'read')
 
     // 如果指定了段落ID，从段落表获取
     if (options?.paragraphId) {
@@ -183,10 +223,14 @@ class KMSService {
    * 获取文件摘要
    */
   getFileSummary(fileId: string): any {
+    const summary = this.db.prepare('SELECT * FROM kms_file_summaries WHERE file_id = ?').get(fileId)
+    if (!summary) return null
+
+    // 摘要存在后再记录访问日志（避免外键约束失败）
     const crawler = KMSCrawlerService.getInstance()
     crawler.logFileAccess(fileId, 'summary_view')
 
-    return this.db.prepare('SELECT * FROM kms_file_summaries WHERE file_id = ?').get(fileId)
+    return summary
   }
 
   /**
@@ -278,6 +322,134 @@ class KMSService {
       files: fileStats,
       index: indexStats,
     }
+  }
+
+  // ==================== KMS 设置 ====================
+
+  /**
+   * 获取 KMS 设置（模型配置、检索参数）
+   */
+  getKmsSettings(): any {
+    const mainDb = DatabaseService.getInstance().getDb()
+    const result: any = { model: null, embeddingModel: null, searchParams: { maxRounds: 3, topK: 10 } }
+
+    try {
+      const modelRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
+      if (modelRow?.value) {
+        result.model = JSON.parse(modelRow.value)
+      }
+    } catch {}
+
+    try {
+      const embRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
+      if (embRow?.value) {
+        result.embeddingModel = JSON.parse(embRow.value)
+      }
+    } catch {}
+
+    try {
+      const paramsRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_search_params'").get() as any
+      if (paramsRow?.value) {
+        result.searchParams = { ...result.searchParams, ...JSON.parse(paramsRow.value) }
+      }
+    } catch {}
+
+    return result
+  }
+
+  /**
+   * 保存 KMS 设置
+   */
+  setKmsSettings(params: any): void {
+    const mainDb = DatabaseService.getInstance().getDb()
+    const setSetting = (key: string, value: any) => {
+      const jsonStr = JSON.stringify(value)
+      mainDb.prepare(
+        'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+      ).run(key, jsonStr)
+    }
+
+    if (params.model !== undefined) {
+      if (params.model) {
+        setSetting('kms_model', params.model)
+      } else {
+        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_model'").run()
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel) {
+        setSetting('kms_embedding_model', params.embeddingModel)
+      } else {
+        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_embedding_model'").run()
+      }
+    }
+    if (params.searchParams !== undefined) {
+      setSetting('kms_search_params', params.searchParams)
+    }
+  }
+
+  // ==================== 知识沉淀（摘要查看） ====================
+
+  /**
+   * 获取所有目录摘要
+   */
+  getDirSummaries(): any[] {
+    return this.db.prepare(`
+      SELECT ds.dir_id, ds.dir_path, ds.summary, ds.file_count, ds.keywords_json, ds.updated_at,
+             d.display_name, d.enabled
+      FROM kms_dir_summaries ds
+      LEFT JOIN kms_index_dirs d ON d.id = ds.dir_id
+      ORDER BY ds.updated_at DESC
+    `).all() as any[]
+  }
+
+  /**
+   * 获取文件摘要列表（含冷热状态、轻量摘要、LLM摘要）
+   */
+  getFileSummaries(params?: { dirId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
+    const page = params?.page || 1
+    const pageSize = params?.pageSize || 20
+    const offset = (page - 1) * pageSize
+
+    let whereClause = 'WHERE 1=1'
+    const sqlParams: any[] = []
+
+    if (params?.dirId) {
+      whereClause += ' AND f.dir_id = ?'
+      sqlParams.push(params.dirId)
+    }
+    if (params?.dataTier) {
+      whereClause += ' AND f.data_tier = ?'
+      sqlParams.push(params.dataTier)
+    }
+    if (params?.keyword) {
+      whereClause += ' AND (f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)'
+      const kw = `%${params.keyword}%`
+      sqlParams.push(kw, kw, kw)
+    }
+
+    const total = (this.db.prepare(
+      `SELECT COUNT(*) as count FROM kms_files f LEFT JOIN kms_file_summaries s ON s.file_id = f.id ${whereClause}`
+    ).get(...sqlParams) as any)?.count || 0
+
+    const items = this.db.prepare(`
+      SELECT f.id, f.file_name, f.file_path, f.file_ext, f.file_size, f.data_tier,
+             f.index_status, f.modified_time, f.updated_at,
+             COALESCE(s.summary, '') as summary,
+             COALESCE(s.light_summary, '') as light_summary,
+             COALESCE(s.preview_text, '') as preview_text,
+             COALESCE(s.keywords_json, '[]') as keywords_json,
+             COALESCE(s.main_topics_json, '[]') as main_topics_json,
+             d.display_name as dir_name
+      FROM kms_files f
+      LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+      LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
+      ${whereClause}
+      ORDER BY f.updated_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...sqlParams, pageSize, offset) as any[]
+
+    return { items, total }
   }
 
   // ==================== 进度通知 ====================

@@ -7,7 +7,7 @@ import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool } from './agent/tools'
+import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool, createKMSTools } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { KbIdsRef } from './agent/tools/kb-agent-tools'
 import type { Message } from './agent/core/types'
@@ -212,6 +212,10 @@ class EmployeeAgentService {
     const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
 
+    // 注册 KMS 本地搜索工具
+    const kmsTools = createKMSTools().filter(t => enabledToolIds.has(t.id))
+    agent.registerTools(kmsTools)
+
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
@@ -246,6 +250,15 @@ class EmployeeAgentService {
       'kb_get_content',
     ]
     for (const id of kbToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
+    const kmsToolIds = [
+      'kms_search',
+      'kms_agent_search',
+      'kms_get_content',
+    ]
+    for (const id of kmsToolIds) {
       allBuiltinToolIds.add(id)
     }
 

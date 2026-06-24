@@ -8,9 +8,10 @@ import type {
 import type DatabaseService from '../services/database.service'
 import type ToolEngineService from '../services/tool-engine.service'
 import type SkillRegistryService from '../services/skill-registry.service'
-import { allBuiltinTools } from '../services/agent/tools'
+import { allBuiltinTools, createKMSTools, createKBAgentTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
+import KnowledgeBaseService from '../services/kb.service'
 
 function getUnifiedBuiltinToolCatalog() {
   const agentTools = allBuiltinTools.map(t => ({
@@ -19,6 +20,24 @@ function getUnifiedBuiltinToolCatalog() {
     title: t.title,
     description: t.description,
     category: 'agent' as const,
+  }))
+
+  // KMS 本地搜索工具
+  const kmsTools = createKMSTools().map(t => ({
+    id: t.id,
+    name: t.name,
+    title: t.title,
+    description: t.description,
+    category: 'kms' as const,
+  }))
+
+  // 知识库工具
+  const kbTools = createKBAgentTools(KnowledgeBaseService.getInstance(), { current: [] }).map(t => ({
+    id: t.id,
+    name: t.name,
+    title: t.title,
+    description: t.description,
+    category: 'kb' as const,
   }))
 
   const engineTools = toolEngine.getBuiltinTools().map(t => ({
@@ -32,14 +51,7 @@ function getUnifiedBuiltinToolCatalog() {
   const seen = new Set<string>()
   const unified: Array<{ id: string; name: string; title: string; description: string; category: string }> = []
 
-  for (const tool of agentTools) {
-    if (!seen.has(tool.id)) {
-      seen.add(tool.id)
-      unified.push(tool)
-    }
-  }
-
-  for (const tool of engineTools) {
+  for (const tool of [...agentTools, ...kmsTools, ...kbTools, ...engineTools]) {
     if (!seen.has(tool.id)) {
       seen.add(tool.id)
       unified.push(tool)

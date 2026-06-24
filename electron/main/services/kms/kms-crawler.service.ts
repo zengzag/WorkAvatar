@@ -234,6 +234,10 @@ class KMSCrawlerService {
    * 记录文件访问
    */
   logFileAccess(fileId: string, accessType: 'search_hit' | 'read' | 'summary_view'): void {
+    // 先检查文件是否存在，避免外键约束失败
+    const exists = this.db.prepare('SELECT 1 FROM kms_files WHERE id = ?').get(fileId)
+    if (!exists) return
+
     const id = generateId()
     this.db.prepare(
       'INSERT INTO kms_access_log (id, file_id, access_type, accessed_at) VALUES (?, ?, ?, unixepoch())'

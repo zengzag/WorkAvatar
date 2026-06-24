@@ -180,9 +180,40 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_file ON kms_access_log(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_time ON kms_access_log(accessed_at);
+
+      -- 目录摘要表（冷热数据渐进沉淀：基于文件名+轻量摘要生成目录级摘要）
+      CREATE TABLE IF NOT EXISTS kms_dir_summaries (
+        id TEXT PRIMARY KEY,
+        dir_id TEXT NOT NULL UNIQUE REFERENCES kms_index_dirs(id) ON DELETE CASCADE,
+        dir_path TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL DEFAULT '',
+        file_count INTEGER NOT NULL DEFAULT 0,
+        keywords_json TEXT DEFAULT '[]',
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_dir_summaries_dir ON kms_dir_summaries(dir_id);
     `)
 
+    // 增量迁移：为已有表添加新字段
+    this.migrateSchema()
+
     this.recoverStuckFiles()
+  }
+
+  /**
+   * 增量迁移：安全添加新字段（兼容已有数据库）
+   */
+  private migrateSchema(): void {
+    // kms_file_summaries 增加 light_summary（冷数据轻量摘要，不调用LLM）
+    const cols = this.db.prepare("PRAGMA table_info(kms_file_summaries)").all() as any[]
+    const colNames = cols.map(c => c.name)
+    if (!colNames.includes('light_summary')) {
+      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN light_summary TEXT DEFAULT ''")
+    }
+    if (!colNames.includes('preview_text')) {
+      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN preview_text TEXT DEFAULT ''")
+    }
   }
 
   private recoverStuckFiles(): void {

@@ -105,9 +105,12 @@ class KMSIndexManagerService {
             searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
           }
 
-          // 冷数据：仅索引文件名和关键词
-          // 热数据：额外生成摘要和段落索引
+          // 冷数据：生成轻量摘要（文件开头内容提取，不调用LLM，节省资源）
+          // 热数据：额外生成LLM摘要和段落索引
           const isHot = file.dataTier === 'hot'
+          if (parseResult.fullText) {
+            this.saveLightSummary(file.id, file.fileName, file.filePath, parseResult.fullText)
+          }
           if (isHot && providerId) {
             await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
           }
@@ -136,6 +139,11 @@ class KMSIndexManagerService {
       // 执行冷热数据评估
       if (!signal.aborted) {
         this.evaluateDataTiers()
+      }
+
+      // 阶段4：生成/更新目录摘要（冷热知识渐进沉淀）
+      if (!signal.aborted) {
+        await this.generateDirSummaries(providerId, llmClient, signal)
       }
 
       onProgress?.({ phase: 'done', current: processed, total, message: `索引完成，共处理 ${processed} 个文件` })
@@ -462,6 +470,10 @@ class KMSIndexManagerService {
     if (!fullText || fullText.length < 50) return
 
     try {
+      // 获取 provider 配置以确定使用的模型
+      const providerConfig = await llmClient.getProviderConfig(providerId)
+      const modelId = providerConfig?.model || undefined
+
       // 生成文档摘要
       const truncatedText = fullText.substring(0, 3000)
       const summaryPrompt = `请为以下文档内容生成简洁摘要（150字以内），并提取5-8个关键词和3-5个主要主题。\n\n文档内容：\n${truncatedText}\n\n请以JSON格式返回：{"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
@@ -469,7 +481,7 @@ class KMSIndexManagerService {
       const summaryResult = await llmClient.chat(providerId, [
         { role: 'system', content: '你是一个文档摘要助手。请严格按照JSON格式返回结果。' },
         { role: 'user', content: summaryPrompt },
-      ], { temperature: 0.1, max_tokens: 500 })
+      ], { temperature: 0.1, max_tokens: 500, model: modelId })
 
       if (signal?.aborted) return
 
@@ -510,6 +522,163 @@ class KMSIndexManagerService {
         VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(id, fileId, summary, JSON.stringify(keywords), JSON.stringify(mainTopics))
     }
+  }
+
+  /**
+   * 保存冷数据轻量摘要（不调用LLM，基于文件名+文件开头内容提取）
+   * 用于冷热知识渐进沉淀的冷启动阶段，以最低资源成本提供基础摘要能力
+   */
+  private saveLightSummary(fileId: string, fileName: string, _filePath: string, fullText: string): void {
+    try {
+      // 提取文件开头500字符作为预览文本
+      const previewText = fullText.substring(0, 500).replace(/\s+/g, ' ').trim()
+      // 轻量摘要：文件名 + 路径 + 开头内容片段（不调用LLM）
+      const lightSummary = `[${fileName}] ${previewText.substring(0, 200)}`
+
+      const existing = this.db.prepare('SELECT id FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+      if (existing) {
+        this.db.prepare(`
+          UPDATE kms_file_summaries SET light_summary = ?, preview_text = ?, updated_at = unixepoch()
+          WHERE file_id = ?
+        `).run(lightSummary, previewText, fileId)
+      } else {
+        const id = generateId()
+        this.db.prepare(`
+          INSERT INTO kms_file_summaries (id, file_id, summary, light_summary, preview_text, keywords_json, main_topics_json, created_at, updated_at)
+          VALUES (?, ?, '', ?, ?, '[]', '[]', unixepoch(), unixepoch())
+        `).run(id, fileId, lightSummary, previewText)
+      }
+    } catch (err) {
+      logger.warn(`Failed to save light summary for file ${fileId}:`, err)
+    }
+  }
+
+  /**
+   * 生成/更新目录摘要（冷热知识渐进沉淀）
+   * 基于目录下文件名 + 轻量摘要，调用LLM生成目录级内容概述
+   * 如果没有LLM provider，降级为基于文件名的简单聚合
+   */
+  private async generateDirSummaries(providerId: string | undefined, llmClient: LLMClientService, signal?: AbortSignal): Promise<void> {
+    try {
+      const dirs = this.db.prepare('SELECT id, dir_path, display_name FROM kms_index_dirs WHERE enabled = 1').all() as any[]
+      if (dirs.length === 0) return
+
+      let modelId: string | undefined
+      if (providerId) {
+        const config = await llmClient.getProviderConfig(providerId)
+        modelId = config?.model || undefined
+      }
+
+      for (const dir of dirs) {
+        if (signal?.aborted) break
+
+        try {
+          // 获取目录下所有文件的信息（文件名 + 轻量摘要）
+          const files = this.db.prepare(`
+            SELECT f.file_name, f.file_ext, f.file_size, f.data_tier,
+                   COALESCE(s.light_summary, '') as light_summary,
+                   COALESCE(s.summary, '') as summary
+            FROM kms_files f
+            LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+            WHERE f.dir_id = ? AND f.index_status = 'completed'
+            ORDER BY f.file_name
+          `).all(dir.id) as any[]
+
+          if (files.length === 0) continue
+
+          // 构建目录内容清单
+          const fileList = files.map(f => {
+            const summary = f.summary || f.light_summary || ''
+            return `- ${f.file_name} (${f.file_ext || '无扩展名'}, ${this.formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
+          }).join('\n')
+
+          let dirSummary: string
+          let keywords: string[] = []
+
+          if (providerId && modelId && files.length <= 100) {
+            // 调用LLM生成目录摘要
+            const prompt = `请为以下目录生成简洁摘要（200字以内），概括目录内容主题和结构，并提取5-10个关键词。
+
+目录路径：${dir.dir_path}
+文件数量：${files.length}
+文件清单：
+${fileList}
+
+请以JSON格式返回：{"summary": "...", "keywords": ["..."]}`
+
+            try {
+              const result = await llmClient.chat(providerId, [
+                { role: 'system', content: '你是一个目录内容摘要助手，输出简洁准确的JSON。' },
+                { role: 'user', content: prompt },
+              ], { temperature: 0.1, max_tokens: 400, model: modelId, signal, logSource: 'kms_dir_summary' })
+
+              const parsed = JSON.parse(result)
+              dirSummary = parsed.summary || ''
+              keywords = parsed.keywords || []
+            } catch {
+              // LLM失败，降级为简单聚合
+              dirSummary = this.generateSimpleDirSummary(dir.dir_path, files)
+            }
+          } else {
+            // 无LLM或文件过多，使用简单聚合
+            dirSummary = this.generateSimpleDirSummary(dir.dir_path, files)
+          }
+
+          // 保存目录摘要
+          this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)
+        } catch (err) {
+          logger.warn(`Failed to generate dir summary for ${dir.dir_path}:`, err)
+        }
+      }
+    } catch (err) {
+      logger.warn('Failed to generate dir summaries:', err)
+    }
+  }
+
+  /**
+   * 生成简单目录摘要（不调用LLM，基于文件名聚合）
+   */
+  private generateSimpleDirSummary(_dirPath: string, files: any[]): string {
+    const extCount: Record<string, number> = {}
+    for (const f of files) {
+      const ext = f.file_ext || '其他'
+      extCount[ext] = (extCount[ext] || 0) + 1
+    }
+    const extList = Object.entries(extCount)
+      .sort((a, b) => b[1] - a[1])
+      .map(([ext, count]) => `${ext}(${count})`)
+      .join(', ')
+
+    // 取前10个文件名作为示例
+    const sampleFiles = files.slice(0, 10).map(f => f.file_name).join(', ')
+    return `目录包含 ${files.length} 个文件（${extList}）。代表文件：${sampleFiles}`
+  }
+
+  /**
+   * 保存目录摘要
+   */
+  private saveDirSummary(dirId: string, dirPath: string, summary: string, fileCount: number, keywords: string[]): void {
+    const existing = this.db.prepare('SELECT id FROM kms_dir_summaries WHERE dir_id = ?').get(dirId) as any
+    if (existing) {
+      this.db.prepare(`
+        UPDATE kms_dir_summaries SET dir_path = ?, summary = ?, file_count = ?, keywords_json = ?, updated_at = unixepoch()
+        WHERE dir_id = ?
+      `).run(dirPath, summary, fileCount, JSON.stringify(keywords), dirId)
+    } else {
+      this.db.prepare(`
+        INSERT INTO kms_dir_summaries (id, dir_id, dir_path, summary, file_count, keywords_json, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, unixepoch())
+      `).run(generateId(), dirId, dirPath, summary, fileCount, JSON.stringify(keywords))
+    }
+  }
+
+  /**
+   * 格式化文件大小
+   */
+  private formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes}B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
   }
 }
 

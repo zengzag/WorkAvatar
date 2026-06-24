@@ -5,6 +5,7 @@ export const KMS_CHANNELS = {
   KMS_DELETE_DIR: 'kms:delete-dir',
   KMS_SEARCH: 'kms:search',
   KMS_AGENT_SEARCH: 'kms:agent-search',
+  KMS_AGENT_SEARCH_PROGRESS: 'kms:agent-search-progress',
   KMS_GET_FILE_CONTENT: 'kms:get-file-content',
   KMS_GET_FILE_SUMMARY: 'kms:get-file-summary',
   KMS_BUILD_INDEX: 'kms:build-index',
@@ -16,6 +17,11 @@ export const KMS_CHANNELS = {
   KMS_OPEN_FILE: 'kms:open-file',
   KMS_OPEN_FILE_DIR: 'kms:open-file-dir',
   KMS_GET_FILE_FULL_CONTENT: 'kms:get-file-full-content',
+  // KMS 设置与知识沉淀
+  KMS_GET_SETTINGS: 'kms:get-settings',
+  KMS_SET_SETTINGS: 'kms:set-settings',
+  KMS_GET_DIR_SUMMARIES: 'kms:get-dir-summaries',
+  KMS_GET_FILE_SUMMARIES: 'kms:get-file-summaries',
   // KMS MCP 服务
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -74,4 +80,18 @@ export interface KMSMCPSetConfigParams {
   enabled?: boolean
   port?: number
   apiKey?: string
+}
+
+export interface KMSGetFileSummariesParams {
+  dirId?: string
+  dataTier?: 'cold' | 'hot'
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+export interface KMSSetSettingsParams {
+  model?: { provider_id: string; model_id: string } | null
+  embeddingModel?: { provider_id: string; model_id: string } | null
+  searchParams?: { maxRounds?: number; topK?: number }
 }
