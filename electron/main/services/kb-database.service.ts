@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
+import * as sqliteVec from 'sqlite-vec'
 import PathService from './path.service'
 import DatabaseService from './database.service'
 import { createLogger } from './logger'
@@ -26,6 +27,14 @@ class KBDatabaseService {
 
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+
+    // 加载 sqlite-vec 向量搜索扩展
+    try {
+      sqliteVec.load(this.db)
+      logger.info('sqlite-vec 扩展加载成功')
+    } catch (err: any) {
+      logger.error('sqlite-vec 扩展加载失败:', err?.message || err)
+    }
 
     this.initializeSchema()
     this.migrateFromMainDb()

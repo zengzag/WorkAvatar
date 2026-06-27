@@ -1,6 +1,9 @@
 import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
 import { generateId } from '../common-utils'
+import { createLogger } from '../logger'
+
+const logger = createLogger('KMSSearchEngine')
 
 type SourceType = 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph'
 
@@ -57,9 +60,13 @@ class KMSSearchEngineService {
   private static readonly CACHE_TTL = 60000
   private static readonly CACHE_MAX_SIZE = 100
   private embeddingCache: Map<string, EmbeddingEntry[]> = new Map()
+  // vec0 虚表当前维度，null 表示虚表尚未创建
+  private vecDimension: number | null = null
+  private vecReady: boolean = false
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
+    this.initVecIndex()
   }
 
   static getInstance(): KMSSearchEngineService {
@@ -67,6 +74,99 @@ class KMSSearchEngineService {
       KMSSearchEngineService.instance = new KMSSearchEngineService()
     }
     return KMSSearchEngineService.instance
+  }
+
+  /**
+   * 初始化 vec0 向量索引：
+   * 1. 检查 sqlite-vec 扩展是否加载
+   * 2. 如果 vec_kms_embeddings 已存在，读取其维度
+   * 3. 如果不存在但有现有数据，按数据维度创建并迁移
+   */
+  private initVecIndex(): void {
+    try {
+      this.db.prepare('SELECT vec_version()').get()
+      this.vecReady = true
+    } catch {
+      logger.warn('sqlite-vec 扩展未加载，向量检索将回退到 JS 全扫描模式')
+      return
+    }
+
+    const existing = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_kms_embeddings'"
+    ).get() as any
+
+    if (existing) {
+      const dimRow = this.db.prepare(
+        'SELECT dimension FROM kms_embeddings ORDER BY updated_at DESC LIMIT 1'
+      ).get() as any
+      if (dimRow?.dimension) {
+        this.vecDimension = dimRow.dimension
+      }
+      logger.info(`vec0 虚表已存在，维度=${this.vecDimension}`)
+      return
+    }
+
+    const countRow = this.db.prepare(
+      'SELECT COUNT(*) as count, dimension FROM kms_embeddings GROUP BY dimension ORDER BY count DESC LIMIT 1'
+    ).get() as any
+    if (!countRow || countRow.count === 0) {
+      logger.info('kms_embeddings 表为空，vec0 虚表将延迟到首次写入时创建')
+      return
+    }
+
+    const dimension = countRow.dimension
+    this.createVecTable(dimension)
+    this.migrateExistingEmbeddings(dimension)
+  }
+
+  /**
+   * 创建 vec0 虚表（如不存在）
+   */
+  private createVecTable(dimension: number): void {
+    try {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_kms_embeddings USING vec0(
+          embedding float[${dimension}] distance_metric=cosine,
+          file_id TEXT,
+          source_type TEXT
+        )
+      `)
+      this.vecDimension = dimension
+      logger.info(`vec0 虚表创建成功，维度=${dimension}`)
+    } catch (err: any) {
+      logger.error('vec0 虚表创建失败:', err?.message || err)
+      this.vecReady = false
+    }
+  }
+
+  /**
+   * 将 kms_embeddings 表中的现有数据迁移到 vec0 虚表
+   */
+  private migrateExistingEmbeddings(dimension: number): void {
+    try {
+      const rows = this.db.prepare(
+        'SELECT rowid, embedding, file_id, source_type FROM kms_embeddings WHERE dimension = ?'
+      ).all(dimension) as any[]
+
+      if (rows.length === 0) return
+
+      const insertStmt = this.db.prepare(
+        'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
+      )
+      const migrate = this.db.transaction(() => {
+        for (const row of rows) {
+          try {
+            insertStmt.run(row.rowid, row.embedding, row.file_id, row.source_type)
+          } catch (err: any) {
+            logger.warn(`迁移 rowid=${row.rowid} 失败:`, err?.message || err)
+          }
+        }
+      })
+      migrate()
+      logger.info(`vec0 迁移完成，共迁移 ${rows.length} 条向量`)
+    } catch (err: any) {
+      logger.error('vec0 数据迁移失败:', err?.message || err)
+    }
   }
 
   // ==================== 索引操作 ====================
@@ -492,9 +592,90 @@ class KMSSearchEngineService {
     options?: SearchOptions
   ): Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> {
     const topK = options?.topK || 10
+
+    // 优先用 vec0 KNN 索引；维度不匹配或未就绪时回退到 JS 全扫描
+    if (this.vecReady && this.vecDimension === queryEmbedding.length) {
+      const vecResult = this.vectorSearchViaVec0(queryEmbedding, topK, options)
+      if (vecResult !== null) return vecResult
+    }
+
+    return this.vectorSearchViaJS(queryEmbedding, topK, options)
+  }
+
+  /**
+   * 使用 vec0 虚表的 KNN 查询：
+   * - metadata 过滤 file_id、source_type
+   * - 多取 topK*3 条以缓解 pre-filter 后不足 k 的问题
+   * 返回 null 表示 KNN 查询失败，调用方应回退到 JS。
+   */
+  private vectorSearchViaVec0(
+    queryEmbedding: Float32Array,
+    topK: number,
+    options?: SearchOptions
+  ): Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> | null {
+    try {
+      const queryBuffer = Buffer.from(queryEmbedding.buffer)
+      const k = Math.max(topK * 3, 30)
+
+      let whereClause = 'embedding MATCH ? AND k = ?'
+      const params: any[] = [queryBuffer, k]
+
+      if (options?.fileIds && options.fileIds.length > 0) {
+        const placeholders = options.fileIds.map(() => '?').join(',')
+        whereClause += ` AND file_id IN (${placeholders})`
+        params.push(...options.fileIds)
+      }
+
+      if (options?.sourceTypes && options.sourceTypes.length > 0) {
+        const placeholders = options.sourceTypes.map(() => '?').join(',')
+        whereClause += ` AND source_type IN (${placeholders})`
+        params.push(...options.sourceTypes)
+      }
+
+      const knnRows = this.db.prepare(
+        `SELECT rowid, distance FROM vec_kms_embeddings WHERE ${whereClause} ORDER BY distance`
+      ).all(...params) as any[]
+
+      if (knnRows.length === 0) return []
+
+      // 回查 kms_embeddings 获取元数据
+      const rowids = knnRows.map(r => r.rowid)
+      const placeholders = rowids.map(() => '?').join(',')
+      const metaRows = this.db.prepare(
+        `SELECT rowid, source_type, source_id, file_id FROM kms_embeddings WHERE rowid IN (${placeholders})`
+      ).all(...rowids) as any[]
+
+      const metaMap = new Map<number, any>()
+      for (const row of metaRows) {
+        metaMap.set(row.rowid, row)
+      }
+
+      return knnRows.map(knn => {
+        const meta = metaMap.get(knn.rowid)
+        return {
+          sourceType: meta?.source_type || '',
+          sourceId: meta?.source_id || '',
+          fileId: meta?.file_id || '',
+          score: 1 - knn.distance,
+        }
+      }).slice(0, topK)
+    } catch (err: any) {
+      logger.warn('vec0 KNN 查询失败，回退到 JS:', err?.message || err)
+      return null
+    }
+  }
+
+  /**
+   * JS 全扫描向量检索（fallback）：
+   * 当 vec0 索引不可用或维度不匹配时使用
+   */
+  private vectorSearchViaJS(
+    queryEmbedding: Float32Array,
+    topK: number,
+    options?: SearchOptions
+  ): Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> {
     let embeddings = this.loadAllEmbeddings()
 
-    // 按条件过滤
     if (options?.fileIds && options.fileIds.length > 0) {
       const fileSet = new Set(options.fileIds)
       embeddings = embeddings.filter(e => fileSet.has(e.fileId))
@@ -668,30 +849,83 @@ class KMSSearchEngineService {
     model: string
   ): void {
     const existing = this.db.prepare(
-      'SELECT id FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
+      'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
     ).get(sourceType, sourceId) as any
 
     const buffer = Buffer.from(embedding.buffer)
+    let rowid: number
 
     if (existing) {
       this.db.prepare(`
         UPDATE kms_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
       `).run(buffer, model, embedding.length, existing.id)
+      rowid = existing.rowid
     } else {
       const id = generateId()
       this.db.prepare(`
         INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(id, sourceType, sourceId, fileId, buffer, model, embedding.length)
+      rowid = Number((this.db.prepare('SELECT last_insert_rowid() as r').get() as any).r)
     }
 
+    // 同步写入 vec0 虚表
+    this.syncVecIndex(rowid, buffer, fileId, sourceType, embedding.length)
+
     this.embeddingCache.clear()
+  }
+
+  /**
+   * 同步向量到 vec0 虚表：
+   * - 延迟创建虚表（首次写入时按 embedding 维度创建）
+   * - 维度不匹配时跳过（降级到 JS 检索）
+   * - vec0 不支持 UPDATE 向量列，用 DELETE + INSERT 替代
+   */
+  private syncVecIndex(
+    rowid: number,
+    buffer: Buffer,
+    fileId: string,
+    sourceType: string,
+    dimension: number
+  ): void {
+    if (!this.vecReady) return
+
+    if (this.vecDimension === null) {
+      this.createVecTable(dimension)
+      if (this.vecDimension === null) return
+    }
+
+    if (this.vecDimension !== dimension) {
+      logger.warn(`向量维度 ${dimension} 与 vec0 虚表维度 ${this.vecDimension} 不匹配，跳过索引写入`)
+      return
+    }
+
+    try {
+      this.db.prepare('DELETE FROM vec_kms_embeddings WHERE rowid = ?').run(rowid)
+      this.db.prepare(
+        'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
+      ).run(rowid, buffer, fileId, sourceType)
+    } catch (err: any) {
+      logger.warn(`vec0 同步失败 rowid=${rowid}:`, err?.message || err)
+    }
   }
 
   /**
    * 删除文件的所有向量嵌入
    */
   deleteEmbeddingsByFile(fileId: string): void {
+    // 先获取要删除的 rowid，用于同步清理 vec0
+    if (this.vecReady) {
+      const rowids = this.db.prepare('SELECT rowid FROM kms_embeddings WHERE file_id = ?').all(fileId) as any[]
+      if (rowids.length > 0) {
+        try {
+          const placeholders = rowids.map(() => '?').join(',')
+          this.db.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${placeholders})`).run(...rowids.map(r => r.rowid))
+        } catch (err: any) {
+          logger.warn('清理 vec0 索引失败:', err?.message || err)
+        }
+      }
+    }
     this.db.prepare('DELETE FROM kms_embeddings WHERE file_id = ?').run(fileId)
     this.embeddingCache.clear()
   }
