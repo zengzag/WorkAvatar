@@ -530,6 +530,7 @@ class SearchEngineService {
 
     const allKeys = new Set([...ftsRankMap.keys(), ...vectorScoreMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
+    const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string; documentId: string }; sortKey: number }> = []
 
     for (const key of allKeys) {
       const ftsRank = ftsRankMap.get(key) || 0
@@ -549,25 +550,48 @@ class SearchEngineService {
       } else if (useVector && vectorScore > 0) {
         const vs = vectorSourceMap.get(key)
         if (!vs) continue
+        missingEntries.push({ key, vs, sortKey })
+      }
+    }
 
-        const indexEntry = this.db.prepare(
-          'SELECT * FROM kb_search_index WHERE source_type = ? AND source_id = ?'
-        ).get(vs.sourceType, vs.sourceId) as any
+    if (missingEntries.length > 0) {
+      const conditions = missingEntries.map(() => '(source_type = ? AND source_id = ?)').join(' OR ')
+      const params = missingEntries.flatMap(m => [m.vs.sourceType, m.vs.sourceId])
+      const indexRows = this.db.prepare(
+        `SELECT source_type, source_id, document_id, title, content, start_offset, end_offset FROM kb_search_index WHERE ${conditions}`
+      ).all(...params) as any[]
 
+      const docIds = [...new Set(indexRows.map(r => r.document_id).filter(Boolean))]
+      const docNameMap = new Map<string, string>()
+      if (docIds.length > 0) {
+        const docRows = this.db.prepare(
+          `SELECT id, original_name FROM kb_documents WHERE id IN (${docIds.map(() => '?').join(', ')})`
+        ).all(...docIds) as any[]
+        for (const row of docRows) {
+          docNameMap.set(row.id, row.original_name)
+        }
+      }
+
+      const indexMap = new Map<string, any>()
+      for (const row of indexRows) {
+        indexMap.set(`${row.source_type}-${row.source_id}`, row)
+      }
+
+      for (const entry of missingEntries) {
+        const indexEntry = indexMap.get(`${entry.vs.sourceType}-${entry.vs.sourceId}`)
         if (indexEntry) {
-          const doc = this.db.prepare('SELECT original_name FROM kb_documents WHERE id = ?').get(indexEntry.document_id) as any
           hybridResults.push({
             result: {
               document_id: indexEntry.document_id,
-              document_name: doc?.original_name || '',
-              paragraph_id: vs.sourceType === 'paragraph' ? vs.sourceId : undefined,
+              document_name: docNameMap.get(indexEntry.document_id) || '',
+              paragraph_id: entry.vs.sourceType === 'paragraph' ? entry.vs.sourceId : undefined,
               paragraph_title: indexEntry.title,
               text: indexEntry.content.substring(0, 300),
               match_type: 'hybrid',
               start_offset: indexEntry.start_offset,
               end_offset: indexEntry.end_offset,
             },
-            sortKey,
+            sortKey: entry.sortKey,
           })
         }
       }
@@ -628,7 +652,7 @@ class SearchEngineService {
     }
 
     const rows = this.db.prepare(
-      'SELECT * FROM kb_embeddings WHERE kb_id = ?'
+      'SELECT id, kb_id, source_type, source_id, document_id, embedding, model, dimension FROM kb_embeddings WHERE kb_id = ?'
     ).all(kbId) as any[]
 
     const entries: EmbeddingEntry[] = rows.map(row => ({

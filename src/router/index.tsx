@@ -1,12 +1,20 @@
 import { createHashRouter } from 'react-router-dom'
+import { lazy, Suspense, ReactNode } from 'react'
 import App from '../App'
-import CreationWizard from '../pages/CreationWizard'
 import EmployeeRedirect from '../components/common/EmployeeRedirect'
-import EmployeeWorkbench from '../pages/EmployeeWorkbench'
-import EmployeeSettings from '../pages/EmployeeSettings'
-import Settings from '../pages/Settings'
-import KnowledgeBasePage from '../pages/KnowledgeBase'
-import KMSPage from '../pages/KMS'
+
+const EmployeeWorkbench = lazy(() => import('../pages/EmployeeWorkbench'))
+const CreationWizard = lazy(() => import('../pages/CreationWizard'))
+const EmployeeSettings = lazy(() => import('../pages/EmployeeSettings'))
+const Settings = lazy(() => import('../pages/Settings'))
+const KnowledgeBasePage = lazy(() => import('../pages/KnowledgeBase'))
+const KMSPage = lazy(() => import('../pages/KMS'))
+
+const lazyElement = (node: ReactNode) => (
+  <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }} />}>
+    {node}
+  </Suspense>
+)
 
 const router = createHashRouter([
   {
@@ -19,27 +27,27 @@ const router = createHashRouter([
       },
       {
         path: 'wizard',
-        element: <CreationWizard />,
+        element: lazyElement(<CreationWizard />),
       },
       {
         path: 'employee/:id',
-        element: <EmployeeWorkbench />,
+        element: lazyElement(<EmployeeWorkbench />),
       },
       {
         path: 'employee/:id/settings',
-        element: <EmployeeSettings />,
+        element: lazyElement(<EmployeeSettings />),
       },
       {
         path: 'settings',
-        element: <Settings />,
+        element: lazyElement(<Settings />),
       },
       {
         path: 'knowledge-base',
-        element: <KnowledgeBasePage />,
+        element: lazyElement(<KnowledgeBasePage />),
       },
       {
         path: 'kms',
-        element: <KMSPage />,
+        element: lazyElement(<KMSPage />),
       },
     ],
   },

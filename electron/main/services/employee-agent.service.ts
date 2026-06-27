@@ -1,6 +1,5 @@
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
-import ToolEngineService from './tool-engine.service'
 import SkillRegistryService from './skill-registry.service'
 import KnowledgeBaseService from './kb.service'
 import EmployeeMemoryService from './employee-memory.service'
@@ -206,9 +205,6 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    const employeeTools = this.getEmployeeTools(employeeId)
-    agent.registerTools(employeeTools)
-
     const kbIdsRef: KbIdsRef = { current: [] }
     const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
@@ -295,28 +291,6 @@ class EmployeeAgentService {
     }
 
     return result
-  }
-
-  private getEmployeeTools(employeeId: string): ToolDefinition[] {
-    const toolEngine = ToolEngineService.getInstance()
-    const assignedTools = toolEngine.getToolsForEmployee(employeeId)
-
-    return assignedTools.map((t) => ({
-      id: t.id,
-      name: t.name,
-      title: t.name,
-      description: t.description || '',
-      parameters: {
-        type: 'object' as const,
-        properties: (t.parameters as any)?.properties || {},
-        required: (t.parameters as any)?.required,
-      },
-      handler: async (args: any) => {
-        const result = await toolEngine.executeTool(t.id, args)
-        return result.success ? result.output : { error: result.error }
-      },
-      source: t.source as ToolDefinition['source'],
-    }))
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {

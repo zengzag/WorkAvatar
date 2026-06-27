@@ -8,6 +8,17 @@ import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import DatabaseService from './services/database.service'
 import { registerIpcHandlers } from './ipc-handlers'
+import { createLogger } from './services/logger'
+
+const logger = createLogger('Main')
+
+// 全局异常兜底：捕获逃逸的 Promise rejection 和未捕获异常
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled Rejection:', reason)
+})
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error)
+})
 
 const gotTheLock = app.requestSingleInstanceLock()
 

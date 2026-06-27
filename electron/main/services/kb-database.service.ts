@@ -85,6 +85,7 @@ class KBDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(hash);
+      CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_status ON kb_documents(kb_id, parse_status);
 
       CREATE TABLE IF NOT EXISTS kb_paragraphs (
         id TEXT PRIMARY KEY,
@@ -155,6 +156,7 @@ class KBDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_kb ON kb_processing_jobs(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_status ON kb_processing_jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_created ON kb_processing_jobs(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS wiki_compile_cache (
         id TEXT PRIMARY KEY,

@@ -306,7 +306,6 @@ export abstract class BaseAgent {
       this.eventEmitter.on('iteration:end', (e) => handler('iteration:end', e.data))
       this.eventEmitter.on('tool:call:start', (e) => handler('tool:call:start', e.data))
       this.eventEmitter.on('tool:call:end', (e) => handler('tool:call:end', e.data))
-      this.eventEmitter.on('tool:call:error', (e) => handler('tool:call:error', e.data))
       this.eventEmitter.on('memory:compressed', (e) => handler('memory:compressed', e.data))
       this.eventEmitter.on('plan:generated', (e) => handler('plan:generated', e.data))
       this.eventEmitter.on('skill:activated', (e) => handler('skill:activated', e.data))

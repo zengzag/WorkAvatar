@@ -83,6 +83,9 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_files_hash ON kms_files(file_hash);
       CREATE INDEX IF NOT EXISTS idx_kms_files_status ON kms_files(index_status);
       CREATE INDEX IF NOT EXISTS idx_kms_files_tier ON kms_files(data_tier);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_modified ON kms_files(modified_time);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_ext ON kms_files(file_ext);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_updated ON kms_files(updated_at DESC);
 
       -- 文件内容段落表（热数据：深度摘要和向量化后的段落）
       CREATE TABLE IF NOT EXISTS kms_paragraphs (

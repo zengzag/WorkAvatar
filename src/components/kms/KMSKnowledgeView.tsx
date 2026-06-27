@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Space, Typography, Tag, Empty, Spin, Input, Select, Table, Tooltip, Button, theme,
@@ -219,7 +219,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   }
 
   // 文件摘要表格列定义
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: t('kms.knowledge.fileName'),
       dataIndex: 'file_name',
@@ -345,7 +345,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
         </Space>
       ),
     },
-  ]
+  ], [t, token, onOpenFile, onOpenFileDir])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

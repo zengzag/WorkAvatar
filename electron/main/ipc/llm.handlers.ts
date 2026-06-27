@@ -11,6 +11,7 @@ import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
+import { safeHandle } from './_shared'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -19,7 +20,7 @@ export function registerLLMHandlers(
   const activeSessions: Map<string, AbortController> = new Map()
   const interactionService = UnifiedInteractionService.getInstance()
 
-  ipcMain.handle(IPC_CHANNELS.LLM_ABORT_CHAT, (_, sessionId?: string) => {
+  safeHandle(IPC_CHANNELS.LLM_ABORT_CHAT, (sessionId?: string) => {
     if (sessionId) {
       const controller = activeSessions.get(sessionId)
       if (controller) {
@@ -34,27 +35,29 @@ export function registerLLMHandlers(
     }
     return { success: true }
   })
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
+
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
     return llmClient.getProviderList()
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_CREATE, async (_, params: LLMProviderCreateParams) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_CREATE, async (params: LLMProviderCreateParams) => {
     return llmClient.createProvider(params)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_UPDATE, async (_, params: LLMProviderUpdateParams) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_UPDATE, async (params: LLMProviderUpdateParams) => {
     const { id, ...data } = params
     return llmClient.updateProvider(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_DELETE, async (_, id: string) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_DELETE, async (id: string) => {
     return llmClient.deleteProvider(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_TEST_CONNECTION, async (_, params: LLMTestConnectionParams) => {
+  safeHandle(IPC_CHANNELS.LLM_TEST_CONNECTION, async (params: LLMTestConnectionParams) => {
     return llmClient.testConnection(params.provider_id)
   })
 
+  // 业务语义错误返回 { success: false, error }，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.LLM_CHAT, async (_, params: LLMChatParams) => {
     try {
       const result = await llmClient.chat(
@@ -68,6 +71,7 @@ export function registerLLMHandlers(
     }
   })
 
+  // 流式聊天：需要事件回调推送多种事件，保留 ipcMain.handle
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: EmployeeChatStreamParams) => {
     const abortController = new AbortController()
     const sessionId = generateId()

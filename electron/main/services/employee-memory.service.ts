@@ -427,55 +427,57 @@ ${contextParts.join('\n---\n')}
 
       const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
 
-      for (const memory of validExtracted) {
-        const existing = this.db.getDb().prepare(
-          'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-        ).get(employeeId, memory.key) as EmployeeMemory | undefined
+      this.db.getDb().transaction(() => {
+        for (const memory of validExtracted) {
+          const existing = this.db.getDb().prepare(
+            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
+          ).get(employeeId, memory.key) as EmployeeMemory | undefined
 
-        if (existing) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-          ).run(memory.content, memory.topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
-        } else {
-          this.createMemory({
-            employee_id: employeeId,
-            key: memory.key,
-            topic: memory.topic,
-            content: memory.content,
-            source: 'auto',
-          })
+          if (existing) {
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+            ).run(memory.content, memory.topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+          } else {
+            this.createMemory({
+              employee_id: employeeId,
+              key: memory.key,
+              topic: memory.topic,
+              content: memory.content,
+              source: 'auto',
+            })
+          }
         }
-      }
 
-      for (const key of (parsed.delete_keys || [])) {
-        this.deleteMemoryByKey(employeeId, key)
-        logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
-      }
-
-      for (const update of (parsed.update_memories || [])) {
-        if (!update.key || !update.content) continue
-        const existing = this.db.getDb().prepare(
-          'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-        ).get(employeeId, update.key) as EmployeeMemory | undefined
-        if (existing) {
-          const topic = update.topic || existing.topic
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-          ).run(update.content, topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
-          logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
+        for (const key of (parsed.delete_keys || [])) {
+          this.deleteMemoryByKey(employeeId, key)
+          logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
         }
-      }
+
+        for (const update of (parsed.update_memories || [])) {
+          if (!update.key || !update.content) continue
+          const existing = this.db.getDb().prepare(
+            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
+          ).get(employeeId, update.key) as EmployeeMemory | undefined
+          if (existing) {
+            const topic = update.topic || existing.topic
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+            ).run(update.content, topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+            logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
+          }
+        }
+
+        if (conversationId && parsed.summary) {
+          const newSummary = parsed.summary.trim().substring(0, 500)
+          if (newSummary) {
+            this.db.getDb().prepare(
+              'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
+            ).run(newSummary, Math.floor(Date.now() / 1000), conversationId)
+          }
+        }
+      })()
 
       logger.info(`Extracted ${validExtracted.length} memories, deleted ${(parsed.delete_keys || []).length}, updated ${(parsed.update_memories || []).length} for employee ${employeeId}`)
-
-      if (conversationId && parsed.summary) {
-        const newSummary = parsed.summary.trim().substring(0, 500)
-        if (newSummary) {
-          this.db.getDb().prepare(
-            'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
-          ).run(newSummary, Math.floor(Date.now() / 1000), conversationId)
-        }
-      }
 
       return validExtracted
     } catch (error: any) {
@@ -573,54 +575,56 @@ JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":""
       let merged = 0
       let simplified = 0
 
-      for (const key of (parsed.delete_keys || [])) {
-        if (this.deleteMemoryByKey(employeeId, key)) deleted++
-      }
+      this.db.getDb().transaction(() => {
+        for (const key of (parsed.delete_keys || [])) {
+          if (this.deleteMemoryByKey(employeeId, key)) deleted++
+        }
 
-      for (const group of (parsed.merge_groups || [])) {
-        if (!group.keys || group.keys.length < 2 || !group.merged) continue
-        const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
-        this.createMemory({
-          employee_id: employeeId,
-          key: group.merged.key,
-          topic: group.merged.topic,
-          content: group.merged.content,
-          source: 'auto',
-          is_pinned: hasPinned,
-        })
-        for (const key of group.keys) {
-          const mem = candidates.find(m => m.key === key)
-          if (mem && !mem.is_pinned) {
-            this.deleteMemoryByKey(employeeId, key)
-          } else if (mem && mem.is_pinned) {
+        for (const group of (parsed.merge_groups || [])) {
+          if (!group.keys || group.keys.length < 2 || !group.merged) continue
+          const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
+          this.createMemory({
+            employee_id: employeeId,
+            key: group.merged.key,
+            topic: group.merged.topic,
+            content: group.merged.content,
+            source: 'auto',
+            is_pinned: hasPinned,
+          })
+          for (const key of group.keys) {
+            const mem = candidates.find(m => m.key === key)
+            if (mem && !mem.is_pinned) {
+              this.deleteMemoryByKey(employeeId, key)
+            } else if (mem && mem.is_pinned) {
+              this.db.getDb().prepare(
+                'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
+              ).run(Math.floor(Date.now() / 1000), mem.id)
+            }
+          }
+          merged++
+        }
+
+        for (const update of (parsed.simplify_updates || [])) {
+          if (!update.key || !update.content) continue
+          const existing = candidates.find(m => m.key === update.key)
+          if (existing && existing.content !== update.content) {
             this.db.getDb().prepare(
-              'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
-            ).run(Math.floor(Date.now() / 1000), mem.id)
+              'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
+            ).run(update.content, Math.floor(Date.now() / 1000), existing.id)
+            simplified++
           }
         }
-        merged++
-      }
 
-      for (const update of (parsed.simplify_updates || [])) {
-        if (!update.key || !update.content) continue
-        const existing = candidates.find(m => m.key === update.key)
-        if (existing && existing.content !== update.content) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
-          ).run(update.content, Math.floor(Date.now() / 1000), existing.id)
-          simplified++
+        for (const update of (parsed.importance_updates || [])) {
+          if (!update.key || !update.importance) continue
+          const existing = candidates.find(m => m.key === update.key)
+          if (existing) {
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
+            ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
+          }
         }
-      }
-
-      for (const update of (parsed.importance_updates || [])) {
-        if (!update.key || !update.importance) continue
-        const existing = candidates.find(m => m.key === update.key)
-        if (existing) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
-          ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
-        }
-      }
+      })()
 
       this.lastConsolidationAt.set(employeeId, Math.floor(Date.now() / 1000))
       logger.info(`Consolidated memories for employee ${employeeId}: deleted=${deleted}, merged=${merged}, simplified=${simplified}`)

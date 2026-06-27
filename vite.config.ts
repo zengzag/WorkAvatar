@@ -50,6 +50,24 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: 'dist'
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](react-markdown|remark-gfm|remark-math|rehype-katex)[\\/]/.test(id)) {
+            return 'react-markdown'
+          }
+          if (/[\\/]node_modules[\\/]react-syntax-highlighter[\\/]/.test(id)) {
+            return 'syntax-highlighter'
+          }
+          if (/[\\/]node_modules[\\/]katex[\\/]/.test(id)) {
+            return 'katex'
+          }
+          if (/[\\/]node_modules[\\/](antd|@ant-design)[\\/]/.test(id)) {
+            return 'antd'
+          }
+        }
+      }
+    }
   }
 })

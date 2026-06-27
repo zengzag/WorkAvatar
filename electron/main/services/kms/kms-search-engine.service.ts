@@ -850,7 +850,7 @@ class KMSSearchEngineService {
       return this.embeddingCache.get(cacheKey)!
     }
 
-    const rows = this.db.prepare('SELECT * FROM kms_embeddings').all() as any[]
+    const rows = this.db.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
 
     const entries: EmbeddingEntry[] = rows.map(row => ({
       id: row.id,

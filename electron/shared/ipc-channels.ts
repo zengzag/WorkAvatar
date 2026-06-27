@@ -1,13 +1,5 @@
 export { IPC_CHANNELS } from './channels'
 export type {
-  WorkspaceInfoParams,
-  WorkspaceListFilesParams,
-  WorkspaceReadFileParams,
-  WorkspaceWriteFileParams,
-  WorkspaceCreateFolderParams,
-  WorkspaceDeleteItemParams,
-  WorkspaceRenameItemParams,
-  WorkspaceImportParams,
   WorkspaceOpenInExplorerParams,
 } from './channels/workspace'
 export type {

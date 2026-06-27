@@ -12,7 +12,6 @@ import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
 import DatabaseService from '../services/database.service'
 import EmployeeProfilingService from '../services/employee-profiling.service'
-import ToolEngineService from '../services/tool-engine.service'
 import SkillRegistryService from '../services/skill-registry.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import KnowledgeBaseService from '../services/kb.service'
@@ -24,7 +23,6 @@ export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
   const llmClient = LLMClientService.getInstance()
   const profilingService = EmployeeProfilingService.getInstance()
-  const toolEngine = ToolEngineService.getInstance()
   const skillRegistry = SkillRegistryService.getInstance()
   const employeeAgent = EmployeeAgentService.getInstance()
   const kbService = KnowledgeBaseService.getInstance()
@@ -33,11 +31,11 @@ export function registerIpcHandlers() {
   const mcpService = KBMCPService.getInstance()
   const db = DatabaseService.getInstance().getDb()
 
-  registerWorkspaceHandlers(workspaceManager)
+  registerWorkspaceHandlers()
   registerEmployeeHandlers(workspaceManager, profilingService, employeeExportService, memoryService)
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db)
-  registerToolHandlers(db, toolEngine, skillRegistry)
+  registerToolHandlers(db, skillRegistry)
   registerKBHandlers(kbService)
   registerTaskHandlers()
   registerKBMCPHandlers(mcpService)

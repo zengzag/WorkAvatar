@@ -24,6 +24,7 @@ import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
+import { safeHandle } from './_shared'
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
@@ -31,55 +32,56 @@ export function registerEmployeeHandlers(
   employeeExportService: EmployeeExportService,
   memoryService: EmployeeMemoryService
 ) {
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_LIST, (_, params?: EmployeeListParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_LIST, (params?: EmployeeListParams) => {
     return workspaceManager.getEmployeeList(params?.status)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_GET, (_, id: string) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_GET, (id: string) => {
     return workspaceManager.getEmployee(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CREATE, (_, params: EmployeeCreateParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_CREATE, (params: EmployeeCreateParams) => {
     return workspaceManager.createEmployee(params.name, params.description, params.profile_json)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_UPDATE, (_, params: EmployeeUpdateParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_UPDATE, (params: EmployeeUpdateParams) => {
     const { id, ...data } = params
     return workspaceManager.updateEmployee(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_DELETE, (_, params: string | { id: string; delete_workspace?: boolean }) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: string | { id: string; delete_workspace?: boolean }) => {
     if (typeof params === 'string') {
       return workspaceManager.deleteEmployee(params, false)
     }
     return workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_LIST, (_, params: ConversationListParams) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_LIST, (params: ConversationListParams) => {
     return workspaceManager.getConversationList(params.employee_id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_GET, (_, id: string) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_GET, (id: string) => {
     return workspaceManager.getConversation(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_CREATE, (_, params: ConversationCreateParams) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_CREATE, (params: ConversationCreateParams) => {
     return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_UPDATE, (_, params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }) => {
     const { id, ...data } = params
     return workspaceManager.updateConversation(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE, (_, id: string) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
     return workspaceManager.deleteConversation(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (_, employeeId: string) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
     return workspaceManager.deleteAllConversations(employeeId)
   })
 
+  // 需要事件回调推送进度，保留 ipcMain.handle + try-catch
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, async (event, params: EmployeeProfileAnalyzeParams) => {
     try {
       const result = await profilingService.analyzeForEmployee(
@@ -122,14 +124,15 @@ export function registerEmployeeHandlers(
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_CONFIG, (_, params: EmployeeExportConfigParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_EXPORT_CONFIG, (params: EmployeeExportConfigParams) => {
     return employeeExportService.exportConfig(params.employee_id, params.export_path)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_CONFIG, (_, params: EmployeeImportConfigParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_IMPORT_CONFIG, (params: EmployeeImportConfigParams) => {
     return employeeExportService.importConfig(params.import_path, params.conflict_strategy)
   })
 
+  // 需要事件回调推送进度，保留 ipcMain.handle
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_PACKAGE, async (event, params: EmployeeExportPackageParams) => {
     return employeeExportService.exportPackage(
       params.employee_id,
@@ -150,31 +153,32 @@ export function registerEmployeeHandlers(
     )
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (_, params: EmployeeMemoryListParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (params: EmployeeMemoryListParams) => {
     return memoryService.listMemories(params.employee_id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, (_, params: EmployeeMemoryCreateParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_CREATE, (params: EmployeeMemoryCreateParams) => {
     return memoryService.createMemory(params)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_UPDATE, (_, params: EmployeeMemoryUpdateParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_UPDATE, (params: EmployeeMemoryUpdateParams) => {
     const { id, ...data } = params
     return memoryService.updateMemory(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_DELETE, (_, id: string) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_DELETE, (id: string) => {
     return memoryService.deleteMemory(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_TOGGLE_PIN, (_, id: string) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_TOGGLE_PIN, (id: string) => {
     return memoryService.togglePin(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, (_, params: EmployeeMemorySearchParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_SEARCH, (params: EmployeeMemorySearchParams) => {
     return memoryService.searchMemories(params.employee_id, params.query, params.limit)
   })
 
+  // 业务语义错误返回 { success: false, error }，与 safeHandle 的 { error } 不同，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, async (_, params: EmployeeMemoryExtractParams) => {
     try {
       const result = await memoryService.extractMemoriesFromConversation(
@@ -209,7 +213,7 @@ export function registerEmployeeHandlers(
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, (_, params: EmployeeMemoryStatsParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, (params: EmployeeMemoryStatsParams) => {
     return memoryService.getMemoryStats(params.employee_id)
   })
 }

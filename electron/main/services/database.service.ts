@@ -129,6 +129,7 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
 
       CREATE TABLE IF NOT EXISTS tools (
@@ -202,6 +203,7 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
       CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
+      CREATE INDEX IF NOT EXISTS idx_background_tasks_created ON background_tasks(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
@@ -217,6 +219,10 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
