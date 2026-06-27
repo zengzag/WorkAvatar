@@ -189,6 +189,18 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
+  // ==================== 自动索引 ====================
+  safeHandle(IPC_CHANNELS.KMS_GET_AUTO_INDEX_STATUS, async () => {
+    return kmsService.getAutoIndexStatus()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_RUN_AUTO_INDEX_CHECK, async () => {
+    kmsService.runAutoIndexCheckNow().catch((err: any) => {
+      logger.error('runAutoIndexCheckNow failed:', String(err?.message || err))
+    })
+    return { success: true }
+  })
+
   // ==================== 知识沉淀（摘要查看） ====================
   safeHandle(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES, async () => {
     return kmsService.getDirSummaries()

@@ -135,6 +135,7 @@ export function createKMSTools(): ToolDefinition[] {
       },
       required: ['query'],
     },
+    timeoutMs: 600000, // 10分钟超时，因为独立检索子智能体可能执行多轮检索
     handler: async (args: any, context?: ToolHandlerContext) => {
       try {
         const query = String(args.query || '').trim()

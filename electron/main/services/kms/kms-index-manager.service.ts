@@ -18,6 +18,25 @@ export interface IndexProgress {
 
 type ProgressCallback = (progress: IndexProgress) => void
 
+/** 自动索引配置 */
+export interface AutoIndexConfig {
+  /** 是否启用自动索引 */
+  enabled: boolean
+  /** 检查间隔（分钟） */
+  intervalMinutes: number
+  /** 文件稳定阈值（秒）：文件最后修改时间距今不足该值时跳过，避免用户正在编辑时频繁更新 */
+  stableThresholdSeconds: number
+}
+
+/** 自动索引状态 */
+export interface AutoIndexStatus {
+  running: boolean
+  config: AutoIndexConfig
+  lastRunAt: number | null
+  nextRunAt: number | null
+  lastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null
+}
+
 /** 热数据晋升阈值：30天内被搜索命中 >= 5 次 或被读取 >= 3 次 */
 const HOT_PROMOTE_HIT_THRESHOLD = 5
 const HOT_PROMOTE_READ_THRESHOLD = 3
@@ -34,6 +53,14 @@ class KMSIndexManagerService {
   private db: Database.Database
   private static instance: KMSIndexManagerService
   private abortController: AbortController | null = null
+  // 自动索引相关
+  private autoIndexTimer: NodeJS.Timeout | null = null
+  private autoIndexConfig: AutoIndexConfig = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
+  private autoIndexLastRunAt: number | null = null
+  private autoIndexLastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null = null
+  private autoIndexRunning: boolean = false
+  // 自动索引进度回调（由 kms.service.ts 注入）
+  private autoIndexProgressCallback: ProgressCallback | null = null
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
@@ -354,6 +381,189 @@ class KMSIndexManagerService {
   cancelIndexing(): void {
     this.abortController?.abort()
     this.abortController = null
+  }
+
+  // ==================== 自动索引 ====================
+
+  /**
+   * 设置自动索引进度回调
+   */
+  setAutoIndexProgressCallback(cb: ProgressCallback | null): void {
+    this.autoIndexProgressCallback = cb
+  }
+
+  /**
+   * 启动自动索引定时器
+   */
+  startAutoIndex(config: AutoIndexConfig): void {
+    // 先停止现有定时器
+    this.stopAutoIndex()
+    this.autoIndexConfig = config
+
+    if (!config.enabled) return
+
+    const intervalMs = Math.max(1, config.intervalMinutes) * 60 * 1000
+    logger.info(`Auto-index enabled: interval=${config.intervalMinutes}min, stableThreshold=${config.stableThresholdSeconds}s`)
+
+    this.autoIndexTimer = setInterval(() => {
+      this.runAutoIndexCheck().catch((err) => {
+        logger.error('Auto-index check failed:', err)
+      })
+    }, intervalMs)
+  }
+
+  /**
+   * 停止自动索引定时器
+   */
+  stopAutoIndex(): void {
+    if (this.autoIndexTimer) {
+      clearInterval(this.autoIndexTimer)
+      this.autoIndexTimer = null
+      logger.info('Auto-index timer stopped')
+    }
+  }
+
+  /**
+   * 获取自动索引状态
+   */
+  getAutoIndexStatus(): AutoIndexStatus {
+    const nextRunAt = this.autoIndexTimer && this.autoIndexLastRunAt
+      ? this.autoIndexLastRunAt + Math.max(1, this.autoIndexConfig.intervalMinutes) * 60
+      : null
+
+    return {
+      running: this.autoIndexRunning,
+      config: { ...this.autoIndexConfig },
+      lastRunAt: this.autoIndexLastRunAt,
+      nextRunAt,
+      lastResult: this.autoIndexLastResult ? { ...this.autoIndexLastResult } : null,
+    }
+  }
+
+  /**
+   * 立即执行一次自动索引检查（不受定时器控制）
+   * 如果有手动索引任务正在运行则跳过
+   */
+  async runAutoIndexCheck(): Promise<void> {
+    // 正在手动索引或自动索引中则跳过
+    if (this.abortController) {
+      logger.info('Auto-index skipped: manual indexing in progress')
+      return
+    }
+    if (this.autoIndexRunning) {
+      logger.info('Auto-index skipped: already running')
+      return
+    }
+
+    this.autoIndexRunning = true
+    const signal = new AbortController().signal
+    const onProgress = this.autoIndexProgressCallback ?? undefined
+
+    try {
+      // 阶段1：带稳定阈值扫描目录，检测变更
+      onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '自动检测文件变更...' })
+      const crawlResult = await KMSCrawlerService.getInstance().crawlAllDirectories(signal, {
+        stableThresholdSeconds: this.autoIndexConfig.stableThresholdSeconds,
+      })
+
+      // 获取需要索引的文件（新增+修改）
+      const pendingFiles = KMSCrawlerService.getInstance().getPendingFiles()
+      const total = pendingFiles.length
+
+      this.autoIndexLastResult = {
+        newFiles: crawlResult.newFiles,
+        modifiedFiles: crawlResult.modifiedFiles,
+        deletedFiles: crawlResult.deletedFiles,
+        skippedUnstableFiles: crawlResult.skippedUnstableFiles,
+      }
+      this.autoIndexLastRunAt = Math.floor(Date.now() / 1000)
+
+      // 没有变更则结束
+      if (total === 0 && crawlResult.deletedFiles === 0) {
+        logger.info(`Auto-index: no changes detected (skipped unstable: ${crawlResult.skippedUnstableFiles})`)
+        onProgress?.({ phase: 'done', current: 0, total: 0, message: '未检测到文件变更' })
+        return
+      }
+
+      if (total === 0) {
+        logger.info(`Auto-index: only deletions (deleted: ${crawlResult.deletedFiles})`)
+        onProgress?.({ phase: 'done', current: 0, total: 0, message: `已清理 ${crawlResult.deletedFiles} 个已删除文件的索引` })
+        return
+      }
+
+      logger.info(`Auto-index: processing ${total} files (new: ${crawlResult.newFiles}, modified: ${crawlResult.modifiedFiles}, deleted: ${crawlResult.deletedFiles}, skipped: ${crawlResult.skippedUnstableFiles})`)
+
+      // 阶段2：解析和索引变更文件
+      onProgress?.({ phase: 'parsing', current: 0, total, message: `自动索引 ${total} 个文件...` })
+
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const fileParser = FileParserService.getInstance()
+
+      // 获取 KMS 配置的 embedding provider
+      let providerId: string | undefined
+      try {
+        const defaultEmbConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
+        if (defaultEmbConfig) providerId = defaultEmbConfig.providerId
+      } catch {}
+
+      let processed = 0
+      for (const file of pendingFiles) {
+        if (signal.aborted) break
+
+        try {
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
+          // 先删除旧索引（处理 modified 文件）
+          searchEngine.deleteIndexByFile(file.id)
+
+          const parseResult = await fileParser.parseFilePath(file.filePath, signal)
+          if (signal.aborted) break
+
+          onProgress?.({ phase: 'indexing', current: processed + 1, total, message: `自动索引: ${file.fileName}` })
+
+          searchEngine.indexFileTitle(file.id, file.fileName)
+          if (parseResult.fullText) {
+            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
+          }
+
+          // 冷数据：生成轻量摘要
+          if (parseResult.fullText) {
+            this.saveLightSummary(file.id, file.fileName, file.filePath, parseResult.fullText)
+          }
+
+          // 热数据：额外生成 LLM 摘要
+          if (file.dataTier === 'hot' && providerId) {
+            const llmClient = LLMClientService.getInstance()
+            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+          }
+
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+        } catch (err: any) {
+          if (signal.aborted) break
+          logger.error(`Auto-index failed for "${file.fileName}":`, err)
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
+        }
+
+        processed++
+        onProgress?.({ phase: 'parsing', current: processed, total, message: `已处理 ${processed}/${total} 个文件` })
+      }
+
+      // 生成向量嵌入
+      if (providerId && !signal.aborted) {
+        await this.generateEmbeddings(providerId, onProgress, signal)
+      }
+
+      // 冷热数据评估
+      if (!signal.aborted) {
+        this.evaluateDataTiers()
+      }
+
+      onProgress?.({ phase: 'done', current: processed, total, message: `自动索引完成，共处理 ${processed} 个文件` })
+    } catch (err: any) {
+      logger.error('Auto-index check failed:', err)
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: err.message })
+    } finally {
+      this.autoIndexRunning = false
+    }
   }
 
   /**

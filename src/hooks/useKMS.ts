@@ -91,7 +91,23 @@ export interface KMSModelConfig {
   model_id: string
 }
 
-/** KMS 设置（模型 + 检索参数） */
+/** KMS 自动索引配置 */
+export interface KMSAutoIndexConfig {
+  enabled: boolean
+  intervalMinutes: number
+  stableThresholdSeconds: number
+}
+
+/** KMS 自动索引状态 */
+export interface KMSAutoIndexStatus {
+  running: boolean
+  config: KMSAutoIndexConfig
+  lastRunAt: number | null
+  nextRunAt: number | null
+  lastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null
+}
+
+/** KMS 设置（模型 + 检索参数 + 自动索引） */
 export interface KMSSettings {
   model: KMSModelConfig | null
   embeddingModel: KMSModelConfig | null
@@ -99,6 +115,7 @@ export interface KMSSettings {
     maxRounds?: number
     topK?: number
   }
+  autoIndex: KMSAutoIndexConfig
 }
 
 /** 目录摘要 */
@@ -176,7 +193,10 @@ export function useKMS() {
     model: null,
     embeddingModel: null,
     searchParams: { maxRounds: 3, topK: 10 },
+    autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
+  // 自动索引状态
+  const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
   // 知识沉淀
   const [dirSummaries, setDirSummaries] = useState<DirSummary[]>([])
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
@@ -417,6 +437,11 @@ export function useKMS() {
             maxRounds: result.searchParams?.maxRounds ?? 3,
             topK: result.searchParams?.topK ?? 10,
           },
+          autoIndex: {
+            enabled: result.autoIndex?.enabled ?? false,
+            intervalMinutes: result.autoIndex?.intervalMinutes ?? 10,
+            stableThresholdSeconds: result.autoIndex?.stableThresholdSeconds ?? 300,
+          },
         })
       }
     } catch (err) {
@@ -429,6 +454,7 @@ export function useKMS() {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number }
+    autoIndex?: KMSAutoIndexConfig
   }) => {
     try {
       await window.electronAPI.kms.setSettings(params)
@@ -440,6 +466,25 @@ export function useKMS() {
       return false
     }
   }, [loadKmsSettings])
+
+  // 加载自动索引状态
+  const loadAutoIndexStatus = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kms.getAutoIndexStatus()
+      setAutoIndexStatus(result)
+    } catch (err) {
+      console.error('Failed to load auto-index status:', err)
+    }
+  }, [])
+
+  // 手动触发一次自动索引检查
+  const runAutoIndexCheckNow = useCallback(async () => {
+    try {
+      await window.electronAPI.kms.runAutoIndexCheck()
+    } catch (err) {
+      console.error('Failed to trigger auto-index check:', err)
+    }
+  }, [])
 
   // ==================== 知识沉淀（摘要查看） ====================
 
@@ -530,6 +575,8 @@ export function useKMS() {
         setIsIndexing(false)
         setTimeout(() => setIndexProgress(null), 3000)
         loadStats()
+        // 自动索引完成后刷新状态
+        loadAutoIndexStatus()
       }
     })
     return () => {
@@ -537,14 +584,15 @@ export function useKMS() {
         progressUnsubscribe.current()
       }
     }
-  }, [loadStats])
+  }, [loadStats, loadAutoIndexStatus])
 
   // 初始加载
   useEffect(() => {
     loadDirs()
     loadStats()
     loadKmsSettings()
-  }, [loadDirs, loadStats, loadKmsSettings])
+    loadAutoIndexStatus()
+  }, [loadDirs, loadStats, loadKmsSettings, loadAutoIndexStatus])
 
   return {
     dirs,
@@ -564,6 +612,8 @@ export function useKMS() {
     previewFile,
     // KMS 设置
     kmsSettings,
+    // 自动索引
+    autoIndexStatus,
     // 知识沉淀
     dirSummaries,
     fileSummaries,
@@ -591,6 +641,9 @@ export function useKMS() {
     // KMS 设置
     loadKmsSettings,
     saveKmsSettings,
+    // 自动索引
+    loadAutoIndexStatus,
+    runAutoIndexCheckNow,
     // 知识沉淀
     loadDirSummaries,
     loadFileSummaries,

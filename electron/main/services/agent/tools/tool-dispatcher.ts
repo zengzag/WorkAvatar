@@ -33,7 +33,13 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
-      const result = await this.middlewareChain.execute(toolName, toolParams, async () => {
+      // 如果工具定义指定了 timeoutMs，注入到中间件参数中供超时中间件使用
+      const middlewareParams = { ...toolParams }
+      if (tool.timeoutMs) {
+        middlewareParams._timeoutMs = tool.timeoutMs
+      }
+
+      const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
         const result = await tool.handler(toolParams, context)
 
         const output = this.serializeResult(result)

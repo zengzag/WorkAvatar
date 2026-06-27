@@ -3,7 +3,7 @@ import fs from 'fs'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
-import KMSIndexManagerService, { type IndexProgress } from './kms-index-manager.service'
+import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
@@ -24,6 +24,10 @@ class KMSService {
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
+    // 将自动索引进度转发到进度通知通道，供前端感知
+    KMSIndexManagerService.getInstance().setAutoIndexProgressCallback((progress) => {
+      this.notifyProgress(progress)
+    })
   }
 
   static getInstance(): KMSService {
@@ -327,11 +331,16 @@ class KMSService {
   // ==================== KMS 设置 ====================
 
   /**
-   * 获取 KMS 设置（模型配置、检索参数）
+   * 获取 KMS 设置（模型配置、检索参数、自动索引配置）
    */
   getKmsSettings(): any {
     const mainDb = DatabaseService.getInstance().getDb()
-    const result: any = { model: null, embeddingModel: null, searchParams: { maxRounds: 3, topK: 10 } }
+    const result: any = {
+      model: null,
+      embeddingModel: null,
+      searchParams: { maxRounds: 3, topK: 10 },
+      autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
+    }
 
     try {
       const modelRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
@@ -351,6 +360,13 @@ class KMSService {
       const paramsRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_search_params'").get() as any
       if (paramsRow?.value) {
         result.searchParams = { ...result.searchParams, ...JSON.parse(paramsRow.value) }
+      }
+    } catch {}
+
+    try {
+      const autoIndexRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_auto_index'").get() as any
+      if (autoIndexRow?.value) {
+        result.autoIndex = { ...result.autoIndex, ...JSON.parse(autoIndexRow.value) }
       }
     } catch {}
 
@@ -386,6 +402,40 @@ class KMSService {
     if (params.searchParams !== undefined) {
       setSetting('kms_search_params', params.searchParams)
     }
+    if (params.autoIndex !== undefined) {
+      setSetting('kms_auto_index', params.autoIndex)
+      // 立即应用自动索引配置
+      const config: AutoIndexConfig = {
+        enabled: !!params.autoIndex.enabled,
+        intervalMinutes: Math.max(1, Math.min(1440, params.autoIndex.intervalMinutes ?? 10)),
+        stableThresholdSeconds: Math.max(0, Math.min(86400, params.autoIndex.stableThresholdSeconds ?? 300)),
+      }
+      KMSIndexManagerService.getInstance().startAutoIndex(config)
+    }
+  }
+
+  /**
+   * 初始化自动索引（应用启动时调用）
+   * 从数据库读取配置并启动定时器
+   */
+  initAutoIndex(): void {
+    const settings = this.getKmsSettings()
+    const config: AutoIndexConfig = settings.autoIndex || { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
+    KMSIndexManagerService.getInstance().startAutoIndex(config)
+  }
+
+  /**
+   * 获取自动索引状态
+   */
+  getAutoIndexStatus(): AutoIndexStatus {
+    return KMSIndexManagerService.getInstance().getAutoIndexStatus()
+  }
+
+  /**
+   * 立即执行一次自动索引检查
+   */
+  async runAutoIndexCheckNow(): Promise<void> {
+    await KMSIndexManagerService.getInstance().runAutoIndexCheck()
   }
 
   // ==================== 知识沉淀（摘要查看） ====================

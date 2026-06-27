@@ -390,13 +390,16 @@ const EmployeeWorkbench: React.FC = () => {
   }
 
   useEffect(() => {
-    if (!employee && id && employees.length > 0) {
+    // 仅当 URL 中的 id 明确不在员工列表时才回退到第一个员工
+    // 避免 employee.get(id) 异步加载期间因 employee 暂时为 null 而误触发跳转，
+    // 导致用户最后手动选定的智能体丢失
+    if (id && employees.length > 0 && !employees.some(e => e.id === id)) {
       const firstEmployee = employees[0]
       if (firstEmployee) {
         navigate(`/employee/${firstEmployee.id}`, { replace: true })
       }
     }
-  }, [employee, id, employees])
+  }, [id, employees])
 
   if (!employeeListLoaded) {
     return (

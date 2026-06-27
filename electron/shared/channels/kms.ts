@@ -22,6 +22,9 @@ export const KMS_CHANNELS = {
   KMS_SET_SETTINGS: 'kms:set-settings',
   KMS_GET_DIR_SUMMARIES: 'kms:get-dir-summaries',
   KMS_GET_FILE_SUMMARIES: 'kms:get-file-summaries',
+  // KMS 自动索引
+  KMS_GET_AUTO_INDEX_STATUS: 'kms:get-auto-index-status',
+  KMS_RUN_AUTO_INDEX_CHECK: 'kms:run-auto-index-check',
   // KMS 搜索历史
   KMS_GET_SEARCH_HISTORY: 'kms:get-search-history',
   KMS_GET_SEARCH_HISTORY_DETAIL: 'kms:get-search-history-detail',
@@ -96,10 +99,17 @@ export interface KMSGetFileSummariesParams {
   pageSize?: number
 }
 
+export interface KMSAutoIndexConfig {
+  enabled: boolean
+  intervalMinutes: number
+  stableThresholdSeconds: number
+}
+
 export interface KMSSetSettingsParams {
   model?: { provider_id: string; model_id: string } | null
   embeddingModel?: { provider_id: string; model_id: string } | null
   searchParams?: { maxRounds?: number; topK?: number }
+  autoIndex?: KMSAutoIndexConfig
 }
 
 export interface KMSRecordSearchHistoryParams {

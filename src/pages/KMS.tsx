@@ -26,6 +26,9 @@ const KMSPage: React.FC = () => {
     // KMS 设置
     kmsSettings,
     saveKmsSettings,
+    // 自动索引
+    autoIndexStatus,
+    runAutoIndexCheckNow,
     // 知识沉淀
     dirSummaries,
     fileSummaries,
@@ -202,6 +205,8 @@ const KMSPage: React.FC = () => {
           onIncrementalIndex={incrementalIndex}
           onRebuildIndex={buildIndex}
           onCancelIndex={cancelIndex}
+          autoIndexStatus={autoIndexStatus}
+          onRunAutoIndexCheck={runAutoIndexCheckNow}
         />
       </Drawer>
 

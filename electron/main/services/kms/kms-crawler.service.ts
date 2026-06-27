@@ -29,6 +29,13 @@ export interface CrawlResult {
   modifiedFiles: number
   deletedFiles: number
   unchangedFiles: number
+  /** 因稳定阈值跳过的文件数（文件最近被修改，尚未稳定） */
+  skippedUnstableFiles: number
+}
+
+export interface CrawlOptions {
+  /** 文件稳定阈值（秒）：修改时间距今不足该值的文件视为"尚未稳定"，跳过不索引，避免用户正在编辑时频繁更新 */
+  stableThresholdSeconds?: number
 }
 
 export interface FileEntry {
@@ -65,8 +72,9 @@ class KMSCrawlerService {
 
   /**
    * 扫描指定索引目录，检测文件变更
+   * @param stableThresholdSeconds 文件稳定阈值（秒）：修改时间距今不足该值的文件视为"尚未稳定"，跳过不索引
    */
-  async crawlDirectory(dirId: string, signal?: AbortSignal): Promise<CrawlResult> {
+  async crawlDirectory(dirId: string, signal?: AbortSignal, options?: CrawlOptions): Promise<CrawlResult> {
     const dirRow = this.db.prepare('SELECT * FROM kms_index_dirs WHERE id = ? AND enabled = 1').get(dirId) as any
     if (!dirRow) {
       throw new Error(`Index directory not found or disabled: ${dirId}`)
@@ -82,6 +90,9 @@ class KMSCrawlerService {
       throw new Error(`Directory does not exist: ${dirPath}`)
     }
 
+    const stableThreshold = options?.stableThresholdSeconds ?? 0
+    const now = Math.floor(Date.now() / 1000)
+
     // 收集磁盘上的文件
     const diskFiles = this.scanDiskFiles(dirPath, recursive, extensions, signal)
 
@@ -95,6 +106,7 @@ class KMSCrawlerService {
       modifiedFiles: 0,
       deletedFiles: 0,
       unchangedFiles: 0,
+      skippedUnstableFiles: 0,
     }
 
     const diskPathSet = new Set(diskFiles.map(f => f.filePath))
@@ -109,7 +121,14 @@ class KMSCrawlerService {
         await this.registerFile(dirId, diskFile)
         result.newFiles++
       } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
-        // 可能修改的文件 - 需要计算hash确认
+        // 可能修改的文件 - 先检查稳定阈值
+        // 如果文件最近被修改（距今不足稳定阈值），跳过以避免用户正在编辑时频繁更新
+        if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
+          result.skippedUnstableFiles++
+          continue
+        }
+
+        // 需要计算hash确认是否真的修改
         const newHash = await calculateFileHash(diskFile.filePath)
         if (newHash !== dbFile.file_hash) {
           this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
@@ -130,14 +149,14 @@ class KMSCrawlerService {
       }
     }
 
-    logger.info(`Crawled "${dirPath}": ${result.newFiles} new, ${result.modifiedFiles} modified, ${result.deletedFiles} deleted, ${result.unchangedFiles} unchanged`)
+    logger.info(`Crawled "${dirPath}": ${result.newFiles} new, ${result.modifiedFiles} modified, ${result.deletedFiles} deleted, ${result.unchangedFiles} unchanged, ${result.skippedUnstableFiles} skipped(unstable)`)
     return result
   }
 
   /**
    * 扫描所有启用的索引目录
    */
-  async crawlAllDirectories(signal?: AbortSignal): Promise<CrawlResult> {
+  async crawlAllDirectories(signal?: AbortSignal, options?: CrawlOptions): Promise<CrawlResult> {
     const dirs = this.db.prepare('SELECT * FROM kms_index_dirs WHERE enabled = 1').all() as any[]
     const totalResult: CrawlResult = {
       totalFiles: 0,
@@ -145,17 +164,19 @@ class KMSCrawlerService {
       modifiedFiles: 0,
       deletedFiles: 0,
       unchangedFiles: 0,
+      skippedUnstableFiles: 0,
     }
 
     for (const dir of dirs) {
       if (signal?.aborted) break
       try {
-        const result = await this.crawlDirectory(dir.id, signal)
+        const result = await this.crawlDirectory(dir.id, signal, options)
         totalResult.totalFiles += result.totalFiles
         totalResult.newFiles += result.newFiles
         totalResult.modifiedFiles += result.modifiedFiles
         totalResult.deletedFiles += result.deletedFiles
         totalResult.unchangedFiles += result.unchangedFiles
+        totalResult.skippedUnstableFiles += result.skippedUnstableFiles
       } catch (err) {
         logger.error(`Failed to crawl directory "${dir.dir_path}":`, err)
       }

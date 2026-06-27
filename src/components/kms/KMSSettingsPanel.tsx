@@ -11,7 +11,7 @@ import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
 import KMSIndexPanel from './KMSIndexPanel'
 import type { LLMProvider } from '../../types'
-import type { KMSSettings, KMSModelConfig } from '../../hooks/useKMS'
+import type { KMSSettings, KMSModelConfig, KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -45,6 +45,7 @@ interface KMSSettingsPanelProps {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number }
+    autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
   // 目录管理
   dirs: IndexDir[]
@@ -59,6 +60,9 @@ interface KMSSettingsPanelProps {
   onIncrementalIndex: () => void
   onRebuildIndex: () => void
   onCancelIndex: () => void
+  // 自动索引
+  autoIndexStatus: KMSAutoIndexStatus | null
+  onRunAutoIndexCheck: () => void
 }
 
 const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
@@ -75,6 +79,8 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onIncrementalIndex,
   onRebuildIndex,
   onCancelIndex,
+  autoIndexStatus,
+  onRunAutoIndexCheck,
 }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -374,6 +380,10 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         onIncrementalIndex={onIncrementalIndex}
         onRebuildIndex={onRebuildIndex}
         onCancelIndex={onCancelIndex}
+        autoIndexConfig={settings.autoIndex}
+        autoIndexStatus={autoIndexStatus}
+        onSaveAutoIndex={async (config) => onSaveSettings({ autoIndex: config })}
+        onRunAutoIndexCheck={onRunAutoIndexCheck}
       />
     </div>
   )

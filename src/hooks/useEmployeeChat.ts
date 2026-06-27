@@ -290,6 +290,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       initEmployee()
     }
     return () => {
+      // 切换员工或卸载组件前，保存当前对话 ID，便于下次进入时恢复
+      // 使用闭包捕获的旧 activeConvIdStorageKey，确保保存到正确的员工名下
+      // （闭包中的 key 与本 effect 注册时的 id 一致，正好对应切换前的员工）
+      if (activeConversationIdRef.current && activeConvIdStorageKey) {
+        localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
+      }
       initializedRef.current = false
     }
   }, [id])
@@ -316,10 +322,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     return () => {
-      if (activeConversationIdRef.current && activeConvIdStorageKey) {
-        localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
-      }
-
       const entries: [string, MessageWithThought[]][] = []
       for (const entry of conversationMessagesRef.current.entries()) {
         entries.push(entry as [string, MessageWithThought[]])
