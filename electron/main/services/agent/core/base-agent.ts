@@ -498,7 +498,15 @@ export abstract class BaseAgent {
           this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
           callbacks.onToolCall?.({ id: toolCall.id, name: toolName, args })
 
-          const result = await this.toolDispatcher.dispatch(toolName, args)
+          const toolContext = callbacks.onToolProgress
+            ? {
+                onProgress: (progress: any) => {
+                  callbacks.onToolProgress?.({ toolCallId: toolCall.id, name: toolName, progress })
+                },
+              }
+            : undefined
+
+          const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
           usedToolCalls.push({
             name: toolName,
             args,

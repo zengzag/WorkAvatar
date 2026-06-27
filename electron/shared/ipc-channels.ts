@@ -72,4 +72,6 @@ export type {
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
   KMSSetSettingsParams,
+  KMSRecordSearchHistoryParams,
+  KMSGetSearchHistoryParams,
 } from './channels/kms'

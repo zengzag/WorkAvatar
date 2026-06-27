@@ -9,6 +9,8 @@ import type {
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
   KMSSetSettingsParams,
+  KMSRecordSearchHistoryParams,
+  KMSGetSearchHistoryParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -194,6 +196,30 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, async (params: KMSGetFileSummariesParams) => {
     return kmsService.getFileSummaries(params)
+  })
+
+  // ==================== 搜索历史 ====================
+  safeHandle(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, async (params: KMSRecordSearchHistoryParams) => {
+    kmsService.recordSearchHistory(params)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, async (params: KMSGetSearchHistoryParams) => {
+    return kmsService.getSearchHistory(params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, async (id: string) => {
+    return kmsService.getSearchHistoryDetail(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, async (searchMode?: string) => {
+    kmsService.clearSearchHistory(searchMode)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, async (id: string) => {
+    kmsService.deleteSearchHistory(id)
+    return { success: true }
   })
 
   // ==================== KMS MCP 服务 ====================

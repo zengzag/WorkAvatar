@@ -54,6 +54,8 @@ import type {
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
   KMSSetSettingsParams,
+  KMSRecordSearchHistoryParams,
+  KMSGetSearchHistoryParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -155,6 +157,11 @@ const electronAPI = {
       const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
+    },
+    onToolProgress: (callback: (data: { sessionId: string; toolCallId: string; name: string; progress: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; toolCallId: string; name: string; progress: any }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
     },
   },
 
@@ -293,6 +300,12 @@ const electronAPI = {
     // 知识沉淀（摘要查看）
     getDirSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES),
     getFileSummaries: (params: KMSGetFileSummariesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, params),
+    // 搜索历史
+    recordSearchHistory: (params: KMSRecordSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, params),
+    getSearchHistory: (params?: KMSGetSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, params || {}),
+    getSearchHistoryDetail: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, id),
+    clearSearchHistory: (searchMode?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, searchMode),
+    deleteSearchHistory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, id),
   },
 
   kmsMcp: {

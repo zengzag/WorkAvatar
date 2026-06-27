@@ -149,6 +149,7 @@ export default {
     completed: '完成',
     inputParams: '输入参数',
     outputResult: '返回结果',
+    toolProgress: '执行进度',
     resultTruncated: '...(结果已截断)',
     executionTime: '耗时 {{time}}s',
     showMore: '展开更多',
@@ -1099,6 +1100,17 @@ export default {
     // 视图切换
     searchView: '搜索',
     knowledgeView: '知识沉淀',
+    historyView: '历史',
+    // 搜索历史
+    historyAll: '全部',
+    noHistory: '暂无搜索历史',
+    historyDetail: '搜索历史详情',
+    searchQuery: '搜索词',
+    viewDetail: '查看详情',
+    clearHistory: '清空历史',
+    clearHistoryConfirm: '确定清空搜索历史？此操作不可恢复。',
+    historyResultsUnit: '条结果',
+    historyNoDetail: '该搜索模式不保存详细结果数据',
     // 设置面板
     settingsPanel: {
       modelTab: '模型设置',

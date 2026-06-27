@@ -205,6 +205,12 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     })
   }, [onPreview])
 
+  // 从搜索查询中提取关键词用于高亮
+  const searchKeywords = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    return searchQuery.trim().split(/\s+/).filter(kw => kw.length > 0)
+  }, [searchQuery])
+
   const renderScoreBar = (score?: number) => {
     if (score === undefined || score === null) return null
     const percent = Math.min(Math.round(score * 100), 100)
@@ -378,7 +384,10 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
               whiteSpace: 'pre-wrap',
             }}
           >
-            {agentResult.conclusion}
+            <HighlightText
+              text={agentResult.conclusion}
+              keywords={searchKeywords}
+            />
           </Paragraph>
         </Card>
 
@@ -410,11 +419,11 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                       onClick={() => handleSourcePreview(source)}
                       title={t('kms.preview')}
                     >
-                      {source.fileName}
+                      <HighlightText text={source.fileName} keywords={searchKeywords} />
                     </Text>
                     {source.paragraphTitle && (
                       <Text type="secondary" style={{ fontSize: 11 }}>
-                        {source.paragraphTitle}
+                        <HighlightText text={source.paragraphTitle} keywords={searchKeywords} />
                       </Text>
                     )}
                   </Space>
@@ -478,7 +487,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                     maxHeight: 40,
                     overflow: 'hidden',
                   }}>
-                    {source.snippet}
+                    <HighlightText text={source.snippet} keywords={searchKeywords} />
                   </div>
                 )}
               </Card>

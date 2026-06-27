@@ -15,6 +15,7 @@ export const LLM_CHANNELS = {
   LLM_THOUGHT: 'llm:thought',
   AGENT_TOOL_CALL: 'agent:tool-call',
   AGENT_TOOL_RESULT: 'agent:tool-result',
+  AGENT_TOOL_PROGRESS: 'agent:tool-progress',
   INTERACTION_REQUEST: 'interaction:request',
   INTERACTION_RESPONSE: 'interaction:response',
 } as const

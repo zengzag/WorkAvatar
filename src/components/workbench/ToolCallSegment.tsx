@@ -293,6 +293,74 @@ const ToolCallSegment: React.FC<{
                 </pre>
               </div>
             )}
+            {seg.toolProgress && seg.toolProgress.length > 0 && (
+              <div style={{ marginBottom: seg.toolResult !== undefined ? 10 : 0 }}>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
+                  {t('workbench.toolProgress')}
+                </Text>
+                <div style={{
+                  padding: '6px 10px',
+                  background: token.colorPrimaryBg,
+                  borderRadius: 6,
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  maxHeight: 200,
+                  overflow: 'auto',
+                  border: `1px solid ${token.colorPrimaryBorder}`,
+                }}>
+                  {seg.toolProgress.map((step: any, i: number) => {
+                    const typeColors: Record<string, string> = {
+                      info: token.colorTextTertiary,
+                      llm: '#722ed1',
+                      search: '#1677ff',
+                      read: '#fa8c16',
+                      plan: '#13c2c2',
+                      result: '#52c41a',
+                    }
+                    const typeIcons: Record<string, string> = {
+                      info: '•',
+                      llm: '🤖',
+                      search: '🔍',
+                      read: '📄',
+                      plan: '📋',
+                      result: '✓',
+                    }
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: 6,
+                          padding: '2px 0',
+                          borderBottom: i < seg.toolProgress!.length - 1 ? `1px solid ${token.colorBorderSecondary}` : 'none',
+                        }}
+                      >
+                        <span style={{ color: typeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
+                          {typeIcons[step.type] || '•'}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {step.phase && (
+                            <span style={{ color: typeColors[step.type] || token.colorTextTertiary, fontWeight: 500 }}>
+                              [{step.phase}]
+                            </span>
+                          )}
+                          <span style={{ color: token.colorTextSecondary, marginLeft: step.phase ? 4 : 0 }}>
+                            {step.action}
+                          </span>
+                          {step.detail && (
+                            <span style={{ color: token.colorTextTertiary, marginLeft: 4 }}>— {step.detail}</span>
+                          )}
+                          {step.durationMs !== undefined && (
+                            <span style={{ color: token.colorTextQuaternary, marginLeft: 6 }}>{step.durationMs}ms</span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             {seg.toolResult !== undefined && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>

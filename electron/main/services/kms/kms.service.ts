@@ -452,6 +452,85 @@ class KMSService {
     return { items, total }
   }
 
+  // ==================== 搜索历史 ====================
+
+  /**
+   * 记录搜索历史
+   */
+  recordSearchHistory(params: {
+    query: string
+    searchMode: string
+    resultCount: number
+    resultData?: any
+    filters?: any
+  }): void {
+    const id = generateId()
+    this.db.prepare(`
+      INSERT INTO kms_search_history (id, query, search_mode, result_count, result_data, filters_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      params.query,
+      params.searchMode,
+      params.resultCount,
+      params.resultData ? JSON.stringify(params.resultData) : null,
+      params.filters ? JSON.stringify(params.filters) : '{}'
+    )
+  }
+
+  /**
+   * 获取搜索历史列表
+   */
+  getSearchHistory(params?: { limit?: number; searchMode?: string }): any[] {
+    const limit = Math.min(Math.max(params?.limit || 50, 1), 500)
+    let sql = 'SELECT id, query, search_mode, result_count, created_at FROM kms_search_history'
+    const sqlParams: any[] = []
+    if (params?.searchMode) {
+      sql += ' WHERE search_mode = ?'
+      sqlParams.push(params.searchMode)
+    }
+    sql += ' ORDER BY created_at DESC LIMIT ?'
+    sqlParams.push(limit)
+    return this.db.prepare(sql).all(...sqlParams)
+  }
+
+  /**
+   * 获取搜索历史详情（含完整结果数据）
+   */
+  getSearchHistoryDetail(id: string): any {
+    const row = this.db.prepare('SELECT * FROM kms_search_history WHERE id = ?').get(id) as any
+    if (!row) return null
+    if (row.result_data) {
+      try {
+        row.result_data = JSON.parse(row.result_data)
+      } catch {}
+    }
+    if (row.filters_json) {
+      try {
+        row.filters_json = JSON.parse(row.filters_json)
+      } catch {}
+    }
+    return row
+  }
+
+  /**
+   * 清空搜索历史
+   */
+  clearSearchHistory(searchMode?: string): void {
+    if (searchMode) {
+      this.db.prepare('DELETE FROM kms_search_history WHERE search_mode = ?').run(searchMode)
+    } else {
+      this.db.prepare('DELETE FROM kms_search_history').run()
+    }
+  }
+
+  /**
+   * 删除单条搜索历史
+   */
+  deleteSearchHistory(id: string): void {
+    this.db.prepare('DELETE FROM kms_search_history WHERE id = ?').run(id)
+  }
+
   // ==================== 进度通知 ====================
 
   onProgress(listener: (progress: IndexProgress) => void): () => void {

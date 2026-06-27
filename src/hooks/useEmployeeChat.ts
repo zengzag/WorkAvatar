@@ -474,6 +474,39 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       )
     })
 
+    const toolProgressCleanup = window.electronAPI.llm.onToolProgress((data: { sessionId: string; toolCallId: string; name: string; progress: any }) => {
+      const { sessionId, toolCallId, name, progress } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(streamState.conversationId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+          // 找到对应的 tool_call segment（通过 toolCallId 或 name+incomplete）
+          let targetIndex = -1
+          if (toolCallId) {
+            targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.toolCallId === toolCallId && !s.isToolComplete)
+          }
+          if (targetIndex === -1) {
+            const lastIncompleteIndex = [...segs].reverse().findIndex(
+              s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete
+            )
+            if (lastIncompleteIndex !== -1) {
+              targetIndex = segs.length - 1 - lastIncompleteIndex
+            }
+          }
+          if (targetIndex === -1) return m
+          const existingProgress = segs[targetIndex].toolProgress || []
+          segs[targetIndex] = {
+            ...segs[targetIndex],
+            toolProgress: [...existingProgress, progress],
+          }
+          return { ...m, segments: segs }
+        })
+      )
+    })
+
     const doneCleanup = window.electronAPI.llm.onDone((data: { sessionId: string; metadata?: any }) => {
       const { sessionId, metadata } = data
       const streamState = streamStatesRef.current.get(sessionId)
@@ -572,6 +605,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       thoughtCleanup()
       toolCallCleanup()
       toolResultCleanup()
+      toolProgressCleanup()
       doneCleanup()
       errorCleanup()
     }

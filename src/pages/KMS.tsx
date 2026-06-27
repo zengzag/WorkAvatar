@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Drawer, Button, Segmented } from 'antd'
-import { SettingOutlined, SearchOutlined, DatabaseOutlined } from '@ant-design/icons'
-import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView } from '../components/kms'
+import { SettingOutlined, SearchOutlined, DatabaseOutlined, HistoryOutlined } from '@ant-design/icons'
+import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSHistoryView } from '../components/kms'
 import { useKMS } from '../hooks/useKMS'
 
-type ViewMode = 'search' | 'knowledge'
+type ViewMode = 'search' | 'knowledge' | 'history'
 
 const KMSPage: React.FC = () => {
   const { t } = useTranslation()
@@ -32,6 +32,12 @@ const KMSPage: React.FC = () => {
     isLoadingSummaries,
     loadDirSummaries,
     loadFileSummaries,
+    // 搜索历史
+    searchHistory,
+    loadSearchHistory,
+    getSearchHistoryDetail,
+    clearSearchHistory,
+    deleteSearchHistory,
     addDir,
     updateDir,
     deleteDir,
@@ -47,6 +53,13 @@ const KMSPage: React.FC = () => {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('search')
+
+  // 切换到历史视图时加载历史数据
+  useEffect(() => {
+    if (viewMode === 'history') {
+      loadSearchHistory({ limit: 100 })
+    }
+  }, [viewMode, loadSearchHistory])
 
   const handlePreview = useCallback((result: any) => {
     setPreviewFile(result)
@@ -104,6 +117,15 @@ const KMSPage: React.FC = () => {
               ),
               value: 'knowledge',
             },
+            {
+              label: (
+                <span>
+                  <HistoryOutlined style={{ marginRight: 4 }} />
+                  {t('kms.historyView')}
+                </span>
+              ),
+              value: 'history',
+            },
           ]}
         />
         <Button
@@ -133,7 +155,7 @@ const KMSPage: React.FC = () => {
             onOpenFileDir={openFileDir}
             onPreview={handlePreview}
           />
-        ) : (
+        ) : viewMode === 'knowledge' ? (
           <KMSKnowledgeView
             dirs={dirs}
             dirSummaries={dirSummaries}
@@ -143,6 +165,17 @@ const KMSPage: React.FC = () => {
             onLoadFileSummaries={loadFileSummaries}
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
+          />
+        ) : (
+          <KMSHistoryView
+            history={searchHistory}
+            onLoadHistory={loadSearchHistory}
+            onGetDetail={getSearchHistoryDetail}
+            onDelete={deleteSearchHistory}
+            onClear={clearSearchHistory}
+            onOpenFile={openFile}
+            onOpenFileDir={openFileDir}
+            onPreview={handlePreview}
           />
         )}
       </div>

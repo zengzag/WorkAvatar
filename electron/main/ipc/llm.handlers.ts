@@ -103,6 +103,10 @@ export function registerLLMHandlers(
                 const { rawResult: _, ...safeResult } = toolResult
                 event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
               },
+              onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
+                if (abortController.signal.aborted) return
+                event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
+              },
               onDone: (metadata?: any) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} }); activeSessions.delete(sessionId) },
               onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error }); activeSessions.delete(sessionId) },
             },

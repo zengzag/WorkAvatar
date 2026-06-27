@@ -21,6 +21,8 @@ export interface MessageSegment {
   toolResult?: any
   isToolComplete?: boolean
   toolCallId?: string
+  /** 工具执行中间进度步骤（仅UI展示，不进入LLM上下文） */
+  toolProgress?: any[]
 }
 
 export interface TokenUsage {

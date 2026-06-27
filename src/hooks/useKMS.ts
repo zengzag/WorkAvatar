@@ -137,6 +137,26 @@ export interface FileSummariesResult {
   total: number
 }
 
+/** 搜索历史项 */
+export interface SearchHistoryItem {
+  id: string
+  query: string
+  search_mode: string
+  result_count: number
+  created_at: number
+}
+
+/** 搜索历史详情 */
+export interface SearchHistoryDetail {
+  id: string
+  query: string
+  search_mode: string
+  result_count: number
+  result_data: any
+  filters_json: any
+  created_at: number
+}
+
 export function useKMS() {
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -161,6 +181,8 @@ export function useKMS() {
   const [dirSummaries, setDirSummaries] = useState<DirSummary[]>([])
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
   const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
+  // 搜索历史
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
   const progressUnsubscribe = useRef<(() => void) | null>(null)
 
   // 加载目录列表
@@ -250,6 +272,14 @@ export function useKMS() {
         if (result && !result.error) {
           setAgentResult(result)
           setSearchResults([])
+          // 记录AI搜索历史（含完整结果数据）
+          window.electronAPI.kms.recordSearchHistory({
+            query,
+            searchMode: 'ai',
+            resultCount: result.sources?.length || 0,
+            resultData: result,
+            filters,
+          }).catch(() => {})
         } else {
           // 显示错误信息作为结论
           const errorMsg = result?.error || 'Unknown error'
@@ -277,6 +307,13 @@ export function useKMS() {
         })
         setAgentResult(null)
         setSearchResults(results || [])
+        // 记录关键词/语义/混合搜索历史
+        window.electronAPI.kms.recordSearchHistory({
+          query,
+          searchMode: mode || 'keyword',
+          resultCount: results?.length || 0,
+          filters,
+        }).catch(() => {})
       }
     } catch (err) {
       console.error('KMS search failed:', err)
@@ -440,6 +477,48 @@ export function useKMS() {
     }
   }, [])
 
+  // ==================== 搜索历史 ====================
+
+  // 加载搜索历史
+  const loadSearchHistory = useCallback(async (params?: { limit?: number; searchMode?: string }) => {
+    try {
+      const result = await window.electronAPI.kms.getSearchHistory(params)
+      setSearchHistory(result || [])
+    } catch (err) {
+      console.error('Failed to load search history:', err)
+    }
+  }, [])
+
+  // 获取搜索历史详情
+  const getSearchHistoryDetail = useCallback(async (id: string) => {
+    try {
+      return await window.electronAPI.kms.getSearchHistoryDetail(id)
+    } catch (err) {
+      console.error('Failed to load search history detail:', err)
+      return null
+    }
+  }, [])
+
+  // 清空搜索历史
+  const clearSearchHistory = useCallback(async (searchMode?: string) => {
+    try {
+      await window.electronAPI.kms.clearSearchHistory(searchMode)
+      await loadSearchHistory()
+    } catch (err) {
+      console.error('Failed to clear search history:', err)
+    }
+  }, [loadSearchHistory])
+
+  // 删除单条搜索历史
+  const deleteSearchHistory = useCallback(async (id: string) => {
+    try {
+      await window.electronAPI.kms.deleteSearchHistory(id)
+      await loadSearchHistory()
+    } catch (err) {
+      console.error('Failed to delete search history:', err)
+    }
+  }, [loadSearchHistory])
+
   // 监听索引进度
   useEffect(() => {
     if (progressUnsubscribe.current) {
@@ -489,6 +568,8 @@ export function useKMS() {
     dirSummaries,
     fileSummaries,
     isLoadingSummaries,
+    // 搜索历史
+    searchHistory,
     setFileContent: (v: null) => setFileContent(v),
     setFileSummary: (v: null) => setFileSummary(v),
     setPreviewFile: (v: SearchResult | null) => setPreviewFile(v),
@@ -513,5 +594,10 @@ export function useKMS() {
     // 知识沉淀
     loadDirSummaries,
     loadFileSummaries,
+    // 搜索历史
+    loadSearchHistory,
+    getSearchHistoryDetail,
+    clearSearchHistory,
+    deleteSearchHistory,
   }
 }

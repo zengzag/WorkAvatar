@@ -193,6 +193,20 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_dir_summaries_dir ON kms_dir_summaries(dir_id);
+
+      -- 搜索历史表（记录关键词搜索和AI搜索的历史）
+      CREATE TABLE IF NOT EXISTS kms_search_history (
+        id TEXT PRIMARY KEY,
+        query TEXT NOT NULL,
+        search_mode TEXT NOT NULL,
+        result_count INTEGER NOT NULL DEFAULT 0,
+        result_data TEXT,
+        filters_json TEXT DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_search_history_time ON kms_search_history(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_kms_search_history_mode ON kms_search_history(search_mode);
     `)
 
     // 增量迁移：为已有表添加新字段

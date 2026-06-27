@@ -52,6 +52,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolResult: (toolResult: { name: string; result: any }) => void
+  onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
 }
@@ -422,6 +423,7 @@ class EmployeeAgentService {
           onThought: callbacks.onThought,
           onToolCall: callbacks.onToolCall,
           onToolResult: callbacks.onToolResult,
+          onToolProgress: callbacks.onToolProgress,
           onDone: (metadata?: any) => {
             callbacks.onDone(metadata)
             if (memoryEnabled) {

@@ -22,6 +22,12 @@ export const KMS_CHANNELS = {
   KMS_SET_SETTINGS: 'kms:set-settings',
   KMS_GET_DIR_SUMMARIES: 'kms:get-dir-summaries',
   KMS_GET_FILE_SUMMARIES: 'kms:get-file-summaries',
+  // KMS 搜索历史
+  KMS_GET_SEARCH_HISTORY: 'kms:get-search-history',
+  KMS_GET_SEARCH_HISTORY_DETAIL: 'kms:get-search-history-detail',
+  KMS_CLEAR_SEARCH_HISTORY: 'kms:clear-search-history',
+  KMS_DELETE_SEARCH_HISTORY: 'kms:delete-search-history',
+  KMS_RECORD_SEARCH_HISTORY: 'kms:record-search-history',
   // KMS MCP 服务
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -94,4 +100,17 @@ export interface KMSSetSettingsParams {
   model?: { provider_id: string; model_id: string } | null
   embeddingModel?: { provider_id: string; model_id: string } | null
   searchParams?: { maxRounds?: number; topK?: number }
+}
+
+export interface KMSRecordSearchHistoryParams {
+  query: string
+  searchMode: string
+  resultCount: number
+  resultData?: any
+  filters?: any
+}
+
+export interface KMSGetSearchHistoryParams {
+  limit?: number
+  searchMode?: string
 }

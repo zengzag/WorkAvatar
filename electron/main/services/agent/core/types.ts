@@ -86,6 +86,7 @@ export interface AgentRunStreamCallbacks {
   onThought?: (thought: string) => void
   onToolCall?: (toolCall: { id: string; name: string; args: any }) => void
   onToolResult?: (toolResult: { name: string; result: any; rawResult?: any }) => void
+  onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: AgentResponseMetadata) => void
   onError?: (error: string) => void
   onPlan?: (plan: string) => void

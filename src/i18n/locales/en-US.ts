@@ -149,6 +149,7 @@ export default {
     completed: 'Completed',
     inputParams: 'Input Parameters',
     outputResult: 'Result',
+    toolProgress: 'Progress',
     resultTruncated: '...(result truncated)',
     executionTime: '{{time}}s',
     showMore: 'Show more',
@@ -1093,6 +1094,17 @@ export default {
     // 视图切换
     searchView: 'Search',
     knowledgeView: 'Knowledge',
+    historyView: 'History',
+    // 搜索历史
+    historyAll: 'All',
+    noHistory: 'No search history yet',
+    historyDetail: 'Search History Detail',
+    searchQuery: 'Query',
+    viewDetail: 'View Detail',
+    clearHistory: 'Clear History',
+    clearHistoryConfirm: 'Are you sure to clear all search history? This cannot be undone.',
+    historyResultsUnit: ' results',
+    historyNoDetail: 'No detailed result data for this search mode',
     // 设置面板
     settingsPanel: {
       modelTab: 'Model',

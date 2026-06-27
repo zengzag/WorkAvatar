@@ -157,17 +157,17 @@ const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_get_content',
-    description: 'Get file content by file ID, with precise location by paragraph ID, character offset, or line number. Supports context expansion.',
+    description: 'Get file content by file ID, with precise location by paragraph ID, character offset, or line number. Supports context expansion. The file_id must be the raw ID returned by kms_search or kms_agent_search (e.g. "8170964a"), NOT a prefixed format like "f:8170964a".',
     inputSchema: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: 'File ID (required)',
+          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search/kms_agent_search results. Do NOT include "f:" prefix.',
         },
         paragraph_id: {
           type: 'string',
-          description: 'Paragraph ID for precise paragraph retrieval (optional)',
+          description: 'Paragraph ID for precise paragraph retrieval (optional). Raw ID without "p:" prefix.',
         },
         start_offset: {
           type: 'number',
@@ -192,13 +192,13 @@ const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_get_summary',
-    description: 'Get the summary, keywords, and main topics of a file (available for hot data files).',
+    description: 'Get the summary, keywords, and main topics of a file (available for hot data files). The file_id must be the raw ID returned by kms_search or kms_agent_search, NOT a prefixed format like "f:8170964a".',
     inputSchema: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: 'File ID (required)',
+          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search/kms_agent_search results. Do NOT include "f:" prefix.',
         },
       },
       required: ['file_id'],
@@ -537,17 +537,14 @@ class KMSMCPService {
           if (r.paragraph_title) output += ` > ${r.paragraph_title}`
           output += '\n'
           output += `${r.text}\n`
-
-          const locParts: string[] = []
-          locParts.push(`f:${r.file_id}`)
-          if (r.paragraph_id) locParts.push(`p:${r.paragraph_id}`)
+          output += `file_id: ${r.file_id}\n`
+          if (r.paragraph_id) output += `paragraph_id: ${r.paragraph_id}\n`
           if (r.start_line !== undefined && r.end_line !== undefined) {
-            locParts.push(`L${r.start_line}-${r.end_line}`)
+            output += `lines: ${r.start_line}-${r.end_line}\n`
           }
           if (r.start_offset !== undefined && r.end_offset !== undefined) {
-            locParts.push(`off:${r.start_offset}-${r.end_offset}`)
+            output += `offset: ${r.start_offset}-${r.end_offset}\n`
           }
-          output += `[${locParts.join(' ')}]\n`
           output += `path: ${r.file_path}\n\n`
         }
 
@@ -580,16 +577,14 @@ class KMSMCPService {
             output += `[${i + 1}] ${s.fileName}`
             if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
             output += '\n'
-            const locParts: string[] = []
-            locParts.push(`f:${s.fileId}`)
-            if (s.paragraphId) locParts.push(`p:${s.paragraphId}`)
+            output += `file_id: ${s.fileId}\n`
+            if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
             if (s.startLine !== undefined && s.endLine !== undefined) {
-              locParts.push(`L${s.startLine}-${s.endLine}`)
+              output += `lines: ${s.startLine}-${s.endLine}\n`
             }
             if (s.startOffset !== undefined && s.endOffset !== undefined) {
-              locParts.push(`off:${s.startOffset}-${s.endOffset}`)
+              output += `offset: ${s.startOffset}-${s.endOffset}\n`
             }
-            output += `[${locParts.join(' ')}]\n`
             output += `path: ${s.filePath}\n`
             if (s.snippet) output += `snippet: ${s.snippet.substring(0, 150)}...\n`
             output += '\n'
@@ -600,13 +595,15 @@ class KMSMCPService {
       }
 
       case 'kms_get_content': {
-        const fileId = String(args.file_id || '').trim()
+        let fileId = String(args.file_id || '').trim()
         if (!fileId) {
           return 'Please provide file_id.'
         }
+        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
+        fileId = this.stripIdPrefix(fileId)
 
         const content = await kmsService.getFileContent(fileId, {
-          paragraphId: args.paragraph_id,
+          paragraphId: this.stripIdPrefix(String(args.paragraph_id || '')) || undefined,
           startOffset: args.start_offset,
           endOffset: args.end_offset,
           startLine: args.start_line,
@@ -619,25 +616,26 @@ class KMSMCPService {
         }
 
         let output = `${file.file_name}\n`
-        const locParts: string[] = [`f:${fileId}`]
-        if (args.paragraph_id) locParts.push(`p:${args.paragraph_id}`)
+        output += `file_id: ${fileId}\n`
+        if (args.paragraph_id) output += `paragraph_id: ${this.stripIdPrefix(String(args.paragraph_id))}\n`
         if (args.start_offset !== undefined && args.end_offset !== undefined) {
-          locParts.push(`off:${args.start_offset}-${args.end_offset}`)
+          output += `offset: ${args.start_offset}-${args.end_offset}\n`
         }
         if (args.start_line !== undefined) {
-          locParts.push(`L${args.start_line}`)
+          output += `line: ${args.start_line}\n`
         }
-        output += `[${locParts.join(' ')}]\n`
         output += `path: ${file.file_path}\n\n`
         output += content
         return output
       }
 
       case 'kms_get_summary': {
-        const fileId = String(args.file_id || '').trim()
+        let fileId = String(args.file_id || '').trim()
         if (!fileId) {
           return 'Please provide file_id.'
         }
+        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
+        fileId = this.stripIdPrefix(fileId)
 
         const summary = kmsService.getFileSummary(fileId) as any
         if (!summary) {
@@ -674,6 +672,20 @@ class KMSMCPService {
   private getFileById(fileId: string): any {
     const db = KMSDatabaseService.getInstance().getDb()
     return db.prepare('SELECT file_name, file_path FROM kms_files WHERE id = ?').get(fileId)
+  }
+
+  /**
+   * 防御性剥离 ID 前缀
+   * AI 可能误传 f:xxx / p:xxx 等带前缀格式（来源于旧版输出格式的歧义）
+   */
+  private stripIdPrefix(id: string): string {
+    const trimmed = id.trim()
+    // 匹配 f: / p: / off: 等单字母前缀 + 冒号
+    const match = trimmed.match(/^[a-z]+:(.+)$/i)
+    if (match) {
+      return match[1].trim()
+    }
+    return trimmed
   }
 
   private setCORSHeaders(res: http.ServerResponse) {

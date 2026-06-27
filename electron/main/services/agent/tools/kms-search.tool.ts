@@ -1,12 +1,12 @@
 import KMSService from '../../kms/kms.service'
-import type { ToolDefinition } from './types'
+import type { ToolDefinition, ToolHandlerContext } from './types'
 
 /**
  * 创建 KMS 本地搜索工具集
  *
  * 暴露本地知识库搜索引擎的能力给数字员工，支持：
  * - kms_search: 关键词/语义/混合检索本地文件
- * - kms_agent_search: AI 智能检索（子智能体内部闭环，输出结论+溯源）
+ * - kms_agent_search: AI 智能检索（子智能体内部闭环，输出结论+溯源，中间过程通过 onProgress 实时推送至UI）
  * - kms_get_content: 获取文件内容（支持段落/偏移/行号定位）
  */
 export function createKMSTools(): ToolDefinition[] {
@@ -93,18 +93,13 @@ export function createKMSTools(): ToolDefinition[] {
           output += '\n'
           output += `路径: ${r.file_path}\n`
           output += `${r.text}\n`
-
-          const locParts: string[] = []
-          if (r.file_id) locParts.push(`f:${r.file_id}`)
-          if (r.paragraph_id) locParts.push(`p:${r.paragraph_id}`)
+          output += `file_id: ${r.file_id}\n`
+          if (r.paragraph_id) output += `paragraph_id: ${r.paragraph_id}\n`
           if (r.start_line !== undefined && r.end_line !== undefined) {
-            locParts.push(`L${r.start_line}-${r.end_line}`)
+            output += `lines: ${r.start_line}-${r.end_line}\n`
           }
           if (r.start_offset !== undefined && r.end_offset !== undefined) {
-            locParts.push(`off:${r.start_offset}-${r.end_offset}`)
-          }
-          if (locParts.length > 0) {
-            output += `[${locParts.join(' ')}]\n`
+            output += `offset: ${r.start_offset}-${r.end_offset}\n`
           }
           output += '\n'
         }
@@ -140,7 +135,7 @@ export function createKMSTools(): ToolDefinition[] {
       },
       required: ['query'],
     },
-    handler: async (args: any) => {
+    handler: async (args: any, context?: ToolHandlerContext) => {
       try {
         const query = String(args.query || '').trim()
         if (!query || query.length < 1) {
@@ -149,7 +144,13 @@ export function createKMSTools(): ToolDefinition[] {
 
         const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
 
-        const result = await kmsService.agentSearch(query, { maxRounds })
+        const result = await kmsService.agentSearch(query, {
+          maxRounds,
+          onProgress: (step) => {
+            // 中间过程仅推送到UI展示，不进入LLM上下文
+            context?.onProgress?.(step)
+          },
+        })
 
         let output = `【${result.queryTypeLabel}】${result.searchRounds}轮检索\n\n`
         output += `${result.conclusion}\n`
@@ -162,17 +163,13 @@ export function createKMSTools(): ToolDefinition[] {
             if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
             output += '\n'
             output += `路径: ${s.filePath}\n`
-            const locParts: string[] = []
-            if (s.fileId) locParts.push(`f:${s.fileId}`)
-            if (s.paragraphId) locParts.push(`p:${s.paragraphId}`)
+            output += `file_id: ${s.fileId}\n`
+            if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
             if (s.startLine !== undefined && s.endLine !== undefined) {
-              locParts.push(`L${s.startLine}-${s.endLine}`)
+              output += `lines: ${s.startLine}-${s.endLine}\n`
             }
             if (s.startOffset !== undefined && s.endOffset !== undefined) {
-              locParts.push(`off:${s.startOffset}-${s.endOffset}`)
-            }
-            if (locParts.length > 0) {
-              output += `[${locParts.join(' ')}]\n`
+              output += `offset: ${s.startOffset}-${s.endOffset}\n`
             }
             output += '\n'
           }
@@ -191,17 +188,17 @@ export function createKMSTools(): ToolDefinition[] {
     id: 'kms_get_content',
     name: 'kms_get_content',
     title: '获取本地文件内容',
-    description: '获取本地索引文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 或 kms_agent_search 获取文件ID。',
+    description: '获取本地索引文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 或 kms_agent_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
     parameters: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: '文件ID（通过 kms_search 结果中的 f: 获取）',
+          description: '文件ID，来自 kms_search/kms_agent_search 结果中的 "file_id" 字段（如 "8170964a"），不要带 "f:" 前缀',
         },
         paragraph_id: {
           type: 'string',
-          description: '段落ID（可选，指定后返回该段落内容）',
+          description: '段落ID（可选，指定后返回该段落内容。来自结果中的 "paragraph_id" 字段，不要带 "p:" 前缀）',
         },
         start_offset: {
           type: 'number',
@@ -225,13 +222,26 @@ export function createKMSTools(): ToolDefinition[] {
     },
     handler: async (args: any) => {
       try {
-        const fileId = String(args.file_id || '').trim()
+        let fileId = String(args.file_id || '').trim()
         if (!fileId) {
           return { success: true, output: '请提供 file_id。' }
         }
+        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
+        const prefixMatch = fileId.match(/^[a-z]+:(.+)$/i)
+        if (prefixMatch) {
+          fileId = prefixMatch[1].trim()
+        }
+
+        let paragraphId: string | undefined
+        if (args.paragraph_id) {
+          let pId = String(args.paragraph_id).trim()
+          const pMatch = pId.match(/^[a-z]+:(.+)$/i)
+          if (pMatch) pId = pMatch[1].trim()
+          paragraphId = pId
+        }
 
         const content = await kmsService.getFileContent(fileId, {
-          paragraphId: args.paragraph_id,
+          paragraphId,
           startOffset: args.start_offset,
           endOffset: args.end_offset,
           startLine: args.start_line,
