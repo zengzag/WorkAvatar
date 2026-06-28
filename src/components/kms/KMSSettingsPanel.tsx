@@ -94,12 +94,16 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
+  // Embedding 最大字符数（资料库独立配置）
+  const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
+  const [savingEmbeddingMaxChars, setSavingEmbeddingMaxChars] = useState(false)
 
   // 加载 LLM 提供商列表
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
       setProviders(result as LLMProvider[])
     }).catch(() => {})
+    loadEmbeddingMaxChars()
   }, [])
 
   // 同步外部 settings 变化
@@ -109,6 +113,27 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     setMaxRounds(settings.searchParams?.maxRounds ?? 3)
     setTopK(settings.searchParams?.topK ?? 10)
   }, [settings])
+
+  const loadEmbeddingMaxChars = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.settings.get({ key: 'embedding_max_chars' })
+      if (result?.value) {
+        setEmbeddingMaxChars(parseInt(result.value, 10))
+      }
+    } catch {}
+  }, [])
+
+  const handleSaveEmbeddingMaxChars = useCallback(async () => {
+    setSavingEmbeddingMaxChars(true)
+    try {
+      await window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
+      message.success(t('settings.embeddingMaxCharsSaved'))
+    } catch {
+      message.error(t('settings.defaultModelSaveFailed'))
+    } finally {
+      setSavingEmbeddingMaxChars(false)
+    }
+  }, [embeddingMaxChars, message, t])
 
   // 保存模型设置
   const handleSaveModel = useCallback(async () => {
@@ -242,6 +267,49 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               </Text>
             )}
           </div>
+        </div>
+      </Card>
+
+      {/* Embedding 最大字符数 */}
+      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: token.colorBgTextHover,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}>
+              <ThunderboltOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
+            </div>
+          </div>
+          <Space style={{ flexShrink: 0 }}>
+            <InputNumber
+              value={embeddingMaxChars}
+              onChange={v => setEmbeddingMaxChars(v || 2000)}
+              min={100}
+              max={32000}
+              step={100}
+              style={{ width: 120 }}
+            />
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={savingEmbeddingMaxChars}
+              onClick={handleSaveEmbeddingMaxChars}
+            >
+              {t('common.save')}
+            </Button>
+          </Space>
         </div>
       </Card>
 

@@ -1,17 +1,18 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react'
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Input, Button, Radio, Card, Tag, Empty, Spin, Typography, Space, Tooltip,
-  Collapse, Select, DatePicker, theme,
+  Collapse, Select, DatePicker, Popover, List, theme,
 } from 'antd'
 import {
   SearchOutlined, FileTextOutlined, FilePdfOutlined, FileExcelOutlined,
   FileWordOutlined, FileMarkdownOutlined, FileOutlined, CodeOutlined,
   FolderOpenOutlined, EyeOutlined, FilterOutlined, RobotOutlined,
   BulbOutlined, CompressOutlined, RiseOutlined, AimOutlined,
+  HistoryOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import HighlightText from './HighlightText'
-import type { SearchFilters, AgentSearchResult, AgentSearchSource, SearchTraceStep } from '../../hooks/useKMS'
+import type { SearchFilters, AgentSearchResult, AgentSearchSource, SearchTraceStep, SearchHistoryItem } from '../../hooks/useKMS'
 
 const { Text, Paragraph } = Typography
 const { RangePicker } = DatePicker
@@ -66,6 +67,14 @@ interface KMSSearchPanelProps {
   /** 受控的合集筛选；用于跨视图联动（如从合集页"在此合集中搜索"） */
   filterCollectionIds?: string[]
   onFilterCollectionIdsChange?: (ids: string[]) => void
+  /** 搜索历史列表（用于输入框聚焦时下拉提示） */
+  searchHistory?: SearchHistoryItem[]
+  /** 加载搜索历史 */
+  onLoadSearchHistory?: (params?: { limit?: number }) => void
+  /** 删除单条搜索历史 */
+  onDeleteSearchHistory?: (id: string) => void
+  /** 清空搜索历史 */
+  onClearSearchHistory?: () => void
 }
 
 const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
@@ -88,6 +97,21 @@ const FILE_FORMAT_OPTIONS = [
   'md', 'txt', 'csv', 'json', 'html', 'xml',
   'ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'c', 'cpp', 'h',
 ]
+
+// 格式化搜索历史时间戳为相对时间
+const formatHistoryTime = (timestamp: number) => {
+  const date = new Date(timestamp * 1000)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes}分钟前`
+  if (hours < 24) return `${hours}小时前`
+  if (days < 7) return `${days}天前`
+  return date.toLocaleDateString()
+}
 
 const getFileIcon = (fileName: string) => {
   const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -139,6 +163,10 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   onPreview,
   filterCollectionIds: controlledCollectionIds,
   onFilterCollectionIdsChange,
+  searchHistory,
+  onLoadSearchHistory,
+  onDeleteSearchHistory,
+  onClearSearchHistory,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -156,6 +184,10 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   const [filterExtensions, setFilterExtensions] = useState<string[]>([])
   const [filterTimeRange, setFilterTimeRange] = useState<[number, number] | null>(null)
   const [collectionOptions, setCollectionOptions] = useState<{ label: string; value: string }[]>([])
+
+  // 搜索历史下拉控制
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const inputRef = useRef<any>(null)
 
   const dirOptions = useMemo(() => {
     return dirs.map((d) => ({
@@ -194,6 +226,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   const handleSearch = useCallback(() => {
     if (searchQuery.trim()) {
       onSearch(searchQuery.trim(), searchMode, buildFilters())
+      setHistoryOpen(false)
     }
   }, [searchQuery, searchMode, onSearch, buildFilters])
 
@@ -202,6 +235,96 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       handleSearch()
     }
   }, [handleSearch, isSearching])
+
+  // 搜索历史相关处理
+  // 输入框聚焦时加载历史并展开下拉
+  const handleInputFocus = useCallback(() => {
+    if (onLoadSearchHistory) {
+      onLoadSearchHistory({ limit: 20 })
+    }
+    // 总是展开下拉：有历史则显示列表，无历史则显示空提示
+    setHistoryOpen(true)
+  }, [onLoadSearchHistory])
+
+  // 输入框失焦时收起（延迟以便点击下拉项）
+  const handleInputBlur = useCallback(() => {
+    setTimeout(() => setHistoryOpen(false), 200)
+  }, [])
+
+  // 点击历史项：回填到输入框并触发搜索
+  const handlePickHistory = useCallback((item: SearchHistoryItem) => {
+    onSearchQueryChange(item.query)
+    setHistoryOpen(false)
+    // 自动用历史项的搜索模式与查询触发一次搜索
+    onSearch(item.query, item.search_mode as any, buildFilters())
+  }, [onSearchQueryChange, onSearch, buildFilters])
+
+  // 删除单条历史
+  const handleDeleteHistory = useCallback((e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (onDeleteSearchHistory) {
+      onDeleteSearchHistory(id)
+    }
+  }, [onDeleteSearchHistory])
+
+  // 清空全部历史
+  const handleClearHistory = useCallback(() => {
+    if (onClearSearchHistory) {
+      onClearSearchHistory()
+    }
+  }, [onClearSearchHistory])
+
+  // 历史下拉内容
+  const renderHistoryContent = () => {
+    if (!searchHistory || searchHistory.length === 0) {
+      return (
+        <div style={{ width: 380, padding: '12px 16px', textAlign: 'center' }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.noHistory')}</Text>
+        </div>
+      )
+    }
+    return (
+      <div style={{ width: 380, maxHeight: 360, overflow: 'auto', padding: '4px 0' }}>
+        <List
+          size="small"
+          split={false}
+          dataSource={searchHistory}
+          renderItem={(item) => (
+            <List.Item
+              style={{ padding: '6px 12px', cursor: 'pointer', border: 'none' }}
+              onClick={() => handlePickHistory(item)}
+            >
+              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <HistoryOutlined style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
+                <Text ellipsis style={{ flex: 1, minWidth: 0, fontSize: 12 }}>{item.query}</Text>
+                <Tag style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>{item.result_count}{t('kms.historyResultsUnit')}</Tag>
+                <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>{formatHistoryTime(item.created_at)}</Text>
+                {onDeleteSearchHistory && (
+                  <Tooltip title={t('common.delete')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={(e) => handleDeleteHistory(e, item.id)}
+                      style={{ flexShrink: 0 }}
+                    />
+                  </Tooltip>
+                )}
+              </div>
+            </List.Item>
+          )}
+        />
+        {onClearSearchHistory && (
+          <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '6px 12px', textAlign: 'right' }}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={handleClearHistory}>
+              {t('kms.clearHistory')}
+            </Button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const handleTimeRangeChange = useCallback((dates: any) => {
     if (dates && dates[0] && dates[1]) {
@@ -588,27 +711,52 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 搜索输入栏 */}
+      {/* 搜索输入栏（聚焦时弹出搜索历史下拉） */}
       <div style={{ marginBottom: 12 }}>
-        <Input
-          value={searchQuery}
-          onChange={(e) => onSearchQueryChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={t('kms.searchPlaceholder')}
-          size="large"
-          prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
-          suffix={
-            <Button
-              type="primary"
-              size="small"
-              icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
-              onClick={handleSearch}
-              loading={isSearching}
-            >
-              {t('kms.search')}
-            </Button>
-          }
-        />
+        <Popover
+          content={renderHistoryContent()}
+          trigger="click"
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          placement="bottomLeft"
+          overlayInnerStyle={{ padding: 0 }}
+          overlayStyle={{ paddingTop: 4 }}
+        >
+          <Input
+            ref={inputRef}
+            value={searchQuery}
+            onChange={(e) => onSearchQueryChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
+            placeholder={t('kms.searchPlaceholder')}
+            size="large"
+            prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            suffix={
+              <Space size={4}>
+                {searchHistory && searchHistory.length > 0 && (
+                  <Tooltip title={t('kms.searchHistory')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<HistoryOutlined />}
+                      onClick={() => setHistoryOpen((v) => !v)}
+                    />
+                  </Tooltip>
+                )}
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
+                  onClick={handleSearch}
+                  loading={isSearching}
+                >
+                  {t('kms.search')}
+                </Button>
+              </Space>
+            }
+          />
+        </Popover>
       </div>
 
       {/* 搜索模式 + 高级筛选 */}

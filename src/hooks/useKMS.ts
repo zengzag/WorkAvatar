@@ -38,6 +38,16 @@ interface IndexProgress {
   current: number
   total: number
   message: string
+  /** 当前处理的文件ID（文件级阶段时填充） */
+  fileId?: string
+  /** 当前处理的文件名 */
+  fileName?: string
+  /** 当前处理的合集ID（合集级阶段时填充） */
+  collectionId?: string
+  /** 当前处理的合集名称 */
+  collectionName?: string
+  /** 阶段开始时间（秒） */
+  startedAt?: number
 }
 
 interface KMSStats {
@@ -148,6 +158,7 @@ export interface FileSummaryItem {
   keywords_json: string
   main_topics_json: string
   dir_name?: string
+  has_embedding?: number
 }
 
 export interface FileSummariesResult {
@@ -155,23 +166,12 @@ export interface FileSummariesResult {
   total: number
 }
 
-/** 搜索历史项 */
+/** 搜索历史项（不再保存结果数据，仅用于搜索框下拉提示） */
 export interface SearchHistoryItem {
   id: string
   query: string
   search_mode: string
   result_count: number
-  created_at: number
-}
-
-/** 搜索历史详情 */
-export interface SearchHistoryDetail {
-  id: string
-  query: string
-  search_mode: string
-  result_count: number
-  result_data: any
-  filters_json: any
   created_at: number
 }
 
@@ -294,12 +294,11 @@ export function useKMS() {
         if (result && !result.error) {
           setAgentResult(result)
           setSearchResults([])
-          // 记录AI搜索历史（含完整结果数据）
+          // 记录AI搜索历史（仅元数据，不保存结果）
           window.electronAPI.kms.recordSearchHistory({
             query,
             searchMode: 'ai',
             resultCount: result.sources?.length || 0,
-            resultData: result,
             filters,
           }).catch(() => {})
         } else {
@@ -527,23 +526,15 @@ export function useKMS() {
 
   // ==================== 搜索历史 ====================
 
-  // 加载搜索历史
+  // 加载搜索历史（仅元数据列表，用于搜索框下拉提示）
   const loadSearchHistory = useCallback(async (params?: { limit?: number; searchMode?: string }) => {
     try {
       const result = await window.electronAPI.kms.getSearchHistory(params)
       setSearchHistory(result || [])
+      return result || []
     } catch (err) {
       console.error('Failed to load search history:', err)
-    }
-  }, [])
-
-  // 获取搜索历史详情
-  const getSearchHistoryDetail = useCallback(async (id: string) => {
-    try {
-      return await window.electronAPI.kms.getSearchHistoryDetail(id)
-    } catch (err) {
-      console.error('Failed to load search history detail:', err)
-      return null
+      return []
     }
   }, [])
 
@@ -652,7 +643,6 @@ export function useKMS() {
     loadFileSummaries,
     // 搜索历史
     loadSearchHistory,
-    getSearchHistoryDetail,
     clearSearchHistory,
     deleteSearchHistory,
   }

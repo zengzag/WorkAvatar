@@ -1,11 +1,11 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Drawer, Button, Segmented } from 'antd'
-import { SettingOutlined, SearchOutlined, DatabaseOutlined, HistoryOutlined, FolderOutlined } from '@ant-design/icons'
-import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSHistoryView, KMSCollectionsView } from '../components/kms'
+import { SettingOutlined, SearchOutlined, DatabaseOutlined, FolderOutlined } from '@ant-design/icons'
+import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSCollectionsView } from '../components/kms'
 import { useKMS } from '../hooks/useKMS'
 
-type ViewMode = 'search' | 'knowledge' | 'collections' | 'history'
+type ViewMode = 'search' | 'knowledge' | 'collections'
 
 const KMSPage: React.FC = () => {
   const { t } = useTranslation()
@@ -35,10 +35,9 @@ const KMSPage: React.FC = () => {
     isLoadingSummaries,
     loadDirSummaries,
     loadFileSummaries,
-    // 搜索历史
+    // 搜索历史（嵌入搜索框下拉）
     searchHistory,
     loadSearchHistory,
-    getSearchHistoryDetail,
     clearSearchHistory,
     deleteSearchHistory,
     addDir,
@@ -58,13 +57,6 @@ const KMSPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('search')
   // 跨视图联动：合集页"在此合集中搜索"使用
   const [filterCollectionIds, setFilterCollectionIds] = useState<string[]>([])
-
-  // 切换到历史视图时加载历史数据
-  useEffect(() => {
-    if (viewMode === 'history') {
-      loadSearchHistory({ limit: 100 })
-    }
-  }, [viewMode, loadSearchHistory])
 
   const handlePreview = useCallback((result: any) => {
     setPreviewFile(result)
@@ -122,15 +114,6 @@ const KMSPage: React.FC = () => {
             {
               label: (
                 <span>
-                  <DatabaseOutlined style={{ marginRight: 4 }} />
-                  {t('kms.knowledgeView')}
-                </span>
-              ),
-              value: 'knowledge',
-            },
-            {
-              label: (
-                <span>
                   <FolderOutlined style={{ marginRight: 4 }} />
                   {t('kms.collectionsView')}
                 </span>
@@ -140,11 +123,11 @@ const KMSPage: React.FC = () => {
             {
               label: (
                 <span>
-                  <HistoryOutlined style={{ marginRight: 4 }} />
-                  {t('kms.historyView')}
+                  <DatabaseOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledgeView')}
                 </span>
               ),
-              value: 'history',
+              value: 'knowledge',
             },
           ]}
         />
@@ -176,6 +159,10 @@ const KMSPage: React.FC = () => {
             onPreview={handlePreview}
             filterCollectionIds={filterCollectionIds}
             onFilterCollectionIdsChange={setFilterCollectionIds}
+            searchHistory={searchHistory}
+            onLoadSearchHistory={loadSearchHistory}
+            onDeleteSearchHistory={deleteSearchHistory}
+            onClearSearchHistory={clearSearchHistory}
           />
         ) : viewMode === 'knowledge' ? (
           <KMSKnowledgeView
@@ -188,21 +175,10 @@ const KMSPage: React.FC = () => {
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
           />
-        ) : viewMode === 'collections' ? (
+        ) : (
           <KMSCollectionsView
             onSearchInCollection={handleSearchInCollection}
             onPreviewFile={handlePreview}
-          />
-        ) : (
-          <KMSHistoryView
-            history={searchHistory}
-            onLoadHistory={loadSearchHistory}
-            onGetDetail={getSearchHistoryDetail}
-            onDelete={deleteSearchHistory}
-            onClear={clearSearchHistory}
-            onOpenFile={openFile}
-            onOpenFileDir={openFileDir}
-            onPreview={handlePreview}
           />
         )}
       </div>

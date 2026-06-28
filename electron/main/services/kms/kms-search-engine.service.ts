@@ -321,7 +321,101 @@ class KMSSearchEngineService {
   }
 
   /**
-   * 删除文件的所有索引
+   * 保存段落到 kms_paragraphs 表（段落切分结果写入）
+   * 若段落已存在（按 file_id + paragraph_index）则更新
+   * 返回写入的段落列表（含生成的 id）
+   */
+  saveParagraphs(
+    fileId: string,
+    paragraphs: Array<{
+      title: string
+      titlePath: string
+      level: number
+      paragraphIndex: number
+      startOffset: number
+      endOffset: number
+      content: string
+    }>
+  ): Array<{ id: string; paragraphIndex: number }> {
+    // 先清除该文件已有的段落（保留外键约束下级联）
+    this.deleteParagraphsByFile(fileId)
+
+    const result: Array<{ id: string; paragraphIndex: number }> = []
+    if (paragraphs.length === 0) return result
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO kms_paragraphs (id, file_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, keywords_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', unixepoch(), unixepoch())
+    `)
+
+    const tx = this.db.transaction(() => {
+      for (const p of paragraphs) {
+        const id = generateId()
+        insertStmt.run(id, fileId, p.title, p.titlePath, p.level, p.paragraphIndex, p.startOffset, p.endOffset, p.content)
+        result.push({ id, paragraphIndex: p.paragraphIndex })
+      }
+    })
+    tx()
+    return result
+  }
+
+  /**
+   * 更新段落的 LLM 摘要和关键词
+   */
+  updateParagraphSummary(paragraphId: string, summary: string, keywords: string[]): void {
+    this.db.prepare(`
+      UPDATE kms_paragraphs SET summary = ?, keywords_json = ?, updated_at = unixepoch() WHERE id = ?
+    `).run(summary, JSON.stringify(keywords), paragraphId)
+  }
+
+  /**
+   * 删除文件的所有段落（同步级联删除索引、向量、FTS行）
+   */
+  deleteParagraphsByFile(fileId: string): void {
+    // 删除段落对应的搜索索引与FTS行
+    const paraIndexRows = this.db.prepare(
+      "SELECT id FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph'"
+    ).all(fileId) as any[]
+    if (paraIndexRows.length > 0) {
+      const tx = this.db.transaction(() => {
+        for (const row of paraIndexRows) this.deleteFtsRow(row.id)
+      })
+      tx()
+      this.db.prepare(
+        "DELETE FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph'"
+      ).run(fileId)
+    }
+    // 删除段落对应的向量
+    const paraIds = (this.db.prepare('SELECT id FROM kms_paragraphs WHERE file_id = ?').all(fileId) as any[]).map(r => r.id)
+    if (paraIds.length > 0) {
+      const placeholders = paraIds.map(() => '?').join(',')
+      this.db.prepare(
+        `DELETE FROM kms_embeddings WHERE source_type = 'paragraph' AND source_id IN (${placeholders})`
+      ).run(...paraIds)
+    }
+    // 删除段落本身
+    this.db.prepare('DELETE FROM kms_paragraphs WHERE file_id = ?').run(fileId)
+    this.invalidateCache()
+  }
+
+  /**
+   * 保存文件 TOC 到 kms_file_summaries.toc_json
+   */
+  saveFileToc(fileId: string, tocJson: string): void {
+    const existing = this.db.prepare('SELECT id FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+    if (existing) {
+      this.db.prepare('UPDATE kms_file_summaries SET toc_json = ?, updated_at = unixepoch() WHERE file_id = ?')
+        .run(tocJson, fileId)
+    } else {
+      this.db.prepare(`
+        INSERT INTO kms_file_summaries (id, file_id, summary, toc_json, keywords_json, main_topics_json, created_at, updated_at)
+        VALUES (?, ?, '', ?, '[]', '[]', unixepoch(), unixepoch())
+      `).run(generateId(), fileId, tocJson)
+    }
+  }
+
+  /**
+   * 删除文件的所有索引（含段落表、段落向量）
    */
   deleteIndexByFile(fileId: string): void {
     const rows = this.db.prepare(
@@ -338,6 +432,9 @@ class KMSSearchEngineService {
     }
 
     this.db.prepare('DELETE FROM kms_search_index WHERE file_id = ?').run(fileId)
+    // 同步清理段落表与段落向量（避免脏数据残留）
+    this.db.prepare('DELETE FROM kms_paragraphs WHERE file_id = ?').run(fileId)
+    this.db.prepare('DELETE FROM kms_embeddings WHERE file_id = ?').run(fileId)
     this.invalidateCache()
   }
 

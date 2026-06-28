@@ -9,11 +9,45 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-Index')
 
+/**
+ * 索引进度阶段
+ * - crawling/parsing/indexing/embedding/done/error: 原有粗粒度阶段
+ * - toc: 目录章节识别（段落切分后从标题派生TOC）
+ * - paragraph_split: 段落切分（按Markdown标题层级拆分文档）
+ * - paragraph_summary: 段落级LLM摘要生成
+ * - doc_summary: 文件级LLM摘要生成
+ * - collection_summary: 合集级LLM摘要生成
+ * - collection_embedding: 合集摘要向量化
+ */
+export type IndexPhase =
+  | 'crawling'
+  | 'parsing'
+  | 'indexing'
+  | 'toc'
+  | 'paragraph_split'
+  | 'paragraph_summary'
+  | 'doc_summary'
+  | 'collection_summary'
+  | 'collection_embedding'
+  | 'embedding'
+  | 'done'
+  | 'error'
+
 export interface IndexProgress {
-  phase: 'crawling' | 'parsing' | 'indexing' | 'embedding' | 'done' | 'error'
+  phase: IndexPhase
   current: number
   total: number
   message: string
+  /** 当前处理的文件ID（文件级阶段时填充，便于前端展示文件粒度进度） */
+  fileId?: string
+  /** 当前处理的文件名 */
+  fileName?: string
+  /** 当前处理的合集ID（合集级阶段时填充） */
+  collectionId?: string
+  /** 当前处理的合集名称 */
+  collectionName?: string
+  /** 阶段开始时间（秒），用于前端展示耗时） */
+  startedAt?: number
 }
 
 type ProgressCallback = (progress: IndexProgress) => void
@@ -139,7 +173,7 @@ class KMSIndexManagerService {
             this.saveLightSummary(file.id, file.fileName, file.filePath, parseResult.fullText)
           }
           if (isHot && providerId) {
-            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+            await this.processHotFile(file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total })
           }
 
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
@@ -158,9 +192,9 @@ class KMSIndexManagerService {
         })
       }
 
-      // 阶段3：生成向量嵌入（如果有provider）
-      if (providerId && !signal.aborted) {
-        await this.generateEmbeddings(providerId, onProgress, signal)
+      // 阶段3：生成向量嵌入（独立于 chat providerId，使用 KMS Embedding 配置）
+      if (!signal.aborted) {
+        await this.generateEmbeddings(undefined, onProgress, signal)
       }
 
       // 执行冷热数据评估
@@ -243,7 +277,7 @@ class KMSIndexManagerService {
           // 热数据：额外生成摘要
           const isHot = file.dataTier === 'hot'
           if (isHot && providerId) {
-            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+            await this.processHotFile(file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total })
           }
 
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
@@ -262,9 +296,9 @@ class KMSIndexManagerService {
         })
       }
 
-      // 生成向量嵌入
-      if (providerId && !signal.aborted) {
-        await this.generateEmbeddings(providerId, onProgress, signal)
+      // 生成向量嵌入（独立于 chat providerId，使用 KMS Embedding 配置）
+      if (!signal.aborted) {
+        await this.generateEmbeddings(undefined, onProgress, signal)
       }
 
       // 冷热数据评估
@@ -343,7 +377,7 @@ class KMSIndexManagerService {
 
           const isHot = file.dataTier === 'hot'
           if (isHot && providerId) {
-            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+            await this.processHotFile(file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total })
           }
 
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
@@ -362,8 +396,8 @@ class KMSIndexManagerService {
         })
       }
 
-      if (providerId && !signal.aborted) {
-        await this.generateEmbeddings(providerId, onProgress, signal)
+      if (!signal.aborted) {
+        await this.generateEmbeddings(undefined, onProgress, signal)
       }
 
       onProgress?.({ phase: 'done', current: processed, total, message: `重建索引完成，共处理 ${processed} 个文件` })
@@ -390,6 +424,223 @@ class KMSIndexManagerService {
    */
   setAutoIndexProgressCallback(cb: ProgressCallback | null): void {
     this.autoIndexProgressCallback = cb
+  }
+
+  /**
+   * 合集深度处理：对合集内所有文件做"段落切分→TOC→段落摘要→文件摘要"，再生成合集摘要并向量化
+   * 适用场景：用户主动添加文件到合集后，对合集执行一次性深度处理，使合集具备完整的章节检索、段落摘要、合集摘要能力
+   * 与全量/增量索引流程不同，本方法不依赖冷热数据机制，强制对所有文件做深度处理
+   */
+  async processCollectionDeep(collectionId: string, onProgress?: ProgressCallback): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    try {
+      // 通过 kms.service.ts 获取合集信息和文件列表
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const collection = kmsService.getCollection(collectionId)
+      if (!collection) {
+        return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'Collection not found' }
+      }
+      const files = kmsService.listFilesInCollection(collectionId)
+      if (files.length === 0) {
+        return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_FILES' }
+      }
+
+      // 获取 LLM 配置
+      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      if (!llmConfig) {
+        return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_LLM_PROVIDER' }
+      }
+
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const fileParser = FileParserService.getInstance()
+      const llmClient = LLMClientService.getInstance()
+      const total = files.length
+
+      onProgress?.({
+        phase: 'parsing',
+        current: 0,
+        total,
+        message: `合集深度处理: ${collection.name}（${total} 个文件）`,
+        collectionId,
+        collectionName: collection.name,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+
+      let fileProcessed = 0
+      for (const file of files) {
+        if (signal.aborted) break
+
+        try {
+          // 解析文件
+          const parseResult = await fileParser.parseFilePath(file.file_path, signal)
+          if (signal.aborted) break
+          if (!parseResult.fullText) {
+            fileProcessed++
+            continue
+          }
+
+          // 清除旧索引和段落，确保从干净状态开始
+          searchEngine.deleteIndexByFile(file.id)
+          searchEngine.indexFileTitle(file.id, file.file_name)
+          searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
+          this.saveLightSummary(file.id, file.file_name, file.file_path, parseResult.fullText)
+
+          // 调用 processHotFile 完成段落切分/TOC/段落摘要/文件摘要
+          await this.processHotFile(
+            file.id,
+            parseResult.fullText,
+            file.file_name,
+            llmConfig.providerId,
+            llmClient,
+            searchEngine,
+            signal,
+            onProgress,
+            { current: fileProcessed + 1, total },
+            llmConfig.modelId
+          )
+
+          // 标记为热数据并完成
+          KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+        } catch (err: any) {
+          if (signal.aborted) break
+          logger.error(`Collection deep process failed for "${file.file_name}":`, err)
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
+        }
+
+        fileProcessed++
+        onProgress?.({
+          phase: 'parsing',
+          current: fileProcessed,
+          total,
+          message: `已处理 ${fileProcessed}/${total} 个文件`,
+          collectionId,
+          collectionName: collection.name,
+          startedAt: Math.floor(Date.now() / 1000),
+        })
+      }
+
+      if (signal.aborted) {
+        return { fileProcessed, summaryGenerated: false, embeddingGenerated: false, error: 'ABORTED' }
+      }
+
+      // 生成段落向量嵌入
+      onProgress?.({
+        phase: 'embedding',
+        current: 0,
+        total: 0,
+        message: `生成段落向量嵌入...`,
+        collectionId,
+        collectionName: collection.name,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+      await this.generateEmbeddings(llmConfig.providerId, onProgress, signal)
+
+      // 生成合集摘要
+      onProgress?.({
+        phase: 'collection_summary',
+        current: 0,
+        total: 1,
+        message: `生成合集摘要: ${collection.name}`,
+        collectionId,
+        collectionName: collection.name,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+      const summaryResult = await kmsService.generateCollectionSummary(collectionId)
+      const summaryGenerated = !('error' in summaryResult)
+
+      // 合集摘要向量化
+      let embeddingGenerated = false
+      if (summaryGenerated) {
+        onProgress?.({
+          phase: 'collection_embedding',
+          current: 0,
+          total: 1,
+          message: `合集摘要向量化: ${collection.name}`,
+          collectionId,
+          collectionName: collection.name,
+          startedAt: Math.floor(Date.now() / 1000),
+        })
+        embeddingGenerated = await this.generateCollectionSummaryEmbedding(collectionId, llmConfig.providerId, signal)
+      }
+
+      onProgress?.({
+        phase: 'done',
+        current: fileProcessed,
+        total,
+        message: `合集处理完成: ${collection.name}（${fileProcessed} 个文件，摘要${summaryGenerated ? '已' : '未'}生成）`,
+        collectionId,
+        collectionName: collection.name,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+
+      return { fileProcessed, summaryGenerated, embeddingGenerated }
+    } catch (err: any) {
+      logger.error('processCollectionDeep failed:', err)
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', collectionId })
+      return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: err?.message || 'Unknown error' }
+    } finally {
+      this.abortController = null
+    }
+  }
+
+  /**
+   * 合集摘要向量化：将合集摘要文本转为向量嵌入，直接写入 kms_collection_summaries.embedding 字段
+   * 不存入 kms_embeddings 表（避免破坏 file_id 外键约束），独立存储便于按合集语义检索
+   */
+  private async generateCollectionSummaryEmbedding(
+    collectionId: string,
+    _providerId: string,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    try {
+      const summaryRow = this.db.prepare(
+        'SELECT id, summary, key_topics_json FROM kms_collection_summaries WHERE collection_id = ?'
+      ).get(collectionId) as any
+      if (!summaryRow || !summaryRow.summary) return false
+
+      const keyTopics: string[] = (() => {
+        try { return JSON.parse(summaryRow.key_topics_json || '[]') } catch { return [] }
+      })()
+
+      const text = `${summaryRow.summary} ${keyTopics.join(' ')}`.trim()
+      if (!text) return false
+
+      // 通过 kms.service 获取 embedding 配置（KMS 专属 → 默认 embedding 配置）
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const embConfig = kmsService.getKmsEmbeddingConfigPublic()
+      if (!embConfig) return false
+
+      const llmClient = LLMClientService.getInstance()
+      const embedding = await llmClient.createEmbedding(embConfig.providerId, text, embConfig.modelName)
+      if (signal?.aborted) return false
+
+      // 直接将向量写入 kms_collection_summaries 表的新字段
+      const buffer = Buffer.from(embedding.buffer)
+      this.db.prepare(`
+        UPDATE kms_collection_summaries
+        SET embedding = ?, dimension = ?, embedding_model = ?, updated_at = unixepoch()
+        WHERE collection_id = ?
+      `).run(buffer, embedding.length, embConfig.modelName, collectionId)
+
+      logger.info(`Collection summary embedding generated for ${collectionId} (dim=${embedding.length})`)
+      return true
+    } catch (err: any) {
+      logger.warn('generateCollectionSummaryEmbedding failed:', err?.message || err)
+      return false
+    }
+  }
+
+  /**
+   * 取消合集深度处理（与取消索引共用同一 AbortController）
+   */
+  cancelCollectionDeepProcess(): void {
+    this.abortController?.abort()
+    this.abortController = null
   }
 
   /**
@@ -560,7 +811,7 @@ class KMSIndexManagerService {
           // 热数据：额外生成 LLM 摘要
           if (file.dataTier === 'hot' && providerId) {
             const llmClient = LLMClientService.getInstance()
-            await this.processHotFile(file.id, parseResult.fullText, providerId, llmClient, searchEngine, signal)
+            await this.processHotFile(file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total })
           }
 
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
@@ -574,9 +825,9 @@ class KMSIndexManagerService {
         onProgress?.({ phase: 'parsing', current: processed, total, message: `已处理 ${processed}/${total} 个文件` })
       }
 
-      // 生成向量嵌入
-      if (providerId && !signal.aborted) {
-        await this.generateEmbeddings(providerId, onProgress, signal)
+      // 生成向量嵌入（独立于 chat providerId，使用 KMS Embedding 配置）
+      if (!signal.aborted) {
+        await this.generateEmbeddings(undefined, onProgress, signal)
       }
 
       // 冷热数据评估
@@ -595,15 +846,24 @@ class KMSIndexManagerService {
 
   /**
    * 生成向量嵌入
+   * providerId 未指定时，优先使用 KMS 专属 Embedding 配置，再回退到默认 Embedding 配置
    */
   async generateEmbeddings(providerId?: string, onProgress?: ProgressCallback, signal?: AbortSignal): Promise<void> {
     if (!providerId) {
-      const defaultConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
-      if (!defaultConfig) {
-        logger.warn('No embedding provider configured, skipping embedding generation')
-        return
+      // 优先使用 KMS 专属 Embedding 配置
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const embConfig = kmsService.getKmsEmbeddingConfigPublic()
+      if (embConfig) {
+        providerId = embConfig.providerId
+      } else {
+        const defaultConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
+        if (!defaultConfig) {
+          logger.warn('No embedding provider configured, skipping embedding generation')
+          return
+        }
+        providerId = defaultConfig.providerId
       }
-      providerId = defaultConfig.providerId
     }
 
     const searchEngine = KMSSearchEngineService.getInstance()
@@ -627,6 +887,7 @@ class KMSIndexManagerService {
 
     const batchSize = 20
     let processed = 0
+    let embeddingError: string | undefined
 
     for (let i = 0; i < unembedded.length; i += batchSize) {
       if (signal?.aborted) break
@@ -649,8 +910,18 @@ class KMSIndexManagerService {
             providerId
           )
         }
-      } catch (err) {
+      } catch (err: any) {
         logger.error('Batch embedding generation failed:', err)
+        if (!embeddingError) {
+          embeddingError = err?.message || String(err)
+          onProgress?.({
+            phase: 'error',
+            current: processed,
+            total: unembedded.length,
+            message: `向量嵌入失败: ${embeddingError}`,
+          })
+        }
+        break
       }
 
       processed += batch.length
@@ -703,50 +974,423 @@ class KMSIndexManagerService {
   }
 
   /**
-   * 处理热数据文件：生成段落摘要和文档摘要
+   * 处理热数据文件：生成段落切分 + TOC + 段落摘要 + 文件摘要
+   * 与原知识库处理流程对齐：先做目录章节切分，再为每个段落生成摘要，最后生成文件摘要
    */
   private async processHotFile(
     fileId: string,
     fullText: string,
+    fileName: string,
     providerId: string,
     llmClient: LLMClientService,
     searchEngine: KMSSearchEngineService,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: ProgressCallback,
+    progressBase?: { current: number; total: number },
+    kmsModelId?: string
   ): Promise<void> {
     if (!fullText || fullText.length < 50) return
 
     try {
-      // 获取 provider 配置以确定使用的模型
       const providerConfig = await llmClient.getProviderConfig(providerId)
-      const modelId = providerConfig?.model || undefined
+      let modelId = kmsModelId || providerConfig?.model || undefined
 
-      // 生成文档摘要
-      const truncatedText = fullText.substring(0, 3000)
-      const summaryPrompt = `请为以下文档内容生成简洁摘要（150字以内），并提取5-8个关键词和3-5个主要主题。\n\n文档内容：\n${truncatedText}\n\n请以JSON格式返回：{"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
+      // 如果仍未获取到 modelId，尝试从 KMS 配置解析
+      if (!modelId) {
+        try {
+          const KMSService = (await import('./kms.service')).default
+          const kmsService = KMSService.getInstance()
+          const kmsConfig = kmsService.getKmsLLMConfigPublic()
+          if (kmsConfig?.modelId) {
+            modelId = kmsConfig.modelId
+          }
+        } catch {}
+      }
 
-      const summaryResult = await llmClient.chat(providerId, [
-        { role: 'system', content: '你是一个文档摘要助手。请严格按照JSON格式返回结果。' },
-        { role: 'user', content: summaryPrompt },
-      ], { temperature: 0.1, max_tokens: 500, model: modelId })
+      // 阶段1：段落切分（按 Markdown 标题层级）
+      onProgress?.({
+        phase: 'paragraph_split',
+        current: progressBase?.current ?? 0,
+        total: progressBase?.total ?? 0,
+        message: `段落切分: ${fileName}`,
+        fileId,
+        fileName,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+      const paragraphs = this.splitParagraphs(fullText, fileName)
+      const savedParagraphs = searchEngine.saveParagraphs(fileId, paragraphs)
+
+      // 阶段2：TOC 生成（从段落表派生目录结构）
+      onProgress?.({
+        phase: 'toc',
+        current: progressBase?.current ?? 0,
+        total: progressBase?.total ?? 0,
+        message: `生成目录: ${fileName}（${paragraphs.length} 个章节）`,
+        fileId,
+        fileName,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+      this.generateFileToc(fileId, paragraphs, searchEngine)
+
+      // 将段落写入搜索索引（paragraph 类型），便于精确章节检索
+      for (const sp of savedParagraphs) {
+        const p = paragraphs.find(x => x.paragraphIndex === sp.paragraphIndex)
+        if (!p) continue
+        searchEngine.indexParagraph(
+          fileId,
+          sp.id,
+          p.title,
+          p.titlePath,
+          '', // 摘要稍后填充
+          [],
+          p.startOffset,
+          p.endOffset
+        )
+      }
 
       if (signal?.aborted) return
 
-      try {
-        const parsed = JSON.parse(summaryResult || '{}')
-        const summary = parsed.summary || ''
-        const keywords = parsed.keywords || []
-        const mainTopics = parsed.main_topics || []
+      // 阶段3：段落级 LLM 摘要（批量处理，避免逐段调用 LLM 开销过大）
+      // 仅对内容超过 100 字的段落生成摘要，避免对短段落浪费 LLM 调用
+      const summaryCandidates = savedParagraphs.filter(sp => {
+        const p = paragraphs.find(x => x.paragraphIndex === sp.paragraphIndex)
+        return p && p.content.length > 100
+      })
 
-        // 保存摘要到数据库
-        this.saveFileSummary(fileId, summary, keywords, mainTopics)
+      if (summaryCandidates.length > 0 && providerId && modelId) {
+        onProgress?.({
+          phase: 'paragraph_summary',
+          current: 0,
+          total: summaryCandidates.length,
+          message: `段落摘要: ${fileName}（${summaryCandidates.length}/${savedParagraphs.length} 段）`,
+          fileId,
+          fileName,
+          startedAt: Math.floor(Date.now() / 1000),
+        })
 
-        // 索引文件摘要
-        searchEngine.indexFileSummary(fileId, summary, keywords)
-      } catch {
-        logger.warn(`Failed to parse summary result for file ${fileId}`)
+        // 批量生成段落摘要：一次 LLM 调用处理多个段落，降低成本
+        await this.generateParagraphSummariesBatch(
+          fileId,
+          summaryCandidates,
+          paragraphs,
+          savedParagraphs,
+          providerId,
+          modelId,
+          llmClient,
+          searchEngine,
+          signal,
+          onProgress
+        )
       }
+
+      if (signal?.aborted) return
+
+      // 阶段4：文件级 LLM 摘要
+      onProgress?.({
+        phase: 'doc_summary',
+        current: progressBase?.current ?? 0,
+        total: progressBase?.total ?? 0,
+        message: `文件摘要: ${fileName}`,
+        fileId,
+        fileName,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+      await this.generateFileSummary(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal)
     } catch (err) {
-      logger.warn(`Failed to generate summary for file ${fileId}:`, err)
+      logger.warn(`Failed to process hot file ${fileId}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * 段落切分：基于 Markdown 标题层级拆分文档
+   * - 识别 # / ## / ### 标题行（最多3级），形成带层级的段落
+   * - 首个标题前的正文作为"前言"段落保留
+   * - 长段落（超过 2000 字）按双换行二次切分，避免单段过大
+   * - 计算 start_offset/end_offset（基于原文偏移）
+   */
+  private splitParagraphs(
+    fullText: string,
+    fileName: string
+  ): Array<{
+    title: string
+    titlePath: string
+    level: number
+    paragraphIndex: number
+    startOffset: number
+    endOffset: number
+    content: string
+  }> {
+    const lines = fullText.split('\n')
+    const paragraphs: Array<any> = []
+
+    // 标题栈：维护当前各级标题路径
+    const titleStack: Array<{ level: number; title: string }> = []
+    let currentTitle = ''
+    let currentLevel = 0
+    let buffer: string[] = []
+    let bufferStartOffset = 0
+    let currentOffset = 0
+    let paragraphIndex = 0
+
+    const pushBuffer = () => {
+      const content = buffer.join('\n').trim()
+      if (content.length === 0) {
+        buffer = []
+        return
+      }
+
+      // 长段落二次切分
+      if (content.length > 2000) {
+        const subBlocks = content.split(/\n\n+/).filter(s => s.trim().length > 20)
+        let subOffset = bufferStartOffset
+        for (const sub of subBlocks) {
+          const subStart = fullText.indexOf(sub, subOffset)
+          const subEnd = subStart >= 0 ? subStart + sub.length : bufferStartOffset + content.length
+          paragraphs.push({
+            title: currentTitle || (currentLevel === 0 ? '前言' : ''),
+            titlePath: this.buildTitlePath(titleStack, currentLevel, currentTitle),
+            level: currentLevel === 0 ? 1 : currentLevel,
+            paragraphIndex: paragraphIndex++,
+            startOffset: subStart >= 0 ? subStart : bufferStartOffset,
+            endOffset: subEnd,
+            content: sub,
+          })
+          if (subStart >= 0) subOffset = subEnd
+        }
+      } else {
+        paragraphs.push({
+          title: currentTitle || (currentLevel === 0 ? '前言' : ''),
+          titlePath: this.buildTitlePath(titleStack, currentLevel, currentTitle),
+          level: currentLevel === 0 ? 1 : currentLevel,
+          paragraphIndex: paragraphIndex++,
+          startOffset: bufferStartOffset,
+          endOffset: bufferStartOffset + content.length,
+          content,
+        })
+      }
+      buffer = []
+    }
+
+    for (const line of lines) {
+      // 识别 Markdown 标题（最多3级）
+      const headingMatch = line.match(/^(#{1,3})\s+(.+?)\s*#*\s*$/)
+      if (headingMatch) {
+        pushBuffer()
+        const level = headingMatch[1].length
+        const title = headingMatch[2].trim()
+
+        // 弹出栈中级别 >= 当前的标题
+        while (titleStack.length > 0 && titleStack[titleStack.length - 1].level >= level) {
+          titleStack.pop()
+        }
+        titleStack.push({ level, title })
+
+        currentTitle = title
+        currentLevel = level
+        bufferStartOffset = currentOffset
+      } else {
+        if (buffer.length === 0) {
+          bufferStartOffset = currentOffset
+        }
+        buffer.push(line)
+      }
+      currentOffset += line.length + 1 // +1 为换行符
+    }
+    pushBuffer()
+
+    // 兜底：若文档无任何标题，整体作为单一段落
+    if (paragraphs.length === 0 && fullText.trim().length > 0) {
+      paragraphs.push({
+        title: fileName,
+        titlePath: fileName,
+        level: 1,
+        paragraphIndex: 0,
+        startOffset: 0,
+        endOffset: fullText.length,
+        content: fullText.trim(),
+      })
+    }
+
+    return paragraphs
+  }
+
+  /**
+   * 构建标题路径（如 "第一章 > 1.1 概述 > 1.1.1 定义"）
+   */
+  private buildTitlePath(
+    titleStack: Array<{ level: number; title: string }>,
+    currentLevel: number,
+    currentTitle: string
+  ): string {
+    const parts = titleStack.filter(t => t.level < currentLevel).map(t => t.title)
+    if (currentTitle) parts.push(currentTitle)
+    return parts.length > 0 ? parts.join(' > ') : (currentTitle || '')
+  }
+
+  /**
+   * 生成文件 TOC（从段落表派生目录结构，写入 kms_file_summaries.toc_json）
+   * TOC 仅包含标题与层级，不含正文内容
+   */
+  private generateFileToc(
+    fileId: string,
+    paragraphs: Array<{ title: string; titlePath: string; level: number; paragraphIndex: number; startOffset: number; endOffset: number }>,
+    searchEngine: KMSSearchEngineService
+  ): void {
+    const toc = paragraphs
+      .filter(p => p.title && p.title !== '前言')
+      .map(p => ({
+        id: p.paragraphIndex,
+        title: p.title,
+        titlePath: p.titlePath,
+        level: p.level,
+        paragraphIndex: p.paragraphIndex,
+        startOffset: p.startOffset,
+        endOffset: p.endOffset,
+      }))
+
+    searchEngine.saveFileToc(fileId, JSON.stringify(toc))
+  }
+
+  /**
+   * 批量生成段落 LLM 摘要
+   * 一次 LLM 调用处理多个段落，避免逐段调用造成成本过高
+   * 每批最多 5 个段落，单段内容截断至 1500 字
+   */
+  private async generateParagraphSummariesBatch(
+    fileId: string,
+    candidates: Array<{ id: string; paragraphIndex: number }>,
+    paragraphs: Array<any>,
+    savedParagraphs: Array<{ id: string; paragraphIndex: number }>,
+    providerId: string,
+    modelId: string,
+    llmClient: LLMClientService,
+    searchEngine: KMSSearchEngineService,
+    signal?: AbortSignal,
+    onProgress?: ProgressCallback
+  ): Promise<void> {
+    const BATCH_SIZE = 5
+    let processed = 0
+
+    // 建立段落ID到原始段落的映射
+    const paraMap = new Map<number, any>()
+    for (const p of paragraphs) paraMap.set(p.paragraphIndex, p)
+    const idMap = new Map<number, string>()
+    for (const sp of savedParagraphs) idMap.set(sp.paragraphIndex, sp.id)
+
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      if (signal?.aborted) return
+
+      const batch = candidates.slice(i, i + BATCH_SIZE)
+      const batchItems = batch.map(c => {
+        const p = paraMap.get(c.paragraphIndex)
+        const content = p ? p.content.substring(0, 1500) : ''
+        const title = p?.title || ''
+        return { paragraphId: c.id, paragraphIndex: c.paragraphIndex, title, content }
+      }).filter(it => it.content.length > 0)
+
+      if (batchItems.length === 0) {
+        processed += batch.length
+        continue
+      }
+
+      try {
+        const prompt = `请为以下段落生成简洁摘要（每段不超过80字）和2-4个关键词。
+
+段落列表：
+${batchItems.map((it, idx) => `--- 段落 ${idx + 1} ---
+标题：${it.title}
+内容：${it.content}`).join('\n\n')}
+
+请以JSON数组格式返回，每个元素对应一个段落：
+[{"summary":"...","keywords":["..."]}]`
+
+        const result = await llmClient.chat(providerId, [
+          { role: 'system', content: '你是文档段落摘要助手，严格输出JSON数组，不要添加其他文本。' },
+          { role: 'user', content: prompt },
+        ], { temperature: 0.1, max_tokens: 800, model: modelId, signal, logSource: 'kms_paragraph_summary' })
+
+        if (signal?.aborted) return
+
+        const cleaned = (result || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+        const parsed = JSON.parse(cleaned)
+
+        if (Array.isArray(parsed)) {
+          for (let j = 0; j < batchItems.length && j < parsed.length; j++) {
+            const item = parsed[j]
+            const summary: string = (item.summary || '').trim()
+            const keywords: string[] = Array.isArray(item.keywords) ? item.keywords.map((k: any) => String(k).trim()).filter(Boolean).slice(0, 4) : []
+            if (summary) {
+              const paragraphId = batchItems[j].paragraphId
+              searchEngine.updateParagraphSummary(paragraphId, summary, keywords)
+              // 同步更新段落搜索索引（补充摘要和关键词）
+              const p = paraMap.get(batchItems[j].paragraphIndex)
+              if (p) {
+                searchEngine.indexParagraph(
+                  fileId,
+                  paragraphId,
+                  p.title,
+                  p.titlePath,
+                  summary,
+                  keywords,
+                  p.startOffset,
+                  p.endOffset
+                )
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        logger.warn(`Batch paragraph summary failed for file ${fileId} batch ${i / BATCH_SIZE + 1}:`, err?.message || err)
+      }
+
+      processed += batch.length
+      onProgress?.({
+        phase: 'paragraph_summary',
+        current: processed,
+        total: candidates.length,
+        message: `段落摘要: ${processed}/${candidates.length}`,
+        fileId,
+        startedAt: Math.floor(Date.now() / 1000),
+      })
+    }
+  }
+
+  /**
+   * 生成文件级 LLM 摘要（含关键词和主题）
+   */
+  private async generateFileSummary(
+    fileId: string,
+    fullText: string,
+    providerId: string,
+    modelId: string | undefined,
+    llmClient: LLMClientService,
+    searchEngine: KMSSearchEngineService,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!modelId) {
+      throw new Error('MODEL_NOT_CONFIGURED')
+    }
+    const truncatedText = fullText.substring(0, 3000)
+    const summaryPrompt = `请为以下文档内容生成简洁摘要（150字以内），并提取5-8个关键词和3-5个主要主题。\n\n文档内容：\n${truncatedText}\n\n请以JSON格式返回：{"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
+
+    const summaryResult = await llmClient.chat(providerId, [
+      { role: 'system', content: '你是一个文档摘要助手。请严格按照JSON格式返回结果。' },
+      { role: 'user', content: summaryPrompt },
+    ], { temperature: 0.1, max_tokens: 500, model: modelId, signal })
+
+    if (signal?.aborted) return
+
+    try {
+      const parsed = JSON.parse(summaryResult || '{}')
+      const summary = parsed.summary || ''
+      const keywords = parsed.keywords || []
+      const mainTopics = parsed.main_topics || []
+
+      this.saveFileSummary(fileId, summary, keywords, mainTopics)
+      searchEngine.indexFileSummary(fileId, summary, keywords)
+    } catch {
+      logger.warn(`Failed to parse summary result for file ${fileId}`)
     }
   }
 
@@ -813,6 +1457,17 @@ class KMSIndexManagerService {
       if (providerId) {
         const config = await llmClient.getProviderConfig(providerId)
         modelId = config?.model || undefined
+      }
+      // 如果未获取到 modelId，尝试从 KMS 配置解析
+      if (!modelId) {
+        try {
+          const KMSService = (await import('./kms.service')).default
+          const kmsService = KMSService.getInstance()
+          const kmsConfig = kmsService.getKmsLLMConfigPublic()
+          if (kmsConfig?.modelId) {
+            modelId = kmsConfig.modelId
+          }
+        } catch {}
       }
 
       for (const dir of dirs) {
@@ -925,6 +1580,195 @@ ${fileList}
     if (bytes < 1024) return `${bytes}B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  }
+
+  // ==================== 手动摘要生成 ====================
+
+  /**
+   * 手动生成单个目录的摘要
+   * 使用 KMS LLM 配置，对指定目录下的已完成文件生成摘要
+   */
+  async generateDirSummaryManual(dirId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const dir = this.db.prepare('SELECT id, dir_path, display_name FROM kms_index_dirs WHERE id = ?').get(dirId) as any
+      if (!dir) return { success: false, error: 'DIR_NOT_FOUND' }
+
+      const files = this.db.prepare(`
+        SELECT f.file_name, f.file_ext, f.file_size, f.data_tier,
+               COALESCE(s.light_summary, '') as light_summary,
+               COALESCE(s.summary, '') as summary
+        FROM kms_files f
+        LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+        WHERE f.dir_id = ? AND f.index_status = 'completed'
+        ORDER BY f.file_name
+      `).all(dirId) as any[]
+
+      if (files.length === 0) return { success: false, error: 'NO_FILES' }
+
+      // 获取 KMS LLM 配置
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      const llmClient = LLMClientService.getInstance()
+
+      let modelId: string | undefined
+      if (llmConfig?.providerId) {
+        const config = await llmClient.getProviderConfig(llmConfig.providerId)
+        modelId = llmConfig.modelId || config?.model || undefined
+      }
+
+      // 构建目录内容清单
+      const fileList = files.map(f => {
+        const summary = f.summary || f.light_summary || ''
+        return `- ${f.file_name} (${f.file_ext || '无扩展名'}, ${this.formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
+      }).join('\n')
+
+      let dirSummary: string
+      let keywords: string[] = []
+
+      if (llmConfig?.providerId && modelId && files.length <= 100) {
+        const prompt = `请为以下目录生成简洁摘要（200字以内），概括目录内容主题和结构，并提取5-10个关键词。
+
+目录路径：${dir.dir_path}
+文件数量：${files.length}
+文件清单：
+${fileList}
+
+请以JSON格式返回：{"summary": "...", "keywords": ["..."]}`
+
+        try {
+          const result = await llmClient.chat(llmConfig.providerId, [
+            { role: 'system', content: '你是一个目录内容摘要助手，输出简洁准确的JSON。' },
+            { role: 'user', content: prompt },
+          ], { temperature: 0.1, max_tokens: 400, model: modelId, logSource: 'kms_dir_summary_manual' })
+
+          const parsed = JSON.parse(result)
+          dirSummary = parsed.summary || ''
+          keywords = parsed.keywords || []
+        } catch {
+          dirSummary = this.generateSimpleDirSummary(dir.dir_path, files)
+        }
+      } else {
+        dirSummary = this.generateSimpleDirSummary(dir.dir_path, files)
+      }
+
+      this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)
+      return { success: true }
+    } catch (err: any) {
+      logger.error(`Failed to generate dir summary manually for ${dirId}:`, err)
+      return { success: false, error: err?.message || 'UNKNOWN' }
+    }
+  }
+
+  /**
+   * 手动生成单个文件的摘要（含段落切分/TOC/段落摘要/文件摘要）
+   * 使用 KMS LLM 配置，对指定文件执行深度处理
+   */
+  async generateFileSummaryManual(fileId: string): Promise<{ success: boolean; error?: string; embeddingError?: string }> {
+    try {
+      const file = this.db.prepare('SELECT id, file_name, file_path, file_ext, data_tier FROM kms_files WHERE id = ?').get(fileId) as any
+      if (!file) return { success: false, error: 'FILE_NOT_FOUND' }
+
+      // 获取 KMS LLM 配置
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      if (!llmConfig?.providerId) {
+        return { success: false, error: 'NO_LLM_PROVIDER' }
+      }
+
+      const llmClient = LLMClientService.getInstance()
+
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const fileParser = FileParserService.getInstance()
+
+      // 解析文件
+      const parseResult = await fileParser.parseFilePath(file.file_path)
+      if (!parseResult.fullText) return { success: false, error: 'EMPTY_CONTENT' }
+
+      // 生成轻量摘要（确保至少有基础摘要）
+      this.saveLightSummary(file.id, file.file_name, file.file_path, parseResult.fullText)
+
+      // 执行深度处理（段落切分/TOC/段落摘要/文件摘要），传入 KMS 配置的 modelId
+      await this.processHotFile(
+        file.id,
+        parseResult.fullText,
+        file.file_name,
+        llmConfig.providerId,
+        llmClient,
+        searchEngine,
+        undefined,
+        undefined,
+        undefined,
+        llmConfig.modelId
+      )
+
+      // 为该文件的索引条目生成向量嵌入
+      const embResult = await this.generateEmbeddingsForFile(file.id, llmConfig.providerId)
+
+      return { success: true, embeddingError: embResult.error }
+    } catch (err: any) {
+      logger.error(`Failed to generate file summary manually for ${fileId}:`, err)
+      const errMsg = err?.message || 'UNKNOWN'
+      if (errMsg.includes('MissingParameter') || errMsg.includes('model')) {
+        return { success: false, error: 'MODEL_NOT_CONFIGURED' }
+      }
+      return { success: false, error: errMsg }
+    }
+  }
+
+  /**
+   * 为单个文件的索引条目生成向量嵌入
+   */
+  private async generateEmbeddingsForFile(fileId: string, chatProviderId: string): Promise<{ error?: string }> {
+    try {
+      // 优先使用 KMS Embedding 配置
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const embConfig = kmsService.getKmsEmbeddingConfigPublic()
+      const providerId = embConfig?.providerId || chatProviderId
+
+      const llmClient = LLMClientService.getInstance()
+      const searchEngine = KMSSearchEngineService.getInstance()
+
+      const unembedded = this.db.prepare(`
+        SELECT si.id, si.source_type, si.source_id, si.file_id, si.title, si.content
+        FROM kms_search_index si
+        LEFT JOIN kms_embeddings e ON si.source_type = e.source_type AND si.source_id = e.source_id
+        WHERE e.id IS NULL AND si.content != '' AND si.file_id = ?
+      `).all(fileId) as any[]
+
+      if (unembedded.length === 0) return {}
+
+      const batchSize = 20
+      let firstError: string | undefined
+      for (let i = 0; i < unembedded.length; i += batchSize) {
+        const batch = unembedded.slice(i, i + batchSize)
+        const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, 500))
+        try {
+          const embeddings = await llmClient.createEmbeddings(providerId, texts)
+          for (let j = 0; j < batch.length && j < embeddings.length; j++) {
+            searchEngine.storeEmbedding(
+              batch[j].source_type,
+              batch[j].source_id,
+              batch[j].file_id,
+              embeddings[j],
+              providerId
+            )
+          }
+        } catch (err: any) {
+          logger.error(`Batch embedding failed for file ${fileId}:`, err)
+          if (!firstError) {
+            firstError = err?.message || String(err)
+          }
+        }
+      }
+      searchEngine.invalidateCache()
+      return firstError ? { error: firstError } : {}
+    } catch (err: any) {
+      logger.warn(`Failed to generate embeddings for file ${fileId}:`, err)
+      return { error: err?.message || String(err) }
+    }
   }
 }
 

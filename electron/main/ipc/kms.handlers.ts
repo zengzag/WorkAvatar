@@ -167,6 +167,11 @@ export function registerKMSHandlers(): void {
         current: progress.current,
         total: progress.total,
         message: progress.message,
+        fileId: progress.fileId,
+        fileName: progress.fileName,
+        collectionId: progress.collectionId,
+        collectionName: progress.collectionName,
+        startedAt: progress.startedAt,
       })
     }
   })
@@ -219,10 +224,6 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, async (params: KMSGetSearchHistoryParams) => {
     return kmsService.getSearchHistory(params)
-  })
-
-  safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, async (id: string) => {
-    return kmsService.getSearchHistoryDetail(id)
   })
 
   safeHandle(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, async (searchMode?: string) => {
@@ -298,6 +299,29 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_SCAN_DIR_FILES, async (params: { dirPath: string; extensions?: string[] }) => {
     return kmsService.scanDirFiles(params.dirPath, params.extensions)
+  })
+
+  // ==================== 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化） ====================
+  // 触发合集深度处理，进度通过 KMS_INDEX_PROGRESS 通道推送（含 collectionId/collectionName 字段）
+  ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string) => {
+    logger.info('Process collection deep requested:', collectionId)
+    kmsService.processCollectionDeep(collectionId).catch((err: any) => {
+      logger.error('processCollectionDeep failed:', String(err?.message || err))
+    })
+  })
+
+  ipcMain.on(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP, () => {
+    logger.info('Cancel collection deep process requested')
+    kmsService.cancelCollectionDeepProcess()
+  })
+
+  // ==================== 手动摘要生成 ====================
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, async (dirId: string) => {
+    return kmsService.generateDirSummaryManual(dirId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, async (fileId: string) => {
+    return kmsService.generateFileSummaryManual(fileId)
   })
 
   // ==================== KMS MCP 服务 ====================

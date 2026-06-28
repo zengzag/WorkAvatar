@@ -30,7 +30,6 @@ export const KMS_CHANNELS = {
   KMS_RUN_AUTO_INDEX_CHECK: 'kms:run-auto-index-check',
   // KMS 搜索历史
   KMS_GET_SEARCH_HISTORY: 'kms:get-search-history',
-  KMS_GET_SEARCH_HISTORY_DETAIL: 'kms:get-search-history-detail',
   KMS_CLEAR_SEARCH_HISTORY: 'kms:clear-search-history',
   KMS_DELETE_SEARCH_HISTORY: 'kms:delete-search-history',
   KMS_RECORD_SEARCH_HISTORY: 'kms:record-search-history',
@@ -50,6 +49,13 @@ export const KMS_CHANNELS = {
   KMS_DELETE_COLLECTION_SUMMARY: 'kms:delete-collection-summary',
   KMS_GENERATE_COLLECTION_SUMMARY: 'kms:generate-collection-summary',
   KMS_SCAN_DIR_FILES: 'kms:scan-dir-files',
+  // KMS 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化）
+  // 进度事件复用 KMS_INDEX_PROGRESS 通道，含 collectionId 字段供前端按合集过滤
+  KMS_PROCESS_COLLECTION_DEEP: 'kms:process-collection-deep',
+  KMS_CANCEL_COLLECTION_DEEP: 'kms:cancel-collection-deep',
+  // KMS 手动摘要生成（目录摘要/文件摘要）
+  KMS_GENERATE_DIR_SUMMARY: 'kms:generate-dir-summary',
+  KMS_GENERATE_FILE_SUMMARY: 'kms:generate-file-summary',
   // KMS MCP 服务
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -139,7 +145,6 @@ export interface KMSRecordSearchHistoryParams {
   query: string
   searchMode: string
   resultCount: number
-  resultData?: any
   filters?: any
 }
 

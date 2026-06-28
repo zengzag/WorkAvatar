@@ -280,6 +280,19 @@ class KMSDatabaseService {
     if (!colNames.includes('preview_text')) {
       this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN preview_text TEXT DEFAULT ''")
     }
+
+    // kms_collection_summaries 增加 embedding/dimension/model 字段（合集摘要向量化）
+    const collCols = this.db.prepare("PRAGMA table_info(kms_collection_summaries)").all() as any[]
+    const collColNames = collCols.map(c => c.name)
+    if (!collColNames.includes('embedding')) {
+      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding BLOB")
+    }
+    if (!collColNames.includes('dimension')) {
+      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN dimension INTEGER DEFAULT 0")
+    }
+    if (!collColNames.includes('embedding_model')) {
+      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding_model TEXT DEFAULT ''")
+    }
   }
 
   private recoverStuckFiles(): void {

@@ -203,8 +203,18 @@ const electronAPI = {
     rebuildDirIndex: (dirId: string, providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId); return Promise.resolve({ success: true }) },
     cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
-    onIndexProgress: (callback: (progress: { phase: string; current: number; total: number; message: string }) => void) => {
-      const handler = (_event: any, progress: { phase: string; current: number; total: number; message: string }) => callback(progress)
+    onIndexProgress: (callback: (progress: {
+      phase: string
+      current: number
+      total: number
+      message: string
+      fileId?: string
+      fileName?: string
+      collectionId?: string
+      collectionName?: string
+      startedAt?: number
+    }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
     },
@@ -223,7 +233,6 @@ const electronAPI = {
     // 搜索历史
     recordSearchHistory: (params: KMSRecordSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, params),
     getSearchHistory: (params?: KMSGetSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, params || {}),
-    getSearchHistoryDetail: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, id),
     clearSearchHistory: (searchMode?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, searchMode),
     deleteSearchHistory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, id),
     // 合集管理
@@ -242,6 +251,12 @@ const electronAPI = {
     deleteCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_COLLECTION_SUMMARY, collectionId),
     generateCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_COLLECTION_SUMMARY, collectionId),
     scanDirFiles: (dirPath: string, extensions?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SCAN_DIR_FILES, { dirPath, extensions }),
+    // 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化）
+    processCollectionDeep: (collectionId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId),
+    cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
+    // 手动摘要生成（目录摘要/文件摘要）
+    generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
+    generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
   },
 
   kmsMcp: {

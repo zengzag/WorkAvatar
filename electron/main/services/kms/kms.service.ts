@@ -538,6 +538,24 @@ ${fileSummaries.join('\n')}
   /**
    * 获取 KMS LLM 配置（providerId + modelId）
    * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
+   * 对外暴露（public）供索引管理器调用
+   */
+  getKmsLLMConfigPublic(): { providerId: string; modelId: string | undefined } | null {
+    return this.getKmsLLMConfig()
+  }
+
+  /**
+   * 获取 KMS Embedding 配置（providerId + modelName）
+   * 优先级：KMS 专属 Embedding 模型 > 默认 Embedding 配置
+   * 对外暴露（public）供索引管理器调用
+   */
+  getKmsEmbeddingConfigPublic(): { providerId: string; modelName: string } | null {
+    return this.getKmsEmbeddingConfig()
+  }
+
+  /**
+   * 获取 KMS LLM 配置（providerId + modelId）
+   * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
    */
   private getKmsLLMConfig(): { providerId: string; modelId: string | undefined } | null {
     const llmClient = LLMClientService.getInstance()
@@ -820,9 +838,15 @@ ${fileSummaries.join('\n')}
 
   /**
    * 构建全量索引
+   * 若未显式指定 providerId，则从 KMS 专属 LLM 配置解析（供 chat 摘要使用）
+   * 向量嵌入使用独立的 KMS Embedding 配置，在 indexManager 内部解析
    */
   async buildFullIndex(providerId?: string): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
+    if (!providerId) {
+      const llmConfig = this.getKmsLLMConfig()
+      providerId = llmConfig?.providerId
+    }
     await indexManager.buildFullIndex(providerId, (progress) => {
       this.notifyProgress(progress)
     })
@@ -833,6 +857,10 @@ ${fileSummaries.join('\n')}
    */
   async incrementalIndex(providerId?: string): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
+    if (!providerId) {
+      const llmConfig = this.getKmsLLMConfig()
+      providerId = llmConfig?.providerId
+    }
     await indexManager.incrementalIndex(providerId, (progress) => {
       this.notifyProgress(progress)
     })
@@ -843,9 +871,45 @@ ${fileSummaries.join('\n')}
    */
   async rebuildDirIndex(dirId: string, providerId?: string): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
+    if (!providerId) {
+      const llmConfig = this.getKmsLLMConfig()
+      providerId = llmConfig?.providerId
+    }
     await indexManager.rebuildDirIndex(dirId, providerId, (progress) => {
       this.notifyProgress(progress)
     })
+  }
+
+  /**
+   * 合集深度处理：对合集内所有文件做段落切分/TOC/段落摘要/文件摘要，再生成合集摘要并向量化
+   * 进度通过 onProgress 推送到前端，含 collectionId/collectionName 字段便于按合集过滤展示
+   */
+  async processCollectionDeep(collectionId: string): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
+    const indexManager = KMSIndexManagerService.getInstance()
+    return await indexManager.processCollectionDeep(collectionId, (progress) => {
+      this.notifyProgress(progress)
+    })
+  }
+
+  /**
+   * 取消合集深度处理
+   */
+  cancelCollectionDeepProcess(): void {
+    KMSIndexManagerService.getInstance().cancelCollectionDeepProcess()
+  }
+
+  /**
+   * 手动生成单个目录的摘要
+   */
+  async generateDirSummaryManual(dirId: string): Promise<{ success: boolean; error?: string }> {
+    return KMSIndexManagerService.getInstance().generateDirSummaryManual(dirId)
+  }
+
+  /**
+   * 手动生成单个文件的摘要（含段落切分/TOC/段落摘要/文件摘要 + 向量嵌入）
+   */
+  async generateFileSummaryManual(fileId: string): Promise<{ success: boolean; error?: string }> {
+    return KMSIndexManagerService.getInstance().generateFileSummaryManual(fileId)
   }
 
   /**
@@ -1045,7 +1109,10 @@ ${fileSummaries.join('\n')}
              COALESCE(s.preview_text, '') as preview_text,
              COALESCE(s.keywords_json, '[]') as keywords_json,
              COALESCE(s.main_topics_json, '[]') as main_topics_json,
-             d.display_name as dir_name
+             d.display_name as dir_name,
+             CASE WHEN EXISTS (
+               SELECT 1 FROM kms_embeddings e WHERE e.file_id = f.id LIMIT 1
+             ) THEN 1 ELSE 0 END as has_embedding
       FROM kms_files f
       LEFT JOIN kms_file_summaries s ON s.file_id = f.id
       LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
@@ -1066,19 +1133,17 @@ ${fileSummaries.join('\n')}
     query: string
     searchMode: string
     resultCount: number
-    resultData?: any
     filters?: any
   }): void {
     const id = generateId()
     this.db.prepare(`
-      INSERT INTO kms_search_history (id, query, search_mode, result_count, result_data, filters_json)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO kms_search_history (id, query, search_mode, result_count, filters_json)
+      VALUES (?, ?, ?, ?, ?)
     `).run(
       id,
       params.query,
       params.searchMode,
       params.resultCount,
-      params.resultData ? JSON.stringify(params.resultData) : null,
       params.filters ? JSON.stringify(params.filters) : '{}'
     )
   }
@@ -1097,25 +1162,6 @@ ${fileSummaries.join('\n')}
     sql += ' ORDER BY created_at DESC LIMIT ?'
     sqlParams.push(limit)
     return this.db.prepare(sql).all(...sqlParams)
-  }
-
-  /**
-   * 获取搜索历史详情（含完整结果数据）
-   */
-  getSearchHistoryDetail(id: string): any {
-    const row = this.db.prepare('SELECT * FROM kms_search_history WHERE id = ?').get(id) as any
-    if (!row) return null
-    if (row.result_data) {
-      try {
-        row.result_data = JSON.parse(row.result_data)
-      } catch {}
-    }
-    if (row.filters_json) {
-      try {
-        row.filters_json = JSON.parse(row.filters_json)
-      } catch {}
-    }
-    return row
   }
 
   /**
