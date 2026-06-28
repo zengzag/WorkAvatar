@@ -1,14 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
-  WorkspaceInfoParams,
-  WorkspaceListFilesParams,
-  WorkspaceReadFileParams,
-  WorkspaceWriteFileParams,
-  WorkspaceCreateFolderParams,
-  WorkspaceDeleteItemParams,
-  WorkspaceRenameItemParams,
-  WorkspaceImportParams,
   WorkspaceOpenInExplorerParams,
   EmployeeListParams,
   EmployeeCreateParams,
@@ -38,10 +30,6 @@ import type {
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
   EmployeeImportPackageParams,
-  EmployeeTaskCreateParams,
-  EmployeeTaskUpdateParams,
-  EmployeeScheduleCreateParams,
-  EmployeeScheduleUpdateParams,
   EmployeeMemoryListParams,
   EmployeeMemoryCreateParams,
   EmployeeMemoryUpdateParams,
@@ -49,21 +37,21 @@ import type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
-  WorkflowCreateParams,
-  WorkflowUpdateParams,
   KBMCPSetConfigParams,
+  KMSAddDirParams,
+  KMSUpdateDirParams,
+  KMSSearchParams,
+  KMSAgentSearchParams,
+  KMSGetFileContentParams,
+  KMSMCPSetConfigParams,
+  KMSGetFileSummariesParams,
+  KMSSetSettingsParams,
+  KMSRecordSearchHistoryParams,
+  KMSGetSearchHistoryParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
   workspace: {
-    info: (params: WorkspaceInfoParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_INFO, params),
-    listFiles: (params: WorkspaceListFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_FILES, params),
-    readFile: (params: WorkspaceReadFileParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_READ_FILE, params),
-    writeFile: (params: WorkspaceWriteFileParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_WRITE_FILE, params),
-    createFolder: (params: WorkspaceCreateFolderParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CREATE_FOLDER, params),
-    deleteItem: (params: WorkspaceDeleteItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_ITEM, params),
-    renameItem: (params: WorkspaceRenameItemParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME_ITEM, params),
-    importFiles: (params: WorkspaceImportParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_IMPORT, params),
     openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
   },
 
@@ -124,8 +112,8 @@ const electronAPI = {
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
-    onChunk: (callback: (data: { sessionId: string; chunk: string }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; chunk: string }) => callback(data)
+    onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
     },
@@ -153,6 +141,11 @@ const electronAPI = {
       const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
+    },
+    onToolProgress: (callback: (data: { sessionId: string; toolCallId: string; name: string; progress: any }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; toolCallId: string; name: string; progress: any }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
     },
   },
 
@@ -258,6 +251,58 @@ const electronAPI = {
     setConfig: (params: KBMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_SET_CONFIG, params),
   },
 
+  kms: {
+    listDirs: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_DIRS),
+    addDir: (params: KMSAddDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_DIR, params),
+    updateDir: (params: KMSUpdateDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_DIR, params),
+    deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
+    search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
+    agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
+    onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
+      const handler = (_event: any, step: any) => callback(step)
+      ipcRenderer.on(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
+    },
+    getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
+    getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
+    getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
+    openFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE, filePath),
+    openFileDir: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE_DIR, filePath),
+    buildIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId); return Promise.resolve({ success: true }) },
+    incrementalIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId); return Promise.resolve({ success: true }) },
+    rebuildDirIndex: (dirId: string, providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId); return Promise.resolve({ success: true }) },
+    cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
+    getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
+    onIndexProgress: (callback: (progress: { phase: string; current: number; total: number; message: string }) => void) => {
+      const handler = (_event: any, progress: { phase: string; current: number; total: number; message: string }) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
+    },
+    // KMS 设置
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SETTINGS),
+    setSettings: (params: KMSSetSettingsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_SETTINGS, params),
+    // 自动索引
+    getAutoIndexStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_AUTO_INDEX_STATUS),
+    runAutoIndexCheck: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_RUN_AUTO_INDEX_CHECK),
+    // 知识沉淀（摘要查看）
+    getDirSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES),
+    getFileSummaries: (params: KMSGetFileSummariesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, params),
+    // 搜索历史
+    recordSearchHistory: (params: KMSRecordSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, params),
+    getSearchHistory: (params?: KMSGetSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, params || {}),
+    getSearchHistoryDetail: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, id),
+    clearSearchHistory: (searchMode?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, searchMode),
+    deleteSearchHistory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, id),
+  },
+
+  kmsMcp: {
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_START),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_STOP),
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
+    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
+    setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
+  },
+
   interaction: {
     onRequest: (callback: (request: any) => void) => {
       const handler = (_event: any, request: any) => callback(request)
@@ -266,83 +311,6 @@ const electronAPI = {
     },
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
-  },
-
-  employeeTask: {
-    list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST, employeeId),
-    listAll: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_LIST_ALL),
-    get: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_GET, taskId),
-    create: (params: EmployeeTaskCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_CREATE, params),
-    update: (params: EmployeeTaskUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_UPDATE, params),
-    delete: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_DELETE, taskId),
-    execute: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_EXECUTE, taskId),
-    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_TASK_ABORT_EXECUTION, executionId),
-    listSchedules: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST, employeeId),
-    listAllSchedules: () => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_LIST_ALL),
-    createSchedule: (params: EmployeeScheduleCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_CREATE, params),
-    updateSchedule: (params: EmployeeScheduleUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_UPDATE, params),
-    deleteSchedule: (scheduleId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_DELETE, scheduleId),
-    validateCron: (cronExpr: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SCHEDULE_VALIDATE_CRON, cronExpr),
-    listExecutionsForTask: (params: { task_id: string; limit?: number }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_LIST_FOR_TASK, params),
-    getExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_GET, executionId),
-    allRecentExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_ALL_RECENT, limit),
-    failedExecutions: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_FAILED, limit),
-    deleteExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_EXECUTION_DELETE, executionId),
-    onTaskCompletion: (callback: (notification: any) => void) => {
-      const handler = (_event: any, notification: any) => callback(notification)
-      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_COMPLETION, handler)
-    },
-    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => {
-      const handler = (_event: any, data: { executionId: string; taskId: string; employeeId: string }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_NOTIFICATION_CLICK, handler)
-    },
-    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => {
-      const handler = (_event: any, data: { executionId: string; segments: any[]; isStreaming: boolean }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_SEGMENTS_UPDATE, handler)
-    },
-    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => {
-      const handler = (_event: any, data: { executionId: string; status: string; errorMessage: string | null }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_STATUS_UPDATE, handler)
-    },
-  },
-
-  workflow: {
-    list: (params?: Record<string, never>) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST, params),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET, id),
-    create: (params: WorkflowCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CREATE, params),
-    update: (params: WorkflowUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DELETE, id),
-    execute: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE, workflowId),
-    abortExecution: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_ABORT_EXECUTION, executionId),
-    executeDebug: (workflowId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_EXECUTE_DEBUG, workflowId),
-    debugContinue: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_CONTINUE, executionId),
-    debugSkip: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_SKIP, executionId),
-    debugStop: (executionId: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_DEBUG_STOP, executionId),
-    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT_RESPOND, params),
-    onExecutionProgress: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_EXECUTION_PROGRESS, handler)
-    },
-    onNodeExecutionUpdate: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_NODE_EXECUTION_UPDATE, handler)
-    },
-    onDebugPaused: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_DEBUG_PAUSED, handler)
-    },
-    onRuntimeInput: (callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.WORKFLOW_RUNTIME_INPUT, handler)
-    },
   },
 }
 
@@ -374,49 +342,6 @@ export type ElectronAPI = typeof electronAPI & {
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>
-  }
-  employeeTask: {
-    list: (employeeId: string) => Promise<any[]>
-    listAll: () => Promise<any[]>
-    get: (taskId: string) => Promise<any>
-    create: (params: any) => Promise<any>
-    update: (params: any) => Promise<any>
-    delete: (taskId: string) => Promise<boolean>
-    execute: (taskId: string) => Promise<{ success: boolean; execution?: any; error?: string }>
-    abortExecution: (executionId: string) => Promise<boolean>
-    listSchedules: (employeeId: string) => Promise<any[]>
-    listAllSchedules: () => Promise<any[]>
-    createSchedule: (params: any) => Promise<any>
-    updateSchedule: (params: any) => Promise<any>
-    deleteSchedule: (scheduleId: string) => Promise<boolean>
-    validateCron: (cronExpr: string) => Promise<{ valid: boolean; error?: string; nextRun?: string }>
-    listExecutionsForTask: (params: { task_id: string; limit?: number }) => Promise<any[]>
-    getExecution: (executionId: string) => Promise<any>
-    allRecentExecutions: (limit?: number) => Promise<any[]>
-    failedExecutions: (limit?: number) => Promise<any[]>
-    deleteExecution: (executionId: string) => Promise<boolean>
-    onTaskCompletion: (callback: (notification: any) => void) => () => void
-    onNotificationClick: (callback: (data: { executionId: string; taskId: string; employeeId: string }) => void) => () => void
-    onSegmentsUpdate: (callback: (data: { executionId: string; segments: any[]; isStreaming: boolean }) => void) => () => void
-    onExecutionStatusUpdate: (callback: (data: { executionId: string; status: string; errorMessage: string | null }) => void) => () => void
-  }
-  workflow: {
-    list: (params?: Record<string, never>) => Promise<any[]>
-    get: (id: string) => Promise<any>
-    create: (params: WorkflowCreateParams) => Promise<any>
-    update: (params: WorkflowUpdateParams) => Promise<any>
-    delete: (id: string) => Promise<boolean>
-    execute: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
-    abortExecution: (executionId: string) => Promise<boolean>
-    executeDebug: (workflowId: string) => Promise<{ success: boolean; executionId?: string; error?: string }>
-    debugContinue: (executionId: string) => Promise<boolean>
-    debugSkip: (executionId: string) => Promise<boolean>
-    debugStop: (executionId: string) => Promise<boolean>
-    respondRuntimeInput: (params: { executionId: string; nodeId: string; value: string }) => Promise<boolean>
-    onExecutionProgress: (callback: (data: any) => void) => () => void
-    onNodeExecutionUpdate: (callback: (data: any) => void) => () => void
-    onDebugPaused: (callback: (data: any) => void) => () => void
-    onRuntimeInput: (callback: (data: any) => void) => () => void
   }
   kbMcp: {
     start: () => Promise<{ success: boolean; error?: string }>

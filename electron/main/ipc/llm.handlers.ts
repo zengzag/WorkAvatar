@@ -11,6 +11,7 @@ import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
+import { safeHandle } from './_shared'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -19,7 +20,7 @@ export function registerLLMHandlers(
   const activeSessions: Map<string, AbortController> = new Map()
   const interactionService = UnifiedInteractionService.getInstance()
 
-  ipcMain.handle(IPC_CHANNELS.LLM_ABORT_CHAT, (_, sessionId?: string) => {
+  safeHandle(IPC_CHANNELS.LLM_ABORT_CHAT, (sessionId?: string) => {
     if (sessionId) {
       const controller = activeSessions.get(sessionId)
       if (controller) {
@@ -34,27 +35,29 @@ export function registerLLMHandlers(
     }
     return { success: true }
   })
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
+
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
     return llmClient.getProviderList()
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_CREATE, async (_, params: LLMProviderCreateParams) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_CREATE, async (params: LLMProviderCreateParams) => {
     return llmClient.createProvider(params)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_UPDATE, async (_, params: LLMProviderUpdateParams) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_UPDATE, async (params: LLMProviderUpdateParams) => {
     const { id, ...data } = params
     return llmClient.updateProvider(id, data)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_PROVIDER_DELETE, async (_, id: string) => {
+  safeHandle(IPC_CHANNELS.LLM_PROVIDER_DELETE, async (id: string) => {
     return llmClient.deleteProvider(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.LLM_TEST_CONNECTION, async (_, params: LLMTestConnectionParams) => {
+  safeHandle(IPC_CHANNELS.LLM_TEST_CONNECTION, async (params: LLMTestConnectionParams) => {
     return llmClient.testConnection(params.provider_id)
   })
 
+  // 业务语义错误返回 { success: false, error }，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.LLM_CHAT, async (_, params: LLMChatParams) => {
     try {
       const result = await llmClient.chat(
@@ -68,12 +71,31 @@ export function registerLLMHandlers(
     }
   })
 
+  // 流式聊天：需要事件回调推送多种事件，保留 ipcMain.handle
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, async (event, params: EmployeeChatStreamParams) => {
     const abortController = new AbortController()
     const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
 
     interactionService.registerSession(sessionId, event.sender)
+
+    // chunk 批量合并缓冲：避免 100+ tokens/sec 触发 100+ 次 IPC 往返
+    // 用 setImmediate 在当前事件循环结束后批量发送，渲染端一次性接收多 token
+    const chunkBuffer: string[] = []
+    let flushScheduled = false
+    const flushChunks = () => {
+      flushScheduled = false
+      if (chunkBuffer.length === 0) return
+      if (abortController.signal.aborted) { chunkBuffer.length = 0; return }
+      const chunks = chunkBuffer.splice(0)
+      event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+    }
+    const scheduleFlush = () => {
+      if (!flushScheduled) {
+        flushScheduled = true
+        setImmediate(flushChunks)
+      }
+    }
 
     interactionContext.run(
       {
@@ -95,7 +117,12 @@ export function registerLLMHandlers(
               minimal_mode: params.minimal_mode,
             },
             {
-              onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunk }) },
+              onChunk: (chunk: string) => {
+                if (!abortController.signal.aborted) {
+                  chunkBuffer.push(chunk)
+                  scheduleFlush()
+                }
+              },
               onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
               onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
@@ -103,12 +130,25 @@ export function registerLLMHandlers(
                 const { rawResult: _, ...safeResult } = toolResult
                 event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
               },
-              onDone: (metadata?: any) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} }); activeSessions.delete(sessionId) },
-              onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error }); activeSessions.delete(sessionId) },
+              onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
+                if (abortController.signal.aborted) return
+                event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
+              },
+              onDone: (metadata?: any) => {
+                flushChunks() // 确保缓冲区中的 token 不丢失
+                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
+                activeSessions.delete(sessionId)
+              },
+              onError: (error: string) => {
+                flushChunks()
+                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
+                activeSessions.delete(sessionId)
+              },
             },
             abortController.signal
           )
         } catch (error: any) {
+          flushChunks()
           if (abortController.signal.aborted) {
             event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
             activeSessions.delete(sessionId)

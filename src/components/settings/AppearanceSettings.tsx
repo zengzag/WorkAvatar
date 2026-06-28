@@ -1,7 +1,6 @@
-import { Typography, Radio, Divider, Switch } from 'antd'
+import { Typography, Radio, Divider } from 'antd'
 import { useAppearanceStore, type ThemeMode, type FontSizeLevel, type AppLocale } from '../../stores/appearance.store'
 import { useTranslation } from 'react-i18next'
-import { BellOutlined } from '@ant-design/icons'
 
 const { Text, Title } = Typography
 
@@ -13,8 +12,6 @@ const AppearanceSettings: React.FC = () => {
   const setFontSizeLevel = useAppearanceStore((s) => s.setFontSizeLevel)
   const locale = useAppearanceStore((s) => s.locale)
   const setLocale = useAppearanceStore((s) => s.setLocale)
-  const taskNotifications = useAppearanceStore((s) => s.taskNotifications)
-  const setTaskNotifications = useAppearanceStore((s) => s.setTaskNotifications)
 
   return (
     <div>
@@ -54,15 +51,6 @@ const AppearanceSettings: React.FC = () => {
             <Radio.Button value="zh-CN">中文</Radio.Button>
             <Radio.Button value="en-US">English</Radio.Button>
           </Radio.Group>
-        </div>
-        <Divider />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Text strong><BellOutlined style={{ marginRight: 6 }} />{t('settings.taskNotification')}</Text>
-            <br />
-            <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.taskNotificationDesc')}</Text>
-          </div>
-          <Switch checked={taskNotifications} onChange={setTaskNotifications} />
         </div>
       </div>
     </div>

@@ -1,5 +1,8 @@
 import KBDatabaseService from './kb-database.service'
 import { generateId } from './common-utils'
+import { createLogger } from './logger'
+
+const logger = createLogger('SearchEngine')
 
 type SourceType = 'document_title' | 'document_summary' | 'paragraph' | 'content_paragraph'
 
@@ -41,9 +44,13 @@ class SearchEngineService {
   private static readonly CACHE_TTL = 60000
   private static readonly CACHE_MAX_SIZE = 100
   private embeddingCache: Map<string, EmbeddingEntry[]> = new Map()
+  // vec0 虚表当前维度，null 表示虚表尚未创建
+  private vecDimension: number | null = null
+  private vecReady: boolean = false
 
   private constructor() {
     this.kbDb = KBDatabaseService.getInstance()
+    this.initVecIndex()
   }
 
   private get db() { return this.kbDb.getDb() }
@@ -53,6 +60,104 @@ class SearchEngineService {
       SearchEngineService.instance = new SearchEngineService()
     }
     return SearchEngineService.instance
+  }
+
+  /**
+   * 初始化 vec0 向量索引：
+   * 1. 检查 sqlite-vec 扩展是否加载
+   * 2. 如果 vec_kb_embeddings 已存在，读取其维度
+   * 3. 如果不存在但有现有数据，按数据维度创建并迁移
+   */
+  private initVecIndex(): void {
+    try {
+      // 验证 sqlite-vec 扩展已加载
+      this.db.prepare('SELECT vec_version()').get()
+      this.vecReady = true
+    } catch {
+      logger.warn('sqlite-vec 扩展未加载，向量检索将回退到 JS 全扫描模式')
+      return
+    }
+
+    // 检查 vec_kb_embeddings 虚表是否已存在
+    const existing = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_kb_embeddings'"
+    ).get() as any
+
+    if (existing) {
+      // 虚表已存在，从现有数据推断维度
+      const dimRow = this.db.prepare(
+        'SELECT dimension FROM kb_embeddings ORDER BY updated_at DESC LIMIT 1'
+      ).get() as any
+      if (dimRow?.dimension) {
+        this.vecDimension = dimRow.dimension
+      }
+      logger.info(`vec0 虚表已存在，维度=${this.vecDimension}`)
+      return
+    }
+
+    // 虚表不存在，检查是否有现有数据需要迁移
+    const countRow = this.db.prepare('SELECT COUNT(*) as count, dimension FROM kb_embeddings GROUP BY dimension ORDER BY count DESC LIMIT 1').get() as any
+    if (!countRow || countRow.count === 0) {
+      logger.info('kb_embeddings 表为空，vec0 虚表将延迟到首次写入时创建')
+      return
+    }
+
+    // 有现有数据，按最常见维度创建虚表并迁移
+    const dimension = countRow.dimension
+    this.createVecTable(dimension)
+    this.migrateExistingEmbeddings(dimension)
+  }
+
+  /**
+   * 创建 vec0 虚表（如不存在）
+   */
+  private createVecTable(dimension: number): void {
+    try {
+      this.db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_kb_embeddings USING vec0(
+          embedding float[${dimension}] distance_metric=cosine,
+          kb_id TEXT PARTITION KEY,
+          document_id TEXT,
+          source_type TEXT
+        )
+      `)
+      this.vecDimension = dimension
+      logger.info(`vec0 虚表创建成功，维度=${dimension}`)
+    } catch (err: any) {
+      logger.error('vec0 虚表创建失败:', err?.message || err)
+      this.vecReady = false
+    }
+  }
+
+  /**
+   * 将 kb_embeddings 表中的现有数据迁移到 vec0 虚表
+   */
+  private migrateExistingEmbeddings(dimension: number): void {
+    try {
+      const rows = this.db.prepare(
+        'SELECT rowid, embedding, kb_id, document_id, source_type FROM kb_embeddings WHERE dimension = ?'
+      ).all(dimension) as any[]
+
+      if (rows.length === 0) return
+
+      const insertStmt = this.db.prepare(
+        'INSERT INTO vec_kb_embeddings(rowid, embedding, kb_id, document_id, source_type) VALUES (?, ?, ?, ?, ?)'
+      )
+      const migrate = this.db.transaction(() => {
+        for (const row of rows) {
+          try {
+            insertStmt.run(row.rowid, row.embedding, row.kb_id, row.document_id, row.source_type)
+          } catch (err: any) {
+            // 单条迁移失败不中断整体流程
+            logger.warn(`迁移 rowid=${row.rowid} 失败:`, err?.message || err)
+          }
+        }
+      })
+      migrate()
+      logger.info(`vec0 迁移完成，共迁移 ${rows.length} 条向量`)
+    } catch (err: any) {
+      logger.error('vec0 数据迁移失败:', err?.message || err)
+    }
   }
 
   private insertFtsRow(indexId: string, kbId: string, sourceType: SourceType, sourceId: string, documentId: string, title: string, content: string, keywords: string): void {
@@ -252,6 +357,14 @@ class SearchEngineService {
     this.db.prepare("DELETE FROM kb_fts WHERE kb_id = ?").run(kbId)
     this.db.prepare('DELETE FROM kb_search_index WHERE kb_id = ?').run(kbId)
     this.db.prepare('DELETE FROM kb_embeddings WHERE kb_id = ?').run(kbId)
+    // 同步清理 vec0 虚表（partition key 过滤）
+    if (this.vecReady) {
+      try {
+        this.db.prepare('DELETE FROM vec_kb_embeddings WHERE kb_id = ?').run(kbId)
+      } catch (err: any) {
+        logger.warn('清理 vec0 索引失败:', err?.message || err)
+      }
+    }
     this.embeddingCache.delete(kbId)
     this.invalidateCache()
   }
@@ -436,30 +549,160 @@ class SearchEngineService {
     model: string
   ): void {
     const existing = this.db.prepare(
-      'SELECT id FROM kb_embeddings WHERE source_type = ? AND source_id = ?'
+      'SELECT id, rowid FROM kb_embeddings WHERE source_type = ? AND source_id = ?'
     ).get(sourceType, sourceId) as any
 
     const buffer = Buffer.from(embedding.buffer)
+    let rowid: number
 
     if (existing) {
       this.db.prepare(`
         UPDATE kb_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
       `).run(buffer, model, embedding.length, existing.id)
+      rowid = existing.rowid
     } else {
       const id = generateId()
       this.db.prepare(`
         INSERT INTO kb_embeddings (id, kb_id, source_type, source_id, document_id, embedding, model, dimension, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(id, kbId, sourceType, sourceId, documentId, buffer, model, embedding.length)
+      rowid = Number((this.db.prepare('SELECT last_insert_rowid() as r').get() as any).r)
     }
 
+    // 同步写入 vec0 虚表
+    this.syncVecIndex(rowid, buffer, kbId, documentId, sourceType, embedding.length)
+
     this.embeddingCache.delete(kbId)
+  }
+
+  /**
+   * 同步向量到 vec0 虚表：
+   * - 延迟创建虚表（首次写入时按 embedding 维度创建）
+   * - 维度不匹配时跳过（降级到 JS 检索）
+   * - vec0 不支持 UPDATE 向量列，用 DELETE + INSERT 替代
+   */
+  private syncVecIndex(
+    rowid: number,
+    buffer: Buffer,
+    kbId: string,
+    documentId: string,
+    sourceType: string,
+    dimension: number
+  ): void {
+    if (!this.vecReady) return
+
+    // 延迟创建虚表
+    if (this.vecDimension === null) {
+      this.createVecTable(dimension)
+      if (this.vecDimension === null) return
+    }
+
+    // 维度不匹配，跳过 vec0 写入（降级到 JS 检索）
+    if (this.vecDimension !== dimension) {
+      logger.warn(`向量维度 ${dimension} 与 vec0 虚表维度 ${this.vecDimension} 不匹配，跳过索引写入`)
+      return
+    }
+
+    try {
+      // vec0 不支持 UPDATE 向量，先删后插
+      this.db.prepare('DELETE FROM vec_kb_embeddings WHERE rowid = ?').run(rowid)
+      this.db.prepare(
+        'INSERT INTO vec_kb_embeddings(rowid, embedding, kb_id, document_id, source_type) VALUES (?, ?, ?, ?, ?)'
+      ).run(rowid, buffer, kbId, documentId, sourceType)
+    } catch (err: any) {
+      logger.warn(`vec0 同步失败 rowid=${rowid}:`, err?.message || err)
+    }
   }
 
   vectorSearch(
     kbId: string,
     queryEmbedding: Float32Array,
     topK: number = 10,
+    options?: { documentIds?: string[]; sourceTypes?: string[] }
+  ): Array<{ sourceType: string; sourceId: string; documentId: string; score: number }> {
+    // 优先用 vec0 KNN 索引；维度不匹配或未就绪时回退到 JS 全扫描
+    if (this.vecReady && this.vecDimension === queryEmbedding.length) {
+      const vecResult = this.vectorSearchViaVec0(kbId, queryEmbedding, topK, options)
+      if (vecResult !== null) return vecResult
+    }
+
+    return this.vectorSearchViaJS(kbId, queryEmbedding, topK, options)
+  }
+
+  /**
+   * 使用 vec0 虚表的 KNN 查询：
+   * - partition key 过滤 kb_id
+   * - metadata 过滤 document_id、source_type
+   * - 多取 topK*3 条以缓解 pre-filter 后不足 k 的问题
+   * 返回 null 表示 KNN 查询失败，调用方应回退到 JS。
+   */
+  private vectorSearchViaVec0(
+    kbId: string,
+    queryEmbedding: Float32Array,
+    topK: number,
+    options?: { documentIds?: string[]; sourceTypes?: string[] }
+  ): Array<{ sourceType: string; sourceId: string; documentId: string; score: number }> | null {
+    try {
+      const queryBuffer = Buffer.from(queryEmbedding.buffer)
+      const k = Math.max(topK * 3, 30)
+
+      let whereClause = 'embedding MATCH ? AND k = ? AND kb_id = ?'
+      const params: any[] = [queryBuffer, k, kbId]
+
+      if (options?.documentIds && options.documentIds.length > 0) {
+        const placeholders = options.documentIds.map(() => '?').join(',')
+        whereClause += ` AND document_id IN (${placeholders})`
+        params.push(...options.documentIds)
+      }
+
+      if (options?.sourceTypes && options.sourceTypes.length > 0) {
+        const placeholders = options.sourceTypes.map(() => '?').join(',')
+        whereClause += ` AND source_type IN (${placeholders})`
+        params.push(...options.sourceTypes)
+      }
+
+      const knnRows = this.db.prepare(
+        `SELECT rowid, distance FROM vec_kb_embeddings WHERE ${whereClause} ORDER BY distance`
+      ).all(...params) as any[]
+
+      if (knnRows.length === 0) return []
+
+      // 回查 kb_embeddings 获取元数据
+      const rowids = knnRows.map(r => r.rowid)
+      const placeholders = rowids.map(() => '?').join(',')
+      const metaRows = this.db.prepare(
+        `SELECT rowid, source_type, source_id, document_id FROM kb_embeddings WHERE rowid IN (${placeholders})`
+      ).all(...rowids) as any[]
+
+      const metaMap = new Map<number, any>()
+      for (const row of metaRows) {
+        metaMap.set(row.rowid, row)
+      }
+
+      return knnRows.map(knn => {
+        const meta = metaMap.get(knn.rowid)
+        return {
+          sourceType: meta?.source_type || '',
+          sourceId: meta?.source_id || '',
+          documentId: meta?.document_id || '',
+          // cosine distance = 1 - cosine similarity
+          score: 1 - knn.distance,
+        }
+      }).slice(0, topK)
+    } catch (err: any) {
+      logger.warn('vec0 KNN 查询失败，回退到 JS:', err?.message || err)
+      return null
+    }
+  }
+
+  /**
+   * JS 全扫描向量检索（fallback）：
+   * 当 vec0 索引不可用或维度不匹配时使用
+   */
+  private vectorSearchViaJS(
+    kbId: string,
+    queryEmbedding: Float32Array,
+    topK: number,
     options?: { documentIds?: string[]; sourceTypes?: string[] }
   ): Array<{ sourceType: string; sourceId: string; documentId: string; score: number }> {
     let embeddings = this.loadEmbeddings(kbId)
@@ -530,6 +773,7 @@ class SearchEngineService {
 
     const allKeys = new Set([...ftsRankMap.keys(), ...vectorScoreMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
+    const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string; documentId: string }; sortKey: number }> = []
 
     for (const key of allKeys) {
       const ftsRank = ftsRankMap.get(key) || 0
@@ -549,25 +793,48 @@ class SearchEngineService {
       } else if (useVector && vectorScore > 0) {
         const vs = vectorSourceMap.get(key)
         if (!vs) continue
+        missingEntries.push({ key, vs, sortKey })
+      }
+    }
 
-        const indexEntry = this.db.prepare(
-          'SELECT * FROM kb_search_index WHERE source_type = ? AND source_id = ?'
-        ).get(vs.sourceType, vs.sourceId) as any
+    if (missingEntries.length > 0) {
+      const conditions = missingEntries.map(() => '(source_type = ? AND source_id = ?)').join(' OR ')
+      const params = missingEntries.flatMap(m => [m.vs.sourceType, m.vs.sourceId])
+      const indexRows = this.db.prepare(
+        `SELECT source_type, source_id, document_id, title, content, start_offset, end_offset FROM kb_search_index WHERE ${conditions}`
+      ).all(...params) as any[]
 
+      const docIds = [...new Set(indexRows.map(r => r.document_id).filter(Boolean))]
+      const docNameMap = new Map<string, string>()
+      if (docIds.length > 0) {
+        const docRows = this.db.prepare(
+          `SELECT id, original_name FROM kb_documents WHERE id IN (${docIds.map(() => '?').join(', ')})`
+        ).all(...docIds) as any[]
+        for (const row of docRows) {
+          docNameMap.set(row.id, row.original_name)
+        }
+      }
+
+      const indexMap = new Map<string, any>()
+      for (const row of indexRows) {
+        indexMap.set(`${row.source_type}-${row.source_id}`, row)
+      }
+
+      for (const entry of missingEntries) {
+        const indexEntry = indexMap.get(`${entry.vs.sourceType}-${entry.vs.sourceId}`)
         if (indexEntry) {
-          const doc = this.db.prepare('SELECT original_name FROM kb_documents WHERE id = ?').get(indexEntry.document_id) as any
           hybridResults.push({
             result: {
               document_id: indexEntry.document_id,
-              document_name: doc?.original_name || '',
-              paragraph_id: vs.sourceType === 'paragraph' ? vs.sourceId : undefined,
+              document_name: docNameMap.get(indexEntry.document_id) || '',
+              paragraph_id: entry.vs.sourceType === 'paragraph' ? entry.vs.sourceId : undefined,
               paragraph_title: indexEntry.title,
               text: indexEntry.content.substring(0, 300),
               match_type: 'hybrid',
               start_offset: indexEntry.start_offset,
               end_offset: indexEntry.end_offset,
             },
-            sortKey,
+            sortKey: entry.sortKey,
           })
         }
       }
@@ -628,7 +895,7 @@ class SearchEngineService {
     }
 
     const rows = this.db.prepare(
-      'SELECT * FROM kb_embeddings WHERE kb_id = ?'
+      'SELECT id, kb_id, source_type, source_id, document_id, embedding, model, dimension FROM kb_embeddings WHERE kb_id = ?'
     ).all(kbId) as any[]
 
     const entries: EmbeddingEntry[] = rows.map(row => ({

@@ -44,7 +44,7 @@ class TaskQueueService {
   private loadTasksFromDB() {
     try {
       const rows = this.db.getDb().prepare(
-        'SELECT * FROM background_tasks ORDER BY created_at DESC'
+        'SELECT * FROM background_tasks ORDER BY created_at DESC LIMIT 200'
       ).all() as any[]
 
       for (const row of rows) {

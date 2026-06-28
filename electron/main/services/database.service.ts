@@ -126,34 +126,10 @@ class DatabaseService {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE TABLE IF NOT EXISTS workflows (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        nodes_json TEXT NOT NULL DEFAULT '[]',
-        edges_json TEXT NOT NULL DEFAULT '[]',
-        status TEXT NOT NULL DEFAULT 'draft',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE TABLE IF NOT EXISTS workflow_executions (
-        id TEXT PRIMARY KEY,
-        workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
-        status TEXT NOT NULL DEFAULT 'pending',
-        node_executions_json TEXT NOT NULL DEFAULT '{}',
-        started_at INTEGER,
-        completed_at INTEGER,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_workflow_executions_workflow ON workflow_executions(workflow_id);
-      CREATE INDEX IF NOT EXISTS idx_workflow_executions_status ON workflow_executions(status);
-
       CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
 
       CREATE TABLE IF NOT EXISTS tools (
@@ -227,54 +203,7 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
       CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
-
-      CREATE TABLE IF NOT EXISTS employee_tasks (
-        id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        prompt TEXT NOT NULL,
-        is_enabled BOOLEAN NOT NULL DEFAULT 1,
-        timeout_ms INTEGER DEFAULT 300000,
-        extra_config_json TEXT DEFAULT '{}',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_employee_tasks_employee ON employee_tasks(employee_id);
-
-      CREATE TABLE IF NOT EXISTS employee_schedules (
-        id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        cron_expr TEXT NOT NULL,
-        is_enabled BOOLEAN NOT NULL DEFAULT 1,
-        task_ids_json TEXT NOT NULL DEFAULT '[]',
-        last_run_at INTEGER,
-        next_run_at INTEGER,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_employee_schedules_employee ON employee_schedules(employee_id);
-
-      CREATE TABLE IF NOT EXISTS employee_task_executions (
-        id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-        task_id TEXT NOT NULL REFERENCES employee_tasks(id) ON DELETE CASCADE,
-        schedule_id TEXT REFERENCES employee_schedules(id) ON DELETE SET NULL,
-        trigger_type TEXT NOT NULL DEFAULT 'manual',
-        status TEXT NOT NULL DEFAULT 'running',
-        result_text TEXT,
-        error_message TEXT,
-        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER,
-        duration_ms INTEGER
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_employee ON employee_task_executions(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_task ON employee_task_executions(task_id);
-      CREATE INDEX IF NOT EXISTS idx_employee_task_executions_status ON employee_task_executions(status);
+      CREATE INDEX IF NOT EXISTS idx_background_tasks_created ON background_tasks(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
@@ -290,15 +219,13 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
+      -- 复合索引：支持 ORDER BY is_pinned DESC, updated_at DESC 的常见查询，避免 filesort
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
     `)
-
-    this.addColumnIfNotExists('employee_tasks', 'llm_provider_id', 'TEXT')
-    this.addColumnIfNotExists('employee_tasks', 'llm_model', 'TEXT')
-    this.addColumnIfNotExists('employee_tasks', 'enable_thinking', 'BOOLEAN NOT NULL DEFAULT 0')
-    this.addColumnIfNotExists('employee_tasks', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
-    this.addColumnIfNotExists('employee_task_executions', 'segments_json', 'TEXT')
-    this.addColumnIfNotExists('employee_schedules', 'run_mode', "TEXT NOT NULL DEFAULT 'recurring'")
-    this.addColumnIfNotExists('employee_schedules', 'notify_on_complete', 'BOOLEAN NOT NULL DEFAULT 1')
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
@@ -319,9 +246,38 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
 
     this.migrateEmployeeAddWorkspacePath()
-    this.migrateWorkflowRemoveProjectId()
+
+    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描）
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
+        key,
+        topic,
+        content,
+        memory_id UNINDEXED,
+        employee_id UNINDEXED,
+        tokenize='unicode61'
+      );
+    `)
+    // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）
+    this.migrateEmployeeMemoriesFTS()
 
     this.recoverStuckDocs()
+  }
+
+  /** 将已有 employee_memories 数据同步到 FTS5 表（仅执行一次） */
+  private migrateEmployeeMemoriesFTS(): void {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM employee_memories_fts').get() as { n: number }
+    if (count.n > 0) return
+    const rows = this.db.prepare('SELECT id, employee_id, key, topic, content FROM employee_memories').all() as any[]
+    if (rows.length === 0) return
+    const insert = this.db.prepare(
+      'INSERT INTO employee_memories_fts (key, topic, content, memory_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+    )
+    const tx = this.db.transaction((items: any[]) => {
+      for (const r of items) insert.run(r.key, r.topic, r.content, r.id, r.employee_id)
+    })
+    tx(rows)
+    logger.info(`Migrated ${rows.length} employee_memories rows to FTS5 table`)
   }
 
   private migrateEmployeeAddWorkspacePath(): void {
@@ -362,31 +318,6 @@ class DatabaseService {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {
       logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
-    }
-  }
-
-  private migrateWorkflowRemoveProjectId(): void {
-    const tableInfo = this.db.prepare('PRAGMA table_info(workflows)').all() as any[]
-    const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
-    if (hasProjectId) {
-      logger.info('Migrating workflows: removing project_id column...')
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS workflows_new (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          description TEXT DEFAULT '',
-          nodes_json TEXT NOT NULL DEFAULT '[]',
-          edges_json TEXT NOT NULL DEFAULT '[]',
-          status TEXT NOT NULL DEFAULT 'draft',
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-        );
-        INSERT INTO workflows_new (id, name, description, nodes_json, edges_json, status, created_at, updated_at)
-          SELECT id, name, description, nodes_json, edges_json, status, created_at, updated_at FROM workflows;
-        DROP TABLE workflows;
-        ALTER TABLE workflows_new RENAME TO workflows;
-      `)
-      logger.info('Migration completed: workflows.project_id removed')
     }
   }
 

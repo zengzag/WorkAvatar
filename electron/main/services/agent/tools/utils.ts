@@ -1,6 +1,6 @@
 import { safeCalculate, formatDate, generateId } from '../../common-utils'
 
-export { safeCalculate, formatDate, generateId }
+export { safeCalculate, formatDate }
 
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -12,15 +12,6 @@ export function formatFileSize(bytes: number): string {
 
 export function generateUUID(): string {
   return generateId()
-}
-
-export function validateKbId(kbIds: string[] | undefined | null): string | null {
-  if (!kbIds || kbIds.length === 0) return 'knowledge_base_ids为必填字段'
-  return null
-}
-
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.5)
 }
 
 export function createKbIdValidator(kbIdsRef: { current: string[] }) {

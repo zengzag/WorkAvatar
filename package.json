@@ -21,7 +21,6 @@
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@xyflow/react": "^12.10.2",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",
@@ -45,6 +44,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "sqlite-vec": "^0.1.9",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",
     "word-extractor": "^1.0.4",

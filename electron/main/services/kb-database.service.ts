@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
+import * as sqliteVec from 'sqlite-vec'
 import PathService from './path.service'
 import DatabaseService from './database.service'
 import { createLogger } from './logger'
@@ -26,6 +27,14 @@ class KBDatabaseService {
 
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+
+    // 加载 sqlite-vec 向量搜索扩展
+    try {
+      sqliteVec.load(this.db)
+      logger.info('sqlite-vec 扩展加载成功')
+    } catch (err: any) {
+      logger.error('sqlite-vec 扩展加载失败:', err?.message || err)
+    }
 
     this.initializeSchema()
     this.migrateFromMainDb()
@@ -85,6 +94,7 @@ class KBDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kb_documents_kb ON kb_documents(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_documents_hash ON kb_documents(hash);
+      CREATE INDEX IF NOT EXISTS idx_kb_documents_kb_status ON kb_documents(kb_id, parse_status);
 
       CREATE TABLE IF NOT EXISTS kb_paragraphs (
         id TEXT PRIMARY KEY,
@@ -155,6 +165,7 @@ class KBDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_kb ON kb_processing_jobs(kb_id);
       CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_status ON kb_processing_jobs(status);
+      CREATE INDEX IF NOT EXISTS idx_kb_processing_jobs_created ON kb_processing_jobs(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS wiki_compile_cache (
         id TEXT PRIMARY KEY,

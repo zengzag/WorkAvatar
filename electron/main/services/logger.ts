@@ -6,7 +6,6 @@ const LOG_PREFIXES: Record<string, string> = {
   'KB-DB': '[KB-DB]',
   Agent: '[Agent]',
   AgentEvent: '[AgentEvent]',
-  Scheduler: '[Scheduler]',
   TaskQueue: '[TaskQueue]',
   OCR: '[OCR]',
   LLM: '[LLM]',

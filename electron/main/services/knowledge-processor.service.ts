@@ -784,128 +784,134 @@ ${docsText.substring(0, 20000)}
   }
 
   saveParagraphs(kbId: string, documentId: string, paragraphs: ParagraphInfo[], summaries: ParagraphSummary[]): void {
-    const existingParagraphs = this.db.prepare(
-      'SELECT id FROM kb_paragraphs WHERE document_id = ?'
-    ).all(documentId) as any[]
+    this.db.transaction(() => {
+      const existingParagraphs = this.db.prepare(
+        'SELECT id FROM kb_paragraphs WHERE document_id = ?'
+      ).all(documentId) as any[]
 
-    if (existingParagraphs.length > 0) {
-      this.db.prepare('DELETE FROM kb_paragraphs WHERE document_id = ?').run(documentId)
-    }
+      if (existingParagraphs.length > 0) {
+        this.db.prepare('DELETE FROM kb_paragraphs WHERE document_id = ?').run(documentId)
+      }
 
-    const insertStmt = this.db.prepare(`
-      INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-    `)
+      const insertStmt = this.db.prepare(`
+        INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      `)
 
-    for (let i = 0; i < paragraphs.length; i++) {
-      const paragraph = paragraphs[i]
-      const summary = summaries[i]
-      const id = generateId()
+      for (let i = 0; i < paragraphs.length; i++) {
+        const paragraph = paragraphs[i]
+        const summary = summaries[i]
+        const id = generateId()
 
-      insertStmt.run(
-        id,
-        kbId,
-        documentId,
-        paragraph.title,
-        paragraph.titlePath,
-        paragraph.level,
-        paragraph.index,
-        paragraph.startOffset,
-        paragraph.endOffset,
-        paragraph.content,
-        summary?.summary || null,
-        JSON.stringify(summary?.keywords || []),
-      )
+        insertStmt.run(
+          id,
+          kbId,
+          documentId,
+          paragraph.title,
+          paragraph.titlePath,
+          paragraph.level,
+          paragraph.index,
+          paragraph.startOffset,
+          paragraph.endOffset,
+          paragraph.content,
+          summary?.summary || null,
+          JSON.stringify(summary?.keywords || []),
+        )
 
-      this.searchEngine.indexParagraph(
-        kbId,
-        documentId,
-        id,
-        paragraph.title,
-        paragraph.titlePath,
-        summary?.summary || '',
-        summary?.keywords || [],
-        paragraph.startOffset,
-        paragraph.endOffset
-      )
-    }
+        this.searchEngine.indexParagraph(
+          kbId,
+          documentId,
+          id,
+          paragraph.title,
+          paragraph.titlePath,
+          summary?.summary || '',
+          summary?.keywords || [],
+          paragraph.startOffset,
+          paragraph.endOffset
+        )
+      }
+    })()
   }
 
   saveParagraphsWithoutSummary(kbId: string, documentId: string, paragraphs: ParagraphInfo[]): void {
-    const existingParagraphs = this.db.prepare(
-      'SELECT id FROM kb_paragraphs WHERE document_id = ?'
-    ).all(documentId) as any[]
+    this.db.transaction(() => {
+      const existingParagraphs = this.db.prepare(
+        'SELECT id FROM kb_paragraphs WHERE document_id = ?'
+      ).all(documentId) as any[]
 
-    if (existingParagraphs.length > 0) {
-      this.db.prepare('DELETE FROM kb_paragraphs WHERE document_id = ?').run(documentId)
-    }
+      if (existingParagraphs.length > 0) {
+        this.db.prepare('DELETE FROM kb_paragraphs WHERE document_id = ?').run(documentId)
+      }
 
-    const insertStmt = this.db.prepare(`
-      INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', unixepoch(), unixepoch())
-    `)
+      const insertStmt = this.db.prepare(`
+        INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', unixepoch(), unixepoch())
+      `)
 
-    for (let i = 0; i < paragraphs.length; i++) {
-      const paragraph = paragraphs[i]
-      const id = generateId()
+      for (let i = 0; i < paragraphs.length; i++) {
+        const paragraph = paragraphs[i]
+        const id = generateId()
 
-      insertStmt.run(
-        id,
-        kbId,
-        documentId,
-        paragraph.title,
-        paragraph.titlePath,
-        paragraph.level,
-        paragraph.index,
-        paragraph.startOffset,
-        paragraph.endOffset,
-        paragraph.content,
-      )
+        insertStmt.run(
+          id,
+          kbId,
+          documentId,
+          paragraph.title,
+          paragraph.titlePath,
+          paragraph.level,
+          paragraph.index,
+          paragraph.startOffset,
+          paragraph.endOffset,
+          paragraph.content,
+        )
 
-      this.searchEngine.indexParagraph(
-        kbId,
-        documentId,
-        id,
-        paragraph.title,
-        paragraph.titlePath,
-        '',
-        [],
-        paragraph.startOffset,
-        paragraph.endOffset
-      )
-    }
+        this.searchEngine.indexParagraph(
+          kbId,
+          documentId,
+          id,
+          paragraph.title,
+          paragraph.titlePath,
+          '',
+          [],
+          paragraph.startOffset,
+          paragraph.endOffset
+        )
+      }
+    })()
   }
 
   updateParagraphSummaries(documentId: string, summaries: ParagraphSummary[]): void {
-    const paragraphs = this.db.prepare(
-      'SELECT id, kb_id, title, start_offset, end_offset FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
-    ).all(documentId) as Array<{ id: string; kb_id: string; title: string; start_offset: number; end_offset: number }>
+    this.db.transaction(() => {
+      const paragraphs = this.db.prepare(
+        'SELECT id, kb_id, title, start_offset, end_offset FROM kb_paragraphs WHERE document_id = ? ORDER BY paragraph_index'
+      ).all(documentId) as Array<{ id: string; kb_id: string; title: string; start_offset: number; end_offset: number }>
 
-    const updateStmt = this.db.prepare(`
-      UPDATE kb_paragraphs SET summary = ?, keywords_json = ?, updated_at = unixepoch() WHERE id = ?
-    `)
+      const updateStmt = this.db.prepare(`
+        UPDATE kb_paragraphs SET summary = ?, keywords_json = ?, updated_at = unixepoch() WHERE id = ?
+      `)
 
-    for (let i = 0; i < Math.min(paragraphs.length, summaries.length); i++) {
-      const paragraph = paragraphs[i]
-      const summary = summaries[i]
-      updateStmt.run(
-        summary?.summary || null,
-        JSON.stringify(summary?.keywords || []),
-        paragraph.id,
-      )
+      for (let i = 0; i < Math.min(paragraphs.length, summaries.length); i++) {
+        const paragraph = paragraphs[i]
+        const summary = summaries[i]
+        updateStmt.run(
+          summary?.summary || null,
+          JSON.stringify(summary?.keywords || []),
+          paragraph.id,
+        )
 
-      this.searchEngine.indexParagraph(
-        paragraph.kb_id,
-        documentId,
-        paragraph.id,
-        paragraph.title,
-        '',
-        summary?.summary || '',
-        summary?.keywords || [],
-        paragraph.start_offset,
-        paragraph.end_offset,
-      )
-    }
+        this.searchEngine.indexParagraph(
+          paragraph.kb_id,
+          documentId,
+          paragraph.id,
+          paragraph.title,
+          '',
+          summary?.summary || '',
+          summary?.keywords || [],
+          paragraph.start_offset,
+          paragraph.end_offset,
+        )
+      }
+    })()
   }
 
   saveDocumentSummary(kbId: string, documentId: string, docSummary: DocumentSummary): void {

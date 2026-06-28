@@ -133,6 +133,7 @@ class EmployeeMemoryService {
       now,
       now
     )
+    this.syncMemoryFTS(id, params.employee_id, params.key, params.topic, params.content)
     return this.getMemory(id)!
   }
 
@@ -159,15 +160,37 @@ class EmployeeMemoryService {
       `UPDATE employee_memories SET ${sets.join(', ')} WHERE id = ?`
     ).run(...values)
 
+    // 同步 FTS 表（key/topic/content 任一变更时）
+    if (params.key !== undefined || params.topic !== undefined || params.content !== undefined) {
+      const updated = this.getMemory(id)!
+      this.syncMemoryFTS(id, updated.employee_id, updated.key, updated.topic, updated.content)
+    }
+
     return this.getMemory(id)
   }
 
+  /** 同步单条记忆到 FTS5 表（先删后插，保证一致性） */
+  private syncMemoryFTS(id: string, employeeId: string, key: string, topic: string, content: string): void {
+    this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
+    this.db.getDb().prepare(
+      'INSERT INTO employee_memories_fts (key, topic, content, memory_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(key, topic, content, id, employeeId)
+  }
+
   deleteMemory(id: string): boolean {
+    this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
     const result = this.db.getDb().prepare('DELETE FROM employee_memories WHERE id = ?').run(id)
     return result.changes > 0
   }
 
   deleteMemoryByKey(employeeId: string, key: string): boolean {
+    const ids = this.db.getDb().prepare(
+      'SELECT id FROM employee_memories WHERE employee_id = ? AND key = ?'
+    ).all(employeeId, key) as Array<{ id: string }>
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',')
+      this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
+    }
     const result = this.db.getDb().prepare(
       'DELETE FROM employee_memories WHERE employee_id = ? AND key = ?'
     ).run(employeeId, key)
@@ -195,17 +218,16 @@ class EmployeeMemoryService {
       'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
 
-    const searchResults = this.db.getDb().prepare(
-      `SELECT * FROM employee_memories
-       WHERE employee_id = ? AND is_pinned = 0 AND (key LIKE ? OR topic LIKE ? OR content LIKE ?)
-       ORDER BY updated_at DESC LIMIT ?`
-    ).all(
-      employeeId,
-      `%${query}%`,
-      `%${query}%`,
-      `%${query}%`,
-      limit
-    ) as EmployeeMemory[]
+    // 使用 FTS5 全文检索替代 LIKE '%query%'（避免全表扫描）
+    const ftsQuery = this.buildFtsQuery(query)
+    const searchResults = ftsQuery
+      ? (this.db.getDb().prepare(
+          `SELECT m.* FROM employee_memories m
+           JOIN employee_memories_fts f ON f.memory_id = m.id
+           WHERE f.employee_id = ? AND m.is_pinned = 0 AND employee_memories_fts MATCH ?
+           ORDER BY f.rank LIMIT ?`
+        ).all(employeeId, ftsQuery, limit) as EmployeeMemory[])
+      : []
 
     return [...pinned, ...searchResults]
   }
@@ -215,19 +237,32 @@ class EmployeeMemoryService {
       'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
 
-    const relevant = this.db.getDb().prepare(
-      `SELECT * FROM employee_memories
-       WHERE employee_id = ? AND is_pinned = 0 AND (key LIKE ? OR topic LIKE ? OR content LIKE ?)
-       ORDER BY updated_at DESC LIMIT ?`
-    ).all(
-      employeeId,
-      `%${query}%`,
-      `%${query}%`,
-      `%${query}%`,
-      limit
-    ) as EmployeeMemory[]
+    // 使用 FTS5 全文检索替代 LIKE '%query%'
+    const ftsQuery = this.buildFtsQuery(query)
+    const relevant = ftsQuery
+      ? (this.db.getDb().prepare(
+          `SELECT m.* FROM employee_memories m
+           JOIN employee_memories_fts f ON f.memory_id = m.id
+           WHERE f.employee_id = ? AND m.is_pinned = 0 AND employee_memories_fts MATCH ?
+           ORDER BY f.rank LIMIT ?`
+        ).all(employeeId, ftsQuery, limit) as EmployeeMemory[])
+      : []
 
     return [...pinned, ...relevant]
+  }
+
+  /**
+   * 将用户查询转换为 FTS5 安全的查询字符串
+   * - 双引号包裹整体以支持短语匹配
+   * - 转义内部双引号
+   * - 过滤过短的查询
+   */
+  private buildFtsQuery(query: string): string {
+    const trimmed = query.trim()
+    if (trimmed.length < 2) return ''
+    // FTS5 短语查询：用双引号包裹，内部双引号翻倍转义
+    const escaped = trimmed.replace(/"/g, '""')
+    return `"${escaped}"`
   }
 
   getMemoryStats(employeeId: string): MemoryStats {
@@ -427,55 +462,59 @@ ${contextParts.join('\n---\n')}
 
       const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
 
-      for (const memory of validExtracted) {
-        const existing = this.db.getDb().prepare(
-          'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-        ).get(employeeId, memory.key) as EmployeeMemory | undefined
+      this.db.getDb().transaction(() => {
+        for (const memory of validExtracted) {
+          const existing = this.db.getDb().prepare(
+            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
+          ).get(employeeId, memory.key) as EmployeeMemory | undefined
 
-        if (existing) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-          ).run(memory.content, memory.topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
-        } else {
-          this.createMemory({
-            employee_id: employeeId,
-            key: memory.key,
-            topic: memory.topic,
-            content: memory.content,
-            source: 'auto',
-          })
+          if (existing) {
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+            ).run(memory.content, memory.topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, memory.topic, memory.content)
+          } else {
+            this.createMemory({
+              employee_id: employeeId,
+              key: memory.key,
+              topic: memory.topic,
+              content: memory.content,
+              source: 'auto',
+            })
+          }
         }
-      }
 
-      for (const key of (parsed.delete_keys || [])) {
-        this.deleteMemoryByKey(employeeId, key)
-        logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
-      }
-
-      for (const update of (parsed.update_memories || [])) {
-        if (!update.key || !update.content) continue
-        const existing = this.db.getDb().prepare(
-          'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-        ).get(employeeId, update.key) as EmployeeMemory | undefined
-        if (existing) {
-          const topic = update.topic || existing.topic
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-          ).run(update.content, topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
-          logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
+        for (const key of (parsed.delete_keys || [])) {
+          this.deleteMemoryByKey(employeeId, key)
+          logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
         }
-      }
+
+        for (const update of (parsed.update_memories || [])) {
+          if (!update.key || !update.content) continue
+          const existing = this.db.getDb().prepare(
+            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
+          ).get(employeeId, update.key) as EmployeeMemory | undefined
+          if (existing) {
+            const topic = update.topic || existing.topic
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
+            ).run(update.content, topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, topic, update.content)
+            logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
+          }
+        }
+
+        if (conversationId && parsed.summary) {
+          const newSummary = parsed.summary.trim().substring(0, 500)
+          if (newSummary) {
+            this.db.getDb().prepare(
+              'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
+            ).run(newSummary, Math.floor(Date.now() / 1000), conversationId)
+          }
+        }
+      })()
 
       logger.info(`Extracted ${validExtracted.length} memories, deleted ${(parsed.delete_keys || []).length}, updated ${(parsed.update_memories || []).length} for employee ${employeeId}`)
-
-      if (conversationId && parsed.summary) {
-        const newSummary = parsed.summary.trim().substring(0, 500)
-        if (newSummary) {
-          this.db.getDb().prepare(
-            'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
-          ).run(newSummary, Math.floor(Date.now() / 1000), conversationId)
-        }
-      }
 
       return validExtracted
     } catch (error: any) {
@@ -573,54 +612,57 @@ JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":""
       let merged = 0
       let simplified = 0
 
-      for (const key of (parsed.delete_keys || [])) {
-        if (this.deleteMemoryByKey(employeeId, key)) deleted++
-      }
+      this.db.getDb().transaction(() => {
+        for (const key of (parsed.delete_keys || [])) {
+          if (this.deleteMemoryByKey(employeeId, key)) deleted++
+        }
 
-      for (const group of (parsed.merge_groups || [])) {
-        if (!group.keys || group.keys.length < 2 || !group.merged) continue
-        const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
-        this.createMemory({
-          employee_id: employeeId,
-          key: group.merged.key,
-          topic: group.merged.topic,
-          content: group.merged.content,
-          source: 'auto',
-          is_pinned: hasPinned,
-        })
-        for (const key of group.keys) {
-          const mem = candidates.find(m => m.key === key)
-          if (mem && !mem.is_pinned) {
-            this.deleteMemoryByKey(employeeId, key)
-          } else if (mem && mem.is_pinned) {
+        for (const group of (parsed.merge_groups || [])) {
+          if (!group.keys || group.keys.length < 2 || !group.merged) continue
+          const hasPinned = candidates.some(m => group.keys.includes(m.key) && m.is_pinned)
+          this.createMemory({
+            employee_id: employeeId,
+            key: group.merged.key,
+            topic: group.merged.topic,
+            content: group.merged.content,
+            source: 'auto',
+            is_pinned: hasPinned,
+          })
+          for (const key of group.keys) {
+            const mem = candidates.find(m => m.key === key)
+            if (mem && !mem.is_pinned) {
+              this.deleteMemoryByKey(employeeId, key)
+            } else if (mem && mem.is_pinned) {
+              this.db.getDb().prepare(
+                'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
+              ).run(Math.floor(Date.now() / 1000), mem.id)
+            }
+          }
+          merged++
+        }
+
+        for (const update of (parsed.simplify_updates || [])) {
+          if (!update.key || !update.content) continue
+          const existing = candidates.find(m => m.key === update.key)
+          if (existing && existing.content !== update.content) {
             this.db.getDb().prepare(
-              'UPDATE employee_memories SET is_pinned = 0, updated_at = ? WHERE id = ?'
-            ).run(Math.floor(Date.now() / 1000), mem.id)
+              'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
+            ).run(update.content, Math.floor(Date.now() / 1000), existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, existing.topic, update.content)
+            simplified++
           }
         }
-        merged++
-      }
 
-      for (const update of (parsed.simplify_updates || [])) {
-        if (!update.key || !update.content) continue
-        const existing = candidates.find(m => m.key === update.key)
-        if (existing && existing.content !== update.content) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
-          ).run(update.content, Math.floor(Date.now() / 1000), existing.id)
-          simplified++
+        for (const update of (parsed.importance_updates || [])) {
+          if (!update.key || !update.importance) continue
+          const existing = candidates.find(m => m.key === update.key)
+          if (existing) {
+            this.db.getDb().prepare(
+              'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
+            ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
+          }
         }
-      }
-
-      for (const update of (parsed.importance_updates || [])) {
-        if (!update.key || !update.importance) continue
-        const existing = candidates.find(m => m.key === update.key)
-        if (existing) {
-          this.db.getDb().prepare(
-            'UPDATE employee_memories SET importance = ?, updated_at = ? WHERE id = ?'
-          ).run(update.importance, Math.floor(Date.now() / 1000), existing.id)
-        }
-      }
+      })()
 
       this.lastConsolidationAt.set(employeeId, Math.floor(Date.now() / 1000))
       logger.info(`Consolidated memories for employee ${employeeId}: deleted=${deleted}, merged=${merged}, simplified=${simplified}`)
@@ -653,6 +695,18 @@ JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":""
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
 
+    // 先查出待删除的 id，同步清理 FTS 表
+    const staleIds = this.db.getDb().prepare(
+      `SELECT id FROM employee_memories
+       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'
+       AND ((last_referenced_at IS NOT NULL AND last_referenced_at < ?)
+            OR (last_referenced_at IS NULL AND created_at < ?))`
+    ).all(employeeId, staleThreshold, staleThreshold) as Array<{ id: string }>
+
+    if (staleIds.length === 0) return 0
+
+    const placeholders = staleIds.map(() => '?').join(',')
+    this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...staleIds.map(i => i.id))
     const result = this.db.getDb().prepare(
       `DELETE FROM employee_memories
        WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'

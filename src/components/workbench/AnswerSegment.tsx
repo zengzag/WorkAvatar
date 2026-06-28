@@ -1,3 +1,4 @@
+import { memo, useDeferredValue, useMemo } from 'react'
 import { theme } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -28,11 +29,29 @@ const markdownComponents = {
   },
 }
 
-const AnswerSegment: React.FC<{
+const AnswerSegmentInner: React.FC<{
   seg: MessageSegment
   isError: boolean
 }> = ({ seg, isError }) => {
   const { token } = theme.useToken()
+
+  // 流式输出时节流 markdown 解析：useDeferredValue 让 React 在空闲时才重新解析
+  // 避免 2000 token 流式输出触发 2000 次完整 markdown+KaTeX 重解析
+  const deferredContent = useDeferredValue(seg.content || (seg.isStreaming ? '▊' : ''))
+
+  // 仅当内容真正变化时才重建 ReactMarkdown 子树
+  const markdownNode = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={markdownComponents}
+      >
+        {deferredContent}
+      </ReactMarkdown>
+    ),
+    [deferredContent]
+  )
 
   return (
     <div style={{ marginBottom: 0 }}>
@@ -45,18 +64,19 @@ const AnswerSegment: React.FC<{
         border: isError ? '1px solid #ff4d4f' : 'none',
       }}>
         <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
-            components={markdownComponents}
-          >
-            {seg.content || (seg.isStreaming ? '▊' : '')}
-          </ReactMarkdown>
+          {markdownNode}
         </div>
         {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>}
       </div>
     </div>
   )
 }
+
+// React.memo 避免父组件 state 变化导致未变化的消息段重渲染
+const AnswerSegment = memo(AnswerSegmentInner, (prev, next) =>
+  prev.seg.content === next.seg.content &&
+  prev.seg.isStreaming === next.seg.isStreaming &&
+  prev.isError === next.isError
+)
 
 export default AnswerSegment

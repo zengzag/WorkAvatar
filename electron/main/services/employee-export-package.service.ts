@@ -21,13 +21,9 @@ export interface PackageManifest {
     hasConfig: boolean
     hasSkills: boolean
     hasMemories: boolean
-    hasTasks: boolean
-    hasSchedules: boolean
     hasKnowledgeBases: boolean
     skillCount: number
     memoryCount: number
-    taskCount: number
-    scheduleCount: number
     kbCount: number
     docCount: number
   }
@@ -143,42 +139,6 @@ export class EmployeeExportPackageService {
       }))
       zip.addFile('employee-memories.json', Buffer.from(JSON.stringify(memoryData, null, 2)))
 
-      onProgress?.('adding_tasks', 'Adding employee tasks...')
-      const tasks = this.db.getDb().prepare(
-        'SELECT * FROM employee_tasks WHERE employee_id = ?'
-      ).all(employeeId) as any[]
-      const taskData = tasks.map(t => ({
-        name: t.name,
-        description: t.description || '',
-        prompt: t.prompt,
-        is_enabled: !!t.is_enabled,
-        timeout_ms: t.timeout_ms || 300000,
-        extra_config_json: t.extra_config_json || '{}',
-        llm_provider_id: t.llm_provider_id || null,
-        llm_model: t.llm_model || null,
-        enable_thinking: !!t.enable_thinking,
-        run_mode: t.run_mode || 'recurring',
-        created_at: t.created_at,
-        updated_at: t.updated_at,
-      }))
-      zip.addFile('employee-tasks.json', Buffer.from(JSON.stringify(taskData, null, 2)))
-
-      onProgress?.('adding_schedules', 'Adding employee schedules...')
-      const schedules = this.db.getDb().prepare(
-        'SELECT * FROM employee_schedules WHERE employee_id = ?'
-      ).all(employeeId) as any[]
-      const scheduleData = schedules.map(s => ({
-        name: s.name,
-        cron_expr: s.cron_expr,
-        is_enabled: !!s.is_enabled,
-        task_names_json: s.task_ids_json || '[]',
-        run_mode: s.run_mode || 'recurring',
-        notify_on_complete: s.notify_on_complete !== undefined ? !!s.notify_on_complete : true,
-        created_at: s.created_at,
-        updated_at: s.updated_at,
-      }))
-      zip.addFile('employee-schedules.json', Buffer.from(JSON.stringify(scheduleData, null, 2)))
-
       onProgress?.('generating_checksum', 'Generating checksum...')
       const manifest: PackageManifest = {
         version: EXPORT_PACKAGE_VERSION,
@@ -190,13 +150,9 @@ export class EmployeeExportPackageService {
           hasConfig: true,
           hasSkills: skillCount > 0,
           hasMemories: memories.length > 0,
-          hasTasks: tasks.length > 0,
-          hasSchedules: schedules.length > 0,
           hasKnowledgeBases: false,
           skillCount,
           memoryCount: memories.length,
-          taskCount: tasks.length,
-          scheduleCount: schedules.length,
           kbCount: 0,
           docCount: 0,
         },
@@ -209,7 +165,7 @@ export class EmployeeExportPackageService {
 
       onProgress?.('saving', 'Saving package...')
       zip.writeZip(exportPath)
-      onProgress?.('complete', `Package exported: ${skillCount} skills, ${memories.length} memories, ${tasks.length} tasks, ${schedules.length} schedules`)
+      onProgress?.('complete', `Package exported: ${skillCount} skills, ${memories.length} memories`)
 
       return { success: true }
     } catch (error) {
@@ -383,71 +339,6 @@ export class EmployeeExportPackageService {
           }
         } catch (e) {
           warnings.push(`Failed to import memories: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      }
-
-      onProgress?.('importing_tasks', 'Importing employee tasks...')
-      const tasksEntry = zip.getEntry('employee-tasks.json')
-      const taskIdMap = new Map<string, string>()
-      if (tasksEntry) {
-        try {
-          const taskData = JSON.parse(tasksEntry.getData().toString('utf-8')) as any[]
-          const now = Math.floor(Date.now() / 1000)
-          for (const t of taskData) {
-            const tId = generateId()
-            const taskName = t.name
-            taskIdMap.set(taskName, tId)
-            this.db.getDb().prepare(`
-              INSERT INTO employee_tasks (id, employee_id, name, description, prompt, is_enabled, timeout_ms, extra_config_json, llm_provider_id, llm_model, enable_thinking, run_mode, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              tId, employeeId, taskName, t.description || '', t.prompt,
-              t.is_enabled !== false ? 1 : 0, t.timeout_ms || 300000,
-              t.extra_config_json || '{}', t.llm_provider_id || null,
-              t.llm_model || null, t.enable_thinking ? 1 : 0,
-              t.run_mode || 'recurring', t.created_at || now, t.updated_at || now
-            )
-          }
-          if (taskData.length > 0) {
-            onProgress?.('importing_tasks', `Imported ${taskData.length} tasks`)
-          }
-        } catch (e) {
-          warnings.push(`Failed to import tasks: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      }
-
-      onProgress?.('importing_schedules', 'Importing employee schedules...')
-      const schedulesEntry = zip.getEntry('employee-schedules.json')
-      if (schedulesEntry) {
-        try {
-          const scheduleData = JSON.parse(schedulesEntry.getData().toString('utf-8')) as any[]
-          const now = Math.floor(Date.now() / 1000)
-          for (const s of scheduleData) {
-            const sId = generateId()
-            let taskIdsJson = '[]'
-            if (s.task_names_json) {
-              try {
-                const taskNames = JSON.parse(s.task_names_json) as string[]
-                const mappedIds = taskNames.map((name: string) => taskIdMap.get(name)).filter(Boolean) as string[]
-                taskIdsJson = JSON.stringify(mappedIds)
-              } catch {}
-            }
-
-            this.db.getDb().prepare(`
-              INSERT INTO employee_schedules (id, employee_id, name, cron_expr, is_enabled, task_ids_json, run_mode, notify_on_complete, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              sId, employeeId, s.name, s.cron_expr,
-              s.is_enabled !== false ? 1 : 0, taskIdsJson,
-              s.run_mode || 'recurring', s.notify_on_complete !== false ? 1 : 0,
-              s.created_at || now, s.updated_at || now
-            )
-          }
-          if (scheduleData.length > 0) {
-            onProgress?.('importing_schedules', `Imported ${scheduleData.length} schedules`)
-          }
-        } catch (e) {
-          warnings.push(`Failed to import schedules: ${e instanceof Error ? e.message : String(e)}`)
         }
       }
 

@@ -306,7 +306,6 @@ export abstract class BaseAgent {
       this.eventEmitter.on('iteration:end', (e) => handler('iteration:end', e.data))
       this.eventEmitter.on('tool:call:start', (e) => handler('tool:call:start', e.data))
       this.eventEmitter.on('tool:call:end', (e) => handler('tool:call:end', e.data))
-      this.eventEmitter.on('tool:call:error', (e) => handler('tool:call:error', e.data))
       this.eventEmitter.on('memory:compressed', (e) => handler('memory:compressed', e.data))
       this.eventEmitter.on('plan:generated', (e) => handler('plan:generated', e.data))
       this.eventEmitter.on('skill:activated', (e) => handler('skill:activated', e.data))
@@ -498,7 +497,15 @@ export abstract class BaseAgent {
           this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
           callbacks.onToolCall?.({ id: toolCall.id, name: toolName, args })
 
-          const result = await this.toolDispatcher.dispatch(toolName, args)
+          const toolContext = callbacks.onToolProgress
+            ? {
+                onProgress: (progress: any) => {
+                  callbacks.onToolProgress?.({ toolCallId: toolCall.id, name: toolName, progress })
+                },
+              }
+            : undefined
+
+          const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
           usedToolCalls.push({
             name: toolName,
             args,

@@ -1,13 +1,12 @@
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
-import ToolEngineService from './tool-engine.service'
 import SkillRegistryService from './skill-registry.service'
 import KnowledgeBaseService from './kb.service'
 import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool } from './agent/tools'
+import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool, createKMSTools } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { KbIdsRef } from './agent/tools/kb-agent-tools'
 import type { Message } from './agent/core/types'
@@ -52,6 +51,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolResult: (toolResult: { name: string; result: any }) => void
+  onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
 }
@@ -205,12 +205,13 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    const employeeTools = this.getEmployeeTools(employeeId)
-    agent.registerTools(employeeTools)
-
     const kbIdsRef: KbIdsRef = { current: [] }
     const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(knowledgeTools)
+
+    // 注册 KMS 本地搜索工具
+    const kmsTools = createKMSTools().filter(t => enabledToolIds.has(t.id))
+    agent.registerTools(kmsTools)
 
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
@@ -249,6 +250,15 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
+    const kmsToolIds = [
+      'kms_search',
+      'kms_agent_search',
+      'kms_get_content',
+    ]
+    for (const id of kmsToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
     const officeToolIds = [
       'office_exec',
       'office_guide',
@@ -281,28 +291,6 @@ class EmployeeAgentService {
     }
 
     return result
-  }
-
-  private getEmployeeTools(employeeId: string): ToolDefinition[] {
-    const toolEngine = ToolEngineService.getInstance()
-    const assignedTools = toolEngine.getToolsForEmployee(employeeId)
-
-    return assignedTools.map((t) => ({
-      id: t.id,
-      name: t.name,
-      title: t.name,
-      description: t.description || '',
-      parameters: {
-        type: 'object' as const,
-        properties: (t.parameters as any)?.properties || {},
-        required: (t.parameters as any)?.required,
-      },
-      handler: async (args: any) => {
-        const result = await toolEngine.executeTool(t.id, args)
-        return result.success ? result.output : { error: result.error }
-      },
-      source: t.source as ToolDefinition['source'],
-    }))
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
@@ -409,6 +397,7 @@ class EmployeeAgentService {
           onThought: callbacks.onThought,
           onToolCall: callbacks.onToolCall,
           onToolResult: callbacks.onToolResult,
+          onToolProgress: callbacks.onToolProgress,
           onDone: (metadata?: any) => {
             callbacks.onDone(metadata)
             if (memoryEnabled) {

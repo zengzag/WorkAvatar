@@ -1,13 +1,5 @@
 export { IPC_CHANNELS } from './channels'
 export type {
-  WorkspaceInfoParams,
-  WorkspaceListFilesParams,
-  WorkspaceReadFileParams,
-  WorkspaceWriteFileParams,
-  WorkspaceCreateFolderParams,
-  WorkspaceDeleteItemParams,
-  WorkspaceRenameItemParams,
-  WorkspaceImportParams,
   WorkspaceOpenInExplorerParams,
 } from './channels/workspace'
 export type {
@@ -61,15 +53,18 @@ export type {
   KBImportFullParams,
 } from './channels/kb'
 export type {
-  EmployeeTaskCreateParams,
-  EmployeeTaskUpdateParams,
-  EmployeeScheduleCreateParams,
-  EmployeeScheduleUpdateParams,
-} from './channels/employee-task'
-export type {
-  WorkflowCreateParams,
-  WorkflowUpdateParams,
-} from './channels/workflow'
-export type {
   KBMCPSetConfigParams,
 } from './channels/kb-mcp'
+export type {
+  KMSAddDirParams,
+  KMSUpdateDirParams,
+  KMSSearchParams,
+  KMSAgentSearchParams,
+  KMSGetFileContentParams,
+  KMSMCPSetConfigParams,
+  KMSGetFileSummariesParams,
+  KMSSetSettingsParams,
+  KMSAutoIndexConfig,
+  KMSRecordSearchHistoryParams,
+  KMSGetSearchHistoryParams,
+} from './channels/kms'

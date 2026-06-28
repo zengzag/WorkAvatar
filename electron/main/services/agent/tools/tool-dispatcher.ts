@@ -1,5 +1,5 @@
 import { ToolRegistry } from './tool-registry'
-import { ToolCallResult } from './types'
+import { ToolCallResult, ToolHandlerContext } from './types'
 import { ToolMiddlewareChain } from './tool-middleware'
 
 export class ToolDispatcher {
@@ -19,7 +19,7 @@ export class ToolDispatcher {
     return this.middlewareChain
   }
 
-  async dispatch(toolName: string, toolParams: Record<string, any>): Promise<ToolCallResult> {
+  async dispatch(toolName: string, toolParams: Record<string, any>, context?: ToolHandlerContext): Promise<ToolCallResult> {
     const tool = this.registry.getTool(toolName)
 
     if (!tool) {
@@ -33,8 +33,14 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
-      const result = await this.middlewareChain.execute(toolName, toolParams, async () => {
-        const result = await tool.handler(toolParams)
+      // 如果工具定义指定了 timeoutMs，注入到中间件参数中供超时中间件使用
+      const middlewareParams = { ...toolParams }
+      if (tool.timeoutMs) {
+        middlewareParams._timeoutMs = tool.timeoutMs
+      }
+
+      const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
+        const result = await tool.handler(toolParams, context)
 
         const output = this.serializeResult(result)
 
@@ -60,18 +66,18 @@ export class ToolDispatcher {
     }
   }
 
-  async dispatchMultiple(calls: Array<{ name: string; params: Record<string, any> }>): Promise<ToolCallResult[]> {
+  async dispatchMultiple(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
     const results: ToolCallResult[] = []
 
     for (const call of calls) {
-      results.push(await this.dispatch(call.name, call.params))
+      results.push(await this.dispatch(call.name, call.params, context))
     }
 
     return results
   }
 
-  async dispatchParallel(calls: Array<{ name: string; params: Record<string, any> }>): Promise<ToolCallResult[]> {
-    return Promise.all(calls.map(call => this.dispatch(call.name, call.params)))
+  async dispatchParallel(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
+    return Promise.all(calls.map(call => this.dispatch(call.name, call.params, context)))
   }
 
   private serializeResult(result: any): any {
