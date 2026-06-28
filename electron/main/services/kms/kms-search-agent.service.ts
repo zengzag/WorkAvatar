@@ -79,6 +79,8 @@ export interface AgentSearchSource {
 export interface AgentSearchOptions {
   /** 限定目录ID列表 */
   dirIds?: string[]
+  /** 限定合集ID列表（与 dirIds 同时指定时取交集） */
+  collectionIds?: string[]
   /** 限定文件扩展名 */
   fileExtensions?: string[]
   /** 时间范围起始（毫秒时间戳） */
@@ -173,14 +175,8 @@ class KMSSearchAgentService {
       fileExtensions: options?.fileExtensions,
       timeRangeStart: options?.timeRangeStart ? Math.floor(options.timeRangeStart / 1000) : undefined,
       timeRangeEnd: options?.timeRangeEnd ? Math.floor(options.timeRangeEnd / 1000) : undefined,
-    }
-
-    // 如果指定了目录，转换为文件ID列表
-    if (options?.dirIds && options.dirIds.length > 0) {
-      const fileIds = this.getFileIdsByDirIds(options.dirIds)
-      if (fileIds.length > 0) {
-        baseSearchOpts.fileIds = fileIds
-      }
+      dirIds: options?.dirIds,
+      collectionIds: options?.collectionIds,
     }
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
@@ -202,7 +198,7 @@ class KMSSearchAgentService {
     // ========== 阶段2：获取文件清单（结合文件名/路径判断内容） ==========
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
-    const fileInventory = this.getFileInventory(options?.dirIds)
+    const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds)
     addStep({
       phase: '获取文件清单',
       action: `获取到 ${fileInventory.length} 个文件的信息`,
@@ -211,12 +207,12 @@ class KMSSearchAgentService {
       durationMs: Date.now() - t1,
     })
 
-    // 获取目录摘要
-    const dirSummaries = this.getDirSummaries(options?.dirIds)
+    // 获取目录摘要（合集模式下返回合集摘要）
+    const dirSummaries = this.getScopeSummaries(options?.dirIds, options?.collectionIds)
     if (dirSummaries.length > 0) {
       addStep({
         phase: '获取文件清单',
-        action: `获取到 ${dirSummaries.length} 个目录摘要`,
+        action: `获取到 ${dirSummaries.length} 个${options?.collectionIds ? '合集' : '目录'}摘要`,
         type: 'info',
       })
     }
@@ -504,11 +500,12 @@ class KMSSearchAgentService {
 
   /**
    * 获取文件清单（文件名、路径、轻量摘要）—— 用于LLM判断哪些文件可能相关
+   * 支持按目录或合集过滤，两者同时存在时取交集
    */
-  private getFileInventory(dirIds?: string[]): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
+  private getFileInventory(dirIds?: string[], collectionIds?: string[]): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
     try {
       let sql = `
-        SELECT f.id as file_id, f.file_name, f.file_path, f.file_ext,
+        SELECT DISTINCT f.id as file_id, f.file_name, f.file_path, f.file_ext,
                COALESCE(s.light_summary, '') as light_summary,
                COALESCE(s.summary, '') as summary
         FROM kms_files f
@@ -520,6 +517,11 @@ class KMSSearchAgentService {
         const placeholders = dirIds.map(() => '?').join(',')
         sql += ` AND f.dir_id IN (${placeholders})`
         params.push(...dirIds)
+      }
+      if (collectionIds && collectionIds.length > 0) {
+        const placeholders = collectionIds.map(() => '?').join(',')
+        sql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+        params.push(...collectionIds)
       }
       sql += ` ORDER BY f.file_name LIMIT 200`
 
@@ -535,6 +537,44 @@ class KMSSearchAgentService {
       logger.warn('Failed to get file inventory:', err)
       return []
     }
+  }
+
+  /**
+   * 获取作用域摘要（目录摘要或合集摘要）
+   * - 仅传 dirIds：返回目录摘要
+   * - 仅传 collectionIds：返回合集摘要（包装为兼容结构）
+   * - 同时传：返回目录摘要（合集摘要作为补充信息，由调用方决定是否使用）
+   */
+  private getScopeSummaries(dirIds?: string[], collectionIds?: string[]): Array<{ dirPath: string; summary: string; fileCount: number }> {
+    // 优先返回目录摘要
+    const dirSummaries = this.getDirSummaries(dirIds)
+    if (dirSummaries.length > 0 || (dirIds && dirIds.length > 0)) {
+      return dirSummaries
+    }
+
+    // 没有目录过滤时，若指定了合集，返回合集摘要
+    if (collectionIds && collectionIds.length > 0) {
+      try {
+        const placeholders = collectionIds.map(() => '?').join(',')
+        const rows = this.db.prepare(`
+          SELECT cs.summary, cs.key_topics_json,
+                 (SELECT COUNT(*) FROM kms_file_collections fc WHERE fc.collection_id = cs.collection_id) as file_count,
+                 c.name as collection_name
+          FROM kms_collection_summaries cs
+          JOIN kms_collections c ON c.id = cs.collection_id
+          WHERE cs.collection_id IN (${placeholders})
+        `).all(...collectionIds) as any[]
+        return rows.map(r => ({
+          dirPath: `合集: ${r.collection_name}`,
+          summary: r.summary || '',
+          fileCount: r.file_count || 0,
+        }))
+      } catch {
+        return []
+      }
+    }
+
+    return []
   }
 
   /**
@@ -866,15 +906,6 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
 
       return { conclusion, sources }
     }
-  }
-
-  private getFileIdsByDirIds(dirIds: string[]): string[] {
-    if (dirIds.length === 0) return []
-    const placeholders = dirIds.map(() => '?').join(',')
-    const rows = this.db.prepare(
-      `SELECT id FROM kms_files WHERE dir_id IN (${placeholders})`
-    ).all(...dirIds) as any[]
-    return rows.map(r => r.id)
   }
 
   private getResultKey(result: SearchResult): string {

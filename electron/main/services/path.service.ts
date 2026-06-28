@@ -67,18 +67,8 @@ class PathService {
     return path.join(this.dataDir, 'workavatar.db')
   }
 
-  getKBDbPath(): string {
-    return path.join(this.dataDir, 'workavatar-kb.db')
-  }
-
   getKMSDbPath(): string {
     return path.join(this.dataDir, 'workavatar-kms.db')
-  }
-
-  getKBBasePath(kbId: string): string {
-    const dir = path.join(this.dataDir, 'knowledge_bases', kbId)
-    this.ensureDir(dir)
-    return dir
   }
 
   getSkillsDir(): string {

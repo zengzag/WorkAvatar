@@ -22,6 +22,9 @@ export const KMS_CHANNELS = {
   KMS_SET_SETTINGS: 'kms:set-settings',
   KMS_GET_DIR_SUMMARIES: 'kms:get-dir-summaries',
   KMS_GET_FILE_SUMMARIES: 'kms:get-file-summaries',
+  // KMS 文件内容浏览（段落、TOC）
+  KMS_GET_FILE_PARAGRAPHS: 'kms:get-file-paragraphs',
+  KMS_GET_FILE_TOC: 'kms:get-file-toc',
   // KMS 自动索引
   KMS_GET_AUTO_INDEX_STATUS: 'kms:get-auto-index-status',
   KMS_RUN_AUTO_INDEX_CHECK: 'kms:run-auto-index-check',
@@ -31,6 +34,22 @@ export const KMS_CHANNELS = {
   KMS_CLEAR_SEARCH_HISTORY: 'kms:clear-search-history',
   KMS_DELETE_SEARCH_HISTORY: 'kms:delete-search-history',
   KMS_RECORD_SEARCH_HISTORY: 'kms:record-search-history',
+  // KMS 合集管理
+  KMS_LIST_COLLECTIONS: 'kms:list-collections',
+  KMS_CREATE_COLLECTION: 'kms:create-collection',
+  KMS_UPDATE_COLLECTION: 'kms:update-collection',
+  KMS_DELETE_COLLECTION: 'kms:delete-collection',
+  KMS_GET_COLLECTION: 'kms:get-collection',
+  KMS_ADD_FILE_TO_COLLECTION: 'kms:add-file-to-collection',
+  KMS_ADD_FILES_TO_COLLECTION: 'kms:add-files-to-collection',
+  KMS_REMOVE_FILE_FROM_COLLECTION: 'kms:remove-file-from-collection',
+  KMS_LIST_FILES_IN_COLLECTION: 'kms:list-files-in-collection',
+  KMS_GET_COLLECTION_STATS: 'kms:get-collection-stats',
+  KMS_GET_COLLECTION_SUMMARY: 'kms:get-collection-summary',
+  KMS_SET_COLLECTION_SUMMARY: 'kms:set-collection-summary',
+  KMS_DELETE_COLLECTION_SUMMARY: 'kms:delete-collection-summary',
+  KMS_GENERATE_COLLECTION_SUMMARY: 'kms:generate-collection-summary',
+  KMS_SCAN_DIR_FILES: 'kms:scan-dir-files',
   // KMS MCP 服务
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -64,6 +83,8 @@ export interface KMSSearchParams {
   timeRangeEnd?: number
   fileExtensions?: string[]
   dirIds?: string[]
+  /** 按合集过滤：只搜索属于指定合集的文件 */
+  collectionIds?: string[]
 }
 
 export interface KMSAgentSearchParams {
@@ -71,6 +92,7 @@ export interface KMSAgentSearchParams {
   maxRounds?: number
   topK?: number
   dirIds?: string[]
+  collectionIds?: string[]
   fileExtensions?: string[]
   timeRangeStart?: number
   timeRangeEnd?: number
@@ -93,6 +115,7 @@ export interface KMSMCPSetConfigParams {
 
 export interface KMSGetFileSummariesParams {
   dirId?: string
+  collectionId?: string
   dataTier?: 'cold' | 'hot'
   keyword?: string
   page?: number
@@ -123,4 +146,38 @@ export interface KMSRecordSearchHistoryParams {
 export interface KMSGetSearchHistoryParams {
   limit?: number
   searchMode?: string
+}
+
+// ==================== 合集相关参数类型 ====================
+
+export interface KMSCreateCollectionParams {
+  name: string
+  description?: string
+}
+
+export interface KMSUpdateCollectionParams {
+  id: string
+  name?: string
+  description?: string
+}
+
+export interface KMSAddFileToCollectionParams {
+  collectionId: string
+  filePath: string
+}
+
+export interface KMSAddFilesToCollectionParams {
+  collectionId: string
+  filePaths: string[]
+}
+
+export interface KMSRemoveFileFromCollectionParams {
+  collectionId: string
+  fileId: string
+}
+
+export interface KMSSetCollectionSummaryParams {
+  collectionId: string
+  summary: string
+  keyTopics?: string[]
 }

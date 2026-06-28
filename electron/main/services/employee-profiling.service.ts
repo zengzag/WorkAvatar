@@ -1,5 +1,5 @@
 import DatabaseService from './database.service'
-import KBDatabaseService from './kb-database.service'
+import KMSDatabaseService from './kms/kms-database.service'
 import LLMClientService from './llm-client.service'
 import { getDefaultProviderId } from './common-utils'
 import { allBuiltinTools } from './agent/tools'
@@ -31,10 +31,10 @@ export interface SuggestedSkill {
   enabled: boolean
 }
 
-interface KBContent {
-  kbId: string
-  kbName: string
-  kbDescription: string
+interface CollectionContent {
+  collectionId: string
+  collectionName: string
+  collectionDescription: string
   globalSummary: string
   keyTopics: string[]
   documentSummaries: Array<{
@@ -51,13 +51,13 @@ interface KBContent {
 }
 
 class EmployeeProfilingService {
-  private kbDb: KBDatabaseService
+  private kmsDb: KMSDatabaseService
   private db: DatabaseService
   private llmClient: LLMClientService
   private static instance: EmployeeProfilingService
 
   private constructor() {
-    this.kbDb = KBDatabaseService.getInstance()
+    this.kmsDb = KMSDatabaseService.getInstance()
     this.db = DatabaseService.getInstance()
     this.llmClient = LLMClientService.getInstance()
   }
@@ -71,33 +71,33 @@ class EmployeeProfilingService {
 
   async analyzeForEmployee(
     _employeeId: string,
-    kbIds: string[],
+    collectionIds: string[],
     providerId?: string,
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string; messages?: Array<{ role: string; content: string }> }> {
-    const kbContents = this.loadKBContents(kbIds)
+    const collectionContents = this.loadCollectionContents(collectionIds)
     const defaultProvider = providerId || this.getDefaultProviderId()
 
     if (!defaultProvider) {
-      if (kbContents.length > 0) {
-        return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
+      if (collectionContents.length > 0) {
+        return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
       }
       return { profile: this.getDefaultProfile(), analysisMethod: 'default' }
     }
 
     try {
-      onProgress?.({ stage: 'preparing', detail: kbContents.length > 0 ? `准备分析 ${kbContents.length} 个知识库...` : '准备分析业务描述...' })
-      const { profile, messages } = await this.analyzeWithLLM(kbContents, defaultProvider, modelId, additionalContext, onProgress)
+      onProgress?.({ stage: 'preparing', detail: collectionContents.length > 0 ? `准备分析 ${collectionContents.length} 个合集...` : '准备分析业务描述...' })
+      const { profile, messages } = await this.analyzeWithLLM(collectionContents, defaultProvider, modelId, additionalContext, onProgress)
       onProgress?.({ stage: 'done', detail: '分析完成' })
       return { profile, analysisMethod: 'llm', messages }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
       console.error('LLM profiling failed, falling back to heuristic:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
-      if (kbContents.length > 0) {
-        return { profile: this.getHeuristicProfile(kbContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
+      if (collectionContents.length > 0) {
+        return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
       }
       return { profile: this.getDefaultProfile(), analysisMethod: 'default', error: `LLM 调用失败: ${errorMsg}` }
     }
@@ -207,44 +207,62 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     }
   }
 
-  private loadKBContents(kbIds: string[]): KBContent[] {
-    const results: KBContent[] = []
+  private loadCollectionContents(collectionIds: string[]): CollectionContent[] {
+    const results: CollectionContent[] = []
+    const db = this.kmsDb.getDb()
 
-    for (const kbId of kbIds) {
-      const kb = this.kbDb.getDb().prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(kbId) as any
-      if (!kb) continue
+    for (const collectionId of collectionIds) {
+      const collection = db.prepare('SELECT * FROM kms_collections WHERE id = ?').get(collectionId) as any
+      if (!collection) continue
 
-      const content: KBContent = {
-        kbId: kb.id,
-        kbName: kb.name,
-        kbDescription: kb.description || '',
+      const content: CollectionContent = {
+        collectionId: collection.id,
+        collectionName: collection.name,
+        collectionDescription: collection.description || '',
         globalSummary: '',
         keyTopics: [],
         documentSummaries: [],
         paragraphSamples: [],
       }
 
-      const globalSummary = this.kbDb.getDb().prepare('SELECT * FROM kb_global_summaries WHERE kb_id = ?').get(kbId) as any
-      if (globalSummary) {
-        content.globalSummary = globalSummary.summary || ''
-        try { content.keyTopics = JSON.parse(globalSummary.key_topics_json || '[]') } catch {}
+      // 合集摘要（全局摘要）
+      const collectionSummary = db.prepare('SELECT * FROM kms_collection_summaries WHERE collection_id = ?').get(collectionId) as any
+      if (collectionSummary) {
+        content.globalSummary = collectionSummary.summary || ''
+        try { content.keyTopics = JSON.parse(collectionSummary.key_topics_json || '[]') } catch {}
       }
 
-      const docSummaries = this.kbDb.getDb().prepare('SELECT ds.*, d.original_name FROM kb_document_summaries ds JOIN kb_documents d ON ds.document_id = d.id WHERE ds.kb_id = ?').all(kbId) as any[]
-      for (const ds of docSummaries) {
-        const docSummary: KBContent['documentSummaries'][0] = {
-          docName: ds.original_name,
-          summary: ds.summary || '',
+      // 文件摘要（通过 kms_file_collections 关联合集中的文件）
+      const fileSummaries = db.prepare(`
+        SELECT s.summary, s.main_topics_json, f.file_name
+        FROM kms_file_collections fc
+        JOIN kms_files f ON fc.file_id = f.id
+        LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+        WHERE fc.collection_id = ?
+      `).all(collectionId) as any[]
+      for (const fs of fileSummaries) {
+        const docSummary: CollectionContent['documentSummaries'][0] = {
+          docName: fs.file_name,
+          summary: fs.summary || '',
           mainTopics: [],
         }
-        try { docSummary.mainTopics = JSON.parse(ds.main_topics_json || '[]') } catch {}
+        try { docSummary.mainTopics = JSON.parse(fs.main_topics_json || '[]') } catch {}
         content.documentSummaries.push(docSummary)
       }
 
-      const paragraphs = this.kbDb.getDb().prepare('SELECT p.*, d.original_name FROM kb_paragraphs p JOIN kb_documents d ON p.document_id = d.id WHERE p.kb_id = ? ORDER BY p.paragraph_index LIMIT 30').all(kbId) as any[]
+      // 段落样本（通过 kms_file_collections 关联合集中的文件段落）
+      const paragraphs = db.prepare(`
+        SELECT p.title, p.title_path, p.content, f.file_name
+        FROM kms_paragraphs p
+        JOIN kms_file_collections fc ON p.file_id = fc.file_id
+        JOIN kms_files f ON p.file_id = f.id
+        WHERE fc.collection_id = ?
+        ORDER BY p.paragraph_index
+        LIMIT 30
+      `).all(collectionId) as any[]
       for (const p of paragraphs) {
         content.paragraphSamples.push({
-          docName: p.original_name,
+          docName: p.file_name,
           title: p.title,
           titlePath: p.title_path || '',
           content: (p.content || '').substring(0, 500),
@@ -266,14 +284,14 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
   }
 
   private async analyzeWithLLM(
-    kbContents: KBContent[],
+    collectionContents: CollectionContent[],
     providerId: string,
     modelId?: string,
     additionalContext?: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<{ profile: EmployeeProfile; messages: Array<{ role: string; content: string }> }> {
-    const hasKB = kbContents.length > 0
-    const combinedText = hasKB ? this.buildCombinedKBDocument(kbContents) : ''
+    const hasCollection = collectionContents.length > 0
+    const combinedText = hasCollection ? this.buildCombinedCollectionDocument(collectionContents) : ''
     const maxLength = 12000
     const truncatedText = combinedText.length > maxLength
       ? combinedText.substring(0, maxLength) + '\n...[内容已截断，共' + combinedText.length + '字符]'
@@ -287,16 +305,16 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
 
     let prompt: string
-    if (hasKB) {
-      prompt = `分析知识库内容，设计数字员工角色，JSON格式输出。
+    if (hasCollection) {
+      prompt = `分析资料库合集内容，设计数字员工角色，JSON格式输出。
 
-知识库资料：
+资料库合集资料：
 ${truncatedText}${userGuidance}
 
 分析要求：
-1. 分析知识库中的业务领域、文档类型和核心主题，确定该知识库的业务场景
+1. 分析合集中的业务领域、文档类型和核心主题，确定该合集的业务场景
 2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
-3. 基于知识库内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
+3. 基于合集内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
 4. 根据业务特性确定工作流程和注意事项
 
 可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
@@ -331,7 +349,7 @@ ${toolsListText}
     const llmMessages: Array<{ role: string; content: string }> = [
       {
         role: 'system',
-        content: '根据知识库内容或业务描述分析设计数字员工角色，输出JSON格式结果。suggestedTools 必须从提供的工具列表中选取。'
+        content: '根据资料库合集内容或业务描述分析设计数字员工角色，输出JSON格式结果。suggestedTools 必须从提供的工具列表中选取。'
       },
       { role: 'user', content: prompt },
     ]
@@ -383,7 +401,7 @@ ${toolsListText}
 
     const profile: EmployeeProfile = {
       roleName: result.roleName || '数字员工',
-      roleDescription: result.roleDescription || (hasKB ? '基于知识库自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
+      roleDescription: result.roleDescription || (hasCollection ? '基于资料库合集自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
       suggestedSkills: [],
       suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : [],
     }
@@ -404,35 +422,35 @@ ${toolsListText}
     return null
   }
 
-  private buildCombinedKBDocument(kbContents: KBContent[]): string {
+  private buildCombinedCollectionDocument(collectionContents: CollectionContent[]): string {
     const parts: string[] = []
 
-    for (const kb of kbContents) {
-      parts.push(`\n=== 知识库: ${kb.kbName} ===`)
-      if (kb.kbDescription) {
-        parts.push(`描述: ${kb.kbDescription}`)
+    for (const col of collectionContents) {
+      parts.push(`\n=== 合集: ${col.collectionName} ===`)
+      if (col.collectionDescription) {
+        parts.push(`描述: ${col.collectionDescription}`)
       }
 
-      if (kb.globalSummary) {
-        parts.push(`\n[全局摘要]\n${kb.globalSummary}`)
+      if (col.globalSummary) {
+        parts.push(`\n[全局摘要]\n${col.globalSummary}`)
       }
 
-      if (kb.keyTopics.length > 0) {
-        parts.push(`\n[核心主题] ${kb.keyTopics.join(', ')}`)
+      if (col.keyTopics.length > 0) {
+        parts.push(`\n[核心主题] ${col.keyTopics.join(', ')}`)
       }
 
-      if (kb.documentSummaries.length > 0) {
+      if (col.documentSummaries.length > 0) {
         parts.push('\n[文档摘要]')
-        for (const doc of kb.documentSummaries) {
+        for (const doc of col.documentSummaries) {
           parts.push(`\n--- 文档: ${doc.docName} ---`)
           if (doc.summary) parts.push(doc.summary)
           if (doc.mainTopics.length > 0) parts.push(`主题: ${doc.mainTopics.join(', ')}`)
         }
       }
 
-      if (kb.paragraphSamples.length > 0) {
+      if (col.paragraphSamples.length > 0) {
         parts.push('\n[段落内容示例]')
-        for (const p of kb.paragraphSamples.slice(0, 10)) {
+        for (const p of col.paragraphSamples.slice(0, 10)) {
           parts.push(`\n--- ${p.docName} / ${p.titlePath || p.title} ---`)
           parts.push(p.content)
         }
@@ -442,9 +460,9 @@ ${toolsListText}
     return parts.join('\n')
   }
 
-  private getHeuristicProfile(kbContents: KBContent[]): EmployeeProfile {
-    const kbNames = kbContents.map((kb) => kb.kbName)
-    const allText = kbContents.map((kb) => [kb.globalSummary, ...kb.documentSummaries.map(d => d.summary)].join(' ')).join(' ').toLowerCase()
+  private getHeuristicProfile(collectionContents: CollectionContent[]): EmployeeProfile {
+    const collectionNames = collectionContents.map((c) => c.collectionName)
+    const allText = collectionContents.map((c) => [c.globalSummary, ...c.documentSummaries.map(d => d.summary)].join(' ')).join(' ').toLowerCase()
 
     const skills: SuggestedSkill[] = []
 
@@ -470,7 +488,7 @@ ${toolsListText}
         testCases: [
           { input: '请审核这份采购合同', expectedOutput: '包含风险点列表和评估意见的审核报告' },
         ],
-        sourceFiles: kbNames,
+        sourceFiles: collectionNames,
         enabled: true,
       })
     }
@@ -479,22 +497,22 @@ ${toolsListText}
       skills.push({
         type: 'qa',
         name: '知识问答',
-        description: '基于知识库回答用户问题',
-        promptTemplate: `你是知识顾问，基于知识库回答问题。
+        description: '基于资料库合集回答用户问题',
+        promptTemplate: `你是知识顾问，基于资料库合集回答问题。
 
 原则：
-1. 只基于知识库回答，不编造
+1. 只基于资料库回答，不编造
 2. 无相关信息时明确说明
 3. 引用来源文件和段落
 4. 专业、简洁、准确`,
         rules: [
           { description: '必须引用知识来源', condition: '回答问题时', action: '标注信息来源文件' },
-          { description: '不确定时明确告知', condition: '知识库中无相关信息', action: '说明无法回答，不编造' },
+          { description: '不确定时明确告知', condition: '资料库中无相关信息', action: '说明无法回答，不编造' },
         ],
         testCases: [
-          { input: '这个产品的保修期是多久？', expectedOutput: '基于知识库给出准确答案并引用来源' },
+          { input: '这个产品的保修期是多久？', expectedOutput: '基于资料库给出准确答案并引用来源' },
         ],
-        sourceFiles: kbNames,
+        sourceFiles: collectionNames,
         enabled: true,
       })
     }
@@ -519,7 +537,7 @@ ${toolsListText}
         testCases: [
           { input: '统计上个月的销售额', expectedOutput: '包含具体数字的分析报告' },
         ],
-        sourceFiles: kbNames,
+        sourceFiles: collectionNames,
         enabled: true,
       })
     }
@@ -528,26 +546,26 @@ ${toolsListText}
       skills.push({
         type: 'qa',
         name: '通用问答',
-        description: '基于知识库回答各类问题',
-        promptTemplate: `基于知识库回答用户问题。
+        description: '基于资料库合集回答各类问题',
+        promptTemplate: `基于资料库合集回答用户问题。
 
 原则：
-1. 基于知识库内容
+1. 基于资料库内容
 2. 专业、准确
 3. 引用来源
 4. 不确定时明确说明`,
         rules: [],
         testCases: [
-          { input: '请介绍一下相关内容', expectedOutput: '基于知识库的概括性回答' },
+          { input: '请介绍一下相关内容', expectedOutput: '基于资料库的概括性回答' },
         ],
-        sourceFiles: kbNames,
+        sourceFiles: collectionNames,
         enabled: true,
       })
     }
 
     return {
       roleName: '数字员工',
-      roleDescription: '基于知识库自动创建的数字员工，提供专业知识服务。负责回答用户咨询、处理业务请求、提供专业建议。专业耐心，风格严谨细致。',
+      roleDescription: '基于资料库合集自动创建的数字员工，提供专业知识服务。负责回答用户咨询、处理业务请求、提供专业建议。专业耐心，风格严谨细致。',
       suggestedSkills: skills,
       suggestedTools: [],
     }

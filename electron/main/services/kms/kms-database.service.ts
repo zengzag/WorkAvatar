@@ -225,6 +225,40 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_search_history_time ON kms_search_history(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_kms_search_history_mode ON kms_search_history(search_mode);
+
+      -- ==================== 合集（Collection）相关表 ====================
+      -- 合集：手动挑选文件组成的稳定资料集
+      CREATE TABLE IF NOT EXISTS kms_collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      -- 文件-合集多对多关系表（一个文件可属于多个合集）
+      CREATE TABLE IF NOT EXISTS kms_file_collections (
+        file_id TEXT NOT NULL REFERENCES kms_files(id) ON DELETE CASCADE,
+        collection_id TEXT NOT NULL REFERENCES kms_collections(id) ON DELETE CASCADE,
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (file_id, collection_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_file_collections_file ON kms_file_collections(file_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_file_collections_collection ON kms_file_collections(collection_id);
+
+      -- 合集级摘要表（对应原 KB 的 kb_global_summaries）
+      CREATE TABLE IF NOT EXISTS kms_collection_summaries (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL UNIQUE REFERENCES kms_collections(id) ON DELETE CASCADE,
+        summary TEXT NOT NULL DEFAULT '',
+        key_topics_json TEXT DEFAULT '[]',
+        vector_id TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_collection_summaries_collection ON kms_collection_summaries(collection_id);
     `)
 
     // 增量迁移：为已有表添加新字段

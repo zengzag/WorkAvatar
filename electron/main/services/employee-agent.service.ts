@@ -1,14 +1,12 @@
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
-import KnowledgeBaseService from './kb.service'
 import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKBAgentTools, createOfficeGuideTool, officeExecTool, createKMSTools } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, type CollectionIdsRef } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
-import type { KbIdsRef } from './agent/tools/kb-agent-tools'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
@@ -40,7 +38,7 @@ interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
-  kb_ids?: string[]
+  collection_ids?: string[]
   enable_thinking?: boolean
   conversation_id?: string
   minimal_mode?: boolean
@@ -59,14 +57,13 @@ interface EmployeeChatCallbacks {
 interface CachedAgentEntry {
   agent: EmployeeAgent
   conversationId: string | null
-  kbIdsRef: KbIdsRef
+  collectionIdsRef: CollectionIdsRef
 }
 
 class EmployeeAgentService {
   private db: DatabaseService
   private llmClient: LLMClientService
   private skillRegistry: SkillRegistryService
-  private kbService: KnowledgeBaseService
   private memoryService: EmployeeMemoryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
   private static instance: EmployeeAgentService
@@ -75,7 +72,6 @@ class EmployeeAgentService {
     this.db = DatabaseService.getInstance()
     this.llmClient = LLMClientService.getInstance()
     this.skillRegistry = SkillRegistryService.getInstance()
-    this.kbService = KnowledgeBaseService.getInstance()
     this.memoryService = EmployeeMemoryService.getInstance()
   }
 
@@ -114,7 +110,7 @@ class EmployeeAgentService {
       throw new Error(`Provider ${providerId} not found`)
     }
 
-    let instructions = '你是专业数字员工，基于知识库和工具为用户提供服务。'
+    let instructions = '你是专业数字员工，基于资料库和工具为用户提供服务。'
     let role: string | undefined
     if (employee.profile_json) {
       try {
@@ -205,13 +201,12 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    const kbIdsRef: KbIdsRef = { current: [] }
-    const knowledgeTools = this.getKnowledgeTools(kbIdsRef).filter(t => enabledToolIds.has(t.id))
-    agent.registerTools(knowledgeTools)
-
-    // 注册 KMS 本地搜索工具
-    const kmsTools = createKMSTools().filter(t => enabledToolIds.has(t.id))
+    // 注册 KMS 资料库工具集（搜索 + 合集管理），共享同一个 collectionIdsRef
+    const collectionIdsRef: CollectionIdsRef = { current: [] }
+    const kmsTools = createKMSTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsTools)
+    const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
+    agent.registerTools(kmsCollectionTools)
 
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
@@ -227,33 +222,21 @@ class EmployeeAgentService {
     this.agentEntries.set(cacheKey, {
       agent,
       conversationId: conversationId || null,
-      kbIdsRef,
+      collectionIdsRef,
     })
-    return { agent, conversationId: conversationId || null, kbIdsRef }
-  }
-
-  private getKnowledgeTools(kbIdsRef: KbIdsRef): ToolDefinition[] {
-    return createKBAgentTools(this.kbService, kbIdsRef)
+    return { agent, conversationId: conversationId || null, collectionIdsRef }
   }
 
   private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
     const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
-    const kbToolIds = [
-      'kb_list',
-      'kb_overview',
-      'kb_search',
-      'kb_get_toc',
-      'kb_get_paragraphs',
-      'kb_get_content',
-    ]
-    for (const id of kbToolIds) {
-      allBuiltinToolIds.add(id)
-    }
-
     const kmsToolIds = [
       'kms_search',
       'kms_agent_search',
       'kms_get_content',
+      'kms_list_collections',
+      'kms_collection_overview',
+      'kms_get_toc',
+      'kms_get_paragraphs',
     ]
     for (const id of kmsToolIds) {
       allBuiltinToolIds.add(id)
@@ -307,7 +290,7 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, kb_ids = [], enable_thinking, conversation_id, minimal_mode = false } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
     const employeeName = employee?.name || 'unknown'
@@ -323,7 +306,7 @@ class EmployeeAgentService {
       const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
       const agent = entry.agent
       agent.setMinimalMode(minimal_mode)
-      entry.kbIdsRef.current = kb_ids || []
+      entry.collectionIdsRef.current = collection_ids || []
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
 
@@ -347,15 +330,17 @@ class EmployeeAgentService {
         agent.updateKBContextPrompt(undefined)
         agent.updateToolPlanningPrompt(null)
       } else if (!systemPromptCached) {
-        // 只有未缓存时才需要构建 KB 上下文和工具规划提示（首次消息）
-        if (kb_ids.length > 0) {
-          const kbDb = require('./kb-database.service').default.getInstance()
-          const placeholders = kb_ids.map(() => '?').join(',')
-          const kbList = kbDb.getDb().prepare(
-            `SELECT id, name FROM knowledge_bases WHERE id IN (${placeholders})`
-          ).all(...kb_ids) as any[]
-          const kbNames = kbList.map((kb: any) => kb.name).join('、')
-          agent.updateKBContextPrompt(`当前对话可使用的知识库: ${kbNames}`)
+        // 只有未缓存时才需要构建合集上下文和工具规划提示（首次消息）
+        if (collection_ids.length > 0) {
+          const kmsService = require('./kms/kms.service').default.getInstance()
+          const allCollections = kmsService.listCollections() as any[]
+          const selected = allCollections.filter((c: any) => collection_ids.includes(c.id))
+          if (selected.length > 0) {
+            const names = selected.map((c: any) => c.name).join('、')
+            agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
+          } else {
+            agent.updateKBContextPrompt(undefined)
+          }
         } else {
           agent.updateKBContextPrompt(undefined)
         }
@@ -363,7 +348,7 @@ class EmployeeAgentService {
         const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
         agent.updateToolPlanningPrompt(toolPlanningHint)
       } else {
-        // 已有缓存，跳过 KB 和工具规划，省的 token
+        // 已有缓存，跳过合集上下文和工具规划，省的 token
         agent.updateKBContextPrompt(undefined)
         agent.updateToolPlanningPrompt(null)
       }

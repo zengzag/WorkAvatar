@@ -136,12 +136,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     json_utils: t('workbench.toolNames.json_utils'),
     random_utils: t('workbench.toolNames.random_utils'),
     env_vars: t('workbench.toolNames.env_vars'),
-    kb_overview: t('workbench.toolNames.kb_overview'),
-    kb_list: t('workbench.toolNames.kb_list'),
-    kb_get_toc: t('workbench.toolNames.kb_get_toc'),
-    kb_get_paragraphs: t('workbench.toolNames.kb_get_paragraphs'),
-    kb_search: t('workbench.toolNames.kb_search'),
-    kb_get_content: t('workbench.toolNames.kb_get_content'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
     ask_user: t('workbench.toolNames.ask_user'),
@@ -175,7 +169,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const stored = enableThinkingKey ? localStorage.getItem(enableThinkingKey) : null
     return stored === 'true'
   })
-  const [selectedKbIds, setSelectedKbIds] = useState<string[]>([])
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([])
   const [minimalMode, setMinimalMode] = useState(false)
 
   const handleLlmChange = useCallback((providerId: string, modelId: string) => {
@@ -1140,7 +1134,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             messages: messageHistory,
             options: { temperature: 0.3 },
             use_skills: true,
-            kb_ids: selectedKbIds,
+            collection_ids: selectedCollectionIds,
             enable_thinking: enableThinking,
             conversation_id: targetConvId,
             minimal_mode: minimalMode,
@@ -1206,7 +1200,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           messages: messageHistory,
           options: { temperature: 0.3 },
           use_skills: true,
-          kb_ids: selectedKbIds,
+          collection_ids: selectedCollectionIds,
           enable_thinking: enableThinking,
           conversation_id: targetConvId,
           minimal_mode: minimalMode,
@@ -1334,7 +1328,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        kb_ids: selectedKbIds,
+        collection_ids: selectedCollectionIds,
         enable_thinking: enableThinking,
         conversation_id: convId,
         minimal_mode: minimalMode,
@@ -1429,7 +1423,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        kb_ids: selectedKbIds,
+        collection_ids: selectedCollectionIds,
         enable_thinking: enableThinking,
         conversation_id: convId,
         minimal_mode: minimalMode,
@@ -1564,7 +1558,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         messages: messageHistory,
         options: { temperature: 0.3 },
         use_skills: true,
-        kb_ids: selectedKbIds,
+        collection_ids: selectedCollectionIds,
         enable_thinking: enableThinking,
         conversation_id: convId,
         minimal_mode: minimalMode,
@@ -1926,8 +1920,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleLlmChange,
     enableThinking,
     setEnableThinking,
-    selectedKbIds,
-    setSelectedKbIds,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     showSidePanel,

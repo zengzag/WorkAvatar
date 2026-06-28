@@ -76,7 +76,7 @@ class WorkspaceManagerService {
       'name', 'role_name', 'role_description', 'responsibilities_json',
       'personality_traits_json', 'working_style', 'suggested_tools_json',
       'status', 'avatar_url', 'prompt_template',
-      'system_prompt', 'kb_id', 'kb_ids_json', 'tool_ids_json',
+      'system_prompt', 'tool_ids_json',
       'mcp_server_ids_json', 'skill_ids_json', 'workspace_dir',
       'enable_thinking', 'description',
       'memory_enabled', 'workspace_path'

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import fs from 'fs'
+import path from 'path'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
@@ -8,7 +9,7 @@ import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions 
 import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
 import FileParserService from '../file-parser.service'
-import { generateId } from '../common-utils'
+import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS')
@@ -28,6 +29,38 @@ class KMSService {
     KMSIndexManagerService.getInstance().setAutoIndexProgressCallback((progress) => {
       this.notifyProgress(progress)
     })
+    // 确保"手动文件源"虚拟目录存在（用于合集文件注册）
+    this.ensureManualSourceDir()
+  }
+
+  /**
+   * 手动文件源虚拟目录的路径标记
+   * 合集中不在任何索引目录下的文件，dir_id 指向此虚拟目录（enabled=0，不参与扫描）
+   */
+  private static readonly MANUAL_SOURCE_PATH = '__manual_files__'
+  private manualSourceDirId: string | null = null
+
+  /**
+   * 确保手动文件源虚拟目录存在
+   * 合集文件如果不在任何索引目录中，会注册到此目录下
+   */
+  private ensureManualSourceDir(): void {
+    const existing = this.db.prepare(
+      "SELECT id FROM kms_index_dirs WHERE dir_path = ?"
+    ).get(KMSService.MANUAL_SOURCE_PATH) as any
+
+    if (existing) {
+      this.manualSourceDirId = existing.id
+      return
+    }
+
+    const id = generateId()
+    this.db.prepare(`
+      INSERT INTO kms_index_dirs (id, dir_path, display_name, enabled, recursive, file_extensions)
+      VALUES (?, ?, ?, 0, 0, '')
+    `).run(id, KMSService.MANUAL_SOURCE_PATH, '手动添加的文件')
+    this.manualSourceDirId = id
+    logger.info('手动文件源虚拟目录已创建')
   }
 
   static getInstance(): KMSService {
@@ -106,10 +139,525 @@ class KMSService {
   }
 
   /**
-   * 获取所有索引目录
+   * 获取所有索引目录（排除手动文件源虚拟目录）
    */
   listIndexDirs(): any[] {
-    return this.db.prepare('SELECT * FROM kms_index_dirs ORDER BY created_at ASC').all()
+    return this.db.prepare(
+      `SELECT * FROM kms_index_dirs WHERE dir_path != ? ORDER BY created_at ASC`
+    ).all(KMSService.MANUAL_SOURCE_PATH)
+  }
+
+  // ==================== 合集管理 ====================
+
+  /**
+   * 创建合集
+   */
+  createCollection(name: string, description: string = ''): any {
+    const id = generateId()
+    this.db.prepare(`
+      INSERT INTO kms_collections (id, name, description)
+      VALUES (?, ?, ?)
+    `).run(id, name, description)
+    return this.getCollection(id)
+  }
+
+  /**
+   * 更新合集
+   */
+  updateCollection(id: string, updates: { name?: string; description?: string }): any {
+    const sets: string[] = []
+    const params: any[] = []
+    if (updates.name !== undefined) {
+      sets.push('name = ?')
+      params.push(updates.name)
+    }
+    if (updates.description !== undefined) {
+      sets.push('description = ?')
+      params.push(updates.description)
+    }
+    if (sets.length === 0) return this.getCollection(id)
+    sets.push('updated_at = unixepoch()')
+    params.push(id)
+    this.db.prepare(`UPDATE kms_collections SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    return this.getCollection(id)
+  }
+
+  /**
+   * 删除合集（级联清理文件关联与合集摘要）
+   * 注意：合集内的文件本身不会被删除（可能属于其他合集或目录）
+   */
+  deleteCollection(id: string): void {
+    this.db.prepare('DELETE FROM kms_collections WHERE id = ?').run(id)
+    KMSSearchEngineService.getInstance().invalidateCache()
+  }
+
+  /**
+   * 获取合集
+   */
+  getCollection(id: string): any {
+    const collection = this.db.prepare('SELECT * FROM kms_collections WHERE id = ?').get(id) as any
+    if (!collection) return null
+    const fileCount = (this.db.prepare(
+      'SELECT COUNT(*) as count FROM kms_file_collections WHERE collection_id = ?'
+    ).get(id) as any)?.count || 0
+    return { ...collection, file_count: fileCount }
+  }
+
+  /**
+   * 获取所有合集（含文件数统计）
+   */
+  listCollections(): any[] {
+    const collections = this.db.prepare(`
+      SELECT c.*,
+             (SELECT COUNT(*) FROM kms_file_collections fc WHERE fc.collection_id = c.id) as file_count
+      FROM kms_collections c
+      ORDER BY c.updated_at DESC
+    `).all() as any[]
+    return collections
+  }
+
+  /**
+   * 添加文件到合集
+   * - 若文件已在 kms_files 中（按 file_path 匹配），直接关联
+   * - 若文件不在任何索引目录中，注册到"手动文件源"虚拟目录
+   * - 相同内容的文件（按 hash 去重）复用索引
+   */
+  async addFileToCollection(collectionId: string, filePath: string): Promise<{ fileId: string; reused: boolean; duplicated: boolean; changed: boolean }> {
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`文件不存在: ${filePath}`)
+    }
+
+    const fileName = path.basename(filePath)
+    const ext = path.extname(fileName).toLowerCase().slice(1)
+    const stat = fs.statSync(filePath)
+    const fileSize = stat.size
+    const modifiedTime = Math.floor(stat.mtimeMs / 1000)
+
+    // 1. 按 file_path 查找现有记录
+    const existingByPath = this.db.prepare(
+      'SELECT id, file_hash, modified_time, index_status FROM kms_files WHERE file_path = ?'
+    ).get(filePath) as any
+
+    let fileId: string
+    let reused = false
+    let duplicated = false
+    let changed = false
+
+    if (existingByPath) {
+      // 文件已注册（在某个索引目录或虚拟目录中），直接关联
+      fileId = existingByPath.id
+      reused = true
+
+      // 检测文件是否被修改：mtime 变化时重新计算哈希比对
+      if (existingByPath.modified_time !== modifiedTime) {
+        const newHash = await calculateFileHash(filePath)
+        if (existingByPath.file_hash !== newHash) {
+          // 文件内容变化，重置为 pending 触发增量索引
+          this.db.prepare(
+            'UPDATE kms_files SET file_hash = ?, file_size = ?, modified_time = ?, index_status = ? WHERE id = ?'
+          ).run(newHash, fileSize, modifiedTime, 'pending', fileId)
+          changed = true
+        } else {
+          // 仅时间戳变化但内容未变，更新时间戳即可
+          this.db.prepare(
+            'UPDATE kms_files SET modified_time = ? WHERE id = ?'
+          ).run(modifiedTime, fileId)
+        }
+      }
+    } else {
+      // 2. 文件未注册，计算哈希
+      const hash = await calculateFileHash(filePath)
+
+      // 3. 按 hash 查找是否有相同内容的文件
+      const existingByHash = this.db.prepare(
+        'SELECT id FROM kms_files WHERE file_hash = ? LIMIT 1'
+      ).get(hash) as any
+
+      fileId = generateId()
+      changed = true // 新文件需要索引
+
+      if (existingByHash) {
+        // 相同内容文件已存在，复用索引，注册新记录到虚拟目录
+        this.db.prepare(`
+          INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'cold')
+        `).run(fileId, this.manualSourceDirId, filePath, fileName, ext, fileSize, hash, modifiedTime)
+        KMSSearchEngineService.getInstance().cloneIndexData(existingByHash.id, fileId)
+        duplicated = true
+        changed = false // 复用索引，无需再触发
+      } else {
+        // 4. 全新文件，注册到虚拟目录，待索引
+        this.db.prepare(`
+          INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
+        `).run(fileId, this.manualSourceDirId, filePath, fileName, ext, fileSize, hash, modifiedTime)
+      }
+    }
+
+    // 5. 关联到合集（INSERT OR IGNORE 避免重复关联）
+    this.db.prepare(`
+      INSERT OR IGNORE INTO kms_file_collections (file_id, collection_id)
+      VALUES (?, ?)
+    `).run(fileId, collectionId)
+
+    // 6. 更新合集更新时间
+    this.db.prepare('UPDATE kms_collections SET updated_at = unixepoch() WHERE id = ?').run(collectionId)
+
+    KMSSearchEngineService.getInstance().invalidateCache()
+
+    // 7. 若有新增/变更的 pending 文件，异步触发增量索引（fire-and-forget）
+    if (changed) {
+      KMSIndexManagerService.getInstance().incrementalIndex().catch((err: any) => {
+        logger.error('Auto incrementalIndex after addFileToCollection failed:', err?.message || err)
+      })
+    }
+
+    return { fileId, reused, duplicated, changed }
+  }
+
+  /**
+   * 批量添加文件到合集
+   */
+  async addFilesToCollection(collectionId: string, filePaths: string[]): Promise<{ added: number; reused: number; duplicated: number; changed: number; failed: { path: string; error: string }[] }> {
+    let added = 0
+    let reused = 0
+    let duplicated = 0
+    let changed = 0
+    const failed: { path: string; error: string }[] = []
+
+    for (const filePath of filePaths) {
+      try {
+        const result = await this.addFileToCollection(collectionId, filePath)
+        added++
+        if (result.reused) reused++
+        if (result.duplicated) duplicated++
+        if (result.changed) changed++
+      } catch (err: any) {
+        failed.push({ path: filePath, error: err?.message || String(err) })
+      }
+    }
+
+    return { added, reused, duplicated, changed, failed }
+  }
+
+  /**
+   * 从合集中移除文件（仅解除关联，不删除文件本身）
+   */
+  removeFileFromCollection(collectionId: string, fileId: string): void {
+    this.db.prepare(
+      'DELETE FROM kms_file_collections WHERE file_id = ? AND collection_id = ?'
+    ).run(fileId, collectionId)
+    this.db.prepare('UPDATE kms_collections SET updated_at = unixepoch() WHERE id = ?').run(collectionId)
+    KMSSearchEngineService.getInstance().invalidateCache()
+  }
+
+  /**
+   * 获取合集内的文件列表（含文件详细信息）
+   */
+  listFilesInCollection(collectionId: string): any[] {
+    return this.db.prepare(`
+      SELECT f.id, f.file_name, f.file_path, f.file_ext, f.file_size, f.data_tier,
+             f.index_status, f.modified_time, f.updated_at,
+             fc.added_at,
+             COALESCE(s.summary, '') as summary,
+             COALESCE(s.light_summary, '') as light_summary,
+             COALESCE(s.keywords_json, '[]') as keywords_json,
+             COALESCE(s.main_topics_json, '[]') as main_topics_json
+      FROM kms_file_collections fc
+      JOIN kms_files f ON fc.file_id = f.id
+      LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+      WHERE fc.collection_id = ?
+      ORDER BY fc.added_at DESC
+    `).all(collectionId) as any[]
+  }
+
+  /**
+   * 获取合集统计信息
+   */
+  getCollectionStats(collectionId: string): any {
+    const fileCount = (this.db.prepare(
+      'SELECT COUNT(*) as count FROM kms_file_collections WHERE collection_id = ?'
+    ).get(collectionId) as any)?.count || 0
+
+    const indexedCount = (this.db.prepare(`
+      SELECT COUNT(*) as count FROM kms_file_collections fc
+      JOIN kms_files f ON fc.file_id = f.id
+      WHERE fc.collection_id = ? AND f.index_status = 'completed'
+    `).get(collectionId) as any)?.count || 0
+
+    const hotCount = (this.db.prepare(`
+      SELECT COUNT(*) as count FROM kms_file_collections fc
+      JOIN kms_files f ON fc.file_id = f.id
+      WHERE fc.collection_id = ? AND f.data_tier = 'hot'
+    `).get(collectionId) as any)?.count || 0
+
+    const pendingCount = (this.db.prepare(`
+      SELECT COUNT(*) as count FROM kms_file_collections fc
+      JOIN kms_files f ON fc.file_id = f.id
+      WHERE fc.collection_id = ? AND f.index_status = 'pending'
+    `).get(collectionId) as any)?.count || 0
+
+    const hasSummary = !!this.db.prepare(
+      'SELECT 1 FROM kms_collection_summaries WHERE collection_id = ?'
+    ).get(collectionId)
+
+    return {
+      fileCount,
+      indexedCount,
+      hotCount,
+      pendingCount,
+      hasSummary,
+    }
+  }
+
+  /**
+   * 获取合集摘要
+   */
+  getCollectionSummary(collectionId: string): any {
+    return this.db.prepare(
+      'SELECT * FROM kms_collection_summaries WHERE collection_id = ?'
+    ).get(collectionId) as any
+  }
+
+  /**
+   * 保存合集摘要（手动设置或 LLM 生成后写入）
+   */
+  setCollectionSummary(collectionId: string, summary: string, keyTopics: string[] = []): void {
+    const existing = this.db.prepare(
+      'SELECT id FROM kms_collection_summaries WHERE collection_id = ?'
+    ).get(collectionId) as any
+
+    if (existing) {
+      this.db.prepare(`
+        UPDATE kms_collection_summaries
+        SET summary = ?, key_topics_json = ?, updated_at = unixepoch()
+        WHERE collection_id = ?
+      `).run(summary, JSON.stringify(keyTopics), collectionId)
+    } else {
+      const id = generateId()
+      this.db.prepare(`
+        INSERT INTO kms_collection_summaries (id, collection_id, summary, key_topics_json)
+        VALUES (?, ?, ?, ?)
+      `).run(id, collectionId, summary, JSON.stringify(keyTopics))
+    }
+  }
+
+  /**
+   * 删除合集摘要
+   */
+  deleteCollectionSummary(collectionId: string): void {
+    this.db.prepare('DELETE FROM kms_collection_summaries WHERE collection_id = ?').run(collectionId)
+  }
+
+  /**
+   * AI 生成合集摘要（基于合集内文件的轻量摘要与关键主题）
+   * 失败时返回 { error }，成功时返回 { summary, keyTopics }
+   */
+  async generateCollectionSummary(collectionId: string): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {
+    const collection = this.db.prepare('SELECT id, name, description FROM kms_collections WHERE id = ?').get(collectionId) as any
+    if (!collection) {
+      return { error: 'Collection not found' }
+    }
+
+    const files = this.listFilesInCollection(collectionId)
+    if (files.length === 0) {
+      return { error: 'NO_FILES' }
+    }
+
+    // 获取 LLM 配置（KMS 专属 → 知识场景默认 → 任意可用）
+    const llmConfig = this.getKmsLLMConfig()
+    if (!llmConfig) {
+      return { error: 'NO_LLM_PROVIDER' }
+    }
+
+    // 拼接文件信息+轻量摘要作为 LLM 输入（控制总长度避免超 token）
+    const fileSummaries: string[] = []
+    let totalChars = 0
+    const MAX_INPUT_CHARS = 12000
+    for (const f of files) {
+      const lightSummary = f.light_summary || f.summary || ''
+      const line = `【${f.file_name}】${lightSummary ? ' ' + lightSummary : ''}`
+      if (totalChars + line.length > MAX_INPUT_CHARS) {
+        fileSummaries.push(`...（其余 ${files.length - fileSummaries.length} 个文件省略）`)
+        break
+      }
+      fileSummaries.push(line)
+      totalChars += line.length
+    }
+
+    const prompt = `请基于以下合集内文件的摘要信息，生成该合集的整体摘要和关键主题词。
+
+合集名称：${collection.name}
+合集描述：${collection.description || '（无）'}
+文件数量：${files.length}
+
+文件摘要列表：
+${fileSummaries.join('\n')}
+
+要求：
+1. summary：用 150-300 字概括这个合集的核心内容、覆盖范围与价值，不要罗列文件名。
+2. keyTopics：提取 3-8 个关键主题词（短语），用于快速了解合集主题。
+
+只返回 JSON：{"summary":"...","keyTopics":["..."]}`
+
+    try {
+      const llmClient = LLMClientService.getInstance()
+      const result = await llmClient.chat(llmConfig.providerId, [
+        { role: 'system', content: '你是一个资料库合集分析助手。只输出 JSON，不要添加其他文本。' },
+        { role: 'user', content: prompt },
+      ], {
+        temperature: 0.3,
+        max_tokens: 800,
+        model: llmConfig.modelId,
+        logSource: 'kms_collection_summary',
+      })
+
+      // 解析 JSON（容错：去除可能的 markdown 代码块包裹）
+      const cleaned = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+      const parsed = JSON.parse(cleaned)
+      const summary: string = (parsed.summary || '').trim()
+      const keyTopics: string[] = Array.isArray(parsed.keyTopics)
+        ? parsed.keyTopics.map((k: any) => String(k).trim()).filter(Boolean).slice(0, 8)
+        : []
+
+      if (!summary) {
+        return { error: 'LLM returned empty summary' }
+      }
+
+      // 写入数据库
+      this.setCollectionSummary(collectionId, summary, keyTopics)
+      logger.info(`Collection summary generated for ${collectionId}: ${summary.length} chars, ${keyTopics.length} topics`)
+
+      return { summary, keyTopics }
+    } catch (err: any) {
+      logger.error('generateCollectionSummary failed:', err?.message || err)
+      return { error: err?.message || 'LLM call failed' }
+    }
+  }
+
+  /**
+   * 获取 KMS LLM 配置（providerId + modelId）
+   * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
+   */
+  private getKmsLLMConfig(): { providerId: string; modelId: string | undefined } | null {
+    const llmClient = LLMClientService.getInstance()
+    const mainDb = DatabaseService.getInstance().getDb()
+
+    try {
+      const kmsModelRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
+      if (kmsModelRow?.value) {
+        const config = JSON.parse(kmsModelRow.value)
+        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
+          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+        }
+      }
+    } catch {}
+
+    try {
+      const row = mainDb.prepare("SELECT value FROM settings WHERE key = 'default_model_knowledge'").get() as any
+      if (row?.value) {
+        const config = JSON.parse(row.value)
+        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
+          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+        }
+      }
+    } catch {}
+
+    const providers = llmClient.getProviderList?.() as any[] || []
+    const first = providers[0]
+    return first ? { providerId: first.id, modelId: undefined } : null
+  }
+
+  /**
+   * 扫描目录下所有支持格式的文件（递归），用于"文件夹批量导入到合集"
+   * 返回 { files: string[], skipped: number }
+   */
+  scanDirFiles(dirPath: string, extensions?: string[]): { files: string[]; skipped: number } {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return { files: [], skipped: 0 }
+    }
+    const supportedExts = (extensions && extensions.length > 0
+      ? extensions
+      : ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'md', 'html', 'htm']
+    ).map(e => e.toLowerCase().replace(/^\./, ''))
+    const result: string[] = []
+    let skipped = 0
+    const walk = (dir: string) => {
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(fullPath)
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase().replace(/^\./, '')
+          if (supportedExts.includes(ext)) {
+            result.push(fullPath)
+          } else {
+            skipped++
+          }
+        }
+      }
+    }
+    walk(dirPath)
+    logger.info(`scanDirFiles: ${dirPath} -> ${result.length} files, ${skipped} skipped`)
+    return { files: result, skipped }
+  }
+
+  /**
+   * 获取文件的段落列表（用于前端内容浏览）
+   * 返回段落的目录树结构（TOC）+ 完整段落列表
+   */
+  getFileParagraphs(fileId: string): any[] {
+    return this.db.prepare(`
+      SELECT id, title, title_path, level, paragraph_index, start_offset, end_offset, summary, keywords_json
+      FROM kms_paragraphs
+      WHERE file_id = ?
+      ORDER BY paragraph_index ASC
+    `).all(fileId) as any[]
+  }
+
+  /**
+   * 获取文件的目录结构（TOC，从段落表的 title_path 派生）
+   */
+  getFileToc(fileId: string): any[] {
+    const paragraphs = this.db.prepare(`
+      SELECT id, title, title_path, level, paragraph_index, start_offset, end_offset
+      FROM kms_paragraphs
+      WHERE file_id = ?
+      ORDER BY paragraph_index ASC
+    `).all(fileId) as any[]
+    return paragraphs.map(p => ({
+      id: p.id,
+      title: p.title,
+      titlePath: p.title_path,
+      level: p.level,
+      paragraphIndex: p.paragraph_index,
+      startOffset: p.start_offset,
+      endOffset: p.end_offset,
+    }))
+  }
+
+  /**
+   * 按段落ID批量查询段落详情（含所属文件名）
+   * 用于 Agent 工具 kms_get_paragraphs
+   */
+  getParagraphsByIds(paragraphIds: string[]): any[] {
+    if (!paragraphIds || paragraphIds.length === 0) return []
+    const placeholders = paragraphIds.map(() => '?').join(',')
+    return this.db.prepare(`
+      SELECT p.id, p.title, p.title_path, p.level, p.paragraph_index,
+             p.start_offset, p.end_offset, p.summary, p.keywords_json,
+             p.file_id,
+             (SELECT file_name FROM kms_files WHERE id = p.file_id) as file_name
+      FROM kms_paragraphs p
+      WHERE p.id IN (${placeholders})
+      ORDER BY p.file_id, p.paragraph_index
+    `).all(...paragraphIds) as any[]
   }
 
   // ==================== 搜索 ====================
@@ -318,11 +866,13 @@ class KMSService {
 
     const fileStats = crawler.getFileStats()
     const indexStats = searchEngine.getIndexStats()
-    const dirCount = (this.db.prepare('SELECT COUNT(*) as count FROM kms_index_dirs').get() as any)?.count || 0
-    const enabledDirCount = (this.db.prepare('SELECT COUNT(*) as count FROM kms_index_dirs WHERE enabled = 1').get() as any)?.count || 0
+    const dirCount = (this.db.prepare('SELECT COUNT(*) as count FROM kms_index_dirs WHERE dir_path != ?').get(KMSService.MANUAL_SOURCE_PATH) as any)?.count || 0
+    const enabledDirCount = (this.db.prepare('SELECT COUNT(*) as count FROM kms_index_dirs WHERE enabled = 1 AND dir_path != ?').get(KMSService.MANUAL_SOURCE_PATH) as any)?.count || 0
+    const collectionCount = (this.db.prepare('SELECT COUNT(*) as count FROM kms_collections').get() as any)?.count || 0
 
     return {
       dirs: { total: dirCount, enabled: enabledDirCount },
+      collections: { total: collectionCount },
       files: fileStats,
       index: indexStats,
     }
@@ -456,17 +1006,22 @@ class KMSService {
   /**
    * 获取文件摘要列表（含冷热状态、轻量摘要、LLM摘要）
    */
-  getFileSummaries(params?: { dirId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
+  getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
     const page = params?.page || 1
     const pageSize = params?.pageSize || 20
     const offset = (page - 1) * pageSize
 
+    // 不再过滤 __manual_files__ 虚拟目录：手动添加到合集的文件也应在知识视图中可见
     let whereClause = 'WHERE 1=1'
     const sqlParams: any[] = []
 
     if (params?.dirId) {
       whereClause += ' AND f.dir_id = ?'
       sqlParams.push(params.dirId)
+    }
+    if (params?.collectionId) {
+      whereClause += ' AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id = ?)'
+      sqlParams.push(params.collectionId)
     }
     if (params?.dataTier) {
       whereClause += ' AND f.data_tier = ?'

@@ -67,7 +67,7 @@ const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_search',
-    description: 'Search local files using keyword, semantic, or hybrid mode. Supports filtering by directory, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets).',
+    description: 'Search local files using keyword, semantic, or hybrid mode. Supports filtering by directory, collection, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -91,6 +91,11 @@ const MCP_TOOLS: MCPTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'Limit search to specific directory IDs (optional)',
+        },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Limit search to files within specified collections (optional). Use kms_list_collections to get available collection IDs.',
         },
         file_extensions: {
           type: 'array',
@@ -137,6 +142,11 @@ const MCP_TOOLS: MCPTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'Limit search to specific directory IDs (optional)',
+        },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Limit search to files within specified collections (optional). Use kms_list_collections to get available collection IDs.',
         },
         file_extensions: {
           type: 'array',
@@ -204,19 +214,89 @@ const MCP_TOOLS: MCPTool[] = [
       required: ['file_id'],
     },
   },
+  {
+    name: 'kms_list_collections',
+    description: 'List all manual file collections (curated groups of files, e.g. "Product Spec", "HR Policies"). Each collection has an ID, name, description, and file count. Use collection IDs to filter kms_search and kms_agent_search.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'kms_list_files_in_collection',
+    description: 'List all files within a specific collection, including file name, path, extension, size, index status, and per-file summary.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collection_id: {
+          type: 'string',
+          description: 'Collection ID (obtain from kms_list_collections)',
+        },
+      },
+      required: ['collection_id'],
+    },
+  },
+  {
+    name: 'kms_get_collection_summary',
+    description: 'Get the high-level summary and key topics of a collection (if generated). Useful for understanding what a collection covers before searching within it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collection_id: {
+          type: 'string',
+          description: 'Collection ID (obtain from kms_list_collections)',
+        },
+      },
+      required: ['collection_id'],
+    },
+  },
+  {
+    name: 'kms_get_toc',
+    description: 'Get the table of contents (TOC) of a file - the hierarchical structure of its paragraphs/headings. Useful for understanding document structure before reading specific sections. The file_id must be the raw ID without "f:" prefix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_id: {
+          type: 'string',
+          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
+        },
+      },
+      required: ['file_id'],
+    },
+  },
+  {
+    name: 'kms_get_paragraphs',
+    description: 'Get all paragraphs of a file with their titles, hierarchy, and offsets. Useful for browsing document structure and locating specific sections. The file_id must be the raw ID without "f:" prefix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_id: {
+          type: 'string',
+          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
+        },
+      },
+      required: ['file_id'],
+    },
+  },
 ]
 
 /**
  * KMS MCP 服务
  * 将本地搜索引擎能力暴露为 MCP 工具，供第三方智能体（Claude Code、Cursor 等）调用
  *
- * 工具列表：
+ * 工具列表（11 个）：
  * - kms_list_dirs: 列出索引目录
- * - kms_stats: 获取统计信息
- * - kms_search: 普通检索（关键词/语义/混合）
- * - kms_agent_search: 智能检索（子智能体自主规划+提纯）
+ * - kms_stats: 获取统计信息（含合集数）
+ * - kms_search: 普通检索（关键词/语义/混合，支持目录/合集过滤）
+ * - kms_agent_search: 智能检索（子智能体自主规划+提纯，支持目录/合集过滤）
  * - kms_get_content: 获取文件内容（精确定位）
  * - kms_get_summary: 获取文件摘要
+ * - kms_list_collections: 列出所有合集
+ * - kms_list_files_in_collection: 列出合集内文件
+ * - kms_get_collection_summary: 获取合集摘要与关键主题
+ * - kms_get_toc: 获取文件目录结构（TOC）
+ * - kms_get_paragraphs: 获取文件段落列表
  */
 class KMSMCPService {
   private server: http.Server | null = null
@@ -488,6 +568,7 @@ class KMSMCPService {
         const stats = kmsService.getStats()
         let output = 'KMS Statistics:\n'
         output += `Directories: ${stats.dirs.total} (enabled: ${stats.dirs.enabled})\n`
+        output += `Collections: ${stats.collections?.total ?? 0}\n`
         output += `Files: ${stats.files.total}\n`
         output += `  Status: ${JSON.stringify(stats.files.byStatus)}\n`
         output += `  Tier: ${JSON.stringify(stats.files.byTier)}\n`
@@ -513,6 +594,8 @@ class KMSMCPService {
           fileExtensions: args.file_extensions,
           timeRangeStart: args.time_range_start ? Math.floor(args.time_range_start / 1000) : undefined,
           timeRangeEnd: args.time_range_end ? Math.floor(args.time_range_end / 1000) : undefined,
+          dirIds: args.dir_ids,
+          collectionIds: args.collection_ids,
         })
 
         if (results.length === 0) {
@@ -561,6 +644,7 @@ class KMSMCPService {
           maxRounds: args.max_rounds,
           topK: args.top_k,
           dirIds: args.dir_ids,
+          collectionIds: args.collection_ids,
           fileExtensions: args.file_extensions,
           timeRangeStart: args.time_range_start,
           timeRangeEnd: args.time_range_end,
@@ -655,6 +739,128 @@ class KMSMCPService {
           }
         } catch {}
 
+        return output
+      }
+
+      case 'kms_list_collections': {
+        const collections = kmsService.listCollections() as any[]
+        if (collections.length === 0) {
+          return 'No collections available. Collections are curated groups of files created via the WorkAvatar UI.'
+        }
+
+        let output = `${collections.length} collection(s):\n`
+        for (let i = 0; i < collections.length; i++) {
+          const c = collections[i]
+          output += `${i + 1}. ${c.name} [${c.id}] ${c.file_count || 0} files`
+          if (c.description) output += ` - ${c.description}`
+          output += '\n'
+        }
+        return output
+      }
+
+      case 'kms_list_files_in_collection': {
+        const collectionId = String(args.collection_id || '').trim()
+        if (!collectionId) {
+          return 'Please provide collection_id.'
+        }
+
+        const files = kmsService.listFilesInCollection(collectionId) as any[]
+        if (files.length === 0) {
+          return 'Collection is empty or not found.'
+        }
+
+        let output = `${files.length} file(s) in collection:\n\n`
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i]
+          output += `[${i + 1}] ${f.file_name} [${f.id}]\n`
+          output += `  ext: ${f.file_ext || 'N/A'}, size: ${f.file_size || 0}, status: ${f.index_status}\n`
+          output += `  path: ${f.file_path}\n`
+          if (f.light_summary) {
+            output += `  summary: ${f.light_summary.substring(0, 200)}${f.light_summary.length > 200 ? '...' : ''}\n`
+          }
+          output += '\n'
+        }
+        return output
+      }
+
+      case 'kms_get_collection_summary': {
+        const collectionId = String(args.collection_id || '').trim()
+        if (!collectionId) {
+          return 'Please provide collection_id.'
+        }
+
+        const summary = kmsService.getCollectionSummary(collectionId) as any
+        if (!summary) {
+          return 'No summary available for this collection.'
+        }
+
+        let output = `Collection Summary:\n`
+        output += `${summary.summary || '(empty)'}\n`
+        try {
+          const topics = JSON.parse(summary.key_topics_json || '[]')
+          if (topics.length > 0) {
+            output += `\nKey Topics: ${topics.join(', ')}\n`
+          }
+        } catch {}
+        return output
+      }
+
+      case 'kms_get_toc': {
+        let fileId = String(args.file_id || '').trim()
+        if (!fileId) {
+          return 'Please provide file_id.'
+        }
+        fileId = this.stripIdPrefix(fileId)
+
+        const toc = kmsService.getFileToc(fileId) as any[]
+        if (!toc || toc.length === 0) {
+          return 'No table of contents available. TOC is generated when the file is indexed as hot data.'
+        }
+
+        let output = `Table of Contents (${toc.length} entries):\n\n`
+        for (const entry of toc) {
+          const indent = '  '.repeat(Math.max(0, (entry.level || 1) - 1))
+          output += `${indent}- ${entry.title || '(untitled)'}`
+          output += ` [paragraph_id: ${entry.id}]`
+          if (entry.startOffset !== undefined && entry.endOffset !== undefined) {
+            output += ` offset: ${entry.startOffset}-${entry.endOffset}`
+          }
+          output += '\n'
+        }
+        return output
+      }
+
+      case 'kms_get_paragraphs': {
+        let fileId = String(args.file_id || '').trim()
+        if (!fileId) {
+          return 'Please provide file_id.'
+        }
+        fileId = this.stripIdPrefix(fileId)
+
+        const paragraphs = kmsService.getFileParagraphs(fileId) as any[]
+        if (!paragraphs || paragraphs.length === 0) {
+          return 'No paragraphs available. Paragraphs are generated when the file is indexed as hot data.'
+        }
+
+        let output = `${paragraphs.length} paragraph(s):\n\n`
+        for (let i = 0; i < paragraphs.length; i++) {
+          const p = paragraphs[i]
+          const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
+          output += `[${i + 1}] ${indent}${p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
+          if (p.summary) {
+            output += `  summary: ${p.summary}\n`
+          }
+          if (p.start_offset !== undefined && p.end_offset !== undefined) {
+            output += `  offset: ${p.start_offset}-${p.end_offset}\n`
+          }
+          try {
+            const keywords = JSON.parse(p.keywords_json || '[]')
+            if (Array.isArray(keywords) && keywords.length > 0) {
+              output += `  keywords: ${keywords.join(', ')}\n`
+            }
+          } catch {}
+          output += '\n'
+        }
         return output
       }
 

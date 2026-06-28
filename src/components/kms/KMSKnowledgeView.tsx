@@ -5,9 +5,19 @@ import {
 } from 'antd'
 import {
   FolderOpenOutlined, FileTextOutlined, FireOutlined, InboxOutlined,
-  SearchOutlined, ReloadOutlined, EyeOutlined, FolderOutlined,
+  SearchOutlined, ReloadOutlined, EyeOutlined, FolderOutlined, AppstoreOutlined,
 } from '@ant-design/icons'
 import type { DirSummary, FileSummaryItem, FileSummariesResult } from '../../hooks/useKMS'
+
+interface CollectionWithSummary {
+  id: string
+  name: string
+  description?: string
+  file_count: number
+  summary?: string
+  key_topics_json?: string
+  updated_at?: number
+}
 
 const { Text, Paragraph } = Typography
 
@@ -54,12 +64,57 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  // 合集摘要
+  const [collectionSummaries, setCollectionSummaries] = useState<CollectionWithSummary[]>([])
+
+  // 加载合集摘要
+  const loadCollectionSummaries = useCallback(async () => {
+    try {
+      const collections = await window.electronAPI.kms.listCollections() as any[]
+      if (!collections || collections.length === 0) {
+        setCollectionSummaries([])
+        return
+      }
+      // 并行获取每个合集的摘要
+      const summaries = await Promise.all(
+        collections.map(async (c) => {
+          try {
+            const summary = await window.electronAPI.kms.getCollectionSummary(c.id) as any
+            return {
+              id: c.id,
+              name: c.name,
+              description: c.description,
+              file_count: c.file_count || 0,
+              summary: summary?.summary || '',
+              key_topics_json: summary?.key_topics_json || '[]',
+              updated_at: summary?.updated_at || c.updated_at,
+            } as CollectionWithSummary
+          } catch {
+            return {
+              id: c.id,
+              name: c.name,
+              description: c.description,
+              file_count: c.file_count || 0,
+              summary: '',
+              key_topics_json: '[]',
+              updated_at: c.updated_at,
+            } as CollectionWithSummary
+          }
+        })
+      )
+      setCollectionSummaries(summaries)
+    } catch (err) {
+      console.error('Failed to load collection summaries:', err)
+      setCollectionSummaries([])
+    }
+  }, [])
 
   // 初始加载
   useEffect(() => {
     onLoadDirSummaries()
     onLoadFileSummaries({ page: 1, pageSize: 20 })
-  }, [onLoadDirSummaries, onLoadFileSummaries])
+    loadCollectionSummaries()
+  }, [onLoadDirSummaries, onLoadFileSummaries, loadCollectionSummaries])
 
   // 重新加载文件摘要
   const reloadFileSummaries = useCallback(() => {
@@ -93,7 +148,8 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const handleReload = useCallback(() => {
     onLoadDirSummaries()
     reloadFileSummaries()
-  }, [onLoadDirSummaries, reloadFileSummaries])
+    loadCollectionSummaries()
+  }, [onLoadDirSummaries, reloadFileSummaries, loadCollectionSummaries])
 
   // 解析关键词 JSON
   const parseKeywords = (json: string): string[] => {
@@ -210,6 +266,84 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
                 <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 6 }}>
                   {t('kms.knowledge.updatedAt')}: {formatTime(dir.updated_at)}
                 </Text>
+              </Card>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // 合集摘要卡片
+  const renderCollectionSummaries = () => {
+    if (collectionSummaries.length === 0) {
+      return null
+    }
+
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Space size={6}>
+            <AppstoreOutlined style={{ color: token.colorPrimary }} />
+            <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.collectionSummaries')}</Text>
+            <Tag style={{ fontSize: 11 }}>{collectionSummaries.length}</Tag>
+          </Space>
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: 8,
+        }}>
+          {collectionSummaries.map((col) => {
+            const keywords = parseKeywords(col.key_topics_json || '[]')
+            return (
+              <Card
+                key={col.id}
+                size="small"
+                style={{
+                  borderLeft: `3px solid ${token.colorSuccess}`,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <AppstoreOutlined style={{ color: token.colorSuccess }} />
+                  <Text strong style={{ fontSize: 12 }} ellipsis>
+                    {col.name}
+                  </Text>
+                  <Tag color="green" style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 4px' }}>
+                    {col.file_count}{t('kms.knowledge.filesUnit')}
+                  </Tag>
+                </div>
+                {col.description && (
+                  <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 6 }} ellipsis>
+                    {col.description}
+                  </Text>
+                )}
+                <Paragraph
+                  type="secondary"
+                  style={{
+                    fontSize: 11,
+                    margin: 0,
+                    maxHeight: 60,
+                    overflow: 'hidden',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {col.summary || t('kms.knowledge.noSummary')}
+                </Paragraph>
+                {keywords.length > 0 && (
+                  <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    {keywords.slice(0, 5).map((kw, i) => (
+                      <Tag key={i} color="green" style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 4px' }}>
+                        {kw}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+                {col.updated_at && (
+                  <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 6 }}>
+                    {t('kms.knowledge.updatedAt')}: {formatTime(col.updated_at)}
+                  </Text>
+                )}
               </Card>
             )
           })}
@@ -376,6 +510,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
       {/* 目录摘要 */}
       <div style={{ flexShrink: 0, maxHeight: '40%', overflow: 'auto' }}>
         {renderDirSummaries()}
+        {renderCollectionSummaries()}
       </div>
 
       {/* 文件摘要筛选 */}

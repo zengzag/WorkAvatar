@@ -4,12 +4,10 @@ import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
-import KBDatabaseService from './kb-database.service'
 import PathService from './path.service'
-import KnowledgeBaseService from './kb.service'
 import { EmployeeExportConfigService, EXPORT_CONFIG_VERSION, EmployeeConfigExport } from './employee-export-config.service'
 
-export const EXPORT_PACKAGE_VERSION = '1.1.0'
+export const EXPORT_PACKAGE_VERSION = '2.0.0'
 
 export interface PackageManifest {
   version: string
@@ -21,22 +19,17 @@ export interface PackageManifest {
     hasConfig: boolean
     hasSkills: boolean
     hasMemories: boolean
-    hasKnowledgeBases: boolean
     skillCount: number
     memoryCount: number
-    kbCount: number
-    docCount: number
   }
 }
 
 export class EmployeeExportPackageService {
-  private kbDb: KBDatabaseService
   private db: DatabaseService
   private configService: EmployeeExportConfigService
 
-  constructor(db: DatabaseService, kbDb: KBDatabaseService, configService: EmployeeExportConfigService) {
+  constructor(db: DatabaseService, configService: EmployeeExportConfigService) {
     this.db = db
-    this.kbDb = kbDb
     this.configService = configService
   }
 
@@ -150,11 +143,8 @@ export class EmployeeExportPackageService {
           hasConfig: true,
           hasSkills: skillCount > 0,
           hasMemories: memories.length > 0,
-          hasKnowledgeBases: false,
           skillCount,
           memoryCount: memories.length,
-          kbCount: 0,
-          docCount: 0,
         },
       }
 
@@ -342,64 +332,6 @@ export class EmployeeExportPackageService {
         }
       }
 
-      onProgress?.('importing_knowledge', 'Importing knowledge bases...')
-      const kbEntries = zip.getEntries().filter(e =>
-        e.entryName.startsWith('knowledge-bases/') && e.entryName.endsWith('kb-data.json')
-      )
-
-      const importedKBIds: string[] = []
-
-      for (const kbEntry of kbEntries) {
-        const kbData = JSON.parse(kbEntry.getData().toString('utf-8'))
-
-        const existingKB = this.kbDb.getDb().prepare(
-          'SELECT id FROM knowledge_bases WHERE name = ?'
-        ).get(kbData.name) as any
-
-        let targetKBId: string
-
-        if (existingKB) {
-          if (conflictStrategy === 'skip') {
-            warnings.push(`Knowledge base "${kbData.name}" already exists, skipped`)
-            targetKBId = existingKB.id
-          } else if (conflictStrategy === 'overwrite') {
-            const oldKbBasePath = PathService.getInstance().getKBBasePath(existingKB.id)
-            if (fs.existsSync(oldKbBasePath)) {
-              try { fs.rmSync(oldKbBasePath, { recursive: true, force: true }) } catch {}
-            }
-            this.kbDb.getDb().prepare('DELETE FROM knowledge_bases WHERE id = ?').run(existingKB.id)
-            targetKBId = this.createKBFromData(kbData)
-          } else {
-            targetKBId = existingKB.id
-          }
-        } else {
-          targetKBId = this.createKBFromData(kbData)
-        }
-
-        importedKBIds.push(targetKBId)
-
-        const kbBasePath = PathService.getInstance().getKBBasePath(targetKBId)
-
-        const safeKbName = kbData.name.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, '_')
-        const docFiles = zip.getEntries().filter(e =>
-          e.entryName.startsWith(`knowledge-bases/${safeKbName}/documents/`) && !e.isDirectory
-        )
-
-        for (const docFile of docFiles) {
-          const fileName = path.basename(docFile.entryName)
-          const destPath = path.join(kbBasePath, fileName)
-          fs.writeFileSync(destPath, docFile.getData())
-        }
-      }
-
-      onProgress?.('building_index', 'Building search indexes...')
-      const kbService = KnowledgeBaseService.getInstance()
-      for (const kbId of importedKBIds) {
-        try {
-          await kbService.rebuildSearchIndex(kbId)
-        } catch {}
-      }
-
       onProgress?.('complete', 'Package import complete')
       return { success: true, employeeId, warnings }
     } catch (error) {
@@ -407,88 +339,6 @@ export class EmployeeExportPackageService {
       onProgress?.('error', errorMessage)
       return { success: false, error: errorMessage }
     }
-  }
-
-  private createKBFromData(kbData: any): string {
-    const kbId = generateId()
-    const now = Math.floor(Date.now() / 1000)
-
-    const kbPath = PathService.getInstance().getKBBasePath(kbId)
-
-    this.kbDb.getDb().prepare(`
-      INSERT INTO knowledge_bases (id, name, description, root_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(kbId, kbData.name, kbData.description || '', kbPath, now, now)
-
-    const docIdMap = new Map<string, string>()
-    for (const doc of kbData.documents || []) {
-      const newDocId = generateId()
-      docIdMap.set(doc.id, newDocId)
-
-      let parsedJsonPath: string | null = null
-      if (doc.parsed_json) {
-        const parseDir = path.join(kbPath, '_parsed', newDocId)
-        if (!fs.existsSync(parseDir)) {
-          fs.mkdirSync(parseDir, { recursive: true })
-        }
-        parsedJsonPath = path.join(parseDir, 'parsed.json')
-        fs.writeFileSync(parsedJsonPath, doc.parsed_json, 'utf-8')
-      }
-
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_documents (id, kb_id, file_id, original_name, type, size, hash, parsed_json_path, parse_status, is_reused, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        newDocId, kbId, null, doc.original_name, doc.type, doc.size, doc.hash,
-        parsedJsonPath, doc.parse_status || 'pending', 0,
-        doc.created_at || now, doc.updated_at || now
-      )
-    }
-
-    for (const p of kbData.paragraphs || []) {
-      const newDocId = docIdMap.get(p.document_id)
-      if (!newDocId) continue
-
-      const pId = generateId()
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_paragraphs (id, kb_id, document_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, summary, keywords_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(
-        pId, kbId, newDocId, p.title, p.title_path || null,
-        p.level || 1, p.paragraph_index ?? 0,
-        p.start_offset, p.end_offset, p.content || '',
-        p.summary || null, p.keywords_json || '[]'
-      )
-    }
-
-    for (const ds of kbData.docSummaries || []) {
-      const newDocId = docIdMap.get(ds.document_id)
-      if (!newDocId) continue
-
-      const id = generateId()
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_document_summaries (id, kb_id, document_id, summary, keywords_json, main_topics_json, toc_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(
-        id, kbId, newDocId, ds.summary || '',
-        ds.keywords_json || '[]', ds.main_topics_json || '[]',
-        ds.toc_json || '[]'
-      )
-    }
-
-    if (kbData.globalSummary) {
-      const gs = kbData.globalSummary
-      const id = generateId()
-      this.kbDb.getDb().prepare(`
-        INSERT INTO kb_global_summaries (id, kb_id, summary, key_topics_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, unixepoch(), unixepoch())
-      `).run(
-        id, kbId, gs.summary || '',
-        gs.key_topics_json || '[]'
-      )
-    }
-
-    return kbId
   }
 
   private addDirectoryToZip(zip: AdmZip, dirPath: string, zipPath: string): void {
@@ -539,3 +389,5 @@ export class EmployeeExportPackageService {
     return result
   }
 }
+
+export default EmployeeExportPackageService

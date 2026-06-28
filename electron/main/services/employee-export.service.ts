@@ -1,5 +1,4 @@
 import DatabaseService from './database.service'
-import KBDatabaseService from './kb-database.service'
 import { EmployeeExportConfigService } from './employee-export-config.service'
 import { EmployeeExportPackageService } from './employee-export-package.service'
 
@@ -10,9 +9,8 @@ class EmployeeExportService {
 
   private constructor() {
     const db = DatabaseService.getInstance()
-    const kbDb = KBDatabaseService.getInstance()
     this.configService = new EmployeeExportConfigService(db)
-    this.packageService = new EmployeeExportPackageService(db, kbDb, this.configService)
+    this.packageService = new EmployeeExportPackageService(db, this.configService)
   }
 
   static getInstance(): EmployeeExportService {

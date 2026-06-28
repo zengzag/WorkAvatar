@@ -2,22 +2,44 @@ import KMSService from '../../kms/kms.service'
 import type { ToolDefinition, ToolHandlerContext } from './types'
 
 /**
+ * 合集ID引用（用于在会话级缓存中绑定当前选中的合集）
+ */
+export interface CollectionIdsRef {
+  current: string[]
+}
+
+/**
  * 创建 KMS 本地搜索工具集
  *
- * 暴露本地知识库搜索引擎的能力给数字员工，支持：
- * - kms_search: 关键词/语义/混合检索本地文件
- * - kms_agent_search: AI 智能检索（子智能体内部闭环，输出结论+溯源，中间过程通过 onProgress 实时推送至UI）
+ * 暴露本地资料库搜索引擎的能力给数字员工，支持：
+ * - kms_search: 关键词/语义/混合检索（支持按合集过滤）
+ * - kms_agent_search: AI 智能检索（子智能体内部闭环，输出结论+溯源，支持按合集过滤）
  * - kms_get_content: 获取文件内容（支持段落/偏移/行号定位）
+ *
+ * @param collectionIdsRef 当前会话选中的合集ID列表（可选，未选中时搜索全部索引文件）
  */
-export function createKMSTools(): ToolDefinition[] {
+export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinition[] {
   const kmsService = KMSService.getInstance()
+
+  /**
+   * 解析本次调用的合集过滤范围：
+   * - 显式传入 collection_ids 时优先使用
+   * - 否则回退到 collectionIdsRef.current（会话级选中）
+   * - 两者都为空时返回 undefined（搜索全部）
+   */
+  function resolveCollectionIds(args: any): string[] | undefined {
+    const explicit = Array.isArray(args?.collection_ids) ? args.collection_ids as string[] : []
+    if (explicit.length > 0) return explicit
+    const ref = collectionIdsRef?.current || []
+    return ref.length > 0 ? ref : undefined
+  }
 
   // kms_search: 本地文件检索
   const kmsSearchTool: ToolDefinition = {
     id: 'kms_search',
     name: 'kms_search',
     title: '本地文件检索',
-    description: '对本地索引目录中的文件进行关键词、语义或混合检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。返回文件名、路径、匹配片段和定位信息。',
+    description: '对本地资料库中的文件进行关键词、语义或混合检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。返回文件名、路径、匹配片段和定位信息。可通过 collection_ids 限定到指定合集；未指定时按会话默认范围（如有）或全部索引文件检索。',
     parameters: {
       type: 'object',
       properties: {
@@ -42,6 +64,11 @@ export function createKMSTools(): ToolDefinition[] {
           description: '是否启用混合搜索（关键词+语义，默认false）。混合搜索能兼顾精确匹配和语义相似',
           default: false,
         },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '限定检索的合集ID列表（可选）。传入后只在指定合集内的文件中检索。不传则按会话默认范围或全部索引文件。',
+        },
         file_extensions: {
           type: 'array',
           items: { type: 'string' },
@@ -60,15 +87,20 @@ export function createKMSTools(): ToolDefinition[] {
         const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
         const useSemantic = Boolean(args.use_semantic)
         const useHybrid = Boolean(args.use_hybrid)
+        const collectionIds = resolveCollectionIds(args)
 
         const results = await kmsService.search(query, {
           topK,
           useSemantic: useSemantic || useHybrid,
+          collectionIds,
           fileExtensions: args.file_extensions,
         })
 
         if (results.length === 0) {
           let msg = `本地搜索无结果："${query}"。`
+          if (collectionIds && collectionIds.length > 0) {
+            msg += ' 当前限定在指定合集中检索，可尝试不传 collection_ids 搜索全部资料库。'
+          }
           if (!useSemantic && !useHybrid) {
             msg += ' 建议：尝试启用语义搜索(use_semantic:true)或混合搜索(use_hybrid:true)'
           }
@@ -83,7 +115,8 @@ export function createKMSTools(): ToolDefinition[] {
           hybrid: '混合',
         }
 
-        let output = `${results.length} 条结果${useHybrid ? '(混合)' : useSemantic ? '(语义)' : '(关键词)'}:\n\n`
+        const scopeLabel = collectionIds && collectionIds.length > 0 ? `(合集${collectionIds.length}个)` : ''
+        let output = `${results.length} 条结果${useHybrid ? '(混合)' : useSemantic ? '(语义)' : '(关键词)'}${scopeLabel}:\n\n`
         for (let i = 0; i < results.length; i++) {
           const r = results[i]
           const typeLabel = typeLabels[r.match_type] || r.match_type
@@ -117,7 +150,7 @@ export function createKMSTools(): ToolDefinition[] {
     id: 'kms_agent_search',
     name: 'kms_agent_search',
     title: '本地AI智能检索',
-    description: '使用独立检索子智能体对本地文件进行深度检索。自动识别查询意图（定位/概念/趋势/分析），多轮检索后输出核心结论和精准溯源信息。适合需要综合分析、趋势梳理、概念解释的复杂查询。',
+    description: '使用独立检索子智能体对本地资料库进行深度检索。自动识别查询意图（定位/概念/趋势/分析），多轮检索后输出核心结论和精准溯源信息。适合需要综合分析、趋势梳理、概念解释的复杂查询。可通过 collection_ids 限定到指定合集。',
     parameters: {
       type: 'object',
       properties: {
@@ -132,6 +165,11 @@ export function createKMSTools(): ToolDefinition[] {
           maximum: 5,
           default: 3,
         },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '限定检索的合集ID列表（可选）。传入后只在指定合集内的文件中检索。',
+        },
       },
       required: ['query'],
     },
@@ -144,9 +182,11 @@ export function createKMSTools(): ToolDefinition[] {
         }
 
         const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
+        const collectionIds = resolveCollectionIds(args)
 
         const result = await kmsService.agentSearch(query, {
           maxRounds,
+          collectionIds,
           onProgress: (step) => {
             // 中间过程仅推送到UI展示，不进入LLM上下文
             context?.onProgress?.(step)
@@ -189,7 +229,7 @@ export function createKMSTools(): ToolDefinition[] {
     id: 'kms_get_content',
     name: 'kms_get_content',
     title: '获取本地文件内容',
-    description: '获取本地索引文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 或 kms_agent_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
+    description: '获取本地资料库中文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 或 kms_agent_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
     parameters: {
       type: 'object',
       properties: {

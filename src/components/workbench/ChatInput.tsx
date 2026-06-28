@@ -31,13 +31,13 @@ const ChatInput: React.FC<{
   onImagesChange: (images: AttachedImage[]) => void
   selectedModels: ModelSelection[]
   onModelsChange: (models: ModelSelection[]) => void
-  selectedKbIds: string[]
-  onSelectedKbIdsChange: (ids: string[]) => void
-  allKBs: any[]
+  selectedCollectionIds: string[]
+  onSelectedCollectionIdsChange: (ids: string[]) => void
+  allCollections: any[]
   minimalMode: boolean
   onMinimalModeChange: (enabled: boolean) => void
   canToggleMinimalMode: boolean
-}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs, minimalMode, onMinimalModeChange, canToggleMinimalMode }) => {
+}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -240,34 +240,34 @@ const ChatInput: React.FC<{
     </div>
   )
 
-  const kbPickerContent = (
+  const collectionPickerContent = (
     <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
-        <span>{t('workbench.selectedKbCount', { count: selectedKbIds.length })}</span>
-        {allKBs.length > 0 && (
+        <span>{t('workbench.selectedKbCount', { count: selectedCollectionIds.length })}</span>
+        {allCollections.length > 0 && (
           <>
             <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
-              onClick={() => onSelectedKbIdsChange(allKBs.map((kb: any) => kb.id))}>
+              onClick={() => onSelectedCollectionIdsChange(allCollections.map((c: any) => c.id))}>
               {t('common.selectAll')}
             </Button>
             <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
-              onClick={() => onSelectedKbIdsChange([])}>
+              onClick={() => onSelectedCollectionIdsChange([])}>
               {t('common.clearAll')}
             </Button>
           </>
         )}
       </div>
       <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {allKBs.map((kb: any) => {
-          const selected = selectedKbIds.includes(kb.id)
+        {allCollections.map((c: any) => {
+          const selected = selectedCollectionIds.includes(c.id)
           return (
             <div
-              key={kb.id}
+              key={c.id}
               onClick={() => {
                 if (selected) {
-                  onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kb.id))
+                  onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== c.id))
                 } else {
-                  onSelectedKbIdsChange([...selectedKbIds, kb.id])
+                  onSelectedCollectionIdsChange([...selectedCollectionIds, c.id])
                 }
               }}
               style={{
@@ -285,12 +285,12 @@ const ChatInput: React.FC<{
             >
               <Checkbox checked={selected} style={{ pointerEvents: 'none' }} />
               <DatabaseOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
-              <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{kb.name}</span>
+              <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
               {selected && <CheckOutlined style={{ fontSize: 11, color: token.colorPrimary }} />}
             </div>
           )
         })}
-        {allKBs.length === 0 && (
+        {allCollections.length === 0 && (
           <div style={{ padding: '16px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
             {t('creationWizard.noKbAvailable')}
           </div>
@@ -324,16 +324,16 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      {selectedKbIds.length > 0 && (
+      {selectedCollectionIds.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
-          {selectedKbIds.map(kbId => {
-            const kb = allKBs.find((k: any) => k.id === kbId)
-            if (!kb) return null
+          {selectedCollectionIds.map(colId => {
+            const col = allCollections.find((c: any) => c.id === colId)
+            if (!col) return null
             return (
-              <div key={kbId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
+              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
                 <DatabaseOutlined style={{ fontSize: 10 }} />
-                <span>{kb.name}</span>
-                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kbId))} />
+                <span>{col.name}</span>
+                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== colId))} />
               </div>
             )
           })}
@@ -389,7 +389,7 @@ const ChatInput: React.FC<{
                   title={t('workbench.compareModels')} />
               </Popover>
               <Popover
-                content={kbPickerContent}
+                content={collectionPickerContent}
                 trigger="click"
                 placement="topLeft"
                 arrow={false}
@@ -398,7 +398,7 @@ const ChatInput: React.FC<{
                 open={showKbPicker}
               >
                 <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
-                  style={{ color: selectedKbIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                  style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                   title={t('workbench.knowledgeBase')} />
               </Popover>
               <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>

@@ -86,7 +86,7 @@ export function registerEmployeeHandlers(
     try {
       const result = await profilingService.analyzeForEmployee(
         'new',
-        params.kb_ids,
+        params.collection_ids,
         params.provider_id,
         params.model_id,
         params.additional_context,

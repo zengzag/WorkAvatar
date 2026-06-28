@@ -7,10 +7,9 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
-import { allBuiltinTools, createKMSTools, createKBAgentTools } from '../services/agent/tools'
+import { allBuiltinTools, createKMSTools, createKMSCollectionTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
-import KnowledgeBaseService from '../services/kb.service'
 import { safeHandle } from './_shared'
 
 function getUnifiedBuiltinToolCatalog() {
@@ -22,7 +21,7 @@ function getUnifiedBuiltinToolCatalog() {
     category: 'agent' as const,
   }))
 
-  // KMS 本地搜索工具
+  // KMS 资料库工具（搜索 + 内容获取）
   const kmsTools = createKMSTools().map(t => ({
     id: t.id,
     name: t.name,
@@ -31,19 +30,19 @@ function getUnifiedBuiltinToolCatalog() {
     category: 'kms' as const,
   }))
 
-  // 知识库工具
-  const kbTools = createKBAgentTools(KnowledgeBaseService.getInstance(), { current: [] }).map(t => ({
+  // KMS 合集管理工具
+  const kmsCollectionTools = createKMSCollectionTools({ current: [] }).map(t => ({
     id: t.id,
     name: t.name,
     title: t.title,
     description: t.description,
-    category: 'kb' as const,
+    category: 'kms_collection' as const,
   }))
 
   const seen = new Set<string>()
   const unified: Array<{ id: string; name: string; title: string; description: string; category: string }> = []
 
-  for (const tool of [...agentTools, ...kmsTools, ...kbTools]) {
+  for (const tool of [...agentTools, ...kmsTools, ...kmsCollectionTools]) {
     if (!seen.has(tool.id)) {
       seen.add(tool.id)
       unified.push(tool)

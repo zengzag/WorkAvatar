@@ -55,8 +55,8 @@ const CreationWizard: React.FC = () => {
   const navigate = useNavigate()
   const { token } = theme.useToken()
   const [currentStep, setCurrentStep] = useState(0)
-  const [allKBs, setAllKBs] = useState<any[]>([])
-  const [selectedKBIds, setSelectedKBIds] = useState<string[]>([])
+  const [allCollections, setAllCollections] = useState<any[]>([])
+  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([])
   const [profile, setProfile] = useState<EmployeeProfile | null>(null)
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [loading, setLoading] = useState(false)
@@ -115,14 +115,14 @@ const CreationWizard: React.FC = () => {
 
   useEffect(() => {
     loadProviders()
-    loadAllKBs()
+    loadAllCollections()
     loadBuiltinTools()
   }, [])
 
-  const loadAllKBs = async () => {
+  const loadAllCollections = async () => {
     try {
-      const result = await window.electronAPI.kb.list()
-      setAllKBs(result)
+      const result = await window.electronAPI.kms.listCollections()
+      setAllCollections(result || [])
     } catch {
       message.error(t('creationWizard.loadKbFailed'))
     }
@@ -153,7 +153,8 @@ const CreationWizard: React.FC = () => {
       setBuiltinTools(result)
       const defaultToolIds = result
         .filter((tool: any) =>
-          tool.name === 'kb_search' ||
+          tool.name === 'kms_search' ||
+          tool.name === 'kms_agent_search' ||
           tool.name === 'read_file' ||
           tool.name === 'write_file'
         )
@@ -199,7 +200,7 @@ const CreationWizard: React.FC = () => {
       const enhancedDescription = businessDescription || undefined
 
       const result = await window.electronAPI.employee.analyzeProfile({
-        kb_ids: selectedKBIds,
+        collection_ids: selectedCollectionIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: enhancedDescription || undefined,
@@ -428,7 +429,7 @@ const CreationWizard: React.FC = () => {
     { title: t('creationWizard.stepConfirmCreate'), icon: <CheckOutlined /> },
   ]
 
-  const displayKBs = allKBs
+  const displayCollections = allCollections
 
   const renderStep1 = () => (
     <div>
@@ -450,22 +451,22 @@ const CreationWizard: React.FC = () => {
               <Space>
                 <Button
                   size="small"
-                  onClick={() => setSelectedKBIds(displayKBs.map((kb: any) => kb.id))}
+                  onClick={() => setSelectedCollectionIds(displayCollections.map((c: any) => c.id))}
                 >
                   {t('common.selectAll')}
                 </Button>
-                <Button size="small" onClick={() => setSelectedKBIds([])}>
+                <Button size="small" onClick={() => setSelectedCollectionIds([])}>
                   {t('common.clearAll')}
                 </Button>
               </Space>
             </div>
-            {displayKBs.length > 0 ? (
+            {displayCollections.length > 0 ? (
               <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>
-                {displayKBs.map((kb: any) => {
-                  const isSelected = selectedKBIds.includes(kb.id)
+                {displayCollections.map((c: any) => {
+                  const isSelected = selectedCollectionIds.includes(c.id)
                   return (
                     <div
-                      key={kb.id}
+                      key={c.id}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -478,9 +479,9 @@ const CreationWizard: React.FC = () => {
                         checked={isSelected}
                         onChange={(e) => {
                           if (e.target.checked) {
-                            setSelectedKBIds((prev) => [...prev, kb.id])
+                            setSelectedCollectionIds((prev) => [...prev, c.id])
                           } else {
-                            setSelectedKBIds((prev) => prev.filter((i) => i !== kb.id))
+                            setSelectedCollectionIds((prev) => prev.filter((i) => i !== c.id))
                           }
                         }}
                         style={{ marginRight: 12 }}
@@ -489,12 +490,12 @@ const CreationWizard: React.FC = () => {
                         <div style={{ marginBottom: 2 }}>
                           <Space>
                             <DatabaseOutlined style={{ color: token.colorPrimary }} />
-                            <Text strong>{kb.name}</Text>
-                            <Tag>{t('common.documents', { count: kb.doc_count || 0 })}</Tag>
+                            <Text strong>{c.name}</Text>
+                            <Tag>{t('common.documents', { count: c.file_count || 0 })}</Tag>
                           </Space>
                         </div>
                         <Text type="secondary" style={{ fontSize: 12 }}>
-                          {kb.description || t('common.noDescription')}
+                          {c.description || t('common.noDescription')}
                         </Text>
                       </div>
                     </div>

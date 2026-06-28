@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Input, Button, Radio, Card, Tag, Empty, Spin, Typography, Space, Tooltip,
@@ -63,6 +63,9 @@ interface KMSSearchPanelProps {
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
   onPreview: (result: SearchResult) => void
+  /** 受控的合集筛选；用于跨视图联动（如从合集页"在此合集中搜索"） */
+  filterCollectionIds?: string[]
+  onFilterCollectionIdsChange?: (ids: string[]) => void
 }
 
 const MATCH_TYPE_CONFIG: Record<string, { color: string; labelKey: string }> = {
@@ -134,13 +137,25 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   onOpenFile,
   onOpenFileDir,
   onPreview,
+  filterCollectionIds: controlledCollectionIds,
+  onFilterCollectionIdsChange,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
   const [filterDirIds, setFilterDirIds] = useState<string[]>([])
+  const [internalCollectionIds, setInternalCollectionIds] = useState<string[]>([])
+  const filterCollectionIds = controlledCollectionIds ?? internalCollectionIds
+  const setFilterCollectionIds = (ids: string[]) => {
+    if (onFilterCollectionIdsChange) {
+      onFilterCollectionIdsChange(ids)
+    } else {
+      setInternalCollectionIds(ids)
+    }
+  }
   const [filterExtensions, setFilterExtensions] = useState<string[]>([])
   const [filterTimeRange, setFilterTimeRange] = useState<[number, number] | null>(null)
+  const [collectionOptions, setCollectionOptions] = useState<{ label: string; value: string }[]>([])
 
   const dirOptions = useMemo(() => {
     return dirs.map((d) => ({
@@ -153,16 +168,28 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     return FILE_FORMAT_OPTIONS.map((ext) => ({ label: ext, value: ext }))
   }, [])
 
+  // 加载合集列表用于筛选
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.kms.listCollections().then((result: any[]) => {
+      if (cancelled) return
+      const opts = (result || []).map((c: any) => ({ label: c.name, value: c.id }))
+      setCollectionOptions(opts)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const buildFilters = useCallback((): SearchFilters => {
     const filters: SearchFilters = {}
     if (filterDirIds.length > 0) filters.dirIds = filterDirIds
+    if (filterCollectionIds.length > 0) filters.collectionIds = filterCollectionIds
     if (filterExtensions.length > 0) filters.fileExtensions = filterExtensions
     if (filterTimeRange) {
       filters.timeRangeStart = filterTimeRange[0]
       filters.timeRangeEnd = filterTimeRange[1]
     }
     return filters
-  }, [filterDirIds, filterExtensions, filterTimeRange])
+  }, [filterDirIds, filterCollectionIds, filterExtensions, filterTimeRange])
 
   const handleSearch = useCallback(() => {
     if (searchQuery.trim()) {
@@ -611,9 +638,9 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
               <Space size={4}>
                 <FilterOutlined />
                 <span>{t('kms.advancedFilters')}</span>
-                {(filterDirIds.length > 0 || filterExtensions.length > 0 || filterTimeRange) && (
+                {(filterDirIds.length > 0 || filterCollectionIds.length > 0 || filterExtensions.length > 0 || filterTimeRange) && (
                   <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                    {filterDirIds.length + filterExtensions.length + (filterTimeRange ? 1 : 0)}
+                    {filterDirIds.length + filterCollectionIds.length + filterExtensions.length + (filterTimeRange ? 1 : 0)}
                   </Tag>
                 )}
               </Space>
@@ -633,6 +660,22 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                     onChange={setFilterDirIds}
                     options={dirOptions}
                     maxTagCount="responsive"
+                  />
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                    {t('kms.filterCollection')}
+                  </Text>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    style={{ width: '100%' }}
+                    placeholder={t('kms.collections.noCollections')}
+                    value={filterCollectionIds}
+                    onChange={setFilterCollectionIds}
+                    options={collectionOptions}
+                    maxTagCount="responsive"
+                    notFoundContent={t('kms.collections.noCollections')}
                   />
                 </div>
                 <div>

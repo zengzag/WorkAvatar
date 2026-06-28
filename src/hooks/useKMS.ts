@@ -80,6 +80,7 @@ export interface SearchTraceStep {
 
 export interface SearchFilters {
   dirIds?: string[]
+  collectionIds?: string[]
   fileExtensions?: string[]
   timeRangeStart?: number
   timeRangeEnd?: number
@@ -285,6 +286,7 @@ export function useKMS() {
           topK: 10,
           maxRounds: 3,
           dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
           fileExtensions: filters?.fileExtensions,
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
@@ -324,6 +326,7 @@ export function useKMS() {
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
           dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
         })
         setAgentResult(null)
         setSearchResults(results || [])

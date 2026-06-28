@@ -14,11 +14,3 @@ export function generateUUID(): string {
   return generateId()
 }
 
-export function createKbIdValidator(kbIdsRef: { current: string[] }) {
-  return (kbId: string | undefined): string | null => {
-    const allowedKbIds = kbIdsRef.current
-    if (!kbId) return allowedKbIds.length > 0 ? allowedKbIds[0] : null
-    if (!allowedKbIds.includes(kbId)) return null
-    return kbId
-  }
-}

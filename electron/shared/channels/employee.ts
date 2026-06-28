@@ -69,7 +69,7 @@ export interface ConversationCreateParams {
 }
 
 export interface EmployeeProfileAnalyzeParams {
-  kb_ids: string[]
+  collection_ids: string[]
   provider_id?: string
   model_id?: string
   additional_context?: string

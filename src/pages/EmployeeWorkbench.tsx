@@ -56,7 +56,7 @@ const EmployeeWorkbench: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
-  const [allKBs, setAllKBs] = useState<any[]>([])
+  const [allCollections, setAllCollections] = useState<any[]>([])
 
   // 消息列表窗口化：长对话只渲染最后 N 条，避免一次性 mount 数百个 MessageBubble
   // + ReactMarkdown + CodeBlock 导致切换对话卡顿
@@ -68,7 +68,7 @@ const EmployeeWorkbench: React.FC = () => {
 
   useEffect(() => {
     loadEmployees()
-    loadAllKBs()
+    loadAllCollections()
   }, [])
 
   useEffect(() => {
@@ -88,10 +88,10 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }
 
-  const loadAllKBs = async () => {
+  const loadAllCollections = async () => {
     try {
-      const result = await window.electronAPI.kb.list()
-      setAllKBs(result)
+      const result = await window.electronAPI.kms.listCollections()
+      setAllCollections(result || [])
     } catch {}
   }
 
@@ -207,8 +207,8 @@ const EmployeeWorkbench: React.FC = () => {
     handleLlmChange,
     enableThinking,
     setEnableThinking,
-    selectedKbIds,
-    setSelectedKbIds,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     showSidePanel,
@@ -770,9 +770,9 @@ const EmployeeWorkbench: React.FC = () => {
             onImagesChange={setAttachedImages}
             selectedModels={selectedModels}
             onModelsChange={setSelectedModels}
-            selectedKbIds={selectedKbIds}
-            onSelectedKbIdsChange={setSelectedKbIds}
-            allKBs={allKBs}
+            selectedCollectionIds={selectedCollectionIds}
+            onSelectedCollectionIdsChange={setSelectedCollectionIds}
+            allCollections={allCollections}
             minimalMode={minimalMode}
             onMinimalModeChange={handleToggleMinimalMode}
             canToggleMinimalMode={messages.length === 0}

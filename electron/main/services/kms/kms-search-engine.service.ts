@@ -37,6 +37,10 @@ export interface SearchOptions {
   timeRangeStart?: number
   timeRangeEnd?: number
   fileExtensions?: string[]
+  /** 按合集过滤：只搜索属于指定合集的文件 */
+  collectionIds?: string[]
+  /** 按索引目录过滤：只搜索指定目录下的文件 */
+  dirIds?: string[]
 }
 
 export interface EmbeddingEntry {
@@ -581,6 +585,20 @@ class KMSSearchEngineService {
       params.push(...options.fileExtensions)
     }
 
+    // 合集过滤
+    if (options?.collectionIds && options.collectionIds.length > 0) {
+      const placeholders = options.collectionIds.map(() => '?').join(',')
+      whereClause += ` AND si.file_id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+      params.push(...options.collectionIds)
+    }
+
+    // 索引目录过滤
+    if (options?.dirIds && options.dirIds.length > 0) {
+      const placeholders = options.dirIds.map(() => '?').join(',')
+      whereClause += ` AND si.file_id IN (SELECT id FROM kms_files WHERE dir_id IN (${placeholders}))`
+      params.push(...options.dirIds)
+    }
+
     return { whereClause, params }
   }
 
@@ -593,13 +611,65 @@ class KMSSearchEngineService {
   ): Array<{ sourceType: string; sourceId: string; fileId: string; score: number }> {
     const topK = options?.topK || 10
 
+    // 将 collectionIds / dirIds 解析为 fileIds，与现有 fileIds 取交集
+    const effectiveOptions = this.resolveFileFilter(options)
+
     // 优先用 vec0 KNN 索引；维度不匹配或未就绪时回退到 JS 全扫描
     if (this.vecReady && this.vecDimension === queryEmbedding.length) {
-      const vecResult = this.vectorSearchViaVec0(queryEmbedding, topK, options)
+      const vecResult = this.vectorSearchViaVec0(queryEmbedding, topK, effectiveOptions)
       if (vecResult !== null) return vecResult
     }
 
-    return this.vectorSearchViaJS(queryEmbedding, topK, options)
+    return this.vectorSearchViaJS(queryEmbedding, topK, effectiveOptions)
+  }
+
+  /**
+   * 解析 collectionIds / dirIds 为 fileIds，与现有 fileIds 取交集
+   * 用于向量搜索（vec0 与 JS 扫描均依赖 fileIds 过滤）
+   * 返回新的 options 对象，fileIds 字段被替换为合并后的结果
+   */
+  private resolveFileFilter(options?: SearchOptions): SearchOptions | undefined {
+    if (!options) return options
+    const { collectionIds, dirIds, fileIds } = options
+
+    // 无合集/目录过滤，直接返回原 options
+    if (!collectionIds?.length && !dirIds?.length) return options
+
+    const sets: string[][] = []
+    if (fileIds?.length) sets.push(fileIds)
+
+    if (collectionIds?.length) {
+      const placeholders = collectionIds.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT DISTINCT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders})`
+      ).all(...collectionIds) as any[]
+      sets.push(rows.map(r => r.file_id))
+    }
+
+    if (dirIds?.length) {
+      const placeholders = dirIds.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT id FROM kms_files WHERE dir_id IN (${placeholders})`
+      ).all(...dirIds) as any[]
+      sets.push(rows.map(r => r.id))
+    }
+
+    // 多组条件取交集，单组直接使用
+    let resolved: string[]
+    if (sets.length === 0) {
+      resolved = []
+    } else if (sets.length === 1) {
+      resolved = sets[0]
+    } else {
+      let result = new Set(sets[0])
+      for (let i = 1; i < sets.length; i++) {
+        const s = new Set(sets[i])
+        result = new Set([...result].filter(x => s.has(x)))
+      }
+      resolved = [...result]
+    }
+
+    return { ...options, fileIds: resolved }
   }
 
   /**
@@ -1009,6 +1079,20 @@ class KMSSearchEngineService {
       const placeholders = options.fileExtensions.map(() => '?').join(',')
       whereClause += ` AND f.file_ext IN (${placeholders})`
       params.push(...options.fileExtensions)
+    }
+
+    // 合集过滤：只搜索属于指定合集的文件
+    if (options?.collectionIds && options.collectionIds.length > 0) {
+      const placeholders = options.collectionIds.map(() => '?').join(',')
+      whereClause += ` AND kms_fts.file_id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+      params.push(...options.collectionIds)
+    }
+
+    // 索引目录过滤：只搜索指定目录下的文件
+    if (options?.dirIds && options.dirIds.length > 0) {
+      const placeholders = options.dirIds.map(() => '?').join(',')
+      whereClause += ` AND kms_fts.file_id IN (SELECT id FROM kms_files WHERE dir_id IN (${placeholders}))`
+      params.push(...options.dirIds)
     }
 
     return { whereClause, params }

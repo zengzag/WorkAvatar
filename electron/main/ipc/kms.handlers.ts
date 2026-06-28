@@ -11,6 +11,12 @@ import type {
   KMSSetSettingsParams,
   KMSRecordSearchHistoryParams,
   KMSGetSearchHistoryParams,
+  KMSCreateCollectionParams,
+  KMSUpdateCollectionParams,
+  KMSAddFileToCollectionParams,
+  KMSAddFilesToCollectionParams,
+  KMSRemoveFileFromCollectionParams,
+  KMSSetCollectionSummaryParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -52,6 +58,8 @@ export function registerKMSHandlers(): void {
       timeRangeStart: params.timeRangeStart,
       timeRangeEnd: params.timeRangeEnd,
       fileExtensions: params.fileExtensions,
+      collectionIds: params.collectionIds,
+      dirIds: params.dirIds,
     })
   })
 
@@ -63,6 +71,7 @@ export function registerKMSHandlers(): void {
         maxRounds: params.maxRounds,
         topK: params.topK,
         dirIds: params.dirIds,
+        collectionIds: params.collectionIds,
         fileExtensions: params.fileExtensions,
         timeRangeStart: params.timeRangeStart,
         timeRangeEnd: params.timeRangeEnd,
@@ -193,6 +202,15 @@ export function registerKMSHandlers(): void {
     return kmsService.getFileSummaries(params)
   })
 
+  // 文件内容浏览（段落、TOC）
+  safeHandle(IPC_CHANNELS.KMS_GET_FILE_PARAGRAPHS, async (fileId: string) => {
+    return kmsService.getFileParagraphs(fileId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_FILE_TOC, async (fileId: string) => {
+    return kmsService.getFileToc(fileId)
+  })
+
   // ==================== 搜索历史 ====================
   safeHandle(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, async (params: KMSRecordSearchHistoryParams) => {
     kmsService.recordSearchHistory(params)
@@ -215,6 +233,71 @@ export function registerKMSHandlers(): void {
   safeHandle(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, async (id: string) => {
     kmsService.deleteSearchHistory(id)
     return { success: true }
+  })
+
+  // ==================== 合集管理 ====================
+  safeHandle(IPC_CHANNELS.KMS_LIST_COLLECTIONS, async () => {
+    return kmsService.listCollections()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_CREATE_COLLECTION, async (params: KMSCreateCollectionParams) => {
+    return kmsService.createCollection(params.name, params.description || '')
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_UPDATE_COLLECTION, async (params: KMSUpdateCollectionParams) => {
+    return kmsService.updateCollection(params.id, params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_COLLECTION, async (id: string) => {
+    kmsService.deleteCollection(id)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION, async (id: string) => {
+    return kmsService.getCollection(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_FILE_TO_COLLECTION, async (params: KMSAddFileToCollectionParams) => {
+    return kmsService.addFileToCollection(params.collectionId, params.filePath)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_FILES_TO_COLLECTION, async (params: KMSAddFilesToCollectionParams) => {
+    return kmsService.addFilesToCollection(params.collectionId, params.filePaths)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_REMOVE_FILE_FROM_COLLECTION, async (params: KMSRemoveFileFromCollectionParams) => {
+    kmsService.removeFileFromCollection(params.collectionId, params.fileId)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_LIST_FILES_IN_COLLECTION, async (collectionId: string) => {
+    return kmsService.listFilesInCollection(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION_STATS, async (collectionId: string) => {
+    return kmsService.getCollectionStats(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION_SUMMARY, async (collectionId: string) => {
+    return kmsService.getCollectionSummary(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SET_COLLECTION_SUMMARY, async (params: KMSSetCollectionSummaryParams) => {
+    kmsService.setCollectionSummary(params.collectionId, params.summary, params.keyTopics || [])
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_COLLECTION_SUMMARY, async (collectionId: string) => {
+    kmsService.deleteCollectionSummary(collectionId)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_COLLECTION_SUMMARY, async (collectionId: string) => {
+    return kmsService.generateCollectionSummary(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SCAN_DIR_FILES, async (params: { dirPath: string; extensions?: string[] }) => {
+    return kmsService.scanDirFiles(params.dirPath, params.extensions)
   })
 
   // ==================== KMS MCP 服务 ====================

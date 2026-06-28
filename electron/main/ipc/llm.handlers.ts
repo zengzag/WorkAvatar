@@ -111,7 +111,7 @@ export function registerLLMHandlers(
               model_id: params.model_id,
               messages: params.messages,
               use_skills: params.use_skills !== false,
-              kb_ids: params.kb_ids || [],
+              collection_ids: params.collection_ids || [],
               enable_thinking: params.enable_thinking,
               conversation_id: params.conversation_id,
               minimal_mode: params.minimal_mode,
