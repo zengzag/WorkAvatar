@@ -909,48 +909,52 @@ class KBDocumentService {
     this.searchEngine.rebuildIndexForKb(kbId)
 
     const docs = this.db.prepare(
-      "SELECT * FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
+      "SELECT id, kb_id, original_name, parsed_json_path FROM kb_documents WHERE kb_id = ? AND parse_status = 'completed'"
     ).all(kbId) as DBKBDocument[]
 
-    for (const doc of docs) {
-      this.searchEngine.indexDocumentTitle(kbId, doc.id, doc.original_name)
-
-      const content = doc.parsed_json_path ? this.readDocContentFromParsedJson(doc.parsed_json_path) : ''
-      if (content) {
-        this.searchEngine.indexContentParagraphs(kbId, doc.id, content, doc.original_name)
-      }
-    }
-
     const summaries = this.db.prepare(
-      'SELECT * FROM kb_document_summaries WHERE kb_id = ?'
+      'SELECT document_id, summary, keywords_json FROM kb_document_summaries WHERE kb_id = ?'
     ).all(kbId) as DBKBDocumentSummary[]
 
-    for (const ds of summaries) {
-      this.searchEngine.indexDocumentSummary(
-        kbId,
-        ds.document_id,
-        ds.summary,
-        JSON.parse(ds.keywords_json || '[]')
-      )
-    }
-
     const paragraphs = this.db.prepare(
-      'SELECT * FROM kb_paragraphs WHERE kb_id = ?'
+      'SELECT document_id, id, title, title_path, summary, keywords_json, start_offset, end_offset FROM kb_paragraphs WHERE kb_id = ?'
     ).all(kbId) as DBKBParagraph[]
 
-    for (const p of paragraphs) {
-      this.searchEngine.indexParagraph(
-        kbId,
-        p.document_id,
-        p.id,
-        p.title,
-        p.title_path || '',
-        p.summary || '',
-        JSON.parse(p.keywords_json || '[]'),
-        p.start_offset,
-        p.end_offset
-      )
-    }
+    // 整个索引重建包裹在单个事务中：避免每条段落单独 commit，崩溃时保持原子性
+    const tx = this.db.transaction(() => {
+      for (const doc of docs) {
+        this.searchEngine.indexDocumentTitle(kbId, doc.id, doc.original_name)
+
+        const content = doc.parsed_json_path ? this.readDocContentFromParsedJson(doc.parsed_json_path) : ''
+        if (content) {
+          this.searchEngine.indexContentParagraphs(kbId, doc.id, content, doc.original_name)
+        }
+      }
+
+      for (const ds of summaries) {
+        this.searchEngine.indexDocumentSummary(
+          kbId,
+          ds.document_id,
+          ds.summary,
+          JSON.parse(ds.keywords_json || '[]')
+        )
+      }
+
+      for (const p of paragraphs) {
+        this.searchEngine.indexParagraph(
+          kbId,
+          p.document_id,
+          p.id,
+          p.title,
+          p.title_path || '',
+          p.summary || '',
+          JSON.parse(p.keywords_json || '[]'),
+          p.start_offset,
+          p.end_offset
+        )
+      }
+    })
+    tx()
 
     await this.rebuildEmbeddings(kbId)
 
@@ -990,16 +994,20 @@ class KBDocumentService {
 
     try {
       const embeddings = await this.llmClient.createEmbeddings(provider, texts, modelName)
-      for (let i = 0; i < embeddings.length && i < meta.length; i++) {
-        this.searchEngine.storeEmbedding(
-          kbId,
-          meta[i].sourceType,
-          meta[i].sourceId,
-          meta[i].documentId,
-          embeddings[i],
-          modelName || 'rebuild'
-        )
-      }
+      // 批量写入包裹在事务中：N 条 embedding 共享一次 commit
+      const tx = this.db.transaction(() => {
+        for (let i = 0; i < embeddings.length && i < meta.length; i++) {
+          this.searchEngine.storeEmbedding(
+            kbId,
+            meta[i].sourceType,
+            meta[i].sourceId,
+            meta[i].documentId,
+            embeddings[i],
+            modelName || 'rebuild'
+          )
+        }
+      })
+      tx()
     } catch (err) {
       console.warn('[KB] Failed to rebuild embeddings:', err)
     }

@@ -7,6 +7,7 @@ import 'pdf-parse'
 import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import DatabaseService from './services/database.service'
+import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import { registerIpcHandlers } from './ipc-handlers'
 import { createLogger } from './services/logger'
 
@@ -95,6 +96,22 @@ async function createWindow() {
     if (!isQuitting) {
       event.preventDefault()
       mainWindow?.hide()
+    }
+  })
+
+  // 窗口失焦时暂停 KMS 自动索引定时器，获焦时恢复（避免后台 CPU 占用）
+  mainWindow.on('blur', () => {
+    try {
+      KMSIndexManagerService.getInstance().pauseAutoIndex()
+    } catch {
+      // KMS 服务可能尚未初始化，忽略
+    }
+  })
+  mainWindow.on('focus', () => {
+    try {
+      KMSIndexManagerService.getInstance().resumeAutoIndex()
+    } catch {
+      // KMS 服务可能尚未初始化，忽略
     }
   })
 

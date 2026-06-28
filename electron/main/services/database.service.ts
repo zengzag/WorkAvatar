@@ -223,6 +223,8 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
+      -- 复合索引：支持 ORDER BY is_pinned DESC, updated_at DESC 的常见查询，避免 filesort
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
@@ -245,7 +247,37 @@ class DatabaseService {
 
     this.migrateEmployeeAddWorkspacePath()
 
+    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描）
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
+        key,
+        topic,
+        content,
+        memory_id UNINDEXED,
+        employee_id UNINDEXED,
+        tokenize='unicode61'
+      );
+    `)
+    // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）
+    this.migrateEmployeeMemoriesFTS()
+
     this.recoverStuckDocs()
+  }
+
+  /** 将已有 employee_memories 数据同步到 FTS5 表（仅执行一次） */
+  private migrateEmployeeMemoriesFTS(): void {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM employee_memories_fts').get() as { n: number }
+    if (count.n > 0) return
+    const rows = this.db.prepare('SELECT id, employee_id, key, topic, content FROM employee_memories').all() as any[]
+    if (rows.length === 0) return
+    const insert = this.db.prepare(
+      'INSERT INTO employee_memories_fts (key, topic, content, memory_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+    )
+    const tx = this.db.transaction((items: any[]) => {
+      for (const r of items) insert.run(r.key, r.topic, r.content, r.id, r.employee_id)
+    })
+    tx(rows)
+    logger.info(`Migrated ${rows.length} employee_memories rows to FTS5 table`)
   }
 
   private migrateEmployeeAddWorkspacePath(): void {

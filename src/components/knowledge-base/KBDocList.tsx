@@ -231,7 +231,8 @@ const KBDocList: React.FC<KBDocListProps> = ({
       >
         <Table
           dataSource={docs} rowKey="id" size="small" pagination={{ pageSize: 20 }}
-          scroll={{ x: 'max-content' }}
+          scroll={{ x: 'max-content', y: 500 }}
+          virtual
           columns={[
             { title: t('knowledgeBase.fileName'), dataIndex: 'original_name', key: 'name', ellipsis: true,
               render: (text: string, record: KBDocument) => (

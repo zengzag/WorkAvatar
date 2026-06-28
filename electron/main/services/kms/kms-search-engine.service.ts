@@ -741,6 +741,7 @@ class KMSSearchEngineService {
 
     const allKeys = new Set([...ftsRankMap.keys(), ...vectorScoreMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
+    const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string }; sortKey: number }> = []
 
     for (const key of allKeys) {
       const ftsRank = ftsRankMap.get(key) || 0
@@ -761,27 +762,52 @@ class KMSSearchEngineService {
       } else if (useVector && vectorScore > 0) {
         const vs = vectorSourceMap.get(key)
         if (!vs) continue
+        missingEntries.push({ key, vs, sortKey })
+      }
+    }
 
-        const indexEntry = this.db.prepare(
-          'SELECT * FROM kms_search_index WHERE source_type = ? AND source_id = ?'
-        ).get(vs.sourceType, vs.sourceId) as any
+    // 批量查询缺失的索引条目，避免 N+1（原实现每条向量命中都执行 2 次查询）
+    if (missingEntries.length > 0) {
+      const conditions = missingEntries.map(() => '(source_type = ? AND source_id = ?)').join(' OR ')
+      const params = missingEntries.flatMap(m => [m.vs.sourceType, m.vs.sourceId])
+      const indexRows = this.db.prepare(
+        `SELECT source_type, source_id, file_id, title, content, start_offset, end_offset FROM kms_search_index WHERE ${conditions}`
+      ).all(...params) as any[]
 
+      const fileIds = [...new Set(indexRows.map(r => r.file_id).filter(Boolean))]
+      const fileMap = new Map<string, { file_name: string; file_path: string }>()
+      if (fileIds.length > 0) {
+        const fileRows = this.db.prepare(
+          `SELECT id, file_name, file_path FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
+        ).all(...fileIds) as any[]
+        for (const row of fileRows) {
+          fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path })
+        }
+      }
+
+      const indexMap = new Map<string, any>()
+      for (const row of indexRows) {
+        indexMap.set(`${row.source_type}-${row.source_id}`, row)
+      }
+
+      for (const entry of missingEntries) {
+        const indexEntry = indexMap.get(`${entry.vs.sourceType}-${entry.vs.sourceId}`)
         if (indexEntry) {
-          const file = this.db.prepare('SELECT file_name, file_path FROM kms_files WHERE id = ?').get(indexEntry.file_id) as any
+          const file = fileMap.get(indexEntry.file_id)
           hybridResults.push({
             result: {
               file_id: indexEntry.file_id,
               file_name: file?.file_name || '',
               file_path: file?.file_path || '',
-              paragraph_id: vs.sourceType === 'paragraph' ? vs.sourceId : undefined,
+              paragraph_id: entry.vs.sourceType === 'paragraph' ? entry.vs.sourceId : undefined,
               paragraph_title: indexEntry.title,
               text: indexEntry.content.substring(0, 300),
               match_type: 'hybrid',
               start_offset: indexEntry.start_offset,
               end_offset: indexEntry.end_offset,
-              score: sortKey,
+              score: entry.sortKey,
             },
-            sortKey,
+            sortKey: entry.sortKey,
           })
         }
       }

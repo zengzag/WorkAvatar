@@ -314,9 +314,21 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  // scrollIntoView 节流：用 requestAnimationFrame 合并多个 token chunk 为单次滚动
+  // 避免 2000 token 流式输出触发 2000 次同步 reflow
+  const scrollRafRef = useRef<number | null>(null)
   useEffect(() => {
-    if (isUserAtBottomRef.current) {
+    if (!isUserAtBottomRef.current) return
+    if (scrollRafRef.current !== null) return // 已有 pending 帧，跳过
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    })
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current)
+        scrollRafRef.current = null
+      }
     }
   }, [messages])
 
@@ -358,8 +370,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       globalListenersCleanupRef.current = null
     }
 
-    const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk: string }) => {
-      const { sessionId, chunk } = data
+    const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk?: string; chunks?: string[] }) => {
+      const { sessionId } = data
+      // 主进程批量发送 chunks 数组（setImmediate 合并），一次性拼接减少渲染次数；
+      // 兼容旧 chunk 单字段（理论上不再出现，但保留兜底）
+      const chunk = data.chunks && data.chunks.length > 0 ? data.chunks.join('') : (data.chunk || '')
+      if (!chunk) return
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -613,7 +629,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
     _persistentListenersCleanup = cleanup
     globalListenersCleanupRef.current = cleanup
-  }, [activeConversationId, t])
+    // 依赖仅 t：listeners 通过 ref（streamStatesRef/activeConversationIdRef）读取运行时状态，
+    // 无需在切换对话时重建（原 deps 含 activeConversationId 导致每次切换都 teardown+setup 7 个监听器）
+  }, [t])
 
   const setupGlobalListenersRef = useRef(setupGlobalListeners)
   setupGlobalListenersRef.current = setupGlobalListeners

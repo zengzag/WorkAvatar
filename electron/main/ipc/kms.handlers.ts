@@ -16,26 +16,9 @@ import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
 import type { IndexProgress } from '../services/kms/kms-index-manager.service'
 import { createLogger } from '../services/logger'
+import { safeHandle } from './_shared'
 
 const logger = createLogger('KMS-Handler')
-
-/**
- * 安全执行IPC handler，捕获错误并返回可序列化的结果
- * 避免Error对象中的不可序列化属性导致 "An object could not be cloned" 错误
- */
-function safeHandle(channel: string, handler: (...args: any[]) => Promise<any>): void {
-  ipcMain.handle(channel, async (_event, ...args) => {
-    try {
-      const result = await handler(...args)
-      // 深度净化：确保返回值只包含可结构化克隆的简单类型
-      return JSON.parse(JSON.stringify(result))
-    } catch (err: any) {
-      logger.error(`IPC handler error [${channel}]:`, err?.message || err)
-      // 返回纯字符串错误信息，避免Error对象不可克隆
-      return { error: String(err?.message || err) }
-    }
-  })
-}
 
 export function registerKMSHandlers(): void {
   const kmsService = KMSService.getInstance()

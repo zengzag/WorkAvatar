@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Layout, Menu, Typography, theme } from 'antd'
 import {
   RobotOutlined,
@@ -23,16 +23,17 @@ const App: React.FC = () => {
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
 
-  const getSelectedKey = () => {
+  const getSelectedKey = useCallback(() => {
     const path = location.pathname
     if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/knowledge-base')) return 'knowledge-base'
     if (path.startsWith('/kms')) return 'kms'
     return 'digital-employees'
-  }
+  }, [location.pathname])
 
-  const menuItems = [
+  // memoize menuItems：避免每次路由变化都生成新数组触发 Menu 重渲染
+  const menuItems = useMemo(() => [
     {
       key: 'digital-employees',
       icon: <RobotOutlined />,
@@ -57,7 +58,7 @@ const App: React.FC = () => {
       label: t('nav.settings'),
       onClick: () => navigate('/settings'),
     },
-  ]
+  ], [t, navigate])
 
   return (
     <Layout style={{ height: '100vh' }}>

@@ -79,6 +79,24 @@ export function registerLLMHandlers(
 
     interactionService.registerSession(sessionId, event.sender)
 
+    // chunk 批量合并缓冲：避免 100+ tokens/sec 触发 100+ 次 IPC 往返
+    // 用 setImmediate 在当前事件循环结束后批量发送，渲染端一次性接收多 token
+    const chunkBuffer: string[] = []
+    let flushScheduled = false
+    const flushChunks = () => {
+      flushScheduled = false
+      if (chunkBuffer.length === 0) return
+      if (abortController.signal.aborted) { chunkBuffer.length = 0; return }
+      const chunks = chunkBuffer.splice(0)
+      event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+    }
+    const scheduleFlush = () => {
+      if (!flushScheduled) {
+        flushScheduled = true
+        setImmediate(flushChunks)
+      }
+    }
+
     interactionContext.run(
       {
         sessionId,
@@ -99,7 +117,12 @@ export function registerLLMHandlers(
               minimal_mode: params.minimal_mode,
             },
             {
-              onChunk: (chunk: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunk }) },
+              onChunk: (chunk: string) => {
+                if (!abortController.signal.aborted) {
+                  chunkBuffer.push(chunk)
+                  scheduleFlush()
+                }
+              },
               onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
               onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
@@ -111,12 +134,21 @@ export function registerLLMHandlers(
                 if (abortController.signal.aborted) return
                 event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
               },
-              onDone: (metadata?: any) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} }); activeSessions.delete(sessionId) },
-              onError: (error: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error }); activeSessions.delete(sessionId) },
+              onDone: (metadata?: any) => {
+                flushChunks() // 确保缓冲区中的 token 不丢失
+                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
+                activeSessions.delete(sessionId)
+              },
+              onError: (error: string) => {
+                flushChunks()
+                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
+                activeSessions.delete(sessionId)
+              },
             },
             abortController.signal
           )
         } catch (error: any) {
+          flushChunks()
           if (abortController.signal.aborted) {
             event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
             activeSessions.delete(sessionId)

@@ -291,6 +291,45 @@ class KMSCrawlerService {
   }
 
   /**
+   * 批量获取文件访问统计（单次聚合查询，避免 N+1）
+   * @param fileIds 文件ID列表
+   * @param days 统计窗口天数
+   * @returns Map<fileId, stats>
+   */
+  getFileAccessStatsBatch(fileIds: string[], days: number = 30): Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }> {
+    const result = new Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }>()
+    if (fileIds.length === 0) return result
+    const since = Math.floor(Date.now() / 1000) - days * 86400
+
+    // 单次聚合查询：用 CASE WHEN 在一次扫描中统计两类访问量 + MAX 最后访问时间
+    const placeholders = fileIds.map(() => '?').join(',')
+    const rows = this.db.prepare(`
+      SELECT file_id,
+             SUM(CASE WHEN access_type = 'search_hit' AND accessed_at >= ? THEN 1 ELSE 0 END) AS hit_count,
+             SUM(CASE WHEN access_type = 'read'        AND accessed_at >= ? THEN 1 ELSE 0 END) AS read_count,
+             MAX(accessed_at) AS last_accessed
+      FROM kms_access_log
+      WHERE file_id IN (${placeholders})
+      GROUP BY file_id
+    `).all(since, since, ...fileIds) as any[]
+
+    for (const row of rows) {
+      result.set(row.file_id, {
+        hitCount: row.hit_count || 0,
+        readCount: row.read_count || 0,
+        lastAccessed: row.last_accessed || null,
+      })
+    }
+    // 未在访问日志中出现的文件补默认值
+    for (const id of fileIds) {
+      if (!result.has(id)) {
+        result.set(id, { hitCount: 0, readCount: 0, lastAccessed: null })
+      }
+    }
+    return result
+  }
+
+  /**
    * 获取所有文件统计
    */
   getFileStats(): { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> } {

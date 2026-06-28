@@ -424,6 +424,33 @@ class KMSIndexManagerService {
   }
 
   /**
+   * 暂停自动索引定时器（窗口失焦时调用，避免后台 CPU 占用）
+   * 保留配置，仅清除定时器，下次 resumeAutoIndex 时按原配置重启
+   */
+  pauseAutoIndex(): void {
+    if (this.autoIndexTimer && !this.autoIndexRunning) {
+      clearInterval(this.autoIndexTimer)
+      this.autoIndexTimer = null
+      logger.info('Auto-index timer paused (window blurred)')
+    }
+  }
+
+  /**
+   * 恢复自动索引定时器（窗口获焦时调用）
+   */
+  resumeAutoIndex(): void {
+    if (!this.autoIndexTimer && this.autoIndexConfig.enabled && !this.autoIndexRunning) {
+      const intervalMs = Math.max(1, this.autoIndexConfig.intervalMinutes) * 60 * 1000
+      this.autoIndexTimer = setInterval(() => {
+        this.runAutoIndexCheck().catch((err) => {
+          logger.error('Auto-index check failed:', err)
+        })
+      }, intervalMs)
+      logger.info('Auto-index timer resumed (window focused)')
+    }
+  }
+
+  /**
    * 获取自动索引状态
    */
   getAutoIndexStatus(): AutoIndexStatus {
@@ -635,6 +662,7 @@ class KMSIndexManagerService {
 
   /**
    * 评估冷热数据层级并执行晋升/降级
+   * 使用批量聚合查询，避免 N+1（原实现 6N+2 次查询，现仅 2 次聚合查询）
    */
   evaluateDataTiers(): void {
     const crawler = KMSCrawlerService.getInstance()
@@ -642,26 +670,34 @@ class KMSIndexManagerService {
 
     // 获取所有热数据文件
     const hotFiles = this.db.prepare("SELECT id FROM kms_files WHERE data_tier = 'hot'").all() as any[]
+    const hotFileIds = hotFiles.map(f => f.id)
 
-    // 降级：90天无访问的热数据 → 冷数据
+    // 降级：90天无访问的热数据 → 冷数据（批量查询）
     const coldThreshold = now - COLD_DEMOTE_DAYS * 86400
-    for (const file of hotFiles) {
-      const stats = crawler.getFileAccessStats(file.id, COLD_DEMOTE_DAYS)
-      if (stats.lastAccessed && stats.lastAccessed < coldThreshold) {
-        crawler.updateFileDataTier(file.id, 'cold')
-        logger.info(`Demoted file ${file.id} from hot to cold (no access in ${COLD_DEMOTE_DAYS} days)`)
+    if (hotFileIds.length > 0) {
+      const statsMap = crawler.getFileAccessStatsBatch(hotFileIds, COLD_DEMOTE_DAYS)
+      for (const fileId of hotFileIds) {
+        const stats = statsMap.get(fileId)!
+        if (stats.lastAccessed && stats.lastAccessed < coldThreshold) {
+          crawler.updateFileDataTier(fileId, 'cold')
+          logger.info(`Demoted file ${fileId} from hot to cold (no access in ${COLD_DEMOTE_DAYS} days)`)
+        }
       }
     }
 
     // 获取所有冷数据文件
     const coldFiles = this.db.prepare("SELECT id FROM kms_files WHERE data_tier = 'cold'").all() as any[]
+    const coldFileIds = coldFiles.map(f => f.id)
 
-    // 晋升：高频访问的冷数据 → 热数据
-    for (const file of coldFiles) {
-      const stats = crawler.getFileAccessStats(file.id, HOT_PROMOTE_DAYS)
-      if (stats.hitCount >= HOT_PROMOTE_HIT_THRESHOLD || stats.readCount >= HOT_PROMOTE_READ_THRESHOLD) {
-        crawler.updateFileDataTier(file.id, 'hot')
-        logger.info(`Promoted file ${file.id} from cold to hot (hits: ${stats.hitCount}, reads: ${stats.readCount})`)
+    // 晋升：高频访问的冷数据 → 热数据（批量查询）
+    if (coldFileIds.length > 0) {
+      const statsMap = crawler.getFileAccessStatsBatch(coldFileIds, HOT_PROMOTE_DAYS)
+      for (const fileId of coldFileIds) {
+        const stats = statsMap.get(fileId)!
+        if (stats.hitCount >= HOT_PROMOTE_HIT_THRESHOLD || stats.readCount >= HOT_PROMOTE_READ_THRESHOLD) {
+          crawler.updateFileDataTier(fileId, 'hot')
+          logger.info(`Promoted file ${fileId} from cold to hot (hits: ${stats.hitCount}, reads: ${stats.readCount})`)
+        }
       }
     }
   }

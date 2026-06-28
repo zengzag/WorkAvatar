@@ -45,8 +45,10 @@ const contextStorage = new AsyncLocalStorage<LLMLogContext>()
 
 class LLMLoggerService {
   private static instance: LLMLoggerService
-  private openFiles: Map<string, fs.WriteStream> = new Map()
+  private openFiles: Map<string, { stream: fs.WriteStream; lastWriteAt: number }> = new Map()
   private flushTimer: NodeJS.Timeout | null = null
+  // 流空闲超过该阈值则关闭（毫秒）
+  private static readonly IDLE_THRESHOLD_MS = 60_000
 
   private constructor() {
     this.flushTimer = setInterval(() => this.closeIdleStreams(), 30_000)
@@ -103,7 +105,8 @@ class LLMLoggerService {
   }
 
   private writeEntry(filePath: string, entry: LLMLogEntry): void {
-    let stream = this.openFiles.get(filePath)
+    const existing = this.openFiles.get(filePath)
+    let stream = existing?.stream
 
     if (!stream || stream.destroyed) {
       const dir = path.dirname(filePath)
@@ -115,18 +118,27 @@ class LLMLoggerService {
       stream.on('error', () => {
         this.openFiles.delete(filePath)
       })
-      this.openFiles.set(filePath, stream)
     }
 
     const line = JSON.stringify(entry) + '\n'
     stream.write(line)
+    this.openFiles.set(filePath, { stream, lastWriteAt: Date.now() })
   }
 
+  /**
+   * 关闭空闲超过 IDLE_THRESHOLD_MS 的写入流。
+   * 原实现仅移除已 ended/destroyed 的流，从未真正关闭空闲流，导致文件句柄泄漏。
+   */
   private closeIdleStreams(): void {
-    for (const [filePath, stream] of this.openFiles.entries()) {
-      if (stream.writableEnded || stream.destroyed) {
+    const now = Date.now()
+    for (const [filePath, { stream, lastWriteAt }] of this.openFiles.entries()) {
+      if (stream.destroyed) {
         this.openFiles.delete(filePath)
         continue
+      }
+      if (now - lastWriteAt > LLMLoggerService.IDLE_THRESHOLD_MS) {
+        stream.end()
+        this.openFiles.delete(filePath)
       }
     }
   }
@@ -136,7 +148,7 @@ class LLMLoggerService {
       clearInterval(this.flushTimer)
       this.flushTimer = null
     }
-    for (const [, stream] of this.openFiles.entries()) {
+    for (const [, { stream }] of this.openFiles.entries()) {
       stream.end()
     }
     this.openFiles.clear()

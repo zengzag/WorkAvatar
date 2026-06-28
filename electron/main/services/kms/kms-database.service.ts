@@ -153,6 +153,8 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_search_index_file ON kms_search_index(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_search_index_source ON kms_search_index(source_type, source_id);
       CREATE INDEX IF NOT EXISTS idx_kms_search_index_type ON kms_search_index(source_type);
+      -- 复合索引：支持 deleteIndexByFileAndType 的 WHERE file_id = ? AND source_type = ?
+      CREATE INDEX IF NOT EXISTS idx_kms_search_index_file_type ON kms_search_index(file_id, source_type);
 
       -- FTS5 全文检索虚拟表
       CREATE VIRTUAL TABLE IF NOT EXISTS kms_fts USING fts5(
@@ -181,6 +183,8 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source ON kms_embeddings(source_type, source_id);
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_file ON kms_embeddings(file_id);
+      -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
 
       -- 访问追踪表（用于冷热数据判定）
       CREATE TABLE IF NOT EXISTS kms_access_log (
@@ -192,6 +196,8 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_file ON kms_access_log(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_time ON kms_access_log(accessed_at);
+      -- 复合索引：支持 getFileAccessStats 的 WHERE file_id = ? AND access_type = ? AND accessed_at >= ?
+      CREATE INDEX IF NOT EXISTS idx_kms_access_log_file_type_time ON kms_access_log(file_id, access_type, accessed_at);
 
       -- 目录摘要表（冷热数据渐进沉淀：基于文件名+轻量摘要生成目录级摘要）
       CREATE TABLE IF NOT EXISTS kms_dir_summaries (
