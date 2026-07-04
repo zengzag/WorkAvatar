@@ -30,10 +30,10 @@ interface KMSDirPanelProps {
 }
 
 /** 支持的文件扩展名分组 */
-const FILE_TYPE_GROUPS: { label: string; icon: React.ReactNode; exts: string[] }[] = [
-  { label: '文档', icon: <FileTextOutlined />, exts: ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx'] },
-  { label: '文本', icon: <FileTextOutlined />, exts: ['txt', 'md', 'html', 'htm'] },
-  { label: '图片', icon: <FileImageOutlined />, exts: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'] },
+const FILE_TYPE_GROUPS: { labelKey: string; icon: React.ReactNode; exts: string[] }[] = [
+  { labelKey: 'kms.fileGroupDocuments', icon: <FileTextOutlined />, exts: ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx'] },
+  { labelKey: 'kms.fileGroupText', icon: <FileTextOutlined />, exts: ['txt', 'md', 'html', 'htm'] },
+  { labelKey: 'kms.fileGroupImages', icon: <FileImageOutlined />, exts: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'] },
 ]
 
 /** 所有支持的扩展名 */
@@ -331,10 +331,10 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
               padding: 8,
             }}>
               {FILE_TYPE_GROUPS.map((group) => (
-                <div key={group.label} style={{ marginBottom: 12 }}>
+                <div key={group.labelKey} style={{ marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{ color: token.colorTextTertiary, fontSize: 13 }}>{group.icon}</span>
-                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{group.label}</Text>
+                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{t(group.labelKey)}</Text>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 22 }}>
                     {group.exts.map(ext => (

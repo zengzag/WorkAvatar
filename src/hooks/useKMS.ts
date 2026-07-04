@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface IndexDir {
   id: string
@@ -176,9 +177,10 @@ export interface SearchHistoryItem {
 }
 
 export function useKMS() {
+  const { t } = useTranslation()
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('keyword')
+  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('hybrid')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
   const [liveSteps, setLiveSteps] = useState<SearchTraceStep[]>([])
@@ -306,8 +308,8 @@ export function useKMS() {
           const errorMsg = result?.error || 'Unknown error'
           setAgentResult({
             queryType: 'locate',
-            queryTypeLabel: '定位查找',
-            conclusion: `AI 检索失败：${errorMsg}${errorMsg.includes('LLM provider') ? '\n\n请在设置中配置 LLM 提供商后再使用 AI 搜索。' : ''}`,
+            queryTypeLabel: t('kms.queryTypeLocate'),
+            conclusion: `${t('kms.aiSearchFailed', { error: errorMsg })}${errorMsg.includes('LLM provider') ? `\n\n${t('kms.aiSearchLLMHint')}` : ''}`,
             sources: [],
             searchRounds: 0,
             searchTrace: [],
@@ -400,24 +402,27 @@ export function useKMS() {
   }, [])
 
   // 构建索引（fire-and-forget，通过进度事件更新状态）
-  const buildIndex = useCallback(async (providerId?: string) => {
+  // withEmbedding 控制是否同步生成向量嵌入（智能索引），默认 true
+  const buildIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.buildIndex(providerId)
+    await window.electronAPI.kms.buildIndex(providerId, withEmbedding)
   }, [])
 
   // 增量索引
-  const incrementalIndex = useCallback(async (providerId?: string) => {
+  // withEmbedding 控制是否同步生成向量嵌入（智能索引），默认 true
+  const incrementalIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.incrementalIndex(providerId)
+    await window.electronAPI.kms.incrementalIndex(providerId, withEmbedding)
   }, [])
 
   // 重建目录索引
-  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string) => {
+  // withEmbedding 控制是否同步生成向量嵌入（智能索引），默认 true
+  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string, withEmbedding: boolean = true) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId)
+    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding)
   }, [])
 
   // 取消索引

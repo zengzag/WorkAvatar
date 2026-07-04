@@ -1,8 +1,14 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState } from 'react'
 import { getProviderModels } from '../../utils/llm'
+
+interface AttachedFile {
+  id: string
+  path: string
+  name: string
+}
 
 const { Text } = Typography
 
@@ -41,7 +47,10 @@ const ChatInput: React.FC<{
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dragDepthRef = useRef(0)
   const [localValue, setLocalValue] = useState('')
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
 
   const slashCommands = useMemo(() => [
     { key: '/clear', label: '/clear', description: t('workbench.cmdClear') },
@@ -66,15 +75,68 @@ const ChatInput: React.FC<{
   }
 
   const handleSend = useCallback(() => {
-    if (!localValue.trim() && attachedImages.length === 0) return
+    if (!localValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
-    onSend(localValue.trim(), imageUrls, selectedModels)
+    let content = localValue.trim()
+    if (attachedFiles.length > 0) {
+      const filePaths = attachedFiles.map(f => f.path).filter(Boolean).join('\n')
+      if (filePaths) {
+        content = content ? `${content}\n${filePaths}` : filePaths
+      }
+    }
+    onSend(content, imageUrls, selectedModels)
     setLocalValue('')
-  }, [localValue, attachedImages, selectedModels, onSend])
+    setAttachedFiles([])
+  }, [localValue, attachedImages, attachedFiles, selectedModels, onSend])
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current++
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current--
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.files || e.dataTransfer.files.length === 0) return
+    e.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragOver(false)
+    const dropped = Array.from(e.dataTransfer.files)
+    const newFiles: AttachedFile[] = dropped.map(f => ({
+      id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+      name: f.name,
+    }))
+    if (newFiles.length > 0) {
+      setAttachedFiles(prev => [...prev, ...newFiles])
+    }
+  }, [])
+
+  const removeFile = useCallback((id: string) => {
+    setAttachedFiles(prev => prev.filter(f => f.id !== id))
+  }, [])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
+
+    // 优先处理图片粘贴
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault()
@@ -90,7 +152,24 @@ const ChatInput: React.FC<{
           }])
         }
         reader.readAsDataURL(file)
-        break
+        return
+      }
+    }
+
+    // 处理文件粘贴（如从文件管理器复制的文件）
+    const files = e.clipboardData?.files
+    if (files && files.length > 0) {
+      e.preventDefault()
+      const pasted = Array.from(files)
+      const newFiles: AttachedFile[] = pasted
+        .filter(f => !f.type.startsWith('image/')) // 图片已在上面处理
+        .map(f => ({
+          id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+          name: f.name,
+        }))
+      if (newFiles.length > 0) {
+        setAttachedFiles(prev => [...prev, ...newFiles])
       }
     }
   }, [attachedImages, onImagesChange])
@@ -313,6 +392,28 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
+      {attachedFiles.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, padding: '4px 0 8px', flexWrap: 'wrap' }}>
+          {attachedFiles.map(f => (
+            <Tooltip title={f.path} key={f.id} mouseEnterDelay={0.4}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px',
+                borderRadius: 8,
+                background: token.colorFillQuaternary,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                fontSize: 12,
+                color: token.colorTextSecondary,
+                maxWidth: 360,
+              }}>
+                <FileTextOutlined style={{ fontSize: 14, color: token.colorPrimary, flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer', color: token.colorTextTertiary, flexShrink: 0 }} onClick={() => removeFile(f.id)} />
+              </div>
+            </Tooltip>
+          ))}
+        </div>
+      )}
       {modelTags.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
           {modelTags.map(tag => (
@@ -352,9 +453,29 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 16, padding: '6px 6px 6px 16px', border: '2px solid transparent', transition: 'border-color 0.3s' }}
-        onFocusCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
+      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 16, padding: '6px 6px 6px 16px', border: `2px solid ${isDragOver ? token.colorPrimary : 'transparent'}`, transition: 'border-color 0.3s' }}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
+        {isDragOver && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            borderRadius: 16,
+            background: token.colorPrimaryBg,
+            border: `2px dashed ${token.colorPrimary}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 10,
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <FileTextOutlined style={{ fontSize: 32, color: token.colorPrimary }} />
+              <Text style={{ color: token.colorPrimary, fontWeight: 500 }}>{t('workbench.dropFileHint')}</Text>
+            </div>
+          </div>
+        )}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Input.TextArea
             value={localValue}
@@ -421,7 +542,7 @@ const ChatInput: React.FC<{
           <Button icon={<StopOutlined />} danger onClick={onStop} shape="circle" size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
-            disabled={!localValue.trim() && attachedImages.length === 0}
+            disabled={!localValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
             shape="circle" size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>

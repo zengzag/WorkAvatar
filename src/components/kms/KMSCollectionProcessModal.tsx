@@ -5,7 +5,7 @@ import {
   CheckCircleFilled, LoadingOutlined, ClockCircleOutlined,
   CloseCircleFilled, FileTextOutlined, NodeIndexOutlined,
   FileSearchOutlined, BlockOutlined, RobotOutlined,
-  CloudUploadOutlined, ThunderboltOutlined,
+  CloudUploadOutlined, ThunderboltOutlined, MinusCircleOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -43,7 +43,10 @@ interface KMSCollectionProcessModalProps {
   open: boolean
   collectionId: string | null
   collectionName: string
+  /** 关闭弹窗（不取消后台处理） */
   onClose: () => void
+  /** 取消处理 */
+  onCancel: () => void
 }
 
 const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
@@ -51,6 +54,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   collectionId,
   collectionName,
   onClose,
+  onCancel,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -61,9 +65,9 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   const [totalFiles, setTotalFiles] = useState<number>(0)
   const [isDone, setIsDone] = useState(false)
   const [isError, setIsError] = useState(false)
+  const [isCancelled, setIsCancelled] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [startedAt, setStartedAt] = useState<number>(0)
-  const [autoCloseTimer, setAutoCloseTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
   const unsubscribeRef = useRef<(() => void) | null>(null)
 
   // 重置状态
@@ -74,6 +78,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     setTotalFiles(0)
     setIsDone(false)
     setIsError(false)
+    setIsCancelled(false)
     setErrorMessage('')
     setStartedAt(0)
   }, [])
@@ -99,6 +104,10 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       if (progress.phase === 'done') {
         setIsDone(true)
         setIsError(false)
+        // 检测是否为取消完成
+        if (progress.message && progress.message.includes('已取消')) {
+          setIsCancelled(true)
+        }
         // 标记所有未完成阶段为 done
         setStages((prev) => {
           const next = { ...prev }
@@ -140,9 +149,8 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       // 更新阶段状态
       setStages((prev) => {
         const next = { ...prev }
-        const prevStage = next[progress.phase]
 
-        // 标记之前所有阶段为 done（如果还未标记）
+        // 标记之前所有阶段为 done（如果还未标记），但不回退已完成的阶段
         const currentIdx = STAGES.findIndex((s) => s.key === progress.phase)
         for (let i = 0; i < currentIdx; i++) {
           const prevKey = STAGES[i].key
@@ -153,25 +161,29 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
           }
         }
 
-        // 更新当前阶段
-        next[progress.phase] = {
-          status: progress.current >= progress.total && progress.total > 0 ? 'done' : 'processing',
-          current: progress.current,
-          total: progress.total,
-          message: progress.message || '',
-          startedAt: progress.startedAt,
-          finishedAt: progress.current >= progress.total && progress.total > 0 ? Math.floor(Date.now() / 1000) : prevStage?.finishedAt,
+        // 更新当前阶段：只有尚未完成时才更新（避免阶段间切换时回退已完成的阶段）
+        const existingStage = next[progress.phase]
+        if (!existingStage || existingStage.status !== 'done') {
+          next[progress.phase] = {
+            status: progress.current >= progress.total && progress.total > 0 ? 'done' : 'processing',
+            current: progress.current,
+            total: progress.total,
+            message: progress.message || '',
+            startedAt: progress.startedAt,
+            finishedAt: progress.current >= progress.total && progress.total > 0 ? Math.floor(Date.now() / 1000) : existingStage?.finishedAt,
+          }
         }
         return next
       })
 
-      // 跟踪文件级进度（parsing 阶段）
-      if (progress.phase === 'parsing') {
+      // 跟踪文件级进度：所有携带 fileName 的事件都更新文件名
+      if (progress.fileName) {
+        setCurrentFileName(progress.fileName)
+      }
+      // parsing 阶段跟踪文件总数与当前文件索引
+      if (progress.phase === 'parsing' && progress.total > 0) {
         setTotalFiles(progress.total)
         setCurrentFileIndex(progress.current)
-        if (progress.fileName) {
-          setCurrentFileName(progress.fileName)
-        }
       }
     })
 
@@ -182,22 +194,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       }
     }
   }, [open, collectionId, resetState])
-
-  // 完成后自动关闭（延迟 2.5 秒，便于用户看到完成状态）
-  useEffect(() => {
-    if (isDone && !autoCloseTimer) {
-      const timer = setTimeout(() => {
-        onClose()
-      }, isError ? 4000 : 2500)
-      setAutoCloseTimer(timer)
-    }
-    return () => {
-      if (autoCloseTimer) {
-        clearTimeout(autoCloseTimer)
-        setAutoCloseTimer(null)
-      }
-    }
-  }, [isDone, isError, autoCloseTimer, onClose])
 
   // 计算总体进度百分比
   const overallPercent = (() => {
@@ -215,7 +211,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   })()
 
   const handleCancel = () => {
-    window.electronAPI.kms.cancelCollectionDeepProcess()
+    onCancel()
   }
 
   // 渲染单个阶段
@@ -323,6 +319,14 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     return `${m}m ${s}s`
   }
 
+  // 标题：根据状态展示
+  const titleText = (() => {
+    if (isCancelled) return t('kms.collectionProcess.cancelledTitle')
+    if (isError) return t('kms.collectionProcess.errorTitle')
+    if (isDone) return t('kms.collectionProcess.doneTitle')
+    return t('kms.collectionProcess.processingTitle')
+  })()
+
   return (
     <Modal
       open={open}
@@ -343,19 +347,27 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
         isDone ? (
           <Button onClick={onClose}>{t('common.close')}</Button>
         ) : (
-          <Button danger onClick={handleCancel}>
-            {t('kms.collectionProcess.cancel')}
-          </Button>
+          <Space>
+            <Button
+              icon={<MinusCircleOutlined />}
+              onClick={onClose}
+            >
+              {t('kms.collectionProcess.runInBackground')}
+            </Button>
+            <Button danger onClick={handleCancel}>
+              {t('kms.collectionProcess.cancel')}
+            </Button>
+          </Space>
         )
       }
       maskClosable={false}
-      closable={isDone}
+      closable={true}
     >
       {/* 总体进度 */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <Text strong style={{ fontSize: 13 }}>
-            {isError ? t('kms.collectionProcess.errorTitle') : isDone ? t('kms.collectionProcess.doneTitle') : t('kms.collectionProcess.processingTitle')}
+            {titleText}
           </Text>
           <Space size={12}>
             {startedAt > 0 && (
@@ -371,7 +383,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
         </div>
         <Progress
           percent={overallPercent}
-          status={isError ? 'exception' : isDone ? 'success' : 'active'}
+          status={isCancelled ? 'normal' : isError ? 'exception' : isDone ? 'success' : 'active'}
         />
       </div>
 
@@ -395,6 +407,24 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
               {currentFileName}
             </Text>
           </div>
+        </div>
+      )}
+
+      {/* 取消提示 */}
+      {isCancelled && (
+        <div style={{
+          marginBottom: 12,
+          padding: '8px 12px',
+          backgroundColor: token.colorFillQuaternary,
+          borderRadius: 4,
+          borderLeft: `3px solid ${token.colorTextTertiary}`,
+        }}>
+          <Space size={6}>
+            <MinusCircleOutlined style={{ color: token.colorTextTertiary }} />
+            <Text strong style={{ fontSize: 12 }}>
+              {t('kms.collectionProcess.cancelledHint')}
+            </Text>
+          </Space>
         </div>
       )}
 

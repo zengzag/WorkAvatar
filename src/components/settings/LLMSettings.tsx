@@ -34,7 +34,7 @@ import { useTranslation } from 'react-i18next'
 
 const { Text, Title } = Typography
 
-const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; icon?: string }[] = [
+const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string; group: string; icon?: string }[] = [
   { value: 'openai', label: 'OpenAI', group: 'international' },
   { value: 'groq', label: 'Groq', group: 'international' },
   { value: 'mistral', label: 'Mistral AI', group: 'international' },
@@ -42,13 +42,13 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; ic
   { value: 'azure', label: 'Azure OpenAI', group: 'international' },
   { value: 'vertex', label: 'Google Vertex AI', group: 'international' },
   { value: 'bedrock', label: 'AWS Bedrock', group: 'international' },
-  { value: 'deepseek', label: 'DeepSeek (深度求索)', group: 'domestic' },
-  { value: 'qwen', label: '通义千问 (Qwen)', group: 'domestic' },
-  { value: 'zhipu', label: '智谱 AI (GLM)', group: 'domestic' },
-  { value: 'volcengine', label: '火山引擎 (豆包)', group: 'domestic' },
+  { value: 'deepseek', label: 'DeepSeek (深度求索)', labelKey: 'settings.providerDeepseek', group: 'domestic' },
+  { value: 'qwen', label: '通义千问 (Qwen)', labelKey: 'settings.providerQwen', group: 'domestic' },
+  { value: 'zhipu', label: '智谱 AI (GLM)', labelKey: 'settings.providerZhipu', group: 'domestic' },
+  { value: 'volcengine', label: '火山引擎 (豆包)', labelKey: 'settings.providerVolcengine', group: 'domestic' },
   { value: 'moonshot', label: 'Moonshot (Kimi)', group: 'domestic' },
-  { value: 'yi', label: '零一万物 (Yi)', group: 'domestic' },
-  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: 'local' },
+  { value: 'yi', label: '零一万物 (Yi)', labelKey: 'settings.providerYi', group: 'domestic' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容接口', labelKey: 'settings.providerOpenaiCompatible', group: 'local' },
   { value: 'lmstudio', label: 'LM Studio', group: 'local' },
 ]
 
@@ -70,9 +70,10 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   xai: { baseURL: 'https://api.x.ai/v1' },
 }
 
-const getProviderTypeLabel = (type: string): string => {
+const getProviderTypeLabel = (type: string, t: (key: string, options?: any) => string): string => {
   const info = PROVIDER_TYPES.find((p) => p.value === type)
-  return info?.label || type
+  if (!info) return type
+  return info.labelKey ? t(info.labelKey) : info.label
 }
 
 const getProviderTypeGroup = (type: string): string => {
@@ -351,7 +352,7 @@ const LLMSettings: React.FC = () => {
       width: 140,
       render: (type: string) => {
         const group = getProviderTypeGroup(type)
-        const label = getProviderTypeLabel(type)
+        const label = getProviderTypeLabel(type, t)
         const groupTranslationMap: Record<string, string> = {
           domestic: t('settings.providerGroupDomestic'),
           local: t('settings.providerGroupLocal'),
@@ -418,15 +419,15 @@ const LLMSettings: React.FC = () => {
   const providerTypeOptions = [
     {
       label: t('settings.localProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'local').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'local').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
     {
       label: t('settings.domesticProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'domestic').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'domestic').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
     {
       label: t('settings.internationalProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'international').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'international').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
   ]
 

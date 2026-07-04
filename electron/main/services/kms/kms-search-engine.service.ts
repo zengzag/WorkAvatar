@@ -399,6 +399,92 @@ class KMSSearchEngineService {
   }
 
   /**
+   * 删除文件中 paragraph_index >= fromIndex 的所有段落（含搜索索引、向量嵌入）
+   * 用于增量重新生成场景：保留前半部分段落，重新生成后半部分
+   */
+  deleteParagraphsFromFileIndex(fileId: string, fromIndex: number): void {
+    // 查询待删除的段落 ID
+    const paraRows = this.db.prepare(
+      'SELECT id FROM kms_paragraphs WHERE file_id = ? AND paragraph_index >= ?'
+    ).all(fileId, fromIndex) as any[]
+    const paraIds = paraRows.map(r => r.id)
+    if (paraIds.length === 0) return
+
+    const placeholders = paraIds.map(() => '?').join(',')
+
+    // 删除段落对应的搜索索引与 FTS 行
+    const indexRows = this.db.prepare(
+      `SELECT id FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph' AND source_id IN (${placeholders})`
+    ).all(fileId, ...paraIds) as any[]
+    if (indexRows.length > 0) {
+      const tx = this.db.transaction(() => {
+        for (const row of indexRows) this.deleteFtsRow(row.id)
+      })
+      tx()
+      this.db.prepare(
+        `DELETE FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph' AND source_id IN (${placeholders})`
+      ).run(fileId, ...paraIds)
+    }
+
+    // 删除段落对应的向量嵌入
+    this.db.prepare(
+      `DELETE FROM kms_embeddings WHERE source_type = 'paragraph' AND source_id IN (${placeholders})`
+    ).run(...paraIds)
+
+    // 删除段落本身
+    this.db.prepare(
+      'DELETE FROM kms_paragraphs WHERE file_id = ? AND paragraph_index >= ?'
+    ).run(fileId, fromIndex)
+    this.invalidateCache()
+  }
+
+  /**
+   * 增量插入段落到 kms_paragraphs 表（不删除已有段落）
+   * 用于增量重新生成场景：在保留前半部分段落的基础上追加新段落
+   * 返回写入的段落列表（含生成的 id）
+   */
+  insertParagraphs(
+    fileId: string,
+    paragraphs: Array<{
+      title: string
+      titlePath: string
+      level: number
+      paragraphIndex: number
+      startOffset: number
+      endOffset: number
+      content: string
+    }>
+  ): Array<{ id: string; paragraphIndex: number }> {
+    const result: Array<{ id: string; paragraphIndex: number }> = []
+    if (paragraphs.length === 0) return result
+
+    const insertStmt = this.db.prepare(`
+      INSERT INTO kms_paragraphs (id, file_id, title, title_path, level, paragraph_index, start_offset, end_offset, content, keywords_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', unixepoch(), unixepoch())
+    `)
+
+    const tx = this.db.transaction(() => {
+      for (const p of paragraphs) {
+        const id = generateId()
+        insertStmt.run(id, fileId, p.title, p.titlePath, p.level, p.paragraphIndex, p.startOffset, p.endOffset, p.content)
+        result.push({ id, paragraphIndex: p.paragraphIndex })
+      }
+    })
+    tx()
+    return result
+  }
+
+  /**
+   * 获取文件中 paragraph_index 最大的段落（用于确定增量追加的起始 index）
+   */
+  getMaxParagraphIndex(fileId: string): number {
+    const row = this.db.prepare(
+      'SELECT MAX(paragraph_index) as max_idx FROM kms_paragraphs WHERE file_id = ?'
+    ).get(fileId) as any
+    return row?.max_idx ?? -1
+  }
+
+  /**
    * 保存文件 TOC 到 kms_file_summaries.toc_json
    */
   saveFileToc(fileId: string, tocJson: string): void {
@@ -462,6 +548,7 @@ class KMSSearchEngineService {
 
   /**
    * 克隆索引数据（用于MD5去重：相同内容文件复用索引）
+   * 同时克隆对应的 embedding 记录，避免去重文件缺少向量嵌入
    */
   cloneIndexData(sourceFileId: string, targetFileId: string): void {
     const sourceRows = this.db.prepare(
@@ -470,20 +557,62 @@ class KMSSearchEngineService {
 
     if (sourceRows.length === 0) return
 
+    // 预加载源文件的 embedding 记录
+    const sourceEmbeddings = this.db.prepare(
+      'SELECT * FROM kms_embeddings WHERE file_id = ?'
+    ).all(sourceFileId) as any[]
+
+    // 建立 source_type+source_id → embedding 记录 的映射
+    const embeddingMap = new Map<string, any>()
+    for (const emb of sourceEmbeddings) {
+      embeddingMap.set(`${emb.source_type}:${emb.source_id}`, emb)
+    }
+
     const transaction = this.db.transaction(() => {
       for (const row of sourceRows) {
         const newId = generateId()
+        // 保留原 source_id，使 LEFT JOIN 能匹配到原文件的 embedding
         this.db.prepare(`
           INSERT INTO kms_search_index (id, file_id, source_type, source_id, paragraph_index, title, content, keywords_json, metadata_json, start_offset, end_offset, start_line, end_line, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
         `).run(
-          newId, targetFileId, row.source_type, generateId(),
+          newId, targetFileId, row.source_type, row.source_id,
           row.paragraph_index, row.title, row.content,
           row.keywords_json, row.metadata_json,
           row.start_offset, row.end_offset, row.start_line, row.end_line
         )
 
-        this.insertFtsRow(newId, targetFileId, row.source_type as SourceType, newId, row.title, row.content, '')
+        this.insertFtsRow(newId, targetFileId, row.source_type as SourceType, row.source_id, row.title, row.content, '')
+
+        // 克隆对应的 embedding 记录
+        const embKey = `${row.source_type}:${row.source_id}`
+        const sourceEmb = embeddingMap.get(embKey)
+        if (sourceEmb) {
+          this.db.prepare(`
+            INSERT INTO kms_embeddings (source_type, source_id, file_id, embedding, model, dimension, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, unixepoch())
+          `).run(
+            sourceEmb.source_type, sourceEmb.source_id, targetFileId,
+            sourceEmb.embedding, sourceEmb.model, sourceEmb.dimension
+          )
+
+          // 同步 vec0 虚表
+          if (this.vecReady && this.vecDimension && sourceEmb.dimension === this.vecDimension) {
+            try {
+              const newRowId = this.db.prepare(
+                'SELECT last_insert_rowid() as id FROM kms_embeddings LIMIT 1'
+              ).get() as any
+              const vecRowId = newRowId?.id || this.db.prepare('SELECT MAX(rowid) as id FROM kms_embeddings').get() as any
+              if (vecRowId?.id) {
+                this.db.prepare(
+                  'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
+                ).run(vecRowId.id, sourceEmb.embedding, targetFileId, sourceEmb.source_type)
+              }
+            } catch (err: any) {
+              logger.warn(`cloneIndexData: vec0 insert failed for targetFile=${targetFileId}:`, err?.message || err)
+            }
+          }
+        }
       }
     })
 

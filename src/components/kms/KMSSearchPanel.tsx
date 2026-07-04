@@ -99,17 +99,17 @@ const FILE_FORMAT_OPTIONS = [
 ]
 
 // 格式化搜索历史时间戳为相对时间
-const formatHistoryTime = (timestamp: number) => {
+const formatHistoryTime = (timestamp: number, t: (key: string, options?: any) => string) => {
   const date = new Date(timestamp * 1000)
   const now = new Date()
   const diff = now.getTime() - date.getTime()
   const minutes = Math.floor(diff / 60000)
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟前`
-  if (hours < 24) return `${hours}小时前`
-  if (days < 7) return `${days}天前`
+  if (minutes < 1) return t('kms.historyJustNow')
+  if (minutes < 60) return t('kms.historyMinutesAgo', { count: minutes })
+  if (hours < 24) return t('kms.historyHoursAgo', { count: hours })
+  if (days < 7) return t('kms.historyDaysAgo', { count: days })
   return date.toLocaleDateString()
 }
 
@@ -242,14 +242,22 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     if (onLoadSearchHistory) {
       onLoadSearchHistory({ limit: 20 })
     }
-    // 总是展开下拉：有历史则显示列表，无历史则显示空提示
     setHistoryOpen(true)
   }, [onLoadSearchHistory])
 
-  // 输入框失焦时收起（延迟以便点击下拉项）
+  // 输入框失焦时关闭历史下拉（延迟以允许 Popover 内容区点击事件完成）
   const handleInputBlur = useCallback(() => {
-    setTimeout(() => setHistoryOpen(false), 200)
+    setTimeout(() => setHistoryOpen(false), 150)
   }, [])
+
+  // 历史按钮点击：切换历史下拉（使用 onMouseDown + preventDefault 阻止输入框 blur）
+  const handleHistoryBtnMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault() // 阻止输入框失焦
+    setHistoryOpen((v) => !v)
+    if (!historyOpen && onLoadSearchHistory) {
+      onLoadSearchHistory({ limit: 20 })
+    }
+  }, [onLoadSearchHistory, historyOpen])
 
   // 点击历史项：回填到输入框并触发搜索
   const handlePickHistory = useCallback((item: SearchHistoryItem) => {
@@ -298,7 +306,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                 <HistoryOutlined style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
                 <Text ellipsis style={{ flex: 1, minWidth: 0, fontSize: 12 }}>{item.query}</Text>
                 <Tag style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>{item.result_count}{t('kms.historyResultsUnit')}</Tag>
-                <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>{formatHistoryTime(item.created_at)}</Text>
+                <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>{formatHistoryTime(item.created_at, t)}</Text>
                 {onDeleteSearchHistory && (
                   <Tooltip title={t('common.delete')}>
                     <Button
@@ -715,7 +723,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       <div style={{ marginBottom: 12 }}>
         <Popover
           content={renderHistoryContent()}
-          trigger="click"
+          trigger={[]}
           open={historyOpen}
           onOpenChange={setHistoryOpen}
           placement="bottomLeft"
@@ -740,7 +748,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
                       type="text"
                       size="small"
                       icon={<HistoryOutlined />}
-                      onClick={() => setHistoryOpen((v) => !v)}
+                      onMouseDown={handleHistoryBtnMouseDown}
                     />
                   </Tooltip>
                 )}
@@ -762,15 +770,13 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       {/* 搜索模式 + 高级筛选 */}
       <div style={{ marginBottom: 12 }}>
         <Radio.Group
-          value={searchMode}
+          value={searchMode === 'keyword' || searchMode === 'semantic' ? '' : searchMode}
           onChange={(e) => onSearchModeChange(e.target.value)}
           optionType="button"
           buttonStyle="solid"
           size="small"
           style={{ marginBottom: 8 }}
         >
-          <Radio.Button value="keyword">{t('kms.keywordSearch')}</Radio.Button>
-          <Radio.Button value="semantic">{t('kms.semanticSearch')}</Radio.Button>
           <Radio.Button value="hybrid">{t('kms.hybridSearch')}</Radio.Button>
           <Radio.Button value="ai">
             <RobotOutlined style={{ marginRight: 4 }} />
@@ -786,15 +792,31 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
               <Space size={4}>
                 <FilterOutlined />
                 <span>{t('kms.advancedFilters')}</span>
-                {(filterDirIds.length > 0 || filterCollectionIds.length > 0 || filterExtensions.length > 0 || filterTimeRange) && (
+                {(filterDirIds.length > 0 || filterCollectionIds.length > 0 || filterExtensions.length > 0 || filterTimeRange || searchMode === 'keyword' || searchMode === 'semantic') && (
                   <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                    {filterDirIds.length + filterCollectionIds.length + filterExtensions.length + (filterTimeRange ? 1 : 0)}
+                    {filterDirIds.length + filterCollectionIds.length + filterExtensions.length + (filterTimeRange ? 1 : 0) + (searchMode === 'keyword' || searchMode === 'semantic' ? 1 : 0)}
                   </Tag>
                 )}
               </Space>
             ),
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+                    {t('kms.searchMode')}
+                  </Text>
+                  <Select
+                    style={{ width: '100%' }}
+                    value={searchMode}
+                    onChange={(v) => onSearchModeChange(v as 'keyword' | 'semantic' | 'hybrid' | 'ai')}
+                    options={[
+                      { label: t('kms.hybridSearch'), value: 'hybrid' },
+                      { label: t('kms.keywordSearch'), value: 'keyword' },
+                      { label: t('kms.semanticSearch'), value: 'semantic' },
+                      { label: t('kms.aiSearch'), value: 'ai' },
+                    ]}
+                  />
+                </div>
                 <div>
                   <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
                     {t('kms.filterDirectory')}

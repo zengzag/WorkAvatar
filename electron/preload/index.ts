@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
   WorkspaceOpenInExplorerParams,
@@ -198,9 +198,9 @@ const electronAPI = {
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
     openFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE, filePath),
     openFileDir: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE_DIR, filePath),
-    buildIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId); return Promise.resolve({ success: true }) },
-    incrementalIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId); return Promise.resolve({ success: true }) },
-    rebuildDirIndex: (dirId: string, providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId); return Promise.resolve({ success: true }) },
+    buildIndex: (providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId, withEmbedding); return Promise.resolve({ success: true }) },
+    incrementalIndex: (providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId, withEmbedding); return Promise.resolve({ success: true }) },
+    rebuildDirIndex: (dirId: string, providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId, withEmbedding); return Promise.resolve({ success: true }) },
     cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
     onIndexProgress: (callback: (progress: {
@@ -230,6 +230,7 @@ const electronAPI = {
     // 文件内容浏览（段落、TOC）
     getFileParagraphs: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_PARAGRAPHS, fileId),
     getFileToc: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_TOC, fileId),
+    getParagraphContent: (paragraphId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_PARAGRAPH_CONTENT, paragraphId),
     // 搜索历史
     recordSearchHistory: (params: KMSRecordSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, params),
     getSearchHistory: (params?: KMSGetSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, params || {}),
@@ -254,6 +255,9 @@ const electronAPI = {
     // 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化）
     processCollectionDeep: (collectionId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId),
     cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
+    // 文件段落增量重新生成（从指定段落开始重新切分/摘要/向量化，保留前半部分）
+    regenerateFileParagraph: (fileId: string, paragraphId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_REGENERATE_FILE_PARAGRAPH, { fileId, paragraphId }),
+    cancelRegenerateFileParagraph: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_REGENERATE_FILE_PARAGRAPH),
     // 手动摘要生成（目录摘要/文件摘要）
     generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
     generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
@@ -280,6 +284,7 @@ const electronAPI = {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   ...electronAPI,
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   tasks: {
     getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_ALL),
     clearCompleted: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_COMPLETED),
@@ -295,6 +300,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 })
 
 export type ElectronAPI = typeof electronAPI & {
+  getPathForFile: (file: File) => string
   tasks: {
     getAll: () => Promise<any[]>
     clearCompleted: () => Promise<boolean>

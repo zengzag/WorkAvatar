@@ -2,14 +2,14 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Button, Empty, Spin, Modal, Input, Space, Tag, Tooltip, Popconfirm,
-  Drawer, Table, message, theme, Typography, Tree,
+  Drawer, Table, message, theme, Typography, Tree, Alert, Progress,
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, FileOutlined, FolderOutlined,
   ReloadOutlined, ExclamationCircleOutlined, FileAddOutlined,
   FileTextOutlined, SearchOutlined, FolderAddOutlined,
-  EyeOutlined, ThunderboltOutlined,
-  RobotOutlined, TagOutlined, NodeIndexOutlined, BlockOutlined,
+  EyeOutlined, ThunderboltOutlined, LoadingOutlined,
+  RobotOutlined, TagOutlined, NodeIndexOutlined,
 } from '@ant-design/icons'
 import KMSCollectionProcessModal from './KMSCollectionProcessModal'
 
@@ -94,6 +94,18 @@ interface FileDetailCache {
   error?: string
 }
 
+/** 后台处理中合集的实时状态 */
+interface ProcessingCollectionState {
+  id: string
+  name: string
+  phase: string
+  message: string
+  current: number
+  total: number
+  percent: number
+  lastUpdated: number
+}
+
 interface KMSCollectionsViewProps {
   /** 点击"在此合集中搜索"时触发，由父组件切换到搜索视图并设置筛选 */
   onSearchInCollection?: (collectionId: string) => void
@@ -126,7 +138,7 @@ const parseJsonArray = (json?: string): string[] => {
 }
 
 // 将段落列表构建为 Tree 结构（按 title_path 的层级）
-const buildTocTree = (paragraphs: ParagraphItem[]): any[] => {
+const buildTocTree = (paragraphs: ParagraphItem[], t: (key: string, options?: any) => string): any[] => {
   const sorted = [...paragraphs].sort((a, b) => a.paragraph_index - b.paragraph_index)
   const roots: any[] = []
   const stack: { node: any; level: number }[] = []
@@ -136,7 +148,7 @@ const buildTocTree = (paragraphs: ParagraphItem[]): any[] => {
       key: p.id,
       title: (
         <span>
-          <Text style={{ fontSize: 12 }}>{p.title || '(未命名段落)'}</Text>
+          <Text style={{ fontSize: 12 }}>{p.title || t('kms.collectionDetails.unnamedParagraph')}</Text>
           {p.summary ? (
             <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
               {p.summary.length > 50 ? p.summary.slice(0, 50) + '…' : p.summary}
@@ -206,6 +218,37 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [processModalOpen, setProcessModalOpen] = useState(false)
   const [processCollection, setProcessCollection] = useState<CollectionItem | null>(null)
 
+  // 后台处理中合集状态跟踪（弹窗关闭后继续在后台跟踪进度）
+  const [processingMap, setProcessingMap] = useState<Record<string, ProcessingCollectionState>>({})
+  // 已完成的合集处理（用于刷新列表，弹出后短暂保留）
+  const processingMapRef = useRef<Record<string, ProcessingCollectionState>>({})
+  // 进度事件订阅引用
+  const processingUnsubscribeRef = useRef<(() => void) | null>(null)
+
+  // 文件段落增量重新生成进度跟踪（按 fileId 过滤，不含 collectionId）
+  const [regenerateState, setRegenerateState] = useState<{
+    fileId: string
+    fileName: string
+    phase: string
+    message: string
+    percent: number
+  } | null>(null)
+  const regenerateUnsubscribeRef = useRef<(() => void) | null>(null)
+  // loadFileDetail 的 ref，避免 useEffect 因 detailCache 变化而频繁重订阅
+  const loadFileDetailRef = useRef<(fileId: string) => void>(() => {})
+
+  // 章节预览抽屉状态
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewParagraph, setPreviewParagraph] = useState<{
+    title: string; titlePath: string; content: string; summary: string; keywords: string[]
+  } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  // 8 阶段定义（用于计算总体百分比）
+  const STAGE_KEYS = ['parsing', 'paragraph_split', 'toc', 'paragraph_summary', 'doc_summary', 'embedding', 'collection_summary', 'collection_embedding']
+  const STAGE_INDEX: Record<string, number> = {}
+  STAGE_KEYS.forEach((k, i) => { STAGE_INDEX[k] = i })
+
   const loadCollections = useCallback(async () => {
     setLoading(true)
     try {
@@ -237,6 +280,121 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       setStatsMap(stMap)
     } catch {}
   }, [])
+
+  // 全局订阅合集深度处理进度（用于跟踪后台处理状态，即使弹窗关闭也保持订阅）
+  useEffect(() => {
+    if (processingUnsubscribeRef.current) {
+      processingUnsubscribeRef.current()
+      processingUnsubscribeRef.current = null
+    }
+    processingUnsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
+      // 只关心带 collectionId 的事件（合集深度处理）
+      if (!progress.collectionId) return
+
+      // 完成或错误：从处理中列表移除
+      if (progress.phase === 'done' || progress.phase === 'error') {
+        setProcessingMap((prev) => {
+          const next = { ...prev }
+          delete next[progress.collectionId!]
+          return next
+        })
+        delete processingMapRef.current[progress.collectionId!]
+        // 刷新合集列表与摘要
+        loadCollections()
+        loadAllSummaryAndStats()
+        return
+      }
+
+      // 跳过非阶段事件
+      if (!(progress.phase in STAGE_INDEX)) return
+
+      // 计算总体百分比（按阶段加权）
+      const currentIdx = STAGE_INDEX[progress.phase]
+      let fraction = currentIdx / STAGE_KEYS.length
+      if (progress.total > 0) {
+        fraction += (progress.current / progress.total) / STAGE_KEYS.length
+      }
+      const percent = Math.min(Math.round(fraction * 100), 99)
+
+      const state: ProcessingCollectionState = {
+        id: progress.collectionId!,
+        name: progress.collectionName || '',
+        phase: progress.phase,
+        message: progress.message || '',
+        current: progress.current,
+        total: progress.total,
+        percent,
+        lastUpdated: Math.floor(Date.now() / 1000),
+      }
+      setProcessingMap((prev) => ({ ...prev, [progress.collectionId!]: state }))
+      processingMapRef.current[progress.collectionId!] = state
+    })
+
+    return () => {
+      if (processingUnsubscribeRef.current) {
+        processingUnsubscribeRef.current()
+        processingUnsubscribeRef.current = null
+      }
+    }
+  }, [loadCollections, loadAllSummaryAndStats])
+
+  // 文件段落增量重新生成进度订阅（带 fileId 但不带 collectionId 的事件）
+  // 用于在文件详情抽屉中显示"从此重新生成"的实时进度
+  useEffect(() => {
+    if (regenerateUnsubscribeRef.current) {
+      regenerateUnsubscribeRef.current()
+      regenerateUnsubscribeRef.current = null
+    }
+    regenerateUnsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
+      // 只处理文件级事件（有 fileId 但无 collectionId）
+      if (!progress.fileId || progress.collectionId) return
+
+      // 完成/错误：清除状态并刷新文件详情
+      if (progress.phase === 'done' || progress.phase === 'error') {
+        const finishedFileId = progress.fileId
+        setRegenerateState(null)
+        // 若抽屉打开的是该文件，刷新其详情
+        if (drawerCollection) {
+          // 刷新文件段落详情缓存
+          setDetailCache(prev => {
+            const next = { ...prev }
+            delete next[finishedFileId]
+            return next
+          })
+          // 重新加载该文件详情
+          loadFileDetailRef.current(finishedFileId)
+        }
+        message.success(progress.message || t('kms.collectionDetails.regenerateDone'))
+        return
+      }
+
+      // 跳过非阶段事件
+      if (!(progress.phase in STAGE_INDEX)) return
+
+      // 计算总体百分比
+      const currentIdx = STAGE_INDEX[progress.phase]
+      let fraction = currentIdx / STAGE_KEYS.length
+      if (progress.total > 0) {
+        fraction += (progress.current / progress.total) / STAGE_KEYS.length
+      }
+      const percent = Math.min(Math.round(fraction * 100), 99)
+
+      setRegenerateState({
+        fileId: progress.fileId,
+        fileName: progress.fileName || '',
+        phase: progress.phase,
+        message: progress.message || '',
+        percent,
+      })
+    })
+
+    return () => {
+      if (regenerateUnsubscribeRef.current) {
+        regenerateUnsubscribeRef.current()
+        regenerateUnsubscribeRef.current = null
+      }
+    }
+  }, [drawerCollection, t])
 
   useEffect(() => {
     loadCollections()
@@ -298,8 +456,15 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // ============ 合集深度处理（段落切分/TOC/摘要/向量化） ============
+  // ============ 合集深度处理（段落切分/TOC/摘要/智能索引） ============
   const handleProcessDeep = async (collection: CollectionItem) => {
+    // 若该合集已在后台处理中，仅重新打开进度弹窗（不触发新处理）
+    if (processingMapRef.current[collection.id]) {
+      setProcessCollection(collection)
+      setProcessModalOpen(true)
+      return
+    }
+
     // 先校验是否有文件
     try {
       const stats = await window.electronAPI.kms.getCollectionStats(collection.id)
@@ -333,13 +498,48 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     window.electronAPI.kms.processCollectionDeep(collection.id)
   }
 
+  // 关闭弹窗：仅关闭 UI，不取消后台处理（后台处理状态由全局订阅持续跟踪）
   const handleCloseProcessModal = useCallback(() => {
     setProcessModalOpen(false)
     setProcessCollection(null)
-    // 处理完成后刷新合集列表与摘要
-    loadCollections()
-    loadAllSummaryAndStats()
-  }, [loadCollections, loadAllSummaryAndStats])
+  }, [])
+
+  // 取消处理：调用后端取消接口 + 关闭弹窗
+  const handleCancelProcessModal = useCallback(() => {
+    window.electronAPI.kms.cancelCollectionDeepProcess()
+    setProcessModalOpen(false)
+    setProcessCollection(null)
+  }, [])
+
+  // ============ 文件段落增量重新生成 ==========
+  // 取消文件段落增量重新生成
+  const handleCancelRegenerate = useCallback(() => {
+    window.electronAPI.kms.cancelRegenerateFileParagraph()
+    setRegenerateState(null)
+  }, [])
+
+  // 预览段落章节内容
+  const handlePreviewParagraph = useCallback(async (paragraphId: string) => {
+    setPreviewOpen(true)
+    setPreviewLoading(true)
+    setPreviewParagraph(null)
+    try {
+      const data = await window.electronAPI.kms.getParagraphContent(paragraphId)
+      if (data) {
+        setPreviewParagraph({
+          title: data.title || '',
+          titlePath: data.title_path || '',
+          content: data.content || '',
+          summary: data.summary || '',
+          keywords: (() => { try { return JSON.parse(data.keywords_json || '[]') } catch { return [] } })(),
+        })
+      }
+    } catch {
+      setPreviewParagraph(null)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [])
 
   // ============ 文件管理 ============
   const openFilesDrawer = async (collection: CollectionItem) => {
@@ -429,6 +629,11 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [detailCache])
 
+  // 同步 loadFileDetail 到 ref，供 useEffect 内回调调用而无需将其加入依赖
+  useEffect(() => {
+    loadFileDetailRef.current = loadFileDetail
+  }, [loadFileDetail])
+
   const handleAddFiles = async () => {
     if (!drawerCollection) return
     try {
@@ -452,7 +657,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       setAddingFiles(false)
 
       if (addResult.failed && addResult.failed.length > 0) {
-        message.warning(`${addResult.failed.length} 个文件添加失败`)
+        message.warning(t('kms.collections.filesAddFailed', { count: addResult.failed.length }))
       }
       const added = (addResult.added || 0) + (addResult.reused || 0) + (addResult.duplicated || 0)
       if (added > 0) {
@@ -495,7 +700,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       setAddingFiles(false)
 
       if (addResult.failed && addResult.failed.length > 0) {
-        message.warning(`${addResult.failed.length} 个文件添加失败`)
+        message.warning(t('kms.collections.filesAddFailed', { count: addResult.failed.length }))
       }
       const added = (addResult.added || 0) + (addResult.reused || 0) + (addResult.duplicated || 0)
       if (added > 0) {
@@ -657,9 +862,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     const keywords = parseJsonArray(fileSummary?.keywords_json)
     const mainTopics = parseJsonArray(fileSummary?.main_topics_json)
     const hasToc = detail.toc.length > 0
-    const paragraphsWithSummary = detail.paragraphs.filter(p => p.summary)
 
-    if (!fileSummary?.summary && !hasToc && paragraphsWithSummary.length === 0) {
+    if (!fileSummary?.summary && !hasToc) {
       return (
         <div style={{ padding: '12px 24px' }}>
           <Empty
@@ -714,7 +918,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
               <Tag style={{ fontSize: 10, margin: 0 }}>{detail.toc.length}</Tag>
             </div>
             <Tree
-              treeData={buildTocTree(detail.paragraphs)}
+              treeData={buildTocTree(detail.paragraphs, t)}
               defaultExpandAll
               showLine
               selectable={false}
@@ -722,9 +926,9 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                 const raw = node?.raw as ParagraphItem
                 if (!raw) return node?.title
                 return (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <Text style={{ fontSize: 12 }}>{raw.title || '(未命名)'}</Text>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, flex: 1 }}>
+                      <Text style={{ fontSize: 12 }}>{raw.title || t('kms.collectionDetails.unnamed')}</Text>
                       {raw.summary && (
                         <Tooltip title={raw.summary}>
                           <Text type="secondary" style={{ fontSize: 11 }}>
@@ -733,52 +937,22 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                         </Tooltip>
                       )}
                     </div>
+                    <Tooltip title={t('kms.collectionDetails.previewParagraph')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handlePreviewParagraph(raw.id)
+                        }}
+                        style={{ flexShrink: 0 }}
+                      />
+                    </Tooltip>
                   </div>
                 )
               }}
             />
-          </Card>
-        )}
-
-        {/* 段落摘要列表 */}
-        {paragraphsWithSummary.length > 0 && (
-          <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <BlockOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
-              <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.paragraphSummariesTitle')}</Text>
-              <Tag style={{ fontSize: 10, margin: 0 }}>{paragraphsWithSummary.length}</Tag>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {paragraphsWithSummary.map((p) => (
-                <div
-                  key={p.id}
-                  style={{
-                    padding: 8,
-                    background: token.colorFillQuaternary,
-                    borderRadius: 4,
-                    borderLeft: `2px solid ${token.colorPrimary}`,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                    <Text strong style={{ fontSize: 12 }}>{p.title || `(段落 #${p.paragraph_index + 1})`}</Text>
-                  </div>
-                  <Paragraph style={{ fontSize: 11, margin: 0, color: token.colorTextSecondary }}>
-                    {p.summary}
-                  </Paragraph>
-                  {(() => {
-                    const kws = parseJsonArray(p.keywords_json)
-                    if (kws.length === 0) return null
-                    return (
-                      <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {kws.slice(0, 5).map((kw, i) => (
-                          <Tag key={i} style={{ fontSize: 10, margin: 0 }}>{kw}</Tag>
-                        ))}
-                      </div>
-                    )
-                  })()}
-                </div>
-              ))}
-            </div>
           </Card>
         )}
       </div>
@@ -888,6 +1062,45 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         </Space>
       </div>
 
+      {/* 后台处理指示器：弹窗关闭后仍持续跟踪后台处理进度，可点击重新打开弹窗 */}
+      {Object.values(processingMap).length > 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          {Object.values(processingMap).map((p) => (
+            <Alert
+              key={p.id}
+              type="info"
+              showIcon
+              icon={<LoadingOutlined />}
+              message={
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <Text strong style={{ fontSize: 13 }}>
+                      {t('kms.collectionProcess.backgroundRunningHint', { name: p.name, percent: p.percent })}
+                    </Text>
+                    {p.message && (
+                      <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                        - {p.message}
+                      </Text>
+                    )}
+                  </div>
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => {
+                      setProcessCollection({ id: p.id, name: p.name, description: '', file_count: 0, created_at: 0, updated_at: 0 })
+                      setProcessModalOpen(true)
+                    }}
+                  >
+                    {t('kms.collectionProcess.viewProgress')}
+                  </Button>
+                </div>
+              }
+              style={{ padding: '6px 12px' }}
+            />
+          ))}
+        </div>
+      )}
+
       {/* 合集列表 */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {loading ? (
@@ -924,8 +1137,13 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                       <Tooltip title={t('kms.collections.searchInCollection')}>
                         <Button type="text" size="small" icon={<SearchOutlined />} onClick={() => onSearchInCollection?.(c.id)} />
                       </Tooltip>
-                      <Tooltip title={t('kms.collectionProcess.title')}>
-                        <Button type="text" size="small" icon={<ThunderboltOutlined />} onClick={() => handleProcessDeep(c)} />
+                      <Tooltip title={processingMap[c.id] ? t('kms.collectionProcess.viewProgress') : t('kms.collectionProcess.title')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={processingMap[c.id] ? <LoadingOutlined /> : <ThunderboltOutlined />}
+                          onClick={() => handleProcessDeep(c)}
+                        />
                       </Tooltip>
                       <Tooltip title={t('kms.collections.editSummary')}>
                         <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => openSummaryModal(c)} />
@@ -1076,6 +1294,37 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           </Space>
         }
       >
+        {/* 文件段落增量重新生成进度提示 */}
+        {regenerateState && (
+          <Alert
+            type="info"
+            showIcon
+            icon={<LoadingOutlined />}
+            style={{ marginBottom: 12 }}
+            message={
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <Text strong style={{ fontSize: 12 }}>
+                    {t('kms.collectionDetails.regeneratingTitle', { name: regenerateState.fileName })}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                    - {regenerateState.message}
+                  </Text>
+                  <Progress
+                    percent={regenerateState.percent}
+                    size="small"
+                    status="active"
+                    style={{ marginTop: 4, marginBottom: 0 }}
+                  />
+                </div>
+                <Button type="link" size="small" danger onClick={handleCancelRegenerate}>
+                  {t('common.cancel')}
+                </Button>
+              </div>
+            }
+          />
+        )}
+
         {/* 合集全局摘要卡片 */}
         {drawerSummary && (
           <Card
@@ -1188,7 +1437,90 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         collectionId={processCollection?.id || null}
         collectionName={processCollection?.name || ''}
         onClose={handleCloseProcessModal}
+        onCancel={handleCancelProcessModal}
       />
+
+      {/* 章节预览抽屉 */}
+      <Drawer
+        title={previewParagraph?.title || t('kms.collectionDetails.previewParagraph')}
+        open={previewOpen}
+        onClose={() => { setPreviewOpen(false); setPreviewParagraph(null) }}
+        width={520}
+      >
+        {previewLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+        ) : previewParagraph ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* 标题路径 */}
+            {previewParagraph.titlePath && (
+              <div>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.collectionDetails.titlePath')}</Text>
+                <div style={{ marginTop: 2 }}>
+                  <Text style={{ fontSize: 13 }}>{previewParagraph.titlePath}</Text>
+                </div>
+              </div>
+            )}
+
+            {/* 摘要 */}
+            {previewParagraph.summary && (
+              <Card size="small" style={{ borderColor: token.colorBorderSecondary, background: token.colorFillQuaternary }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <RobotOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
+                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.summary')}</Text>
+                </div>
+                <Paragraph style={{ fontSize: 12, margin: 0, color: token.colorTextSecondary }}>
+                  {previewParagraph.summary}
+                </Paragraph>
+              </Card>
+            )}
+
+            {/* 关键词 */}
+            {previewParagraph.keywords.length > 0 && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                  <TagOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
+                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.keywords')}</Text>
+                </div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {previewParagraph.keywords.map((kw, i) => (
+                    <Tag key={i} style={{ fontSize: 11, margin: 0 }}>{kw}</Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 原文 */}
+            {previewParagraph.content && (
+              <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <FileTextOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
+                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.originalContent')}</Text>
+                </div>
+                <Paragraph
+                  style={{
+                    fontSize: 13,
+                    margin: 0,
+                    whiteSpace: 'pre-wrap',
+                    maxHeight: 400,
+                    overflow: 'auto',
+                    backgroundColor: token.colorFillQuaternary,
+                    padding: 12,
+                    borderRadius: 4,
+                  }}
+                >
+                  {previewParagraph.content}
+                </Paragraph>
+              </Card>
+            )}
+
+            {!previewParagraph.content && !previewParagraph.summary && (
+              <Empty description={t('kms.collectionDetails.noContent')} />
+            )}
+          </div>
+        ) : (
+          <Empty description={t('kms.collectionDetails.previewLoadFailed')} />
+        )}
+      </Drawer>
     </div>
   )
 }

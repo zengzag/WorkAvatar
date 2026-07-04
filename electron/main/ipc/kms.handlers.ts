@@ -108,23 +108,24 @@ export function registerKMSHandlers(): void {
 
   // 索引管理 — 使用 ipcMain.on (fire-and-forget)，通过进度事件通知结果
   // 不使用 ipcMain.handle 避免返回值序列化问题
-  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string) => {
-    logger.info('Build index requested')
-    kmsService.buildFullIndex(providerId).catch((err: any) => {
+  // 第二个参数 withEmbedding（默认 true）控制是否同步生成向量嵌入（智能索引）
+  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
+    logger.info(`Build index requested (withEmbedding=${withEmbedding})`)
+    kmsService.buildFullIndex(providerId, withEmbedding).catch((err: any) => {
       logger.error('buildFullIndex failed:', String(err?.message || err))
     })
   })
 
-  ipcMain.on(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, (_event, providerId?: string) => {
-    logger.info('Incremental index requested')
-    kmsService.incrementalIndex(providerId).catch((err: any) => {
+  ipcMain.on(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
+    logger.info(`Incremental index requested (withEmbedding=${withEmbedding})`)
+    kmsService.incrementalIndex(providerId, withEmbedding).catch((err: any) => {
       logger.error('incrementalIndex failed:', String(err?.message || err))
     })
   })
 
-  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string) => {
-    logger.info('Rebuild dir index requested:', dirId)
-    kmsService.rebuildDirIndex(dirId, providerId).catch((err: any) => {
+  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string, withEmbedding: boolean = true) => {
+    logger.info(`Rebuild dir index requested: ${dirId} (withEmbedding=${withEmbedding})`)
+    kmsService.rebuildDirIndex(dirId, providerId, withEmbedding).catch((err: any) => {
       logger.error('rebuildDirIndex failed:', String(err?.message || err))
     })
   })
@@ -214,6 +215,10 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_GET_FILE_TOC, async (fileId: string) => {
     return kmsService.getFileToc(fileId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_PARAGRAPH_CONTENT, async (paragraphId: string) => {
+    return kmsService.getParagraphContent(paragraphId)
   })
 
   // ==================== 搜索历史 ====================
@@ -313,6 +318,21 @@ export function registerKMSHandlers(): void {
   ipcMain.on(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP, () => {
     logger.info('Cancel collection deep process requested')
     kmsService.cancelCollectionDeepProcess()
+  })
+
+  // ==================== 文件段落增量重新生成 ====================
+  // 从指定段落开始重新切分/摘要/向量化，保留前半部分段落不变
+  // 进度通过 KMS_INDEX_PROGRESS 通道推送（含 fileId/fileName，不含 collectionId）
+  ipcMain.on(IPC_CHANNELS.KMS_REGENERATE_FILE_PARAGRAPH, (_event, params: { fileId: string; paragraphId: string }) => {
+    logger.info('Regenerate file paragraph requested:', params)
+    kmsService.regenerateFileParagraph(params.fileId, params.paragraphId).catch((err: any) => {
+      logger.error('regenerateFileParagraph failed:', String(err?.message || err))
+    })
+  })
+
+  ipcMain.on(IPC_CHANNELS.KMS_CANCEL_REGENERATE_FILE_PARAGRAPH, () => {
+    logger.info('Cancel regenerate file paragraph requested')
+    kmsService.cancelFileParagraphRegenerate()
   })
 
   // ==================== 手动摘要生成 ====================

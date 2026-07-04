@@ -4,14 +4,15 @@ import {
   Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App,
 } from 'antd'
 import {
-  DatabaseOutlined, FileTextOutlined, ThunderboltOutlined,
+  ThunderboltOutlined,
   SyncOutlined, BuildOutlined, StopOutlined,
-  FireOutlined, InboxOutlined, ClockCircleOutlined, RadarChartOutlined,
+  ClockCircleOutlined, RadarChartOutlined,
   PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import type { KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 
 interface IndexProgress {
   phase: string
@@ -20,19 +21,12 @@ interface IndexProgress {
   message: string
 }
 
-interface KMSStats {
-  dirs: { total: number; enabled: number }
-  files: { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> }
-  index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
-}
-
 interface KMSIndexPanelProps {
-  stats: KMSStats | null
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: () => void
-  onIncrementalIndex: () => void
-  onRebuildIndex: () => void
+  onBuildIndex: (withEmbedding?: boolean) => void
+  onIncrementalIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean) => void
   onCancelIndex: () => void
   // 自动索引
   autoIndexConfig: KMSAutoIndexConfig
@@ -51,7 +45,6 @@ const PHASE_LABEL_KEYS: Record<string, string> = {
 }
 
 const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
-  stats,
   isIndexing,
   indexProgress,
   onBuildIndex,
@@ -72,6 +65,8 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
   const [savingAuto, setSavingAuto] = useState(false)
+  // 是否同时构建智能索引（向量嵌入），默认开启
+  const [withEmbedding, setWithEmbedding] = useState(true)
 
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
@@ -103,26 +98,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     const s = String(d.getSeconds()).padStart(2, '0')
     return `${h}:${m}:${s}`
   }
-
-  const totalFiles = stats?.files?.total ?? 0
-  const indexedFiles = stats?.files?.byStatus?.completed ?? 0
-  const pendingFiles = stats?.files?.byStatus?.pending ?? 0
-  const failedFiles = stats?.files?.byStatus?.failed ?? 0
-  const hotFiles = stats?.files?.byTier?.hot ?? 0
-  const coldFiles = stats?.files?.byTier?.cold ?? 0
-  const indexEntries = stats?.index?.totalEntries ?? 0
-  const embeddingCount = stats?.index?.embeddingCount ?? 0
-
-  const statCards = [
-    { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
-    { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
-    { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
-    { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
-    { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: '#f5222d' }} /> },
-    { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
-    { label: t('kms.indexEntries'), value: indexEntries, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
-    { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: '#722ed1' }} /> },
-  ]
 
   const progressPercent = indexProgress && indexProgress.total > 0
     ? Math.round((indexProgress.current / indexProgress.total) * 100)
@@ -265,29 +240,11 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
         </div>
       </Card>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-        gap: 12,
-      }}>
-        {statCards.map((card) => (
-          <Card
-            key={card.label}
-            size="small"
-            style={{ textAlign: 'center' }}
-          >
-            <div style={{ marginBottom: 4 }}>{card.icon}</div>
-            <Title level={4} style={{ margin: 0, fontSize: 20 }}>{card.value}</Title>
-            <Text type="secondary" style={{ fontSize: 12 }}>{card.label}</Text>
-          </Card>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           type="primary"
           icon={<BuildOutlined />}
-          onClick={() => onBuildIndex()}
+          onClick={() => onBuildIndex(withEmbedding)}
           disabled={isIndexing}
           loading={isIndexing && indexProgress?.phase === 'crawling'}
         >
@@ -295,14 +252,14 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
         </Button>
         <Button
           icon={<SyncOutlined />}
-          onClick={() => onIncrementalIndex()}
+          onClick={() => onIncrementalIndex(withEmbedding)}
           disabled={isIndexing}
         >
           {t('kms.incrementalIndex')}
         </Button>
         <Button
           icon={<ThunderboltOutlined />}
-          onClick={() => onRebuildIndex()}
+          onClick={() => onRebuildIndex(withEmbedding)}
           disabled={isIndexing}
         >
           {t('kms.rebuildIndex')}
@@ -316,6 +273,21 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
             {t('kms.cancelIndex')}
           </Button>
         )}
+        <Tooltip title={t('kms.withEmbeddingTooltip')}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 10px', borderRadius: 6,
+            background: withEmbedding ? token.colorPrimaryBg : token.colorFillQuaternary,
+            border: `1px solid ${withEmbedding ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
+            fontSize: 12, color: withEmbedding ? token.colorPrimary : token.colorTextSecondary,
+            cursor: 'pointer', userSelect: 'none',
+            transition: 'all 0.2s',
+          }} onClick={() => setWithEmbedding(!withEmbedding)}>
+            <CloudServerOutlined style={{ fontSize: 12 }} />
+            <span>{t('kms.withEmbedding')}</span>
+            <Switch size="small" checked={withEmbedding} onChange={setWithEmbedding} />
+          </div>
+        </Tooltip>
       </div>
 
       {isIndexing && indexProgress && (

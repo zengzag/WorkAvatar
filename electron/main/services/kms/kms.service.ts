@@ -452,11 +452,16 @@ class KMSService {
   /**
    * AI 生成合集摘要（基于合集内文件的轻量摘要与关键主题）
    * 失败时返回 { error }，成功时返回 { summary, keyTopics }
+   * 支持通过 signal 取消 LLM 调用
    */
-  async generateCollectionSummary(collectionId: string): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {
+  async generateCollectionSummary(collectionId: string, signal?: AbortSignal): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {
     const collection = this.db.prepare('SELECT id, name, description FROM kms_collections WHERE id = ?').get(collectionId) as any
     if (!collection) {
       return { error: 'Collection not found' }
+    }
+
+    if (signal?.aborted) {
+      return { error: 'ABORTED' }
     }
 
     const files = this.listFilesInCollection(collectionId)
@@ -509,8 +514,14 @@ ${fileSummaries.join('\n')}
         temperature: 0.3,
         max_tokens: 800,
         model: llmConfig.modelId,
+        signal,
         logSource: 'kms_collection_summary',
       })
+
+      // 取消检查
+      if (signal?.aborted) {
+        return { error: 'ABORTED' }
+      }
 
       // 解析 JSON（容错：去除可能的 markdown 代码块包裹）
       const cleaned = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
@@ -530,6 +541,10 @@ ${fileSummaries.join('\n')}
 
       return { summary, keyTopics }
     } catch (err: any) {
+      // AbortError 视为取消，不算错误
+      if (signal?.aborted || err?.name === 'AbortError') {
+        return { error: 'ABORTED' }
+      }
       logger.error('generateCollectionSummary failed:', err?.message || err)
       return { error: err?.message || 'LLM call failed' }
     }
@@ -637,6 +652,17 @@ ${fileSummaries.join('\n')}
       WHERE file_id = ?
       ORDER BY paragraph_index ASC
     `).all(fileId) as any[]
+  }
+
+  /**
+   * 获取单个段落的完整内容（含原文，用于预览）
+   */
+  getParagraphContent(paragraphId: string): { id: string; title: string; title_path: string; level: number; paragraph_index: number; content: string; summary: string | null; keywords_json: string | null; file_id: string } | null {
+    return this.db.prepare(`
+      SELECT id, title, title_path, level, paragraph_index, content, summary, keywords_json, file_id
+      FROM kms_paragraphs
+      WHERE id = ?
+    `).get(paragraphId) as any || null
   }
 
   /**
@@ -840,8 +866,9 @@ ${fileSummaries.join('\n')}
    * 构建全量索引
    * 若未显式指定 providerId，则从 KMS 专属 LLM 配置解析（供 chat 摘要使用）
    * 向量嵌入使用独立的 KMS Embedding 配置，在 indexManager 内部解析
+   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
    */
-  async buildFullIndex(providerId?: string): Promise<void> {
+  async buildFullIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
@@ -849,13 +876,14 @@ ${fileSummaries.join('\n')}
     }
     await indexManager.buildFullIndex(providerId, (progress) => {
       this.notifyProgress(progress)
-    })
+    }, withEmbedding)
   }
 
   /**
    * 增量索引
+   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
    */
-  async incrementalIndex(providerId?: string): Promise<void> {
+  async incrementalIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
@@ -863,13 +891,14 @@ ${fileSummaries.join('\n')}
     }
     await indexManager.incrementalIndex(providerId, (progress) => {
       this.notifyProgress(progress)
-    })
+    }, withEmbedding)
   }
 
   /**
    * 重建指定目录索引
+   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
    */
-  async rebuildDirIndex(dirId: string, providerId?: string): Promise<void> {
+  async rebuildDirIndex(dirId: string, providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
@@ -877,7 +906,7 @@ ${fileSummaries.join('\n')}
     }
     await indexManager.rebuildDirIndex(dirId, providerId, (progress) => {
       this.notifyProgress(progress)
-    })
+    }, withEmbedding)
   }
 
   /**
@@ -910,6 +939,25 @@ ${fileSummaries.join('\n')}
    */
   async generateFileSummaryManual(fileId: string): Promise<{ success: boolean; error?: string }> {
     return KMSIndexManagerService.getInstance().generateFileSummaryManual(fileId)
+  }
+
+  /**
+   * 增量重新生成：从指定段落开始重新切分、生成摘要、向量化
+   * 保留该段落之前的所有段落不变，仅重新处理该段落及之后的内容
+   * 进度通过 onProgress 推送（带 fileId/fileName，不带 collectionId）
+   */
+  async regenerateFileParagraph(fileId: string, fromParagraphId: string): Promise<{ success: boolean; error?: string }> {
+    const indexManager = KMSIndexManagerService.getInstance()
+    return await indexManager.regenerateFileParagraph(fileId, fromParagraphId, (progress) => {
+      this.notifyProgress(progress)
+    })
+  }
+
+  /**
+   * 取消文件段落增量重新生成
+   */
+  cancelFileParagraphRegenerate(): void {
+    KMSIndexManagerService.getInstance().cancelFileParagraphRegenerate()
   }
 
   /**
@@ -1127,7 +1175,7 @@ ${fileSummaries.join('\n')}
   // ==================== 搜索历史 ====================
 
   /**
-   * 记录搜索历史
+   * 记录搜索历史（相同 query 去重：更新已有记录而非重复插入）
    */
   recordSearchHistory(params: {
     query: string
@@ -1135,17 +1183,35 @@ ${fileSummaries.join('\n')}
     resultCount: number
     filters?: any
   }): void {
-    const id = generateId()
-    this.db.prepare(`
-      INSERT INTO kms_search_history (id, query, search_mode, result_count, filters_json)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(
-      id,
-      params.query,
-      params.searchMode,
-      params.resultCount,
-      params.filters ? JSON.stringify(params.filters) : '{}'
-    )
+    // 查找是否已有相同 query 的历史记录
+    const existing = this.db.prepare(
+      'SELECT id FROM kms_search_history WHERE query = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(params.query) as any
+
+    if (existing) {
+      // 更新已有记录，刷新搜索模式、结果数和时间为当前
+      this.db.prepare(`
+        UPDATE kms_search_history SET search_mode = ?, result_count = ?, filters_json = ?, created_at = unixepoch()
+        WHERE id = ?
+      `).run(
+        params.searchMode,
+        params.resultCount,
+        params.filters ? JSON.stringify(params.filters) : '{}',
+        existing.id
+      )
+    } else {
+      const id = generateId()
+      this.db.prepare(`
+        INSERT INTO kms_search_history (id, query, search_mode, result_count, filters_json)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        id,
+        params.query,
+        params.searchMode,
+        params.resultCount,
+        params.filters ? JSON.stringify(params.filters) : '{}'
+      )
+    }
   }
 
   /**

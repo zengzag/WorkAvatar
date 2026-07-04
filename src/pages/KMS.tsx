@@ -23,6 +23,7 @@ const KMSPage: React.FC = () => {
     indexProgress,
     isIndexing,
     stats,
+    loadStats,
     // KMS 设置
     kmsSettings,
     saveKmsSettings,
@@ -30,10 +31,8 @@ const KMSPage: React.FC = () => {
     autoIndexStatus,
     runAutoIndexCheckNow,
     // 知识沉淀
-    dirSummaries,
     fileSummaries,
     isLoadingSummaries,
-    loadDirSummaries,
     loadFileSummaries,
     // 搜索历史（嵌入搜索框下拉）
     searchHistory,
@@ -167,13 +166,13 @@ const KMSPage: React.FC = () => {
         ) : viewMode === 'knowledge' ? (
           <KMSKnowledgeView
             dirs={dirs}
-            dirSummaries={dirSummaries}
             fileSummaries={fileSummaries}
             isLoadingSummaries={isLoadingSummaries}
-            onLoadDirSummaries={loadDirSummaries}
             onLoadFileSummaries={loadFileSummaries}
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
+            stats={stats}
+            onLoadStats={loadStats}
           />
         ) : (
           <KMSCollectionsView
@@ -198,12 +197,11 @@ const KMSPage: React.FC = () => {
           onAddDir={addDir}
           onUpdateDir={updateDir}
           onDeleteDir={deleteDir}
-          stats={stats}
           isIndexing={isIndexing}
           indexProgress={indexProgress}
-          onBuildIndex={buildIndex}
-          onIncrementalIndex={incrementalIndex}
-          onRebuildIndex={buildIndex}
+          onBuildIndex={(withEmbedding) => buildIndex(undefined, withEmbedding)}
+          onIncrementalIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}
+          onRebuildIndex={(withEmbedding) => buildIndex(undefined, withEmbedding)}
           onCancelIndex={cancelIndex}
           autoIndexStatus={autoIndexStatus}
           onRunAutoIndexCheck={runAutoIndexCheckNow}

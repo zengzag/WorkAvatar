@@ -33,12 +33,6 @@ interface IndexProgress {
   message: string
 }
 
-interface KMSStats {
-  dirs: { total: number; enabled: number }
-  files: { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> }
-  index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
-}
-
 interface KMSSettingsPanelProps {
   settings: KMSSettings
   onSaveSettings: (params: {
@@ -53,12 +47,11 @@ interface KMSSettingsPanelProps {
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
   onDeleteDir: (id: string) => void
   // 索引管理
-  stats: KMSStats | null
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: () => void
-  onIncrementalIndex: () => void
-  onRebuildIndex: () => void
+  onBuildIndex: (withEmbedding?: boolean) => void
+  onIncrementalIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean) => void
   onCancelIndex: () => void
   // 自动索引
   autoIndexStatus: KMSAutoIndexStatus | null
@@ -72,7 +65,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onAddDir,
   onUpdateDir,
   onDeleteDir,
-  stats,
   isIndexing,
   indexProgress,
   onBuildIndex,
@@ -94,7 +86,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
-  // Embedding 最大字符数（资料库独立配置）
+  // 智能索引最大字符数（资料库独立配置）
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
   const [savingEmbeddingMaxChars, setSavingEmbeddingMaxChars] = useState(false)
 
@@ -222,7 +214,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         </div>
       </Card>
 
-      {/* Embedding 模型 */}
+      {/* 智能索引模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -270,7 +262,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         </div>
       </Card>
 
-      {/* Embedding 最大字符数 */}
+      {/* 智能索引最大字符数 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -441,7 +433,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         </Paragraph>
       </div>
       <KMSIndexPanel
-        stats={stats}
         isIndexing={isIndexing}
         indexProgress={indexProgress}
         onBuildIndex={onBuildIndex}
