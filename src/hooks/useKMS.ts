@@ -430,8 +430,6 @@ export function useKMS() {
     await window.electronAPI.kms.cancelIndex()
   }, [])
 
-  // ==================== KMS 设置 ====================
-
   // 加载 KMS 设置
   const loadKmsSettings = useCallback(async () => {
     try {
@@ -493,8 +491,6 @@ export function useKMS() {
     }
   }, [])
 
-  // ==================== 知识沉淀（摘要查看） ====================
-
   // 加载目录摘要
   const loadDirSummaries = useCallback(async () => {
     try {
@@ -528,8 +524,6 @@ export function useKMS() {
       setIsLoadingSummaries(false)
     }
   }, [])
-
-  // ==================== 搜索历史 ====================
 
   // 加载搜索历史（仅元数据列表，用于搜索框下拉提示）
   const loadSearchHistory = useCallback(async (params?: { limit?: number; searchMode?: string }) => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Button, Empty, Spin, Modal, Input, Space, Tag, Tooltip, Popconfirm,
+  Card, Button, Empty, Spin, Modal, Space, Tag, Tooltip, Popconfirm,
   Drawer, Table, message, theme, Typography, Tree, Alert, Progress,
 } from 'antd'
 import {
@@ -12,6 +12,12 @@ import {
   RobotOutlined, TagOutlined, NodeIndexOutlined,
 } from '@ant-design/icons'
 import KMSCollectionProcessModal from './KMSCollectionProcessModal'
+import {
+  KMSCollectionEditModal,
+  KMSCollectionSummaryModal,
+  KMSParagraphPreviewDrawer,
+} from './collection'
+import { formatFileSize } from '../../utils/format'
 
 const { Text, Paragraph } = Typography
 
@@ -111,14 +117,6 @@ interface KMSCollectionsViewProps {
   onSearchInCollection?: (collectionId: string) => void
   /** 预览文件，由父组件打开 KMSFilePreview */
   onPreviewFile?: (file: { file_id: string; file_name: string; file_path: string; text: string; match_type: string }) => void
-}
-
-const formatFileSize = (bytes: number): string => {
-  if (!bytes || bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 const formatTime = (ts: number): string => {
@@ -401,7 +399,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     loadAllSummaryAndStats()
   }, [loadCollections, loadAllSummaryAndStats])
 
-  // ============ 创建/编辑合集 ============
   const openCreateModal = () => {
     setEditingCollection(null)
     setFormName('')
@@ -456,7 +453,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // ============ 合集深度处理（段落切分/TOC/摘要/智能索引） ============
   const handleProcessDeep = async (collection: CollectionItem) => {
     // 若该合集已在后台处理中，仅重新打开进度弹窗（不触发新处理）
     if (processingMapRef.current[collection.id]) {
@@ -511,7 +507,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     setProcessCollection(null)
   }, [])
 
-  // ============ 文件段落增量重新生成 ==========
   // 取消文件段落增量重新生成
   const handleCancelRegenerate = useCallback(() => {
     window.electronAPI.kms.cancelRegenerateFileParagraph()
@@ -541,7 +536,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [])
 
-  // ============ 文件管理 ============
   const openFilesDrawer = async (collection: CollectionItem) => {
     setDrawerCollection(collection)
     setFilesDrawerOpen(true)
@@ -753,7 +747,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // ============ 摘要编辑 ============
   const openSummaryModal = async (collection: CollectionItem) => {
     setSummaryCollection(collection)
     setSummaryText('')
@@ -830,7 +823,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // ============ 卡片状态颜色计算 ============
   const getStatsTag = (collectionId: string) => {
     const stats = statsMap[collectionId]
     if (!stats) return null
@@ -849,7 +841,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     )
   }
 
-  // ============ 展开行渲染文件 AI 详情 ============
   const renderFileDetail = (file: CollectionFile) => {
     const detail = detailCache[file.id]
     if (!detail || detail.loading) {
@@ -959,7 +950,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     )
   }
 
-  // ============ 文件表格列定义 ============
   const fileColumns = [
     {
       title: t('kms.collections.fileName'),
@@ -1208,41 +1198,17 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       </div>
 
       {/* 创建/编辑合集弹窗 */}
-      <Modal
-        title={editingCollection ? t('kms.collections.editCollection') : t('kms.collections.createCollection')}
+      <KMSCollectionEditModal
         open={editModalOpen}
+        editingCollection={editingCollection}
+        formName={formName}
+        formDesc={formDesc}
+        saving={saving}
+        onNameChange={setFormName}
+        onDescChange={setFormDesc}
         onCancel={() => setEditModalOpen(false)}
-        onOk={handleSaveCollection}
-        confirmLoading={saving}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
-          <div>
-            <div style={{ marginBottom: 6, fontSize: 12, color: token.colorTextSecondary }}>
-              {t('kms.collections.collectionName')} <span style={{ color: token.colorError }}>*</span>
-            </div>
-            <Input
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-              placeholder={t('kms.collections.collectionNamePlaceholder')}
-              maxLength={50}
-            />
-          </div>
-          <div>
-            <div style={{ marginBottom: 6, fontSize: 12, color: token.colorTextSecondary }}>
-              {t('kms.collections.collectionDesc')}
-            </div>
-            <Input.TextArea
-              value={formDesc}
-              onChange={(e) => setFormDesc(e.target.value)}
-              placeholder={t('kms.collections.collectionDescPlaceholder')}
-              rows={3}
-              maxLength={200}
-            />
-          </div>
-        </div>
-      </Modal>
+        onSave={handleSaveCollection}
+      />
 
       {/* 合集详情抽屉（统一：文件管理 + AI 内容查看） */}
       <Drawer
@@ -1390,46 +1356,19 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       </Drawer>
 
       {/* 合集摘要编辑弹窗 */}
-      <Modal
-        title={summaryCollection ? `${t('kms.collections.editSummary')} - ${summaryCollection.name}` : t('kms.collections.editSummary')}
+      <KMSCollectionSummaryModal
         open={summaryModalOpen}
+        summaryCollection={summaryCollection}
+        summaryText={summaryText}
+        summaryTopics={summaryTopics}
+        summarySaving={summarySaving}
+        summaryGenerating={summaryGenerating}
+        onSummaryChange={setSummaryText}
+        onTopicsChange={setSummaryTopics}
         onCancel={() => setSummaryModalOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setSummaryModalOpen(false)}>{t('common.cancel')}</Button>,
-          <Button key="ai" type="default" icon={<RobotOutlined />} loading={summaryGenerating} onClick={handleAIGenerateInModal}>
-            {t('kms.collections.aiGenerateSummary')}
-          </Button>,
-          <Button key="save" type="primary" loading={summarySaving} onClick={handleSaveSummary}>
-            {t('common.save')}
-          </Button>,
-        ]}
-        width={600}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
-          <div>
-            <div style={{ marginBottom: 6, fontSize: 12, color: token.colorTextSecondary }}>
-              {t('kms.collections.summary')}
-            </div>
-            <Input.TextArea
-              value={summaryText}
-              onChange={(e) => setSummaryText(e.target.value)}
-              placeholder={t('kms.collections.summaryPlaceholder')}
-              rows={6}
-              maxLength={2000}
-            />
-          </div>
-          <div>
-            <div style={{ marginBottom: 6, fontSize: 12, color: token.colorTextSecondary }}>
-              {t('kms.collections.keyTopics')}
-            </div>
-            <Input
-              value={summaryTopics}
-              onChange={(e) => setSummaryTopics(e.target.value)}
-              placeholder={t('kms.collections.keyTopicsPlaceholder')}
-            />
-          </div>
-        </div>
-      </Modal>
+        onSave={handleSaveSummary}
+        onAIGenerate={handleAIGenerateInModal}
+      />
 
       {/* 合集深度处理进度弹窗 */}
       <KMSCollectionProcessModal
@@ -1441,86 +1380,12 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       />
 
       {/* 章节预览抽屉 */}
-      <Drawer
-        title={previewParagraph?.title || t('kms.collectionDetails.previewParagraph')}
+      <KMSParagraphPreviewDrawer
         open={previewOpen}
+        previewParagraph={previewParagraph}
+        previewLoading={previewLoading}
         onClose={() => { setPreviewOpen(false); setPreviewParagraph(null) }}
-        width={520}
-      >
-        {previewLoading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-        ) : previewParagraph ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* 标题路径 */}
-            {previewParagraph.titlePath && (
-              <div>
-                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.collectionDetails.titlePath')}</Text>
-                <div style={{ marginTop: 2 }}>
-                  <Text style={{ fontSize: 13 }}>{previewParagraph.titlePath}</Text>
-                </div>
-              </div>
-            )}
-
-            {/* 摘要 */}
-            {previewParagraph.summary && (
-              <Card size="small" style={{ borderColor: token.colorBorderSecondary, background: token.colorFillQuaternary }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <RobotOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.summary')}</Text>
-                </div>
-                <Paragraph style={{ fontSize: 12, margin: 0, color: token.colorTextSecondary }}>
-                  {previewParagraph.summary}
-                </Paragraph>
-              </Card>
-            )}
-
-            {/* 关键词 */}
-            {previewParagraph.keywords.length > 0 && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <TagOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.keywords')}</Text>
-                </div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {previewParagraph.keywords.map((kw, i) => (
-                    <Tag key={i} style={{ fontSize: 11, margin: 0 }}>{kw}</Tag>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 原文 */}
-            {previewParagraph.content && (
-              <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <FileTextOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-                  <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.originalContent')}</Text>
-                </div>
-                <Paragraph
-                  style={{
-                    fontSize: 13,
-                    margin: 0,
-                    whiteSpace: 'pre-wrap',
-                    maxHeight: 400,
-                    overflow: 'auto',
-                    backgroundColor: token.colorFillQuaternary,
-                    padding: 12,
-                    borderRadius: 4,
-                  }}
-                >
-                  {previewParagraph.content}
-                </Paragraph>
-              </Card>
-            )}
-
-            {!previewParagraph.content && !previewParagraph.summary && (
-              <Empty description={t('kms.collectionDetails.noContent')} />
-            )}
-          </div>
-        ) : (
-          <Empty description={t('kms.collectionDetails.previewLoadFailed')} />
-        )}
-      </Drawer>
+      />
     </div>
   )
 }

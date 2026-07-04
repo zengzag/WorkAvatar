@@ -177,7 +177,6 @@ export function registerKMSHandlers(): void {
     }
   })
 
-  // ==================== KMS 设置 ====================
   safeHandle(IPC_CHANNELS.KMS_GET_SETTINGS, async () => {
     return kmsService.getKmsSettings()
   })
@@ -187,7 +186,6 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== 自动索引 ====================
   safeHandle(IPC_CHANNELS.KMS_GET_AUTO_INDEX_STATUS, async () => {
     return kmsService.getAutoIndexStatus()
   })
@@ -199,7 +197,6 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== 知识沉淀（摘要查看） ====================
   safeHandle(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES, async () => {
     return kmsService.getDirSummaries()
   })
@@ -221,7 +218,6 @@ export function registerKMSHandlers(): void {
     return kmsService.getParagraphContent(paragraphId)
   })
 
-  // ==================== 搜索历史 ====================
   safeHandle(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, async (params: KMSRecordSearchHistoryParams) => {
     kmsService.recordSearchHistory(params)
     return { success: true }
@@ -241,7 +237,6 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== 合集管理 ====================
   safeHandle(IPC_CHANNELS.KMS_LIST_COLLECTIONS, async () => {
     return kmsService.listCollections()
   })
@@ -306,7 +301,6 @@ export function registerKMSHandlers(): void {
     return kmsService.scanDirFiles(params.dirPath, params.extensions)
   })
 
-  // ==================== 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化） ====================
   // 触发合集深度处理，进度通过 KMS_INDEX_PROGRESS 通道推送（含 collectionId/collectionName 字段）
   ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string) => {
     logger.info('Process collection deep requested:', collectionId)
@@ -320,7 +314,6 @@ export function registerKMSHandlers(): void {
     kmsService.cancelCollectionDeepProcess()
   })
 
-  // ==================== 文件段落增量重新生成 ====================
   // 从指定段落开始重新切分/摘要/向量化，保留前半部分段落不变
   // 进度通过 KMS_INDEX_PROGRESS 通道推送（含 fileId/fileName，不含 collectionId）
   ipcMain.on(IPC_CHANNELS.KMS_REGENERATE_FILE_PARAGRAPH, (_event, params: { fileId: string; paragraphId: string }) => {
@@ -335,7 +328,6 @@ export function registerKMSHandlers(): void {
     kmsService.cancelFileParagraphRegenerate()
   })
 
-  // ==================== 手动摘要生成 ====================
   safeHandle(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, async (dirId: string) => {
     return kmsService.generateDirSummaryManual(dirId)
   })
@@ -344,7 +336,6 @@ export function registerKMSHandlers(): void {
     return kmsService.generateFileSummaryManual(fileId)
   })
 
-  // ==================== KMS MCP 服务 ====================
   safeHandle(IPC_CHANNELS.KMS_MCP_START, async () => {
     return kmsMcpService.start()
   })

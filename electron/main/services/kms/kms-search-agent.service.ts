@@ -181,7 +181,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段1：查询类型识别 ==========
     addStep({ phase: '查询类型识别', action: '分析查询意图', type: 'llm' })
     const t0 = Date.now()
     const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal)
@@ -195,7 +194,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段2：获取文件清单（结合文件名/路径判断内容） ==========
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
     const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds)
@@ -219,7 +217,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段3：检索路径规划（结合文件清单） ==========
     addStep({ phase: '检索路径规划', action: 'LLM 规划检索策略', type: 'plan' })
     const t2 = Date.now()
     const searchPlan = await this.planSearchPath(
@@ -236,7 +233,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段4：多轮检索执行（搜索 + 文件读取） ==========
     const allResults: SearchResult[] = []
     const seenKeys = new Set<string>()
     let roundsExecuted = 0
@@ -316,7 +312,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段5：信息补充（文件分片读取） ==========
     // 如果搜索结果不足，或LLM规划了候选文件，读取相关文件片段补充信息
     let supplementaryContent = ''
     const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
@@ -360,7 +355,6 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段6：内容筛选提纯 ==========
     addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
     const t5 = Date.now()
     const distilled = await this.distillResults(
@@ -395,8 +389,6 @@ class KMSSearchAgentService {
     }
   }
 
-  // ==================== 私有方法 ====================
-
   /**
    * 获取默认 LLM 配置（providerId + modelId）
    * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
@@ -416,7 +408,9 @@ class KMSSearchAgentService {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_model setting, falling back to default', error)
+    }
 
     // 2. 回退到知识场景默认模型
     try {
@@ -432,7 +426,9 @@ class KMSSearchAgentService {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read default_model_knowledge setting, falling back to first provider', error)
+    }
 
     // 3. 最后回退到任意可用提供商
     const fallbackProviderId = getDefaultProviderId(this.mainDb)
@@ -473,7 +469,9 @@ class KMSSearchAgentService {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
+    }
 
     // 2. 回退到默认 Embedding 配置
     return llmClient.getDefaultEmbeddingConfig()
@@ -922,7 +920,9 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
     for (const fileId of fileIds) {
       try {
         crawler.logFileAccess(fileId, 'search_hit')
-      } catch {}
+      } catch (error) {
+        logger.debug('Failed to log file access for search hit', fileId, error)
+      }
     }
   }
 }

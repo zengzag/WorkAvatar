@@ -24,35 +24,11 @@ import { ensureSegments } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
 import AnswerSegment from './AnswerSegment'
-import CodeBlock from './CodeBlock'
-import { getProviderModels } from '../../utils/llm'
+import { markdownComponents } from './markdown-components'
+import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import { isColorDark } from '../../utils/format'
 
 const { Text } = Typography
-
-const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
-const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
-
-const markdownComponents = {
-  code({ className, children, ...props }: any) {
-    const match = /language-(\w+)/.exec(className || '')
-    const code = String(children).replace(/\n$/, '')
-    if (match) {
-      return <CodeBlock language={match[1]} code={code} />
-    }
-    return (
-      <code className={className} {...props}>
-        {children}
-      </code>
-    )
-  },
-  a({ href, children, ...props }: any) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-        {children}
-      </a>
-    )
-  },
-}
 
 const ModelSwitchPopover: React.FC<{
   providers: any[]
@@ -137,15 +113,6 @@ const ModelSwitchPopover: React.FC<{
         title={t('workbench.switchModelRegenerate')} />
     </Popover>
   )
-}
-
-function isColorDark(hex: string): boolean {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.substring(0, 2), 16)
-  const g = parseInt(h.substring(2, 4), 16)
-  const b = parseInt(h.substring(4, 6), 16)
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return luminance < 0.5
 }
 
 const MessageBubble: React.FC<{

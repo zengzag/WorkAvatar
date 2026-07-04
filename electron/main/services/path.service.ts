@@ -1,6 +1,9 @@
 import path from 'path'
 import fs from 'fs'
 import { app } from 'electron'
+import { createLogger } from './logger'
+
+const logger = createLogger('PathService')
 
 const CONFIG_FILENAME = 'workavatar-path.json'
 
@@ -50,7 +53,9 @@ class PathService {
     try {
       const configPath = this.getConfigPath()
       fs.writeFileSync(configPath, JSON.stringify({ dataDir: this.dataDir }, null, 2), 'utf-8')
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to write path config', error)
+    }
   }
 
   private ensureDir(dir: string): void {

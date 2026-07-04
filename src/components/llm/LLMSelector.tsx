@@ -3,10 +3,7 @@ import { Select, Space, Tag, Input, theme } from 'antd'
 import { RobotOutlined, CloudServerOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { LLMProvider } from '../../types'
-import { getProviderModels } from '../../utils/llm'
-
-const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
-const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
+import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 
 const SEP = '::'
 

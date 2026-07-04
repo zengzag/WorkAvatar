@@ -3,6 +3,9 @@ import KMSDatabaseService from './kms/kms-database.service'
 import LLMClientService from './llm-client.service'
 import { getDefaultProviderId } from './common-utils'
 import { allBuiltinTools } from './agent/tools'
+import { createLogger } from './logger'
+
+const logger = createLogger('EmployeeProfiling')
 
 export interface EmployeeProfile {
   roleName: string
@@ -94,7 +97,7 @@ class EmployeeProfilingService {
       return { profile, analysisMethod: 'llm', messages }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
-      console.error('LLM profiling failed, falling back to heuristic:', error)
+      logger.error('LLM profiling failed, falling back to heuristic:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
       if (collectionContents.length > 0) {
         return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
@@ -201,7 +204,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
       return { profile, messages: updatedMessages }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
-      console.error('LLM refine profiling failed:', error)
+      logger.error('LLM refine profiling failed:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
       return { profile: previousProfile, messages: previousMessages, error: `LLM 调用失败: ${errorMsg}` }
     }

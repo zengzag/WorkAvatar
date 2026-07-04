@@ -3,7 +3,6 @@ import { registerEmployeeHandlers } from './employee.handlers'
 import { registerLLMHandlers } from './llm.handlers'
 import { registerAppHandlers } from './app.handlers'
 import { registerToolHandlers } from './tool.handlers'
-import { registerTaskHandlers } from './task.handlers'
 import { registerKMSHandlers } from './kms.handlers'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
@@ -30,7 +29,6 @@ export function registerIpcHandlers() {
   registerLLMHandlers(llmClient, employeeAgent)
   registerAppHandlers(db)
   registerToolHandlers(db, skillRegistry)
-  registerTaskHandlers()
   registerKMSHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）

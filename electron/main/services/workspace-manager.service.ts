@@ -4,6 +4,9 @@ import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
+import { createLogger } from './logger'
+
+const logger = createLogger('WorkspaceManager')
 
 class WorkspaceManagerService {
   private db: DatabaseService
@@ -112,7 +115,7 @@ class WorkspaceManagerService {
       if (employee && employee.workspace_path) {
         const workspaceRoot = path.resolve(employee.workspace_path)
         if (fs.existsSync(workspaceRoot)) {
-          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch {}
+          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch (error) { logger.warn('Failed to remove workspace directory', workspaceRoot, error) }
         }
       }
     }

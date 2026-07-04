@@ -89,12 +89,14 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_files_dir ON kms_files(dir_id);
-      CREATE INDEX IF NOT EXISTS idx_kms_files_hash ON kms_files(file_hash);
+      -- file_hash 唯一索引由 enforceUniqueFileHash() 迁移建立
       CREATE INDEX IF NOT EXISTS idx_kms_files_status ON kms_files(index_status);
       CREATE INDEX IF NOT EXISTS idx_kms_files_tier ON kms_files(data_tier);
       CREATE INDEX IF NOT EXISTS idx_kms_files_modified ON kms_files(modified_time);
       CREATE INDEX IF NOT EXISTS idx_kms_files_ext ON kms_files(file_ext);
       CREATE INDEX IF NOT EXISTS idx_kms_files_updated ON kms_files(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_name ON kms_files(file_name);
+      CREATE INDEX IF NOT EXISTS idx_kms_files_dir_status_name ON kms_files(dir_id, index_status, file_name);
 
       -- 文件内容段落表（热数据：深度摘要和向量化后的段落）
       CREATE TABLE IF NOT EXISTS kms_paragraphs (
@@ -115,6 +117,7 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_paragraphs_file ON kms_paragraphs(file_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_paragraphs_file_index ON kms_paragraphs(file_id, paragraph_index DESC);
 
       -- 文件摘要表（热数据）
       CREATE TABLE IF NOT EXISTS kms_file_summaries (
@@ -183,6 +186,8 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source ON kms_embeddings(source_type, source_id);
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_file ON kms_embeddings(file_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_dimension ON kms_embeddings(dimension);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_updated ON kms_embeddings(updated_at DESC);
       -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
 
@@ -293,6 +298,69 @@ class KMSDatabaseService {
     if (!collColNames.includes('embedding_model')) {
       this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding_model TEXT DEFAULT ''")
     }
+
+    // file_hash 唯一约束：去重已有数据后建立唯一索引（代码逻辑假设 file_hash 唯一）
+    this.enforceUniqueFileHash()
+  }
+
+  /**
+   * 为 kms_files.file_hash 建立唯一索引：
+   * 1. 重复行保留最早创建的（created_at 最小），其余迁移引用后删除
+   * 2. 删除原非唯一索引，建立唯一索引
+   */
+  private enforceUniqueFileHash(): void {
+    // 检查唯一索引是否已存在
+    const idxExists = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_kms_files_hash_unique'"
+    ).get() as any
+    if (idxExists) return
+
+    // 检查是否存在重复 file_hash
+    const dupes = this.db.prepare(`
+      SELECT file_hash, COUNT(*) as cnt FROM kms_files GROUP BY file_hash HAVING cnt > 1
+    `).all() as any[]
+
+    if (dupes.length > 0) {
+      // 对每个重复 hash：保留 created_at 最小的记录，其余删除（外键级联清理子表）
+      const keepIds = this.db.prepare(`
+        SELECT id FROM kms_files WHERE file_hash = ? ORDER BY created_at ASC LIMIT 1
+      `)
+      const findDupes = this.db.prepare(`
+        SELECT id FROM kms_files WHERE file_hash = ? AND id != ? ORDER BY created_at ASC
+      `)
+      // 将子表（kms_file_collections、kms_access_log）引用迁移到保留行，再删除重复行
+      const migrateRefs = this.db.transaction((dupeIds: string[], keepId: string) => {
+        const placeholders = dupeIds.map(() => '?').join(',')
+        // kms_file_collections: 复合主键避免冲突，使用 INSERT OR IGNORE
+        this.db.prepare(
+          `INSERT OR IGNORE INTO kms_file_collections (file_id, collection_id, added_at)
+           SELECT ?, collection_id, added_at FROM kms_file_collections WHERE file_id IN (${placeholders})`
+        ).run(keepId, ...dupeIds)
+        this.db.prepare(
+          `DELETE FROM kms_file_collections WHERE file_id IN (${placeholders})`
+        ).run(...dupeIds)
+        // kms_access_log 直接迁移（id 为 PK，无冲突风险）
+        this.db.prepare(
+          `UPDATE kms_access_log SET file_id = ? WHERE file_id IN (${placeholders})`
+        ).run(keepId, ...dupeIds)
+      })
+      for (const dup of dupes) {
+        const keepRow = keepIds.get(dup.file_hash) as any
+        if (!keepRow) continue
+        const dupeRows = findDupes.all(dup.file_hash, keepRow.id) as any[]
+        const dupeIds = dupeRows.map(r => r.id)
+        if (dupeIds.length > 0) migrateRefs(dupeIds, keepRow.id)
+        const delPlaceholders = dupeIds.map(() => '?').join(',')
+        this.db.prepare(
+          `DELETE FROM kms_files WHERE id IN (${delPlaceholders})`
+        ).run(...dupeIds)
+      }
+      logger.info(`Deduplicated ${dupes.length} file_hash group(s) before enforcing unique constraint`)
+    }
+
+    // 删除原非唯一索引并建立唯一索引
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash')
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash)')
   }
 
   private recoverStuckFiles(): void {

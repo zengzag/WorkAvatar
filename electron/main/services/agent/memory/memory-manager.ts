@@ -13,9 +13,6 @@ export class MemoryManager implements IMemoryManager {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config }
   }
 
-  setLLMSummaryFn(_fn: (messages: Array<{ role: string; content: string }>) => Promise<string>): void {
-  }
-
   manageContext(
     systemPrompt: string,
     history: Message[],

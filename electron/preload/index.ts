@@ -285,30 +285,10 @@ const electronAPI = {
 contextBridge.exposeInMainWorld('electronAPI', {
   ...electronAPI,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
-  tasks: {
-    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_ALL),
-    clearCompleted: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_COMPLETED),
-    cancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, taskId),
-    pause: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE, taskId),
-    resume: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME, taskId),
-    onTasksUpdated: (callback: (tasks: any[]) => void) => {
-      const handler = (_event: any, tasks: any[]) => callback(tasks)
-      ipcRenderer.on(IPC_CHANNELS.TASK_UPDATED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_UPDATED, handler)
-    },
-  },
 })
 
 export type ElectronAPI = typeof electronAPI & {
   getPathForFile: (file: File) => string
-  tasks: {
-    getAll: () => Promise<any[]>
-    clearCompleted: () => Promise<boolean>
-    cancel: (taskId: string) => Promise<boolean>
-    pause: (taskId: string) => Promise<boolean>
-    resume: (taskId: string) => Promise<boolean>
-    onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
-  }
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>

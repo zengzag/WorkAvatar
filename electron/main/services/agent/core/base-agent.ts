@@ -9,6 +9,7 @@ import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../to
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
 import { generateId } from '../../common-utils'
+import { createLogger } from '../../logger'
 import type {
   AgentConfig,
   AgentRunOptions,
@@ -19,6 +20,8 @@ import type {
   ToolCallRecord,
   TokenUsage,
 } from './types'
+
+const logger = createLogger('BaseAgent')
 
 const DEFAULT_MAX_ITERATIONS = 100
 const DEFAULT_TOOL_TIMEOUT_MS = 30000
@@ -145,8 +148,6 @@ export abstract class BaseAgent {
         this.eventEmitter.emit('memory:compressed', stats)
       }
 
-      this.context.setMessages(messages)
-
       const activeTools = await this.resolveActiveTools(options.tools)
 
       const result = await this.executeLoop(messages, activeTools, maxIterations)
@@ -210,8 +211,6 @@ export abstract class BaseAgent {
       if (stats.wasCompressed) {
         this.eventEmitter.emit('memory:compressed', stats)
       }
-
-      this.context.setMessages(messages)
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
@@ -618,7 +617,7 @@ export abstract class BaseAgent {
     const msgLevel = levels[level] ?? 2
     if (msgLevel > configLevel) return
 
-    const timestamp = new Date().toISOString()
-    console.log(`[${timestamp}] [${level.toUpperCase()}] [${this.name}:${action}]`, data)
+    const fn = (logger as any)[level] ?? logger.info
+    fn.call(logger, `[${this.name}:${action}]`, data)
   }
 }

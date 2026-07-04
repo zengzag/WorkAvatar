@@ -6,9 +6,10 @@ import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
+import KMSSearchHistoryService from './kms-search-history.service'
+import KMSFileReaderService from './kms-file-reader.service'
 import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
-import FileParserService from '../file-parser.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
 
@@ -69,8 +70,6 @@ class KMSService {
     }
     return KMSService.instance
   }
-
-  // ==================== 索引目录管理 ====================
 
   /**
    * 添加索引目录
@@ -146,8 +145,6 @@ class KMSService {
       `SELECT * FROM kms_index_dirs WHERE dir_path != ? ORDER BY created_at ASC`
     ).all(KMSService.MANUAL_SOURCE_PATH)
   }
-
-  // ==================== 合集管理 ====================
 
   /**
    * 创建合集
@@ -584,7 +581,9 @@ ${fileSummaries.join('\n')}
           return { providerId: config.provider_id, modelId: config.model_id || undefined }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_model setting, falling back to default', error)
+    }
 
     try {
       const row = mainDb.prepare("SELECT value FROM settings WHERE key = 'default_model_knowledge'").get() as any
@@ -594,7 +593,9 @@ ${fileSummaries.join('\n')}
           return { providerId: config.provider_id, modelId: config.model_id || undefined }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read default_model_knowledge setting, falling back to first provider', error)
+    }
 
     const providers = llmClient.getProviderList?.() as any[] || []
     const first = providers[0]
@@ -606,39 +607,7 @@ ${fileSummaries.join('\n')}
    * 返回 { files: string[], skipped: number }
    */
   scanDirFiles(dirPath: string, extensions?: string[]): { files: string[]; skipped: number } {
-    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-      return { files: [], skipped: 0 }
-    }
-    const supportedExts = (extensions && extensions.length > 0
-      ? extensions
-      : ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'md', 'html', 'htm']
-    ).map(e => e.toLowerCase().replace(/^\./, ''))
-    const result: string[] = []
-    let skipped = 0
-    const walk = (dir: string) => {
-      let entries: fs.Dirent[]
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true })
-      } catch {
-        return
-      }
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name)
-        if (entry.isDirectory()) {
-          walk(fullPath)
-        } else if (entry.isFile()) {
-          const ext = path.extname(entry.name).toLowerCase().replace(/^\./, '')
-          if (supportedExts.includes(ext)) {
-            result.push(fullPath)
-          } else {
-            skipped++
-          }
-        }
-      }
-    }
-    walk(dirPath)
-    logger.info(`scanDirFiles: ${dirPath} -> ${result.length} files, ${skipped} skipped`)
-    return { files: result, skipped }
+    return KMSFileReaderService.getInstance().scanDirFiles(dirPath, extensions)
   }
 
   /**
@@ -646,44 +615,21 @@ ${fileSummaries.join('\n')}
    * 返回段落的目录树结构（TOC）+ 完整段落列表
    */
   getFileParagraphs(fileId: string): any[] {
-    return this.db.prepare(`
-      SELECT id, title, title_path, level, paragraph_index, start_offset, end_offset, summary, keywords_json
-      FROM kms_paragraphs
-      WHERE file_id = ?
-      ORDER BY paragraph_index ASC
-    `).all(fileId) as any[]
+    return KMSFileReaderService.getInstance().getFileParagraphs(fileId)
   }
 
   /**
    * 获取单个段落的完整内容（含原文，用于预览）
    */
   getParagraphContent(paragraphId: string): { id: string; title: string; title_path: string; level: number; paragraph_index: number; content: string; summary: string | null; keywords_json: string | null; file_id: string } | null {
-    return this.db.prepare(`
-      SELECT id, title, title_path, level, paragraph_index, content, summary, keywords_json, file_id
-      FROM kms_paragraphs
-      WHERE id = ?
-    `).get(paragraphId) as any || null
+    return KMSFileReaderService.getInstance().getParagraphContent(paragraphId)
   }
 
   /**
    * 获取文件的目录结构（TOC，从段落表的 title_path 派生）
    */
   getFileToc(fileId: string): any[] {
-    const paragraphs = this.db.prepare(`
-      SELECT id, title, title_path, level, paragraph_index, start_offset, end_offset
-      FROM kms_paragraphs
-      WHERE file_id = ?
-      ORDER BY paragraph_index ASC
-    `).all(fileId) as any[]
-    return paragraphs.map(p => ({
-      id: p.id,
-      title: p.title,
-      titlePath: p.title_path,
-      level: p.level,
-      paragraphIndex: p.paragraph_index,
-      startOffset: p.start_offset,
-      endOffset: p.end_offset,
-    }))
+    return KMSFileReaderService.getInstance().getFileToc(fileId)
   }
 
   /**
@@ -691,20 +637,8 @@ ${fileSummaries.join('\n')}
    * 用于 Agent 工具 kms_get_paragraphs
    */
   getParagraphsByIds(paragraphIds: string[]): any[] {
-    if (!paragraphIds || paragraphIds.length === 0) return []
-    const placeholders = paragraphIds.map(() => '?').join(',')
-    return this.db.prepare(`
-      SELECT p.id, p.title, p.title_path, p.level, p.paragraph_index,
-             p.start_offset, p.end_offset, p.summary, p.keywords_json,
-             p.file_id,
-             (SELECT file_name FROM kms_files WHERE id = p.file_id) as file_name
-      FROM kms_paragraphs p
-      WHERE p.id IN (${placeholders})
-      ORDER BY p.file_id, p.paragraph_index
-    `).all(...paragraphIds) as any[]
+    return KMSFileReaderService.getInstance().getParagraphsByIds(paragraphIds)
   }
-
-  // ==================== 搜索 ====================
 
   /**
    * 搜索
@@ -772,7 +706,9 @@ ${fileSummaries.join('\n')}
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
+    }
 
     // 2. 回退到默认 Embedding 配置
     return llmClient.getDefaultEmbeddingConfig()
@@ -782,51 +718,14 @@ ${fileSummaries.join('\n')}
    * 获取文件内容（按段落/偏移/行号定位）
    */
   async getFileContent(fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }): Promise<string> {
-    const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
-    if (!file) throw new Error('File not found')
-
-    // 文件存在后再记录访问日志（避免外键约束失败）
-    const crawler = KMSCrawlerService.getInstance()
-    crawler.logFileAccess(fileId, 'read')
-
-    // 如果指定了段落ID，从段落表获取
-    if (options?.paragraphId) {
-      const paragraph = this.db.prepare('SELECT content FROM kms_paragraphs WHERE id = ? AND file_id = ?').get(options.paragraphId, fileId) as any
-      if (paragraph) return paragraph.content
-    }
-
-    // 否则重新解析文件获取原文
-    const maxChars = options?.maxChars || 5000
-    try {
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
-      let content = parseResult.fullText
-
-      if (options?.startOffset !== undefined && options?.endOffset !== undefined) {
-        content = content.substring(options.startOffset, options.endOffset)
-      } else if (options?.startLine !== undefined) {
-        const lines = content.split('\n')
-        content = lines.slice(options.startLine - 1, options.startLine + 50).join('\n')
-      }
-
-      return content.substring(0, maxChars)
-    } catch (err) {
-      logger.error(`Failed to read file content for ${file.file_path}:`, err)
-      throw err
-    }
+    return KMSFileReaderService.getInstance().getFileContent(fileId, options)
   }
 
   /**
    * 获取文件摘要
    */
   getFileSummary(fileId: string): any {
-    const summary = this.db.prepare('SELECT * FROM kms_file_summaries WHERE file_id = ?').get(fileId)
-    if (!summary) return null
-
-    // 摘要存在后再记录访问日志（避免外键约束失败）
-    const crawler = KMSCrawlerService.getInstance()
-    crawler.logFileAccess(fileId, 'summary_view')
-
-    return summary
+    return KMSFileReaderService.getInstance().getFileSummary(fileId)
   }
 
   /**
@@ -841,26 +740,8 @@ ${fileSummaries.join('\n')}
    * 获取文件完整文本内容（用于预览）
    */
   async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string }> {
-    const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
-    if (!file) throw new Error('File not found')
-
-    const crawler = KMSCrawlerService.getInstance()
-    crawler.logFileAccess(fileId, 'read')
-
-    try {
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
-      return {
-        content: parseResult.fullText,
-        fileName: file.file_name,
-        filePath: file.file_path,
-      }
-    } catch (err) {
-      logger.error(`Failed to read file content for ${file.file_path}:`, err)
-      throw err
-    }
+    return KMSFileReaderService.getInstance().getFileFullContent(fileId)
   }
-
-  // ==================== 索引管理 ====================
 
   /**
    * 构建全量索引
@@ -967,8 +848,6 @@ ${fileSummaries.join('\n')}
     KMSIndexManagerService.getInstance().cancelIndexing()
   }
 
-  // ==================== 统计 ====================
-
   /**
    * 获取整体统计信息
    */
@@ -989,8 +868,6 @@ ${fileSummaries.join('\n')}
       index: indexStats,
     }
   }
-
-  // ==================== KMS 设置 ====================
 
   /**
    * 获取 KMS 设置（模型配置、检索参数、自动索引配置）
@@ -1100,8 +977,6 @@ ${fileSummaries.join('\n')}
     await KMSIndexManagerService.getInstance().runAutoIndexCheck()
   }
 
-  // ==================== 知识沉淀（摘要查看） ====================
-
   /**
    * 获取所有目录摘要
    */
@@ -1172,8 +1047,6 @@ ${fileSummaries.join('\n')}
     return { items, total }
   }
 
-  // ==================== 搜索历史 ====================
-
   /**
    * 记录搜索历史（相同 query 去重：更新已有记录而非重复插入）
    */
@@ -1183,72 +1056,29 @@ ${fileSummaries.join('\n')}
     resultCount: number
     filters?: any
   }): void {
-    // 查找是否已有相同 query 的历史记录
-    const existing = this.db.prepare(
-      'SELECT id FROM kms_search_history WHERE query = ? ORDER BY created_at DESC LIMIT 1'
-    ).get(params.query) as any
-
-    if (existing) {
-      // 更新已有记录，刷新搜索模式、结果数和时间为当前
-      this.db.prepare(`
-        UPDATE kms_search_history SET search_mode = ?, result_count = ?, filters_json = ?, created_at = unixepoch()
-        WHERE id = ?
-      `).run(
-        params.searchMode,
-        params.resultCount,
-        params.filters ? JSON.stringify(params.filters) : '{}',
-        existing.id
-      )
-    } else {
-      const id = generateId()
-      this.db.prepare(`
-        INSERT INTO kms_search_history (id, query, search_mode, result_count, filters_json)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(
-        id,
-        params.query,
-        params.searchMode,
-        params.resultCount,
-        params.filters ? JSON.stringify(params.filters) : '{}'
-      )
-    }
+    KMSSearchHistoryService.getInstance().recordSearchHistory(params)
   }
 
   /**
    * 获取搜索历史列表
    */
   getSearchHistory(params?: { limit?: number; searchMode?: string }): any[] {
-    const limit = Math.min(Math.max(params?.limit || 50, 1), 500)
-    let sql = 'SELECT id, query, search_mode, result_count, created_at FROM kms_search_history'
-    const sqlParams: any[] = []
-    if (params?.searchMode) {
-      sql += ' WHERE search_mode = ?'
-      sqlParams.push(params.searchMode)
-    }
-    sql += ' ORDER BY created_at DESC LIMIT ?'
-    sqlParams.push(limit)
-    return this.db.prepare(sql).all(...sqlParams)
+    return KMSSearchHistoryService.getInstance().getSearchHistory(params)
   }
 
   /**
    * 清空搜索历史
    */
   clearSearchHistory(searchMode?: string): void {
-    if (searchMode) {
-      this.db.prepare('DELETE FROM kms_search_history WHERE search_mode = ?').run(searchMode)
-    } else {
-      this.db.prepare('DELETE FROM kms_search_history').run()
-    }
+    KMSSearchHistoryService.getInstance().clearSearchHistory(searchMode)
   }
 
   /**
    * 删除单条搜索历史
    */
   deleteSearchHistory(id: string): void {
-    this.db.prepare('DELETE FROM kms_search_history WHERE id = ?').run(id)
+    KMSSearchHistoryService.getInstance().deleteSearchHistory(id)
   }
-
-  // ==================== 进度通知 ====================
 
   onProgress(listener: (progress: IndexProgress) => void): () => void {
     this.progressListeners.add(listener)
@@ -1259,7 +1089,9 @@ ${fileSummaries.join('\n')}
     for (const listener of this.progressListeners) {
       try {
         listener(progress)
-      } catch {}
+      } catch (error) {
+        logger.warn('KMS progress listener threw an error', error)
+      }
     }
   }
 }

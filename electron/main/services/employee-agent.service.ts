@@ -121,7 +121,8 @@ class EmployeeAgentService {
         if (profile.roleName) {
           role = profile.roleName
         }
-      } catch {
+      } catch (error) {
+        logger.warn('Failed to parse employee profile_json, using default instructions', error)
       }
     } else if (employee.description) {
       instructions = employee.description
@@ -210,10 +211,6 @@ class EmployeeAgentService {
 
     const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
-
-    agent.getMemoryManager().setLLMSummaryFn(async (msgs) => {
-      return this.memoryService.generateLLMSummary(msgs, providerId, modelId)
-    })
 
     if (memoryPrompt) {
       agent.updateMemoryPrompt(memoryPrompt)

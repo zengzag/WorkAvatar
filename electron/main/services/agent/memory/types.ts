@@ -2,8 +2,6 @@ import { Message } from '../core/types'
 
 export type MemoryStrategy = 'sliding_window' | 'summary' | 'sliding_window_with_summary'
 
-export type LLMSummaryFn = (messages: Array<{ role: string; content: string }>) => Promise<string>
-
 export interface MemoryConfig {
   maxTokens: number
   strategy: MemoryStrategy
@@ -30,8 +28,6 @@ export interface IMemoryManager {
   ): { messages: Message[]; stats: MemoryStats }
 
   estimateTokens(messages: Message[]): number
-
-  setLLMSummaryFn(fn: LLMSummaryFn): void
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {

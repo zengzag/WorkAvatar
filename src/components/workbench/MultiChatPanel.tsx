@@ -10,7 +10,7 @@ import { ensureSegments } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
 import AnswerSegment from './AnswerSegment'
-import CodeBlock from './CodeBlock'
+import { markdownComponents } from './markdown-components'
 
 const { Text } = Typography
 
@@ -19,28 +19,6 @@ const PANEL_COLORS = [
   { border: '#52c41a', bg: '#52c41a10', tag: 'green' },
   { border: '#722ed1', bg: '#722ed110', tag: 'purple' },
 ]
-
-const markdownComponents = {
-  code({ className, children, ...props }: any) {
-    const match = /language-(\w+)/.exec(className || '')
-    const code = String(children).replace(/\n$/, '')
-    if (match) {
-      return <CodeBlock language={match[1]} code={code} />
-    }
-    return (
-      <code className={className} {...props}>
-        {children}
-      </code>
-    )
-  },
-  a({ href, children, ...props }: any) {
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-        {children}
-      </a>
-    )
-  },
-}
 
 function getModelLabel(msg: MessageWithThought, providers: any[]): string {
   if (!msg.comparisonProviderId || !msg.comparisonModelId) return ''

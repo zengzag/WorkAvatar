@@ -3,6 +3,9 @@ import path from 'path'
 import PathService from './path.service'
 import { generateId } from './common-utils'
 import { AsyncLocalStorage } from 'async_hooks'
+import { createLogger } from './logger'
+
+const logger = createLogger('LLMLogger')
 
 export interface LLMLogContext {
   employeeId?: string
@@ -81,7 +84,8 @@ class LLMLoggerService {
 
       const filePath = this.resolveLogFilePath(entry)
       this.writeEntry(filePath, entry)
-    } catch {
+    } catch (error) {
+      logger.warn('Failed to write LLM log entry', error)
     }
   }
 

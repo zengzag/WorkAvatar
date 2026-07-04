@@ -158,8 +158,6 @@ export interface KMSGetSearchHistoryParams {
   searchMode?: string
 }
 
-// ==================== 合集相关参数类型 ====================
-
 export interface KMSCreateCollectionParams {
   name: string
   description?: string

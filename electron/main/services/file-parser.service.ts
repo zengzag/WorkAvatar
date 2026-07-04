@@ -7,6 +7,9 @@ import XLSX from 'xlsx'
 import { extractTextItems } from 'unpdf'
 import type { ParseResult } from '../../shared/types'
 import OCRService from './ocr.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('FileParser')
 
 class FileParserService {
   private ocr: OCRService
@@ -14,7 +17,7 @@ class FileParserService {
 
   private constructor() {
     this.ocr = OCRService.getInstance()
-    this.ocr.initialize().catch(console.error)
+    this.ocr.initialize().catch(err => logger.error('OCR 初始化失败:', err))
   }
 
   static getInstance(): FileParserService {
@@ -49,11 +52,7 @@ class FileParserService {
         },
       }
     } catch (error: any) {
-      console.error('[FileParser] PDF parse error:', {
-        filePath,
-        message: error.message,
-        stack: error.stack,
-      })
+      logger.error('PDF parse error:', { filePath, message: error.message, stack: error.stack })
       throw error
     }
   }
@@ -74,11 +73,7 @@ class FileParserService {
         metadata: {},
       }
     } catch (error: any) {
-      console.error('[FileParser] DOC parse error:', {
-        filePath,
-        message: error.message,
-        stack: error.stack,
-      })
+      logger.error('DOC parse error:', { filePath, message: error.message, stack: error.stack })
       throw error
     }
   }
@@ -101,7 +96,7 @@ class FileParserService {
         metadata: {},
       }
     } catch (error: any) {
-      console.warn('[FileParser] DOCX file2md parse failed, falling back to mammoth:', {
+      logger.warn('DOCX file2md parse failed, falling back to mammoth:', {
         filePath,
         message: error.message,
         code: error.code,
@@ -113,7 +108,7 @@ class FileParserService {
         const buffer = await fs.promises.readFile(filePath)
         const result = await (mammoth as any).convertToMarkdown({ buffer })
         if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-        console.info('[FileParser] DOCX mammoth fallback succeeded:', { filePath })
+        logger.info('DOCX mammoth fallback succeeded:', { filePath })
 
         const rawMarkdown = result.value || ''
         const markdown = rawMarkdown
@@ -127,7 +122,7 @@ class FileParserService {
           metadata: { fallbackParser: 'mammoth-markdown' },
         }
       } catch (mammothError: any) {
-        console.error('[FileParser] DOCX mammoth fallback also failed:', {
+        logger.error('DOCX mammoth fallback also failed:', {
           filePath,
           originalError: error.message,
           mammothError: mammothError.message,
@@ -158,7 +153,7 @@ class FileParserService {
           metadata: {},
         }
       } catch (error: any) {
-        console.warn('[FileParser] XLSX file2md parse failed, falling back to SheetJS:', {
+        logger.warn('XLSX file2md parse failed, falling back to SheetJS:', {
           filePath,
           message: error.message,
           code: error.code,
@@ -229,11 +224,7 @@ class FileParserService {
         metadata: {},
       }
     } catch (error: any) {
-      console.error('[FileParser] PPTX parse error:', {
-        filePath,
-        message: error.message,
-        stack: error.stack,
-      })
+      logger.error('PPTX parse error:', { filePath, message: error.message, stack: error.stack })
       throw error
     }
   }

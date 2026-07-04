@@ -183,28 +183,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_skills_employee ON employee_skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_skills_skill ON employee_skills(skill_id);
 
-      CREATE TABLE IF NOT EXISTS background_tasks (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        progress REAL NOT NULL DEFAULT 0,
-        progress_text TEXT DEFAULT '',
-        error TEXT,
-        metadata_json TEXT DEFAULT '{}',
-        created_at INTEGER NOT NULL,
-        paused_at INTEGER,
-        resumed_at INTEGER,
-        speed REAL DEFAULT 0,
-        eta INTEGER DEFAULT 0,
-        stage TEXT DEFAULT '',
-        detail TEXT DEFAULT ''
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_created ON background_tasks(created_at DESC);
-
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
         employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -260,8 +238,6 @@ class DatabaseService {
     `)
     // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）
     this.migrateEmployeeMemoriesFTS()
-
-    this.recoverStuckDocs()
   }
 
   /** 将已有 employee_memories 数据同步到 FTS5 表（仅执行一次） */
@@ -318,17 +294,6 @@ class DatabaseService {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {
       logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
-    }
-  }
-
-  private recoverStuckDocs(): void {
-    const runningTasksResult = this.db.prepare(`
-      UPDATE background_tasks
-      SET status = 'paused'
-      WHERE status IN ('running', 'pending')
-    `).run()
-    if (runningTasksResult.changes > 0) {
-      logger.info(`Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
     }
   }
 

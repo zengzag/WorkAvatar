@@ -7,6 +7,7 @@ import { ensureSegments, patchMissingCompletedAt } from '../components/workbench
 import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
+import { useChatScroll } from './useChatScroll'
 
 // 对话消息内存缓存最大容量，超过时按 LRU 淘汰，防止长时间使用积累导致内存泄漏
 const MESSAGES_CACHE_MAX_SIZE = 20
@@ -220,9 +221,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return found ? updated : prev
     })
   }, [])
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const chatContainerRef = useRef<HTMLDivElement>(null)
-  const isUserAtBottomRef = useRef(true)
+  const { messagesEndRef, chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(messages)
   const initializedRef = useRef(false)
 
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(_persistentStreamStates)
@@ -307,24 +306,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setEmployee(null)
     }
   }
-
-  // scrollIntoView 节流：用 requestAnimationFrame 合并多个 token chunk 为单次滚动
-  // 避免 2000 token 流式输出触发 2000 次同步 reflow
-  const scrollRafRef = useRef<number | null>(null)
-  useEffect(() => {
-    if (!isUserAtBottomRef.current) return
-    if (scrollRafRef.current !== null) return // 已有 pending 帧，跳过
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null
-      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
-    })
-    return () => {
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current)
-        scrollRafRef.current = null
-      }
-    }
-  }, [messages])
 
   useEffect(() => {
     return () => {
@@ -649,18 +630,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setIsStreaming(hasActiveStream)
     }
   }, [])
-
-  const handleScroll = useCallback(() => {
-    const el = chatContainerRef.current
-    if (!el) return
-    const threshold = 50
-    isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
-  }, [])
-
-  const forceScrollToBottom = () => {
-    isUserAtBottomRef.current = true
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
 
   const loadConversations = async () => {
     try {

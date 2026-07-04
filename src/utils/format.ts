@@ -8,6 +8,15 @@ export function formatFileSize(bytes: number): string {
   return filesize(bytes) as string
 }
 
+export function isColorDark(hex: string): boolean {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance < 0.5
+}
+
 /**
  * 格式化消息时间戳，参考主流聊天软件的时间展示规则：
  * - 1分钟内：刚刚

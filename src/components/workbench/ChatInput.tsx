@@ -2,7 +2,7 @@ import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Too
 import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState } from 'react'
-import { getProviderModels } from '../../utils/llm'
+import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 
 interface AttachedFile {
   id: string
@@ -11,9 +11,6 @@ interface AttachedFile {
 }
 
 const { Text } = Typography
-
-const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
-const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
 
 export interface AttachedImage {
   id: string

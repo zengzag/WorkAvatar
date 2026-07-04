@@ -173,8 +173,6 @@ class KMSSearchEngineService {
     }
   }
 
-  // ==================== 索引操作 ====================
-
   /**
    * 索引文件标题
    */
@@ -620,8 +618,6 @@ class KMSSearchEngineService {
     this.invalidateCache()
   }
 
-  // ==================== 搜索操作 ====================
-
   /**
    * FTS5 全文检索
    */
@@ -746,12 +742,23 @@ class KMSSearchEngineService {
 
     const { whereClause, params } = this.buildLikeWhereClause(options)
 
-    // 取所有索引记录，用 LIKE 匹配
+    // 将关键词 LIKE 匹配下推到 SQL，避免加载无匹配的行；取 topK*5 候选供 JS 精排
+    const likeClauses: string[] = []
+    const likeParams: any[] = []
+    for (const word of queryWords) {
+      const pattern = `%${word}%`
+      likeClauses.push('(LOWER(si.title) LIKE ? OR LOWER(si.content) LIKE ? OR LOWER(si.keywords_json) LIKE ?)')
+      likeParams.push(pattern, pattern, pattern)
+    }
+    const likeWhere = likeClauses.join(' OR ')
+    const candidateLimit = Math.min(topK * 5, 500)
+
     const rows = this.db.prepare(`
       SELECT si.* FROM kms_search_index si
       JOIN kms_files f ON si.file_id = f.id
-      WHERE ${whereClause}
-    `).all(...params) as any[]
+      WHERE ${whereClause} AND (${likeWhere})
+      LIMIT ${candidateLimit}
+    `).all(...params, ...likeParams) as any[]
 
     // 对每条记录计算匹配分数
     const scored = rows.map(row => {
@@ -1158,8 +1165,6 @@ class KMSSearchEngineService {
     return { totalEntries, byType, embeddingCount, ftsEntryCount: totalEntries }
   }
 
-  // ==================== 向量嵌入操作 ====================
-
   /**
    * 存储向量嵌入
    */
@@ -1170,26 +1175,30 @@ class KMSSearchEngineService {
     embedding: Float32Array,
     model: string
   ): void {
-    const existing = this.db.prepare(
-      'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
-    ).get(sourceType, sourceId) as any
-
     const buffer = Buffer.from(embedding.buffer)
-    let rowid: number
 
-    if (existing) {
-      this.db.prepare(`
-        UPDATE kms_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
-      `).run(buffer, model, embedding.length, existing.id)
-      rowid = existing.rowid
-    } else {
+    // 事务包裹 check-then-insert，避免并发写入产生重复行
+    const upsert = this.db.transaction(() => {
+      const existing = this.db.prepare(
+        'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
+      ).get(sourceType, sourceId) as any
+
+      if (existing) {
+        this.db.prepare(`
+          UPDATE kms_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
+        `).run(buffer, model, embedding.length, existing.id)
+        return existing.rowid
+      }
+
       const id = generateId()
       this.db.prepare(`
         INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(id, sourceType, sourceId, fileId, buffer, model, embedding.length)
-      rowid = Number((this.db.prepare('SELECT last_insert_rowid() as r').get() as any).r)
-    }
+      return Number((this.db.prepare('SELECT last_insert_rowid() as r').get() as any).r)
+    })
+
+    const rowid = upsert()
 
     // 同步写入 vec0 虚表
     this.syncVecIndex(rowid, buffer, fileId, sourceType, embedding.length)
@@ -1252,13 +1261,9 @@ class KMSSearchEngineService {
     this.embeddingCache.clear()
   }
 
-  // ==================== 缓存操作 ====================
-
   invalidateCache(): void {
     this.searchCache.clear()
   }
-
-  // ==================== 私有方法 ====================
 
   private insertFtsRow(indexId: string, fileId: string, sourceType: SourceType, sourceId: string, title: string, content: string, keywords: string): void {
     this.db.prepare(`
