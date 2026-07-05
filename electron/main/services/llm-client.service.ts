@@ -206,7 +206,7 @@ function buildRequestBody(
     if (config.provider_type === 'deepseek') {
       body.thinking = { type: 'enabled' }
       body.reasoning_effort = 'high'
-    } else if (config.provider_type === 'qwen') {
+    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
       body.enable_thinking = true
       if (modelConfig?.thinking_budget) {
         body.thinking_budget = modelConfig.thinking_budget
@@ -219,6 +219,8 @@ function buildRequestBody(
   } else {
     if (config.provider_type === 'deepseek') {
       body.thinking = { type: 'disabled' }
+    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
+      body.enable_thinking = false
     } else if (config.provider_type === 'volcengine') {
       body.thinking = { type: 'disabled' }
     } else if (config.provider_type === 'zhipu') {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Button, Empty, Spin, Modal, Space, Tag, Tooltip, Popconfirm,
+  Card, Button, Empty, Spin, Space, Tag, Tooltip, Popconfirm,
   Drawer, Table, App, theme, Typography, Tree, Alert,
 } from 'antd'
 import {
@@ -159,7 +159,7 @@ const SUPPORTED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv
 const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInCollection, onPreviewFile }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
 
   const [collections, setCollections] = useState<CollectionItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -356,7 +356,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       }
 
       if (stats.hasSummary || (stats.indexedCount > 0 && stats.indexedCount === stats.fileCount)) {
-        Modal.confirm({
+        modal.confirm({
           title: t('kms.collectionProcess.reprocessTitle'),
           icon: <ExclamationCircleOutlined style={{ color: token.colorWarning }} />,
           content: t('kms.collectionProcess.reprocessConfirm'),

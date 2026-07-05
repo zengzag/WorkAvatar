@@ -509,7 +509,7 @@ ${fileSummaries.join('\n')}
     return this.getKmsEmbeddingConfig()
   }
 
-  private getKmsLLMConfig(): { providerId: string; modelId: string | undefined } | null {
+  private getKmsLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
     const llmClient = LLMClientService.getInstance()
     const mainDb = DatabaseService.getInstance().getDb()
 
@@ -518,7 +518,11 @@ ${fileSummaries.join('\n')}
       if (kmsModelRow?.value) {
         const config = JSON.parse(kmsModelRow.value)
         if (config.provider_id && llmClient.getProvider(config.provider_id)) {
-          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+          return {
+            providerId: config.provider_id,
+            modelId: config.model_id || undefined,
+            enableThinking: !!config.enable_thinking,
+          }
         }
       }
     } catch (error) {
@@ -530,7 +534,11 @@ ${fileSummaries.join('\n')}
       if (row?.value) {
         const config = JSON.parse(row.value)
         if (config.provider_id && llmClient.getProvider(config.provider_id)) {
-          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+          return {
+            providerId: config.provider_id,
+            modelId: config.model_id || undefined,
+            enableThinking: false,
+          }
         }
       }
     } catch (error) {
@@ -539,7 +547,30 @@ ${fileSummaries.join('\n')}
 
     const providers = llmClient.getProviderList?.() as any[] || []
     const first = providers[0]
-    return first ? { providerId: first.id, modelId: undefined } : null
+    return first ? { providerId: first.id, modelId: undefined, enableThinking: false } : null
+  }
+
+  getKmsSummaryLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
+    const llmClient = LLMClientService.getInstance()
+    const mainDb = DatabaseService.getInstance().getDb()
+
+    try {
+      const summaryRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_summary_model'").get() as any
+      if (summaryRow?.value) {
+        const config = JSON.parse(summaryRow.value)
+        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
+          return {
+            providerId: config.provider_id,
+            modelId: config.model_id || undefined,
+            enableThinking: !!config.enable_thinking,
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to read kms_summary_model setting, falling back to kms_model', error)
+    }
+
+    return this.getKmsLLMConfig()
   }
 
   scanDirFiles(dirPath: string, extensions?: string[]): { files: string[]; skipped: number } {
@@ -722,6 +753,7 @@ ${fileSummaries.join('\n')}
     const result: any = {
       model: null,
       embeddingModel: null,
+      summaryModel: null,
       searchParams: { maxRounds: 3, topK: 10 },
       autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
     }
@@ -737,6 +769,13 @@ ${fileSummaries.join('\n')}
       const embRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
       if (embRow?.value) {
         result.embeddingModel = JSON.parse(embRow.value)
+      }
+    } catch {}
+
+    try {
+      const summaryRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_summary_model'").get() as any
+      if (summaryRow?.value) {
+        result.summaryModel = JSON.parse(summaryRow.value)
       }
     } catch {}
 
@@ -778,6 +817,13 @@ ${fileSummaries.join('\n')}
         setSetting('kms_embedding_model', params.embeddingModel)
       } else {
         mainDb.prepare("DELETE FROM settings WHERE key = 'kms_embedding_model'").run()
+      }
+    }
+    if (params.summaryModel !== undefined) {
+      if (params.summaryModel) {
+        setSetting('kms_summary_model', params.summaryModel)
+      } else {
+        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_summary_model'").run()
       }
     }
     if (params.searchParams !== undefined) {

@@ -30,16 +30,19 @@ export interface InteractionResponse {
   selectedValue?: string
   inputValue?: string
   cancelled: boolean
+  allowAlways?: boolean
 }
 
 interface PendingRequest {
   resolve: (response: InteractionResponse) => void
   timer?: NodeJS.Timeout
+  source?: string
 }
 
 interface SessionInfo {
   webContents: Electron.WebContents
   pendingRequests: Map<string, PendingRequest>
+  allowedSources: Set<string>
 }
 
 export interface SessionContext {
@@ -64,7 +67,7 @@ class UnifiedInteractionService {
   }
 
   registerSession(sessionId: string, webContents: Electron.WebContents): void {
-    this.sessions.set(sessionId, { webContents, pendingRequests: new Map() })
+    this.sessions.set(sessionId, { webContents, pendingRequests: new Map(), allowedSources: new Set() })
     this.ensureIpcRegistered()
   }
 
@@ -79,6 +82,23 @@ class UnifiedInteractionService {
     }
   }
 
+  isSourceAllowed(source?: string): boolean {
+    if (!source) return false
+    const ctx = interactionContext.getStore()
+    if (!ctx) return false
+    const session = this.sessions.get(ctx.sessionId)
+    if (!session) return false
+    return session.allowedSources.has(source)
+  }
+
+  allowSource(source: string): void {
+    const ctx = interactionContext.getStore()
+    if (!ctx) return
+    const session = this.sessions.get(ctx.sessionId)
+    if (!session) return
+    session.allowedSources.add(source)
+  }
+
   async request(request: Omit<InteractionRequest, 'id'>): Promise<InteractionResponse> {
     const ctx = interactionContext.getStore()
     if (!ctx) {
@@ -88,6 +108,15 @@ class UnifiedInteractionService {
     const session = this.sessions.get(ctx.sessionId)
     if (!session || session.webContents.isDestroyed()) {
       return this.createDeniedResponse(request, 'Session not found or window closed')
+    }
+
+    if (request.source && session.allowedSources.has(request.source)) {
+      return {
+        id: '',
+        confirmed: true,
+        cancelled: false,
+        allowAlways: true,
+      }
     }
 
     const id = generateId()
@@ -100,7 +129,7 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true })
       }, timeout)
 
-      session.pendingRequests.set(id, { resolve, timer })
+      session.pendingRequests.set(id, { resolve, timer, source: request.source })
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
@@ -126,6 +155,11 @@ class UnifiedInteractionService {
 
     if (pending.timer) clearTimeout(pending.timer)
     session.pendingRequests.delete(response.id)
+
+    if (response.allowAlways && pending.source) {
+      session.allowedSources.add(pending.source)
+    }
+
     pending.resolve(response)
   }
 

@@ -271,7 +271,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
     },
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) =>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
   },
 }
@@ -285,7 +285,7 @@ export type ElectronAPI = typeof electronAPI & {
   getPathForFile: (file: File) => string
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) => Promise<{ success: boolean }>
   }
 }
 

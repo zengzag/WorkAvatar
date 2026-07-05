@@ -426,7 +426,7 @@ class SkillRegistryService {
 
     return {
       enabled: allSkills.filter((s) => skillStateMap.get(s.id) === true),
-      disabled: allSkills.filter((s) => skillStateMap.has(s.id) && skillStateMap.get(s.id) !== true),
+      disabled: allSkills.filter((s) => skillStateMap.get(s.id) !== true),
     }
   }
 }

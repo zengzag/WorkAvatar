@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, Fragment } from 'react'
-import { Input, Button, Tag, Tooltip } from 'antd'
+import { useState, useMemo, useCallback } from 'react'
+import { Input, Button, Tag } from 'antd'
 import { RobotOutlined, PlusOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { theme } from 'antd'
@@ -21,7 +21,7 @@ interface EmployeeSelectorProps {
 }
 
 const EmployeeSelector: React.FC<EmployeeSelectorProps> = ({
-  open,
+  open: _open,
   onOpenChange,
   employees,
   activeEmployeeId,

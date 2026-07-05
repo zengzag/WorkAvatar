@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react'
+import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Tag, Typography, Space, Tooltip, Button, Collapse, theme } from 'antd'
 import { FileTextOutlined, FilePdfOutlined, FileExcelOutlined, FileWordOutlined, FileMarkdownOutlined, FileOutlined, CodeOutlined, FolderOpenOutlined, EyeOutlined, RobotOutlined, BulbOutlined, CompressOutlined, RiseOutlined, AimOutlined } from '@ant-design/icons'
@@ -63,9 +63,7 @@ const KMSAgentResult: React.FC<KMSAgentResultProps> = ({
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
-  const typeIcons = useMemo<Record<string, string>>(() => ({
-    info: '•', llm: '🤖', search: '🔍', read: '📄', plan: '📋', result: '✓',
-  }), [])
+
 
   const handleSourcePreview = useCallback((source: AgentSearchSource) => {
     onPreview({

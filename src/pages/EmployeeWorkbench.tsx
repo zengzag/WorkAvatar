@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import {
@@ -34,6 +34,37 @@ import type { Employee } from '../types'
 
 const { Text, Paragraph } = Typography
 
+const LAST_USED_KEY = 'employeeWorkbench:lastUsedAt'
+
+function getLastUsedMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(LAST_USED_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function updateEmployeeLastUsed(employeeId: string): void {
+  try {
+    const map = getLastUsedMap()
+    map[employeeId] = Date.now()
+    localStorage.setItem(LAST_USED_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
+function sortEmployeesByLastUsed(employees: Employee[]): Employee[] {
+  const lastUsedMap = getLastUsedMap()
+  return [...employees].sort((a, b) => {
+    const aTime = lastUsedMap[a.id] || 0
+    const bTime = lastUsedMap[b.id] || 0
+    if (bTime !== aTime) return bTime - aTime
+    return (b.updated_at || 0) - (a.updated_at || 0)
+  })
+}
+
 const EmployeeWorkbench: React.FC = () => {
   const { message, modal } = App.useApp()
   const navigate = useNavigate()
@@ -56,7 +87,8 @@ const EmployeeWorkbench: React.FC = () => {
   const loadEmployees = async () => {
     try {
       const result = await window.electronAPI.employee.list()
-      setEmployees(result)
+      const sorted = sortEmployeesByLastUsed(result)
+      setEmployees(sorted)
       setEmployeeListLoaded(true)
     } catch {
       message.error(t('digitalEmployees.loadEmployeesFailed'))
@@ -76,6 +108,8 @@ const EmployeeWorkbench: React.FC = () => {
   useEffect(() => {
     if (id) {
       localStorage.setItem('employeeWorkbench:lastEmployeeId', id)
+      updateEmployeeLastUsed(id)
+      setEmployees(prev => sortEmployeesByLastUsed(prev))
     }
   }, [id])
 
@@ -307,6 +341,7 @@ const EmployeeWorkbench: React.FC = () => {
       navigate('/wizard')
       return
     }
+    updateEmployeeLastUsed(newEmployeeId)
     navigate(`/employee/${newEmployeeId}`)
   }, [navigate])
 

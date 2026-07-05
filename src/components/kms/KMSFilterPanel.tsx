@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Radio, Select, DatePicker, Collapse, Tag, Typography, Space } from 'antd'
 import { FilterOutlined, RobotOutlined } from '@ant-design/icons'
-import type { SearchFilters } from '../../hooks/useKMS'
+
 
 const { Text } = Typography
 const { RangePicker } = DatePicker

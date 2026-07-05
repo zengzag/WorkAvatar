@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Tag, Typography, Space, Tooltip, Button, theme } from 'antd'
 import { FileTextOutlined, FilePdfOutlined, FileExcelOutlined, FileWordOutlined, FileMarkdownOutlined, FileOutlined, CodeOutlined, FolderOpenOutlined, EyeOutlined } from '@ant-design/icons'
@@ -59,18 +59,13 @@ interface KMSSearchResultListProps {
 const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
   results,
   searchMode,
-  searchQuery,
+  searchQuery: _searchQuery,
   onPreview,
   onOpenFile,
   onOpenFileDir,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-
-  const searchKeywords = useMemo(() => {
-    if (!searchQuery.trim()) return []
-    return searchQuery.trim().split(/\s+/).filter(kw => kw.length > 0)
-  }, [searchQuery])
 
   const renderScoreBar = (score?: number) => {
     if (score === undefined || score === null) return null

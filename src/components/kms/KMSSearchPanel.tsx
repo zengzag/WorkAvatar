@@ -5,7 +5,7 @@ import KMSSearchInput from './KMSSearchInput'
 import KMSFilterPanel from './KMSFilterPanel'
 import KMSSearchResultList from './KMSSearchResultList'
 import KMSAgentResult from './KMSAgentResult'
-import type { SearchFilters, AgentSearchResult, AgentSearchSource, SearchTraceStep, SearchHistoryItem } from '../../hooks/useKMS'
+import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem } from '../../hooks/useKMS'
 
 const { Text } = Typography
 

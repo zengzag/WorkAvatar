@@ -29,7 +29,7 @@ interface InteractionState {
 
 interface InteractionActions {
   enqueue: (request: InteractionRequest) => void
-  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => void
+  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) => void
   cancelCurrent: () => void
 }
 

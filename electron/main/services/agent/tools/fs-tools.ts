@@ -183,14 +183,15 @@ export const readFileTool: ToolDefinition = {
   id: 'read_file',
   name: 'read_file',
   title: '读取文件',
-  description: '读取本地文件内容。默认以纯文本方式读取，支持分段读取。设置 parse=true 可解析 PDF、DOCX、XLSX、PPTX、图片等二进制格式。',
+  description: '读取本地文件内容。默认以纯文本方式读取，支持分段读取和行号显示。设置 parse=true 可解析 PDF、DOCX、XLSX、PPTX、图片等二进制格式。输出中每行开头的 "行号|" 为便于定位而添加，不属于原始文件内容；若不需要行号可设置 show_line_numbers=false。',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: '文件绝对路径' },
       parse: { type: 'boolean', description: '是否启用文档解析（解析 PDF/DOCX/XLSX/PPTX/图片OCR 等二进制格式），默认false' },
       offset: { type: 'number', description: '起始字符偏移量（默认0）', minimum: 0 },
-      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，最大${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT }
+      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，最大${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
+      show_line_numbers: { type: 'boolean', description: '是否在每行开头显示行号（默认true），行号为便于定位而添加，不属于原始文件内容' }
     },
     required: ['path']
   },
@@ -242,10 +243,16 @@ export const readFileTool: ToolDefinition = {
       const sliced = content.slice(offset, end)
 
       const beforeOffset = content.slice(0, offset)
+      const showLineNumbers = args.show_line_numbers !== false
       const startLine = (beforeOffset.match(/\n/g) || []).length + 1
       const lines = sliced.split('\n')
-      const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
-      let output = numbered.join('\n')
+      let output: string
+      if (showLineNumbers) {
+        const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
+        output = numbered.join('\n')
+      } else {
+        output = sliced
+      }
 
       const totalLines = (content.match(/\n/g) || []).length + 1
       if (end < totalChars) {
@@ -282,15 +289,15 @@ export const writeFileTool: ToolDefinition = {
       if (!filePath) return { success: false, error: '文件路径不能为空' }
 
       const resolved = path.resolve(filePath)
+      const append = args.append === true
 
-      const confirm = await confirmOutsideWorkspace('写入', resolved)
+      const confirm = await confirmOutsideWorkspace(append ? '追加' : '写入', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
       const dir = path.dirname(resolved)
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
       const content = String(args.content || '')
-      const append = args.append === true
 
       if (append) {
         fs.appendFileSync(resolved, content, 'utf-8')

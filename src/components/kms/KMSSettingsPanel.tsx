@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Alert, Divider, Tag,
+  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Alert, Divider, Tag, Switch, Tooltip,
 } from 'antd'
 import {
   RobotOutlined, CloudServerOutlined, SaveOutlined, FolderOpenOutlined,
-  DatabaseOutlined, ThunderboltOutlined, AimOutlined,
+  DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
@@ -38,6 +38,7 @@ interface KMSSettingsPanelProps {
   onSaveSettings: (params: {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
+    summaryModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
@@ -78,6 +79,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modelConfig, setModelConfig] = useState<KMSModelConfig | null>(settings.model)
   const [embeddingModelConfig, setEmbeddingModelConfig] = useState<KMSModelConfig | null>(settings.embeddingModel)
+  const [summaryModelConfig, setSummaryModelConfig] = useState<KMSModelConfig | null>(settings.summaryModel)
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 3)
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [savingModel, setSavingModel] = useState(false)
@@ -95,6 +97,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   useEffect(() => {
     setModelConfig(settings.model)
     setEmbeddingModelConfig(settings.embeddingModel)
+    setSummaryModelConfig(settings.summaryModel)
     setMaxRounds(settings.searchParams?.maxRounds ?? 3)
     setTopK(settings.searchParams?.topK ?? 10)
   }, [settings])
@@ -125,6 +128,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     const ok = await onSaveSettings({
       model: modelConfig,
       embeddingModel: embeddingModelConfig,
+      summaryModel: summaryModelConfig,
     })
     setSavingModel(false)
     if (ok) {
@@ -132,7 +136,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } else {
       message.error(t('kms.settingsPanel.modelSaveFailed'))
     }
-  }, [modelConfig, embeddingModelConfig, onSaveSettings, message, t])
+  }, [modelConfig, embeddingModelConfig, summaryModelConfig, onSaveSettings, message, t])
 
   const handleSaveParams = useCallback(async () => {
     setSavingParams(true)
@@ -158,49 +162,143 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
 
       {/* AI 搜索模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
+              </div>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <LLMSelector
+                providerId={modelConfig?.provider_id || ''}
+                modelId={modelConfig?.model_id || ''}
+                onChange={(providerId, modelId) => {
+                  if (providerId) {
+                    setModelConfig(prev => ({
+                      provider_id: providerId,
+                      model_id: modelId,
+                      enable_thinking: prev?.enable_thinking ?? false,
+                    }))
+                  } else {
+                    setModelConfig(null)
+                  }
+                }}
+                modelCategory="chat"
+                providers={providers}
+              />
+              {modelConfig?.provider_id && (
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => setModelConfig(null)}
+                >
+                  {t('common.clearAll')}
+                </Text>
+              )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <LLMSelector
-              providerId={modelConfig?.provider_id || ''}
-              modelId={modelConfig?.model_id || ''}
-              onChange={(providerId, modelId) => {
-                if (providerId) {
-                  setModelConfig({ provider_id: providerId, model_id: modelId })
-                } else {
-                  setModelConfig(null)
-                }
-              }}
-              modelCategory="chat"
-              providers={providers}
-            />
-            {modelConfig?.provider_id && (
-              <Text
-                type="secondary"
-                style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                onClick={() => setModelConfig(null)}
-              >
-                {t('common.clearAll')}
-              </Text>
-            )}
+          {modelConfig?.provider_id && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
+                <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
+                  <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>ⓘ</Text>
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={modelConfig?.enable_thinking ?? false}
+                onChange={(checked) => {
+                  setModelConfig(prev => prev ? { ...prev, enable_thinking: checked } : prev)
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* 摘要模型 */}
+      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <FileTextOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.summaryModel')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.summaryModelDesc')}</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <LLMSelector
+                providerId={summaryModelConfig?.provider_id || ''}
+                modelId={summaryModelConfig?.model_id || ''}
+                onChange={(providerId, modelId) => {
+                  if (providerId) {
+                    setSummaryModelConfig(prev => ({
+                      provider_id: providerId,
+                      model_id: modelId,
+                      enable_thinking: prev?.enable_thinking ?? false,
+                    }))
+                  } else {
+                    setSummaryModelConfig(null)
+                  }
+                }}
+                modelCategory="chat"
+                providers={providers}
+              />
+              {summaryModelConfig?.provider_id && (
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => setSummaryModelConfig(null)}
+                >
+                  {t('common.clearAll')}
+                </Text>
+              )}
+            </div>
           </div>
+          {summaryModelConfig?.provider_id && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
+                <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
+                  <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>ⓘ</Text>
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={summaryModelConfig?.enable_thinking ?? false}
+                onChange={(checked) => {
+                  setSummaryModelConfig(prev => prev ? { ...prev, enable_thinking: checked } : prev)
+                }}
+              />
+            </div>
+          )}
         </div>
       </Card>
 

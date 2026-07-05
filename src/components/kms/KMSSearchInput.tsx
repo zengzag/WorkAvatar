@@ -70,9 +70,8 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   }, [onSearch, isSearching])
 
   const handleInputFocus = useCallback(() => {
-    onLoadSearchHistory?.({ limit: 20 })
-    setHistoryOpen(true)
-  }, [onLoadSearchHistory])
+    // 输入框获得焦点时不再自动显示历史记录，需点击历史图标手动触发
+  }, [])
 
   const handleInputBlur = useCallback(() => {
     if (historyBlurTimerRef.current) clearTimeout(historyBlurTimerRef.current)
@@ -163,16 +162,14 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
           prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
           suffix={
             <Space size={4}>
-              {searchHistory && searchHistory.length > 0 && (
-                <Tooltip title={t('kms.searchHistory')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<HistoryOutlined />}
-                    onMouseDown={handleHistoryBtnMouseDown}
-                  />
-                </Tooltip>
-              )}
+              <Tooltip title={t('kms.searchHistory')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<HistoryOutlined />}
+                  onMouseDown={handleHistoryBtnMouseDown}
+                />
+              </Tooltip>
               <Button
                 type="primary"
                 size="small"

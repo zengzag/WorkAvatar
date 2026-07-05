@@ -1,16 +1,13 @@
-import type Database from 'better-sqlite3'
-import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService from './kms-search-engine.service'
 import FileParserService from '../file-parser.service'
 import LLMClientService from '../llm-client.service'
 import { createLogger } from '../logger'
-import type { IndexProgress, ProgressCallback, AutoIndexConfig, AutoIndexStatus } from './kms-index-manager.service'
+import type { ProgressCallback, AutoIndexConfig, AutoIndexStatus } from './kms-index-manager.service'
 
 const logger = createLogger('KMS-AutoIndex')
 
 class KMSAutoIndexService {
-  private db: Database.Database
   private static instance: KMSAutoIndexService
   private autoIndexTimer: NodeJS.Timeout | null = null
   private autoIndexConfig: AutoIndexConfig = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
@@ -21,7 +18,6 @@ class KMSAutoIndexService {
   private abortController: AbortController | null = null
 
   private constructor() {
-    this.db = KMSDatabaseService.getInstance().getDb()
   }
 
   static getInstance(): KMSAutoIndexService {

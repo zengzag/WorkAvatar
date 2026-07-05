@@ -7,6 +7,7 @@ export interface CallLLMForJSONOptions {
   maxTokens?: number
   signal?: AbortSignal
   logSource?: string
+  enable_thinking?: boolean
   /** 失败时抛出异常而不是返回 fallback。默认 false */
   throwOnError?: boolean
   /** 自定义错误信息（仅 throwOnError=true 时使用） */
@@ -38,6 +39,7 @@ export async function callLLMForJSON<T>(
       ...(modelId ? { model: modelId } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.logSource ? { logSource: options.logSource } : {}),
+      ...(options.enable_thinking !== undefined ? { enable_thinking: options.enable_thinking } : {}),
     })
     return parseJSON<T>(result, fallback)
   } catch (err) {

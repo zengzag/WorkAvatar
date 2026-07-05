@@ -18,13 +18,13 @@ interface MessageListProps {
   activeConversationId: string | null
   chatContainerRef: React.RefObject<HTMLDivElement | null>
   onCopy: (content: string) => Promise<void>
-  onDeleteMessage: (msgId: string, timestamp: number) => Promise<void>
-  onRegenerate: (msg: MessageWithThought) => void
-  onSwitchModelRegenerate: (msg: MessageWithThought) => void
-  onEditAndResubmit: (msg: MessageWithThought, newContent: string) => void
+  onDeleteMessage: (msgId: string) => void
+  onRegenerate: (msgId: string) => void
+  onSwitchModelRegenerate: (msgId: string, providerId: string, modelId: string) => void
+  onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
   onSwitchBranch: (msgId: string, branchIndex: number) => void
-  onOpenComparison: (msg: MessageWithThought) => void
+  onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
 }

@@ -13,10 +13,10 @@ import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-sha
 
 const { Text } = Typography
 
-const PANEL_COLOR_KEYS: Array<{ borderKey: keyof typeof import('antd/es/theme/internal').DerivativeToken; bgKey: keyof typeof import('antd/es/theme/internal').DerivativeToken; tag: string }> = [
-  { borderKey: 'colorPrimary' as any, bgKey: 'colorPrimaryBg' as any, tag: 'blue' },
-  { borderKey: 'colorSuccess' as any, bgKey: 'colorSuccessBg' as any, tag: 'green' },
-  { borderKey: 'colorInfo' as any, bgKey: 'colorInfoBg' as any, tag: 'purple' },
+const PANEL_COLOR_KEYS: Array<{ borderKey: string; bgKey: string; tag: string }> = [
+  { borderKey: 'colorPrimary', bgKey: 'colorPrimaryBg', tag: 'blue' },
+  { borderKey: 'colorSuccess', bgKey: 'colorSuccessBg', tag: 'green' },
+  { borderKey: 'colorInfo', bgKey: 'colorInfoBg', tag: 'purple' },
 ]
 
 function getPanelColor(index: number, token: any) {

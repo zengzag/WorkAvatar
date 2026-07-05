@@ -1,4 +1,4 @@
-﻿import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 interface IndexDir {
@@ -101,6 +101,7 @@ export interface SearchFilters {
 export interface KMSModelConfig {
   provider_id: string
   model_id: string
+  enable_thinking?: boolean
 }
 
 /** KMS 自动索引配置 */
@@ -123,6 +124,7 @@ export interface KMSAutoIndexStatus {
 export interface KMSSettings {
   model: KMSModelConfig | null
   embeddingModel: KMSModelConfig | null
+  summaryModel: KMSModelConfig | null
   searchParams: {
     maxRounds?: number
     topK?: number
@@ -182,6 +184,7 @@ export function useKMS() {
   const [kmsSettings, setKmsSettings] = useState<KMSSettings>({
     model: null,
     embeddingModel: null,
+    summaryModel: null,
     searchParams: { maxRounds: 3, topK: 10 },
     autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
@@ -397,6 +400,7 @@ export function useKMS() {
         setKmsSettings({
           model: result.model || null,
           embeddingModel: result.embeddingModel || null,
+          summaryModel: result.summaryModel || null,
           searchParams: {
             maxRounds: result.searchParams?.maxRounds ?? 3,
             topK: result.searchParams?.topK ?? 10,
@@ -416,6 +420,7 @@ export function useKMS() {
   const saveKmsSettings = useCallback(async (params: {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
+    summaryModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => {
