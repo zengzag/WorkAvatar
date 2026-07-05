@@ -162,18 +162,20 @@ export class MemoryManager implements IMemoryManager {
   }
 
   private truncateFromStart(messages: Message[], tokenBudget: number): Message[] {
-    let totalTokens = this.estimateTokens(messages)
+    const totalTokens = this.estimateTokens(messages)
 
     if (totalTokens <= tokenBudget) {
       return messages
     }
 
     const result: Message[] = []
+    let keptTokens = 0
     for (let i = messages.length - 1; i >= 0; i--) {
       const msgTokens = this.estimateTokens([messages[i]])
-      if (totalTokens - msgTokens < tokenBudget || result.length === 0) {
+      // 始终保留最后一条；其余消息仅在累加未超预算时保留
+      if (result.length === 0 || keptTokens + msgTokens <= tokenBudget) {
         result.unshift(messages[i])
-        totalTokens -= msgTokens
+        keptTokens += msgTokens
       } else {
         break
       }

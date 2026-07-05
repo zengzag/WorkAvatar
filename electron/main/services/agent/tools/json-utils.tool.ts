@@ -34,6 +34,11 @@ export const jsonUtilsTool: ToolDefinition = {
             if (current === null || current === undefined) break
             current = current[key]
           }
+          // 路径不存在时 current 为 undefined，JSON.stringify(undefined) 返回 undefined 值（非字符串）
+          // 需要显式处理，避免 ToolDispatcher 走 serializeResult 回退导致 LLM 看到空结果
+          if (current === undefined) {
+            return { success: true, output: 'null (路径不存在)' }
+          }
           return { success: true, output: JSON.stringify(current, null, 2) }
         }
         case 'validate': {

@@ -4,6 +4,7 @@ import type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
+  EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
@@ -49,10 +50,7 @@ export function registerEmployeeHandlers(
     return workspaceManager.updateEmployee(id, data)
   })
 
-  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: string | { id: string; delete_workspace?: boolean }) => {
-    if (typeof params === 'string') {
-      return workspaceManager.deleteEmployee(params, false)
-    }
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams) => {
     return workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
   })
 
@@ -94,7 +92,7 @@ export function registerEmployeeHandlers(
           event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
         }
       )
-      return { success: true, profile: result.profile, analysisMethod: result.analysisMethod, error: result.error, messages: result.messages }
+      return { success: true, profile: result.profile, analysisMethod: result.analysisMethod, warning: result.error, messages: result.messages }
     } catch (error) {
       return {
         success: false,
@@ -115,7 +113,7 @@ export function registerEmployeeHandlers(
           event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
         }
       )
-      return { success: true, profile: result.profile, messages: result.messages, error: result.error }
+      return { success: true, profile: result.profile, messages: result.messages, warning: result.error }
     } catch (error) {
       return {
         success: false,
@@ -132,25 +130,37 @@ export function registerEmployeeHandlers(
     return employeeExportService.importConfig(params.import_path, params.conflict_strategy)
   })
 
-  // 需要事件回调推送进度，保留 ipcMain.handle
+  // 需要事件回调推送进度，保留 ipcMain.handle；try-catch 兜底确保返回统一错误协议
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_EXPORT_PACKAGE, async (event, params: EmployeeExportPackageParams) => {
-    return employeeExportService.exportPackage(
-      params.employee_id,
-      params.export_path,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.EMPLOYEE_EXPORT_PROGRESS, { employee_id: params.employee_id, stage, detail })
-      }
-    )
+    try {
+      return await employeeExportService.exportPackage(
+        params.employee_id,
+        params.export_path,
+        (stage, detail) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send(IPC_CHANNELS.EMPLOYEE_EXPORT_PROGRESS, { employee_id: params.employee_id, stage, detail })
+          }
+        }
+      )
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_IMPORT_PACKAGE, async (event, params: EmployeeImportPackageParams) => {
-    return employeeExportService.importPackage(
-      params.import_path,
-      params.conflict_strategy,
-      (stage, detail) => {
-        event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
-      }
-    )
+    try {
+      return await employeeExportService.importPackage(
+        params.import_path,
+        params.conflict_strategy,
+        (stage, detail) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send(IPC_CHANNELS.EMPLOYEE_IMPORT_PROGRESS, { stage, detail })
+          }
+        }
+      )
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) }
+    }
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST, (params: EmployeeMemoryListParams) => {

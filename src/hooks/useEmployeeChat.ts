@@ -4,15 +4,22 @@ import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
 import type { MessageWithThought, MessageBranch } from '../components/workbench'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
-import { getCachedSceneDefaultModel, getSceneDefaultModel } from '../utils/default-model'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
 import { useChatScroll } from './useChatScroll'
+import { useLlmSettings } from './useLlmSettings'
+import { getSceneDefaultModel } from '../utils/default-model'
 
 // 对话消息内存缓存最大容量，超过时按 LRU 淘汰，防止长时间使用积累导致内存泄漏
 const MESSAGES_CACHE_MAX_SIZE = 20
 // 加载状态的最短展示时间（毫秒），避免加载完成太快时 spinner 闪烁
 const MIN_LOADING_DISPLAY_MS = 120
+// 对话列表分页大小（初始展示 & 加载更多增量）
+const CONVERSATION_PAGE_SIZE = 20
+// 滚动到列表底部多少像素内触发加载更多
+const SCROLL_BOTTOM_THRESHOLD_PX = 10
+// LLM 默认温度
+const DEFAULT_TEMPERATURE = 0.3
 
 interface UseEmployeeChatParams {
   id: string | undefined
@@ -22,11 +29,9 @@ interface UseEmployeeChatParams {
 interface ConversationStreamState {
   isStreaming: boolean
   conversationId: string
-  messages: MessageWithThought[]
   assistantMessageId: string | null
   segCounter: number
   toolCallCounter: number
-  cleanupFns: (() => void)[]
 }
 
 /**
@@ -114,6 +119,20 @@ let _persistentEmployeeId: string | null = null
 // 让出主线程一小段时间，让 React 有机会渲染 loading 状态
 const yieldToBrowser = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
+/**
+ * 统计 assistant 消息的输出字符数（answer segment 内容 + 顶层 content）。
+ * 纯函数，不依赖 hook 状态，放在模块级避免每次渲染重建。
+ */
+const calcTotalOutputChars = (segs: any[], content?: string): number => {
+  let total = (content || '').length
+  for (const s of segs || []) {
+    if (s.type === 'answer' && s.content) {
+      total += (typeof s.content === 'string' ? s.content.length : 0)
+    }
+  }
+  return total
+}
+
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
@@ -148,53 +167,30 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
-  const [providers, setProviders] = useState<any[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
   const [pendingComparisonAggregation, setPendingComparisonAggregation] = useState<string[] | null>(null)
-  const selectedLlmProviderIdKey = id ? `employeeWorkbench:selectedProviderId:${id}` : 'employeeWorkbench:selectedProviderId'
-  const selectedLlmModelIdKey = id ? `employeeWorkbench:selectedModelId:${id}` : 'employeeWorkbench:selectedModelId'
-  const enableThinkingKey = id ? `employeeWorkbench:enableThinking:${id}` : 'employeeWorkbench:enableThinking'
+
+  const {
+    providers,
+    selectedLlmProviderId,
+    selectedLlmModelId,
+    handleLlmChange,
+    enableThinking,
+    setEnableThinking,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
+    minimalMode,
+    setMinimalMode,
+    loadProviders,
+  } = useLlmSettings(id)
+
   const activeConvIdStorageKey = id ? `employeeWorkbench:activeConvId:${id}` : null
-
-  const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
-    const stored = selectedLlmProviderIdKey ? localStorage.getItem(selectedLlmProviderIdKey) : null
-    return stored || getCachedSceneDefaultModel('workbench')?.provider_id || ''
-  })
-  const [selectedLlmModelId, setSelectedLlmModelId] = useState<string>(() => {
-    const stored = selectedLlmModelIdKey ? localStorage.getItem(selectedLlmModelIdKey) : null
-    return stored || getCachedSceneDefaultModel('workbench')?.model_id || ''
-  })
-  const [enableThinking, setEnableThinking] = useState<boolean>(() => {
-    const stored = enableThinkingKey ? localStorage.getItem(enableThinkingKey) : null
-    return stored === 'true'
-  })
-  const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([])
-  const [minimalMode, setMinimalMode] = useState(false)
-
-  const handleLlmChange = useCallback((providerId: string, modelId: string) => {
-    setSelectedLlmProviderId(providerId)
-    setSelectedLlmModelId(modelId)
-  }, [])
-
-  useEffect(() => {
-    if (selectedLlmProviderIdKey) {
-      localStorage.setItem(selectedLlmProviderIdKey, selectedLlmProviderId)
-    }
-    if (selectedLlmModelIdKey) {
-      localStorage.setItem(selectedLlmModelIdKey, selectedLlmModelId)
-    }
-  }, [selectedLlmProviderId, selectedLlmModelId, selectedLlmProviderIdKey, selectedLlmModelIdKey])
-  useEffect(() => {
-    if (enableThinkingKey) {
-      localStorage.setItem(enableThinkingKey, String(enableThinking))
-    }
-  }, [enableThinking, enableThinkingKey])
 
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [displayedCount, setDisplayedCount] = useState(20)
+  const [displayedCount, setDisplayedCount] = useState(CONVERSATION_PAGE_SIZE)
   const [allConversations, setAllConversations] = useState<Conversation[]>([])
 
   // 本地排序：按 COALESCE(last_message_at, created_at) DESC，避免每次重新排序都请求后端
@@ -226,11 +222,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(_persistentStreamStates)
   const conversationMessagesRef = useRef<LRUCache<string, MessageWithThought[]>>(_persistentMessages)
-  const globalListenersCleanupRef = useRef<(() => void) | null>(_persistentListenersCleanup)
   const activeConversationIdRef = useRef<string | null>(null)
   const isStreamingRef = useRef<boolean>(false)
   const initVersionRef = useRef(0)
   const selectConvVersionRef = useRef(0)
+  // 新建对话后延迟发送的 setTimeout 句柄，组件卸载时清理避免 setState-after-unmount（B#7）
+  const pendingSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 将 state 同步到 ref，避免闭包陈旧问题
   useEffect(() => {
@@ -270,10 +267,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (_persistentListenersCleanup) {
           _persistentListenersCleanup()
           _persistentListenersCleanup = null
-          globalListenersCleanupRef.current = null
-        }
-        for (const [, state] of _persistentStreamStates) {
-          state.cleanupFns.forEach(fn => fn())
         }
         _persistentStreamStates.clear()
         _persistentMessages.clear()
@@ -309,6 +302,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     return () => {
+      // 清理未执行的延迟发送，避免卸载后触发 setState（B#7）
+      if (pendingSendTimeoutRef.current) {
+        clearTimeout(pendingSendTimeoutRef.current)
+        pendingSendTimeoutRef.current = null
+      }
       const entries: [string, MessageWithThought[]][] = []
       for (const entry of conversationMessagesRef.current.entries()) {
         entries.push(entry as [string, MessageWithThought[]])
@@ -328,21 +326,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }, [])
 
-  const calcTotalOutputChars = (segs: any[], content?: string): number => {
-    let total = (content || '').length
-    for (const s of segs || []) {
-      if (s.type === 'answer' && s.content) {
-        total += (typeof s.content === 'string' ? s.content.length : 0)
-      }
-    }
-    return total
-  }
-
   const setupGlobalListeners = useCallback(() => {
     if (_persistentListenersCleanup) {
       _persistentListenersCleanup()
       _persistentListenersCleanup = null
-      globalListenersCleanupRef.current = null
     }
 
     const chunkCleanup = window.electronAPI.llm.onChunk((data: { sessionId: string; chunk?: string; chunks?: string[] }) => {
@@ -549,7 +536,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       })
 
       streamState.isStreaming = false
-      streamState.cleanupFns.forEach(fn => fn())
       streamStatesRef.current.delete(sessionId)
 
       const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
@@ -578,7 +564,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       )
 
       streamState.isStreaming = false
-      streamState.cleanupFns.forEach(fn => fn())
       streamStatesRef.current.delete(sessionId)
 
       const anyStreaming = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === streamState.conversationId && s.isStreaming)
@@ -603,7 +588,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       errorCleanup()
     }
     _persistentListenersCleanup = cleanup
-    globalListenersCleanupRef.current = cleanup
     // 依赖仅 t：listeners 通过 ref（streamStatesRef/activeConversationIdRef）读取运行时状态，
     // 无需在切换对话时重建（原 deps 含 activeConversationId 导致每次切换都 teardown+setup 7 个监听器）
   }, [t])
@@ -661,23 +645,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   }
 
   const loadMoreConversations = () => {
-    setDisplayedCount(prev => prev + 20)
+    setDisplayedCount(prev => prev + CONVERSATION_PAGE_SIZE)
   }
 
   const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.target as HTMLDivElement
-    if (target.scrollHeight - target.scrollTop <= target.clientHeight + 10) {
+    if (target.scrollHeight - target.scrollTop <= target.clientHeight + SCROLL_BOTTOM_THRESHOLD_PX) {
       if (conversations.length < allConversations.length) {
         loadMoreConversations()
       }
     }
-  }
-
-  const loadProviders = async () => {
-    try {
-      const result = await window.electronAPI.llm.getProviders()
-      setProviders(result as any[])
-    } catch (e) { console.error('Failed to load providers:', e) }
   }
 
   const startNewConversation = async (): Promise<string | null> => {
@@ -702,7 +679,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       if (pendingMessage) {
         const msgContent = pendingMessage
         setPendingMessage(null)
-        setTimeout(() => sendMessage(convId, msgContent), 0)
+        pendingSendTimeoutRef.current = setTimeout(() => {
+          pendingSendTimeoutRef.current = null
+          sendMessage(convId, msgContent)
+        }, 0)
       }
 
       return convId
@@ -859,8 +839,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     e?.stopPropagation()
     try {
       const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-      for (const [sessionId, state] of streamEntries) {
-        state.cleanupFns.forEach(fn => fn())
+      for (const [sessionId] of streamEntries) {
         streamStatesRef.current.delete(sessionId)
       }
       deleteConvMessages(convId)
@@ -883,8 +862,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       for (const convId of convIds) {
         const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-        for (const [sessionId, state] of streamEntries) {
-          state.cleanupFns.forEach(fn => fn())
+        for (const [sessionId] of streamEntries) {
           streamStatesRef.current.delete(sessionId)
         }
         deleteConvMessages(convId)
@@ -905,9 +883,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const deleteAllConversations = async () => {
     if (!id) return
     try {
-      for (const [, state] of streamStatesRef.current) {
-        state.cleanupFns.forEach(fn => fn())
-      }
       streamStatesRef.current.clear()
       conversationMessagesRef.current.clear()
 
@@ -986,7 +961,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             content: userContent,
           },
         ],
-        options: { temperature: 0.3, max_tokens: 50 },
+        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 50 },
       })
 
       if (result.success && result.content) {
@@ -1079,11 +1054,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         const streamState: ConversationStreamState = {
           isStreaming: true,
           conversationId: targetConvId,
-          messages: updatedMessagesRef,
           assistantMessageId,
           segCounter: 0,
           toolCallCounter: 0,
-          cleanupFns: [],
         }
 
         if (targetConvId === activeConversationIdRef.current) {
@@ -1101,7 +1074,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             provider_id: sel.providerId,
             model_id: sel.modelId,
             messages: messageHistory,
-            options: { temperature: 0.3 },
+            options: { temperature: DEFAULT_TEMPERATURE },
             use_skills: true,
             collection_ids: selectedCollectionIds,
             enable_thinking: enableThinking,
@@ -1152,11 +1125,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const streamState: ConversationStreamState = {
         isStreaming: true,
         conversationId: targetConvId,
-        messages: updatedMessagesRef,
         assistantMessageId,
         segCounter: 0,
         toolCallCounter: 0,
-        cleanupFns: [],
       }
 
       try {
@@ -1167,7 +1138,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           provider_id: providerId,
           model_id: selectedLlmModelId || undefined,
           messages: messageHistory,
-          options: { temperature: 0.3 },
+          options: { temperature: DEFAULT_TEMPERATURE },
           use_skills: true,
           collection_ids: selectedCollectionIds,
           enable_thinking: enableThinking,
@@ -1220,6 +1191,71 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  /**
+   * 提交消息变更并启动流式生成（M8 提取的共享流程）。
+   * 三个重新生成场景（重新生成 / 切换模型重新生成 / 编辑后重发）共享：
+   * 持久化消息 → 注册全局监听 → 标记流式状态 → 启动 employeeChatStream → 异常清理。
+   * 调用方负责构建 newMessages、解析 providerId/modelId、计算上下文消息切片。
+   */
+  const commitAndStartStream = async (
+    convId: string,
+    newMessages: MessageWithThought[],
+    contextMessages: MessageWithThought[],
+    assistantMessageId: string,
+    providerId: string,
+    modelId: string | undefined,
+  ) => {
+    setConvMessages(convId, newMessages)
+    await window.electronAPI.conversation.update({
+      id: convId,
+      messages_json: JSON.stringify(newMessages),
+      message_count: newMessages.length,
+      last_message_at: Math.floor(Date.now() / 1000),
+    })
+
+    setupGlobalListeners()
+    setIsStreaming(true)
+    isStreamingRef.current = true
+
+    const streamState: ConversationStreamState = {
+      isStreaming: true,
+      conversationId: convId,
+      assistantMessageId,
+      segCounter: 0,
+      toolCallCounter: 0,
+    }
+
+    try {
+      const messageHistory = buildEnrichedHistory(contextMessages)
+      const result = await window.electronAPI.llm.employeeChatStream({
+        employee_id: id!,
+        provider_id: providerId,
+        model_id: modelId || undefined,
+        messages: messageHistory,
+        options: { temperature: DEFAULT_TEMPERATURE },
+        use_skills: true,
+        collection_ids: selectedCollectionIds,
+        enable_thinking: enableThinking,
+        conversation_id: convId,
+        minimal_mode: minimalMode,
+      })
+
+      if (result?.sessionId) {
+        streamStatesRef.current.set(result.sessionId, streamState)
+      }
+    } catch {
+      streamState.isStreaming = false
+      for (const [sid, ss] of streamStatesRef.current) {
+        if (ss === streamState) {
+          streamStatesRef.current.delete(sid)
+          break
+        }
+      }
+      setIsStreaming(false)
+      isStreamingRef.current = false
+    }
+  }
+
   const handleRegenerate = async (msgId: string) => {
     const convId = activeConversationIdRef.current
     if (!convId) return
@@ -1232,6 +1268,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const targetMsg = currentMsgs[msgIndex]
     if (targetMsg.role !== 'assistant') return
 
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) {
+      message.warning(t('workbench.noLlmProvider'))
+      return
+    }
+
+    // 保存当前回复为分支，重置消息为流式状态
     const existingBranches = targetMsg.branches || []
     const currentBranch: MessageBranch = {
       content: targetMsg.content,
@@ -1259,64 +1302,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       comparisonProviderId: undefined,
       comparisonModelId: undefined,
     }
-    setConvMessages(convId, newMessages)
-    await window.electronAPI.conversation.update({
-      id: convId,
-      messages_json: JSON.stringify(newMessages),
-      message_count: newMessages.length,
-      last_message_at: Math.floor(Date.now() / 1000),
-    })
 
-    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
-    if (!providerId) {
-      message.warning(t('workbench.noLlmProvider'))
-      return
-    }
-
-    setupGlobalListeners()
-    setIsStreaming(true)
-    isStreamingRef.current = true
-
-    const streamState: ConversationStreamState = {
-      isStreaming: true,
-      conversationId: convId,
-      messages: newMessages.slice(0, msgIndex),
-      assistantMessageId: msgId,
-      segCounter: 0,
-      toolCallCounter: 0,
-      cleanupFns: [],
-    }
-
-    try {
-      const messageHistory = buildEnrichedHistory(newMessages.slice(0, msgIndex))
-
-      const result = await window.electronAPI.llm.employeeChatStream({
-        employee_id: id!,
-        provider_id: providerId,
-        model_id: selectedLlmModelId || undefined,
-        messages: messageHistory,
-        options: { temperature: 0.3 },
-        use_skills: true,
-        collection_ids: selectedCollectionIds,
-        enable_thinking: enableThinking,
-        conversation_id: convId,
-        minimal_mode: minimalMode,
-      })
-
-      if (result?.sessionId) {
-        streamStatesRef.current.set(result.sessionId, streamState)
-      }
-    } catch {
-      streamState.isStreaming = false
-      for (const [sid, ss] of streamStatesRef.current) {
-        if (ss === streamState) {
-          streamStatesRef.current.delete(sid)
-          break
-        }
-      }
-      setIsStreaming(false)
-      isStreamingRef.current = false
-    }
+    await commitAndStartStream(
+      convId,
+      newMessages,
+      newMessages.slice(0, msgIndex),
+      msgId,
+      providerId,
+      selectedLlmModelId || undefined,
+    )
   }
 
   const handleSwitchModelRegenerate = async (msgId: string, providerId: string, modelId: string) => {
@@ -1333,6 +1327,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const targetMsg = currentMsgs[msgIndex]
     if (targetMsg.role !== 'assistant') return
 
+    // 保存当前回复为分支，重置消息为流式状态，并标记新分支使用的模型
     const existingBranches = targetMsg.branches || []
     const currentBranch: MessageBranch = {
       content: targetMsg.content,
@@ -1360,58 +1355,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       comparisonProviderId: providerId,
       comparisonModelId: modelId,
     }
-    setConvMessages(convId, newMessages)
-    await window.electronAPI.conversation.update({
-      id: convId,
-      messages_json: JSON.stringify(newMessages),
-      message_count: newMessages.length,
-      last_message_at: Math.floor(Date.now() / 1000),
-    })
 
-    setupGlobalListeners()
-    setIsStreaming(true)
-    isStreamingRef.current = true
-
-    const streamState: ConversationStreamState = {
-      isStreaming: true,
-      conversationId: convId,
-      messages: newMessages.slice(0, msgIndex),
-      assistantMessageId: msgId,
-      segCounter: 0,
-      toolCallCounter: 0,
-      cleanupFns: [],
-    }
-
-    try {
-      const messageHistory = buildEnrichedHistory(newMessages.slice(0, msgIndex))
-
-      const result = await window.electronAPI.llm.employeeChatStream({
-        employee_id: id!,
-        provider_id: providerId,
-        model_id: modelId,
-        messages: messageHistory,
-        options: { temperature: 0.3 },
-        use_skills: true,
-        collection_ids: selectedCollectionIds,
-        enable_thinking: enableThinking,
-        conversation_id: convId,
-        minimal_mode: minimalMode,
-      })
-
-      if (result?.sessionId) {
-        streamStatesRef.current.set(result.sessionId, streamState)
-      }
-    } catch {
-      streamState.isStreaming = false
-      for (const [sid, ss] of streamStatesRef.current) {
-        if (ss === streamState) {
-          streamStatesRef.current.delete(sid)
-          break
-        }
-      }
-      setIsStreaming(false)
-      isStreamingRef.current = false
-    }
+    await commitAndStartStream(
+      convId,
+      newMessages,
+      newMessages.slice(0, msgIndex),
+      msgId,
+      providerId,
+      modelId,
+    )
   }
 
   const handleEditAndResubmit = async (msgId: string, newContent: string) => {
@@ -1426,6 +1378,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     if (msgIndex === -1) return
 
     const targetMsg = currentMsgs[msgIndex]
+
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) {
+      message.warning(t('workbench.noLlmProvider'))
+      return
+    }
 
     // 编辑用户消息内容
     const editedUserMsg: MessageWithThought = {
@@ -1486,67 +1444,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }
 
-    setConvMessages(convId, newMessages)
-    await window.electronAPI.conversation.update({
-      id: convId,
-      messages_json: JSON.stringify(newMessages),
-      message_count: newMessages.length,
-      last_message_at: Math.floor(Date.now() / 1000),
-    })
-
-    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
-    if (!providerId) {
-      message.warning(t('workbench.noLlmProvider'))
-      return
-    }
-
-    setupGlobalListeners()
-    setIsStreaming(true)
-    isStreamingRef.current = true
-
     // 上下文只使用被编辑消息及其上方的消息（不包含 assistant 回复及之后的消息）
-    const contextMessages = newMessages.slice(0, assistantMsgIndex)
-
-    const streamState: ConversationStreamState = {
-      isStreaming: true,
-      conversationId: convId,
-      messages: contextMessages,
+    await commitAndStartStream(
+      convId,
+      newMessages,
+      newMessages.slice(0, assistantMsgIndex),
       assistantMessageId,
-      segCounter: 0,
-      toolCallCounter: 0,
-      cleanupFns: [],
-    }
-
-    try {
-      const messageHistory = buildEnrichedHistory(contextMessages)
-
-      const result = await window.electronAPI.llm.employeeChatStream({
-        employee_id: id!,
-        provider_id: providerId,
-        model_id: selectedLlmModelId || undefined,
-        messages: messageHistory,
-        options: { temperature: 0.3 },
-        use_skills: true,
-        collection_ids: selectedCollectionIds,
-        enable_thinking: enableThinking,
-        conversation_id: convId,
-        minimal_mode: minimalMode,
-      })
-
-      if (result?.sessionId) {
-        streamStatesRef.current.set(result.sessionId, streamState)
-      }
-    } catch {
-      streamState.isStreaming = false
-      for (const [sid, ss] of streamStatesRef.current) {
-        if (ss === streamState) {
-          streamStatesRef.current.delete(sid)
-          break
-        }
-      }
-      setIsStreaming(false)
-      isStreamingRef.current = false
-    }
+      providerId,
+      selectedLlmModelId || undefined,
+    )
   }
 
   const handleCommand = (command: string) => {
@@ -1727,13 +1633,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setIsComparisonMode(true)
     setComparisonMessageIds([msgId])
 
-    updateConvMessages(convId, () => {
-      const msgs = conversationMessagesRef.current.get(convId) || []
-      return msgs.map(m => {
-        if (m.id !== msgId) return m
-        return { ...m, _comparisonBranchMsgs: allBranchMsgs }
-      })
-    })
+    updateConvMessages(convId, (prev) =>
+      prev.map(m => m.id === msgId ? { ...m, _comparisonBranchMsgs: allBranchMsgs } : m)
+    )
   }
 
   const getComparisonMessages = (): MessageWithThought[] => {
@@ -1784,7 +1686,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     )
     for (const [sessionId, streamState] of activeStreamEntries) {
       streamState.isStreaming = false
-      streamState.cleanupFns.forEach(fn => fn())
       streamStatesRef.current.delete(sessionId)
       try {
         await window.electronAPI.llm.abortChat(sessionId)
@@ -1850,16 +1751,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       if (brs && brs.length > 0 && activeIdx !== undefined && activeIdx < brs.length) {
         return {
           ...m,
-        branches: brs.map((b, i) => {
-          if (i !== activeIdx || !b.segments) return b
-          return {
-            ...b,
-            segments: b.segments.map(s =>
-              s.id === segId ? { ...s, collapsed: !s.collapsed } : s
-            ),
-          }
-        }),
-      }
+          branches: brs.map((b, i) => {
+            if (i !== activeIdx || !b.segments) return b
+            return {
+              ...b,
+              segments: b.segments.map(s =>
+                s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+              ),
+            }
+          }),
+        }
       }
 
       if (!m.segments) return m
@@ -1929,7 +1830,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleExportConversation,
     handleSwitchBranch,
     handleToggleSegment,
-    forceScrollToBottom,
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,

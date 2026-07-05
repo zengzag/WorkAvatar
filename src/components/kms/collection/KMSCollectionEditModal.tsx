@@ -1,15 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Modal, Input, theme } from 'antd'
-
-interface CollectionItem {
-  id: string
-  name: string
-  description: string
-  file_count: number
-  created_at: number
-  updated_at: number
-}
+import type { CollectionItem } from './index'
 
 interface KMSCollectionEditModalProps {
   open: boolean
@@ -25,7 +17,7 @@ interface KMSCollectionEditModalProps {
 }
 
 /** 创建/编辑合集弹窗 */
-export const KMSCollectionEditModal: React.FC<KMSCollectionEditModalProps> = ({
+const KMSCollectionEditModalComponent: React.FC<KMSCollectionEditModalProps> = ({
   open,
   editingCollection,
   formName,
@@ -78,4 +70,8 @@ export const KMSCollectionEditModal: React.FC<KMSCollectionEditModalProps> = ({
   )
 }
 
+// React.memo 包裹避免父组件无关渲染导致的重复绘制
+const KMSCollectionEditModal = React.memo(KMSCollectionEditModalComponent)
+export { KMSCollectionEditModal }
 export default KMSCollectionEditModal
+

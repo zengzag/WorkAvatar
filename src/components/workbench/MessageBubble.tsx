@@ -21,12 +21,9 @@ import { useTranslation } from 'react-i18next'
 import { useState, useCallback, useMemo, memo, useRef, useEffect } from 'react'
 import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
-import ThinkingSegment from './ThinkingSegment'
-import ToolCallSegment from './ToolCallSegment'
-import AnswerSegment from './AnswerSegment'
 import { markdownComponents } from './markdown-components'
+import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
-import { isColorDark } from '../../utils/format'
 
 const { Text } = Typography
 
@@ -130,7 +127,6 @@ const MessageBubble: React.FC<{
 }> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const isDark = isColorDark(token.colorBgContainer)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const bubbleRef = useRef<HTMLDivElement>(null)
@@ -182,13 +178,8 @@ const MessageBubble: React.FC<{
   const currentBranchModelLabel = useMemo(() => {
     if (!hasBranches) return null
     const currentBranch = branchData || { comparisonProviderId: msg.comparisonProviderId, comparisonModelId: msg.comparisonModelId }
-    if (!currentBranch.comparisonProviderId || !currentBranch.comparisonModelId) return null
-    const provider = providers.find((p: any) => p.id === currentBranch.comparisonProviderId)
-    if (!provider) return currentBranch.comparisonModelId
-    let models: any[] = []
-    try { models = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { models = [] }
-    const model = models.find((m: any) => m.model === currentBranch.comparisonModelId)
-    return model?.name || currentBranch.comparisonModelId
+    const label = resolveModelLabel(currentBranch, providers)
+    return label || null
   }, [hasBranches, branchData, msg.comparisonProviderId, msg.comparisonModelId, providers])
 
   const displayMsg = useMemo(() =>
@@ -218,8 +209,8 @@ const MessageBubble: React.FC<{
         background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
       }}>
         {msg.role === 'assistant'
-          ? <RobotOutlined style={{ color: '#1677ff', fontSize: 18 }} />
-          : <UserOutlined style={{ color: '#1677ff', fontSize: 18 }} />}
+          ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
+          : <UserOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />}
       </div>
 
       <div style={{ maxWidth: '80%', minWidth: 0, width: isEditing ? '90%' : undefined }}>
@@ -253,18 +244,18 @@ const MessageBubble: React.FC<{
               <div style={{
                 padding: '10px 16px',
                 borderRadius: 12,
-                background: isDark ? '#1a3a5c' : '#d6e8fa',
-                color: isDark ? '#dce6f0' : '#1a1a1a',
+                background: token.colorInfoBg,
+                color: token.colorText,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 lineHeight: 1.7,
               }}>
-                <Text style={{ color: isDark ? '#dce6f0' : '#1a1a1a', fontSize: 14 }}>{msg.content}</Text>
+                <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     {msg.images.map((img, i) => (
                       <img
-                        key={i}
+                        key={img}
                         src={img}
                         alt={`upload-${i}`}
                         style={{
@@ -272,7 +263,7 @@ const MessageBubble: React.FC<{
                           maxHeight: 150,
                           borderRadius: 6,
                           objectFit: 'cover',
-                          border: '1px solid rgba(255,255,255,0.3)',
+                          border: `1px solid ${token.colorBorderSecondary}`,
                         }}
                       />
                     ))}
@@ -311,43 +302,13 @@ const MessageBubble: React.FC<{
             )}
 
             {displayMsg.segments && displayMsg.segments.length > 0 && (
-              <div style={{ position: 'relative', paddingLeft: 0 }}>
-                {displayMsg.segments.map((seg) => {
-                  if (seg.type === 'thinking') {
-                    return (
-                      <ThinkingSegment
-                        key={seg.id}
-                        seg={seg}
-                        isStreaming={!!seg.isStreaming}
-                        onToggle={() => onToggleSegment(msg.id, seg.id)}
-                      />
-                    )
-                  }
-
-                  if (seg.type === 'tool_call') {
-                    return (
-                      <ToolCallSegment
-                        key={seg.id}
-                        seg={seg}
-                        onToggle={() => onToggleSegment(msg.id, seg.id)}
-                        getToolDisplayName={getToolDisplayName}
-                      />
-                    )
-                  }
-
-                  if (seg.type === 'answer') {
-                    return (
-                      <AnswerSegment
-                        key={seg.id}
-                        seg={seg}
-                        isError={!!displayIsError}
-                      />
-                    )
-                  }
-
-                  return null
-                })}
-              </div>
+              <SegmentList
+                segments={displayMsg.segments}
+                msgId={msg.id}
+                isError={!!displayIsError}
+                onToggleSegment={onToggleSegment}
+                getToolDisplayName={getToolDisplayName}
+              />
             )}
 
             {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
@@ -357,7 +318,7 @@ const MessageBubble: React.FC<{
                 background: token.colorBgLayout,
                 lineHeight: 1.7,
                 wordBreak: 'break-word',
-                border: displayIsError ? '1px solid #ff4d4f' : 'none',
+                border: displayIsError ? `1px solid ${token.colorError}` : 'none',
               }}>
                 <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
                   <ReactMarkdown
@@ -436,30 +397,7 @@ const MessageBubble: React.FC<{
                 gap: 8,
                 alignItems: 'center',
               }}>
-                {displayTokenUsage && displayTokenUsage.totalTokens === undefined && displayTokenUsage.totalChars !== undefined ? (
-                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                    {t('workbench.outputChars')}: {displayTokenUsage.totalChars}
-                  </Text>
-                ) : null}
-                {displayTokenUsage && displayTokenUsage.totalTokens !== undefined ? (
-                  <>
-                    {displayTokenUsage.promptTokens !== undefined && (
-                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                        {t('workbench.promptTokens')}: {displayTokenUsage.promptTokens}
-                        {displayTokenUsage.cachedTokens != null && displayTokenUsage.cachedTokens > 0 && (
-                          <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                            {' '}({t('workbench.cachedTokens')}: {displayTokenUsage.cachedTokens})
-                          </Text>
-                        )}
-                      </Text>
-                    )}
-                    {displayTokenUsage.completionTokens !== undefined && (
-                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                        {t('workbench.completionTokens')}: {displayTokenUsage.completionTokens}
-                      </Text>
-                    )}
-                  </>
-                ) : null}
+                <TokenUsageDisplay tokenUsage={displayTokenUsage} />
               </div>
             )}
           </div>

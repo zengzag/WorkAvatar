@@ -159,7 +159,7 @@ class KMSDatabaseService {
       -- 复合索引：支持 deleteIndexByFileAndType 的 WHERE file_id = ? AND source_type = ?
       CREATE INDEX IF NOT EXISTS idx_kms_search_index_file_type ON kms_search_index(file_id, source_type);
 
-      -- FTS5 全文检索虚拟表
+      -- FTS5 全文检索虚拟表（prefix='2,3' 预建前缀索引加速中文 bigram 前缀匹配）
       CREATE VIRTUAL TABLE IF NOT EXISTS kms_fts USING fts5(
         title,
         content,
@@ -168,7 +168,8 @@ class KMSDatabaseService {
         source_type UNINDEXED,
         source_id UNINDEXED,
         index_id UNINDEXED,
-        tokenize='unicode61'
+        tokenize='unicode61',
+        prefix='2,3'
       );
 
       -- 向量嵌入表
@@ -199,9 +200,9 @@ class KMSDatabaseService {
         accessed_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE INDEX IF NOT EXISTS idx_kms_access_log_file ON kms_access_log(file_id);
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_time ON kms_access_log(accessed_at);
-      -- 复合索引：支持 getFileAccessStats 的 WHERE file_id = ? AND access_type = ? AND accessed_at >= ?
+      -- 复合索引：支持 getFileAccessStatsBatch 的 WHERE file_id IN (...) AND access_type = ? AND accessed_at >= ?
+      -- 同时覆盖单列 file_id 查询（最左前缀），无需再单独建 idx_kms_access_log_file
       CREATE INDEX IF NOT EXISTS idx_kms_access_log_file_type_time ON kms_access_log(file_id, access_type, accessed_at);
 
       -- 目录摘要表（冷热数据渐进沉淀：基于文件名+轻量摘要生成目录级摘要）
@@ -301,6 +302,9 @@ class KMSDatabaseService {
 
     // file_hash 唯一约束：去重已有数据后建立唯一索引（代码逻辑假设 file_hash 唯一）
     this.enforceUniqueFileHash()
+
+    // 删除冗余的单列索引 idx_kms_access_log_file（已被复合索引 idx_kms_access_log_file_type_time 的最左前缀覆盖）
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
   }
 
   /**

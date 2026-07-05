@@ -12,6 +12,7 @@ import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
+import { callLLMForJSON } from './kms-llm-helpers'
 
 const logger = createLogger('KMS')
 
@@ -417,6 +418,23 @@ class KMSService {
   }
 
   /**
+   * 批量获取多个合集的摘要（避免 N+1 查询）
+   * @returns Map<collectionId, summary>
+   */
+  getCollectionSummariesByIds(collectionIds: string[]): Map<string, any> {
+    const result = new Map<string, any>()
+    if (collectionIds.length === 0) return result
+    const placeholders = collectionIds.map(() => '?').join(',')
+    const rows = this.db.prepare(
+      `SELECT * FROM kms_collection_summaries WHERE collection_id IN (${placeholders})`
+    ).all(...collectionIds) as any[]
+    for (const row of rows) {
+      result.set(row.collection_id, row)
+    }
+    return result
+  }
+
+  /**
    * 保存合集摘要（手动设置或 LLM 生成后写入）
    */
   setCollectionSummary(collectionId: string, summary: string, keyTopics: string[] = []): void {
@@ -504,25 +522,24 @@ ${fileSummaries.join('\n')}
 
     try {
       const llmClient = LLMClientService.getInstance()
-      const result = await llmClient.chat(llmConfig.providerId, [
-        { role: 'system', content: '你是一个资料库合集分析助手。只输出 JSON，不要添加其他文本。' },
-        { role: 'user', content: prompt },
-      ], {
-        temperature: 0.3,
-        max_tokens: 800,
-        model: llmConfig.modelId,
-        signal,
-        logSource: 'kms_collection_summary',
-      })
+
+      const parsed = await callLLMForJSON<{ summary: string; keyTopics: string[] }>(
+        llmClient,
+        llmConfig.providerId,
+        llmConfig.modelId,
+        [
+          { role: 'system', content: '你是一个资料库合集分析助手。只输出 JSON，不要添加其他文本。' },
+          { role: 'user', content: prompt },
+        ],
+        { summary: '', keyTopics: [] },
+        { temperature: 0.3, maxTokens: 800, signal, logSource: 'kms_collection_summary' },
+      )
 
       // 取消检查
       if (signal?.aborted) {
         return { error: 'ABORTED' }
       }
 
-      // 解析 JSON（容错：去除可能的 markdown 代码块包裹）
-      const cleaned = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-      const parsed = JSON.parse(cleaned)
       const summary: string = (parsed.summary || '').trim()
       const keyTopics: string[] = Array.isArray(parsed.keyTopics)
         ? parsed.keyTopics.map((k: any) => String(k).trim()).filter(Boolean).slice(0, 8)
@@ -739,7 +756,7 @@ ${fileSummaries.join('\n')}
   /**
    * 获取文件完整文本内容（用于预览）
    */
-  async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string }> {
+  async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
     return KMSFileReaderService.getInstance().getFileFullContent(fileId)
   }
 
@@ -820,25 +837,6 @@ ${fileSummaries.join('\n')}
    */
   async generateFileSummaryManual(fileId: string): Promise<{ success: boolean; error?: string }> {
     return KMSIndexManagerService.getInstance().generateFileSummaryManual(fileId)
-  }
-
-  /**
-   * 增量重新生成：从指定段落开始重新切分、生成摘要、向量化
-   * 保留该段落之前的所有段落不变，仅重新处理该段落及之后的内容
-   * 进度通过 onProgress 推送（带 fileId/fileName，不带 collectionId）
-   */
-  async regenerateFileParagraph(fileId: string, fromParagraphId: string): Promise<{ success: boolean; error?: string }> {
-    const indexManager = KMSIndexManagerService.getInstance()
-    return await indexManager.regenerateFileParagraph(fileId, fromParagraphId, (progress) => {
-      this.notifyProgress(progress)
-    })
-  }
-
-  /**
-   * 取消文件段落增量重新生成
-   */
-  cancelFileParagraphRegenerate(): void {
-    KMSIndexManagerService.getInstance().cancelFileParagraphRegenerate()
   }
 
   /**

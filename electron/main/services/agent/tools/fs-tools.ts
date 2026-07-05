@@ -117,6 +117,7 @@ export const listDirTool: ToolDefinition = {
       const maxEntries = Math.min(Math.max(args.max_entries || 200, 1), 1000)
       const items: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: string }> = []
       let total = 0
+      let truncated = false
 
       const walk = (current: string, prefix: string) => {
         let entries: fs.Dirent[]
@@ -127,7 +128,7 @@ export const listDirTool: ToolDefinition = {
         } catch { return }
 
         for (const entry of entries) {
-          if (total >= maxEntries) break
+          if (total >= maxEntries) { truncated = true; break }
           total++
           const fullPath = path.join(current, entry.name)
           const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
@@ -166,7 +167,7 @@ export const listDirTool: ToolDefinition = {
       })
 
       let result = lines.join('\n')
-      if (total > maxEntries) result += `\n\n(已截断，显示前 ${maxEntries} 条，共 ${total} 条)`
+      if (truncated) result += `\n\n(已截断，显示前 ${total} 条)`
       return { success: true, output: result }
     } catch (error: any) {
       return { success: false, error: `列出目录失败: ${error.message || error}` }
@@ -634,7 +635,6 @@ export const searchFilesTool: ToolDefinition = {
       const regex = new RegExp(`^${regexStr}$`, 'i')
 
       const results: string[] = []
-      let totalScanned = 0
 
       const walk = (current: string) => {
         if (results.length >= maxResults) return
@@ -651,7 +651,6 @@ export const searchFilesTool: ToolDefinition = {
           if (entry.isDirectory()) {
             walk(fullPath)
           } else {
-            totalScanned++
             if (regex.test(entry.name)) {
               const relativePath = path.relative(resolved, fullPath).replace(/\\/g, '/')
               const stat = fs.statSync(fullPath)

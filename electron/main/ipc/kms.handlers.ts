@@ -64,6 +64,8 @@ export function registerKMSHandlers(): void {
   })
 
   // AI 智能检索（带实时进度推送）
+  // 注意：此处未使用 safeHandle，因为需要透传 event 用于进度推送；
+  // 同时需要在内部对 result 做序列化净化（与 safeHandle 行为一致）
   ipcMain.handle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (event, params: KMSAgentSearchParams) => {
     try {
       const sender = event.sender
@@ -80,7 +82,9 @@ export function registerKMSHandlers(): void {
             if (!sender.isDestroyed()) {
               sender.send(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, step)
             }
-          } catch {}
+          } catch (e) {
+            /* 进度推送失败忽略，避免阻塞搜索流程 */
+          }
         },
       })
       return JSON.parse(JSON.stringify(result))
@@ -109,25 +113,32 @@ export function registerKMSHandlers(): void {
   // 索引管理 — 使用 ipcMain.on (fire-and-forget)，通过进度事件通知结果
   // 不使用 ipcMain.handle 避免返回值序列化问题
   // 第二个参数 withEmbedding（默认 true）控制是否同步生成向量嵌入（智能索引）
+  // 用 Promise.resolve().then() 包裹，确保同步抛错也能被 catch 捕获，避免异常逃逸
   ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
     logger.info(`Build index requested (withEmbedding=${withEmbedding})`)
-    kmsService.buildFullIndex(providerId, withEmbedding).catch((err: any) => {
-      logger.error('buildFullIndex failed:', String(err?.message || err))
-    })
+    Promise.resolve()
+      .then(() => kmsService.buildFullIndex(providerId, withEmbedding))
+      .catch((err: any) => {
+        logger.error('buildFullIndex failed:', String(err?.message || err))
+      })
   })
 
   ipcMain.on(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
     logger.info(`Incremental index requested (withEmbedding=${withEmbedding})`)
-    kmsService.incrementalIndex(providerId, withEmbedding).catch((err: any) => {
-      logger.error('incrementalIndex failed:', String(err?.message || err))
-    })
+    Promise.resolve()
+      .then(() => kmsService.incrementalIndex(providerId, withEmbedding))
+      .catch((err: any) => {
+        logger.error('incrementalIndex failed:', String(err?.message || err))
+      })
   })
 
   ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string, withEmbedding: boolean = true) => {
     logger.info(`Rebuild dir index requested: ${dirId} (withEmbedding=${withEmbedding})`)
-    kmsService.rebuildDirIndex(dirId, providerId, withEmbedding).catch((err: any) => {
-      logger.error('rebuildDirIndex failed:', String(err?.message || err))
-    })
+    Promise.resolve()
+      .then(() => kmsService.rebuildDirIndex(dirId, providerId, withEmbedding))
+      .catch((err: any) => {
+        logger.error('rebuildDirIndex failed:', String(err?.message || err))
+      })
   })
 
   ipcMain.on(IPC_CHANNELS.KMS_CANCEL_INDEX, () => {
@@ -304,28 +315,16 @@ export function registerKMSHandlers(): void {
   // 触发合集深度处理，进度通过 KMS_INDEX_PROGRESS 通道推送（含 collectionId/collectionName 字段）
   ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string) => {
     logger.info('Process collection deep requested:', collectionId)
-    kmsService.processCollectionDeep(collectionId).catch((err: any) => {
-      logger.error('processCollectionDeep failed:', String(err?.message || err))
-    })
+    Promise.resolve()
+      .then(() => kmsService.processCollectionDeep(collectionId))
+      .catch((err: any) => {
+        logger.error('processCollectionDeep failed:', String(err?.message || err))
+      })
   })
 
   ipcMain.on(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP, () => {
     logger.info('Cancel collection deep process requested')
     kmsService.cancelCollectionDeepProcess()
-  })
-
-  // 从指定段落开始重新切分/摘要/向量化，保留前半部分段落不变
-  // 进度通过 KMS_INDEX_PROGRESS 通道推送（含 fileId/fileName，不含 collectionId）
-  ipcMain.on(IPC_CHANNELS.KMS_REGENERATE_FILE_PARAGRAPH, (_event, params: { fileId: string; paragraphId: string }) => {
-    logger.info('Regenerate file paragraph requested:', params)
-    kmsService.regenerateFileParagraph(params.fileId, params.paragraphId).catch((err: any) => {
-      logger.error('regenerateFileParagraph failed:', String(err?.message || err))
-    })
-  })
-
-  ipcMain.on(IPC_CHANNELS.KMS_CANCEL_REGENERATE_FILE_PARAGRAPH, () => {
-    logger.info('Cancel regenerate file paragraph requested')
-    kmsService.cancelFileParagraphRegenerate()
   })
 
   safeHandle(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, async (dirId: string) => {

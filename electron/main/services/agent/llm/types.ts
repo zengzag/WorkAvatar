@@ -52,7 +52,8 @@ export interface ILLMProvider {
     messages: LLMMessage[],
     tools: any[],
     callbacks: LLMStreamCallbacks,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: LLMCallOptions
   ): Promise<LLMResponse>
 
   estimateTokens(messages: LLMMessage[]): number

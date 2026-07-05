@@ -6,7 +6,6 @@ export class AgentContext {
   readonly id: string
   readonly agentName: string
   private state: AgentState = 'idle'
-  private metadata: Map<string, any> = new Map()
   readonly eventEmitter: AgentEventEmitter
   readonly createdAt: number
   private iterationCount: number = 0
@@ -37,14 +36,9 @@ export class AgentContext {
     return this.iterationCount
   }
 
-  setMetadata(key: string, value: any): void {
-    this.metadata.set(key, value)
-  }
-
   reset(): void {
     this.state = 'idle'
     this.iterationCount = 0
-    this.metadata.clear()
   }
 }
 

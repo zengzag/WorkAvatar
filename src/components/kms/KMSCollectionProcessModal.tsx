@@ -10,6 +10,17 @@ import {
 
 const { Text } = Typography
 
+/** 计时器刷新间隔（毫秒） */
+const TICK_INTERVAL_MS = 1000
+
+/** 格式化耗时（秒 → 可读字符串） */
+const formatElapsed = (secs: number) => {
+  if (secs < 60) return `${secs}s`
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}m ${s}s`
+}
+
 /** 合集深度处理阶段定义（按出现顺序） */
 interface StageDef {
   key: string
@@ -68,6 +79,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   const [isCancelled, setIsCancelled] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [startedAt, setStartedAt] = useState<number>(0)
+  const [, setTick] = useState(0)
   const unsubscribeRef = useRef<(() => void) | null>(null)
 
   // 重置状态
@@ -104,8 +116,8 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       if (progress.phase === 'done') {
         setIsDone(true)
         setIsError(false)
-        // 检测是否为取消完成
-        if (progress.message && progress.message.includes('已取消')) {
+        // 通过 i18n 无关的 cancelled 标志检测取消完成
+        if (progress.cancelled) {
           setIsCancelled(true)
         }
         // 标记所有未完成阶段为 done
@@ -194,6 +206,13 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       }
     }
   }, [open, collectionId, resetState])
+
+  // 处理进行中时每秒触发一次重渲染，让 elapsedSeconds 计时器持续更新
+  useEffect(() => {
+    if (!open || isDone || isError || isCancelled || !startedAt) return
+    const timer = setInterval(() => setTick((n) => n + 1), TICK_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [open, isDone, isError, isCancelled, startedAt])
 
   // 计算总体进度百分比
   const overallPercent = (() => {
@@ -311,13 +330,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     }
     return Math.max(0, end - startedAt)
   })()
-
-  const formatElapsed = (secs: number) => {
-    if (secs < 60) return `${secs}s`
-    const m = Math.floor(secs / 60)
-    const s = secs % 60
-    return `${m}m ${s}s`
-  }
 
   // 标题：根据状态展示
   const titleText = (() => {

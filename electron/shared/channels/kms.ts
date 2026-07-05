@@ -54,10 +54,6 @@ export const KMS_CHANNELS = {
   // 进度事件复用 KMS_INDEX_PROGRESS 通道，含 collectionId 字段供前端按合集过滤
   KMS_PROCESS_COLLECTION_DEEP: 'kms:process-collection-deep',
   KMS_CANCEL_COLLECTION_DEEP: 'kms:cancel-collection-deep',
-  // KMS 文件段落增量重新生成（从指定段落开始重新切分/摘要/向量化，保留前半部分）
-  // 进度事件复用 KMS_INDEX_PROGRESS 通道，含 fileId 字段供前端按文件过滤
-  KMS_REGENERATE_FILE_PARAGRAPH: 'kms:regenerate-file-paragraph',
-  KMS_CANCEL_REGENERATE_FILE_PARAGRAPH: 'kms:cancel-regenerate-file-paragraph',
   // KMS 手动摘要生成（目录摘要/文件摘要）
   KMS_GENERATE_DIR_SUMMARY: 'kms:generate-dir-summary',
   KMS_GENERATE_FILE_SUMMARY: 'kms:generate-file-summary',

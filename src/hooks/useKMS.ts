@@ -130,18 +130,6 @@ export interface KMSSettings {
   autoIndex: KMSAutoIndexConfig
 }
 
-/** 目录摘要 */
-export interface DirSummary {
-  dir_id: string
-  dir_path: string
-  display_name?: string
-  enabled?: number
-  summary: string
-  file_count: number
-  keywords_json: string
-  updated_at: number
-}
-
 /** 文件摘要项 */
 export interface FileSummaryItem {
   id: string
@@ -201,7 +189,6 @@ export function useKMS() {
   // 自动索引状态
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
   // 知识沉淀
-  const [dirSummaries, setDirSummaries] = useState<DirSummary[]>([])
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
   const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
   // 搜索历史
@@ -491,16 +478,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 加载目录摘要
-  const loadDirSummaries = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.kms.getDirSummaries()
-      setDirSummaries(result || [])
-    } catch (err) {
-      console.error('Failed to load dir summaries:', err)
-    }
-  }, [])
-
   // 加载文件摘要列表
   const loadFileSummaries = useCallback(async (params?: {
     dirId?: string
@@ -608,13 +585,12 @@ export function useKMS() {
     // 自动索引
     autoIndexStatus,
     // 知识沉淀
-    dirSummaries,
     fileSummaries,
     isLoadingSummaries,
     // 搜索历史
     searchHistory,
-    setFileContent: (v: null) => setFileContent(v),
-    setFileSummary: (v: null) => setFileSummary(v),
+    setFileContent: (v: { fileId: string; content: string; fileName: string } | null) => setFileContent(v),
+    setFileSummary: (v: any) => setFileSummary(v),
     setPreviewFile: (v: SearchResult | null) => setPreviewFile(v),
     loadDirs,
     loadStats,
@@ -638,7 +614,6 @@ export function useKMS() {
     loadAutoIndexStatus,
     runAutoIndexCheckNow,
     // 知识沉淀
-    loadDirSummaries,
     loadFileSummaries,
     // 搜索历史
     loadSearchHistory,

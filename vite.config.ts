@@ -22,7 +22,6 @@ export default defineConfig({
                 'better-sqlite3',
                 'file2md',
                 'mammoth',
-                'pdf-parse',
                 'xlsx',
                 'tesseract.js',
                 'unpdf',

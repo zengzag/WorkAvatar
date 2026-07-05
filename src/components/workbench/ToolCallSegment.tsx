@@ -1,4 +1,4 @@
-import { Typography, Tag, theme, Tooltip, message } from 'antd'
+import { Typography, Tag, theme, Tooltip, App } from 'antd'
 import {
   DownOutlined,
   RightOutlined,
@@ -9,7 +9,7 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react'
 import type { MessageSegment } from './types'
 
 const { Text } = Typography
@@ -126,12 +126,13 @@ function useElapsedTime(startTime: number | undefined, isComplete: boolean, comp
   return elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed).toString()
 }
 
-const ToolCallSegment: React.FC<{
+const ToolCallSegmentInner: React.FC<{
   seg: MessageSegment
   onToggle: () => void
   getToolDisplayName: (name: string) => string
 }> = ({ seg, onToggle, getToolDisplayName }) => {
   const { token } = theme.useToken()
+  const { message } = App.useApp()
   const { t } = useTranslation()
   const [resultExpanded, setResultExpanded] = useState(false)
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
@@ -155,9 +156,9 @@ const ToolCallSegment: React.FC<{
 
   const jsonColors = {
     key: token.colorPrimary,
-    string: '#52c41a',
-    number: '#fa8c16',
-    boolean: '#722ed1',
+    string: token.colorSuccess,
+    number: token.colorWarning,
+    boolean: token.colorInfo,
     null: token.colorTextQuaternary,
     bracket: token.colorTextSecondary,
   }
@@ -189,6 +190,24 @@ const ToolCallSegment: React.FC<{
       setContentHeight(contentRef.current.scrollHeight)
     }
   }, [isExpanded, argsStr, resultStr, resultExpanded])
+
+  // 工具进度步骤的类型颜色/图标，放在 map 外部避免每次迭代重建（A#13）
+  const typeColors: Record<string, string> = {
+    info: token.colorTextTertiary,
+    llm: token.colorInfo,
+    search: token.colorPrimary,
+    read: token.colorWarning,
+    plan: token.colorSuccessActive,
+    result: token.colorSuccess,
+  }
+  const typeIcons: Record<string, string> = {
+    info: '•',
+    llm: '🤖',
+    search: '🔍',
+    read: '📄',
+    plan: '📋',
+    result: '✓',
+  }
 
   return (
     <div style={{ marginBottom: 4 }}>
@@ -309,25 +328,9 @@ const ToolCallSegment: React.FC<{
                   border: `1px solid ${token.colorPrimaryBorder}`,
                 }}>
                   {seg.toolProgress.map((step: any, i: number) => {
-                    const typeColors: Record<string, string> = {
-                      info: token.colorTextTertiary,
-                      llm: '#722ed1',
-                      search: '#1677ff',
-                      read: '#fa8c16',
-                      plan: '#13c2c2',
-                      result: '#52c41a',
-                    }
-                    const typeIcons: Record<string, string> = {
-                      info: '•',
-                      llm: '🤖',
-                      search: '🔍',
-                      read: '📄',
-                      plan: '📋',
-                      result: '✓',
-                    }
                     return (
                       <div
-                        key={i}
+                        key={`${i}-${step.action || ''}`}
                         style={{
                           display: 'flex',
                           alignItems: 'flex-start',
@@ -410,5 +413,12 @@ const ToolCallSegment: React.FC<{
     </div>
   )
 }
+
+// React.memo 避免父组件 state 变化导致未变化的工具调用段重渲染（A#12）
+const ToolCallSegment = memo(ToolCallSegmentInner, (prev, next) =>
+  prev.seg === next.seg &&
+  prev.onToggle === next.onToggle &&
+  prev.getToolDisplayName === next.getToolDisplayName
+)
 
 export default ToolCallSegment

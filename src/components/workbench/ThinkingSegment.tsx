@@ -1,12 +1,12 @@
 import { Typography, theme } from 'antd'
 import { BulbOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
 
 const { Text } = Typography
 
-const HIGHLIGHT_PATTERNS = /^(→|→|•|※|结论:|Result:|Therefore|So\s)/i
+const HIGHLIGHT_PATTERNS = /^(→|•|※|结论:|Result:|Therefore|So\s)/i
 
 function parseSteps(content: string): string[] {
   const numberedSplit = content.split(/\n\n+/)
@@ -14,12 +14,7 @@ function parseSteps(content: string): string[] {
   for (const block of numberedSplit) {
     const trimmed = block.trim()
     if (!trimmed) continue
-    const stepMatch = trimmed.match(/^(?:Step\s*\d+[:.]\s*|\d+[.)]\s*)/i)
-    if (stepMatch) {
-      steps.push(trimmed)
-    } else {
-      steps.push(trimmed)
-    }
+    steps.push(trimmed)
   }
   return steps.length > 0 ? steps : [content]
 }
@@ -77,7 +72,7 @@ const StepBlock: React.FC<{
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         {lines.map((line, i) => (
-          <div key={i} style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          <div key={`${i}-${line.slice(0, 12)}`} style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             <StepLine line={line} token={token} />
           </div>
         ))}
@@ -86,7 +81,7 @@ const StepBlock: React.FC<{
   )
 }
 
-const ThinkingSegment: React.FC<{
+const ThinkingSegmentInner: React.FC<{
   seg: MessageSegment
   isStreaming: boolean
   onToggle: () => void
@@ -194,7 +189,7 @@ const ThinkingSegment: React.FC<{
           >
             {steps.map((step, i) => (
               <StepBlock
-                key={i}
+                key={`${i}-${step.slice(0, 12)}`}
                 stepIndex={i}
                 content={step}
                 token={token}
@@ -206,5 +201,12 @@ const ThinkingSegment: React.FC<{
     </div>
   )
 }
+
+// React.memo 避免父组件 state 变化导致未变化的思考段重渲染（A#12）
+const ThinkingSegment = memo(ThinkingSegmentInner, (prev, next) =>
+  prev.seg === next.seg &&
+  prev.isStreaming === next.isStreaming &&
+  prev.onToggle === next.onToggle
+)
 
 export default ThinkingSegment

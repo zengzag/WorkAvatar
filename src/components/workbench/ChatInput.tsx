@@ -12,6 +12,9 @@ interface AttachedFile {
 
 const { Text } = Typography
 
+/** 模型选择的最大数量（对比模式上限） */
+const MAX_SELECTED_MODELS = 3
+
 export interface AttachedImage {
   id: string
   dataUrl: string
@@ -48,6 +51,11 @@ const ChatInput: React.FC<{
   const [localValue, setLocalValue] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+
+  // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
+  // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
+  const attachedImagesRef = useRef(attachedImages)
+  attachedImagesRef.current = attachedImages
 
   const slashCommands = useMemo(() => [
     { key: '/clear', label: '/clear', description: t('workbench.cmdClear') },
@@ -142,7 +150,8 @@ const ChatInput: React.FC<{
         const reader = new FileReader()
         reader.onload = (ev) => {
           const dataUrl = ev.target?.result as string
-          onImagesChange([...attachedImages, {
+          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
+          onImagesChange([...attachedImagesRef.current, {
             id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             dataUrl,
             name: file.name || 'pasted-image.png',
@@ -169,7 +178,7 @@ const ChatInput: React.FC<{
         setAttachedFiles(prev => [...prev, ...newFiles])
       }
     }
-  }, [attachedImages, onImagesChange])
+  }, [onImagesChange])
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -191,19 +200,20 @@ const ChatInput: React.FC<{
         })
         loadedCount++
         if (loadedCount === imageFiles.length) {
-          onImagesChange([...attachedImages, ...loadedImages])
+          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
+          onImagesChange([...attachedImagesRef.current, ...loadedImages])
         }
       }
       reader.onerror = () => {
         loadedCount++
         if (loadedCount === imageFiles.length && loadedImages.length > 0) {
-          onImagesChange([...attachedImages, ...loadedImages])
+          onImagesChange([...attachedImagesRef.current, ...loadedImages])
         }
       }
       reader.readAsDataURL(file)
     }
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [attachedImages, onImagesChange])
+  }, [onImagesChange])
 
   const removeImage = useCallback((id: string) => {
     onImagesChange(attachedImages.filter(img => img.id !== id))
@@ -230,7 +240,7 @@ const ChatInput: React.FC<{
   const toggleModel = useCallback((providerId: string, modelId: string) => {
     if (isModelSelected(providerId, modelId)) {
       onModelsChange(selectedModels.filter(s => !(s.providerId === providerId && s.modelId === modelId)))
-    } else if (selectedModels.length < 3) {
+    } else if (selectedModels.length < MAX_SELECTED_MODELS) {
       onModelsChange([...selectedModels, { providerId, modelId }])
     }
   }, [selectedModels, onModelsChange, isModelSelected])
@@ -250,7 +260,7 @@ const ChatInput: React.FC<{
     }).filter(group => group.models.length > 0)
   }, [providers, modelSearchText])
 
-  const modelPickerContent = (
+  const modelPickerContent = useMemo(() => (
     <div style={{ width: 320, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
@@ -263,7 +273,7 @@ const ChatInput: React.FC<{
         style={{ background: token.colorFillQuaternary, borderRadius: 6 }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
-        <span>{t('workbench.selectedModelCount', { count: selectedModels.length, max: 3 })}</span>
+        <span>{t('workbench.selectedModelCount', { count: selectedModels.length, max: MAX_SELECTED_MODELS })}</span>
       </div>
       <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
         {filteredProviderModels.map(({ provider, models }) => {
@@ -279,7 +289,7 @@ const ChatInput: React.FC<{
               </div>
               {models.map((model) => {
                 const selected = isModelSelected(provider.id, model.model)
-                const disabled = !selected && selectedModels.length >= 3
+                const disabled = !selected && selectedModels.length >= MAX_SELECTED_MODELS
                 return (
                   <div
                     key={`${provider.id}-${model.model}`}
@@ -314,9 +324,9 @@ const ChatInput: React.FC<{
         )}
       </div>
     </div>
-  )
+  ), [t, token, modelSearchText, selectedModels, filteredProviderModels, isModelSelected, toggleModel])
 
-  const collectionPickerContent = (
+  const collectionPickerContent = useMemo(() => (
     <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
         <span>{t('workbench.selectedKbCount', { count: selectedCollectionIds.length })}</span>
@@ -373,7 +383,7 @@ const ChatInput: React.FC<{
         )}
       </div>
     </div>
-  )
+  ), [t, token, selectedCollectionIds, allCollections, onSelectedCollectionIdsChange])
 
   return (
     <div style={{ padding: '12px 4% 20px 4%', flexShrink: 0 }}>

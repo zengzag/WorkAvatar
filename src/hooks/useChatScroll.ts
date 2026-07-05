@@ -10,7 +10,7 @@ import { useEffect, useRef, useCallback } from 'react'
  * - handleScroll：用户滚动时根据阈值更新 isUserAtBottomRef
  * - forceScrollToBottom：强制平滑滚动到底部
  */
-export function useChatScroll(messages: any[]) {
+export function useChatScroll<T>(messages: T[]) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const isUserAtBottomRef = useRef(true)
@@ -23,6 +23,9 @@ export function useChatScroll(messages: any[]) {
     if (scrollRafRef.current !== null) return // 已有 pending 帧，跳过
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null
+      // RAF 回调执行时再次复查 isUserAtBottomRef，
+      // 避免用户在调度与执行之间上滚被强制拉回底部（M5 修复）
+      if (!isUserAtBottomRef.current) return
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
     })
     return () => {
@@ -48,7 +51,6 @@ export function useChatScroll(messages: any[]) {
   return {
     messagesEndRef,
     chatContainerRef,
-    isUserAtBottomRef,
     handleScroll,
     forceScrollToBottom,
   }

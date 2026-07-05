@@ -87,7 +87,8 @@ class EmployeeAgentService {
     providerId: string,
     modelId?: string,
     enableThinking?: boolean,
-    conversationId?: string
+    conversationId?: string,
+    employee?: DBEmployee
   ): Promise<CachedAgentEntry> {
     const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
 
@@ -100,8 +101,8 @@ class EmployeeAgentService {
       }
     }
 
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
-    if (!employee) {
+    const emp = employee ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
+    if (!emp) {
       throw new Error(`Employee ${employeeId} not found`)
     }
 
@@ -112,9 +113,9 @@ class EmployeeAgentService {
 
     let instructions = '你是专业数字员工，基于资料库和工具为用户提供服务。'
     let role: string | undefined
-    if (employee.profile_json) {
+    if (emp.profile_json) {
       try {
-        const profile = JSON.parse(employee.profile_json)
+        const profile = JSON.parse(emp.profile_json)
         if (profile.roleDescription) {
           instructions = profile.roleDescription
         }
@@ -124,8 +125,8 @@ class EmployeeAgentService {
       } catch (error) {
         logger.warn('Failed to parse employee profile_json, using default instructions', error)
       }
-    } else if (employee.description) {
-      instructions = employee.description
+    } else if (emp.description) {
+      instructions = emp.description
     }
 
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
@@ -136,7 +137,7 @@ class EmployeeAgentService {
 
     const resolvedModelName = modelConfig?.model || modelId || config.model
 
-    const memoryEnabled = employee.memory_enabled === 1
+    const memoryEnabled = emp.memory_enabled === 1
     const memoryPrompt = memoryEnabled
       ? (this.memoryService.formatMemoriesForPrompt(
           this.memoryService.listMemories(employeeId)
@@ -144,7 +145,7 @@ class EmployeeAgentService {
       : undefined
 
     const agentConfig: EmployeeAgentConfig = {
-      name: employee.name,
+      name: emp.name,
       instructions,
       role,
       model: resolvedModelName,
@@ -161,7 +162,7 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      workspaceGuidance: employee.workspace_path ? `\n## 工作区\n工作区根目录：${employee.workspace_path}` : undefined,
+      workspaceGuidance: emp.workspace_path ? `\n## 工作区\n工作区根目录：${emp.workspace_path}` : undefined,
     }
 
     const agentOptions: BaseAgentOptions = {
@@ -209,7 +210,7 @@ class EmployeeAgentService {
     const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsCollectionTools)
 
-    const officeGuideTool = createOfficeGuideTool(employee.workspace_path || '')
+    const officeGuideTool = createOfficeGuideTool(emp.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
     if (memoryPrompt) {
@@ -300,70 +301,18 @@ class EmployeeAgentService {
     }
 
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee)
       const agent = entry.agent
       agent.setMinimalMode(minimal_mode)
       entry.collectionIdsRef.current = collection_ids || []
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
-
       const lastMsg = messages[messages.length - 1]
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      // 尝试从 DB 加载对话级系统提示词缓存（首次消息后锁死，后续复用）
-      let systemPromptCached = false
-      if (conversation_id) {
-        const conv = this.db.getDb().prepare(
-          `SELECT system_prompt FROM conversations WHERE id = ?`
-        ).get(conversation_id) as { system_prompt?: string } | undefined
-        if (conv?.system_prompt) {
-          agent.setCachedSystemPrompt(conv.system_prompt)
-          systemPromptCached = true
-        }
-      }
-
-      if (minimal_mode) {
-        agent.updateKBContextPrompt(undefined)
-        agent.updateToolPlanningPrompt(null)
-      } else if (!systemPromptCached) {
-        // 只有未缓存时才需要构建合集上下文和工具规划提示（首次消息）
-        if (collection_ids.length > 0) {
-          const kmsService = require('./kms/kms.service').default.getInstance()
-          const allCollections = kmsService.listCollections() as any[]
-          const selected = allCollections.filter((c: any) => collection_ids.includes(c.id))
-          if (selected.length > 0) {
-            const names = selected.map((c: any) => c.name).join('、')
-            agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
-          } else {
-            agent.updateKBContextPrompt(undefined)
-          }
-        } else {
-          agent.updateKBContextPrompt(undefined)
-        }
-
-        const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
-        agent.updateToolPlanningPrompt(toolPlanningHint)
-      } else {
-        // 已有缓存，跳过合集上下文和工具规划，省的 token
-        agent.updateKBContextPrompt(undefined)
-        agent.updateToolPlanningPrompt(null)
-      }
-
-      const config = await this.llmClient.getProviderConfig(provider_id)
-      let maxIterations = 100
-      if (config?.models_json) {
-        try {
-          const models: LLMModelConfig[] = JSON.parse(config.models_json)
-          const matched = model_id
-            ? models.find(m => m.id === model_id) || models.find(m => m.model === model_id)
-            : models.find(m => m.is_default)
-          if (matched?.max_retry !== undefined) {
-            maxIterations = matched.max_retry
-          }
-        } catch {}
-      }
-
+      const systemPromptCached = await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode, query)
+      const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
       const memoryEnabled = employee?.memory_enabled === 1
 
       await agent.runStream(
@@ -391,16 +340,91 @@ class EmployeeAgentService {
         signal
       )
 
-      // 首次构建的系统提示词持久化到 DB，后续同一对话直接复用
-      if (conversation_id && !systemPromptCached) {
-        const cachedPrompt = agent.getCachedSystemPrompt()
-        if (cachedPrompt) {
-          this.db.getDb().prepare(
-            `UPDATE conversations SET system_prompt = ? WHERE id = ?`
-          ).run(cachedPrompt, conversation_id)
-        }
-      }
+      this.persistSystemPrompt(conversation_id, agent, systemPromptCached)
     })
+  }
+
+  /**
+   * 准备系统提示词：优先从 DB 加载对话级缓存（首次消息后锁死）；未缓存时按模式构建
+   * 合集上下文与工具规划提示。返回是否命中缓存（调用方据此决定是否回写 DB）。
+   */
+  private async prepareSystemPrompt(
+    agent: EmployeeAgent,
+    conversationId: string | undefined,
+    collectionIds: string[],
+    minimalMode: boolean,
+    query: string
+  ): Promise<boolean> {
+    if (conversationId) {
+      const conv = this.db.getDb().prepare(
+        `SELECT system_prompt FROM conversations WHERE id = ?`
+      ).get(conversationId) as { system_prompt?: string } | undefined
+      if (conv?.system_prompt) {
+        agent.setCachedSystemPrompt(conv.system_prompt)
+        // 已有缓存，跳过合集上下文和工具规划，省的 token
+        agent.updateKBContextPrompt(undefined)
+        agent.updateToolPlanningPrompt(null)
+        return true
+      }
+    }
+
+    if (minimalMode) {
+      agent.updateKBContextPrompt(undefined)
+      agent.updateToolPlanningPrompt(null)
+    } else {
+      // 只有未缓存时才需要构建合集上下文和工具规划提示（首次消息）
+      if (collectionIds.length > 0) {
+        const kmsService = require('./kms/kms.service').default.getInstance()
+        const allCollections = kmsService.listCollections() as any[]
+        const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
+        if (selected.length > 0) {
+          const names = selected.map((c: any) => c.name).join('、')
+          agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
+        } else {
+          agent.updateKBContextPrompt(undefined)
+        }
+      } else {
+        agent.updateKBContextPrompt(undefined)
+      }
+      const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
+      agent.updateToolPlanningPrompt(toolPlanningHint)
+    }
+    return false
+  }
+
+  /**
+   * 解析模型配置中的 max_retry 作为 agent 最大迭代次数；未配置时回退到 100。
+   */
+  private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
+    const config = await this.llmClient.getProviderConfig(providerId)
+    if (!config?.models_json) return 100
+    try {
+      const models: LLMModelConfig[] = JSON.parse(config.models_json)
+      const matched = modelId
+        ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
+        : models.find(m => m.is_default)
+      if (matched?.max_retry !== undefined) {
+        return matched.max_retry
+      }
+    } catch {}
+    return 100
+  }
+
+  /**
+   * 首次构建的系统提示词持久化到 DB，后续同一对话直接复用。
+   */
+  private persistSystemPrompt(
+    conversationId: string | undefined,
+    agent: EmployeeAgent,
+    systemPromptCached: boolean
+  ): void {
+    if (!conversationId || systemPromptCached) return
+    const cachedPrompt = agent.getCachedSystemPrompt()
+    if (cachedPrompt) {
+      this.db.getDb().prepare(
+        `UPDATE conversations SET system_prompt = ? WHERE id = ?`
+      ).run(cachedPrompt, conversationId)
+    }
   }
 
   clearAgentCache(employeeId?: string): void {
@@ -498,10 +522,6 @@ class EmployeeAgentService {
     })
   }
 
-  getRelevantMemoriesForPrompt(employeeId: string, query: string): string {
-    const memories = this.memoryService.getRelevantMemories(employeeId, query)
-    return this.memoryService.formatMemoriesForPrompt(memories)
-  }
 }
 
 export default EmployeeAgentService

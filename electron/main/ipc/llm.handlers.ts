@@ -88,7 +88,9 @@ export function registerLLMHandlers(
       if (chunkBuffer.length === 0) return
       if (abortController.signal.aborted) { chunkBuffer.length = 0; return }
       const chunks = chunkBuffer.splice(0)
-      event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+      }
     }
     const scheduleFlush = () => {
       if (!flushScheduled) {
@@ -103,6 +105,8 @@ export function registerLLMHandlers(
         employeeId: params.employee_id,
       },
       async () => {
+        // 标记 onError 是否已处理过错误，避免 catch 块重复发送 LLM_CHAT_ERROR
+        let sentError = false
         try {
           await employeeAgent.chatStream(
             {
@@ -123,25 +127,34 @@ export function registerLLMHandlers(
                   scheduleFlush()
                 }
               },
-              onThought: (thought: string) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
-              onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
+              onThought: (thought: string) => { if (!abortController.signal.aborted && !event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
+              onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted && !event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any }) => {
                 if (abortController.signal.aborted) return
-                const { rawResult: _, ...safeResult } = toolResult
-                event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
+                const { rawResult: _rawResult, ...safeResult } = toolResult
+                if (!event.sender.isDestroyed()) {
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
+                }
               },
               onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
                 if (abortController.signal.aborted) return
-                event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
+                if (!event.sender.isDestroyed()) {
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_PROGRESS, { sessionId, ...progress })
+                }
               },
               onDone: (metadata?: any) => {
                 flushChunks() // 确保缓冲区中的 token 不丢失
-                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
+                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                  event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
+                }
                 activeSessions.delete(sessionId)
               },
               onError: (error: string) => {
                 flushChunks()
-                if (!abortController.signal.aborted) event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
+                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                  event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
+                  sentError = true
+                }
                 activeSessions.delete(sessionId)
               },
             },
@@ -150,17 +163,24 @@ export function registerLLMHandlers(
         } catch (error: any) {
           flushChunks()
           if (abortController.signal.aborted) {
-            event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
+            if (!event.sender.isDestroyed()) {
+              event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
+            }
             activeSessions.delete(sessionId)
             return
           }
-          event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error.message || String(error) })
+          // 避免与 onError 回调重复发送错误，仅当 onError 未处理时发送
+          if (!sentError && !event.sender.isDestroyed()) {
+            event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error?.message || String(error) })
+          }
           activeSessions.delete(sessionId)
         } finally {
           interactionService.unregisterSession(sessionId)
         }
       }
-    ).catch(() => {})
+    ).catch(() => {
+      // interactionContext.run 内部已 try-catch，此处仅兜底防止未捕获异常逃逸
+    })
 
     return { success: true, sessionId }
   })

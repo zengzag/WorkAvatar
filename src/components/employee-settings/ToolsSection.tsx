@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -38,6 +38,11 @@ interface ToolsSectionProps {
 const ToolsSection: React.FC<ToolsSectionProps> = ({ employeeTools, onToggleTool }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+
+  // 包装 props 传入的回调，保证稳定引用（Switch 内部 onChange 仍依赖 tool.id 在 map 闭包中）
+  const handleToggle = useCallback((toolId: string, enabled: boolean) => {
+    onToggleTool(toolId, enabled)
+  }, [onToggleTool])
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
@@ -86,7 +91,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({ employeeTools, onToggleTool
                 </div>
                 <Switch
                   checked={tool.is_enabled}
-                  onChange={(checked) => onToggleTool(tool.id, checked)}
+                  onChange={(checked) => handleToggle(tool.id, checked)}
                   checkedChildren={t('common.enable')}
                   unCheckedChildren={t('common.disable')}
                 />
@@ -99,4 +104,4 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({ employeeTools, onToggleTool
   )
 }
 
-export default ToolsSection
+export default React.memo(ToolsSection)

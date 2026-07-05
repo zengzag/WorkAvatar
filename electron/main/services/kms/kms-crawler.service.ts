@@ -266,28 +266,21 @@ class KMSCrawlerService {
   }
 
   /**
-   * 获取文件访问统计
+   * 批量记录文件访问（单次 INSERT...SELECT 过滤外键，事务包裹）
+   * 用于搜索结束后一次性记录 N 个命中文件，避免 N 次 SELECT+INSERT
    */
-  getFileAccessStats(fileId: string, days: number = 30): { hitCount: number; readCount: number; lastAccessed: number | null } {
-    const since = Math.floor(Date.now() / 1000) - days * 86400
-
-    const hitRow = this.db.prepare(
-      "SELECT COUNT(*) as count FROM kms_access_log WHERE file_id = ? AND access_type = 'search_hit' AND accessed_at >= ?"
-    ).get(fileId, since) as any
-
-    const readRow = this.db.prepare(
-      "SELECT COUNT(*) as count FROM kms_access_log WHERE file_id = ? AND access_type = 'read' AND accessed_at >= ?"
-    ).get(fileId, since) as any
-
-    const lastRow = this.db.prepare(
-      'SELECT MAX(accessed_at) as last FROM kms_access_log WHERE file_id = ?'
-    ).get(fileId) as any
-
-    return {
-      hitCount: hitRow?.count || 0,
-      readCount: readRow?.count || 0,
-      lastAccessed: lastRow?.last || null,
-    }
+  logFileAccessBatch(fileIds: string[], accessType: 'search_hit' | 'read' | 'summary_view'): void {
+    if (fileIds.length === 0) return
+    // 去重
+    const uniqueIds = [...new Set(fileIds)]
+    const placeholders = uniqueIds.map(() => '?').join(',')
+    // 单次 INSERT...SELECT 同时完成外键过滤与插入，避免 N 次 SELECT+INSERT
+    // 每条记录使用 hex(randomblob(16)) 生成唯一 id
+    this.db.prepare(
+      `INSERT INTO kms_access_log (id, file_id, access_type, accessed_at)
+       SELECT lower(hex(randomblob(16))), id, ?, unixepoch()
+       FROM kms_files WHERE id IN (${placeholders})`
+    ).run(accessType, ...uniqueIds)
   }
 
   /**

@@ -15,7 +15,7 @@ const AnswerSegmentInner: React.FC<{
 
   // 流式输出时节流 markdown 解析：useDeferredValue 让 React 在空闲时才重新解析
   // 避免 2000 token 流式输出触发 2000 次完整 markdown+KaTeX 重解析
-  const deferredContent = useDeferredValue(seg.content || (seg.isStreaming ? '▊' : ''))
+  const deferredContent = useDeferredValue(seg.content || '')
 
   // 仅当内容真正变化时才重建 ReactMarkdown 子树
   const markdownNode = useMemo(
@@ -39,7 +39,7 @@ const AnswerSegmentInner: React.FC<{
         background: token.colorBgLayout,
         lineHeight: 1.7,
         wordBreak: 'break-word',
-        border: isError ? '1px solid #ff4d4f' : 'none',
+        border: isError ? `1px solid ${token.colorError}` : 'none',
       }}>
         <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
           {markdownNode}

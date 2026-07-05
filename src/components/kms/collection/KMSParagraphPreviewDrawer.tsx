@@ -23,7 +23,7 @@ interface KMSParagraphPreviewDrawerProps {
 }
 
 /** 章节预览抽屉：展示段落的标题路径、摘要、关键词与原文 */
-export const KMSParagraphPreviewDrawer: React.FC<KMSParagraphPreviewDrawerProps> = ({
+const KMSParagraphPreviewDrawerComponent: React.FC<KMSParagraphPreviewDrawerProps> = ({
   open,
   previewParagraph,
   previewLoading,
@@ -75,7 +75,7 @@ export const KMSParagraphPreviewDrawer: React.FC<KMSParagraphPreviewDrawerProps>
               </div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {previewParagraph.keywords.map((kw, i) => (
-                  <Tag key={i} style={{ fontSize: 11, margin: 0 }}>{kw}</Tag>
+                  <Tag key={`kw-${i}-${kw}`} style={{ fontSize: 11, margin: 0 }}>{kw}</Tag>
                 ))}
               </div>
             </div>
@@ -116,4 +116,7 @@ export const KMSParagraphPreviewDrawer: React.FC<KMSParagraphPreviewDrawerProps>
   )
 }
 
+// React.memo 包裹避免父组件无关渲染导致的重复绘制
+const KMSParagraphPreviewDrawer = React.memo(KMSParagraphPreviewDrawerComponent)
+export { KMSParagraphPreviewDrawer }
 export default KMSParagraphPreviewDrawer

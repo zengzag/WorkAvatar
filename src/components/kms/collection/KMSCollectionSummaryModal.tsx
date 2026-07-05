@@ -2,15 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Modal, Input, Button, theme } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
-
-interface CollectionItem {
-  id: string
-  name: string
-  description: string
-  file_count: number
-  created_at: number
-  updated_at: number
-}
+import type { CollectionItem } from './index'
 
 interface KMSCollectionSummaryModalProps {
   open: boolean
@@ -27,7 +19,7 @@ interface KMSCollectionSummaryModalProps {
 }
 
 /** 合集摘要编辑弹窗（含 AI 生成） */
-export const KMSCollectionSummaryModal: React.FC<KMSCollectionSummaryModalProps> = ({
+const KMSCollectionSummaryModalComponent: React.FC<KMSCollectionSummaryModalProps> = ({
   open,
   summaryCollection,
   summaryText,
@@ -87,4 +79,7 @@ export const KMSCollectionSummaryModal: React.FC<KMSCollectionSummaryModalProps>
   )
 }
 
+// React.memo 包裹避免父组件无关渲染导致的重复绘制
+const KMSCollectionSummaryModal = React.memo(KMSCollectionSummaryModalComponent)
+export { KMSCollectionSummaryModal }
 export default KMSCollectionSummaryModal

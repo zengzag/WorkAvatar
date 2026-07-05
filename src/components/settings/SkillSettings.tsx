@@ -1,3 +1,4 @@
+import React from 'react'
 import { Typography } from 'antd'
 import { useTranslation } from 'react-i18next'
 
@@ -14,4 +15,4 @@ const SkillSettings: React.FC = () => {
   )
 }
 
-export default SkillSettings
+export default React.memo(SkillSettings)

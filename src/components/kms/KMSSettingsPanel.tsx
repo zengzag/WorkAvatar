@@ -228,7 +228,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               justifyContent: 'center',
               flexShrink: 0,
             }}>
-              <CloudServerOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+              <CloudServerOutlined style={{ fontSize: 20, color: token.colorInfo }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.embeddingModel')}</Text>
@@ -276,7 +276,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               justifyContent: 'center',
               flexShrink: 0,
             }}>
-              <ThunderboltOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorInfo }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
@@ -340,7 +340,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <AimOutlined style={{ fontSize: 20, color: '#722ed1' }} />
+              <AimOutlined style={{ fontSize: 20, color: token.colorInfo }} />
             </div>
             <div>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.maxRounds')}</Text>
@@ -369,7 +369,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <ThunderboltOutlined style={{ fontSize: 20, color: '#fa8c16' }} />
+              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorWarning }} />
             </div>
             <div>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.topK')}</Text>

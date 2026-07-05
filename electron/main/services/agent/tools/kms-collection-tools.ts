@@ -27,6 +27,17 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     return ref.includes(collectionId)
   }
 
+  /** 安全解析 JSON 数组字段，容错非法 JSON */
+  function safeParseJsonArray(raw: any): string[] {
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.map(String) : []
+    } catch {
+      return []
+    }
+  }
+
   // kms_list_collections: 列出当前会话可访问的合集
   const kmsListCollectionsTool: ToolDefinition = {
     id: 'kms_list_collections',
@@ -50,13 +61,16 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
           return { success: true, output: '当前会话未选择任何合集，且系统中暂无合集。' }
         }
 
+        // 批量查询所有可见合集的摘要，避免 N+1
+        const summaryMap = kmsService.getCollectionSummariesByIds(visible.map((c: any) => c.id))
+
         let output = `${visible.length}个合集:\n`
         for (let i = 0; i < visible.length; i++) {
           const c = visible[i]
           output += `${i + 1}. ${c.name} [${c.id}] ${c.file_count || 0}篇`
-          const summary = kmsService.getCollectionSummary(c.id)
+          const summary = summaryMap.get(c.id)
           if (summary) {
-            const keyTopics: string[] = JSON.parse(summary.key_topics_json || '[]')
+            const keyTopics = safeParseJsonArray(summary.key_topics_json)
             if (keyTopics.length > 0) {
               output += ` | ${keyTopics.join('、')}`
             }
@@ -121,7 +135,7 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
         const summary = kmsService.getCollectionSummary(collectionId)
         if (summary) {
           output += `摘要: ${summary.summary}\n`
-          const keyTopics: string[] = JSON.parse(summary.key_topics_json || '[]')
+          const keyTopics = safeParseJsonArray(summary.key_topics_json)
           if (keyTopics.length > 0) {
             output += `主题: ${keyTopics.join('、')}\n`
           }
@@ -141,7 +155,7 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
           if (f.summary) {
             output += ` ${f.summary}`
           }
-          const topics: string[] = JSON.parse(f.main_topics_json || '[]')
+          const topics = safeParseJsonArray(f.main_topics_json)
           if (topics.length > 0) {
             output += ` | ${topics.join('、')}`
           }
@@ -251,7 +265,7 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
           if (p.summary) {
             output += ` ${p.summary}`
           }
-          const keywords: string[] = JSON.parse(p.keywords_json || '[]')
+          const keywords = safeParseJsonArray(p.keywords_json)
           if (keywords.length > 0) {
             output += ` | 关键词: ${keywords.join('、')}`
           }

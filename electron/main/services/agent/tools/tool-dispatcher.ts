@@ -11,10 +11,6 @@ export class ToolDispatcher {
     this.middlewareChain = new ToolMiddlewareChain()
   }
 
-  setRegistry(registry: ToolRegistry): void {
-    this.registry = registry
-  }
-
   getMiddlewareChain(): ToolMiddlewareChain {
     return this.middlewareChain
   }
@@ -42,11 +38,18 @@ export class ToolDispatcher {
       const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
         const result = await tool.handler(toolParams, context)
 
-        const output = this.serializeResult(result)
+        // 尊重工具自身的 success 字段；未显式声明时默认为 true
+        const success = result?.success !== false
+        // 优先使用工具返回的 output 字段；否则序列化整个结果（排除元字段）
+        const output = result?.output !== undefined
+          ? result.output
+          : this.serializeResult(result, ['success', 'error', 'toolName', 'rawOutput', 'output'])
+        const error = result?.error
 
         return {
-          success: true,
+          success,
           output,
+          error,
           toolName,
           rawOutput: result
         }
@@ -66,21 +69,12 @@ export class ToolDispatcher {
     }
   }
 
-  async dispatchMultiple(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
-    const results: ToolCallResult[] = []
-
-    for (const call of calls) {
-      results.push(await this.dispatch(call.name, call.params, context))
-    }
-
-    return results
-  }
-
-  async dispatchParallel(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
-    return Promise.all(calls.map(call => this.dispatch(call.name, call.params, context)))
-  }
-
-  private serializeResult(result: any): any {
+  /**
+   * 将工具返回值序列化为字符串
+   * @param result 工具返回值
+   * @param excludeKeys 需要排除的元字段（避免把 success/error 等元数据也喂给 LLM）
+   */
+  private serializeResult(result: any, excludeKeys: string[] = []): any {
     if (result === null || result === undefined) {
       return 'Tool executed successfully (no output)'
     }
@@ -95,6 +89,19 @@ export class ToolDispatcher {
 
     if (typeof result === 'object') {
       try {
+        if (excludeKeys.length > 0) {
+          const filtered: Record<string, any> = {}
+          for (const [k, v] of Object.entries(result)) {
+            if (!excludeKeys.includes(k)) {
+              filtered[k] = v
+            }
+          }
+          // 如果过滤后只剩空对象，返回成功提示
+          if (Object.keys(filtered).length === 0) {
+            return 'Tool executed successfully'
+          }
+          return JSON.stringify(filtered, null, 2)
+        }
         return JSON.stringify(result, null, 2)
       } catch {
         return String(result)

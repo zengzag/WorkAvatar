@@ -9,7 +9,6 @@ export type AgentEventName =
   | 'state:change'
   | 'plan:generated'
   | 'memory:compressed'
-  | 'skill:activated'
 
 export interface AgentEvent {
   type: AgentEventName
@@ -21,12 +20,9 @@ export type AgentEventHandler = (event: AgentEvent) => void
 
 export class AgentEventEmitter {
   private handlers: Map<AgentEventName, Set<AgentEventHandler>> = new Map()
-  private eventHistory: AgentEvent[] = []
-  private maxHistorySize: number
   private enabled: boolean
 
-  constructor(options?: { maxHistorySize?: number; enabled?: boolean }) {
-    this.maxHistorySize = options?.maxHistorySize ?? 1000
+  constructor(options?: { enabled?: boolean }) {
     this.enabled = options?.enabled ?? true
   }
 
@@ -41,10 +37,6 @@ export class AgentEventEmitter {
     }
   }
 
-  off(event: AgentEventName, handler: AgentEventHandler): void {
-    this.handlers.get(event)?.delete(handler)
-  }
-
   emit(event: AgentEventName, data?: any): void {
     if (!this.enabled) return
 
@@ -52,11 +44,6 @@ export class AgentEventEmitter {
       type: event,
       timestamp: Date.now(),
       data: data ?? null,
-    }
-
-    this.eventHistory.push(agentEvent)
-    if (this.eventHistory.length > this.maxHistorySize) {
-      this.eventHistory.shift()
     }
 
     const handlers = this.handlers.get(event)
@@ -69,20 +56,5 @@ export class AgentEventEmitter {
         }
       }
     }
-  }
-
-  getHistory(eventType?: AgentEventName): AgentEvent[] {
-    if (eventType) {
-      return this.eventHistory.filter(e => e.type === eventType)
-    }
-    return [...this.eventHistory]
-  }
-
-  clearHistory(): void {
-    this.eventHistory = []
-  }
-
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled
   }
 }

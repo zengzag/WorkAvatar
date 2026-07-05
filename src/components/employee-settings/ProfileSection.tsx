@@ -1,6 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Row, Col, Statistic } from 'antd'
+import { Card, Row, Col, Statistic, theme } from 'antd'
 import { BarChartOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import type { Employee } from '../../types'
 
@@ -10,6 +10,7 @@ interface ProfileSectionProps {
 
 const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
   const { t } = useTranslation()
+  const { token } = theme.useToken()
 
   return (
     <>
@@ -28,7 +29,7 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
             <Statistic
               title={t('employeeSettings.userApprovals')}
               value={employee.total_approvals}
-              prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+              prefix={<CheckCircleOutlined style={{ color: token.colorSuccess }} />}
             />
           </Card>
         </Col>
@@ -42,4 +43,4 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
   )
 }
 
-export default ProfileSection
+export default React.memo(ProfileSection)

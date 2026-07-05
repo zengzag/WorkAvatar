@@ -129,9 +129,11 @@ export class OpenAIProvider implements ILLMProvider {
     messages: LLMMessage[],
     tools: any[],
     callbacks: LLMStreamCallbacks,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: LLMCallOptions
   ): Promise<LLMResponse> {
     const startTime = Date.now()
+    const logSource = options?.logSource || 'agent'
     const url = `${this.config.baseUrl}/chat/completions`
     const headers = this.buildHeaders()
     const body = this.buildBody(messages, tools, true)
@@ -149,7 +151,7 @@ export class OpenAIProvider implements ILLMProvider {
         const err = this.createError(response.status, errorText)
         LLMLoggerService.getInstance().logCall({
           type: 'chatStream',
-          source: 'agent',
+          source: logSource,
           model: this.config.model,
           providerType: this.config.providerType,
           request: {
@@ -174,15 +176,13 @@ export class OpenAIProvider implements ILLMProvider {
       let accumulatedToolCalls: LLMToolCall[] = []
       const decoder = new TextDecoder()
       let buffer = ''
-
-      let fullBuffer = ''
+      let streamUsage: LLMUsage | undefined
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         const decoded = decoder.decode(value, { stream: true })
-        fullBuffer += decoded
         buffer += decoded
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
@@ -223,6 +223,11 @@ export class OpenAIProvider implements ILLMProvider {
                 if (tc.function?.arguments) accumulatedToolCalls[index].function.arguments += tc.function.arguments
               }
             }
+
+            // 在主循环中直接提取 usage，避免二次遍历解析
+            if (parsed.usage) {
+              streamUsage = this.normalizeUsage(parsed.usage)
+            }
           } catch {
           }
         }
@@ -232,12 +237,12 @@ export class OpenAIProvider implements ILLMProvider {
         callbacks.onToolCall(accumulatedToolCalls)
       }
 
-      const usage = this.extractUsageFromBuffer(fullBuffer)
+      const usage = streamUsage
       const latencyMs = Date.now() - startTime
 
       LLMLoggerService.getInstance().logCall({
         type: 'chatStream',
-        source: 'agent',
+        source: logSource,
         model: this.config.model,
         providerType: this.config.providerType,
         request: {
@@ -267,7 +272,7 @@ export class OpenAIProvider implements ILLMProvider {
       if (!(error as any).status) {
         LLMLoggerService.getInstance().logCall({
           type: 'chatStream',
-          source: 'agent',
+          source: logSource,
           model: this.config.model,
           providerType: this.config.providerType,
           request: {
@@ -296,24 +301,6 @@ export class OpenAIProvider implements ILLMProvider {
       totalTokens: raw.totalTokens ?? raw.total_tokens,
       ...(cachedTokens != null ? { cachedTokens } : {}),
     }
-  }
-
-  private extractUsageFromBuffer(buffer: string): LLMUsage | undefined {
-    const lines = buffer.split('\n')
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || !trimmed.startsWith('data: ')) continue
-      const data = trimmed.slice(6)
-      if (data === '[DONE]') continue
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.usage) {
-          return this.normalizeUsage(parsed.usage)
-        }
-      } catch {
-      }
-    }
-    return undefined
   }
 
   estimateTokens(messages: LLMMessage[]): number {
@@ -446,6 +433,8 @@ export class OpenAIProvider implements ILLMProvider {
     } else {
       if (providerType === 'deepseek') {
         body.thinking = { type: 'disabled' }
+      } else if (providerType === 'qwen') {
+        body.enable_thinking = false
       } else if (providerType === 'volcengine') {
         body.thinking = { type: 'disabled' }
       } else if (providerType === 'zhipu') {

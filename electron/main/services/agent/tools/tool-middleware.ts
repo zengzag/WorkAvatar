@@ -19,16 +19,6 @@ export class ToolMiddlewareChain {
     return this
   }
 
-  useFn(name: string, fn: ToolMiddlewareFn): ToolMiddlewareChain {
-    this.middlewares.push({ name, fn })
-    return this
-  }
-
-  remove(name: string): ToolMiddlewareChain {
-    this.middlewares = this.middlewares.filter(m => m.name !== name)
-    return this
-  }
-
   async execute(
     toolName: string,
     args: Record<string, any>,
@@ -49,15 +39,6 @@ export class ToolMiddlewareChain {
 
     return next()
   }
-
-  getMiddlewares(): ToolMiddleware[] {
-    return [...this.middlewares]
-  }
-
-  clear(): ToolMiddlewareChain {
-    this.middlewares = []
-    return this
-  }
 }
 
 export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolMiddleware {
@@ -67,14 +48,19 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
       const timeoutMs = _args._timeoutMs ?? defaultTimeoutMs
       delete _args._timeoutMs
 
-      const result = await Promise.race([
-        next(),
-        new Promise<ToolCallResult>((_, reject) =>
-          setTimeout(() => reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`)), timeoutMs)
-        ),
-      ])
-
-      return result
+      let timer: NodeJS.Timeout | undefined
+      try {
+        const result = await Promise.race([
+          next(),
+          new Promise<ToolCallResult>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs}ms`)), timeoutMs)
+          }),
+        ])
+        return result
+      } finally {
+        // 无论 next() 先完成还是超时先触发，都清理 timer 避免事件循环泄漏
+        if (timer) clearTimeout(timer)
+      }
     },
   }
 }

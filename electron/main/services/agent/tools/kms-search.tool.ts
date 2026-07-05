@@ -56,12 +56,7 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
         },
         use_semantic: {
           type: 'boolean',
-          description: '是否启用语义搜索（需要Embedding模型支持，默认false，使用关键词检索）。对于概念性查询建议启用',
-          default: false,
-        },
-        use_hybrid: {
-          type: 'boolean',
-          description: '是否启用混合搜索（关键词+语义，默认false）。混合搜索能兼顾精确匹配和语义相似',
+          description: '是否启用语义检索（需要Embedding模型支持，默认false，使用关键词检索）。启用后实际执行关键词+向量混合检索，能兼顾精确匹配和语义相似。对于概念性查询建议启用',
           default: false,
         },
         collection_ids: {
@@ -86,12 +81,11 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
 
         const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
         const useSemantic = Boolean(args.use_semantic)
-        const useHybrid = Boolean(args.use_hybrid)
         const collectionIds = resolveCollectionIds(args)
 
         const results = await kmsService.search(query, {
           topK,
-          useSemantic: useSemantic || useHybrid,
+          useSemantic,
           collectionIds,
           fileExtensions: args.file_extensions,
         })
@@ -101,8 +95,8 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
           if (collectionIds && collectionIds.length > 0) {
             msg += ' 当前限定在指定合集中检索，可尝试不传 collection_ids 搜索全部资料库。'
           }
-          if (!useSemantic && !useHybrid) {
-            msg += ' 建议：尝试启用语义搜索(use_semantic:true)或混合搜索(use_hybrid:true)'
+          if (!useSemantic) {
+            msg += ' 建议：尝试启用语义检索(use_semantic:true)'
           }
           return { success: true, output: msg }
         }
@@ -116,7 +110,7 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
         }
 
         const scopeLabel = collectionIds && collectionIds.length > 0 ? `(合集${collectionIds.length}个)` : ''
-        let output = `${results.length} 条结果${useHybrid ? '(混合)' : useSemantic ? '(语义)' : '(关键词)'}${scopeLabel}:\n\n`
+        let output = `${results.length} 条结果${useSemantic ? '(语义)' : '(关键词)'}${scopeLabel}:\n\n`
         for (let i = 0; i < results.length; i++) {
           const r = results[i]
           const typeLabel = typeLabels[r.match_type] || r.match_type

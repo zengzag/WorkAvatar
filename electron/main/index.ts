@@ -2,7 +2,8 @@ import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
 import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
-import { registerIpcHandlers } from './ipc-handlers'
+import LLMLoggerService from './services/llm-logger.service'
+import { registerIpcHandlers } from './ipc'
 import { createLogger } from './services/logger'
 
 const logger = createLogger('Main')
@@ -167,6 +168,17 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  // 清理资源：关闭 LLM 日志定时器与数据库连接
+  try {
+    LLMLoggerService.getInstance().destroy()
+  } catch (error) {
+    logger.error('Failed to destroy LLMLoggerService:', error)
+  }
+  try {
+    DatabaseService.getInstance().close()
+  } catch (error) {
+    logger.error('Failed to close database:', error)
+  }
 })
 
 app.on('window-all-closed', () => {

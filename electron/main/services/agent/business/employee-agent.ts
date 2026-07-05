@@ -9,14 +9,12 @@ import { buildEmployeeSystemPrompt } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
   treeOfThought?: boolean
-  filterTools?: boolean
   totModel?: string
   totApiKey?: string
   totBaseUrl?: string
   totProviderType?: string
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
-  selfLearning?: boolean
   planningStrategy?: PlanningStrategy
   workspaceGuidance?: string
 }
@@ -178,12 +176,10 @@ export class EmployeeAgent extends BaseAgent {
     callbacks: any,
     signal?: AbortSignal
   ): Promise<void> {
-    this.getContext().setMetadata('currentQuery', options.query)
     return super.runStream(options, callbacks, signal)
   }
 
   async run(options: AgentRunOptions): Promise<any> {
-    this.getContext().setMetadata('currentQuery', options.query)
     return super.run(options)
   }
 
@@ -208,7 +204,7 @@ export class EmployeeAgent extends BaseAgent {
       handler: (args: any) => {
         try {
           const instructions = this.skillManager.activateSkill(args.skill_name)
-          return { success: true, instructions }
+          return { success: true, output: instructions }
         } catch (error: any) {
           return { success: false, error: error.message }
         }
@@ -239,7 +235,7 @@ export class EmployeeAgent extends BaseAgent {
       },
       handler: (args: any) => {
         const content = this.skillManager.readReference(args.skill_name, args.reference_path)
-        return { content }
+        return { success: true, output: content }
       },
       source: 'skill',
       permission: 'safe',
@@ -258,8 +254,6 @@ export class EmployeeAgent extends BaseAgent {
     return {
       ...config,
       treeOfThought: config.treeOfThought || false,
-      filterTools: config.filterTools !== false,
-      selfLearning: config.selfLearning || false,
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
     }

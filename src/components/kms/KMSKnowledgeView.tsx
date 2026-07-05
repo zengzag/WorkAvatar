@@ -1,18 +1,22 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Space, Typography, Tag, Spin, Input, Select, Table, Tooltip, Button, theme, Tabs,
+  Card, Space, Typography, Tag, Spin, Input, Select, Table, Button, theme, Tabs,
   Statistic, Row, App,
 } from 'antd'
 import {
   FolderOpenOutlined, FileTextOutlined, FireOutlined, InboxOutlined,
-  SearchOutlined, ReloadOutlined, EyeOutlined,
-  ThunderboltOutlined, RobotOutlined,
+  SearchOutlined, ReloadOutlined,
+  ThunderboltOutlined,
   DatabaseOutlined, BarChartOutlined,
 } from '@ant-design/icons'
-import type { FileSummaryItem, FileSummariesResult } from '../../hooks/useKMS'
+import type { FileSummariesResult } from '../../hooks/useKMS'
+import { useFileSummaryColumns } from './kms-columns'
 
 const { Text, Title } = Typography
+
+/** 关键词搜索防抖延迟（毫秒） */
+const KEYWORD_DEBOUNCE_MS = 400
 
 interface IndexDir {
   id: string
@@ -68,6 +72,11 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
   // 手动处理中的文件 ID 集合
   const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
+  // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
+  const processingFileIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    processingFileIdsRef.current = processingFileIds
+  }, [processingFileIds])
 
   useEffect(() => {
     onLoadFileSummaries({ page: 1, pageSize: 20 })
@@ -92,19 +101,25 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     })
   }, [filterDirId, filterTier, filterKeyword, page, pageSize, onLoadFileSummaries])
 
-  useEffect(() => {
-    reloadFileSummaries()
-  }, [filterDirId, filterTier, page, pageSize, reloadFileSummaries])
+  // 用 ref 持有最新的 reloadFileSummaries，避免 keyword 变化时立即触发请求
+  // keyword 由下方防抖 effect 单独处理
+  const reloadRef = useRef(reloadFileSummaries)
+  useEffect(() => { reloadRef.current = reloadFileSummaries }, [reloadFileSummaries])
 
-  // 关键词搜索（防抖）
+  // 结构化筛选条件（目录/层级/分页）变化时立即加载
+  useEffect(() => {
+    reloadRef.current()
+  }, [filterDirId, filterTier, page, pageSize])
+
+  // 关键词搜索（防抖）：通过 ref 调用最新的 reloadFileSummaries，避免闭包陷阱
   useEffect(() => {
     const timer = setTimeout(() => {
       if (page !== 1) {
         setPage(1)
       } else {
-        reloadFileSummaries()
+        reloadRef.current()
       }
-    }, 400)
+    }, KEYWORD_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKeyword])
@@ -114,25 +129,10 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onLoadStats()
   }, [reloadFileSummaries, onLoadStats])
 
-  // 格式化文件大小
-  const formatSize = (bytes: number): string => {
-    if (!bytes) return '-'
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  }
-
-  // 格式化时间
-  const formatTime = (ts: number): string => {
-    if (!ts) return '-'
-    const d = new Date(ts * 1000)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-
   // 手动生成文件摘要
-  const handleGenerateFileSummary = async (fileId: string) => {
-    if (processingFileIds.has(fileId)) return
-    const newSet = new Set(processingFileIds)
+  const handleGenerateFileSummary = useCallback(async (fileId: string) => {
+    if (processingFileIdsRef.current.has(fileId)) return
+    const newSet = new Set(processingFileIdsRef.current)
     newSet.add(fileId)
     setProcessingFileIds(newSet)
     try {
@@ -162,11 +162,11 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     } catch (err: any) {
       message.error(err?.message || t('kms.knowledge.fileSummaryFailed'))
     } finally {
-      const clearSet = new Set(processingFileIds)
+      const clearSet = new Set(processingFileIdsRef.current)
       clearSet.delete(fileId)
       setProcessingFileIds(clearSet)
     }
-  }
+  }, [t, message, reloadFileSummaries])
 
   const dirOptions = useMemo(() => [
     { label: t('kms.knowledge.allDirs'), value: '' },
@@ -191,135 +191,41 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     }
   }, [stats])
 
-  // 文件摘要表格列定义
-  const columns = useMemo(() => [
-    {
-      title: t('kms.knowledge.fileName'),
-      dataIndex: 'file_name',
-      key: 'file_name',
-      width: 200,
-      render: (text: string, record: FileSummaryItem) => (
-        <Tooltip title={record.file_path}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-            <FileTextOutlined style={{ color: token.colorTextSecondary, flexShrink: 0, fontSize: 12 }} />
-            <span
-              style={{ fontSize: 12, fontWeight: 500, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}
-              onClick={() => onOpenFile(record.file_path)}
-            >
-              {text}
-            </span>
-          </div>
-        </Tooltip>
-      ),
-    },
-    {
-      title: t('kms.knowledge.tier'),
-      dataIndex: 'data_tier',
-      key: 'data_tier',
-      width: 70,
-      render: (tier: string) => (
-        <Tag
-          color={tier === 'hot' ? 'red' : 'default'}
-          style={{ fontSize: 10, margin: 0, padding: '0 4px' }}
-        >
-          {tier === 'hot' ? <FireOutlined /> : <InboxOutlined />}
-        </Tag>
-      ),
-    },
-    {
-      title: t('kms.knowledge.dir'),
-      dataIndex: 'dir_name',
-      key: 'dir_name',
-      width: 120,
-      render: (text: string) => (
-        <Tooltip title={text}>
-          <span style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-            {text || '-'}
-          </span>
-        </Tooltip>
-      ),
-    },
-    {
-      title: t('kms.knowledge.summary'),
-      key: 'summary',
-      width: 250,
-      render: (_: any, record: FileSummaryItem) => {
-        const summary = record.summary || record.light_summary || record.preview_text || ''
-        return (
-          <Tooltip title={summary || t('kms.knowledge.noSummary')}>
-            <span style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-              {summary || t('kms.knowledge.noSummary')}
-            </span>
-          </Tooltip>
-        )
-      },
-    },
-    {
-      title: t('kms.knowledge.vector'),
-      key: 'vector',
-      width: 65,
-      render: (_: any, record: FileSummaryItem) => (
-        <span style={{ fontSize: 12, color: record.has_embedding ? token.colorSuccess : token.colorTextQuaternary }}>
-          {record.has_embedding ? t('common.yes') : t('common.no')}
-        </span>
-      ),
-    },
-    {
-      title: t('kms.knowledge.size'),
-      dataIndex: 'file_size',
-      key: 'file_size',
-      width: 80,
-      render: (size: number) => (
-        <Text type="secondary" style={{ fontSize: 11 }}>{formatSize(size)}</Text>
-      ),
-    },
-    {
-      title: t('kms.knowledge.updated'),
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 100,
-      render: (ts: number) => (
-        <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ts)}</Text>
-      ),
-    },
-    {
-      title: t('common.actions'),
-      key: 'actions',
-      width: 110,
-      render: (_: any, record: FileSummaryItem) => {
-        const isProcessing = processingFileIds.has(record.id)
-        return (
-          <Space size={2}>
-            <Tooltip title={t('kms.knowledge.generateFileSummary')}>
-              <Button
-                size="small"
-                type="text"
-                icon={isProcessing ? <ReloadOutlined spin /> : <RobotOutlined />}
-                loading={isProcessing}
-                onClick={() => handleGenerateFileSummary(record.id)}
-              />
-            </Tooltip>
-            <Tooltip title={t('kms.openFile')}>
-              <Button
-                size="small"
-                type="text"
-                icon={<EyeOutlined />}
-                onClick={() => onOpenFile(record.file_path)}
-              />
-            </Tooltip>
-            <Tooltip title={t('kms.openDir')}>
-              <Button
-                size="small"
-                type="text"
-                icon={<FolderOpenOutlined />}
-                onClick={() => onOpenFileDir(record.file_path)}
-              />
-            </Tooltip>
-          </Space>
-        )
-      },
-    },
-  ], [t, token, onOpenFile, onOpenFileDir, processingFileIds])
+  // 文件摘要表格列定义（抽离到 kms-columns.tsx，便于复用）
+  const columns = useFileSummaryColumns({
+    processingFileIdsRef,
+    onOpenFile,
+    onOpenFileDir,
+    onGenerateFileSummary: handleGenerateFileSummary,
+  })
+
+  // 统计 Tab 的卡片配置（颜色统一使用主题 token，避免明暗主题下显示异常）
+  const statCards = useMemo(() => {
+    const totalFiles = stats?.files?.total ?? 0
+    const indexedFiles = stats?.files?.byStatus?.completed ?? 0
+    const pendingFiles = stats?.files?.byStatus?.pending ?? 0
+    const failedFiles = stats?.files?.byStatus?.failed ?? 0
+    const hotFiles = stats?.files?.byTier?.hot ?? 0
+    const coldFiles = stats?.files?.byTier?.cold ?? 0
+    const indexEntries = stats?.index?.totalEntries ?? 0
+    const embeddingCount = stats?.index?.embeddingCount ?? 0
+    const ftsEntryCount = stats?.index?.ftsEntryCount ?? 0
+    const enabledDirs = stats?.dirs?.enabled ?? 0
+    const totalDirs = stats?.dirs?.total ?? 0
+    return [
+      { label: t('kms.totalDirs'), value: totalDirs, sub: `${enabledDirs} ${t('kms.knowledge.enabled')}`, icon: <FolderOpenOutlined style={{ color: token.colorPrimary }} /> },
+      { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
+      { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
+      { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
+      { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
+      // 热门文件使用 colorError（语义上代表"高频访问"），替代硬编码 '#f5222d'
+      { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: token.colorError }} /> },
+      { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
+      { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS`, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
+      // 向量嵌入使用 colorInfo（语义上代表"AI 知识"），替代硬编码 '#722ed1'
+      { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: token.colorInfo }} /> },
+    ]
+  }, [t, token, stats])
 
   // 顶部统计栏
   const renderStatsBar = () => (
@@ -429,30 +335,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
 
   // 统计信息 Tab 内容
   const renderStatsTab = () => {
-    const totalFiles = stats?.files?.total ?? 0
-    const indexedFiles = stats?.files?.byStatus?.completed ?? 0
-    const pendingFiles = stats?.files?.byStatus?.pending ?? 0
-    const failedFiles = stats?.files?.byStatus?.failed ?? 0
-    const hotFiles = stats?.files?.byTier?.hot ?? 0
-    const coldFiles = stats?.files?.byTier?.cold ?? 0
-    const indexEntries = stats?.index?.totalEntries ?? 0
-    const embeddingCount = stats?.index?.embeddingCount ?? 0
-    const ftsEntryCount = stats?.index?.ftsEntryCount ?? 0
-    const enabledDirs = stats?.dirs?.enabled ?? 0
-    const totalDirs = stats?.dirs?.total ?? 0
-
-    const statCards = [
-      { label: t('kms.totalDirs'), value: totalDirs, sub: `${enabledDirs} ${t('kms.knowledge.enabled')}`, icon: <FolderOpenOutlined style={{ color: token.colorPrimary }} /> },
-      { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
-      { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
-      { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
-      { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
-      { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: '#f5222d' }} /> },
-      { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
-      { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS`, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
-      { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: '#722ed1' }} /> },
-    ]
-
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 4 }}>
         <div style={{

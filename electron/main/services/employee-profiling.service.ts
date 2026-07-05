@@ -28,8 +28,6 @@ export interface SuggestedSkill {
     input: string
     expectedOutput: string
   }>
-  inputSchema?: Record<string, any>
-  outputSchema?: Record<string, any>
   sourceFiles: string[]
   enabled: boolean
 }
@@ -147,36 +145,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         { role: 'user', content: refinePrompt },
       ]
 
-      let fullResponse = ''
-      let streamDone = false
-      let streamError: Error | null = null
-
-      await this.llmClient.chatStream(
-        providerId,
-        messages,
-        (chunk: string) => {
-          fullResponse += chunk
-          onProgress?.({ stage: 'streaming', chunk })
-        },
-        () => {
-          streamDone = true
-        },
-        (error: Error) => {
-          streamError = error
-        },
-        { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource: 'profiling_refine' },
-        undefined,
-        (thoughtChunk: string) => {
-          onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
-        }
-      )
-
-      if (streamError) {
-        throw streamError
-      }
-      if (!streamDone) {
-        throw new Error('LLM 流式响应未正常完成')
-      }
+      const fullResponse = await this.streamLLMWithProgress(providerId, messages, modelId, 'profiling_refine', onProgress)
 
       onProgress?.({ stage: 'parsing', detail: '正在解析优化结果...' })
 
@@ -357,36 +326,7 @@ ${toolsListText}
       { role: 'user', content: prompt },
     ]
 
-    let fullResponse = ''
-    let streamDone = false
-    let streamError: Error | null = null
-
-    await this.llmClient.chatStream(
-      providerId,
-      llmMessages,
-      (chunk: string) => {
-        fullResponse += chunk
-        onProgress?.({ stage: 'streaming', chunk })
-      },
-      () => {
-        streamDone = true
-      },
-      (error: Error) => {
-        streamError = error
-      },
-      { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource: 'profiling_analyze' },
-      undefined,
-      (thoughtChunk: string) => {
-        onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
-      }
-    )
-
-    if (streamError) {
-      throw streamError
-    }
-    if (!streamDone) {
-      throw new Error('LLM 流式响应未正常完成')
-    }
+    const fullResponse = await this.streamLLMWithProgress(providerId, llmMessages, modelId, 'profiling_analyze', onProgress)
 
     onProgress?.({ stage: 'parsing', detail: '正在解析分析结果...' })
 
@@ -423,6 +363,38 @@ ${toolsListText}
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (jsonMatch) return jsonMatch[0]
     return null
+  }
+
+  /** 统一的 LLM 流式调用 + 进度回调，消除 analyzeWithLLM/refineProfileForEmployee 的样板重复 */
+  private async streamLLMWithProgress(
+    providerId: string,
+    messages: Array<{ role: string; content: string }>,
+    modelId: string | undefined,
+    logSource: string,
+    onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
+  ): Promise<string> {
+    let fullResponse = ''
+    let streamDone = false
+    let streamError: Error | null = null
+
+    await this.llmClient.chatStream(
+      providerId,
+      messages,
+      (chunk: string) => {
+        fullResponse += chunk
+        onProgress?.({ stage: 'streaming', chunk })
+      },
+      () => { streamDone = true },
+      (error: Error) => { streamError = error },
+      { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource },
+      undefined,
+      (thoughtChunk: string) => { onProgress?.({ stage: 'thinking', chunk: thoughtChunk }) }
+    )
+
+    if (streamError) throw streamError
+    if (!streamDone) throw new Error('LLM 流式响应未正常完成')
+
+    return fullResponse
   }
 
   private buildCombinedCollectionDocument(collectionContents: CollectionContent[]): string {

@@ -7,6 +7,10 @@ export const markdownComponents = {
     if (match) {
       return <CodeBlock language={match[1]} code={code} />
     }
+    // 无语言标注的多行代码块（含换行）也用 CodeBlock 渲染，避免被当作行内 code（A#6）
+    if (code.includes('\n')) {
+      return <CodeBlock language="text" code={code} />
+    }
     return (
       <code className={className} {...props}>
         {children}

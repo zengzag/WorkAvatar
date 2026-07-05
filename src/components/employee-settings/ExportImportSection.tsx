@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -26,6 +26,31 @@ interface ExportImportSectionProps {
   employeeName: string
 }
 
+// 导出包进度阶段映射（模块级常量，避免重复创建）
+const EXPORT_STAGE_MAP: Record<string, number> = {
+  preparing: 10,
+  adding_config: 30,
+  adding_skills: 50,
+  adding_knowledge: 70,
+  generating_checksum: 90,
+  saving: 95,
+  complete: 100,
+}
+
+// 导入包进度阶段映射（模块级常量，避免重复创建）
+const IMPORT_STAGE_MAP: Record<string, number> = {
+  reading: 10,
+  importing_config: 30,
+  importing_skills: 50,
+  importing_knowledge: 70,
+  complete: 100,
+}
+
+// 冲突处理策略类型，与后端 employee.importConfig/importPackage 期望的字面量联合类型一致
+type ConflictStrategy = 'merge' | 'skip' | 'overwrite'
+
+const DEFAULT_CONFLICT_STRATEGY: ConflictStrategy = 'merge'
+
 const ExportImportSection: React.FC<ExportImportSectionProps> = ({
   employeeId,
   employeeName,
@@ -38,9 +63,17 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState({ percent: 0, stage: '', detail: '' })
+  // 配置导入与包导入使用独立表单，避免互相串扰
   const [importForm] = Form.useForm()
+  const [importPackageForm] = Form.useForm()
 
-  const handleExportConfig = async () => {
+  const conflictOptions = useMemo(() => [
+    { value: 'merge', label: t('employeeExport.conflictMerge') },
+    { value: 'skip', label: t('employeeExport.conflictSkip') },
+    { value: 'overwrite', label: t('employeeExport.conflictOverwrite') },
+  ], [t])
+
+  const handleExportConfig = useCallback(async () => {
     try {
       const result = await window.electronAPI.app.showSaveDialog({
         title: t('employeeExport.selectExportPath'),
@@ -79,9 +112,9 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setExporting(false)
       setProgress({ percent: 0, stage: '', detail: '' })
     }
-  }
+  }, [employeeId, employeeName, modal, t])
 
-  const handleImportConfig = async () => {
+  const handleImportConfig = useCallback(async (conflictStrategy: ConflictStrategy) => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
         title: t('employeeExport.selectImportFile'),
@@ -89,8 +122,6 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         filters: [{ name: 'JSON', extensions: ['json'] }],
       })
       if (result.canceled || !result.filePaths.length) return
-
-      const conflictStrategy = importForm.getFieldValue('conflict_strategy') || 'merge'
 
       setImporting(true)
       setProgress({ percent: 30, stage: 'importing', detail: t('employeeExport.importingConfig') })
@@ -137,9 +168,9 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setImporting(false)
       setProgress({ percent: 0, stage: '', detail: '' })
     }
-  }
+  }, [modal, t])
 
-  const handleExportPackage = async () => {
+  const handleExportPackage = useCallback(async () => {
     try {
       const result = await window.electronAPI.app.showSaveDialog({
         title: t('employeeExport.selectExportPath'),
@@ -152,17 +183,8 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setProgress({ percent: 10, stage: 'preparing', detail: t('employeeExport.preparingPackage') })
 
       const cleanup = window.electronAPI.employee.onExportProgress((data) => {
-        const stageMap: Record<string, number> = {
-          preparing: 10,
-          adding_config: 30,
-          adding_skills: 50,
-          adding_knowledge: 70,
-          generating_checksum: 90,
-          saving: 95,
-          complete: 100,
-        }
         setProgress({
-          percent: stageMap[data.stage] || 50,
+          percent: EXPORT_STAGE_MAP[data.stage] || 50,
           stage: data.stage,
           detail: data.detail,
         })
@@ -197,9 +219,9 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setExporting(false)
       setProgress({ percent: 0, stage: '', detail: '' })
     }
-  }
+  }, [employeeId, employeeName, modal, t])
 
-  const handleImportPackage = async () => {
+  const handleImportPackage = useCallback(async (conflictStrategy: ConflictStrategy) => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
         title: t('employeeExport.selectImportFile'),
@@ -208,21 +230,12 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       })
       if (result.canceled || !result.filePaths.length) return
 
-      const conflictStrategy = importForm.getFieldValue('conflict_strategy') || 'merge'
-
       setImporting(true)
       setProgress({ percent: 10, stage: 'reading', detail: t('employeeExport.readingPackage') })
 
       const cleanup = window.electronAPI.employee.onImportProgress((data) => {
-        const stageMap: Record<string, number> = {
-          reading: 10,
-          importing_config: 30,
-          importing_skills: 50,
-          importing_knowledge: 70,
-          complete: 100,
-        }
         setProgress({
-          percent: stageMap[data.stage] || 50,
+          percent: IMPORT_STAGE_MAP[data.stage] || 50,
           stage: data.stage,
           detail: data.detail,
         })
@@ -272,13 +285,7 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
       setImporting(false)
       setProgress({ percent: 0, stage: '', detail: '' })
     }
-  }
-
-  const conflictOptions = [
-    { value: 'merge', label: t('employeeExport.conflictMerge') },
-    { value: 'skip', label: t('employeeExport.conflictSkip') },
-    { value: 'overwrite', label: t('employeeExport.conflictOverwrite') },
-  ]
+  }, [modal, t])
 
   return (
     <div>
@@ -351,12 +358,14 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         open={importConfigModalOpen}
         onCancel={() => setImportConfigModalOpen(false)}
         onOk={() => {
+          // 先读取表单值再关闭 Modal，避免表单卸载后取值异常
+          const strategy = importForm.getFieldValue('conflict_strategy') || DEFAULT_CONFLICT_STRATEGY
           setImportConfigModalOpen(false)
-          handleImportConfig()
+          handleImportConfig(strategy)
         }}
         okText={t('employeeExport.startImport')}
       >
-        <Form form={importForm} layout="vertical" initialValues={{ conflict_strategy: 'merge' }}>
+        <Form form={importForm} layout="vertical" initialValues={{ conflict_strategy: DEFAULT_CONFLICT_STRATEGY }}>
           <Form.Item
             name="conflict_strategy"
             label={t('employeeExport.conflictStrategyLabel')}
@@ -377,12 +386,14 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
         open={importPackageModalOpen}
         onCancel={() => setImportPackageModalOpen(false)}
         onOk={() => {
+          // 先读取表单值再关闭 Modal，避免表单卸载后取值异常
+          const strategy = importPackageForm.getFieldValue('conflict_strategy') || DEFAULT_CONFLICT_STRATEGY
           setImportPackageModalOpen(false)
-          handleImportPackage()
+          handleImportPackage(strategy)
         }}
         okText={t('employeeExport.startImport')}
       >
-        <Form form={importForm} layout="vertical" initialValues={{ conflict_strategy: 'merge' }}>
+        <Form form={importPackageForm} layout="vertical" initialValues={{ conflict_strategy: DEFAULT_CONFLICT_STRATEGY }}>
           <Form.Item
             name="conflict_strategy"
             label={t('employeeExport.conflictStrategyLabel')}
@@ -401,4 +412,4 @@ const ExportImportSection: React.FC<ExportImportSectionProps> = ({
   )
 }
 
-export default ExportImportSection
+export default React.memo(ExportImportSection)

@@ -129,7 +129,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
 
       CREATE TABLE IF NOT EXISTS tools (
@@ -198,8 +197,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
-      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
-      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
       -- 复合索引：支持 ORDER BY is_pinned DESC, updated_at DESC 的常见查询，避免 filesort
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
@@ -208,7 +205,7 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
-    this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'')
+    this.addColumnIfNotExists('employees', 'profile_json', "TEXT DEFAULT ''")
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
 
@@ -223,9 +220,16 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
 
+    // 延迟创建依赖后添加列的索引（必须在 addColumnIfNotExists 完成之后）
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
+    `)
+
     this.migrateEmployeeAddWorkspacePath()
 
-    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描）
+    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描；prefix='2,3' 预建前缀索引加速中文匹配）
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
@@ -233,7 +237,8 @@ class DatabaseService {
         content,
         memory_id UNINDEXED,
         employee_id UNINDEXED,
-        tokenize='unicode61'
+        tokenize='unicode61',
+        prefix='2,3'
       );
     `)
     // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）

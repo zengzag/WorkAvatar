@@ -3,6 +3,9 @@ import { safeStorage } from 'electron'
 import type { LLMModelConfig } from '../../shared/types'
 import { generateId } from './common-utils'
 import LLMLoggerService from './llm-logger.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('LLMClient')
 
 interface LLMProviderConfig {
   id: string
@@ -431,13 +434,25 @@ class LLMClientService {
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
+    // 联动外部 signal（如用户手动取消）
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        controller.abort()
+      } else {
+        options.signal.addEventListener('abort', () => controller.abort(), { once: true })
+      }
+    }
+
     try {
       const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: options?.signal,
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -482,6 +497,11 @@ class LLMClientService {
 
       return result
     } catch (error: any) {
+      clearTimeout(timeout)
+      // 超时导致的 abort 转换为可读错误（外部 signal 主动取消的不转换）
+      if (error.name === 'AbortError' && !options?.signal?.aborted) {
+        error.message = 'LLM API request timed out'
+      }
       if (!error.message?.includes('LLM API error')) {
         LLMLoggerService.getInstance().logCall({
           type: 'chat',
@@ -538,14 +558,26 @@ class LLMClientService {
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
+    // 联动外部 signal（如用户手动取消）
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort()
+      } else {
+        signal.addEventListener('abort', () => controller.abort(), { once: true })
+      }
+    }
+
     try {
       const thinkProcessor = createThinkProcessor()
       const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        ...(signal ? { signal } : {}),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -632,7 +664,8 @@ class LLMClientService {
                 onChunk(result.content)
               }
             }
-          } catch {
+          } catch (e) {
+            logger.debug('Failed to parse stream chunk', e)
           }
         }
       }
@@ -668,19 +701,26 @@ class LLMClientService {
 
       onDone()
     } catch (err: any) {
-      LLMLoggerService.getInstance().logCall({
-        type: 'chatStream',
-        source: logSource,
-        model: modelName,
-        providerType: config.provider_type,
-        request: {
-          messages,
-          temperature: body.temperature,
-          max_tokens: body.max_tokens,
-          stream: true,
-        },
-        error: err.message,
-      })
+      clearTimeout(timeout)
+      // 超时导致的 abort 转换为可读错误（外部 signal 主动取消的不转换）
+      if (err.name === 'AbortError' && !signal?.aborted) {
+        err.message = 'LLM API request timed out'
+      }
+      if (!err.message?.includes('LLM API error')) {
+        LLMLoggerService.getInstance().logCall({
+          type: 'chatStream',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: {
+            messages,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: true,
+          },
+          error: err.message,
+        })
+      }
       onError(err)
     }
   }
@@ -765,8 +805,15 @@ class LLMClientService {
     const updates: string[] = []
     const values: any[] = []
 
+    const ALLOWED_PROVIDER_COLUMNS = [
+      'name', 'provider_type', 'base_url', 'model',
+      'embedding_model', 'temperature', 'max_tokens',
+      'timeout_ms', 'extra_headers_json', 'extra_body_json',
+      'is_default', 'models_json'
+    ]
+
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
+      if (value !== undefined && ALLOWED_PROVIDER_COLUMNS.includes(key)) {
         updates.push(`${key} = ?`)
         if (key === 'is_default') {
           values.push(value ? 1 : 0)
@@ -923,4 +970,3 @@ class LLMClientService {
 }
 
 export default LLMClientService
-export { PROVIDER_DEFAULTS }

@@ -5,7 +5,7 @@ import path from 'path'
 import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import PathService from './path.service'
-import { EmployeeExportConfigService, EXPORT_CONFIG_VERSION, EmployeeConfigExport } from './employee-export-config.service'
+import { EmployeeExportConfigService, EmployeeConfigExport } from './employee-export-config.service'
 
 export const EXPORT_PACKAGE_VERSION = '2.0.0'
 
@@ -38,64 +38,19 @@ export class EmployeeExportPackageService {
     exportPath: string,
     onProgress?: (stage: string, detail: string) => void
   ): Promise<{ success: boolean; error?: string }> {
-    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any
-    if (!employee) return { success: false, error: 'Employee not found' }
-
     try {
       onProgress?.('preparing', 'Preparing employee package...')
 
-      const skills = this.db.getDb().prepare(
-        'SELECT * FROM skills WHERE employee_id = ?'
-      ).all(employeeId) as any[]
+      // 复用 config service 的数据构建逻辑，避免两处重复维护
+      const { data: configData, error: buildError } = this.configService.buildConfigData(employeeId)
+      if (!configData) return { success: false, error: buildError || 'Employee not found' }
 
-      const employeeTools = this.db.getDb().prepare(
-        'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
-      ).all(employeeId) as any[]
-
+      // 重新查询 installedSkills 以供后续 skill 文件打包使用
       const installedSkills = this.db.getDb().prepare(
-        'SELECT es.skill_id, es.is_enabled, sk.name as skill_name FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
+        'SELECT es.skill_id, es.is_enabled, sk.name as skill_name, sk.install_path FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
       ).all(employeeId) as any[]
 
-      const configData: EmployeeConfigExport = {
-        version: EXPORT_CONFIG_VERSION,
-        type: 'workavatar-employee-config',
-        exportedAt: new Date().toISOString(),
-        checksum: '',
-        employee: {
-          name: employee.name,
-          description: employee.description,
-          avatar_type: employee.avatar_type,
-          profile_json: employee.profile_json || '',
-          memory_enabled: !!employee.memory_enabled,
-          default_skill_id: employee.default_skill_id || null,
-        },
-        skills: skills.map(s => ({
-          type: s.type,
-          name: s.name,
-          description: s.description,
-          config_json: s.config_json,
-          prompt_template: s.prompt_template || undefined,
-          rules_json: s.rules_json,
-          test_cases_json: s.test_cases_json,
-          input_schema_json: s.input_schema_json || undefined,
-          output_schema_json: s.output_schema_json || undefined,
-          priority: s.priority,
-          is_enabled: !!s.is_enabled,
-        })),
-        tools: employeeTools.map(t => ({
-          tool_id: t.tool_id,
-          is_enabled: !!t.is_enabled,
-          config_json: t.config_json || '{}',
-        })),
-        installedSkills: installedSkills.map(sk => ({
-          skill_id: sk.skill_id,
-          skill_name: sk.skill_name,
-          is_enabled: !!sk.is_enabled,
-        })),
-      }
-
-      const dataStr = JSON.stringify(configData, null, 2)
-      configData.checksum = crypto.createHash('sha256').update(dataStr).digest('hex')
+      configData.checksum = this.configService.computeChecksum(configData)
 
       const zip = new AdmZip()
 
@@ -105,12 +60,9 @@ export class EmployeeExportPackageService {
       onProgress?.('adding_skills', 'Adding skill definitions...')
       let skillCount = 0
       for (const skillRef of installedSkills) {
-        const installedSkill = this.db.getDb().prepare(
-          'SELECT * FROM installed_skills WHERE id = ?'
-        ).get(skillRef.skill_id) as any
-
-        if (installedSkill && installedSkill.install_path && fs.existsSync(installedSkill.install_path)) {
-          this.addDirectoryToZip(zip, installedSkill.install_path, `skills/${installedSkill.name}`)
+        // skillRef 已包含 install_path 和 skill_name，无需再查 installed_skills
+        if (skillRef.install_path && fs.existsSync(skillRef.install_path)) {
+          this.addDirectoryToZip(zip, skillRef.install_path, `skills/${skillRef.skill_name}`)
           skillCount++
         }
       }
@@ -137,7 +89,7 @@ export class EmployeeExportPackageService {
         version: EXPORT_PACKAGE_VERSION,
         type: 'workavatar-employee-package',
         exportedAt: new Date().toISOString(),
-        employeeName: employee.name,
+        employeeName: configData.employee.name,
         checksum: '',
         contents: {
           hasConfig: true,
@@ -188,7 +140,7 @@ export class EmployeeExportPackageService {
         return { success: false, error: 'Invalid package: not a WorkAvatar employee package' }
       }
 
-      const versionCheck = this.configService.checkVersionCompatibility(manifest.version)
+      const versionCheck = this.configService.checkVersionCompatibility(manifest.version, EXPORT_PACKAGE_VERSION)
       if (!versionCheck.compatible) {
         return { success: false, error: versionCheck.message }
       }
@@ -209,15 +161,14 @@ export class EmployeeExportPackageService {
       const configData: EmployeeConfigExport = JSON.parse(configEntry.getData().toString('utf-8'))
 
       const configChecksum = configData.checksum
-      configData.checksum = ''
-      const configStr = JSON.stringify(configData, null, 2)
-      const computedConfigChecksum = crypto.createHash('sha256').update(configStr).digest('hex')
+      const computedConfigChecksum = this.configService.computeChecksum(configData)
       if (configChecksum && computedConfigChecksum !== configChecksum) {
         return { success: false, error: 'Configuration checksum verification failed' }
       }
 
       onProgress?.('importing_config', 'Importing employee configuration...')
-      const configResult = this.configService.importConfigFromData(configData, conflictStrategy)
+      // configData 总是创建新员工，工具/已安装技能的冲突策略由本方法的技能导入循环处理
+      const configResult = this.configService.importConfigFromData(configData)
       if (!configResult.success) {
         return { success: false, error: configResult.error }
       }
@@ -243,49 +194,68 @@ export class EmployeeExportPackageService {
         }
       }
 
+      // Phase 1：写所有技能文件到磁盘（文件写入是幂等的，覆盖安全）
+      const skillMetaList: Array<{
+        skillName: string
+        skillMdContent: string
+        manifest2: ReturnType<EmployeeExportPackageService['parseSkillMdManifest']>
+        skillInstallPath: string
+        existingSkill: any
+      }> = []
+
       for (const skillDir of skillDirs) {
         const skillMdEntry = zip.getEntry(`skills/${skillDir}/SKILL.md`)
-        if (skillMdEntry) {
-          const skillMdContent = skillMdEntry.getData().toString('utf-8')
-          const skillName = this.parseSkillNameFromMd(skillMdContent) || skillDir
+        if (!skillMdEntry) continue
 
-          const existingSkill = this.db.getDb().prepare(
-            'SELECT id FROM installed_skills WHERE name = ?'
-          ).get(skillName) as any
+        const skillMdContent = skillMdEntry.getData().toString('utf-8')
+        const skillName = this.parseSkillNameFromMd(skillMdContent) || skillDir
 
-          if (existingSkill) {
-            if (conflictStrategy === 'skip') {
-              warnings.push(`Skill "${skillName}" already exists, skipped`)
-              continue
-            }
+        const existingSkill = this.db.getDb().prepare(
+          'SELECT id FROM installed_skills WHERE name = ?'
+        ).get(skillName) as any
+
+        if (existingSkill && conflictStrategy === 'skip') {
+          warnings.push(`Skill "${skillName}" already exists, skipped`)
+          continue
+        }
+
+        const skillInstallPath = path.join(PathService.getInstance().getSkillsDir(), skillDir)
+        if (!fs.existsSync(skillInstallPath)) {
+          fs.mkdirSync(skillInstallPath, { recursive: true })
+        }
+
+        const skillFiles = zip.getEntries().filter(e =>
+          e.entryName.startsWith(`skills/${skillDir}/`) && !e.isDirectory
+        )
+        for (const file of skillFiles) {
+          const relativePath = file.entryName.substring(`skills/${skillDir}/`.length)
+          const destPath = path.join(skillInstallPath, relativePath)
+          const destDir = path.dirname(destPath)
+          if (!fs.existsSync(destDir)) {
+            fs.mkdirSync(destDir, { recursive: true })
           }
+          fs.writeFileSync(destPath, file.getData())
+        }
 
-          const skillInstallPath = path.join(PathService.getInstance().getSkillsDir(), skillDir)
+        skillMetaList.push({
+          skillName,
+          skillMdContent,
+          manifest2: this.parseSkillMdManifest(skillMdContent),
+          skillInstallPath,
+          existingSkill,
+        })
+      }
 
-          if (!fs.existsSync(skillInstallPath)) {
-            fs.mkdirSync(skillInstallPath, { recursive: true })
-          }
-
-          const skillFiles = zip.getEntries().filter(e =>
-            e.entryName.startsWith(`skills/${skillDir}/`) && !e.isDirectory
-          )
-
-          for (const file of skillFiles) {
-            const relativePath = file.entryName.substring(`skills/${skillDir}/`.length)
-            const destPath = path.join(skillInstallPath, relativePath)
-            const destDir = path.dirname(destPath)
-            if (!fs.existsSync(destDir)) {
-              fs.mkdirSync(destDir, { recursive: true })
-            }
-            fs.writeFileSync(destPath, file.getData())
-          }
+      // Phase 2：所有 DB 操作放在单个事务中，避免部分失败导致文件/DB 不一致
+      this.db.getDb().transaction(() => {
+        const now = Math.floor(Date.now() / 1000)
+        for (const meta of skillMetaList) {
+          const { skillName, skillMdContent, manifest2, skillInstallPath, existingSkill } = meta
+          const isEnabled = skillEnabledMap.has(skillName) ? (skillEnabledMap.get(skillName)! ? 1 : 0) : 1
 
           if (!existingSkill) {
+            // 新技能：INSERT installed_skills + employee_skills
             const skillId = generateId()
-            const now = Math.floor(Date.now() / 1000)
-            const manifest2 = this.parseSkillMdManifest(skillMdContent)
-            const isEnabled = skillEnabledMap.has(skillName) ? (skillEnabledMap.get(skillName)! ? 1 : 0) : 1
-
             this.db.getDb().prepare(`
               INSERT INTO installed_skills (id, name, description, version, author, tags_json, install_path, manifest_json, skill_md_content, is_enabled, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
@@ -303,9 +273,38 @@ export class EmployeeExportPackageService {
               INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled, config_json, created_at)
               VALUES (?, ?, ?, ?, '{}', ?)
             `).run(esId, employeeId, skillId, isEnabled, now)
+          } else {
+            // 已存在技能：确保 employee_skills 关联存在
+            const existingAssoc = this.db.getDb().prepare(
+              'SELECT id FROM employee_skills WHERE employee_id = ? AND skill_id = ?'
+            ).get(employeeId, existingSkill.id) as any
+            if (!existingAssoc) {
+              const esId = generateId()
+              this.db.getDb().prepare(`
+                INSERT INTO employee_skills (id, employee_id, skill_id, is_enabled, config_json, created_at)
+                VALUES (?, ?, ?, ?, '{}', ?)
+              `).run(esId, employeeId, existingSkill.id, isEnabled, now)
+            }
+
+            // overwrite 策略：更新 installed_skills 的元数据（description/version/manifest 等）
+            if (conflictStrategy === 'overwrite') {
+              this.db.getDb().prepare(`
+                UPDATE installed_skills
+                SET description = ?, version = ?, author = ?, tags_json = ?, manifest_json = ?, skill_md_content = ?
+                WHERE id = ?
+              `).run(
+                manifest2.description || '',
+                manifest2.version || '1.0.0',
+                manifest2.author || '',
+                JSON.stringify(manifest2.tags || []),
+                JSON.stringify(manifest2),
+                skillMdContent,
+                existingSkill.id
+              )
+            }
           }
         }
-      }
+      })()
 
       onProgress?.('importing_memories', 'Importing employee memories...')
       const memoriesEntry = zip.getEntry('employee-memories.json')
@@ -313,17 +312,20 @@ export class EmployeeExportPackageService {
         try {
           const memoryData = JSON.parse(memoriesEntry.getData().toString('utf-8')) as any[]
           const now = Math.floor(Date.now() / 1000)
-          for (const m of memoryData) {
-            const mId = generateId()
-            this.db.getDb().prepare(`
-              INSERT INTO employee_memories (id, employee_id, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              mId, employeeId, m.key, m.topic, m.content || '',
-              m.is_pinned ? 1 : 0, m.source || 'auto', m.importance || 'normal',
-              m.created_at || now, m.updated_at || now, m.last_referenced_at || null
-            )
-          }
+          // 整体放在单个事务中，保证记忆导入的原子性
+          this.db.getDb().transaction(() => {
+            for (const m of memoryData) {
+              const mId = generateId()
+              this.db.getDb().prepare(`
+                INSERT INTO employee_memories (id, employee_id, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                mId, employeeId, m.key, m.topic, m.content || '',
+                m.is_pinned ? 1 : 0, m.source || 'auto', m.importance || 'normal',
+                m.created_at || now, m.updated_at || now, m.last_referenced_at || null
+              )
+            }
+          })()
           if (memoryData.length > 0) {
             onProgress?.('importing_memories', `Imported ${memoryData.length} memories`)
           }
@@ -381,9 +383,9 @@ export class EmployeeExportPackageService {
       if (versionMatch) result.version = versionMatch[1].trim()
       const authorMatch = frontMatter.match(/^author:\s*(.+)$/m)
       if (authorMatch) result.author = authorMatch[1].trim()
-      const tagsMatch = frontMatter.match(/^tags:\s*\n((\s+-\s+.+\n?)+)/m)
+      const tagsMatch = frontMatter.match(/^tags:\s*(.+)$/m)
       if (tagsMatch) {
-        result.tags = tagsMatch[1].split('\n').map(t => t.replace(/^\s*-\s*/, '').trim()).filter(Boolean)
+        result.tags = tagsMatch[1].split(',').map(t => t.trim()).filter(Boolean)
       }
     }
     return result

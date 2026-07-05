@@ -170,7 +170,8 @@ export class InternetSearchService {
       show: true,
       webPreferences: {
         nodeIntegration: false,
-        contextIsolation: true
+        contextIsolation: true,
+        sandbox: true
       }
     })
 

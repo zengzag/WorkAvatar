@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Typography, Select, Slider, Button, Divider, Card, Space, App, theme } from 'antd'
 import { GlobalOutlined, ExportOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -13,6 +13,15 @@ interface EngineInfo {
 
 const SEARCH_RESULT_COUNT_MIN = 1
 const SEARCH_RESULT_COUNT_MAX = 10
+
+// 滑块刻度（模块级常量，避免每次渲染重建）
+const RESULT_COUNT_MARKS: Record<number, string> = {
+  1: '1',
+  3: '3',
+  5: '5',
+  7: '7',
+  10: '10',
+}
 
 const getDefaultEngineKey = () => 'web_search_engine'
 const getDefaultResultCountKey = () => 'web_search_result_count'
@@ -36,7 +45,11 @@ const InternetSearchSettings: React.FC = () => {
       if (engineVal) setDefaultEngine(engineVal)
 
       const countVal = await window.electronAPI.settings.get({ key: getDefaultResultCountKey() })
-      if (countVal) setResultCount(parseInt(countVal, 10))
+      // 明确判空，避免 "0" 被当作 falsy 跳过
+      if (countVal !== undefined && countVal !== null && countVal !== '') {
+        const parsed = parseInt(countVal, 10)
+        if (!Number.isNaN(parsed)) setResultCount(parsed)
+      }
     } catch {
       // ignore load errors
     }
@@ -46,7 +59,9 @@ const InternetSearchSettings: React.FC = () => {
     loadSettings()
   }, [loadSettings])
 
-  const handleEngineChange = async (value: string) => {
+  const engineOptions = useMemo(() => engines.map((e) => ({ label: e.name, value: e.id })), [engines])
+
+  const handleEngineChange = useCallback(async (value: string) => {
     setDefaultEngine(value)
     try {
       await window.electronAPI.settings.set({ key: getDefaultEngineKey(), value })
@@ -54,18 +69,18 @@ const InternetSearchSettings: React.FC = () => {
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [message, t])
 
-  const handleResultCountChange = async (value: number) => {
+  const handleResultCountChange = useCallback(async (value: number) => {
     setResultCount(value)
     try {
       await window.electronAPI.settings.set({ key: getDefaultResultCountKey(), value: String(value) })
     } catch {
       // save failed silently
     }
-  }
+  }, [])
 
-  const handleOpenWindow = async (engine: string) => {
+  const handleOpenWindow = useCallback(async (engine: string) => {
     setLoading(true)
     try {
       const result = await window.electronAPI.searchWindow.open(engine)
@@ -77,7 +92,7 @@ const InternetSearchSettings: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [message, t])
 
   return (
     <div>
@@ -88,9 +103,9 @@ const InternetSearchSettings: React.FC = () => {
           <Text strong>{t('settings.defaultSearchEngine')}</Text>
           <Select
             value={defaultEngine}
-            onChange={(value) => handleEngineChange(value)}
+            onChange={handleEngineChange}
             style={{ width: 200 }}
-            options={engines.map((e) => ({ label: e.name, value: e.id }))}
+            options={engineOptions}
           />
         </div>
 
@@ -106,8 +121,8 @@ const InternetSearchSettings: React.FC = () => {
             max={SEARCH_RESULT_COUNT_MAX}
             value={resultCount}
             onChange={(value) => setResultCount(value)}
-            onChangeComplete={(value) => handleResultCountChange(value)}
-            marks={{ 1: '1', 3: '3', 5: '5', 7: '7', 10: '10' }}
+            onChangeComplete={handleResultCountChange}
+            marks={RESULT_COUNT_MARKS}
           />
         </div>
 
@@ -121,7 +136,7 @@ const InternetSearchSettings: React.FC = () => {
           <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
             {t('settings.searchWindowDesc')}
           </Text>
-          <Space direction="vertical" style={{ width: '100%' }}>
+          <Space orientation="vertical" style={{ width: '100%' }}>
             {engines.map((engine) => (
               <Card
                 key={engine.id}
@@ -159,4 +174,4 @@ const InternetSearchSettings: React.FC = () => {
   )
 }
 
-export default InternetSearchSettings
+export default React.memo(InternetSearchSettings)

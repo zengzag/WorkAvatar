@@ -5,6 +5,7 @@ import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
 import { getDefaultProviderId } from '../common-utils'
 import { createLogger } from '../logger'
+import { callLLMForJSON } from './kms-llm-helpers'
 
 const logger = createLogger('KMS-SearchAgent')
 
@@ -142,6 +143,7 @@ class KMSSearchAgentService {
 
   /**
    * 执行智能检索
+   * 整体流程：初始化 → 查询类型识别 → 获取文件清单 → 检索路径规划 → 多轮检索 → 信息补充 → 内容提纯 → 输出
    */
   async search(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
     const steps: SearchTraceStep[] = []
@@ -181,6 +183,7 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
+    // === 阶段 1：查询类型识别 ===
     addStep({ phase: '查询类型识别', action: '分析查询意图', type: 'llm' })
     const t0 = Date.now()
     const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal)
@@ -194,6 +197,7 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
+    // === 阶段 2：获取文件清单 + 作用域摘要 ===
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
     const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds)
@@ -205,7 +209,6 @@ class KMSSearchAgentService {
       durationMs: Date.now() - t1,
     })
 
-    // 获取目录摘要（合集模式下返回合集摘要）
     const dirSummaries = this.getScopeSummaries(options?.dirIds, options?.collectionIds)
     if (dirSummaries.length > 0) {
       addStep({
@@ -217,6 +220,7 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
+    // === 阶段 3：检索路径规划 ===
     addStep({ phase: '检索路径规划', action: 'LLM 规划检索策略', type: 'plan' })
     const t2 = Date.now()
     const searchPlan = await this.planSearchPath(
@@ -233,12 +237,85 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
+    // === 阶段 4：多轮检索执行 ===
+    const { allResults, roundsExecuted } = await this.executeMultiRoundSearch(
+      searchPlan, baseSearchOpts, query, maxRounds, topK,
+      llmClient, searchEngine, options?.signal, addStep,
+    )
+
+    addStep({
+      phase: '检索完成',
+      action: `共收集 ${allResults.length} 条原始结果`,
+      type: 'result',
+    })
+
+    if (options?.signal?.aborted) throw new Error('Search aborted')
+
+    // === 阶段 5：信息补充（搜索结果不足或LLM规划了候选文件时） ===
+    const supplementaryContent = await this.gatherSupplementaryContent(
+      allResults, searchPlan, topK, options?.signal, addStep,
+    )
+
+    if (options?.signal?.aborted) throw new Error('Search aborted')
+
+    // === 阶段 6：内容提纯 ===
+    addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
+    const t5 = Date.now()
+    const distilled = await this.distillResults(
+      query,
+      queryType,
+      allResults,
+      supplementaryContent,
+      llmClient,
+      llmConfig.providerId,
+      llmConfig.modelId,
+      options?.signal
+    )
+
+    addStep({
+      phase: '内容提纯',
+      action: `生成结论（${distilled.conclusion.length} 字符，${distilled.sources.length} 个来源）`,
+      type: 'result',
+      durationMs: Date.now() - t5,
+    })
+
+    // 记录搜索命中
+    this.logSearchHits(allResults)
+
+    return {
+      queryType,
+      queryTypeLabel: QUERY_TYPE_LABELS[queryType],
+      conclusion: distilled.conclusion,
+      sources: distilled.sources,
+      searchRounds: roundsExecuted,
+      searchTrace: trace,
+      searchSteps: steps,
+    }
+  }
+
+  /**
+   * 阶段 4：执行多轮检索
+   * - 第一轮使用语义搜索（若有 embedding 配置），后续轮次根据规划决定
+   * - 去重合并结果
+   * - 结果充足时提前结束；首轮无结果时用原始查询降级重试
+   */
+  private async executeMultiRoundSearch(
+    searchPlan: { queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] },
+    baseSearchOpts: SearchOptions,
+    originalQuery: string,
+    maxRounds: number,
+    topK: number,
+    llmClient: LLMClientService,
+    searchEngine: KMSSearchEngineService,
+    signal: AbortSignal | undefined,
+    addStep: (step: SearchTraceStep) => void,
+  ): Promise<{ allResults: SearchResult[]; roundsExecuted: number }> {
     const allResults: SearchResult[] = []
     const seenKeys = new Set<string>()
     let roundsExecuted = 0
 
     for (let i = 0; i < Math.min(searchPlan.queries.length, maxRounds); i++) {
-      if (options?.signal?.aborted) throw new Error('Search aborted')
+      if (signal?.aborted) throw new Error('Search aborted')
 
       const subQuery = searchPlan.queries[i]
       const t3 = Date.now()
@@ -293,7 +370,7 @@ class KMSSearchAgentService {
       // 如果首轮无结果，尝试放宽搜索
       if (i === 0 && results.length === 0) {
         addStep({ phase: `第${i + 1}轮检索`, action: '首轮无结果，尝试使用原始查询重试', type: 'search' })
-        const fallbackResults = searchEngine.search(query, queryEmbedding, baseSearchOpts)
+        const fallbackResults = searchEngine.search(originalQuery, queryEmbedding, baseSearchOpts)
         for (const r of fallbackResults) {
           const key = this.getResultKey(r)
           if (!seenKeys.has(key)) {
@@ -304,89 +381,62 @@ class KMSSearchAgentService {
       }
     }
 
+    return { allResults, roundsExecuted }
+  }
+
+  /**
+   * 阶段 5：补充读取文件片段
+   * - 当搜索结果不足，或LLM规划了候选文件时，读取相关文件的开头片段补充上下文
+   * - 最多读取 5 个文件，每个文件读取 READ_CHUNK_SIZE 字符
+   */
+  private async gatherSupplementaryContent(
+    allResults: SearchResult[],
+    searchPlan: { candidateFileIds: string[] },
+    topK: number,
+    signal: AbortSignal | undefined,
+    addStep: (step: SearchTraceStep) => void,
+  ): Promise<string> {
+    const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
+    if (filesToRead.length === 0) {
+      return ''
+    }
+
     addStep({
-      phase: '检索完成',
-      action: `共收集 ${allResults.length} 条原始结果`,
-      type: 'result',
+      phase: '信息补充',
+      action: `读取 ${filesToRead.length} 个文件片段补充信息`,
+      detail: filesToRead.map(f => f.fileName).join(', '),
+      type: 'read',
     })
 
-    if (options?.signal?.aborted) throw new Error('Search aborted')
-
-    // 如果搜索结果不足，或LLM规划了候选文件，读取相关文件片段补充信息
-    let supplementaryContent = ''
-    const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
-
-    if (filesToRead.length > 0) {
+    const t4 = Date.now()
+    const readChunks: string[] = []
+    for (const fileInfo of filesToRead.slice(0, 5)) {
+      if (signal?.aborted) throw new Error('Search aborted')
+      try {
+        const chunk = await this.readFileChunk(fileInfo.fileId, 0, READ_CHUNK_SIZE)
+        if (chunk) {
+          readChunks.push(`【${fileInfo.fileName}】\n${chunk}`)
+          addStep({
+            phase: '信息补充',
+            action: `读取文件片段: ${fileInfo.fileName}`,
+            detail: `${chunk.length} 字符`,
+            type: 'read',
+          })
+        }
+      } catch (err) {
+        logger.warn(`Failed to read chunk from ${fileInfo.fileName}:`, err)
+      }
+    }
+    const supplementaryContent = readChunks.join('\n\n---\n\n')
+    if (supplementaryContent) {
       addStep({
         phase: '信息补充',
-        action: `读取 ${filesToRead.length} 个文件片段补充信息`,
-        detail: filesToRead.map(f => f.fileName).join(', '),
+        action: `补充读取完成，共 ${supplementaryContent.length} 字符`,
         type: 'read',
+        durationMs: Date.now() - t4,
       })
-
-      const t4 = Date.now()
-      const readChunks: string[] = []
-      for (const fileInfo of filesToRead.slice(0, 5)) { // 最多读取5个文件
-        try {
-          const chunk = await this.readFileChunk(fileInfo.fileId, 0, READ_CHUNK_SIZE)
-          if (chunk) {
-            readChunks.push(`【${fileInfo.fileName}】\n${chunk}`)
-            addStep({
-              phase: '信息补充',
-              action: `读取文件片段: ${fileInfo.fileName}`,
-              detail: `${chunk.length} 字符`,
-              type: 'read',
-            })
-          }
-        } catch (err) {
-          logger.warn(`Failed to read chunk from ${fileInfo.fileName}:`, err)
-        }
-      }
-      supplementaryContent = readChunks.join('\n\n---\n\n')
-      if (supplementaryContent) {
-        addStep({
-          phase: '信息补充',
-          action: `补充读取完成，共 ${supplementaryContent.length} 字符`,
-          type: 'read',
-          durationMs: Date.now() - t4,
-        })
-      }
     }
-
-    if (options?.signal?.aborted) throw new Error('Search aborted')
-
-    addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
-    const t5 = Date.now()
-    const distilled = await this.distillResults(
-      query,
-      queryType,
-      allResults,
-      supplementaryContent,
-      llmClient,
-      llmConfig.providerId,
-      llmConfig.modelId,
-      options?.signal
-    )
-
-    addStep({
-      phase: '内容提纯',
-      action: `生成结论（${distilled.conclusion.length} 字符，${distilled.sources.length} 个来源）`,
-      type: 'result',
-      durationMs: Date.now() - t5,
-    })
-
-    // 记录搜索命中
-    this.logSearchHits(allResults)
-
-    return {
-      queryType,
-      queryTypeLabel: QUERY_TYPE_LABELS[queryType],
-      conclusion: distilled.conclusion,
-      sources: distilled.sources,
-      searchRounds: roundsExecuted,
-      searchTrace: trace,
-      searchSteps: steps,
-    }
+    return supplementaryContent
   }
 
   /**
@@ -711,12 +761,22 @@ ${fileListText || '（无文件清单）'}
 - 用户问"用户登录失败怎么排查" → {"queries": ["登录 失败 排查", "登录 错误 日志", "登录 问题 诊断"], ...}`
 
     try {
-      const result = await llmClient.chat(providerId, [
-        { role: 'system', content: '你是一个搜索引擎查询规划器，只返回JSON。' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.1, max_tokens: 400, model: modelId, signal, logSource: 'kms_agent_plan' })
+      const parsed = await callLLMForJSON<{
+        queries: string[]
+        use_semantic_for_all: boolean
+        candidate_file_indices: number[]
+      }>(
+        llmClient,
+        providerId,
+        modelId,
+        [
+          { role: 'system', content: '你是一个搜索引擎查询规划器，只返回JSON。' },
+          { role: 'user', content: prompt },
+        ],
+        { queries: [], use_semantic_for_all: false, candidate_file_indices: [] },
+        { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_agent_plan' },
+      )
 
-      const parsed = JSON.parse(result)
       const queries = Array.isArray(parsed.queries) && parsed.queries.length > 0
         ? parsed.queries.slice(0, 3).map((q: any) => String(q).trim()).filter(Boolean)
         : [query]
@@ -765,12 +825,16 @@ ${fileListText || '（无文件清单）'}
       }
     }
 
-    // 添加LLM规划的候选文件
-    for (const fileId of candidateFileIds.slice(0, 3)) {
-      if (!fileMap.has(fileId)) {
-        const file = this.db.prepare('SELECT file_name FROM kms_files WHERE id = ?').get(fileId) as any
-        if (file) {
-          fileMap.set(fileId, file.file_name)
+    // 批量查询 LLM 规划的候选文件，消除 N+1
+    const candidateIds = candidateFileIds.filter(id => !fileMap.has(id)).slice(0, 3)
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT id, file_name FROM kms_files WHERE id IN (${placeholders})`
+      ).all(...candidateIds) as any[]
+      for (const row of rows) {
+        if (!fileMap.has(row.id)) {
+          fileMap.set(row.id, row.file_name)
         }
       }
     }
@@ -915,14 +979,13 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
   }
 
   private logSearchHits(results: SearchResult[]): void {
-    const fileIds = new Set(results.map(r => r.file_id))
-    const crawler = require('./kms-crawler.service').default.getInstance()
-    for (const fileId of fileIds) {
-      try {
-        crawler.logFileAccess(fileId, 'search_hit')
-      } catch (error) {
-        logger.debug('Failed to log file access for search hit', fileId, error)
-      }
+    const fileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+    if (fileIds.length === 0) return
+    try {
+      const crawler = require('./kms-crawler.service').default.getInstance()
+      crawler.logFileAccessBatch(fileIds, 'search_hit')
+    } catch (error) {
+      logger.debug('Failed to log search hits batch', error)
     }
   }
 }

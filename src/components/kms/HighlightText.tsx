@@ -100,4 +100,4 @@ const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keyword
   return <>{segments}</>
 }
 
-export default HighlightText
+export default React.memo(HighlightText)

@@ -5,10 +5,8 @@ export type MemoryStrategy = 'sliding_window' | 'summary' | 'sliding_window_with
 export interface MemoryConfig {
   maxTokens: number
   strategy: MemoryStrategy
-  reservedSystemTokens: number
   reservedResponseTokens: number
   recentTurnsToKeep: number
-  summaryMaxTokens: number
 }
 
 export interface MemoryStats {
@@ -33,8 +31,6 @@ export interface IMemoryManager {
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   maxTokens: 128000,
   strategy: 'sliding_window',
-  reservedSystemTokens: 4096,
   reservedResponseTokens: 4096,
   recentTurnsToKeep: 10,
-  summaryMaxTokens: 2000,
 }

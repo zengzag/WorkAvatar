@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Button, Empty, Spin, Modal, Space, Tag, Tooltip, Popconfirm,
-  Drawer, Table, message, theme, Typography, Tree, Alert, Progress,
+  Drawer, Table, App, theme, Typography, Tree, Alert,
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, FileOutlined, FolderOutlined,
@@ -16,19 +16,12 @@ import {
   KMSCollectionEditModal,
   KMSCollectionSummaryModal,
   KMSParagraphPreviewDrawer,
+  type CollectionItem,
 } from './collection'
 import { formatFileSize } from '../../utils/format'
+import { formatTime } from './kms-columns'
 
 const { Text, Paragraph } = Typography
-
-interface CollectionItem {
-  id: string
-  name: string
-  description: string
-  file_count: number
-  created_at: number
-  updated_at: number
-}
 
 interface CollectionFile {
   id: string
@@ -70,16 +63,6 @@ interface FileSummary {
   updated_at?: number
 }
 
-interface TocNode {
-  id: string
-  title: string
-  titlePath: string
-  level: number
-  paragraphIndex: number
-  startOffset: number
-  endOffset: number
-}
-
 interface ParagraphItem {
   id: string
   title: string
@@ -94,7 +77,6 @@ interface ParagraphItem {
 
 interface FileDetailCache {
   summary: FileSummary | null
-  toc: TocNode[]
   paragraphs: ParagraphItem[]
   loading: boolean
   error?: string
@@ -119,11 +101,13 @@ interface KMSCollectionsViewProps {
   onPreviewFile?: (file: { file_id: string; file_name: string; file_path: string; text: string; match_type: string }) => void
 }
 
-const formatTime = (ts: number): string => {
-  if (!ts) return '-'
-  const d = new Date(ts * 1000)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
+/** 合集深度处理轮询间隔（毫秒） */
+const POLL_INTERVAL_MS = 3000
+
+/** 8 阶段定义（用于计算总体百分比） */
+const STAGE_KEYS = ['parsing', 'paragraph_split', 'toc', 'paragraph_summary', 'doc_summary', 'embedding', 'collection_summary', 'collection_embedding'] as const
+const STAGE_INDEX: Record<string, number> = {}
+STAGE_KEYS.forEach((k, i) => { STAGE_INDEX[k] = i })
 
 const parseJsonArray = (json?: string): string[] => {
   if (!json) return []
@@ -176,6 +160,7 @@ const SUPPORTED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv
 const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInCollection, onPreviewFile }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const { message } = App.useApp()
 
   const [collections, setCollections] = useState<CollectionItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -213,27 +198,14 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [summaryGenerating, setSummaryGenerating] = useState(false)
 
   // 合集深度处理进度弹窗
+  // processCollection 仅持有正在处理的合集标识，不引用完整 CollectionItem，避免构造 dummy 对象
   const [processModalOpen, setProcessModalOpen] = useState(false)
-  const [processCollection, setProcessCollection] = useState<CollectionItem | null>(null)
+  const [processCollection, setProcessCollection] = useState<{ id: string; name: string } | null>(null)
 
   // 后台处理中合集状态跟踪（弹窗关闭后继续在后台跟踪进度）
   const [processingMap, setProcessingMap] = useState<Record<string, ProcessingCollectionState>>({})
-  // 已完成的合集处理（用于刷新列表，弹出后短暂保留）
-  const processingMapRef = useRef<Record<string, ProcessingCollectionState>>({})
   // 进度事件订阅引用
   const processingUnsubscribeRef = useRef<(() => void) | null>(null)
-
-  // 文件段落增量重新生成进度跟踪（按 fileId 过滤，不含 collectionId）
-  const [regenerateState, setRegenerateState] = useState<{
-    fileId: string
-    fileName: string
-    phase: string
-    message: string
-    percent: number
-  } | null>(null)
-  const regenerateUnsubscribeRef = useRef<(() => void) | null>(null)
-  // loadFileDetail 的 ref，避免 useEffect 因 detailCache 变化而频繁重订阅
-  const loadFileDetailRef = useRef<(fileId: string) => void>(() => {})
 
   // 章节预览抽屉状态
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -241,11 +213,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     title: string; titlePath: string; content: string; summary: string; keywords: string[]
   } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-
-  // 8 阶段定义（用于计算总体百分比）
-  const STAGE_KEYS = ['parsing', 'paragraph_split', 'toc', 'paragraph_summary', 'doc_summary', 'embedding', 'collection_summary', 'collection_embedding']
-  const STAGE_INDEX: Record<string, number> = {}
-  STAGE_KEYS.forEach((k, i) => { STAGE_INDEX[k] = i })
 
   const loadCollections = useCallback(async () => {
     setLoading(true)
@@ -257,7 +224,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [message])
 
   // 加载所有合集的摘要与统计
   const loadAllSummaryAndStats = useCallback(async () => {
@@ -296,7 +263,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           delete next[progress.collectionId!]
           return next
         })
-        delete processingMapRef.current[progress.collectionId!]
         // 刷新合集列表与摘要
         loadCollections()
         loadAllSummaryAndStats()
@@ -325,7 +291,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         lastUpdated: Math.floor(Date.now() / 1000),
       }
       setProcessingMap((prev) => ({ ...prev, [progress.collectionId!]: state }))
-      processingMapRef.current[progress.collectionId!] = state
     })
 
     return () => {
@@ -335,64 +300,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       }
     }
   }, [loadCollections, loadAllSummaryAndStats])
-
-  // 文件段落增量重新生成进度订阅（带 fileId 但不带 collectionId 的事件）
-  // 用于在文件详情抽屉中显示"从此重新生成"的实时进度
-  useEffect(() => {
-    if (regenerateUnsubscribeRef.current) {
-      regenerateUnsubscribeRef.current()
-      regenerateUnsubscribeRef.current = null
-    }
-    regenerateUnsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
-      // 只处理文件级事件（有 fileId 但无 collectionId）
-      if (!progress.fileId || progress.collectionId) return
-
-      // 完成/错误：清除状态并刷新文件详情
-      if (progress.phase === 'done' || progress.phase === 'error') {
-        const finishedFileId = progress.fileId
-        setRegenerateState(null)
-        // 若抽屉打开的是该文件，刷新其详情
-        if (drawerCollection) {
-          // 刷新文件段落详情缓存
-          setDetailCache(prev => {
-            const next = { ...prev }
-            delete next[finishedFileId]
-            return next
-          })
-          // 重新加载该文件详情
-          loadFileDetailRef.current(finishedFileId)
-        }
-        message.success(progress.message || t('kms.collectionDetails.regenerateDone'))
-        return
-      }
-
-      // 跳过非阶段事件
-      if (!(progress.phase in STAGE_INDEX)) return
-
-      // 计算总体百分比
-      const currentIdx = STAGE_INDEX[progress.phase]
-      let fraction = currentIdx / STAGE_KEYS.length
-      if (progress.total > 0) {
-        fraction += (progress.current / progress.total) / STAGE_KEYS.length
-      }
-      const percent = Math.min(Math.round(fraction * 100), 99)
-
-      setRegenerateState({
-        fileId: progress.fileId,
-        fileName: progress.fileName || '',
-        phase: progress.phase,
-        message: progress.message || '',
-        percent,
-      })
-    })
-
-    return () => {
-      if (regenerateUnsubscribeRef.current) {
-        regenerateUnsubscribeRef.current()
-        regenerateUnsubscribeRef.current = null
-      }
-    }
-  }, [drawerCollection, t])
 
   useEffect(() => {
     loadCollections()
@@ -455,8 +362,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
 
   const handleProcessDeep = async (collection: CollectionItem) => {
     // 若该合集已在后台处理中，仅重新打开进度弹窗（不触发新处理）
-    if (processingMapRef.current[collection.id]) {
-      setProcessCollection(collection)
+    if (processingMap[collection.id]) {
+      setProcessCollection({ id: collection.id, name: collection.name })
       setProcessModalOpen(true)
       return
     }
@@ -478,7 +385,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           okText: t('common.confirm'),
           cancelText: t('common.cancel'),
           onOk: () => {
-            setProcessCollection(collection)
+            setProcessCollection({ id: collection.id, name: collection.name })
             setProcessModalOpen(true)
             window.electronAPI.kms.processCollectionDeep(collection.id)
           },
@@ -488,7 +395,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } catch {
       // 忽略校验错误，继续触发后端会返回错误
     }
-    setProcessCollection(collection)
+    setProcessCollection({ id: collection.id, name: collection.name })
     setProcessModalOpen(true)
     // fire-and-forget，进度通过 onIndexProgress 推送
     window.electronAPI.kms.processCollectionDeep(collection.id)
@@ -505,12 +412,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     window.electronAPI.kms.cancelCollectionDeepProcess()
     setProcessModalOpen(false)
     setProcessCollection(null)
-  }, [])
-
-  // 取消文件段落增量重新生成
-  const handleCancelRegenerate = useCallback(() => {
-    window.electronAPI.kms.cancelRegenerateFileParagraph()
-    setRegenerateState(null)
   }, [])
 
   // 预览段落章节内容
@@ -550,7 +451,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } catch {}
   }
 
-  const loadCollectionFiles = async (collectionId: string) => {
+  const loadCollectionFiles = useCallback(async (collectionId: string) => {
     setFilesLoading(true)
     try {
       const [fileList, stats] = await Promise.all([
@@ -564,7 +465,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } finally {
       setFilesLoading(false)
     }
-  }
+  }, [message])
 
   // 后台轮询：当有 pending 文件时，定时刷新 stats
   const startPollingIfNeeded = useCallback((collectionId: string, stats: CollectionStats | null) => {
@@ -581,8 +482,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       } else {
         loadAllSummaryAndStats()
       }
-    }, 3000)
-  }, [loadAllSummaryAndStats])
+    }, POLL_INTERVAL_MS)
+  }, [loadAllSummaryAndStats, loadCollectionFiles])
 
   useEffect(() => {
     return () => {
@@ -596,21 +497,19 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [drawerCollection, filesStats, startPollingIfNeeded])
 
-  // 懒加载文件 AI 详情
+  // 懒加载文件 AI 详情（章节信息以 paragraphs 为准，不再单独请求 toc）
   const loadFileDetail = useCallback(async (fileId: string) => {
     if (detailCache[fileId]) return
-    setDetailCache(prev => ({ ...prev, [fileId]: { summary: null, toc: [], paragraphs: [], loading: true } }))
+    setDetailCache(prev => ({ ...prev, [fileId]: { summary: null, paragraphs: [], loading: true } }))
     try {
-      const [fileSummary, toc, paragraphs] = await Promise.all([
+      const [fileSummary, paragraphs] = await Promise.all([
         window.electronAPI.kms.getFileSummary(fileId).catch(() => null),
-        window.electronAPI.kms.getFileToc(fileId).catch(() => []),
         window.electronAPI.kms.getFileParagraphs(fileId).catch(() => []),
       ])
       setDetailCache(prev => ({
         ...prev,
         [fileId]: {
           summary: fileSummary,
-          toc: toc || [],
           paragraphs: paragraphs || [],
           loading: false,
         },
@@ -618,15 +517,10 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } catch (err: any) {
       setDetailCache(prev => ({
         ...prev,
-        [fileId]: { summary: null, toc: [], paragraphs: [], loading: false, error: err?.message },
+        [fileId]: { summary: null, paragraphs: [], loading: false, error: err?.message },
       }))
     }
   }, [detailCache])
-
-  // 同步 loadFileDetail 到 ref，供 useEffect 内回调调用而无需将其加入依赖
-  useEffect(() => {
-    loadFileDetailRef.current = loadFileDetail
-  }, [loadFileDetail])
 
   const handleAddFiles = async () => {
     if (!drawerCollection) return
@@ -709,7 +603,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  const handleRemoveFile = async (file: CollectionFile) => {
+  const handleRemoveFile = useCallback(async (file: CollectionFile) => {
     if (!drawerCollection) return
     try {
       await window.electronAPI.kms.removeFileFromCollection({
@@ -723,17 +617,17 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } catch (err: any) {
       message.error(err?.message || 'Failed to remove file')
     }
-  }
+  }, [drawerCollection, t, loadCollectionFiles, loadCollections, loadAllSummaryAndStats])
 
-  const handleOpenFile = (filePath: string) => {
+  const handleOpenFile = useCallback((filePath: string) => {
     window.electronAPI.kms.openFile(filePath)
-  }
+  }, [])
 
-  const handleOpenFileDir = (filePath: string) => {
+  const handleOpenFileDir = useCallback((filePath: string) => {
     window.electronAPI.kms.openFileDir(filePath)
-  }
+  }, [])
 
-  const handlePreviewFile = (file: CollectionFile) => {
+  const handlePreviewFile = useCallback((file: CollectionFile) => {
     if (onPreviewFile) {
       onPreviewFile({
         file_id: file.id,
@@ -745,7 +639,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } else {
       handleOpenFile(file.file_path)
     }
-  }
+  }, [onPreviewFile, handleOpenFile])
 
   const openSummaryModal = async (collection: CollectionItem) => {
     setSummaryCollection(collection)
@@ -852,9 +746,10 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     const fileSummary = detail.summary
     const keywords = parseJsonArray(fileSummary?.keywords_json)
     const mainTopics = parseJsonArray(fileSummary?.main_topics_json)
-    const hasToc = detail.toc.length > 0
+    // 章节信息直接使用 paragraphs，避免与 toc 数据源不一致
+    const hasParagraphs = detail.paragraphs.length > 0
 
-    if (!fileSummary?.summary && !hasToc) {
+    if (!fileSummary?.summary && !hasParagraphs) {
       return (
         <div style={{ padding: '12px 24px' }}>
           <Empty
@@ -883,7 +778,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <TagOutlined style={{ fontSize: 11, color: token.colorTextTertiary }} />
                     {keywords.slice(0, 8).map((kw, i) => (
-                      <Tag key={i} style={{ fontSize: 10, margin: 0 }}>{kw}</Tag>
+                      <Tag key={`kw-${i}-${kw}`} style={{ fontSize: 10, margin: 0 }}>{kw}</Tag>
                     ))}
                   </div>
                 )}
@@ -891,7 +786,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <NodeIndexOutlined style={{ fontSize: 11, color: token.colorTextTertiary }} />
                     {mainTopics.slice(0, 8).map((topic, i) => (
-                      <Tag key={i} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
+                      <Tag key={`topic-${i}-${topic}`} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
                     ))}
                   </div>
                 )}
@@ -901,12 +796,12 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         )}
 
         {/* 章节目录 TOC */}
-        {hasToc && (
+        {hasParagraphs && (
           <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
               <NodeIndexOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
               <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.tocTitle')}</Text>
-              <Tag style={{ fontSize: 10, margin: 0 }}>{detail.toc.length}</Tag>
+              <Tag style={{ fontSize: 10, margin: 0 }}>{detail.paragraphs.length}</Tag>
             </div>
             <Tree
               treeData={buildTocTree(detail.paragraphs, t)}
@@ -950,7 +845,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     )
   }
 
-  const fileColumns = [
+  const fileColumns = useMemo(() => [
     {
       title: t('kms.collections.fileName'),
       dataIndex: 'file_name',
@@ -1005,7 +900,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       dataIndex: 'added_at',
       key: 'added_at',
       width: 130,
-      render: (ts: number) => <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ts)}</Text>,
+      render: (ts: number) => <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ts, 'datetime')}</Text>,
     },
     {
       title: '',
@@ -1029,7 +924,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         </Space>
       ),
     },
-  ]
+  ], [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile])
 
   // 抽屉中的合集摘要主题
   const drawerKeyTopics = parseJsonArray(drawerSummary?.key_topics_json)
@@ -1077,7 +972,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                     type="link"
                     size="small"
                     onClick={() => {
-                      setProcessCollection({ id: p.id, name: p.name, description: '', file_count: 0, created_at: 0, updated_at: 0 })
+                      setProcessCollection({ id: p.id, name: p.name })
                       setProcessModalOpen(true)
                     }}
                   >
@@ -1177,7 +1072,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                   {keyTopics.length > 0 && (
                     <div style={{ marginBottom: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       {keyTopics.slice(0, 4).map((topic, idx) => (
-                        <Tag key={idx} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
+                        <Tag key={`topic-${idx}-${topic}`} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
                       ))}
                       {keyTopics.length > 4 && (
                         <Tag style={{ fontSize: 10, margin: 0 }}>+{keyTopics.length - 4}</Tag>
@@ -1188,7 +1083,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
                   {/* 状态行 */}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4 }}>
                     {getStatsTag(c.id)}
-                    <Tag style={{ fontSize: 11 }}>{formatTime(c.updated_at)}</Tag>
+                    <Tag style={{ fontSize: 11 }}>{formatTime(c.updated_at, 'datetime')}</Tag>
                   </div>
                 </Card>
               )
@@ -1260,37 +1155,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           </Space>
         }
       >
-        {/* 文件段落增量重新生成进度提示 */}
-        {regenerateState && (
-          <Alert
-            type="info"
-            showIcon
-            icon={<LoadingOutlined />}
-            style={{ marginBottom: 12 }}
-            message={
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <Text strong style={{ fontSize: 12 }}>
-                    {t('kms.collectionDetails.regeneratingTitle', { name: regenerateState.fileName })}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
-                    - {regenerateState.message}
-                  </Text>
-                  <Progress
-                    percent={regenerateState.percent}
-                    size="small"
-                    status="active"
-                    style={{ marginTop: 4, marginBottom: 0 }}
-                  />
-                </div>
-                <Button type="link" size="small" danger onClick={handleCancelRegenerate}>
-                  {t('common.cancel')}
-                </Button>
-              </div>
-            }
-          />
-        )}
-
         {/* 合集全局摘要卡片 */}
         {drawerSummary && (
           <Card
@@ -1302,7 +1166,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
               <Text strong style={{ fontSize: 13 }}>{t('kms.collectionDetails.collectionSummaryTitle')}</Text>
               {drawerSummary.updated_at ? (
                 <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
-                  {formatTime(drawerSummary.updated_at)}
+                  {formatTime(drawerSummary.updated_at, 'datetime')}
                 </Text>
               ) : null}
             </div>
@@ -1318,7 +1182,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
             {drawerKeyTopics.length > 0 && (
               <div style={{ marginTop: 10, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {drawerKeyTopics.map((topic, i) => (
-                  <Tag key={i} color="purple" style={{ fontSize: 11, margin: 0 }}>{topic}</Tag>
+                  <Tag key={`drawer-topic-${i}-${topic}`} color="purple" style={{ fontSize: 11, margin: 0 }}>{topic}</Tag>
                 ))}
               </div>
             )}

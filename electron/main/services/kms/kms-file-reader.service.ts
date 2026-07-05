@@ -186,20 +186,27 @@ class KMSFileReaderService {
 
   /**
    * 获取文件完整文本内容（用于预览）
+   * 添加字符上限避免超大文件一次性载入内存导致 OOM
    */
-  async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string }> {
+  async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
     const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
     if (!file) throw new Error('File not found')
 
     const crawler = KMSCrawlerService.getInstance()
     crawler.logFileAccess(fileId, 'read')
 
+    // 字符上限：约 5MB 文本，超过则截断并标记 truncated，前端可提示分段加载
+    const MAX_CONTENT_CHARS = 5_000_000
+
     try {
       const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
+      const fullText = parseResult.fullText || ''
+      const truncated = fullText.length > MAX_CONTENT_CHARS
       return {
-        content: parseResult.fullText,
+        content: truncated ? fullText.substring(0, MAX_CONTENT_CHARS) : fullText,
         fileName: file.file_name,
         filePath: file.file_path,
+        truncated,
       }
     } catch (err) {
       logger.error(`Failed to read file content for ${file.file_path}:`, err)

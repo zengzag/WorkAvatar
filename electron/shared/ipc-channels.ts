@@ -6,6 +6,7 @@ export type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
+  EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,

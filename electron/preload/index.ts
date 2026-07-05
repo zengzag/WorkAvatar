@@ -5,6 +5,7 @@ import type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
+  EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
   AppShowOpenDialogParams,
@@ -58,7 +59,7 @@ const electronAPI = {
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET, id),
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
-    delete: (params: string | { id: string; delete_workspace?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    delete: (params: EmployeeDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
@@ -157,6 +158,9 @@ const electronAPI = {
     showSaveDialog: (params: AppShowSaveDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, params),
     getDataDir: () => ipcRenderer.invoke(IPC_CHANNELS.PATH_GET_DATA_DIR),
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
+    getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
+    openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
+    clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
   },
 
   tool: {
@@ -213,6 +217,7 @@ const electronAPI = {
       collectionId?: string
       collectionName?: string
       startedAt?: number
+      cancelled?: boolean
     }) => void) => {
       const handler = (_event: any, progress: any) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
@@ -255,9 +260,6 @@ const electronAPI = {
     // 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化）
     processCollectionDeep: (collectionId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId),
     cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
-    // 文件段落增量重新生成（从指定段落开始重新切分/摘要/向量化，保留前半部分）
-    regenerateFileParagraph: (fileId: string, paragraphId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_REGENERATE_FILE_PARAGRAPH, { fileId, paragraphId }),
-    cancelRegenerateFileParagraph: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_REGENERATE_FILE_PARAGRAPH),
     // 手动摘要生成（目录摘要/文件摘要）
     generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
     generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),

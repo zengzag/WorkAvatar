@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, memo } from 'react'
 import { theme } from 'antd'
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons'
 import { PrismAsync } from 'react-syntax-highlighter'
@@ -11,7 +11,7 @@ interface CodeBlockProps {
   code: string
 }
 
-const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
+const CodeBlockInner: React.FC<CodeBlockProps> = ({ language, code }) => {
   const { token } = theme.useToken()
   const [copied, setCopied] = useState(false)
 
@@ -96,5 +96,8 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
     </div>
   )
 }
+
+// React.memo 避免代码块在父组件重渲染时重复渲染语法高亮（A#11）
+const CodeBlock = memo(CodeBlockInner)
 
 export default CodeBlock

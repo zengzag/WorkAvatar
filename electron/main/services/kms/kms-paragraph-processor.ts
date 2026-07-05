@@ -46,7 +46,7 @@ export function countWords(text: string): number {
 }
 
 /** 按固定大小+重叠切分文本块（过滤过短块） */
-export function splitIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
+function splitIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
   if (text.length <= chunkSize) return [text]
   const chunks: string[] = []
   let start = 0
@@ -60,7 +60,7 @@ export function splitIntoChunks(text: string, chunkSize: number, overlap: number
 }
 
 /** 无标题文档的固定大小分块切分 */
-export function chunkParagraphs(text: string): ParagraphSlice[] {
+function chunkParagraphs(text: string): ParagraphSlice[] {
   const chunks = splitIntoChunks(text, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
   return chunks.map((chunk, i) => {
     const startOff = text.indexOf(chunk)
@@ -86,7 +86,7 @@ export function chunkParagraphs(text: string): ParagraphSlice[] {
  * - （一） （二）（中文括号数字）
  * 标题行约束：trim 后非空、长度 < 100、不含句末标点（。！？；）
  */
-export function detectHeading(line: string): { level: number; title: string } | null {
+function detectHeading(line: string): { level: number; title: string } | null {
   const trimmed = line.trim()
   if (!trimmed || trimmed.length >= 100) return null
   // 含句末标点的行视为正文，避免误识别
@@ -317,7 +317,7 @@ export function addLineNumbers(text: string, startLine: number = 1): string {
 }
 
 /** 判断某行内容是否包含指定标题（容错匹配：归一化后子串包含或字符重合度 ≥ 0.6） */
-export function lineContainsTitle(lineContent: string, title: string): boolean {
+function lineContainsTitle(lineContent: string, title: string): boolean {
   const normalize = (s: string) => s.replace(/[\s\u3000]+/g, '').toLowerCase()
   const normalizedLine = normalize(lineContent)
   const normalizedTitle = normalize(title)
@@ -574,7 +574,7 @@ export function parseJSON<T>(raw: string, fallback: T): T {
 }
 
 /** 修复 LLM 输出的非法 JSON（转义字符串内的换行/制表符） */
-export function repairJSON(raw: string): string {
+function repairJSON(raw: string): string {
   let result = ''
   let inString = false
   let escaped = false

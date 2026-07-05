@@ -11,6 +11,7 @@ import {
   CloudServerOutlined,
 } from '@ant-design/icons'
 import type { KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
+import { formatTime } from './kms-columns'
 
 const { Text } = Typography
 
@@ -89,15 +90,8 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     }
   }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex, message, t])
 
-  // 格式化时间戳为可读字符串
-  const formatTime = (ts: number | null): string => {
-    if (!ts) return '-'
-    const d = new Date(ts * 1000)
-    const h = String(d.getHours()).padStart(2, '0')
-    const m = String(d.getMinutes()).padStart(2, '0')
-    const s = String(d.getSeconds()).padStart(2, '0')
-    return `${h}:${m}:${s}`
-  }
+  // 格式化时间戳为可读字符串（time 格式：HH:mm:ss）
+  const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
   const progressPercent = indexProgress && indexProgress.total > 0
     ? Math.round((indexProgress.current / indexProgress.total) * 100)
@@ -196,10 +190,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
           {autoIndexStatus && autoIndexStatus.config.enabled && (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: token.colorTextSecondary }}>
               {autoIndexStatus.lastRunAt && (
-                <span>{t('kms.settingsPanel.autoIndexLastRun')}: {formatTime(autoIndexStatus.lastRunAt)}</span>
+                <span>{t('kms.settingsPanel.autoIndexLastRun')}: {formatProgressTime(autoIndexStatus.lastRunAt)}</span>
               )}
               {autoIndexStatus.nextRunAt && (
-                <span>{t('kms.settingsPanel.autoIndexNextRun')}: {formatTime(autoIndexStatus.nextRunAt)}</span>
+                <span>{t('kms.settingsPanel.autoIndexNextRun')}: {formatProgressTime(autoIndexStatus.nextRunAt)}</span>
               )}
               {autoIndexStatus.lastResult && (
                 <span>

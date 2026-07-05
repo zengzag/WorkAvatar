@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Modal, Button, Spin, Typography, Space, Tooltip, theme } from 'antd'
+import { Modal, Button, Spin, Typography, Space, Tooltip, theme, Alert } from 'antd'
 import {
   FileOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
@@ -50,6 +50,7 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
 
   const [content, setContent] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [truncated, setTruncated] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<HTMLDivElement[]>([])
 
@@ -57,9 +58,11 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
     if (!result) return
     setLoading(true)
     setContent('')
+    setTruncated(false)
     try {
       const res = await window.electronAPI.kms.getFileFullContent(result.file_id)
       setContent(res?.content || '')
+      setTruncated(!!res?.truncated)
     } catch (err) {
       console.error('Failed to load file content:', err)
       setContent('')
@@ -109,6 +112,8 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
   const setLineRef = useCallback((el: HTMLDivElement | null, index: number) => {
     if (el) {
       lineRefs.current[index] = el
+    } else {
+      delete lineRefs.current[index]
     }
   }, [])
 
@@ -168,6 +173,14 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
           backgroundColor: token.colorBgContainer,
         }}
       >
+        {truncated && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 8 }}
+            message={t('kms.filePreviewTruncated')}
+          />
+        )}
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
             <Spin size="large" tip={t('kms.loadingContent')} />
@@ -176,7 +189,7 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
           <div style={{ fontFamily: 'Consolas, "Courier New", monospace', fontSize: 13, lineHeight: 1.8 }}>
             {lines.map((line, idx) => (
               <div
-                key={idx}
+                key={`line-${idx}`}
                 ref={(el) => setLineRef(el, idx)}
                 style={{
                   display: 'flex',

@@ -5,29 +5,23 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import { useTranslation } from 'react-i18next'
-import type { MessageWithThought, MessageSegment } from './types'
+import { memo } from 'react'
+import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
-import ThinkingSegment from './ThinkingSegment'
-import ToolCallSegment from './ToolCallSegment'
-import AnswerSegment from './AnswerSegment'
 import { markdownComponents } from './markdown-components'
+import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 
 const { Text } = Typography
 
-const PANEL_COLORS = [
-  { border: '#1677ff', bg: '#1677ff10', tag: 'blue' },
-  { border: '#52c41a', bg: '#52c41a10', tag: 'green' },
-  { border: '#722ed1', bg: '#722ed110', tag: 'purple' },
+const PANEL_COLOR_KEYS: Array<{ borderKey: keyof typeof import('antd/es/theme/internal').DerivativeToken; bgKey: keyof typeof import('antd/es/theme/internal').DerivativeToken; tag: string }> = [
+  { borderKey: 'colorPrimary' as any, bgKey: 'colorPrimaryBg' as any, tag: 'blue' },
+  { borderKey: 'colorSuccess' as any, bgKey: 'colorSuccessBg' as any, tag: 'green' },
+  { borderKey: 'colorInfo' as any, bgKey: 'colorInfoBg' as any, tag: 'purple' },
 ]
 
-function getModelLabel(msg: MessageWithThought, providers: any[]): string {
-  if (!msg.comparisonProviderId || !msg.comparisonModelId) return ''
-  const provider = providers.find((p: any) => p.id === msg.comparisonProviderId)
-  if (!provider) return msg.comparisonModelId
-  let models: any[] = []
-  try { models = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { models = [] }
-  const model = models.find((m: any) => m.model === msg.comparisonModelId)
-  return model?.name || msg.comparisonModelId
+function getPanelColor(index: number, token: any) {
+  const k = PANEL_COLOR_KEYS[index % PANEL_COLOR_KEYS.length]
+  return { border: token[k.borderKey], bg: token[k.bgKey], tag: k.tag }
 }
 
 function getProviderName(msg: MessageWithThought, providers: any[]): string {
@@ -55,9 +49,9 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
-  const color = PANEL_COLORS[colorIndex % PANEL_COLORS.length]
+  const color = getPanelColor(colorIndex, token)
   const displayMsg = ensureSegments(msg)
-  const modelLabel = getModelLabel(msg, providers)
+  const modelLabel = resolveModelLabel(msg, providers)
   const providerName = getProviderName(msg, providers)
 
   return (
@@ -136,40 +130,13 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
         )}
 
         {displayMsg.segments && displayMsg.segments.length > 0 && (
-          <div style={{ position: 'relative', paddingLeft: 0 }}>
-            {displayMsg.segments.map((seg: MessageSegment) => {
-              if (seg.type === 'thinking') {
-                return (
-                  <ThinkingSegment
-                    key={seg.id}
-                    seg={seg}
-                    isStreaming={!!seg.isStreaming}
-                    onToggle={() => onToggleSegment(msg.id, seg.id)}
-                  />
-                )
-              }
-              if (seg.type === 'tool_call') {
-                return (
-                  <ToolCallSegment
-                    key={seg.id}
-                    seg={seg}
-                    onToggle={() => onToggleSegment(msg.id, seg.id)}
-                    getToolDisplayName={getToolDisplayName}
-                  />
-                )
-              }
-              if (seg.type === 'answer') {
-                return (
-                  <AnswerSegment
-                    key={seg.id}
-                    seg={seg}
-                    isError={!!msg.isError}
-                  />
-                )
-              }
-              return null
-            })}
-          </div>
+          <SegmentList
+            segments={displayMsg.segments}
+            msgId={msg.id}
+            isError={!!msg.isError}
+            onToggleSegment={onToggleSegment}
+            getToolDisplayName={getToolDisplayName}
+          />
         )}
 
         {(!displayMsg.segments || displayMsg.segments.length === 0) && msg.content && !msg.isStreaming && (
@@ -200,36 +167,16 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
             gap: 8,
             alignItems: 'center',
           }}>
-            {msg.tokenUsage && msg.tokenUsage.totalTokens === undefined && msg.tokenUsage.totalChars !== undefined ? (
-              <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                {t('workbench.outputChars')}: {msg.tokenUsage.totalChars}
-              </Text>
-            ) : null}
-            {msg.tokenUsage && msg.tokenUsage.totalTokens !== undefined ? (
-              <>
-                {msg.tokenUsage.promptTokens !== undefined && (
-                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                    {t('workbench.promptTokens')}: {msg.tokenUsage.promptTokens}
-                    {msg.tokenUsage.cachedTokens != null && msg.tokenUsage.cachedTokens > 0 && (
-                      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                        {' '}({t('workbench.cachedTokens')}: {msg.tokenUsage.cachedTokens})
-                      </Text>
-                    )}
-                  </Text>
-                )}
-                {msg.tokenUsage.completionTokens !== undefined && (
-                  <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-                    {t('workbench.completionTokens')}: {msg.tokenUsage.completionTokens}
-                  </Text>
-                )}
-              </>
-            ) : null}
+            <TokenUsageDisplay tokenUsage={msg.tokenUsage} />
           </div>
         )}
       </div>
     </div>
   )
 }
+
+// 用 memo 包裹，避免 MultiChatPanel 父级状态变化时所有对比列整体重渲染（M3 修复）
+const MemoizedComparisonColumn = memo(ComparisonColumn)
 
 interface MultiChatPanelProps {
   comparisonMessages: MessageWithThought[]
@@ -295,7 +242,7 @@ const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
         minHeight: 0,
       }}>
         {comparisonMessages.map((msg, index) => (
-          <ComparisonColumn
+          <MemoizedComparisonColumn
             key={msg.id}
             msg={msg}
             colorIndex={index}

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Button, Divider, Input, message, Typography, Modal } from 'antd'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Button, Divider, Input, Typography, App } from 'antd'
 import { FolderOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 
@@ -7,8 +7,10 @@ const { Text, Title } = Typography
 
 const StorageSettings: React.FC = () => {
   const { t } = useTranslation()
+  const { message, modal } = App.useApp()
   const [dataDir, setDataDir] = useState<string>('')
   const [loading, setLoading] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   const loadDataDir = useCallback(async () => {
     try {
@@ -23,7 +25,7 @@ const StorageSettings: React.FC = () => {
     loadDataDir()
   }, [loadDataDir])
 
-  const handleSelectDir = async () => {
+  const handleSelectDir = useCallback(async () => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
         title: t('settings.selectDir'),
@@ -33,7 +35,7 @@ const StorageSettings: React.FC = () => {
       if (result.canceled || !result.filePaths?.[0]) return
 
       const newDir = result.filePaths[0]
-      Modal.confirm({
+      modal.confirm({
         title: t('settings.changeDataDir'),
         content: t('settings.changeDataDirConfirm', { newDir }),
         onOk: async () => {
@@ -56,7 +58,32 @@ const StorageSettings: React.FC = () => {
     } catch {
       message.error(t('settings.changeDataDirFailed'))
     }
-  }
+  }, [dataDir, message, modal, t])
+
+  const handleClearAllData = useCallback(() => {
+    modal.confirm({
+      title: t('settings.clearAllData'),
+      content: t('settings.clearAllDataConfirm'),
+      okText: t('settings.clearAllData'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setClearing(true)
+        try {
+          const res = await window.electronAPI.app.clearAllData()
+          if (res?.success) {
+            message.success(t('settings.clearAllDataSuccess'))
+          } else {
+            message.error(res?.error || t('settings.clearAllDataFailed'))
+          }
+        } catch {
+          message.error(t('settings.clearAllDataFailed'))
+        } finally {
+          setClearing(false)
+        }
+      },
+    })
+  }, [message, modal, t])
 
   return (
     <div>
@@ -85,10 +112,12 @@ const StorageSettings: React.FC = () => {
           </Button>
         </div>
         <Divider />
-        <Button danger>{t('settings.clearAllData')}</Button>
+        <Button danger loading={clearing} onClick={handleClearAllData}>
+          {t('settings.clearAllData')}
+        </Button>
       </div>
     </div>
   )
 }
 
-export default StorageSettings
+export default React.memo(StorageSettings)
