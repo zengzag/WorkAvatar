@@ -103,6 +103,7 @@ export function registerLLMHandlers(
       {
         sessionId,
         employeeId: params.employee_id,
+        conversationId: params.conversation_id,
       },
       async () => {
         // 标记 onError 是否已处理过错误，避免 catch 块重复发送 LLM_CHAT_ERROR

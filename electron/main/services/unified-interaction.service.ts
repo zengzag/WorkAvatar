@@ -37,17 +37,19 @@ interface PendingRequest {
   resolve: (response: InteractionResponse) => void
   timer?: NodeJS.Timeout
   source?: string
+  /** allowAlways 授权的缓存 key，优先为 conversationId，降级为 sessionId */
+  allowKey?: string
 }
 
 interface SessionInfo {
   webContents: Electron.WebContents
   pendingRequests: Map<string, PendingRequest>
-  allowedSources: Set<string>
 }
 
 export interface SessionContext {
   sessionId: string
   employeeId: string
+  conversationId?: string
 }
 
 export const interactionContext = new AsyncLocalStorage<SessionContext>()
@@ -55,6 +57,12 @@ export const interactionContext = new AsyncLocalStorage<SessionContext>()
 class UnifiedInteractionService {
   private static instance: UnifiedInteractionService
   private sessions: Map<string, SessionInfo> = new Map()
+  /**
+   * allowAlways 授权缓存，key 为 conversationId（优先）或 sessionId（降级）。
+   * 生命周期：与 conversation 一致，conversation 删除时需调用 clearAllowedSources 清理。
+   * 作用：使"本次任务始终允许"覆盖整个会话的后续消息，而非仅当前一条消息。
+   */
+  private allowedSourcesByKey: Map<string, Set<string>> = new Map()
   private ipcRegistered = false
 
   private constructor() {}
@@ -67,7 +75,7 @@ class UnifiedInteractionService {
   }
 
   registerSession(sessionId: string, webContents: Electron.WebContents): void {
-    this.sessions.set(sessionId, { webContents, pendingRequests: new Map(), allowedSources: new Set() })
+    this.sessions.set(sessionId, { webContents, pendingRequests: new Map() })
     this.ensureIpcRegistered()
   }
 
@@ -82,23 +90,6 @@ class UnifiedInteractionService {
     }
   }
 
-  isSourceAllowed(source?: string): boolean {
-    if (!source) return false
-    const ctx = interactionContext.getStore()
-    if (!ctx) return false
-    const session = this.sessions.get(ctx.sessionId)
-    if (!session) return false
-    return session.allowedSources.has(source)
-  }
-
-  allowSource(source: string): void {
-    const ctx = interactionContext.getStore()
-    if (!ctx) return
-    const session = this.sessions.get(ctx.sessionId)
-    if (!session) return
-    session.allowedSources.add(source)
-  }
-
   async request(request: Omit<InteractionRequest, 'id'>): Promise<InteractionResponse> {
     const ctx = interactionContext.getStore()
     if (!ctx) {
@@ -110,7 +101,10 @@ class UnifiedInteractionService {
       return this.createDeniedResponse(request, 'Session not found or window closed')
     }
 
-    if (request.source && session.allowedSources.has(request.source)) {
+    // allowAlways 授权缓存 key：优先 conversationId（覆盖整个会话），降级 sessionId（仅当前消息流）
+    const allowKey = ctx.conversationId || ctx.sessionId
+
+    if (request.source && this.isSourceAllowed(allowKey, request.source)) {
       return {
         id: '',
         confirmed: true,
@@ -129,7 +123,7 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true })
       }, timeout)
 
-      session.pendingRequests.set(id, { resolve, timer, source: request.source })
+      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey })
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
@@ -141,26 +135,25 @@ class UnifiedInteractionService {
     })
   }
 
-  handleResponse(response: InteractionResponse): void {
-    const ctx = interactionContext.getStore()
-    const sessionId = ctx?.sessionId
+  /**
+   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存。
+   * 应在 conversation 删除时调用，避免内存泄漏与授权残留。
+   */
+  clearAllowedSources(allowKey: string): void {
+    this.allowedSourcesByKey.delete(allowKey)
+  }
 
-    if (!sessionId) return
+  private isSourceAllowed(allowKey: string, source: string): boolean {
+    return this.allowedSourcesByKey.get(allowKey)?.has(source) || false
+  }
 
-    const session = this.sessions.get(sessionId)
-    if (!session) return
-
-    const pending = session.pendingRequests.get(response.id)
-    if (!pending) return
-
-    if (pending.timer) clearTimeout(pending.timer)
-    session.pendingRequests.delete(response.id)
-
-    if (response.allowAlways && pending.source) {
-      session.allowedSources.add(pending.source)
+  private allowSource(allowKey: string, source: string): void {
+    let set = this.allowedSourcesByKey.get(allowKey)
+    if (!set) {
+      set = new Set()
+      this.allowedSourcesByKey.set(allowKey, set)
     }
-
-    pending.resolve(response)
+    set.add(source)
   }
 
   private createDeniedResponse(request: Omit<InteractionRequest, 'id'>, _reason: string): InteractionResponse {
@@ -181,6 +174,10 @@ class UnifiedInteractionService {
         if (pending) {
           if (pending.timer) clearTimeout(pending.timer)
           session.pendingRequests.delete(response.id)
+          // 用户点击"本次任务始终允许"时，缓存授权到 conversation 级别
+          if (response.allowAlways && pending.source && pending.allowKey) {
+            this.allowSource(pending.allowKey, pending.source)
+          }
           pending.resolve(response)
           return { success: true }
         }

@@ -25,6 +25,7 @@ import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
+import UnifiedInteractionService from '../services/unified-interaction.service'
 import { safeHandle } from './_shared'
 
 export function registerEmployeeHandlers(
@@ -72,10 +73,20 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
-    return workspaceManager.deleteConversation(id)
+    const ok = workspaceManager.deleteConversation(id)
+    if (ok) {
+      // 清理该会话的 allowAlways 授权缓存，避免授权残留
+      UnifiedInteractionService.getInstance().clearAllowedSources(id)
+    }
+    return ok
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
+    // 清理该员工下所有会话的授权缓存
+    const conversations = workspaceManager.getConversationList(employeeId)
+    for (const conv of conversations) {
+      UnifiedInteractionService.getInstance().clearAllowedSources(conv.id)
+    }
     return workspaceManager.deleteAllConversations(employeeId)
   })
 
