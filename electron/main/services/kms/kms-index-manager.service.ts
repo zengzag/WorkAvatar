@@ -90,10 +90,6 @@ class KMSIndexManagerService {
     return KMSIndexManagerService.instance
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // 索引管道
-  // ════════════════════════════════════════════════════════════════
-
   async buildFullIndex(providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true): Promise<void> {
     return this.runIndexPipeline('full', onProgress, { providerId, withEmbedding })
   }
@@ -243,10 +239,6 @@ class KMSIndexManagerService {
     this.abortController = null
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // 自动索引（委托给 KMSAutoIndexService）
-  // ════════════════════════════════════════════════════════════════
-
   setAutoIndexProgressCallback(cb: ProgressCallback | null): void {
     KMSAutoIndexService.getInstance().setProgressCallback(cb)
   }
@@ -274,10 +266,6 @@ class KMSIndexManagerService {
   async runAutoIndexCheck(): Promise<void> {
     await KMSAutoIndexService.getInstance().runCheck()
   }
-
-  // ════════════════════════════════════════════════════════════════
-  // 合集深度处理
-  // ════════════════════════════════════════════════════════════════
 
   async processCollectionDeep(collectionId: string, onProgress?: ProgressCallback): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
     this.abortController = new AbortController()
@@ -499,10 +487,6 @@ class KMSIndexManagerService {
     this.abortController?.abort()
     this.abortController = null
   }
-
-  // ════════════════════════════════════════════════════════════════
-  // 热文件处理
-  // ════════════════════════════════════════════════════════════════
 
   private async processHotFile(
     fileId: string,
@@ -821,10 +805,6 @@ class KMSIndexManagerService {
     }
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // LLM 调用辅助
-  // ════════════════════════════════════════════════════════════════
-
   private async callLLMForToc(
     numberedContent: string,
     providerId: string,
@@ -1135,10 +1115,6 @@ ${summariesText.substring(0, 15000)}
     }
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // 目录摘要
-  // ════════════════════════════════════════════════════════════════
-
   private async generateDirSummaries(providerId: string | undefined, llmClient: LLMClientService, signal?: AbortSignal): Promise<void> {
     try {
       const dirs = this.db.prepare('SELECT id, dir_path, display_name FROM kms_index_dirs WHERE enabled = 1').all() as any[]
@@ -1265,10 +1241,6 @@ ${fileList}
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
   }
-
-  // ════════════════════════════════════════════════════════════════
-  // 手动生成摘要
-  // ════════════════════════════════════════════════════════════════
 
   async generateDirSummaryManual(dirId: string): Promise<{ success: boolean; error?: string }> {
     try {

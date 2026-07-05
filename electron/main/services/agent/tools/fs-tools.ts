@@ -13,7 +13,6 @@ const ignoreDirs = new Set([
   'out', 'target', 'bin', 'obj'
 ])
 
-/** 获取当前员工的工作区路径 */
 function getWorkspacePath(): string | null {
   try {
     const ctx = interactionContext.getStore()
@@ -26,7 +25,6 @@ function getWorkspacePath(): string | null {
   }
 }
 
-/** 判断路径是否在工作区内 */
 function isPathInWorkspace(filePath: string): boolean {
   const workspacePath = getWorkspacePath()
   if (!workspacePath) return false
@@ -87,8 +85,6 @@ async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<
     return { ok: false, error: '删除确认失败，操作已取消' }
   }
 }
-
-// ─── list_dir ───
 
 export const listDirTool: ToolDefinition = {
   id: 'list_dir',
@@ -156,7 +152,6 @@ export const listDirTool: ToolDefinition = {
 
       if (items.length === 0) return { success: true, output: `目录 ${dirPath} 为空` }
 
-      // 格式化输出：兼顾可读性和结构化信息
       const lines = items.map(item => {
         if (item.type === 'dir') {
           return `📁 ${item.path}/`
@@ -175,8 +170,6 @@ export const listDirTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── read_file ───
 
 const PARSABLE_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
@@ -215,7 +208,6 @@ export const readFileTool: ToolDefinition = {
       const enableParse = args.parse === true
       const ext = path.extname(resolved).toLowerCase().slice(1)
 
-      // 默认以纯文本读取，仅当显式设置 parse=true 时才解析二进制文档
       if (enableParse && PARSABLE_EXTENSIONS.has(ext)) {
         const parser = require('../../file-parser.service').default.getInstance()
         const result = await parser.parseFilePath(resolved)
@@ -239,7 +231,6 @@ export const readFileTool: ToolDefinition = {
         return { success: true, output }
       }
 
-      // 纯文本读取（默认路径）
       const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
       const totalChars = content.length
 
@@ -271,8 +262,6 @@ export const readFileTool: ToolDefinition = {
   source: 'builtin'
 }
 
-// ─── write_file ───
-
 export const writeFileTool: ToolDefinition = {
   id: 'write_file',
   name: 'write_file',
@@ -294,7 +283,6 @@ export const writeFileTool: ToolDefinition = {
 
       const resolved = path.resolve(filePath)
 
-      // 工作区外需确认
       const confirm = await confirmOutsideWorkspace('写入', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -319,8 +307,6 @@ export const writeFileTool: ToolDefinition = {
   source: 'builtin'
 }
 
-// ─── create_folder ───
-
 export const createFolderTool: ToolDefinition = {
   id: 'create_folder',
   name: 'create_folder',
@@ -340,7 +326,6 @@ export const createFolderTool: ToolDefinition = {
 
       const resolved = path.resolve(folderPath)
 
-      // 工作区外需确认
       const confirm = await confirmOutsideWorkspace('创建文件夹于', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -356,8 +341,6 @@ export const createFolderTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── delete_item ───
 
 export const deleteItemTool: ToolDefinition = {
   id: 'delete_item',
@@ -382,7 +365,6 @@ export const deleteItemTool: ToolDefinition = {
       const stat = fs.statSync(resolved)
       const isDirectory = stat.isDirectory()
 
-      // 所有删除操作均需确认
       const confirm = await confirmDelete(resolved, isDirectory)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -399,8 +381,6 @@ export const deleteItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── rename_item ───
 
 export const renameItemTool: ToolDefinition = {
   id: 'rename_item',
@@ -433,7 +413,6 @@ export const renameItemTool: ToolDefinition = {
       const dir = path.dirname(resolved)
       const newPath = path.join(dir, newName)
 
-      // 工作区外需确认
       const confirm = await confirmOutsideWorkspace('重命名', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -449,8 +428,6 @@ export const renameItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── move_item ───
 
 export const moveItemTool: ToolDefinition = {
   id: 'move_item',
@@ -478,13 +455,11 @@ export const moveItemTool: ToolDefinition = {
       if (!fs.existsSync(resolvedSource)) return { success: false, error: `源路径不存在: ${resolvedSource}` }
       if (fs.existsSync(resolvedDest)) return { success: false, error: `目标路径已存在: ${resolvedDest}` }
 
-      // 源或目标在工作区外需确认
       const confirmSrc = await confirmOutsideWorkspace('移动', resolvedSource)
       if (!confirmSrc.ok) return { success: false, error: confirmSrc.error }
       const confirmDest = await confirmOutsideWorkspace('移动至', resolvedDest)
       if (!confirmDest.ok) return { success: false, error: confirmDest.error }
 
-      // 确保目标父目录存在
       const destDir = path.dirname(resolvedDest)
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true })
 
@@ -496,8 +471,6 @@ export const moveItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── copy_item ───
 
 export const copyItemTool: ToolDefinition = {
   id: 'copy_item',
@@ -525,11 +498,9 @@ export const copyItemTool: ToolDefinition = {
       if (!fs.existsSync(resolvedSource)) return { success: false, error: `源路径不存在: ${resolvedSource}` }
       if (fs.existsSync(resolvedDest)) return { success: false, error: `目标路径已存在: ${resolvedDest}` }
 
-      // 目标在工作区外需确认
       const confirm = await confirmOutsideWorkspace('复制至', resolvedDest)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
-      // 确保目标父目录存在
       const destDir = path.dirname(resolvedDest)
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true })
 
@@ -547,8 +518,6 @@ export const copyItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── get_file_info ───
 
 export const getFileInfoTool: ToolDefinition = {
   id: 'get_file_info',
@@ -598,8 +567,6 @@ export const getFileInfoTool: ToolDefinition = {
   source: 'builtin'
 }
 
-// ─── search_files ───
-
 export const searchFilesTool: ToolDefinition = {
   id: 'search_files',
   name: 'search_files',
@@ -627,7 +594,6 @@ export const searchFilesTool: ToolDefinition = {
 
       const maxResults = Math.min(Math.max(args.max_results || 50, 1), 200)
 
-      // 将通配符模式转换为正则
       const regexStr = pattern
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
         .replace(/\*/g, '.*')

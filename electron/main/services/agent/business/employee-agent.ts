@@ -77,12 +77,10 @@ export class EmployeeAgent extends BaseAgent {
     return this.minimalMode
   }
 
-  /** 设置对话级系统提示词缓存，后续 buildSystemPrompt 直接返回该缓存 */
   setCachedSystemPrompt(prompt: string | undefined): void {
     this.cachedSystemPrompt = prompt
   }
 
-  /** 获取当前对话缓存的系统提示词（如果有的话） */
   getCachedSystemPrompt(): string | undefined {
     return this.cachedSystemPrompt
   }
@@ -107,7 +105,6 @@ export class EmployeeAgent extends BaseAgent {
   }
 
   protected buildSystemPrompt(options: AgentRunOptions): string {
-    // 如果已有对话级缓存，直接返回，确保同一对话上下文内系统提示词不变
     if (this.cachedSystemPrompt) {
       return this.cachedSystemPrompt
     }
@@ -130,7 +127,6 @@ export class EmployeeAgent extends BaseAgent {
       minimalMode: this.minimalMode,
     })
 
-    // 首次构建后缓存，后续直接复用
     this.cachedSystemPrompt = prompt
     return prompt
   }

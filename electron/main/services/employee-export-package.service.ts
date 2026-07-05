@@ -41,11 +41,9 @@ export class EmployeeExportPackageService {
     try {
       onProgress?.('preparing', 'Preparing employee package...')
 
-      // 复用 config service 的数据构建逻辑，避免两处重复维护
       const { data: configData, error: buildError } = this.configService.buildConfigData(employeeId)
       if (!configData) return { success: false, error: buildError || 'Employee not found' }
 
-      // 重新查询 installedSkills 以供后续 skill 文件打包使用
       const installedSkills = this.db.getDb().prepare(
         'SELECT es.skill_id, es.is_enabled, sk.name as skill_name, sk.install_path FROM employee_skills es JOIN installed_skills sk ON es.skill_id = sk.id WHERE es.employee_id = ?'
       ).all(employeeId) as any[]
@@ -60,7 +58,6 @@ export class EmployeeExportPackageService {
       onProgress?.('adding_skills', 'Adding skill definitions...')
       let skillCount = 0
       for (const skillRef of installedSkills) {
-        // skillRef 已包含 install_path 和 skill_name，无需再查 installed_skills
         if (skillRef.install_path && fs.existsSync(skillRef.install_path)) {
           this.addDirectoryToZip(zip, skillRef.install_path, `skills/${skillRef.skill_name}`)
           skillCount++
@@ -246,7 +243,6 @@ export class EmployeeExportPackageService {
         })
       }
 
-      // Phase 2：所有 DB 操作放在单个事务中，避免部分失败导致文件/DB 不一致
       this.db.getDb().transaction(() => {
         const now = Math.floor(Date.now() / 1000)
         for (const meta of skillMetaList) {
@@ -312,7 +308,6 @@ export class EmployeeExportPackageService {
         try {
           const memoryData = JSON.parse(memoriesEntry.getData().toString('utf-8')) as any[]
           const now = Math.floor(Date.now() / 1000)
-          // 整体放在单个事务中，保证记忆导入的原子性
           this.db.getDb().transaction(() => {
             for (const m of memoryData) {
               const mId = generateId()

@@ -41,19 +41,16 @@ interface KMSSettingsPanelProps {
     searchParams?: { maxRounds?: number; topK?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
-  // 目录管理
   dirs: IndexDir[]
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
   onDeleteDir: (id: string) => void
-  // 索引管理
   isIndexing: boolean
   indexProgress: IndexProgress | null
   onBuildIndex: (withEmbedding?: boolean) => void
   onIncrementalIndex: (withEmbedding?: boolean) => void
   onRebuildIndex: (withEmbedding?: boolean) => void
   onCancelIndex: () => void
-  // 自动索引
   autoIndexStatus: KMSAutoIndexStatus | null
   onRunAutoIndexCheck: () => void
 }
@@ -79,18 +76,15 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const { token } = theme.useToken()
 
   const [providers, setProviders] = useState<LLMProvider[]>([])
-  // 本地编辑态（避免每次选择都立即保存）
   const [modelConfig, setModelConfig] = useState<KMSModelConfig | null>(settings.model)
   const [embeddingModelConfig, setEmbeddingModelConfig] = useState<KMSModelConfig | null>(settings.embeddingModel)
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 3)
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
-  // 智能索引最大字符数（资料库独立配置）
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
   const [savingEmbeddingMaxChars, setSavingEmbeddingMaxChars] = useState(false)
 
-  // 加载 LLM 提供商列表
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
       setProviders(result as LLMProvider[])
@@ -98,7 +92,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     loadEmbeddingMaxChars()
   }, [])
 
-  // 同步外部 settings 变化
   useEffect(() => {
     setModelConfig(settings.model)
     setEmbeddingModelConfig(settings.embeddingModel)
@@ -127,7 +120,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }
   }, [embeddingMaxChars, message, t])
 
-  // 保存模型设置
   const handleSaveModel = useCallback(async () => {
     setSavingModel(true)
     const ok = await onSaveSettings({
@@ -142,7 +134,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }
   }, [modelConfig, embeddingModelConfig, onSaveSettings, message, t])
 
-  // 保存检索参数
   const handleSaveParams = useCallback(async () => {
     setSavingParams(true)
     const ok = await onSaveSettings({
@@ -156,7 +147,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }
   }, [maxRounds, topK, onSaveSettings, message, t])
 
-  // 模型设置 Tab
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Alert
@@ -318,7 +308,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 检索参数 Tab
   const renderParamsTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Alert
@@ -399,7 +388,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 目录管理 Tab
   const renderDirsTab = () => (
     <div>
       <div style={{ marginBottom: 12 }}>
@@ -420,7 +408,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 索引管理 Tab
   const renderIndexTab = () => (
     <div>
       <div style={{ marginBottom: 12 }}>

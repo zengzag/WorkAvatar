@@ -44,7 +44,6 @@ interface KMSKnowledgeViewProps {
   }) => void
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
-  // 统计信息
   stats: KMSStats | null
   onLoadStats: () => void
 }
@@ -63,14 +62,12 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const { token } = theme.useToken()
   const { message } = App.useApp()
 
-  // 文件摘要筛选
   const [filterDirId, setFilterDirId] = useState<string | undefined>(undefined)
   const [filterTier, setFilterTier] = useState<'hot' | 'cold' | undefined>(undefined)
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
-  // 手动处理中的文件 ID 集合
   const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
   // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
   const processingFileIdsRef = useRef<Set<string>>(new Set())
@@ -83,7 +80,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onLoadStats()
   }, [onLoadFileSummaries, onLoadStats])
 
-  // 切换到统计 Tab 时刷新统计
   const handleTabChange = useCallback((key: string) => {
     setActiveTab(key as 'files' | 'stats')
     if (key === 'stats') {
@@ -101,17 +97,13 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     })
   }, [filterDirId, filterTier, filterKeyword, page, pageSize, onLoadFileSummaries])
 
-  // 用 ref 持有最新的 reloadFileSummaries，避免 keyword 变化时立即触发请求
-  // keyword 由下方防抖 effect 单独处理
   const reloadRef = useRef(reloadFileSummaries)
   useEffect(() => { reloadRef.current = reloadFileSummaries }, [reloadFileSummaries])
 
-  // 结构化筛选条件（目录/层级/分页）变化时立即加载
   useEffect(() => {
     reloadRef.current()
   }, [filterDirId, filterTier, page, pageSize])
 
-  // 关键词搜索（防抖）：通过 ref 调用最新的 reloadFileSummaries，避免闭包陷阱
   useEffect(() => {
     const timer = setTimeout(() => {
       if (page !== 1) {
@@ -129,7 +121,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onLoadStats()
   }, [reloadFileSummaries, onLoadStats])
 
-  // 手动生成文件摘要
   const handleGenerateFileSummary = useCallback(async (fileId: string) => {
     if (processingFileIdsRef.current.has(fileId)) return
     const newSet = new Set(processingFileIdsRef.current)
@@ -138,7 +129,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     try {
       const result = await window.electronAPI.kms.generateFileSummary(fileId)
       if (result?.success) {
-        // 摘要生成成功，但智能索引可能失败
         if (result.embeddingError) {
           message.warning(t('kms.knowledge.fileSummaryGeneratedButEmbeddingFailed', { error: result.embeddingError }))
         } else {
@@ -182,7 +172,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     { label: t('kms.knowledge.cold'), value: 'cold' },
   ], [t])
 
-  // 顶部统计：使用 KMSStats prop
   const overviewStats = useMemo(() => {
     return {
       totalDirs: stats?.dirs?.total ?? 0,
@@ -191,7 +180,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     }
   }, [stats])
 
-  // 文件摘要表格列定义（抽离到 kms-columns.tsx，便于复用）
   const columns = useFileSummaryColumns({
     processingFileIdsRef,
     onOpenFile,
@@ -199,7 +187,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onGenerateFileSummary: handleGenerateFileSummary,
   })
 
-  // 统计 Tab 的卡片配置（颜色统一使用主题 token，避免明暗主题下显示异常）
   const statCards = useMemo(() => {
     const totalFiles = stats?.files?.total ?? 0
     const indexedFiles = stats?.files?.byStatus?.completed ?? 0
@@ -218,16 +205,13 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
       { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
       { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
       { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
-      // 热门文件使用 colorError（语义上代表"高频访问"），替代硬编码 '#f5222d'
       { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: token.colorError }} /> },
       { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
       { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS`, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
-      // 向量嵌入使用 colorInfo（语义上代表"AI 知识"），替代硬编码 '#722ed1'
       { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: token.colorInfo }} /> },
     ]
   }, [t, token, stats])
 
-  // 顶部统计栏
   const renderStatsBar = () => (
     <Row
       gutter={16}
@@ -271,7 +255,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     </Row>
   )
 
-  // 文件摘要 Tab 内容
   const renderFilesTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* 筛选栏 */}
@@ -333,7 +316,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     </div>
   )
 
-  // 统计信息 Tab 内容
   const renderStatsTab = () => {
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 4 }}>

@@ -197,14 +197,12 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         paragraphSamples: [],
       }
 
-      // 合集摘要（全局摘要）
       const collectionSummary = db.prepare('SELECT * FROM kms_collection_summaries WHERE collection_id = ?').get(collectionId) as any
       if (collectionSummary) {
         content.globalSummary = collectionSummary.summary || ''
         try { content.keyTopics = JSON.parse(collectionSummary.key_topics_json || '[]') } catch {}
       }
 
-      // 文件摘要（通过 kms_file_collections 关联合集中的文件）
       const fileSummaries = db.prepare(`
         SELECT s.summary, s.main_topics_json, f.file_name
         FROM kms_file_collections fc
@@ -222,7 +220,6 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
         content.documentSummaries.push(docSummary)
       }
 
-      // 段落样本（通过 kms_file_collections 关联合集中的文件段落）
       const paragraphs = db.prepare(`
         SELECT p.title, p.title_path, p.content, f.file_name
         FROM kms_paragraphs p
@@ -365,7 +362,6 @@ ${toolsListText}
     return null
   }
 
-  /** 统一的 LLM 流式调用 + 进度回调，消除 analyzeWithLLM/refineProfileForEmployee 的样板重复 */
   private async streamLLMWithProgress(
     providerId: string,
     messages: Array<{ role: string; content: string }>,

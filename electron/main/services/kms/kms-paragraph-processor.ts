@@ -45,7 +45,6 @@ export function countWords(text: string): number {
   return cjkCount + latinWords
 }
 
-/** 按固定大小+重叠切分文本块（过滤过短块） */
 function splitIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
   if (text.length <= chunkSize) return [text]
   const chunks: string[] = []
@@ -59,7 +58,6 @@ function splitIntoChunks(text: string, chunkSize: number, overlap: number): stri
   return chunks.filter(c => c.length > 50)
 }
 
-/** 无标题文档的固定大小分块切分 */
 function chunkParagraphs(text: string): ParagraphSlice[] {
   const chunks = splitIntoChunks(text, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
   return chunks.map((chunk, i) => {

@@ -29,7 +29,6 @@ interface KMSIndexPanelProps {
   onIncrementalIndex: (withEmbedding?: boolean) => void
   onRebuildIndex: (withEmbedding?: boolean) => void
   onCancelIndex: () => void
-  // 自动索引
   autoIndexConfig: KMSAutoIndexConfig
   autoIndexStatus: KMSAutoIndexStatus | null
   onSaveAutoIndex: (config: KMSAutoIndexConfig) => Promise<boolean>
@@ -61,12 +60,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const { token } = theme.useToken()
   const { message } = App.useApp()
 
-  // 本地编辑态
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
   const [savingAuto, setSavingAuto] = useState(false)
-  // 是否同时构建智能索引（向量嵌入），默认开启
   const [withEmbedding, setWithEmbedding] = useState(true)
 
   useEffect(() => {
@@ -90,7 +87,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     }
   }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex, message, t])
 
-  // 格式化时间戳为可读字符串（time 格式：HH:mm:ss）
   const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
   const progressPercent = indexProgress && indexProgress.total > 0

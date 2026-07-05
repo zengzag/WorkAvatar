@@ -1,32 +1,13 @@
 import KMSService from '../../kms/kms.service'
 import type { ToolDefinition, ToolHandlerContext } from './types'
 
-/**
- * 合集ID引用（用于在会话级缓存中绑定当前选中的合集）
- */
 export interface CollectionIdsRef {
   current: string[]
 }
 
-/**
- * 创建 KMS 本地搜索工具集
- *
- * 暴露本地资料库搜索引擎的能力给数字员工，支持：
- * - kms_search: 关键词/语义/混合检索（支持按合集过滤）
- * - kms_agent_search: AI 智能检索（子智能体内部闭环，输出结论+溯源，支持按合集过滤）
- * - kms_get_content: 获取文件内容（支持段落/偏移/行号定位）
- *
- * @param collectionIdsRef 当前会话选中的合集ID列表（可选，未选中时搜索全部索引文件）
- */
 export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinition[] {
   const kmsService = KMSService.getInstance()
 
-  /**
-   * 解析本次调用的合集过滤范围：
-   * - 显式传入 collection_ids 时优先使用
-   * - 否则回退到 collectionIdsRef.current（会话级选中）
-   * - 两者都为空时返回 undefined（搜索全部）
-   */
   function resolveCollectionIds(args: any): string[] | undefined {
     const explicit = Array.isArray(args?.collection_ids) ? args.collection_ids as string[] : []
     if (explicit.length > 0) return explicit
@@ -34,7 +15,6 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
     return ref.length > 0 ? ref : undefined
   }
 
-  // kms_search: 本地文件检索
   const kmsSearchTool: ToolDefinition = {
     id: 'kms_search',
     name: 'kms_search',
@@ -139,7 +119,6 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
     source: 'builtin',
   }
 
-  // kms_agent_search: AI 智能检索
   const kmsAgentSearchTool: ToolDefinition = {
     id: 'kms_agent_search',
     name: 'kms_agent_search',
@@ -182,7 +161,6 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
           maxRounds,
           collectionIds,
           onProgress: (step) => {
-            // 中间过程仅推送到UI展示，不进入LLM上下文
             context?.onProgress?.(step)
           },
         })
@@ -218,7 +196,6 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
     source: 'builtin',
   }
 
-  // kms_get_content: 获取文件内容
   const kmsGetContentTool: ToolDefinition = {
     id: 'kms_get_content',
     name: 'kms_get_content',

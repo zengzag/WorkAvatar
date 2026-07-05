@@ -82,7 +82,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   const [, setTick] = useState(0)
   const unsubscribeRef = useRef<(() => void) | null>(null)
 
-  // 重置状态
   const resetState = useCallback(() => {
     setStages({})
     setCurrentFileName('')
@@ -95,7 +94,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     setStartedAt(0)
   }, [])
 
-  // 订阅索引进度事件，按 collectionId 过滤
   useEffect(() => {
     if (!open || !collectionId) {
       if (unsubscribeRef.current) {
@@ -109,18 +107,14 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     setStartedAt(Math.floor(Date.now() / 1000))
 
     unsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
-      // 仅处理当前合集的进度事件
       if (!progress.collectionId || progress.collectionId !== collectionId) return
 
-      // 处理完成或错误阶段
       if (progress.phase === 'done') {
         setIsDone(true)
         setIsError(false)
-        // 通过 i18n 无关的 cancelled 标志检测取消完成
         if (progress.cancelled) {
           setIsCancelled(true)
         }
-        // 标记所有未完成阶段为 done
         setStages((prev) => {
           const next = { ...prev }
           for (const stage of STAGES) {
@@ -143,7 +137,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
         setErrorMessage(progress.message || 'Unknown error')
         setStages((prev) => {
           const next = { ...prev }
-          // 标记当前 processing 阶段为 done（错误）
           for (const stage of STAGES) {
             if (next[stage.key]?.status === 'processing') {
               next[stage.key] = { ...next[stage.key], status: 'done', finishedAt: Math.floor(Date.now() / 1000) }
@@ -154,15 +147,12 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
         return
       }
 
-      // 跳过未识别的阶段
       const stageDef = STAGES.find((s) => s.key === progress.phase)
       if (!stageDef) return
 
-      // 更新阶段状态
       setStages((prev) => {
         const next = { ...prev }
 
-        // 标记之前所有阶段为 done（如果还未标记），但不回退已完成的阶段
         const currentIdx = STAGES.findIndex((s) => s.key === progress.phase)
         for (let i = 0; i < currentIdx; i++) {
           const prevKey = STAGES[i].key
@@ -173,7 +163,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
           }
         }
 
-        // 更新当前阶段：只有尚未完成时才更新（避免阶段间切换时回退已完成的阶段）
         const existingStage = next[progress.phase]
         if (!existingStage || existingStage.status !== 'done') {
           next[progress.phase] = {
@@ -188,11 +177,9 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
         return next
       })
 
-      // 跟踪文件级进度：所有携带 fileName 的事件都更新文件名
       if (progress.fileName) {
         setCurrentFileName(progress.fileName)
       }
-      // parsing 阶段跟踪文件总数与当前文件索引
       if (progress.phase === 'parsing' && progress.total > 0) {
         setTotalFiles(progress.total)
         setCurrentFileIndex(progress.current)
@@ -207,14 +194,12 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     }
   }, [open, collectionId, resetState])
 
-  // 处理进行中时每秒触发一次重渲染，让 elapsedSeconds 计时器持续更新
   useEffect(() => {
     if (!open || isDone || isError || isCancelled || !startedAt) return
     const timer = setInterval(() => setTick((n) => n + 1), TICK_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [open, isDone, isError, isCancelled, startedAt])
 
-  // 计算总体进度百分比
   const overallPercent = (() => {
     if (isDone) return 100
     const completed = STAGES.filter((s) => stages[s.key]?.status === 'done').length
@@ -233,7 +218,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     onCancel()
   }
 
-  // 渲染单个阶段
   const renderStage = (stage: StageDef, index: number) => {
     const state = stages[stage.key]
     const status: StageStatus = state?.status || 'pending'
@@ -315,12 +299,10 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     )
   }
 
-  // 计算耗时
   const elapsedSeconds = (() => {
     if (!startedAt) return 0
     let end = Math.floor(Date.now() / 1000)
     if (isDone) {
-      // 取最后一个完成阶段的 finishedAt
       let latest = 0
       for (const k of Object.keys(stages)) {
         const f = stages[k]?.finishedAt
@@ -331,7 +313,6 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     return Math.max(0, end - startedAt)
   })()
 
-  // 标题：根据状态展示
   const titleText = (() => {
     if (isCancelled) return t('kms.collectionProcess.cancelledTitle')
     if (isError) return t('kms.collectionProcess.errorTitle')

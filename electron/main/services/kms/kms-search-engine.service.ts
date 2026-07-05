@@ -53,10 +53,6 @@ export interface EmbeddingEntry {
   dimension: number
 }
 
-/**
- * KMS 搜索引擎服务
- * FTS5 全文检索 + 向量语义搜索 + 混合搜索 + 时间范围过滤
- */
 class KMSSearchEngineService {
   private db: Database.Database
   private static instance: KMSSearchEngineService
@@ -64,7 +60,6 @@ class KMSSearchEngineService {
   private static readonly CACHE_TTL = 60000
   private static readonly CACHE_MAX_SIZE = 100
   private embeddingCache: Map<string, EmbeddingEntry[]> = new Map()
-  // vec0 虚表当前维度，null 表示虚表尚未创建
   private vecDimension: number | null = null
   private vecReady: boolean = false
 
@@ -80,12 +75,6 @@ class KMSSearchEngineService {
     return KMSSearchEngineService.instance
   }
 
-  /**
-   * 初始化 vec0 向量索引：
-   * 1. 检查 sqlite-vec 扩展是否加载
-   * 2. 如果 vec_kms_embeddings 已存在，读取其维度
-   * 3. 如果不存在但有现有数据，按数据维度创建并迁移
-   */
   private initVecIndex(): void {
     try {
       this.db.prepare('SELECT vec_version()').get()
@@ -123,9 +112,6 @@ class KMSSearchEngineService {
     this.migrateExistingEmbeddings(dimension)
   }
 
-  /**
-   * 创建 vec0 虚表（如不存在）
-   */
   private createVecTable(dimension: number): void {
     try {
       this.db.exec(`
@@ -143,9 +129,6 @@ class KMSSearchEngineService {
     }
   }
 
-  /**
-   * 将 kms_embeddings 表中的现有数据迁移到 vec0 虚表
-   */
   private migrateExistingEmbeddings(dimension: number): void {
     try {
       const rows = this.db.prepare(
@@ -173,9 +156,6 @@ class KMSSearchEngineService {
     }
   }
 
-  /**
-   * 索引文件标题
-   */
   indexFileTitle(fileId: string, fileName: string): void {
     const tx = this.db.transaction(() => {
       const existing = this.db.prepare(
@@ -202,9 +182,6 @@ class KMSSearchEngineService {
     tx()
   }
 
-  /**
-   * 索引文件摘要
-   */
   indexFileSummary(fileId: string, summary: string, keywords: string[]): void {
     const tx = this.db.transaction(() => {
       const existing = this.db.prepare(
@@ -233,9 +210,6 @@ class KMSSearchEngineService {
     tx()
   }
 
-  /**
-   * 索引段落（标题+摘要+关键词）
-   */
   indexParagraph(
     fileId: string,
     paragraphId: string,
@@ -278,9 +252,6 @@ class KMSSearchEngineService {
     tx()
   }
 
-  /**
-   * 索引原文内容段落（按双换行分割，含行号和偏移）
-   */
   indexContentParagraphs(fileId: string, content: string, fileName: string): void {
     this.deleteIndexByFileAndType(fileId, 'content_paragraph')
 
@@ -327,11 +298,6 @@ class KMSSearchEngineService {
     transaction()
   }
 
-  /**
-   * 保存段落到 kms_paragraphs 表（段落切分结果写入）
-   * 若段落已存在（按 file_id + paragraph_index）则更新
-   * 返回写入的段落列表（含生成的 id）
-   */
   saveParagraphs(
     fileId: string,
     paragraphs: Array<{
@@ -366,20 +332,13 @@ class KMSSearchEngineService {
     return result
   }
 
-  /**
-   * 更新段落的 LLM 摘要和关键词
-   */
   updateParagraphSummary(paragraphId: string, summary: string, keywords: string[]): void {
     this.db.prepare(`
       UPDATE kms_paragraphs SET summary = ?, keywords_json = ?, updated_at = unixepoch() WHERE id = ?
     `).run(summary, JSON.stringify(keywords), paragraphId)
   }
 
-  /**
-   * 删除文件的所有段落（同步级联删除索引、向量、FTS行）
-   */
   deleteParagraphsByFile(fileId: string): void {
-    // 删除段落对应的搜索索引与FTS行
     const paraIndexRows = this.db.prepare(
       "SELECT id FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph'"
     ).all(fileId) as any[]
@@ -404,12 +363,7 @@ class KMSSearchEngineService {
     this.invalidateCache()
   }
 
-  /**
-   * 删除文件中 paragraph_index >= fromIndex 的所有段落（含搜索索引、向量嵌入）
-   * 用于增量重新生成场景：保留前半部分段落，重新生成后半部分
-   */
   deleteParagraphsFromFileIndex(fileId: string, fromIndex: number): void {
-    // 查询待删除的段落 ID
     const paraRows = this.db.prepare(
       'SELECT id FROM kms_paragraphs WHERE file_id = ? AND paragraph_index >= ?'
     ).all(fileId, fromIndex) as any[]
@@ -418,7 +372,6 @@ class KMSSearchEngineService {
 
     const placeholders = paraIds.map(() => '?').join(',')
 
-    // 删除段落对应的搜索索引与 FTS 行
     const indexRows = this.db.prepare(
       `SELECT id FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph' AND source_id IN (${placeholders})`
     ).all(fileId, ...paraIds) as any[]
@@ -431,23 +384,16 @@ class KMSSearchEngineService {
       ).run(fileId, ...paraIds)
     }
 
-    // 删除段落对应的向量嵌入
     this.db.prepare(
       `DELETE FROM kms_embeddings WHERE source_type = 'paragraph' AND source_id IN (${placeholders})`
     ).run(...paraIds)
 
-    // 删除段落本身
     this.db.prepare(
       'DELETE FROM kms_paragraphs WHERE file_id = ? AND paragraph_index >= ?'
     ).run(fileId, fromIndex)
     this.invalidateCache()
   }
 
-  /**
-   * 增量插入段落到 kms_paragraphs 表（不删除已有段落）
-   * 用于增量重新生成场景：在保留前半部分段落的基础上追加新段落
-   * 返回写入的段落列表（含生成的 id）
-   */
   insertParagraphs(
     fileId: string,
     paragraphs: Array<{
@@ -479,9 +425,6 @@ class KMSSearchEngineService {
     return result
   }
 
-  /**
-   * 保存文件 TOC 到 kms_file_summaries.toc_json
-   */
   saveFileToc(fileId: string, tocJson: string): void {
     const existing = this.db.prepare('SELECT id FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
     if (existing) {
@@ -495,15 +438,11 @@ class KMSSearchEngineService {
     }
   }
 
-  /**
-   * 删除文件的所有索引（含段落表、段落向量）
-   */
   deleteIndexByFile(fileId: string): void {
     const rows = this.db.prepare(
       'SELECT id FROM kms_search_index WHERE file_id = ?'
     ).all(fileId) as any[]
 
-    // 单一事务包裹批量 FTS 行删除 + 三张表 DELETE，避免多次 fsync 与中途失败留下脏数据
     const tx = this.db.transaction(() => {
       if (rows.length > 0) {
         const ids = rows.map(r => r.id)

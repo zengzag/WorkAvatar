@@ -281,32 +281,12 @@ const MCP_TOOLS: MCPTool[] = [
   },
 ]
 
-/**
- * KMS MCP 服务
- * 将本地搜索引擎能力暴露为 MCP 工具，供第三方智能体（Claude Code、Cursor 等）调用
- *
- * 工具列表（11 个）：
- * - kms_list_dirs: 列出索引目录
- * - kms_stats: 获取统计信息（含合集数）
- * - kms_search: 普通检索（关键词/语义/混合，支持目录/合集过滤）
- * - kms_agent_search: 智能检索（子智能体自主规划+提纯，支持目录/合集过滤）
- * - kms_get_content: 获取文件内容（精确定位）
- * - kms_get_summary: 获取文件摘要
- * - kms_list_collections: 列出所有合集
- * - kms_list_files_in_collection: 列出合集内文件
- * - kms_get_collection_summary: 获取合集摘要与关键主题
- * - kms_get_toc: 获取文件目录结构（TOC）
- * - kms_get_paragraphs: 获取文件段落列表
- */
 class KMSMCPService {
   private server: http.Server | null = null
   private config: KMSMCPConfig = { ...DEFAULT_CONFIG }
   private sessions: Map<string, { initialized: boolean; createdAt: number; lastActivityAt: number }> = new Map()
-  /** 会话清理定时器：定期移除长时间未活动的 session，避免内存泄漏 */
   private sessionCleanupTimer: NodeJS.Timeout | null = null
-  /** 会话过期阈值：1 小时无活动则清理 */
   private static readonly SESSION_IDLE_TTL_MS = 60 * 60 * 1000
-  /** 清理检查间隔：30 分钟 */
   private static readonly SESSION_CLEANUP_INTERVAL_MS = 30 * 60 * 1000
   private static instance: KMSMCPService
 
@@ -357,12 +337,10 @@ class KMSMCPService {
 
       this.server.listen(this.config.port, '127.0.0.1', () => {
         logger.info(`KMS MCP server started on port ${this.config.port}`)
-        // 启动会话清理定时器，定期移除长时间未活动的 session
         this.sessionCleanupTimer = setInterval(
           () => this.cleanupExpiredSessions(),
           KMSMCPService.SESSION_CLEANUP_INTERVAL_MS
         )
-        // 防止定时器阻止进程退出
         this.sessionCleanupTimer.unref?.()
         resolve({ success: true })
       })
@@ -380,7 +358,6 @@ class KMSMCPService {
         return
       }
 
-      // 停止会话清理定时器
       if (this.sessionCleanupTimer) {
         clearInterval(this.sessionCleanupTimer)
         this.sessionCleanupTimer = null
@@ -444,7 +421,6 @@ class KMSMCPService {
 
     const response = await this.handleMessage(message, sessionId)
     const newSessionId = sessionId || this.getOrCreateSessionId(message)
-    // 更新当前 session 的最后活动时间（用于过期清理）
     this.touchSession(sessionId ?? newSessionId ?? undefined)
 
     const headers: Record<string, string> = {
@@ -468,7 +444,6 @@ class KMSMCPService {
     return null
   }
 
-  /** 更新 session 的最后活动时间（每次收到请求时调用） */
   private touchSession(sessionId: string | undefined): void {
     if (!sessionId) return
     const session = this.sessions.get(sessionId)

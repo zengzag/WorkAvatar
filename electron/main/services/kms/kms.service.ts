@@ -72,9 +72,6 @@ class KMSService {
     return KMSService.instance
   }
 
-  /**
-   * 添加索引目录
-   */
   addIndexDir(dirPath: string, displayName?: string, recursive: boolean = true, fileExtensions?: string[]): any {
     if (!fs.existsSync(dirPath)) {
       throw new Error(`目录不存在: ${dirPath}`)
@@ -89,9 +86,6 @@ class KMSService {
     return this.getIndexDir(id)
   }
 
-  /**
-   * 更新索引目录
-   */
   updateIndexDir(id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }): any {
     const sets: string[] = []
     const params: any[] = []
@@ -122,34 +116,21 @@ class KMSService {
     return this.getIndexDir(id)
   }
 
-  /**
-   * 删除索引目录
-   */
   deleteIndexDir(id: string): void {
-    // 级联删除会自动清理关联文件、段落、摘要、索引和嵌入
     this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
-  /**
-   * 获取索引目录
-   */
   getIndexDir(id: string): any {
     return this.db.prepare('SELECT * FROM kms_index_dirs WHERE id = ?').get(id)
   }
 
-  /**
-   * 获取所有索引目录（排除手动文件源虚拟目录）
-   */
   listIndexDirs(): any[] {
     return this.db.prepare(
       `SELECT * FROM kms_index_dirs WHERE dir_path != ? ORDER BY created_at ASC`
     ).all(KMSService.MANUAL_SOURCE_PATH)
   }
 
-  /**
-   * 创建合集
-   */
   createCollection(name: string, description: string = ''): any {
     const id = generateId()
     this.db.prepare(`
@@ -159,9 +140,6 @@ class KMSService {
     return this.getCollection(id)
   }
 
-  /**
-   * 更新合集
-   */
   updateCollection(id: string, updates: { name?: string; description?: string }): any {
     const sets: string[] = []
     const params: any[] = []
@@ -180,18 +158,11 @@ class KMSService {
     return this.getCollection(id)
   }
 
-  /**
-   * 删除合集（级联清理文件关联与合集摘要）
-   * 注意：合集内的文件本身不会被删除（可能属于其他合集或目录）
-   */
   deleteCollection(id: string): void {
     this.db.prepare('DELETE FROM kms_collections WHERE id = ?').run(id)
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
-  /**
-   * 获取合集
-   */
   getCollection(id: string): any {
     const collection = this.db.prepare('SELECT * FROM kms_collections WHERE id = ?').get(id) as any
     if (!collection) return null
@@ -201,9 +172,6 @@ class KMSService {
     return { ...collection, file_count: fileCount }
   }
 
-  /**
-   * 获取所有合集（含文件数统计）
-   */
   listCollections(): any[] {
     const collections = this.db.prepare(`
       SELECT c.*,
@@ -214,12 +182,6 @@ class KMSService {
     return collections
   }
 
-  /**
-   * 添加文件到合集
-   * - 若文件已在 kms_files 中（按 file_path 匹配），直接关联
-   * - 若文件不在任何索引目录中，注册到"手动文件源"虚拟目录
-   * - 相同内容的文件（按 hash 去重）复用索引
-   */
   async addFileToCollection(collectionId: string, filePath: string): Promise<{ fileId: string; reused: boolean; duplicated: boolean; changed: boolean }> {
     if (!fs.existsSync(filePath)) {
       throw new Error(`文件不存在: ${filePath}`)
@@ -242,7 +204,6 @@ class KMSService {
     let changed = false
 
     if (existingByPath) {
-      // 文件已注册（在某个索引目录或虚拟目录中），直接关联
       fileId = existingByPath.id
       reused = true
 
@@ -275,14 +236,13 @@ class KMSService {
       changed = true // 新文件需要索引
 
       if (existingByHash) {
-        // 相同内容文件已存在，复用索引，注册新记录到虚拟目录
         this.db.prepare(`
           INSERT INTO kms_files (id, dir_id, file_path, file_name, file_ext, file_size, file_hash, modified_time, index_status, data_tier)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', 'cold')
         `).run(fileId, this.manualSourceDirId, filePath, fileName, ext, fileSize, hash, modifiedTime)
         KMSSearchEngineService.getInstance().cloneIndexData(existingByHash.id, fileId)
         duplicated = true
-        changed = false // 复用索引，无需再触发
+        changed = false
       } else {
         // 4. 全新文件，注册到虚拟目录，待索引
         this.db.prepare(`
@@ -313,9 +273,6 @@ class KMSService {
     return { fileId, reused, duplicated, changed }
   }
 
-  /**
-   * 批量添加文件到合集
-   */
   async addFilesToCollection(collectionId: string, filePaths: string[]): Promise<{ added: number; reused: number; duplicated: number; changed: number; failed: { path: string; error: string }[] }> {
     let added = 0
     let reused = 0
@@ -408,19 +365,12 @@ class KMSService {
     }
   }
 
-  /**
-   * 获取合集摘要
-   */
   getCollectionSummary(collectionId: string): any {
     return this.db.prepare(
       'SELECT * FROM kms_collection_summaries WHERE collection_id = ?'
     ).get(collectionId) as any
   }
 
-  /**
-   * 批量获取多个合集的摘要（避免 N+1 查询）
-   * @returns Map<collectionId, summary>
-   */
   getCollectionSummariesByIds(collectionIds: string[]): Map<string, any> {
     const result = new Map<string, any>()
     if (collectionIds.length === 0) return result
@@ -434,9 +384,6 @@ class KMSService {
     return result
   }
 
-  /**
-   * 保存合集摘要（手动设置或 LLM 生成后写入）
-   */
   setCollectionSummary(collectionId: string, summary: string, keyTopics: string[] = []): void {
     const existing = this.db.prepare(
       'SELECT id FROM kms_collection_summaries WHERE collection_id = ?'
@@ -457,18 +404,10 @@ class KMSService {
     }
   }
 
-  /**
-   * 删除合集摘要
-   */
   deleteCollectionSummary(collectionId: string): void {
     this.db.prepare('DELETE FROM kms_collection_summaries WHERE collection_id = ?').run(collectionId)
   }
 
-  /**
-   * AI 生成合集摘要（基于合集内文件的轻量摘要与关键主题）
-   * 失败时返回 { error }，成功时返回 { summary, keyTopics }
-   * 支持通过 signal 取消 LLM 调用
-   */
   async generateCollectionSummary(collectionId: string, signal?: AbortSignal): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {
     const collection = this.db.prepare('SELECT id, name, description FROM kms_collections WHERE id = ?').get(collectionId) as any
     if (!collection) {
@@ -549,13 +488,11 @@ ${fileSummaries.join('\n')}
         return { error: 'LLM returned empty summary' }
       }
 
-      // 写入数据库
       this.setCollectionSummary(collectionId, summary, keyTopics)
       logger.info(`Collection summary generated for ${collectionId}: ${summary.length} chars, ${keyTopics.length} topics`)
 
       return { summary, keyTopics }
     } catch (err: any) {
-      // AbortError 视为取消，不算错误
       if (signal?.aborted || err?.name === 'AbortError') {
         return { error: 'ABORTED' }
       }
@@ -564,28 +501,14 @@ ${fileSummaries.join('\n')}
     }
   }
 
-  /**
-   * 获取 KMS LLM 配置（providerId + modelId）
-   * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
-   * 对外暴露（public）供索引管理器调用
-   */
   getKmsLLMConfigPublic(): { providerId: string; modelId: string | undefined } | null {
     return this.getKmsLLMConfig()
   }
 
-  /**
-   * 获取 KMS Embedding 配置（providerId + modelName）
-   * 优先级：KMS 专属 Embedding 模型 > 默认 Embedding 配置
-   * 对外暴露（public）供索引管理器调用
-   */
   getKmsEmbeddingConfigPublic(): { providerId: string; modelName: string } | null {
     return this.getKmsEmbeddingConfig()
   }
 
-  /**
-   * 获取 KMS LLM 配置（providerId + modelId）
-   * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
-   */
   private getKmsLLMConfig(): { providerId: string; modelId: string | undefined } | null {
     const llmClient = LLMClientService.getInstance()
     const mainDb = DatabaseService.getInstance().getDb()
@@ -619,47 +542,26 @@ ${fileSummaries.join('\n')}
     return first ? { providerId: first.id, modelId: undefined } : null
   }
 
-  /**
-   * 扫描目录下所有支持格式的文件（递归），用于"文件夹批量导入到合集"
-   * 返回 { files: string[], skipped: number }
-   */
   scanDirFiles(dirPath: string, extensions?: string[]): { files: string[]; skipped: number } {
     return KMSFileReaderService.getInstance().scanDirFiles(dirPath, extensions)
   }
 
-  /**
-   * 获取文件的段落列表（用于前端内容浏览）
-   * 返回段落的目录树结构（TOC）+ 完整段落列表
-   */
   getFileParagraphs(fileId: string): any[] {
     return KMSFileReaderService.getInstance().getFileParagraphs(fileId)
   }
 
-  /**
-   * 获取单个段落的完整内容（含原文，用于预览）
-   */
   getParagraphContent(paragraphId: string): { id: string; title: string; title_path: string; level: number; paragraph_index: number; content: string; summary: string | null; keywords_json: string | null; file_id: string } | null {
     return KMSFileReaderService.getInstance().getParagraphContent(paragraphId)
   }
 
-  /**
-   * 获取文件的目录结构（TOC，从段落表的 title_path 派生）
-   */
   getFileToc(fileId: string): any[] {
     return KMSFileReaderService.getInstance().getFileToc(fileId)
   }
 
-  /**
-   * 按段落ID批量查询段落详情（含所属文件名）
-   * 用于 Agent 工具 kms_get_paragraphs
-   */
   getParagraphsByIds(paragraphIds: string[]): any[] {
     return KMSFileReaderService.getInstance().getParagraphsByIds(paragraphIds)
   }
 
-  /**
-   * 搜索
-   */
   async search(query: string, options?: SearchOptions & { useSemantic?: boolean }): Promise<SearchResult[]> {
     const searchEngine = KMSSearchEngineService.getInstance()
     let queryEmbedding: Float32Array | undefined
@@ -681,7 +583,6 @@ ${fileSummaries.join('\n')}
 
     const results = searchEngine.search(query, queryEmbedding, options)
 
-    // 记录搜索命中
     const hitFileIds = new Set(results.map(r => r.file_id))
     const crawler = KMSCrawlerService.getInstance()
     for (const fileId of hitFileIds) {
@@ -691,14 +592,10 @@ ${fileSummaries.join('\n')}
     return results
   }
 
-  /**
-   * 获取 KMS Embedding 配置（优先 KMS 专属设置，回退到默认设置）
-   */
   private getKmsEmbeddingConfig(): { providerId: string; modelName: string } | null {
     const llmClient = LLMClientService.getInstance()
     const mainDb = DatabaseService.getInstance().getDb()
 
-    // 1. 优先使用 KMS 专属 Embedding 模型设置
     try {
       const kmsEmbRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
       if (kmsEmbRow?.value) {
@@ -727,45 +624,25 @@ ${fileSummaries.join('\n')}
       logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
     }
 
-    // 2. 回退到默认 Embedding 配置
     return llmClient.getDefaultEmbeddingConfig()
   }
 
-  /**
-   * 获取文件内容（按段落/偏移/行号定位）
-   */
   async getFileContent(fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }): Promise<string> {
     return KMSFileReaderService.getInstance().getFileContent(fileId, options)
   }
 
-  /**
-   * 获取文件摘要
-   */
   getFileSummary(fileId: string): any {
     return KMSFileReaderService.getInstance().getFileSummary(fileId)
   }
 
-  /**
-   * AI 智能检索（通过检索子智能体）
-   * 自主规划检索路径、多轮补充查找、筛选提纯内容，输出核心结论+精准溯源
-   */
   async agentSearch(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
     return KMSSearchAgentService.getInstance().search(query, options)
   }
 
-  /**
-   * 获取文件完整文本内容（用于预览）
-   */
   async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
     return KMSFileReaderService.getInstance().getFileFullContent(fileId)
   }
 
-  /**
-   * 构建全量索引
-   * 若未显式指定 providerId，则从 KMS 专属 LLM 配置解析（供 chat 摘要使用）
-   * 向量嵌入使用独立的 KMS Embedding 配置，在 indexManager 内部解析
-   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
-   */
   async buildFullIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
@@ -777,10 +654,6 @@ ${fileSummaries.join('\n')}
     }, withEmbedding)
   }
 
-  /**
-   * 增量索引
-   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
-   */
   async incrementalIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
@@ -792,10 +665,6 @@ ${fileSummaries.join('\n')}
     }, withEmbedding)
   }
 
-  /**
-   * 重建指定目录索引
-   * withEmbedding=true 时同步生成向量嵌入，false 时跳过
-   */
   async rebuildDirIndex(dirId: string, providerId?: string, withEmbedding: boolean = true): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
@@ -807,10 +676,6 @@ ${fileSummaries.join('\n')}
     }, withEmbedding)
   }
 
-  /**
-   * 合集深度处理：对合集内所有文件做段落切分/TOC/段落摘要/文件摘要，再生成合集摘要并向量化
-   * 进度通过 onProgress 推送到前端，含 collectionId/collectionName 字段便于按合集过滤展示
-   */
   async processCollectionDeep(collectionId: string): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
     const indexManager = KMSIndexManagerService.getInstance()
     return await indexManager.processCollectionDeep(collectionId, (progress) => {
@@ -818,37 +683,22 @@ ${fileSummaries.join('\n')}
     })
   }
 
-  /**
-   * 取消合集深度处理
-   */
   cancelCollectionDeepProcess(): void {
     KMSIndexManagerService.getInstance().cancelCollectionDeepProcess()
   }
 
-  /**
-   * 手动生成单个目录的摘要
-   */
   async generateDirSummaryManual(dirId: string): Promise<{ success: boolean; error?: string }> {
     return KMSIndexManagerService.getInstance().generateDirSummaryManual(dirId)
   }
 
-  /**
-   * 手动生成单个文件的摘要（含段落切分/TOC/段落摘要/文件摘要 + 向量嵌入）
-   */
   async generateFileSummaryManual(fileId: string): Promise<{ success: boolean; error?: string }> {
     return KMSIndexManagerService.getInstance().generateFileSummaryManual(fileId)
   }
 
-  /**
-   * 取消索引任务
-   */
   cancelIndexing(): void {
     KMSIndexManagerService.getInstance().cancelIndexing()
   }
 
-  /**
-   * 获取整体统计信息
-   */
   getStats(): any {
     const crawler = KMSCrawlerService.getInstance()
     const searchEngine = KMSSearchEngineService.getInstance()
@@ -867,9 +717,6 @@ ${fileSummaries.join('\n')}
     }
   }
 
-  /**
-   * 获取 KMS 设置（模型配置、检索参数、自动索引配置）
-   */
   getKmsSettings(): any {
     const mainDb = DatabaseService.getInstance().getDb()
     const result: any = {
@@ -910,9 +757,6 @@ ${fileSummaries.join('\n')}
     return result
   }
 
-  /**
-   * 保存 KMS 设置
-   */
   setKmsSettings(params: any): void {
     const mainDb = DatabaseService.getInstance().getDb()
     const setSetting = (key: string, value: any) => {
@@ -941,7 +785,6 @@ ${fileSummaries.join('\n')}
     }
     if (params.autoIndex !== undefined) {
       setSetting('kms_auto_index', params.autoIndex)
-      // 立即应用自动索引配置
       const config: AutoIndexConfig = {
         enabled: !!params.autoIndex.enabled,
         intervalMinutes: Math.max(1, Math.min(1440, params.autoIndex.intervalMinutes ?? 10)),
@@ -951,33 +794,20 @@ ${fileSummaries.join('\n')}
     }
   }
 
-  /**
-   * 初始化自动索引（应用启动时调用）
-   * 从数据库读取配置并启动定时器
-   */
   initAutoIndex(): void {
     const settings = this.getKmsSettings()
     const config: AutoIndexConfig = settings.autoIndex || { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
     KMSIndexManagerService.getInstance().startAutoIndex(config)
   }
 
-  /**
-   * 获取自动索引状态
-   */
   getAutoIndexStatus(): AutoIndexStatus {
     return KMSIndexManagerService.getInstance().getAutoIndexStatus()
   }
 
-  /**
-   * 立即执行一次自动索引检查
-   */
   async runAutoIndexCheckNow(): Promise<void> {
     await KMSIndexManagerService.getInstance().runAutoIndexCheck()
   }
 
-  /**
-   * 获取所有目录摘要
-   */
   getDirSummaries(): any[] {
     return this.db.prepare(`
       SELECT ds.dir_id, ds.dir_path, ds.summary, ds.file_count, ds.keywords_json, ds.updated_at,
@@ -988,9 +818,6 @@ ${fileSummaries.join('\n')}
     `).all() as any[]
   }
 
-  /**
-   * 获取文件摘要列表（含冷热状态、轻量摘要、LLM摘要）
-   */
   getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
     const page = params?.page || 1
     const pageSize = params?.pageSize || 20

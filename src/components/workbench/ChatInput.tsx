@@ -141,7 +141,6 @@ const ChatInput: React.FC<{
     const items = e.clipboardData?.items
     if (!items) return
 
-    // 优先处理图片粘贴
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault()
@@ -162,7 +161,6 @@ const ChatInput: React.FC<{
       }
     }
 
-    // 处理文件粘贴（如从文件管理器复制的文件）
     const files = e.clipboardData?.files
     if (files && files.length > 0) {
       e.preventDefault()

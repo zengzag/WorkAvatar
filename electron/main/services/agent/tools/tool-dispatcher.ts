@@ -29,7 +29,6 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
-      // 如果工具定义指定了 timeoutMs，注入到中间件参数中供超时中间件使用
       const middlewareParams = { ...toolParams }
       if (tool.timeoutMs) {
         middlewareParams._timeoutMs = tool.timeoutMs
@@ -38,9 +37,7 @@ export class ToolDispatcher {
       const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
         const result = await tool.handler(toolParams, context)
 
-        // 尊重工具自身的 success 字段；未显式声明时默认为 true
         const success = result?.success !== false
-        // 优先使用工具返回的 output 字段；否则序列化整个结果（排除元字段）
         const output = result?.output !== undefined
           ? result.output
           : this.serializeResult(result, ['success', 'error', 'toolName', 'rawOutput', 'output'])
@@ -69,11 +66,6 @@ export class ToolDispatcher {
     }
   }
 
-  /**
-   * 将工具返回值序列化为字符串
-   * @param result 工具返回值
-   * @param excludeKeys 需要排除的元字段（避免把 success/error 等元数据也喂给 LLM）
-   */
   private serializeResult(result: any, excludeKeys: string[] = []): any {
     if (result === null || result === undefined) {
       return 'Tool executed successfully (no output)'
@@ -96,7 +88,6 @@ export class ToolDispatcher {
               filtered[k] = v
             }
           }
-          // 如果过滤后只剩空对象，返回成功提示
           if (Object.keys(filtered).length === 0) {
             return 'Tool executed successfully'
           }

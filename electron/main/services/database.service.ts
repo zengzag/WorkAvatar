@@ -21,7 +21,6 @@ class DatabaseService {
       timeout: 5000
     })
 
-    // 启用WAL模式以提升并发读性能
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
 
@@ -198,7 +197,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
-      -- 复合索引：支持 ORDER BY is_pinned DESC, updated_at DESC 的常见查询，避免 filesort
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
     `)
 
@@ -214,13 +212,11 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
 
-    // 迁移：为已有对话填充 last_message_at，确保排序正确
     this.migrateConversationLastMessageAt()
 
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
 
-    // 延迟创建依赖后添加列的索引（必须在 addColumnIfNotExists 完成之后）
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
@@ -229,7 +225,6 @@ class DatabaseService {
 
     this.migrateEmployeeAddWorkspacePath()
 
-    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描；prefix='2,3' 预建前缀索引加速中文匹配）
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
@@ -241,11 +236,9 @@ class DatabaseService {
         prefix='2,3'
       );
     `)
-    // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）
     this.migrateEmployeeMemoriesFTS()
   }
 
-  /** 将已有 employee_memories 数据同步到 FTS5 表（仅执行一次） */
   private migrateEmployeeMemoriesFTS(): void {
     const count = this.db.prepare('SELECT COUNT(*) AS n FROM employee_memories_fts').get() as { n: number }
     if (count.n > 0) return
@@ -294,7 +287,6 @@ class DatabaseService {
     }
   }
 
-  /** 为已有对话填充 last_message_at = updated_at，确保排序正确 */
   private migrateConversationLastMessageAt(): void {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {

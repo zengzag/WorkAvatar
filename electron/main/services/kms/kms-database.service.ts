@@ -7,10 +7,6 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DB')
 
-/**
- * KMS 独立数据库服务
- * 管理搜索引擎的所有数据：索引目录、文件注册、FTS5全文索引、向量嵌入、冷热数据、访问追踪
- */
 class KMSDatabaseService {
   private db: Database.Database
   private static instance: KMSDatabaseService
@@ -31,7 +27,6 @@ class KMSDatabaseService {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
 
-    // 加载 sqlite-vec 向量搜索扩展
     try {
       sqliteVec.load(this.db)
       logger.info('sqlite-vec 扩展加载成功')
@@ -267,17 +262,12 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_collection_summaries_collection ON kms_collection_summaries(collection_id);
     `)
 
-    // 增量迁移：为已有表添加新字段
     this.migrateSchema()
 
     this.recoverStuckFiles()
   }
 
-  /**
-   * 增量迁移：安全添加新字段（兼容已有数据库）
-   */
   private migrateSchema(): void {
-    // kms_file_summaries 增加 light_summary（冷数据轻量摘要，不调用LLM）
     const cols = this.db.prepare("PRAGMA table_info(kms_file_summaries)").all() as any[]
     const colNames = cols.map(c => c.name)
     if (!colNames.includes('light_summary')) {
@@ -287,7 +277,6 @@ class KMSDatabaseService {
       this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN preview_text TEXT DEFAULT ''")
     }
 
-    // kms_collection_summaries 增加 embedding/dimension/model 字段（合集摘要向量化）
     const collCols = this.db.prepare("PRAGMA table_info(kms_collection_summaries)").all() as any[]
     const collColNames = collCols.map(c => c.name)
     if (!collColNames.includes('embedding')) {
@@ -300,42 +289,30 @@ class KMSDatabaseService {
       this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding_model TEXT DEFAULT ''")
     }
 
-    // file_hash 唯一约束：去重已有数据后建立唯一索引（代码逻辑假设 file_hash 唯一）
     this.enforceUniqueFileHash()
 
-    // 删除冗余的单列索引 idx_kms_access_log_file（已被复合索引 idx_kms_access_log_file_type_time 的最左前缀覆盖）
     this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
   }
 
-  /**
-   * 为 kms_files.file_hash 建立唯一索引：
-   * 1. 重复行保留最早创建的（created_at 最小），其余迁移引用后删除
-   * 2. 删除原非唯一索引，建立唯一索引
-   */
   private enforceUniqueFileHash(): void {
-    // 检查唯一索引是否已存在
     const idxExists = this.db.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_kms_files_hash_unique'"
     ).get() as any
     if (idxExists) return
 
-    // 检查是否存在重复 file_hash
     const dupes = this.db.prepare(`
       SELECT file_hash, COUNT(*) as cnt FROM kms_files GROUP BY file_hash HAVING cnt > 1
     `).all() as any[]
 
     if (dupes.length > 0) {
-      // 对每个重复 hash：保留 created_at 最小的记录，其余删除（外键级联清理子表）
       const keepIds = this.db.prepare(`
         SELECT id FROM kms_files WHERE file_hash = ? ORDER BY created_at ASC LIMIT 1
       `)
       const findDupes = this.db.prepare(`
         SELECT id FROM kms_files WHERE file_hash = ? AND id != ? ORDER BY created_at ASC
       `)
-      // 将子表（kms_file_collections、kms_access_log）引用迁移到保留行，再删除重复行
       const migrateRefs = this.db.transaction((dupeIds: string[], keepId: string) => {
         const placeholders = dupeIds.map(() => '?').join(',')
-        // kms_file_collections: 复合主键避免冲突，使用 INSERT OR IGNORE
         this.db.prepare(
           `INSERT OR IGNORE INTO kms_file_collections (file_id, collection_id, added_at)
            SELECT ?, collection_id, added_at FROM kms_file_collections WHERE file_id IN (${placeholders})`
@@ -343,7 +320,6 @@ class KMSDatabaseService {
         this.db.prepare(
           `DELETE FROM kms_file_collections WHERE file_id IN (${placeholders})`
         ).run(...dupeIds)
-        // kms_access_log 直接迁移（id 为 PK，无冲突风险）
         this.db.prepare(
           `UPDATE kms_access_log SET file_id = ? WHERE file_id IN (${placeholders})`
         ).run(keepId, ...dupeIds)
@@ -362,7 +338,6 @@ class KMSDatabaseService {
       logger.info(`Deduplicated ${dupes.length} file_hash group(s) before enforcing unique constraint`)
     }
 
-    // 删除原非唯一索引并建立唯一索引
     this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash')
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash)')
   }

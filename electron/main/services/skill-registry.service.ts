@@ -235,7 +235,6 @@ class SkillRegistryService {
           const content = fs.readFileSync(filePath, 'utf-8')
           refs.push({ name: file, content })
         } catch {
-          // Skip unreadable files
         }
       }
     }
@@ -257,7 +256,6 @@ class SkillRegistryService {
           const content = fs.readFileSync(filePath, 'utf-8')
           scripts.push({ name: file, content })
         } catch {
-          // Skip unreadable files
         }
       }
     }

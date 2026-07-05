@@ -2,10 +2,6 @@ import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
 import { generateId } from '../common-utils'
 
-/**
- * KMS 搜索历史服务
- * 负责搜索历史的记录、查询、清除与单条删除
- */
 class KMSSearchHistoryService {
   private db: Database.Database
   private static instance: KMSSearchHistoryService
@@ -61,9 +57,6 @@ class KMSSearchHistoryService {
     }
   }
 
-  /**
-   * 获取搜索历史列表
-   */
   getSearchHistory(params?: { limit?: number; searchMode?: string }): any[] {
     const limit = Math.min(Math.max(params?.limit || 50, 1), 500)
     let sql = 'SELECT id, query, search_mode, result_count, created_at FROM kms_search_history'
@@ -88,9 +81,6 @@ class KMSSearchHistoryService {
     }
   }
 
-  /**
-   * 删除单条搜索历史
-   */
   deleteSearchHistory(id: string): void {
     this.db.prepare('DELETE FROM kms_search_history WHERE id = ?').run(id)
   }

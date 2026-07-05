@@ -160,7 +160,6 @@ class EmployeeMemoryService {
       `UPDATE employee_memories SET ${sets.join(', ')} WHERE id = ?`
     ).run(...values)
 
-    // 同步 FTS 表（key/topic/content 任一变更时）
     if (params.key !== undefined || params.topic !== undefined || params.content !== undefined) {
       const updated = this.getMemory(id)!
       this.syncMemoryFTS(id, updated.employee_id, updated.key, updated.topic, updated.content)
@@ -169,7 +168,6 @@ class EmployeeMemoryService {
     return this.getMemory(id)
   }
 
-  /** 同步单条记忆到 FTS5 表（先删后插，保证一致性） */
   private syncMemoryFTS(id: string, employeeId: string, key: string, topic: string, content: string): void {
     this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
     this.db.getDb().prepare(
@@ -221,13 +219,11 @@ class EmployeeMemoryService {
     return this.queryMemories(employeeId, query, limit)
   }
 
-  /** 共享的记忆检索逻辑：pinned 全量返回 + FTS5 检索非 pinned */
   private queryMemories(employeeId: string, query: string, limit: number): EmployeeMemory[] {
     const pinned = this.db.getDb().prepare(
       'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
 
-    // 使用 FTS5 全文检索替代 LIKE '%query%'（避免全表扫描）
     const ftsQuery = this.buildFtsQuery(query)
     const searchResults = ftsQuery
       ? (this.db.getDb().prepare(
@@ -241,12 +237,6 @@ class EmployeeMemoryService {
     return [...pinned, ...searchResults]
   }
 
-  /**
-   * 将用户查询转换为 FTS5 安全的查询字符串
-   * - 双引号包裹整体以支持短语匹配
-   * - 转义内部双引号
-   * - 过滤过短的查询
-   */
   private buildFtsQuery(query: string): string {
     const trimmed = query.trim()
     if (trimmed.length < 2) return ''
@@ -451,7 +441,6 @@ ${contextParts.join('\n---\n')}
 
       this.db.getDb().transaction(() => {
         const now = Math.floor(Date.now() / 1000)
-        // 批量查询所有新记忆 key 对应的已有记录，消除 N+1
         const allNewKeys = validExtracted.map(m => m.key)
         const existingMap = new Map<string, EmployeeMemory>()
         if (allNewKeys.length > 0) {
@@ -488,7 +477,6 @@ ${contextParts.join('\n---\n')}
           logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
         }
 
-        // 批量查询所有更新 key，消除 N+1
         const allUpdateKeys = (parsed.update_memories || []).map(u => u.key).filter(Boolean)
         const updateExistingMap = new Map<string, EmployeeMemory>()
         if (allUpdateKeys.length > 0) {
@@ -705,7 +693,6 @@ JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":""
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
 
-    // 先查出待删除的 id，同步清理 FTS 表
     const staleIds = this.db.getDb().prepare(
       `SELECT id FROM employee_memories
        WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'

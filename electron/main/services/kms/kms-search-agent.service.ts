@@ -107,7 +107,6 @@ const QUERY_TYPE_LABELS: Record<QueryType, string> = {
   analysis: '综合分析',
 }
 
-/** 文件分片读取的字符数 */
 const READ_CHUNK_SIZE = 2000
 
 /**
@@ -151,14 +150,12 @@ class KMSSearchAgentService {
     const maxRounds = Math.min(Math.max(options?.maxRounds ?? 3, 1), 5)
     const topK = Math.min(Math.max(options?.topK ?? 10, 3), 30)
 
-    /** 记录一个步骤并通知回调 */
     const addStep = (step: SearchTraceStep) => {
       steps.push(step)
       trace.push(step.action + (step.detail ? `：${step.detail}` : ''))
       options?.onProgress?.(step)
     }
 
-    // 获取 LLM 提供商和模型
     const llmConfig = options?.providerId
       ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId) }
       : this.getDefaultLLMConfig()
@@ -171,7 +168,6 @@ class KMSSearchAgentService {
 
     addStep({ phase: '初始化', action: '获取LLM配置', detail: `provider: ${llmConfig.providerId}`, type: 'info' })
 
-    // 构建基础检索选项
     const baseSearchOpts: SearchOptions = {
       topK,
       fileExtensions: options?.fileExtensions,

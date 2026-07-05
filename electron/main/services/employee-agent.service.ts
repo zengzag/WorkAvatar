@@ -203,7 +203,6 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    // 注册 KMS 资料库工具集（搜索 + 合集管理），共享同一个 collectionIdsRef
     const collectionIdsRef: CollectionIdsRef = { current: [] }
     const kmsTools = createKMSTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsTools)
@@ -344,10 +343,6 @@ class EmployeeAgentService {
     })
   }
 
-  /**
-   * 准备系统提示词：优先从 DB 加载对话级缓存（首次消息后锁死）；未缓存时按模式构建
-   * 合集上下文与工具规划提示。返回是否命中缓存（调用方据此决定是否回写 DB）。
-   */
   private async prepareSystemPrompt(
     agent: EmployeeAgent,
     conversationId: string | undefined,
@@ -361,7 +356,6 @@ class EmployeeAgentService {
       ).get(conversationId) as { system_prompt?: string } | undefined
       if (conv?.system_prompt) {
         agent.setCachedSystemPrompt(conv.system_prompt)
-        // 已有缓存，跳过合集上下文和工具规划，省的 token
         agent.updateKBContextPrompt(undefined)
         agent.updateToolPlanningPrompt(null)
         return true
@@ -372,7 +366,6 @@ class EmployeeAgentService {
       agent.updateKBContextPrompt(undefined)
       agent.updateToolPlanningPrompt(null)
     } else {
-      // 只有未缓存时才需要构建合集上下文和工具规划提示（首次消息）
       if (collectionIds.length > 0) {
         const kmsService = require('./kms/kms.service').default.getInstance()
         const allCollections = kmsService.listCollections() as any[]
@@ -392,9 +385,6 @@ class EmployeeAgentService {
     return false
   }
 
-  /**
-   * 解析模型配置中的 max_retry 作为 agent 最大迭代次数；未配置时回退到 100。
-   */
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {
     const config = await this.llmClient.getProviderConfig(providerId)
     if (!config?.models_json) return 100
@@ -410,9 +400,6 @@ class EmployeeAgentService {
     return 100
   }
 
-  /**
-   * 首次构建的系统提示词持久化到 DB，后续同一对话直接复用。
-   */
   private persistSystemPrompt(
     conversationId: string | undefined,
     agent: EmployeeAgent,
@@ -439,17 +426,12 @@ class EmployeeAgentService {
     }
   }
 
-  /**
-   * 将前端消息格式展开为后端 Message[]，把嵌入在 assistant 消息中的 toolCalls
-   * 展开为 assistant + tool 消息序列，以保持与同对话迭代一致的 KV cache 命中。
-   */
   private expandFrontendMessages(
     messages: EmployeeChatStreamParams['messages']
   ): Message[] {
     const result: Message[] = []
     for (const m of messages) {
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        // 构建 assistant 消息：content + reasoning_content + tool_calls
         const assistantMsg: Message = {
           role: 'assistant',
           content: m.content,
@@ -468,7 +450,6 @@ class EmployeeAgentService {
         }
         result.push(assistantMsg)
 
-        // 为每个已完成的工具调用追加 tool 消息
         for (const tc of m.toolCalls) {
           if (tc.isComplete !== false && tc.result !== undefined && tc.id) {
             result.push({
@@ -479,7 +460,6 @@ class EmployeeAgentService {
           }
         }
       } else {
-        // user / tool 消息直接透传
         result.push({
           role: m.role as Message['role'],
           content: m.content,

@@ -246,9 +246,7 @@ export abstract class BaseAgent {
     return this.toolRegistry.getOpenAISchemas()
   }
 
-  /** 工具执行后的钩子，子类可覆盖以实现自定义逻辑（如技能指令持久化） */
   protected async onToolCallExecuted(_toolName: string, _args: any, _result: ToolCallResult): Promise<void> {
-    // 基类无默认行为；EmployeeAgent 覆盖此方法以处理 activate_skill 等
   }
 
   protected createLLMProvider(): ILLMProvider {
@@ -468,10 +466,6 @@ export abstract class BaseAgent {
     return { tokenUsage: totalTokenUsage }
   }
 
-  /**
-   * 处理一轮 LLM 响应中的工具调用序列：解析参数→派发工具→累积记录→追加 tool 消息。
-   * executeLoop 与 executeLoopStream 共享此逻辑；streamCallbacks 仅流式分支需要。
-   */
   private async processToolCalls(
     toolCalls: ToolCall[],
     usedToolCalls: ToolCallRecord[],

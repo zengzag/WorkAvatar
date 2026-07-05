@@ -172,7 +172,6 @@ export const officeExecTool: ToolDefinition = {
         await Promise.race([resultPromise, asyncTimeoutPromise])
       } finally {
         if (asyncTimer) clearTimeout(asyncTimer)
-        // 清理沙箱内未结束的定时器，防止事件循环挂起
         for (const t of trackedTimers) {
           clearTimeout(t)
           clearInterval(t)

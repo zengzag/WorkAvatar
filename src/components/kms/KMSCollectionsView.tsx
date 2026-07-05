@@ -119,7 +119,6 @@ const parseJsonArray = (json?: string): string[] => {
   }
 }
 
-// 将段落列表构建为 Tree 结构（按 title_path 的层级）
 const buildTocTree = (paragraphs: ParagraphItem[], t: (key: string, options?: any) => string): any[] => {
   const sorted = [...paragraphs].sort((a, b) => a.paragraph_index - b.paragraph_index)
   const roots: any[] = []
@@ -164,18 +163,15 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
 
   const [collections, setCollections] = useState<CollectionItem[]>([])
   const [loading, setLoading] = useState(false)
-  // 卡片附加信息：summary + stats
   const [summaryMap, setSummaryMap] = useState<Record<string, CollectionSummary | null>>({})
   const [statsMap, setStatsMap] = useState<Record<string, CollectionStats | null>>({})
 
-  // 编辑/创建合集
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [editingCollection, setEditingCollection] = useState<CollectionItem | null>(null)
   const [formName, setFormName] = useState('')
   const [formDesc, setFormDesc] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // 合集详情抽屉（统一：文件管理 + AI 内容查看）
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false)
   const [drawerCollection, setDrawerCollection] = useState<CollectionItem | null>(null)
   const [drawerSummary, setDrawerSummary] = useState<CollectionSummary | null>(null)
@@ -183,13 +179,10 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [filesStats, setFilesStats] = useState<CollectionStats | null>(null)
   const [filesLoading, setFilesLoading] = useState(false)
   const [addingFiles, setAddingFiles] = useState(false)
-  // 文件 AI 详情缓存（展开行时懒加载）
   const [detailCache, setDetailCache] = useState<Record<string, FileDetailCache>>({})
   const [expandedFileKeys, setExpandedFileKeys] = useState<string[]>([])
-  // 后台索引轮询
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 摘要编辑
   const [summaryModalOpen, setSummaryModalOpen] = useState(false)
   const [summaryCollection, setSummaryCollection] = useState<CollectionItem | null>(null)
   const [summaryText, setSummaryText] = useState('')
@@ -197,17 +190,12 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [summarySaving, setSummarySaving] = useState(false)
   const [summaryGenerating, setSummaryGenerating] = useState(false)
 
-  // 合集深度处理进度弹窗
-  // processCollection 仅持有正在处理的合集标识，不引用完整 CollectionItem，避免构造 dummy 对象
   const [processModalOpen, setProcessModalOpen] = useState(false)
   const [processCollection, setProcessCollection] = useState<{ id: string; name: string } | null>(null)
 
-  // 后台处理中合集状态跟踪（弹窗关闭后继续在后台跟踪进度）
   const [processingMap, setProcessingMap] = useState<Record<string, ProcessingCollectionState>>({})
-  // 进度事件订阅引用
   const processingUnsubscribeRef = useRef<(() => void) | null>(null)
 
-  // 章节预览抽屉状态
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewParagraph, setPreviewParagraph] = useState<{
     title: string; titlePath: string; content: string; summary: string; keywords: string[]
@@ -226,7 +214,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [message])
 
-  // 加载所有合集的摘要与统计
   const loadAllSummaryAndStats = useCallback(async () => {
     try {
       const list = await window.electronAPI.kms.listCollections()
@@ -246,33 +233,27 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     } catch {}
   }, [])
 
-  // 全局订阅合集深度处理进度（用于跟踪后台处理状态，即使弹窗关闭也保持订阅）
   useEffect(() => {
     if (processingUnsubscribeRef.current) {
       processingUnsubscribeRef.current()
       processingUnsubscribeRef.current = null
     }
     processingUnsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
-      // 只关心带 collectionId 的事件（合集深度处理）
       if (!progress.collectionId) return
 
-      // 完成或错误：从处理中列表移除
       if (progress.phase === 'done' || progress.phase === 'error') {
         setProcessingMap((prev) => {
           const next = { ...prev }
           delete next[progress.collectionId!]
           return next
         })
-        // 刷新合集列表与摘要
         loadCollections()
         loadAllSummaryAndStats()
         return
       }
 
-      // 跳过非阶段事件
       if (!(progress.phase in STAGE_INDEX)) return
 
-      // 计算总体百分比（按阶段加权）
       const currentIdx = STAGE_INDEX[progress.phase]
       let fraction = currentIdx / STAGE_KEYS.length
       if (progress.total > 0) {
@@ -361,14 +342,12 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   }
 
   const handleProcessDeep = async (collection: CollectionItem) => {
-    // 若该合集已在后台处理中，仅重新打开进度弹窗（不触发新处理）
     if (processingMap[collection.id]) {
       setProcessCollection({ id: collection.id, name: collection.name })
       setProcessModalOpen(true)
       return
     }
 
-    // 先校验是否有文件
     try {
       const stats = await window.electronAPI.kms.getCollectionStats(collection.id)
       if (!stats || stats.fileCount === 0) {
@@ -376,7 +355,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         return
       }
 
-      // 如果已处理过（有摘要），二次确认
       if (stats.hasSummary || (stats.indexedCount > 0 && stats.indexedCount === stats.fileCount)) {
         Modal.confirm({
           title: t('kms.collectionProcess.reprocessTitle'),
@@ -393,28 +371,23 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         return
       }
     } catch {
-      // 忽略校验错误，继续触发后端会返回错误
     }
     setProcessCollection({ id: collection.id, name: collection.name })
     setProcessModalOpen(true)
-    // fire-and-forget，进度通过 onIndexProgress 推送
     window.electronAPI.kms.processCollectionDeep(collection.id)
   }
 
-  // 关闭弹窗：仅关闭 UI，不取消后台处理（后台处理状态由全局订阅持续跟踪）
   const handleCloseProcessModal = useCallback(() => {
     setProcessModalOpen(false)
     setProcessCollection(null)
   }, [])
 
-  // 取消处理：调用后端取消接口 + 关闭弹窗
   const handleCancelProcessModal = useCallback(() => {
     window.electronAPI.kms.cancelCollectionDeepProcess()
     setProcessModalOpen(false)
     setProcessCollection(null)
   }, [])
 
-  // 预览段落章节内容
   const handlePreviewParagraph = useCallback(async (paragraphId: string) => {
     setPreviewOpen(true)
     setPreviewLoading(true)
@@ -444,7 +417,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     setExpandedFileKeys([])
     setDrawerSummary(null)
     await loadCollectionFiles(collection.id)
-    // 加载合集摘要
     try {
       const summary = await window.electronAPI.kms.getCollectionSummary(collection.id)
       setDrawerSummary(summary || null)
@@ -467,7 +439,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [message])
 
-  // 后台轮询：当有 pending 文件时，定时刷新 stats
   const startPollingIfNeeded = useCallback((collectionId: string, stats: CollectionStats | null) => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current)
@@ -497,7 +468,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [drawerCollection, filesStats, startPollingIfNeeded])
 
-  // 懒加载文件 AI 详情（章节信息以 paragraphs 为准，不再单独请求 toc）
   const loadFileDetail = useCallback(async (fileId: string) => {
     if (detailCache[fileId]) return
     setDetailCache(prev => ({ ...prev, [fileId]: { summary: null, paragraphs: [], loading: true } }))
@@ -560,7 +530,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // 文件夹批量导入：递归收集支持格式的文件
   const handleAddFolder = async () => {
     if (!drawerCollection) return
     try {
@@ -658,7 +627,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         }
       }
     } catch (err: any) {
-      // 忽略 - 摘要可能尚未生成
     }
   }
 
@@ -677,10 +645,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       })
       message.success(t('kms.collections.summarySaved'))
       setSummaryModalOpen(false)
-      // 刷新该卡片摘要
       const updated = await window.electronAPI.kms.getCollectionSummary(summaryCollection.id)
       setSummaryMap(prev => ({ ...prev, [summaryCollection.id]: updated || null }))
-      // 如果抽屉打开的是同一合集，也刷新抽屉摘要
       if (drawerCollection?.id === summaryCollection.id) {
         setDrawerSummary(updated || null)
       }
@@ -691,7 +657,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  // 摘要弹窗内 AI 生成
   const handleAIGenerateInModal = async () => {
     if (!summaryCollection) return
     setSummaryGenerating(true)
@@ -746,7 +711,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     const fileSummary = detail.summary
     const keywords = parseJsonArray(fileSummary?.keywords_json)
     const mainTopics = parseJsonArray(fileSummary?.main_topics_json)
-    // 章节信息直接使用 paragraphs，避免与 toc 数据源不一致
     const hasParagraphs = detail.paragraphs.length > 0
 
     if (!fileSummary?.summary && !hasParagraphs) {
@@ -926,7 +890,6 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     },
   ], [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile])
 
-  // 抽屉中的合集摘要主题
   const drawerKeyTopics = parseJsonArray(drawerSummary?.key_topics_json)
 
   return (

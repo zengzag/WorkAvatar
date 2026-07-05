@@ -50,7 +50,6 @@ class LLMLoggerService {
   private static instance: LLMLoggerService
   private openFiles: Map<string, { stream: fs.WriteStream; lastWriteAt: number }> = new Map()
   private flushTimer: NodeJS.Timeout | null = null
-  // 流空闲超过该阈值则关闭（毫秒）
   private static readonly IDLE_THRESHOLD_MS = 60_000
 
   private constructor() {
@@ -129,10 +128,6 @@ class LLMLoggerService {
     this.openFiles.set(filePath, { stream, lastWriteAt: Date.now() })
   }
 
-  /**
-   * 关闭空闲超过 IDLE_THRESHOLD_MS 的写入流。
-   * 原实现仅移除已 ended/destroyed 的流，从未真正关闭空闲流，导致文件句柄泄漏。
-   */
   private closeIdleStreams(): void {
     const now = Date.now()
     for (const [filePath, { stream, lastWriteAt }] of this.openFiles.entries()) {

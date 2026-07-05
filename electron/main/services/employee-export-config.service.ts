@@ -50,7 +50,6 @@ export class EmployeeExportConfigService {
     this.db = db
   }
 
-  /** 构建 EmployeeConfigExport 数据结构（不含 checksum），供 exportConfig 和 exportPackage 复用 */
   buildConfigData(employeeId: string): { data: EmployeeConfigExport | null; error?: string } {
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as any
     if (!employee) return { data: null, error: 'Employee not found' }
@@ -108,7 +107,6 @@ export class EmployeeExportConfigService {
     return { data: exportData }
   }
 
-  /** 计算 checksum（基于 checksum 字段为空时的 JSON 序列化结果） */
   computeChecksum(data: EmployeeConfigExport): string {
     const cloned = { ...data, checksum: '' }
     const dataStr = JSON.stringify(cloned, null, 2)
@@ -189,7 +187,6 @@ export class EmployeeExportConfigService {
     return { success: true, employeeId, warnings }
   }
 
-  /** 共享的导入逻辑：在事务中创建员工、技能、工具和已安装技能关联 */
   private applyImportData(
     importData: EmployeeConfigExport,
     employeeId: string,
@@ -242,7 +239,6 @@ export class EmployeeExportConfigService {
               'UPDATE employee_tools SET is_enabled = ? WHERE employee_id = ? AND tool_id = ?'
             ).run(tool.is_enabled ? 1 : 0, employeeId, tool.tool_id)
           }
-          // 'skip' 策略不做任何操作
         } else {
           const etId = generateId()
           this.db.getDb().prepare(`

@@ -80,13 +80,11 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
     }
   }, [open, result, loadContent])
 
-  // 自动滚动到搜索结果位置
   useEffect(() => {
     if (!open || !result || loading || !content) return
     const targetLine = result.start_line
     const targetOffset = result.start_offset
 
-    // 优先使用行号定位
     if (targetLine !== undefined && targetLine > 0) {
       const lineIdx = targetLine - 1
       const targetEl = lineRefs.current[lineIdx]
@@ -99,7 +97,6 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
       }
     }
 
-    // 退化：使用字符偏移估算滚动位置
     if (targetOffset !== undefined && targetOffset > 0 && contentRef.current) {
       const ratio = targetOffset / content.length
       const targetScroll = ratio * contentRef.current.scrollHeight - 80

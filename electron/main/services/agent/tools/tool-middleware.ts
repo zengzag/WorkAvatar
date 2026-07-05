@@ -58,7 +58,6 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
         ])
         return result
       } finally {
-        // 无论 next() 先完成还是超时先触发，都清理 timer 避免事件循环泄漏
         if (timer) clearTimeout(timer)
       }
     },

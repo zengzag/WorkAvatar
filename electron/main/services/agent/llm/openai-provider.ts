@@ -224,7 +224,6 @@ export class OpenAIProvider implements ILLMProvider {
               }
             }
 
-            // 在主循环中直接提取 usage，避免二次遍历解析
             if (parsed.usage) {
               streamUsage = this.normalizeUsage(parsed.usage)
             }

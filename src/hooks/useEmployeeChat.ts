@@ -10,15 +10,10 @@ import { useChatScroll } from './useChatScroll'
 import { useLlmSettings } from './useLlmSettings'
 import { getSceneDefaultModel } from '../utils/default-model'
 
-// 对话消息内存缓存最大容量，超过时按 LRU 淘汰，防止长时间使用积累导致内存泄漏
 const MESSAGES_CACHE_MAX_SIZE = 20
-// 加载状态的最短展示时间（毫秒），避免加载完成太快时 spinner 闪烁
 const MIN_LOADING_DISPLAY_MS = 120
-// 对话列表分页大小（初始展示 & 加载更多增量）
 const CONVERSATION_PAGE_SIZE = 20
-// 滚动到列表底部多少像素内触发加载更多
 const SCROLL_BOTTOM_THRESHOLD_PX = 10
-// LLM 默认温度
 const DEFAULT_TEMPERATURE = 0.3
 
 interface UseEmployeeChatParams {
@@ -116,7 +111,6 @@ const _persistentStreamStates = new Map<string, ConversationStreamState>()
 let _persistentListenersCleanup: (() => void) | null = null
 let _persistentEmployeeId: string | null = null
 
-// 让出主线程一小段时间，让 React 有机会渲染 loading 状态
 const yieldToBrowser = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
 /**
@@ -193,7 +187,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [displayedCount, setDisplayedCount] = useState(CONVERSATION_PAGE_SIZE)
   const [allConversations, setAllConversations] = useState<Conversation[]>([])
 
-  // 本地排序：按 COALESCE(last_message_at, created_at) DESC，避免每次重新排序都请求后端
   const conversations = useMemo(() => {
     const sorted = [...allConversations].sort((a, b) => {
       const aTime = a.last_message_at ?? a.created_at
@@ -203,7 +196,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return sorted.slice(0, displayedCount)
   }, [allConversations, displayedCount])
 
-  // 本地更新 last_message_at，避免重新请求后端仅为了列表排序
   const updateConvLastMessageAt = useCallback((convId: string, timestamp: number) => {
     setAllConversations(prev => {
       let found = false
@@ -229,7 +221,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   // 新建对话后延迟发送的 setTimeout 句柄，组件卸载时清理避免 setState-after-unmount（B#7）
   const pendingSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 将 state 同步到 ref，避免闭包陈旧问题
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId
   }, [activeConversationId])
@@ -256,7 +247,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
-  // 删除对话消息缓存（用于删除/清空对话时）
   const deleteConvMessages = (convId: string) => {
     conversationMessagesRef.current.delete(convId)
   }
@@ -463,7 +453,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
-          // 找到对应的 tool_call segment（通过 toolCallId 或 name+incomplete）
           let targetIndex = -1
           if (toolCallId) {
             targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.toolCallId === toolCallId && !s.isToolComplete)
@@ -545,7 +534,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
-        // 对话结束后更新 last_message_at 触发本地排序
         updateConvLastMessageAt(streamState.conversationId, doneLastMsgTime)
       }
     })
@@ -573,7 +561,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         if (activeConvIdStorageKey && localStorage.getItem(activeConvIdStorageKey) === streamState.conversationId) {
           localStorage.removeItem(activeConvIdStorageKey)
         }
-        // 对话出错后更新 last_message_at 触发本地排序
         updateConvLastMessageAt(streamState.conversationId, Math.floor(Date.now() / 1000))
       }
     })
@@ -640,7 +627,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
       setAllConversations(result)
     } catch {
-      // 静默失败，不影响用户体验
     }
   }
 
@@ -673,7 +659,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setConvMessages(convId, [])
       forceScrollToBottom()
 
-      // 从后端刷新列表以获取正确的排序
       refreshConversationList()
 
       if (pendingMessage) {
@@ -709,21 +694,18 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setIsStreaming(hasActiveStream)
     isStreamingRef.current = hasActiveStream
 
-    // 命中 LRU 缓存：同样先展示 loading 过渡，避免 React 一次性 mount 大量 MessageBubble 卡死
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
       const cachedLoadingStart = Date.now()
       setLoadingConversationId(convId)
       setMessages([])
 
-      // 让出主线程，让 spinner 先渲染出来再切入实际内容
       await yieldToBrowser()
       if (version !== selectConvVersionRef.current) {
         setLoadingConversationId(prev => prev === convId ? null : prev)
         return
       }
 
-      // 保证 loading 至少展示 MIN_LOADING_DISPLAY_MS，避免一闪而过
       const cachedElapsed = Date.now() - cachedLoadingStart
       if (cachedElapsed < MIN_LOADING_DISPLAY_MS) {
         await new Promise(resolve => setTimeout(resolve, MIN_LOADING_DISPLAY_MS - cachedElapsed))
@@ -742,7 +724,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    // 缓存未命中：先切换 UI 状态，再异步加载并显示 loading
     const loadingStart = Date.now()
     setLoadingConversationId(convId)
     setMessages([])
@@ -773,7 +754,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setMinimalMode(!!fullConv.minimal_mode)
     }
 
-    // 让出主线程，让 loading 状态先渲染出来
     await yieldToBrowser()
 
     if (version !== selectConvVersionRef.current) {
@@ -789,7 +769,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       parsedMsgs = []
     }
 
-    // 再次让出主线程，避免后续处理阻塞渲染
     await yieldToBrowser()
 
     if (version !== selectConvVersionRef.current) {
@@ -797,7 +776,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    // 构造 segments / 补齐 completedAt
     const msgs = parsedMsgs.map(ensureSegments).map(patchMissingCompletedAt)
 
     if (msgs.some((m, i) => m !== parsedMsgs[i])) {
@@ -808,7 +786,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       }).catch(() => {})
     }
 
-    // 缓存最终处理后的消息，LRU 自动淘汰冷数据
     conversationMessagesRef.current.set(convId, msgs)
 
     if (version !== selectConvVersionRef.current) {
@@ -816,7 +793,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    // 保证 loading 至少展示 MIN_LOADING_DISPLAY_MS，避免一闪而过
     const elapsed = Date.now() - loadingStart
     if (elapsed < MIN_LOADING_DISPLAY_MS) {
       await new Promise(resolve => setTimeout(resolve, MIN_LOADING_DISPLAY_MS - elapsed))
@@ -1024,7 +1000,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const updatedMessagesRef = [...currentMsgs, userMessage]
     setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
-    // 用户发消息时更新 last_message_at，触发列表重新排序
     const lastMsgTime = Math.floor(Date.now() / 1000)
     window.electronAPI.conversation.update({
       id: targetConvId,
@@ -1274,7 +1249,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    // 保存当前回复为分支，重置消息为流式状态
     const existingBranches = targetMsg.branches || []
     const currentBranch: MessageBranch = {
       content: targetMsg.content,
@@ -1327,7 +1301,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const targetMsg = currentMsgs[msgIndex]
     if (targetMsg.role !== 'assistant') return
 
-    // 保存当前回复为分支，重置消息为流式状态，并标记新分支使用的模型
     const existingBranches = targetMsg.branches || []
     const currentBranch: MessageBranch = {
       content: targetMsg.content,
@@ -1385,14 +1358,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       return
     }
 
-    // 编辑用户消息内容
     const editedUserMsg: MessageWithThought = {
       ...targetMsg,
       content: newContent.trim(),
       timestamp: Date.now(),
     }
 
-    // 检查紧随其后的 assistant 消息
     const assistantMsgIndex = msgIndex + 1
     const existingAssistantMsg = currentMsgs[assistantMsgIndex]
     let assistantMessageId: string
@@ -1401,7 +1372,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     newMessages[msgIndex] = editedUserMsg
 
     if (existingAssistantMsg && existingAssistantMsg.role === 'assistant') {
-      // 将当前 assistant 回复保存为分支，重置为空流式状态以重新生成
       const existingBranches = existingAssistantMsg.branches || []
       const currentBranch: MessageBranch = {
         content: existingAssistantMsg.content,
@@ -1430,7 +1400,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         comparisonModelId: undefined,
       }
     } else {
-      // 没有 assistant 消息，创建新的
       assistantMessageId = `msg_${generateId()}`
       const assistantMessage: MessageWithThought = {
         id: assistantMessageId,
@@ -1440,11 +1409,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         isStreaming: true,
         segments: [],
       }
-      // 插入到编辑的用户消息之后
       newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }
 
-    // 上下文只使用被编辑消息及其上方的消息（不包含 assistant 回复及之后的消息）
     await commitAndStartStream(
       convId,
       newMessages,

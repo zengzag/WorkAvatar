@@ -2,32 +2,15 @@ import KMSService from '../../kms/kms.service'
 import type { ToolDefinition } from './types'
 import type { CollectionIdsRef } from './kms-search.tool'
 
-/**
- * 创建 KMS 合集管理工具集
- *
- * 暴露合集（资料库的"手动文件合集"概念）相关能力给数字员工：
- * - kms_list_collections: 列出当前会话可访问的合集
- * - kms_collection_overview: 查看合集的全局摘要与文件清单
- * - kms_get_toc: 获取文件的层级目录结构
- * - kms_get_paragraphs: 批量获取文件段落的摘要与预览
- *
- * @param collectionIdsRef 当前会话选中的合集ID列表（用于权限校验和列表过滤）
- */
 export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): ToolDefinition[] {
   const kmsService = KMSService.getInstance()
 
-  /**
-   * 校验合集ID是否在当前会话可访问范围内：
-   * - 会话未选择任何合集时，允许访问任意合集（开放模式）
-   * - 会话已选择合集时，仅允许访问选中的合集
-   */
   function isAccessible(collectionId: string): boolean {
     const ref = collectionIdsRef.current || []
     if (ref.length === 0) return true
     return ref.includes(collectionId)
   }
 
-  /** 安全解析 JSON 数组字段，容错非法 JSON */
   function safeParseJsonArray(raw: any): string[] {
     if (!raw) return []
     try {
@@ -38,7 +21,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     }
   }
 
-  // kms_list_collections: 列出当前会话可访问的合集
   const kmsListCollectionsTool: ToolDefinition = {
     id: 'kms_list_collections',
     name: 'kms_list_collections',
@@ -95,7 +77,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     source: 'builtin',
   }
 
-  // kms_collection_overview: 查看合集的全局摘要、主题和文件清单
   const kmsCollectionOverviewTool: ToolDefinition = {
     id: 'kms_collection_overview',
     name: 'kms_collection_overview',
@@ -170,7 +151,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     source: 'builtin',
   }
 
-  // kms_get_toc: 获取文件的层级目录结构
   const kmsGetTocTool: ToolDefinition = {
     id: 'kms_get_toc',
     name: 'kms_get_toc',
@@ -192,7 +172,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
         if (!fileId) {
           return { success: true, output: '请提供 file_id。' }
         }
-        // 防御性剥离前缀
         const prefixMatch = fileId.match(/^[a-z]+:(.+)$/i)
         if (prefixMatch) {
           fileId = prefixMatch[1].trim()
@@ -203,7 +182,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
           return { success: true, output: '该文件暂无段落目录。' }
         }
 
-        // 取文件名（通过 file_id 查询）
         const fileSummary = kmsService.getFileSummary(fileId)
         const fileName = fileSummary?.file_name || fileId
 
@@ -220,7 +198,6 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     source: 'builtin',
   }
 
-  // kms_get_paragraphs: 批量获取段落的详细摘要和内容预览
   const kmsGetParagraphsTool: ToolDefinition = {
     id: 'kms_get_paragraphs',
     name: 'kms_get_paragraphs',
@@ -244,14 +221,12 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
           return { success: true, output: '请提供至少一个段落ID。' }
         }
 
-        // 防御性剥离前缀
         const ids: string[] = rawIds.map((id: any) => {
           const s = String(id || '').trim()
           const m = s.match(/^[a-z]+:(.+)$/i)
           return m ? m[1].trim() : s
         })
 
-        // 调用 KMS 服务批量查询段落详情
         const paragraphs = kmsService.getParagraphsByIds(ids)
 
         if (paragraphs.length === 0) {

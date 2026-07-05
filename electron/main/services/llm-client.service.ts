@@ -436,7 +436,6 @@ class LLMClientService {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
-    // 联动外部 signal（如用户手动取消）
     if (options?.signal) {
       if (options.signal.aborted) {
         controller.abort()
@@ -498,7 +497,6 @@ class LLMClientService {
       return result
     } catch (error: any) {
       clearTimeout(timeout)
-      // 超时导致的 abort 转换为可读错误（外部 signal 主动取消的不转换）
       if (error.name === 'AbortError' && !options?.signal?.aborted) {
         error.message = 'LLM API request timed out'
       }
@@ -560,7 +558,6 @@ class LLMClientService {
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
-    // 联动外部 signal（如用户手动取消）
     if (signal) {
       if (signal.aborted) {
         controller.abort()
@@ -702,7 +699,6 @@ class LLMClientService {
       onDone()
     } catch (err: any) {
       clearTimeout(timeout)
-      // 超时导致的 abort 转换为可读错误（外部 signal 主动取消的不转换）
       if (err.name === 'AbortError' && !signal?.aborted) {
         err.message = 'LLM API request timed out'
       }
