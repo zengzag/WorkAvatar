@@ -425,7 +425,11 @@ export function useKMS() {
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {
-      await window.electronAPI.kms.setSettings(params)
+      const result = await window.electronAPI.kms.setSettings(params)
+      if (result?.error) {
+        console.error('Failed to save KMS settings:', result.error)
+        return false
+      }
       await loadKmsSettings()
       return true
     } catch (err) {

@@ -157,7 +157,7 @@ class KMSSearchAgentService {
     }
 
     const llmConfig = options?.providerId
-      ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId) }
+      ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId), enableThinking: false }
       : this.getDefaultLLMConfig()
     if (!llmConfig || !llmConfig.providerId) {
       throw new Error('No LLM provider configured. Please configure an LLM provider first.')
@@ -182,7 +182,7 @@ class KMSSearchAgentService {
     // === 阶段 1：查询类型识别 ===
     addStep({ phase: '查询类型识别', action: '分析查询意图', type: 'llm' })
     const t0 = Date.now()
-    const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal)
+    const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking)
     addStep({
       phase: '查询类型识别',
       action: `查询类型: ${QUERY_TYPE_LABELS[queryType]}`,
@@ -221,7 +221,7 @@ class KMSSearchAgentService {
     const t2 = Date.now()
     const searchPlan = await this.planSearchPath(
       query, queryType, fileInventory, dirSummaries,
-      llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal
+      llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking
     )
     addStep({
       phase: '检索路径规划',
@@ -265,7 +265,8 @@ class KMSSearchAgentService {
       llmClient,
       llmConfig.providerId,
       llmConfig.modelId,
-      options?.signal
+      options?.signal,
+      llmConfig.enableThinking
     )
 
     addStep({
@@ -436,10 +437,10 @@ class KMSSearchAgentService {
   }
 
   /**
-   * 获取默认 LLM 配置（providerId + modelId）
+   * 获取默认 LLM 配置（providerId + modelId + enableThinking）
    * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
    */
-  private getDefaultLLMConfig(): { providerId: string; modelId: string | undefined } | null {
+  private getDefaultLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
     const db = this.mainDb.getDb()
 
     // 1. 优先使用 KMS 专属模型设置
@@ -451,6 +452,7 @@ class KMSSearchAgentService {
           return {
             providerId: config.provider_id,
             modelId: config.model_id || undefined,
+            enableThinking: !!config.enable_thinking,
           }
         }
       }
@@ -469,6 +471,7 @@ class KMSSearchAgentService {
           return {
             providerId: config.provider_id,
             modelId: config.model_id || undefined,
+            enableThinking: false,
           }
         }
       }
@@ -479,7 +482,7 @@ class KMSSearchAgentService {
     // 3. 最后回退到任意可用提供商
     const fallbackProviderId = getDefaultProviderId(this.mainDb)
     if (fallbackProviderId) {
-      return { providerId: fallbackProviderId, modelId: undefined }
+      return { providerId: fallbackProviderId, modelId: undefined, enableThinking: false }
     }
     return null
   }
@@ -652,7 +655,8 @@ class KMSSearchAgentService {
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<QueryType> {
     const prompt = `分析以下用户查询的意图类型，只返回类型代码，不要其他内容。
 
@@ -670,7 +674,7 @@ class KMSSearchAgentService {
       const result = await llmClient.chat(providerId, [
         { role: 'system', content: '你是一个查询意图分类器，只输出类型代码。' },
         { role: 'user', content: prompt },
-      ], { temperature: 0, max_tokens: 20, model: modelId, signal, logSource: 'kms_agent_classify' })
+      ], { temperature: 0, max_tokens: 20, model: modelId, signal, logSource: 'kms_agent_classify', enable_thinking: enableThinking })
 
       const type = result.trim().toLowerCase()
       if (['locate', 'concept', 'trend', 'analysis'].includes(type)) {
@@ -707,7 +711,8 @@ class KMSSearchAgentService {
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] }> {
     const typeStrategy: Record<QueryType, string> = {
       locate: '提取核心实体名、术语、关键标识符进行精确搜索',
@@ -770,7 +775,7 @@ ${fileListText || '（无文件清单）'}
           { role: 'user', content: prompt },
         ],
         { queries: [], use_semantic_for_all: false, candidate_file_indices: [] },
-        { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_agent_plan' },
+        { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_agent_plan', enable_thinking: enableThinking },
       )
 
       const queries = Array.isArray(parsed.queries) && parsed.queries.length > 0
@@ -867,7 +872,8 @@ ${fileListText || '（无文件清单）'}
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ conclusion: string; sources: AgentSearchSource[] }> {
     if (results.length === 0 && !supplementaryContent) {
       return {
@@ -922,7 +928,7 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
       const conclusion = await llmClient.chat(providerId, [
         { role: 'system', content: '你是一个内容提纯助手，输出简洁准确的结论。' },
         { role: 'user', content: prompt },
-      ], { temperature: 0.2, max_tokens: 800, model: modelId, signal, logSource: 'kms_agent_distill' })
+      ], { temperature: 0.2, max_tokens: 800, model: modelId, signal, logSource: 'kms_agent_distill', enable_thinking: enableThinking })
 
       // 构建溯源信息
       const sources: AgentSearchSource[] = limitedResults.map(r => ({

@@ -152,12 +152,18 @@ class KMSAutoIndexService {
       const searchEngine = KMSSearchEngineService.getInstance()
       const fileParser = FileParserService.getInstance()
 
-      let providerId: string | undefined
+      // 摘要模型配置（用于文件摘要等 LLM 分析任务）
+      let summaryProviderId: string | undefined
+      let summaryEnableThinking: boolean | undefined
       try {
-        const defaultEmbConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
-        if (defaultEmbConfig) providerId = defaultEmbConfig.providerId
+        const KMSService = (await import('./kms.service')).default
+        const summaryConfig = KMSService.getInstance().getKmsSummaryLLMConfigPublic()
+        if (summaryConfig) {
+          summaryProviderId = summaryConfig.providerId
+          summaryEnableThinking = summaryConfig.enableThinking
+        }
       } catch (error) {
-        logger.warn('Failed to get default embedding config for auto-index', error)
+        logger.warn('Failed to resolve summary model config for auto-index', error)
       }
 
       // Lazy import to avoid circular dependency
@@ -181,11 +187,11 @@ class KMSAutoIndexService {
             indexManager.saveLightSummary(file.id, file.fileName, parseResult.fullText)
           }
 
-          if (file.dataTier === 'hot' && providerId) {
+          if (file.dataTier === 'hot' && summaryProviderId) {
             const llmClient = LLMClientService.getInstance()
             await indexManager.processHotFilePublic(
-              file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine,
-              signal, onProgress, { current: processed + 1, total },
+              file.id, parseResult.fullText, file.fileName, summaryProviderId, llmClient, searchEngine,
+              signal, onProgress, { current: processed + 1, total }, summaryEnableThinking,
             )
           }
 

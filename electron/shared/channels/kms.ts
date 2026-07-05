@@ -135,9 +135,16 @@ export interface KMSAutoIndexConfig {
   stableThresholdSeconds: number
 }
 
+export interface KMSModelConfig {
+  provider_id: string
+  model_id: string
+  enable_thinking?: boolean
+}
+
 export interface KMSSetSettingsParams {
-  model?: { provider_id: string; model_id: string } | null
-  embeddingModel?: { provider_id: string; model_id: string } | null
+  model?: KMSModelConfig | null
+  embeddingModel?: KMSModelConfig | null
+  summaryModel?: KMSModelConfig | null
   searchParams?: { maxRounds?: number; topK?: number }
   autoIndex?: KMSAutoIndexConfig
 }

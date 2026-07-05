@@ -423,8 +423,8 @@ class KMSService {
       return { error: 'NO_FILES' }
     }
 
-    // 获取 LLM 配置（KMS 专属 → 知识场景默认 → 任意可用）
-    const llmConfig = this.getKmsLLMConfig()
+    // 获取摘要模型 LLM 配置（KMS 摘要模型 → KMS AI搜索模型 → 知识场景默认 → 任意可用）
+    const llmConfig = this.getKmsSummaryLLMConfig()
     if (!llmConfig) {
       return { error: 'NO_LLM_PROVIDER' }
     }
@@ -471,7 +471,7 @@ ${fileSummaries.join('\n')}
           { role: 'user', content: prompt },
         ],
         { summary: '', keyTopics: [] },
-        { temperature: 0.3, maxTokens: 800, signal, logSource: 'kms_collection_summary' },
+        { temperature: 0.3, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking },
       )
 
       // 取消检查
@@ -501,8 +501,16 @@ ${fileSummaries.join('\n')}
     }
   }
 
-  getKmsLLMConfigPublic(): { providerId: string; modelId: string | undefined } | null {
+  getKmsLLMConfigPublic(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
     return this.getKmsLLMConfig()
+  }
+
+  /**
+   * 获取摘要模型配置（用于文件摘要、目录摘要、合集摘要、合集深度处理等）
+   * 优先级：KMS 摘要模型 (kms_summary_model) > KMS AI搜索模型 (kms_model) > 知识场景默认模型 > 任意可用提供商
+   */
+  getKmsSummaryLLMConfigPublic(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
+    return this.getKmsSummaryLLMConfig()
   }
 
   getKmsEmbeddingConfigPublic(): { providerId: string; modelName: string } | null {

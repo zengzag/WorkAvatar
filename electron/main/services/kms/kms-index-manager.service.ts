@@ -107,7 +107,7 @@ class KMSIndexManagerService {
     onProgress?: ProgressCallback,
     options: { providerId?: string; withEmbedding?: boolean; dirId?: string } = {},
   ): Promise<void> {
-    const { providerId, withEmbedding = true, dirId } = options
+    const { withEmbedding = true, dirId } = options
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
@@ -162,6 +162,22 @@ class KMSIndexManagerService {
       const fileParser = FileParserService.getInstance()
       const llmClient = LLMClientService.getInstance()
 
+      // 摘要模型配置（用于文件摘要/目录摘要等 LLM 分析任务）
+      let summaryProviderId: string | undefined
+      let summaryModelId: string | undefined
+      let summaryEnableThinking: boolean | undefined
+      try {
+        const KMSService = (await import('./kms.service')).default
+        const summaryConfig = KMSService.getInstance().getKmsSummaryLLMConfigPublic()
+        if (summaryConfig) {
+          summaryProviderId = summaryConfig.providerId
+          summaryModelId = summaryConfig.modelId
+          summaryEnableThinking = summaryConfig.enableThinking
+        }
+      } catch (error) {
+        logger.warn('Failed to resolve summary model config', error)
+      }
+
       let processed = 0
       for (const file of pendingFiles) {
         if (signal.aborted) break
@@ -189,8 +205,8 @@ class KMSIndexManagerService {
             this.saveLightSummary(file.id, file.fileName, parseResult.fullText)
           }
           const isHot = file.dataTier === 'hot'
-          if (isHot && providerId) {
-            await this.processHotFile(file.id, parseResult.fullText, file.fileName, providerId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total })
+          if (isHot && summaryProviderId) {
+            await this.processHotFile(file.id, parseResult.fullText, file.fileName, summaryProviderId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total }, summaryModelId, summaryEnableThinking)
           }
 
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
@@ -218,7 +234,7 @@ class KMSIndexManagerService {
       }
 
       if (!signal.aborted && isFull) {
-        await this.generateDirSummaries(providerId, llmClient, signal)
+        await this.generateDirSummaries(summaryProviderId, summaryModelId, summaryEnableThinking, llmClient, signal)
       }
 
       if (signal.aborted) {
@@ -283,7 +299,7 @@ class KMSIndexManagerService {
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_FILES' }
       }
 
-      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
       if (!llmConfig) {
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_LLM_PROVIDER' }
       }
@@ -329,7 +345,8 @@ class KMSIndexManagerService {
             signal,
             reportProgress,
             { current: fileProcessed + 1, total },
-            llmConfig.modelId
+            llmConfig.modelId,
+            llmConfig.enableThinking,
           )
 
           KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
@@ -498,7 +515,8 @@ class KMSIndexManagerService {
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
     progressBase?: { current: number; total: number },
-    kmsModelId?: string
+    kmsModelId?: string,
+    enableThinking?: boolean,
   ): Promise<void> {
     if (!fullText || fullText.length < 50) return
 
@@ -507,19 +525,19 @@ class KMSIndexManagerService {
 
       const { paragraphs, savedParagraphs } = await this.splitAndIndexParagraphs(
         fileId, fullText, fileName, providerId, modelId, llmClient, searchEngine,
-        signal, onProgress, progressBase,
+        signal, onProgress, progressBase, enableThinking,
       )
       if (signal?.aborted) return
 
       const paragraphSummaries = await this.generateParagraphSummaries(
         fileId, fileName, paragraphs, savedParagraphs, providerId, modelId, llmClient, searchEngine,
-        signal, onProgress,
+        signal, onProgress, enableThinking,
       )
       if (signal?.aborted) return
 
       await this.generateDocSummary(
         fileId, fullText, fileName, paragraphSummaries, providerId, modelId, llmClient, searchEngine,
-        signal, onProgress, progressBase,
+        signal, onProgress, progressBase, enableThinking,
       )
     } catch (err) {
       if (signal?.aborted) return
@@ -538,8 +556,9 @@ class KMSIndexManagerService {
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
     progressBase?: { current: number; total: number },
+    enableThinking?: boolean,
   ): Promise<void> {
-    return this.processHotFile(fileId, fullText, fileName, providerId, llmClient, searchEngine, signal, onProgress, progressBase)
+    return this.processHotFile(fileId, fullText, fileName, providerId, llmClient, searchEngine, signal, onProgress, progressBase, undefined, enableThinking)
   }
 
   private async resolveHotFileModelId(
@@ -554,12 +573,12 @@ class KMSIndexManagerService {
       try {
         const KMSService = (await import('./kms.service')).default
         const kmsService = KMSService.getInstance()
-        const kmsConfig = kmsService.getKmsLLMConfigPublic()
+        const kmsConfig = kmsService.getKmsSummaryLLMConfigPublic()
         if (kmsConfig?.modelId) {
           modelId = kmsConfig.modelId
         }
       } catch (error) {
-        logger.warn('Failed to resolve modelId from KMS config', error)
+        logger.warn('Failed to resolve modelId from KMS summary config', error)
       }
     }
     return modelId
@@ -576,6 +595,7 @@ class KMSIndexManagerService {
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
     progressBase?: { current: number; total: number },
+    enableThinking?: boolean,
   ): Promise<{ paragraphs: ReturnType<typeof splitParagraphs>; savedParagraphs: Array<{ id: string; paragraphIndex: number }> }> {
     if (signal?.aborted) return { paragraphs: [], savedParagraphs: [] }
 
@@ -604,7 +624,7 @@ class KMSIndexManagerService {
 
       try {
         const restoredToc = await this.restoreTocWithLLM(
-          fullText, providerId, modelId, llmClient, onProgress, signal
+          fullText, providerId, modelId, llmClient, onProgress, signal, enableThinking
         )
 
         if (!signal?.aborted && restoredToc.length > 0) {
@@ -687,6 +707,7 @@ class KMSIndexManagerService {
     searchEngine: KMSSearchEngineService,
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
+    enableThinking?: boolean,
   ): Promise<Array<{ title: string; summary: string; keywords: string[] }>> {
     const paragraphMap = new Map(paragraphs.map(p => [p.paragraphIndex, p]))
 
@@ -725,7 +746,7 @@ class KMSIndexManagerService {
 
       try {
         const summary = await this.generateParagraphSummary(
-          p.content, p.title || fileName, providerId, modelId, llmClient, signal
+          p.content, p.title || fileName, providerId, modelId, llmClient, signal, enableThinking
         )
         paragraphSummaries.push(summary)
       } catch (err: any) {
@@ -767,6 +788,7 @@ class KMSIndexManagerService {
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
     progressBase?: { current: number; total: number },
+    enableThinking?: boolean,
   ): Promise<void> {
     if (!providerId || !modelId) return
 
@@ -783,7 +805,7 @@ class KMSIndexManagerService {
 
       try {
         const docSummary = await this.generateDocumentSummaryFromParagraphs(
-          paragraphSummaries, fileName, providerId, modelId, llmClient, signal
+          paragraphSummaries, fileName, providerId, modelId, llmClient, signal, enableThinking
         )
         this.saveFileSummary(fileId, docSummary.summary, docSummary.keywords, docSummary.mainTopics)
         searchEngine.indexFileSummary(fileId, docSummary.summary, docSummary.keywords)
@@ -801,7 +823,7 @@ class KMSIndexManagerService {
         fileName,
         startedAt: Math.floor(Date.now() / 1000),
       })
-      await this.generateFileSummary(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal)
+      await this.generateFileSummary(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal, enableThinking)
     }
   }
 
@@ -811,7 +833,8 @@ class KMSIndexManagerService {
     modelId: string | undefined,
     llmClient: LLMClientService,
     existingTocContext?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<LLMTocEntry[]> {
     const systemPrompt = `你是一个专业的文档结构分析专家。你的任务是分析文档内容，准确识别其中的章节标题、层级关系和位置。
 
@@ -848,7 +871,7 @@ ${numberedContent}
         { role: 'user', content: userPrompt },
       ],
       { toc: [] },
-      { temperature: 0.1, signal, logSource: 'knowledge_toc' },
+      { temperature: 0.1, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking },
     )
     return Array.isArray(parsed.toc) ? parsed.toc : []
   }
@@ -860,12 +883,13 @@ ${numberedContent}
     llmClient: LLMClientService,
     onProgress?: ProgressCallback,
     signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<ValidatedTocEntry[]> {
     const lines = text.split('\n')
 
     if (lines.length <= TOC_CHUNK_LINES) {
       const numberedContent = addLineNumbers(text)
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, undefined, signal)
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, undefined, signal, enableThinking)
       return validateTocEntries(text, entries)
     }
 
@@ -901,7 +925,7 @@ ${numberedContent}
         startedAt: Math.floor(Date.now() / 1000),
       })
 
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, existingTocContext, signal)
+      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, existingTocContext, signal, enableThinking)
       allEntries.push(...entries)
 
       chunkIndex++
@@ -922,6 +946,7 @@ ${numberedContent}
     modelId: string | undefined,
     llmClient: LLMClientService,
     signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ title: string; summary: string; keywords: string[] }> {
     const prompt = `为以下段落生成摘要，JSON格式返回。
 段落标题：${paragraphTitle}
@@ -948,6 +973,7 @@ ${paragraphContent.substring(0, 8000)}
         signal,
         logSource: 'knowledge_paragraph_summary',
         throwOnError: true,
+        enable_thinking: enableThinking,
         errorMessage: (err) => `Paragraph summary generation failed (${paragraphTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
       },
     )
@@ -960,6 +986,7 @@ ${paragraphContent.substring(0, 8000)}
     modelId: string | undefined,
     llmClient: LLMClientService,
     signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ summary: string; keywords: string[]; mainTopics: string[] }> {
     const summariesText = paragraphSummaries.map((ps, i) =>
       `### 段落${i + 1}: ${ps.title}\n${ps.summary}\n关键词: ${ps.keywords.join(', ')}`
@@ -990,6 +1017,7 @@ ${summariesText.substring(0, 15000)}
         signal,
         logSource: 'knowledge_document_summary',
         throwOnError: true,
+        enable_thinking: enableThinking,
         errorMessage: (err) => `Document summary generation failed (${documentTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
       },
     )
@@ -1039,7 +1067,8 @@ ${summariesText.substring(0, 15000)}
     modelId: string | undefined,
     llmClient: LLMClientService,
     searchEngine: KMSSearchEngineService,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<void> {
     if (!modelId) {
       throw new Error('MODEL_NOT_CONFIGURED')
@@ -1058,7 +1087,7 @@ ${summariesText.substring(0, 15000)}
         { role: 'user', content: summaryPrompt },
       ],
       { summary: '', keywords: [], main_topics: [] },
-      { temperature: 0.1, maxTokens: 500, signal },
+      { temperature: 0.1, maxTokens: 500, signal, enable_thinking: enableThinking },
     )
 
     if (signal?.aborted) return
@@ -1115,13 +1144,18 @@ ${summariesText.substring(0, 15000)}
     }
   }
 
-  private async generateDirSummaries(providerId: string | undefined, llmClient: LLMClientService, signal?: AbortSignal): Promise<void> {
+  private async generateDirSummaries(
+    providerId: string | undefined,
+    modelId: string | undefined,
+    enableThinking: boolean | undefined,
+    llmClient: LLMClientService,
+    signal?: AbortSignal,
+  ): Promise<void> {
     try {
       const dirs = this.db.prepare('SELECT id, dir_path, display_name FROM kms_index_dirs WHERE enabled = 1').all() as any[]
       if (dirs.length === 0) return
 
-      let modelId: string | undefined
-      if (providerId) {
+      if (!modelId && providerId) {
         const config = await llmClient.getProviderConfig(providerId)
         modelId = config?.model || undefined
       }
@@ -1129,12 +1163,12 @@ ${summariesText.substring(0, 15000)}
         try {
           const KMSService = (await import('./kms.service')).default
           const kmsService = KMSService.getInstance()
-          const kmsConfig = kmsService.getKmsLLMConfigPublic()
+          const kmsConfig = kmsService.getKmsSummaryLLMConfigPublic()
           if (kmsConfig?.modelId) {
             modelId = kmsConfig.modelId
           }
         } catch (error) {
-          logger.warn('Failed to resolve modelId from KMS config for dir summaries', error)
+          logger.warn('Failed to resolve modelId from KMS summary config for dir summaries', error)
         }
       }
 
@@ -1182,7 +1216,7 @@ ${fileList}
                   { role: 'user', content: prompt },
                 ],
                 { summary: '', keywords: [] },
-                { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_dir_summary' },
+                { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_dir_summary', enable_thinking: enableThinking },
               )
               dirSummary = parsed.summary || ''
               keywords = parsed.keywords || []
@@ -1261,7 +1295,7 @@ ${fileList}
 
       const KMSService = (await import('./kms.service')).default
       const kmsService = KMSService.getInstance()
-      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
       const llmClient = LLMClientService.getInstance()
 
       let modelId: string | undefined
@@ -1298,7 +1332,7 @@ ${fileList}
               { role: 'user', content: prompt },
             ],
             { summary: '', keywords: [] },
-            { temperature: 0.1, maxTokens: 400, logSource: 'kms_dir_summary_manual' },
+            { temperature: 0.1, maxTokens: 400, logSource: 'kms_dir_summary_manual', enable_thinking: llmConfig.enableThinking },
           )
           dirSummary = parsed.summary || ''
           keywords = parsed.keywords || []
@@ -1327,7 +1361,7 @@ ${fileList}
 
       const KMSService = (await import('./kms.service')).default
       const kmsService = KMSService.getInstance()
-      const llmConfig = kmsService.getKmsLLMConfigPublic()
+      const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
       if (!llmConfig?.providerId) {
         return { success: false, error: 'NO_LLM_PROVIDER' }
       }
@@ -1351,7 +1385,8 @@ ${fileList}
         undefined,
         undefined,
         undefined,
-        llmConfig.modelId
+        llmConfig.modelId,
+        llmConfig.enableThinking,
       )
 
       const embResult = await KMSEmbeddingService.getInstance().generateEmbeddingsForFile(file.id, llmConfig.providerId)
