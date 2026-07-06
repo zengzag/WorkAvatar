@@ -726,6 +726,7 @@ export default {
     dirPath: '目录路径',
     dirDisplayName: '显示名称',
     dirRecursive: '递归扫描',
+    dirFileCount: '{{count}} 个文件',
     dirExtensions: '文件类型过滤',
     dirEnabled: '启用',
     dirDisabled: '禁用',

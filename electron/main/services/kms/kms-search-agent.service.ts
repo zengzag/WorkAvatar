@@ -196,7 +196,7 @@ class KMSSearchAgentService {
     // === 阶段 2：获取文件清单 + 作用域摘要 ===
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
-    const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds)
+    const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds, query)
     addStep({
       phase: '获取文件清单',
       action: `获取到 ${fileInventory.length} 个文件的信息`,
@@ -548,10 +548,15 @@ class KMSSearchAgentService {
   /**
    * 获取文件清单（文件名、路径、轻量摘要）—— 用于LLM判断哪些文件可能相关
    * 支持按目录或合集过滤，两者同时存在时取交集
+   *
+   * 优化策略：
+   * - 文件总数 <= 50 时：全部发送给 LLM
+   * - 文件总数 > 50 时：先用查询关键词对文件名/摘要做轻量匹配，取匹配的文件 + 部分代表性样本
    */
-  private getFileInventory(dirIds?: string[], collectionIds?: string[]): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
+  private getFileInventory(dirIds?: string[], collectionIds?: string[], query?: string): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
     try {
-      let sql = `
+      // 基础查询：获取所有已完成索引的文件
+      let baseSql = `
         SELECT DISTINCT f.id as file_id, f.file_name, f.file_path, f.file_ext,
                COALESCE(s.light_summary, '') as light_summary,
                COALESCE(s.summary, '') as summary
@@ -559,31 +564,115 @@ class KMSSearchAgentService {
         LEFT JOIN kms_file_summaries s ON s.file_id = f.id
         WHERE f.index_status = 'completed'
       `
-      const params: any[] = []
+      const baseParams: any[] = []
       if (dirIds && dirIds.length > 0) {
         const placeholders = dirIds.map(() => '?').join(',')
-        sql += ` AND f.dir_id IN (${placeholders})`
-        params.push(...dirIds)
+        baseSql += ` AND f.dir_id IN (${placeholders})`
+        baseParams.push(...dirIds)
       }
       if (collectionIds && collectionIds.length > 0) {
         const placeholders = collectionIds.map(() => '?').join(',')
-        sql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
-        params.push(...collectionIds)
+        baseSql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+        baseParams.push(...collectionIds)
       }
-      sql += ` ORDER BY f.file_name LIMIT 200`
 
-      const rows = this.db.prepare(sql).all(...params) as any[]
-      return rows.map(r => ({
-        fileId: r.file_id,
-        fileName: r.file_name,
-        filePath: r.file_path,
-        fileExt: r.file_ext || '',
-        lightSummary: r.summary || r.light_summary || '',
-      }))
+      // 先获取总文件数
+      const countSql = `SELECT COUNT(*) as cnt FROM (${baseSql})`
+      const total = (this.db.prepare(countSql).get(...baseParams) as any)?.cnt || 0
+
+      // 文件数量较少时，全量返回
+      if (total <= 50) {
+        const rows = this.db.prepare(`${baseSql} ORDER BY f.file_name LIMIT 50`).all(...baseParams) as any[]
+        return rows.map(r => ({
+          fileId: r.file_id,
+          fileName: r.file_name,
+          filePath: r.file_path,
+          fileExt: r.file_ext || '',
+          lightSummary: r.summary || r.light_summary || '',
+        }))
+      }
+
+      // 文件数量较多时：基于查询关键词预筛选
+      const keywords = this.extractKeywords(query || '')
+      const results: Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> = []
+      const seenIds = new Set<string>()
+
+      // 1. 关键词匹配文件名/摘要的文件（优先）
+      if (keywords.length > 0) {
+        const matchSql = `${baseSql} AND (${keywords.map(() => `(f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)`).join(' OR ')}) ORDER BY f.file_name LIMIT 30`
+        const matchParams = [...baseParams]
+        for (const kw of keywords) {
+          const like = `%${kw}%`
+          matchParams.push(like, like, like)
+        }
+        const rows = this.db.prepare(matchSql).all(...matchParams) as any[]
+        for (const r of rows) {
+          if (!seenIds.has(r.file_id)) {
+            seenIds.add(r.file_id)
+            results.push({
+              fileId: r.file_id,
+              fileName: r.file_name,
+              filePath: r.file_path,
+              fileExt: r.file_ext || '',
+              lightSummary: r.summary || r.light_summary || '',
+            })
+          }
+        }
+      }
+
+      // 2. 补充代表性样本（按扩展名分组，每组取最新文件）
+      if (results.length < 50) {
+        const sampleSql = `${baseSql} ORDER BY f.file_ext, f.updated_at DESC LIMIT 50`
+        const sampleRows = this.db.prepare(sampleSql).all(...baseParams) as any[]
+        for (const r of sampleRows) {
+          if (!seenIds.has(r.file_id) && results.length < 50) {
+            seenIds.add(r.file_id)
+            results.push({
+              fileId: r.file_id,
+              fileName: r.file_name,
+              filePath: r.file_path,
+              fileExt: r.file_ext || '',
+              lightSummary: r.summary || r.light_summary || '',
+            })
+          }
+        }
+      }
+
+      return results
     } catch (err) {
       logger.warn('Failed to get file inventory:', err)
       return []
     }
+  }
+
+  /**
+   * 从查询中提取关键词（简单分词，用于文件名/摘要预匹配）
+   */
+  private extractKeywords(query: string): string[] {
+    // 去除常见疑问词和停用词
+    const stopWords = new Set(['如何', '怎么', '什么', '为什么', '的', '了', '吗', '呢', '在', '是', '有', '和', '与', '及', '等', '中', '上', '下', '不', '也', '都', '还', '就', '要', '会', '能', '可以', '这个', '那个', 'how', 'what', 'why', 'where', 'when', 'who', 'is', 'are', 'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or'])
+    // 中文按2-4字分词，英文按空格分割
+    const tokens: string[] = []
+    // 英文词
+    const enWords = query.match(/[a-zA-Z0-9]+/g) || []
+    tokens.push(...enWords.filter(w => !stopWords.has(w.toLowerCase()) && w.length > 1))
+    // 中文连续片段：按2字和3字滑动窗口提取
+    const cnSegments = query.match(/[\u4e00-\u9fff]+/g) || []
+    for (const seg of cnSegments) {
+      if (seg.length <= 4 && !stopWords.has(seg)) {
+        tokens.push(seg)
+      } else {
+        // 滑动窗口
+        for (let len = 2; len <= Math.min(4, seg.length); len++) {
+          for (let i = 0; i <= seg.length - len; i++) {
+            const sub = seg.substring(i, i + len)
+            if (!stopWords.has(sub)) tokens.push(sub)
+          }
+        }
+      }
+    }
+    // 去重，取前5个关键词
+    return [...new Set(tokens)].slice(0, 5)
   }
 
   /**

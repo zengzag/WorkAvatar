@@ -22,6 +22,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }

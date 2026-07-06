@@ -103,24 +103,29 @@ class KMSCrawlerService {
       if (signal?.aborted) break
 
       const dbFile = dbFileMap.get(diskFile.filePath)
-      if (!dbFile) {
-        await this.registerFile(dirId, diskFile)
-        result.newFiles++
-      } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
-        if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
-          result.skippedUnstableFiles++
-          continue
-        }
+      try {
+        if (!dbFile) {
+          await this.registerFile(dirId, diskFile)
+          result.newFiles++
+        } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
+          if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
+            result.skippedUnstableFiles++
+            continue
+          }
 
-        const newHash = await calculateFileHash(diskFile.filePath)
-        if (newHash !== dbFile.file_hash) {
-          this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
-          result.modifiedFiles++
+          const newHash = await calculateFileHash(diskFile.filePath)
+          if (newHash !== dbFile.file_hash) {
+            this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
+            result.modifiedFiles++
+          } else {
+            result.unchangedFiles++
+          }
         } else {
           result.unchangedFiles++
         }
-      } else {
-        result.unchangedFiles++
+      } catch (err: any) {
+        // 单个文件注册失败不应中断整个目录的扫描
+        logger.warn(`Failed to process file "${diskFile.filePath}":`, err?.message || err)
       }
     }
 
@@ -311,7 +316,8 @@ class KMSCrawlerService {
       let entries: fs.Dirent[]
       try {
         entries = fs.readdirSync(currentDir, { withFileTypes: true })
-      } catch {
+      } catch (err: any) {
+        logger.warn(`Cannot read directory "${currentDir}", skipping:`, err?.message || err)
         return
       }
 
@@ -337,8 +343,8 @@ class KMSCrawlerService {
               fileSize: stat.size,
               modifiedTime: Math.floor(stat.mtimeMs / 1000),
             })
-          } catch {
-            // 跳过无法访问的文件
+          } catch (err: any) {
+            logger.warn(`Cannot stat file "${fullPath}", skipping:`, err?.message || err)
           }
         }
       }
@@ -350,9 +356,17 @@ class KMSCrawlerService {
 
   /**
    * 注册新文件到数据库
-   * 如果相同MD5的文件已存在（不同目录），直接复用索引数据，避免重复计算
+   * - 如果 file_path 已存在（重叠目录场景，如添加了父目录又添加子目录），直接跳过，复用已有索引
+   * - 如果相同 hash 的文件已存在（不同位置的同内容文件），复用索引数据，避免重复计算
    */
   private async registerFile(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }): Promise<void> {
+    // 重叠目录检查：file_path 已存在说明该文件已注册在其他目录下（如父目录），直接跳过
+    const existingByPath = this.db.prepare('SELECT id, dir_id FROM kms_files WHERE file_path = ? LIMIT 1').get(diskFile.filePath) as any
+    if (existingByPath) {
+      logger.info(`File "${diskFile.filePath}" already registered under dir ${existingByPath.dir_id}, skipping`)
+      return
+    }
+
     const id = generateId()
     const ext = path.extname(diskFile.fileName).toLowerCase().slice(1)
     const hash = await calculateFileHash(diskFile.filePath)

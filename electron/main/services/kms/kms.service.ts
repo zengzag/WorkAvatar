@@ -127,7 +127,15 @@ class KMSService {
 
   listIndexDirs(): any[] {
     return this.db.prepare(
-      `SELECT * FROM kms_index_dirs WHERE dir_path != ? ORDER BY created_at ASC`
+      `SELECT d.*,
+        (SELECT COUNT(*) FROM kms_files f
+         WHERE f.dir_id = d.id
+         OR f.file_path LIKE (rtrim(d.dir_path, '/\\') || '/%')
+         OR f.file_path LIKE (rtrim(d.dir_path, '/\\') || '\\%')
+        ) as file_count
+       FROM kms_index_dirs d
+       WHERE d.dir_path != ?
+       ORDER BY d.created_at ASC`
     ).all(KMSService.MANUAL_SOURCE_PATH)
   }
 
@@ -912,6 +920,7 @@ ${fileSummaries.join('\n')}
              COALESCE(s.keywords_json, '[]') as keywords_json,
              COALESCE(s.main_topics_json, '[]') as main_topics_json,
              d.display_name as dir_name,
+             d.dir_path as dir_path,
              CASE WHEN EXISTS (
                SELECT 1 FROM kms_embeddings e WHERE e.file_id = f.id LIMIT 1
              ) THEN 1 ELSE 0 END as has_embedding

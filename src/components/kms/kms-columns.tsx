@@ -88,8 +88,8 @@ export function useFileSummaryColumns(options: UseFileSummaryColumnsOptions) {
       dataIndex: 'dir_name',
       key: 'dir_name',
       width: 120,
-      render: (text: string) => (
-        <Tooltip title={text}>
+      render: (text: string, record: FileSummaryItem) => (
+        <Tooltip title={record.file_path}>
           <span style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
             {text || '-'}
           </span>

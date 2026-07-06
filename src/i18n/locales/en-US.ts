@@ -725,6 +725,7 @@ export default {
     dirPath: 'Directory Path',
     dirDisplayName: 'Display Name',
     dirRecursive: 'Recursive Scan',
+    dirFileCount: '{{count}} files',
     dirExtensions: 'File Type Filter',
     dirEnabled: 'Enabled',
     dirDisabled: 'Disabled',

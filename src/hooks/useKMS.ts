@@ -8,6 +8,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }
@@ -149,6 +150,7 @@ export interface FileSummaryItem {
   keywords_json: string
   main_topics_json: string
   dir_name?: string
+  dir_path?: string
   has_embedding?: number
 }
 
@@ -516,6 +518,7 @@ export function useKMS() {
       if (progress.phase === 'done' || progress.phase === 'error') {
         setIsIndexing(false)
         setTimeout(() => setIndexProgress(null), 3000)
+        loadDirs()
         loadStats()
         loadAutoIndexStatus()
       }
@@ -525,7 +528,7 @@ export function useKMS() {
         progressUnsubscribe.current()
       }
     }
-  }, [loadStats, loadAutoIndexStatus])
+  }, [loadDirs, loadStats, loadAutoIndexStatus])
 
   useEffect(() => {
     loadDirs()

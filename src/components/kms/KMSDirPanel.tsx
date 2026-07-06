@@ -18,6 +18,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }
@@ -215,6 +216,12 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                           {t('kms.dirRecursive')}
                         </Tag>
                       )}
+                      <Tag
+                        color={dir.file_count ? 'green' : undefined}
+                        style={{ fontSize: 11, margin: 0, lineHeight: '18px', padding: '0 6px' }}
+                      >
+                        {t('kms.dirFileCount', { count: dir.file_count || 0 })}
+                      </Tag>
                       <Tooltip title={extInfo.text}>
                         <Tag
                           color={extInfo.count === ALL_SUPPORTED_EXTS.length ? 'blue' : undefined}

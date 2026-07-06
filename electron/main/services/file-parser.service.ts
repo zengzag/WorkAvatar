@@ -85,6 +85,7 @@ class FileParserService {
         preserveLayout: true,
         extractImages: false,
         extractCharts: false,
+        maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型文档触发默认内存限制
       })
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
@@ -142,6 +143,7 @@ class FileParserService {
           preserveLayout: true,
           extractImages: false,
           extractCharts: false,
+          maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型表格触发默认内存限制
         })
         if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
@@ -213,6 +215,7 @@ class FileParserService {
         preserveLayout: true,
         extractImages: false,
         extractCharts: false,
+        maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型PPTX触发默认内存限制
       })
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
