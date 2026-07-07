@@ -44,6 +44,7 @@ interface KMSKnowledgeViewProps {
   }) => void
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
+  onRebuildFileIndex?: (fileId: string) => void
   stats: KMSStats | null
   onLoadStats: () => void
 }
@@ -55,6 +56,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   onLoadFileSummaries,
   onOpenFile,
   onOpenFileDir,
+  onRebuildFileIndex,
   stats,
   onLoadStats,
 }) => {
@@ -185,6 +187,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onOpenFile,
     onOpenFileDir,
     onGenerateFileSummary: handleGenerateFileSummary,
+    onRebuildFileIndex,
   })
 
   const statCards = useMemo(() => {

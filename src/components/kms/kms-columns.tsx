@@ -36,6 +36,7 @@ export interface UseFileSummaryColumnsOptions {
   onOpenFileDir: (filePath: string) => void
   /** 触发文件摘要生成 */
   onGenerateFileSummary: (fileId: string) => void
+  onRebuildFileIndex?: (fileId: string) => void
 }
 
 /**
@@ -45,7 +46,7 @@ export interface UseFileSummaryColumnsOptions {
  * 使用 ref 镜像读取 processingFileIds，避免 Set 引用进入 useMemo 依赖导致每次变更都重算列定义。
  */
 export function useFileSummaryColumns(options: UseFileSummaryColumnsOptions) {
-  const { processingFileIdsRef, onOpenFile, onOpenFileDir, onGenerateFileSummary } = options
+  const { processingFileIdsRef, onOpenFile, onOpenFileDir, onGenerateFileSummary, onRebuildFileIndex } = options
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
@@ -142,7 +143,7 @@ export function useFileSummaryColumns(options: UseFileSummaryColumnsOptions) {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 110,
+      width: 130,
       render: (_: any, record: FileSummaryItem) => {
         const isProcessing = processingFileIdsRef.current?.has(record.id) ?? false
         return (
@@ -156,6 +157,16 @@ export function useFileSummaryColumns(options: UseFileSummaryColumnsOptions) {
                 onClick={() => onGenerateFileSummary(record.id)}
               />
             </Tooltip>
+            {onRebuildFileIndex && (
+              <Tooltip title={t('kms.rebuildIndex')}>
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<ReloadOutlined />}
+                  onClick={() => onRebuildFileIndex(record.id)}
+                />
+              </Tooltip>
+            )}
             <Tooltip title={t('kms.openFile')}>
               <Button
                 size="small"

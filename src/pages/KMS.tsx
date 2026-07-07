@@ -64,6 +64,7 @@ const KMSPage: React.FC = () => {
     search,
     buildIndex,
     incrementalIndex,
+    rebuildDirIndex,
     cancelIndex,
     openFile,
     openFileDir,
@@ -198,6 +199,11 @@ const KMSPage: React.FC = () => {
             onLoadFileSummaries={loadFileSummaries}
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
+            onRebuildFileIndex={async (fileId) => {
+              await window.electronAPI.kms.rebuildFileIndex(fileId)
+              loadFileSummaries({})
+              loadStats()
+            }}
             stats={stats}
             onLoadStats={loadStats}
           />
@@ -226,9 +232,8 @@ const KMSPage: React.FC = () => {
           onDeleteDir={deleteDir}
           isIndexing={isIndexing}
           indexProgress={indexProgress}
-          onBuildIndex={(withEmbedding) => buildIndex(undefined, withEmbedding)}
-          onIncrementalIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}
-          onRebuildIndex={(withEmbedding) => buildIndex(undefined, withEmbedding)}
+          onUpdateIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}
+          onRebuildIndex={(withEmbedding, dirId) => dirId ? rebuildDirIndex(dirId, undefined, withEmbedding) : buildIndex(undefined, withEmbedding)}
           onCancelIndex={cancelIndex}
           autoIndexStatus={autoIndexStatus}
           onRunAutoIndexCheck={runAutoIndexCheckNow}

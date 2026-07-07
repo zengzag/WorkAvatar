@@ -257,6 +257,7 @@ const electronAPI = {
     cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
     generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
     generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
+    rebuildFileIndex: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, fileId),
   },
 
   kmsMcp: {

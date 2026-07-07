@@ -176,8 +176,14 @@ class KMSAutoIndexService {
         try {
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
           searchEngine.deleteIndexByFile(file.id)
-          const parseResult = await fileParser.parseFilePath(file.filePath, signal)
+          const parseResult = await fileParser.parseFilePath(file.filePath, signal, file.dataTier as 'hot' | 'cold')
           if (signal.aborted) break
+
+          // 保存解析模式
+          const parseMode = parseResult.metadata?.parser
+          if (parseMode) {
+            indexManager.saveParseMode(file.id, parseMode)
+          }
 
           onProgress?.({ phase: 'indexing', current: processed + 1, total, message: `自动索引: ${file.fileName}` })
 

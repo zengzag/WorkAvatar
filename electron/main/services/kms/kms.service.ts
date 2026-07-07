@@ -800,6 +800,23 @@ ${fileSummaries.join('\n')}
     return KMSIndexManagerService.getInstance().generateFileSummaryManual(fileId)
   }
 
+  async rebuildFileIndex(fileId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const crawler = KMSCrawlerService.getInstance()
+      searchEngine.deleteIndexByFile(fileId)
+      crawler.updateFileStatus(fileId, 'pending')
+      // 异步触发增量索引
+      KMSIndexManagerService.getInstance().incrementalIndex().catch((err: any) => {
+        logger.error('Auto incrementalIndex after file rebuild failed:', err?.message || err)
+      })
+      return { success: true }
+    } catch (err: any) {
+      logger.error('rebuildFileIndex failed:', err?.message || err)
+      return { success: false, error: err?.message || 'UNKNOWN' }
+    }
+  }
+
   cancelIndexing(): void {
     KMSIndexManagerService.getInstance().cancelIndexing()
   }

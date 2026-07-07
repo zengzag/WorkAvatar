@@ -279,6 +279,9 @@ class KMSDatabaseService {
     if (!colNames.includes('preview_text')) {
       this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN preview_text TEXT DEFAULT ''")
     }
+    if (!colNames.includes('parse_mode')) {
+      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN parse_mode TEXT DEFAULT ''")
+    }
 
     const collCols = this.db.prepare("PRAGMA table_info(kms_collection_summaries)").all() as any[]
     const collColNames = collCols.map(c => c.name)

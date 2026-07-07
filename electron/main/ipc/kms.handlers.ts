@@ -347,6 +347,10 @@ export function registerKMSHandlers(): void {
     return kmsService.generateFileSummaryManual(fileId)
   })
 
+  safeHandle(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, async (fileId: string) => {
+    return kmsService.rebuildFileIndex(fileId)
+  })
+
   safeHandle(IPC_CHANNELS.KMS_MCP_START, async () => {
     return kmsMcpService.start()
   })

@@ -122,7 +122,7 @@ class KMSFileReaderService {
 
     const maxChars = options?.maxChars || 5000
     try {
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
+      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path, undefined, undefined)
       let content = parseResult.fullText
 
       if (options?.startOffset !== undefined && options?.endOffset !== undefined) {
@@ -160,7 +160,15 @@ class KMSFileReaderService {
     const MAX_CONTENT_CHARS = 20_000_000
 
     try {
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
+      // 读取索引时保存的解析模式，确保预览与索引使用相同解析器
+      const summary = this.db.prepare('SELECT parse_mode FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+      const parseMode = summary?.parse_mode || undefined
+
+      const parseResult = await FileParserService.getInstance().parseFilePath(
+        file.file_path,
+        undefined, // signal
+        parseMode === 'file2md' ? 'hot' : 'cold', // file2md 对应 hot 路径
+      )
       const fullText = parseResult.fullText || ''
       const truncated = fullText.length > MAX_CONTENT_CHARS
       return {

@@ -49,9 +49,8 @@ interface KMSSettingsPanelProps {
   onDeleteDir: (id: string) => void
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: (withEmbedding?: boolean) => void
-  onIncrementalIndex: (withEmbedding?: boolean) => void
-  onRebuildIndex: (withEmbedding?: boolean) => void
+  onUpdateIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string) => void
   onCancelIndex: () => void
   autoIndexStatus: KMSAutoIndexStatus | null
   onRunAutoIndexCheck: () => void
@@ -66,8 +65,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onDeleteDir,
   isIndexing,
   indexProgress,
-  onBuildIndex,
-  onIncrementalIndex,
+  onUpdateIndex,
   onRebuildIndex,
   onCancelIndex,
   autoIndexStatus,
@@ -538,14 +536,14 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       <KMSIndexPanel
         isIndexing={isIndexing}
         indexProgress={indexProgress}
-        onBuildIndex={onBuildIndex}
-        onIncrementalIndex={onIncrementalIndex}
+        onUpdateIndex={onUpdateIndex}
         onRebuildIndex={onRebuildIndex}
         onCancelIndex={onCancelIndex}
         autoIndexConfig={settings.autoIndex}
         autoIndexStatus={autoIndexStatus}
         onSaveAutoIndex={async (config) => onSaveSettings({ autoIndex: config })}
         onRunAutoIndexCheck={onRunAutoIndexCheck}
+        dirs={dirs}
       />
     </div>
   )

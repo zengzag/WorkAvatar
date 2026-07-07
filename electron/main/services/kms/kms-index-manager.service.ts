@@ -202,8 +202,14 @@ class KMSIndexManagerService {
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
           searchEngine.deleteIndexByFile(file.id)
 
-          const parseResult = await fileParser.parseFilePath(file.filePath, signal)
+          const parseResult = await fileParser.parseFilePath(file.filePath, signal, file.dataTier as 'hot' | 'cold')
           if (signal.aborted) break
+
+          // 保存解析模式，确保预览时用相同解析器
+          const parseMode = parseResult.metadata?.parser
+          if (parseMode) {
+            this.saveParseMode(file.id, parseMode)
+          }
 
           onProgress?.({
             phase: 'indexing',
@@ -1157,6 +1163,21 @@ ${summariesText.substring(0, 15000)}
       }
     } catch (err) {
       logger.warn(`Failed to save light summary for file ${fileId}:`, err)
+    }
+  }
+
+  saveParseMode(fileId: string, parseMode: string): void {
+    try {
+      const existing = this.db.prepare('SELECT id FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+      if (existing) {
+        this.db.prepare('UPDATE kms_file_summaries SET parse_mode = ?, updated_at = unixepoch() WHERE file_id = ?').run(parseMode, fileId)
+      } else {
+        this.db.prepare(
+          'INSERT INTO kms_file_summaries (id, file_id, summary, light_summary, preview_text, parse_mode, keywords_json, main_topics_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())'
+        ).run(generateId(), fileId, '', '', '', parseMode, '[]', '[]')
+      }
+    } catch (err) {
+      logger.warn(`Failed to save parse_mode for file ${fileId}:`, err)
     }
   }
 

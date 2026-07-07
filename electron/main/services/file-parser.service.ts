@@ -78,8 +78,28 @@ class FileParserService {
     }
   }
 
-  private async parseWord(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+  private async parseWord(filePath: string, signal?: AbortSignal, tier?: 'hot' | 'cold'): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+
+    // 热数据使用 file2md 解析（保留布局和格式），冷数据使用 mammoth 快速解析
+    if (tier === 'hot') {
+      const result = await convert(filePath, {
+        preserveLayout: true,
+        extractImages: false,
+        extractCharts: false,
+        maxMemoryUsage: 4 * 1024 * 1024 * 1024,
+      })
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+      return {
+        type: 'word',
+        fullText: result.markdown,
+        sections: this.splitIntoSections(result.markdown),
+        tables: [],
+        metadata: { parser: 'file2md' },
+      }
+    }
+
+    // 冷数据：mammoth 快速纯文本提取
     const buffer = await fs.promises.readFile(filePath)
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const result = await mammoth.extractRawText({ buffer })
@@ -92,12 +112,32 @@ class FileParserService {
       fullText,
       sections: this.splitIntoSections(fullText),
       tables: [],
-      metadata: {},
+      metadata: { parser: 'mammoth' },
     }
   }
 
-  private async parseExcel(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+  private async parseExcel(filePath: string, signal?: AbortSignal, tier?: 'hot' | 'cold'): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+
+    // 热数据使用 file2md 解析，冷数据使用 SheetJS 快速解析
+    if (tier === 'hot') {
+      const result = await convert(filePath, {
+        preserveLayout: true,
+        extractImages: false,
+        extractCharts: false,
+        maxMemoryUsage: 4 * 1024 * 1024 * 1024,
+      })
+      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+      return {
+        type: 'excel',
+        fullText: result.markdown,
+        sections: this.splitIntoSections(result.markdown),
+        tables: [],
+        metadata: { parser: 'file2md' },
+      }
+    }
+
+    // 冷数据：SheetJS 快速解析
     const workbook = XLSX.readFile(filePath)
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     let fullText = ''
@@ -124,7 +164,7 @@ class FileParserService {
       fullText: fullText.trim(),
       sections: [],
       tables,
-      metadata: { sheetNames: workbook.SheetNames },
+      metadata: { sheetNames: workbook.SheetNames, parser: 'sheetjs' },
     }
   }
 
@@ -142,27 +182,22 @@ class FileParserService {
     }
   }
 
-  private async parsePPTX(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
-    try {
-      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-      const result = await convert(filePath, {
-        preserveLayout: true,
-        extractImages: false,
-        extractCharts: false,
-        maxMemoryUsage: 4 * 1024 * 1024 * 1024, // 4GB，大型PPTX转换需要更多内存
-      })
-      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+  private async parsePPTX(filePath: string, signal?: AbortSignal, tier?: 'hot' | 'cold'): Promise<ParseResult> {
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    const result = await convert(filePath, {
+      preserveLayout: true,
+      extractImages: false,
+      extractCharts: false,
+      maxMemoryUsage: 4 * 1024 * 1024 * 1024,
+    })
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
-      return {
-        type: 'pptx',
-        fullText: result.markdown,
-        sections: this.splitIntoSections(result.markdown),
-        tables: [],
-        metadata: {},
-      }
-    } catch (error: any) {
-      logger.error('PPTX parse error:', { filePath, message: error.message, stack: error.stack })
-      throw error
+    return {
+      type: 'pptx',
+      fullText: result.markdown,
+      sections: this.splitIntoSections(result.markdown),
+      tables: [],
+      metadata: { parser: 'file2md' },
     }
   }
 
@@ -266,7 +301,7 @@ class FileParserService {
     return sections
   }
 
-  async parseFilePath(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
+  async parseFilePath(filePath: string, signal?: AbortSignal, tier?: 'hot' | 'cold'): Promise<ParseResult> {
     const fileType = this.getFileType(filePath)
     let result: ParseResult
 
@@ -278,15 +313,15 @@ class FileParserService {
         result = await this.parseDoc(filePath, signal)
         break
       case 'docx':
-        result = await this.parseWord(filePath, signal)
+        result = await this.parseWord(filePath, signal, tier)
         break
       case 'xlsx':
       case 'xls':
       case 'csv':
-        result = await this.parseExcel(filePath, signal)
+        result = await this.parseExcel(filePath, signal, tier)
         break
       case 'pptx':
-        result = await this.parsePPTX(filePath, signal)
+        result = await this.parsePPTX(filePath, signal, tier)
         break
       case 'txt':
       case 'md':

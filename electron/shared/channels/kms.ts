@@ -57,6 +57,7 @@ export const KMS_CHANNELS = {
   // KMS 手动摘要生成（目录摘要/文件摘要）
   KMS_GENERATE_DIR_SUMMARY: 'kms:generate-dir-summary',
   KMS_GENERATE_FILE_SUMMARY: 'kms:generate-file-summary',
+  KMS_REBUILD_FILE_INDEX: 'kms:rebuild-file-index',
   // KMS 文件搜索（按文件名匹配）
   KMS_SEARCH_FILES: 'kms:search-files',
   // KMS MCP 服务

@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App,
+  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App, Modal,
 } from 'antd'
 import {
   ThunderboltOutlined,
   SyncOutlined, BuildOutlined, StopOutlined,
   ClockCircleOutlined, RadarChartOutlined,
   PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
-  CloudServerOutlined,
+  CloudServerOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import type { KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
 import { formatTime } from './kms-columns'
@@ -22,17 +22,23 @@ interface IndexProgress {
   message: string
 }
 
+interface IndexDir {
+  id: string
+  dir_path: string
+  display_name: string
+}
+
 interface KMSIndexPanelProps {
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: (withEmbedding?: boolean) => void
-  onIncrementalIndex: (withEmbedding?: boolean) => void
-  onRebuildIndex: (withEmbedding?: boolean) => void
+  onUpdateIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string) => void
   onCancelIndex: () => void
   autoIndexConfig: KMSAutoIndexConfig
   autoIndexStatus: KMSAutoIndexStatus | null
   onSaveAutoIndex: (config: KMSAutoIndexConfig) => Promise<boolean>
   onRunAutoIndexCheck: () => void
+  dirs?: IndexDir[]
 }
 
 const PHASE_LABEL_KEYS: Record<string, string> = {
@@ -47,18 +53,18 @@ const PHASE_LABEL_KEYS: Record<string, string> = {
 const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   isIndexing,
   indexProgress,
-  onBuildIndex,
-  onIncrementalIndex,
+  onUpdateIndex,
   onRebuildIndex,
   onCancelIndex,
   autoIndexConfig,
   autoIndexStatus,
   onSaveAutoIndex,
   onRunAutoIndexCheck,
+  dirs,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
 
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
@@ -92,6 +98,46 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const progressPercent = indexProgress && indexProgress.total > 0
     ? Math.round((indexProgress.current / indexProgress.total) * 100)
     : 0
+
+  const handleRebuild = useCallback(() => {
+    const dirOptions = (dirs && dirs.length > 0)
+      ? [
+          { label: t('kms.allDirs'), value: '' },
+          ...dirs.map(d => ({ label: d.display_name || d.dir_path, value: d.id })),
+        ]
+      : []
+
+    modal.confirm({
+      title: t('kms.rebuildIndex'),
+      icon: <ExclamationCircleOutlined />,
+      content: (
+        <div>
+          <p>{t('kms.rebuildIndexConfirm')}</p>
+          {dirOptions.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('kms.rebuildIndexSelectDir')}</Text>
+              <select
+                id="rebuild-dir-select"
+                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: `1px solid ${token.colorBorder}` }}
+                defaultValue=""
+              >
+                {dirOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => {
+        const selectEl = document.getElementById('rebuild-dir-select') as HTMLSelectElement | null
+        const dirId = selectEl?.value || undefined
+        onRebuildIndex(withEmbedding, dirId || undefined)
+      },
+    })
+  }, [dirs, withEmbedding, onRebuildIndex, modal, t, token])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
@@ -233,23 +279,16 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           type="primary"
-          icon={<BuildOutlined />}
-          onClick={() => onBuildIndex(withEmbedding)}
+          icon={<SyncOutlined />}
+          onClick={() => onUpdateIndex(withEmbedding)}
           disabled={isIndexing}
           loading={isIndexing && indexProgress?.phase === 'crawling'}
         >
-          {t('kms.buildIndex')}
+          {t('kms.updateIndex')}
         </Button>
         <Button
-          icon={<SyncOutlined />}
-          onClick={() => onIncrementalIndex(withEmbedding)}
-          disabled={isIndexing}
-        >
-          {t('kms.incrementalIndex')}
-        </Button>
-        <Button
-          icon={<ThunderboltOutlined />}
-          onClick={() => onRebuildIndex(withEmbedding)}
+          icon={<BuildOutlined />}
+          onClick={handleRebuild}
           disabled={isIndexing}
         >
           {t('kms.rebuildIndex')}
