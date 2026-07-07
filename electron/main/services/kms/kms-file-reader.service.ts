@@ -156,8 +156,8 @@ class KMSFileReaderService {
     const crawler = KMSCrawlerService.getInstance()
     crawler.logFileAccess(fileId, 'read')
 
-    // 字符上限：约 5MB 文本，超过则截断并标记 truncated，前端可提示分段加载
-    const MAX_CONTENT_CHARS = 5_000_000
+    // 字符上限：约 20MB 文本
+    const MAX_CONTENT_CHARS = 20_000_000
 
     try {
       const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)

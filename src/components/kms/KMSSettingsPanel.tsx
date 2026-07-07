@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Alert, Divider, Tag, Switch, Tooltip,
+  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Divider, Tag, Switch, Tooltip,
 } from 'antd'
 import {
   RobotOutlined, CloudServerOutlined, SaveOutlined, FolderOpenOutlined,
-  DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined,
+  DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined, SearchOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
@@ -40,7 +40,7 @@ interface KMSSettingsPanelProps {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number }
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
   dirs: IndexDir[]
@@ -83,6 +83,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [summaryModelConfig, setSummaryModelConfig] = useState<KMSModelConfig | null>(settings.summaryModel)
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 3)
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
+  const [resultLimit, setResultLimit] = useState<number>(settings.searchParams?.resultLimit ?? 100)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
@@ -101,6 +102,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     setSummaryModelConfig(settings.summaryModel)
     setMaxRounds(settings.searchParams?.maxRounds ?? 3)
     setTopK(settings.searchParams?.topK ?? 10)
+    setResultLimit(settings.searchParams?.resultLimit ?? 100)
   }, [settings])
 
   const loadEmbeddingMaxChars = useCallback(async () => {
@@ -142,7 +144,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const handleSaveParams = useCallback(async () => {
     setSavingParams(true)
     const ok = await onSaveSettings({
-      searchParams: { maxRounds, topK },
+      searchParams: { maxRounds, topK, resultLimit },
     })
     setSavingParams(false)
     if (ok) {
@@ -150,17 +152,10 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } else {
       message.error(t('kms.settingsPanel.modelSaveFailed'))
     }
-  }, [maxRounds, topK, onSaveSettings, message, t])
+  }, [maxRounds, topK, resultLimit, onSaveSettings, message, t])
 
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Alert
-        type="info"
-        showIcon
-        message={t('kms.settingsPanel.modelHint')}
-        description={t('kms.settingsPanel.modelHintDesc')}
-      />
-
       {/* AI 搜索模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -409,13 +404,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
 
   const renderParamsTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Alert
-        type="info"
-        showIcon
-        message={t('kms.settingsPanel.paramsHint')}
-        description={t('kms.settingsPanel.paramsHintDesc')}
-      />
-
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -468,7 +456,36 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             value={topK}
             onChange={v => setTopK(v || 10)}
             min={3}
-            max={200}
+            max={100}
+            style={{ width: 120 }}
+          />
+        </div>
+
+        <Divider style={{ margin: '12px 0' }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: token.colorBgTextHover,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <SearchOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
+            </div>
+            <div>
+              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.resultLimit')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.resultLimitDesc')}</Text>
+            </div>
+          </div>
+          <InputNumber
+            value={resultLimit}
+            onChange={v => setResultLimit(v || 100)}
+            min={5}
+            max={500}
             style={{ width: 120 }}
           />
         </div>

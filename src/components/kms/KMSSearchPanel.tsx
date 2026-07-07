@@ -128,11 +128,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
   const handlePickHistory = useCallback((item: SearchHistoryItem) => {
     onSearchQueryChange(item.query)
-    const mode: SearchMode = (['keyword', 'semantic', 'hybrid', 'ai', 'file'].includes(item.search_mode)
-      ? item.search_mode
-      : 'hybrid') as SearchMode
-    onSearch(item.query, mode, buildFilters())
-  }, [onSearchQueryChange, onSearch, buildFilters])
+  }, [onSearchQueryChange])
 
   const searchKeywords = useMemo(() => {
     if (!searchQuery.trim()) return []

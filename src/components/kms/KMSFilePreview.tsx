@@ -83,6 +83,8 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
 
   const currentFileId = currentResult?.file_id
 
+  const lines = content ? content.split('\n') : []
+
   const loadContent = useCallback(async () => {
     if (!currentFileId) return
     setLoading(true)
@@ -115,24 +117,48 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
     const targetLine = currentResult.start_line
     const targetOffset = currentResult.start_offset
 
-    if (targetLine !== undefined && targetLine > 0) {
-      const lineIdx = targetLine - 1
-      const targetEl = lineRefs.current[lineIdx]
-      if (targetEl && contentRef.current) {
-        const containerRect = contentRef.current.getBoundingClientRect()
-        const elRect = targetEl.getBoundingClientRect()
-        const offset = elRect.top - containerRect.top + contentRef.current.scrollTop - 80
-        contentRef.current.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' })
-        return
-      }
-    }
+    // 使用 requestAnimationFrame 确保 DOM 已渲染（refs 已挂载）
+    const rafId = requestAnimationFrame(() => {
+      if (!contentRef.current) return
 
-    if (targetOffset !== undefined && targetOffset > 0 && contentRef.current) {
-      const ratio = targetOffset / content.length
-      const targetScroll = ratio * contentRef.current.scrollHeight - 80
-      contentRef.current.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
-    }
-  }, [open, currentResult, loading, content])
+      if (targetLine !== undefined && targetLine > 0) {
+        const lineIdx = Math.min(targetLine - 1, lines.length - 1)
+        const targetEl = lineRefs.current[lineIdx]
+        if (targetEl) {
+          const containerRect = contentRef.current!.getBoundingClientRect()
+          const elRect = targetEl.getBoundingClientRect()
+          const scrollOffset = elRect.top - containerRect.top + contentRef.current!.scrollTop - 80
+          contentRef.current!.scrollTo({ top: Math.max(0, scrollOffset), behavior: 'smooth' })
+          return
+        }
+      }
+
+      // 回退：按 start_offset 的比例定位
+      if (targetOffset !== undefined && targetOffset > 0) {
+        // 通过行内容来精确找到 offset 对应的行
+        let accumulatedLen = 0
+        for (let i = 0; i < lines.length; i++) {
+          accumulatedLen += lines[i].length + 1 // +1 for \n
+          if (accumulatedLen > targetOffset) {
+            const targetEl = lineRefs.current[i]
+            if (targetEl) {
+              const containerRect = contentRef.current!.getBoundingClientRect()
+              const elRect = targetEl.getBoundingClientRect()
+              const scrollOffset = elRect.top - containerRect.top + contentRef.current!.scrollTop - 80
+              contentRef.current!.scrollTo({ top: Math.max(0, scrollOffset), behavior: 'smooth' })
+            }
+            return
+          }
+        }
+        // 如果没找到对应行，按比例回退
+        const ratio = Math.min(targetOffset / Math.max(content.length, 1), 1)
+        const targetScroll = ratio * contentRef.current!.scrollHeight - 80
+        contentRef.current!.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
+      }
+    })
+
+    return () => cancelAnimationFrame(rafId)
+  }, [open, currentResult, loading, content, lines])
 
   const handlePrevMatch = useCallback(() => {
     setCurrentMatchIndex(prev => Math.max(0, prev - 1))
@@ -141,8 +167,6 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
   const handleNextMatch = useCallback(() => {
     setCurrentMatchIndex(prev => Math.min(effectiveMatches.length - 1, prev + 1))
   }, [effectiveMatches.length])
-
-  const lines = content ? content.split('\n') : []
 
   const setLineRef = useCallback((el: HTMLDivElement | null, index: number) => {
     if (el) {

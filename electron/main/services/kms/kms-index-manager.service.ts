@@ -125,6 +125,22 @@ class KMSIndexManagerService {
 
     try {
       onProgress?.({ phase: 'crawling', current: 0, total: 0, message: msgCrawl })
+
+      // 全量重建：批量重置所有文件为 pending 并清除旧索引，确保重新索引
+      if (isFull) {
+        onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在重置索引...' })
+        this.db.transaction(() => {
+          this.db.prepare("DELETE FROM kms_fts").run()
+          this.db.prepare("DELETE FROM kms_search_index").run()
+          this.db.prepare("DELETE FROM kms_paragraphs").run()
+          this.db.prepare("DELETE FROM kms_embeddings").run()
+          try { this.db.prepare("DELETE FROM vec_kms_embeddings").run() } catch {}
+          // 重建时所有文件降级为 cold，只做基础解析索引，不做 LLM 摘要/段落分析
+          this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
+        })()
+        KMSSearchEngineService.getInstance().invalidateCache()
+      }
+
       if (isRebuildDir) {
         await KMSCrawlerService.getInstance().crawlDirectory(dirId!, signal)
       } else {

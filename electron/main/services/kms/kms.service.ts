@@ -614,6 +614,7 @@ ${fileSummaries.join('\n')}
    * 支持与现有搜索相同的过滤条件（dirIds, collectionIds, fileExtensions, timeRangeStart, timeRangeEnd）
    */
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
+    const startTime = Date.now()
     let sql = `
       SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type
       FROM kms_files f
@@ -650,20 +651,24 @@ ${fileSummaries.join('\n')}
       params.push(...options.collectionIds)
     }
 
-    if (options?.topK !== undefined) {
-      sql += ' LIMIT ?'
-      params.push(options.topK)
-    }
+    // 默认限制返回数量，避免大量结果导致前端渲染卡顿
+    const limit = options?.topK ?? 200
+    sql += ' LIMIT ?'
+    params.push(limit)
 
-    return this.db.prepare(sql).all(...params) as SearchResult[]
+    const results = this.db.prepare(sql).all(...params) as SearchResult[]
+    logger.info(`searchFiles "${query}": ${results.length} results, ${Date.now() - startTime}ms`)
+    return results
   }
 
   async search(query: string, options?: SearchOptions & { useSemantic?: boolean }): Promise<SearchResult[]> {
+    const startTime = Date.now()
     const searchEngine = KMSSearchEngineService.getInstance()
     let queryEmbedding: Float32Array | undefined
 
     if (options?.useSemantic) {
       try {
+        const embStart = Date.now()
         const embConfig = this.getKmsEmbeddingConfig()
         if (embConfig) {
           queryEmbedding = await LLMClientService.getInstance().createEmbedding(
@@ -672,12 +677,15 @@ ${fileSummaries.join('\n')}
             embConfig.modelName
           )
         }
+        logger.info(`search embedding generated in ${Date.now() - embStart}ms`)
       } catch (err) {
         logger.warn('Failed to generate query embedding, falling back to keyword search:', err)
       }
     }
 
+    const searchStart = Date.now()
     const results = searchEngine.search(query, queryEmbedding, options)
+    logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
 
     const hitFileIds = new Set(results.map(r => r.file_id))
     const crawler = KMSCrawlerService.getInstance()
@@ -685,6 +693,7 @@ ${fileSummaries.join('\n')}
       crawler.logFileAccess(fileId, 'search_hit')
     }
 
+    logger.info(`search "${query}" total: ${results.length} results, ${Date.now() - startTime}ms`)
     return results
   }
 
@@ -819,7 +828,7 @@ ${fileSummaries.join('\n')}
       model: null,
       embeddingModel: null,
       summaryModel: null,
-      searchParams: { maxRounds: 3, topK: 10 },
+      searchParams: { maxRounds: 3, topK: 10, resultLimit: 100 },
       autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
     }
 

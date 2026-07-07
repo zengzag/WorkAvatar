@@ -706,6 +706,7 @@ class KMSSearchEngineService {
     if (cached) return cached
 
     // 预处理查询：提取关键词并构建 FTS5 查询表达式
+    const tokenizeStart = Date.now()
     const queryWords = this.extractQueryKeywords(query)
     if (queryWords.length === 0) return []
 
@@ -713,6 +714,7 @@ class KMSSearchEngineService {
     const { whereClause, params } = this.buildFtsWhereClause(options)
 
     try {
+      const ftsStart = Date.now()
       const ftsResults = this.db.prepare(`
         SELECT si.*, fts.rank
         FROM kms_fts fts
@@ -723,7 +725,9 @@ class KMSSearchEngineService {
         LIMIT ?
       `).all(ftsQuery, ...params, topK * 2) as any[]
 
+      const convertStart = Date.now()
       let results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
+      logger.info(`ftsSearch "${query}": tokenize=${convertStart - tokenizeStart}ms, fts=${convertStart - ftsStart}ms, convert=${Date.now() - convertStart}ms, results=${results.length}`)
 
       // FTS5 无结果时，降级到 LIKE 模糊匹配（参考搜索引擎的容错机制）
       if (results.length === 0) {

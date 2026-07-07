@@ -79,91 +79,25 @@ class FileParserService {
   }
 
   private async parseWord(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
-    try {
-      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-      const result = await convert(filePath, {
-        preserveLayout: true,
-        extractImages: false,
-        extractCharts: false,
-        maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型文档触发默认内存限制
-      })
-      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    const buffer = await fs.promises.readFile(filePath)
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
+    const result = await mammoth.extractRawText({ buffer })
+    if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 
-      return {
-        type: 'word',
-        fullText: result.markdown,
-        sections: this.splitIntoSections(result.markdown),
-        tables: [],
-        metadata: {},
-      }
-    } catch (error: any) {
-      logger.warn('DOCX file2md parse failed, falling back to mammoth:', {
-        filePath,
-        message: error.message,
-        code: error.code,
-        originalError: error.originalError?.message || error.originalError,
-      })
+    const fullText = (result.value || '').replace(/\n{3,}/g, '\n\n')
 
-      try {
-        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-        const buffer = await fs.promises.readFile(filePath)
-        const result = await (mammoth as any).convertToMarkdown({ buffer })
-        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-        logger.info('DOCX mammoth fallback succeeded:', { filePath })
-
-        const rawMarkdown = result.value || ''
-        const markdown = rawMarkdown
-          .replace(/<a\s+id="[^"]*"><\/a>/g, '')
-          .replace(/!\[[^\]]*\]\(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+\)/g, '')
-        return {
-          type: 'word',
-          fullText: markdown,
-          sections: this.splitIntoSections(markdown),
-          tables: [],
-          metadata: { fallbackParser: 'mammoth-markdown' },
-        }
-      } catch (mammothError: any) {
-        logger.error('DOCX mammoth fallback also failed:', {
-          filePath,
-          originalError: error.message,
-          mammothError: mammothError.message,
-        })
-        throw error
-      }
+    return {
+      type: 'word',
+      fullText,
+      sections: this.splitIntoSections(fullText),
+      tables: [],
+      metadata: {},
     }
   }
 
   private async parseExcel(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-    const ext = path.extname(filePath).toLowerCase()
-
-    if (ext === '.xlsx') {
-      try {
-        const result = await convert(filePath, {
-          preserveLayout: true,
-          extractImages: false,
-          extractCharts: false,
-          maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型表格触发默认内存限制
-        })
-        if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-
-        return {
-          type: 'excel',
-          fullText: result.markdown,
-          sections: this.splitIntoSections(result.markdown),
-          tables: [],
-          metadata: {},
-        }
-      } catch (error: any) {
-        logger.warn('XLSX file2md parse failed, falling back to SheetJS:', {
-          filePath,
-          message: error.message,
-          code: error.code,
-          originalError: error.originalError?.message || error.originalError,
-        })
-      }
-    }
-
     const workbook = XLSX.readFile(filePath)
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     let fullText = ''
@@ -215,7 +149,7 @@ class FileParserService {
         preserveLayout: true,
         extractImages: false,
         extractCharts: false,
-        maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB，避免大型PPTX触发默认内存限制
+        maxMemoryUsage: 4 * 1024 * 1024 * 1024, // 4GB，大型PPTX转换需要更多内存
       })
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
 

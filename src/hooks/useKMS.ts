@@ -129,6 +129,7 @@ export interface KMSSettings {
   searchParams: {
     maxRounds?: number
     topK?: number
+    resultLimit?: number
   }
   autoIndex: KMSAutoIndexConfig
 }
@@ -189,7 +190,7 @@ export function useKMS() {
     model: null,
     embeddingModel: null,
     summaryModel: null,
-    searchParams: { maxRounds: 3, topK: 10 },
+    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100 },
     autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
@@ -320,11 +321,11 @@ export function useKMS() {
         }).catch(() => {})
       } else {
         const useSemantic = mode === 'semantic' || mode === 'hybrid'
-        // 手动搜索不限制返回数量，获取全部匹配结果
+        // 手动搜索限制返回数量，兼顾搜索覆盖面和渲染性能
         const results = await window.electronAPI.kms.search({
           query,
           useSemantic,
-          topK: 500,
+          topK: kmsSettingsRef.current.searchParams?.resultLimit ?? 100,
           fileExtensions: filters?.fileExtensions,
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
@@ -430,6 +431,7 @@ export function useKMS() {
           searchParams: {
             maxRounds: result.searchParams?.maxRounds ?? 3,
             topK: result.searchParams?.topK ?? 10,
+            resultLimit: result.searchParams?.resultLimit ?? 100,
           },
           autoIndex: {
             enabled: result.autoIndex?.enabled ?? false,
@@ -447,7 +449,7 @@ export function useKMS() {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number }
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {

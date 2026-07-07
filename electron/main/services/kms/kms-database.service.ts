@@ -342,7 +342,8 @@ class KMSDatabaseService {
     }
 
     this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash')
-    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash)')
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash_unique')
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash)')
   }
 
   private recoverStuckFiles(): void {
