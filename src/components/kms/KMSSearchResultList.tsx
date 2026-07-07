@@ -70,16 +70,14 @@ interface KMSSearchResultListProps {
 }
 
 const FileResultCard: React.FC<{
-  fileId: string
   fileResults: SearchResult[]
   searchMode: string
-  searchKeywords: string[]
   token: any
   t: (key: string, options?: any) => string
   onPreview: (result: SearchResult) => void
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
-}> = React.memo(({ fileId, fileResults, searchMode, searchKeywords, token, t, onPreview, onOpenFile, onOpenFileDir }) => {
+}> = React.memo(({ fileResults, searchMode, token, t, onPreview, onOpenFile, onOpenFileDir }) => {
   // 只展示最匹配的那一个结果（按 score 排序取最高分）
   const bestItem = fileResults[0]
   const matchConfig = MATCH_TYPE_CONFIG[bestItem.match_type] || { color: 'default', labelKey: 'kms.matchContent' }
@@ -295,10 +293,8 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
       {pagedGroupedResults.map(([fileId, fileResults]) => (
         <FileResultCard
           key={fileId}
-          fileId={fileId}
           fileResults={fileResults}
           searchMode={searchMode}
-          searchKeywords={searchKeywords}
           token={token}
           t={t}
           onPreview={onPreview}

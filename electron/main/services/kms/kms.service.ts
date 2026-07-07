@@ -748,7 +748,7 @@ ${fileSummaries.join('\n')}
     return KMSFileReaderService.getInstance().getFileFullContent(fileId)
   }
 
-  async buildFullIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
+  async buildFullIndex(providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
@@ -756,7 +756,7 @@ ${fileSummaries.join('\n')}
     }
     await indexManager.buildFullIndex(providerId, (progress) => {
       this.notifyProgress(progress)
-    }, withEmbedding)
+    }, withEmbedding, resetHotData)
   }
 
   async incrementalIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
@@ -770,7 +770,7 @@ ${fileSummaries.join('\n')}
     }, withEmbedding)
   }
 
-  async rebuildDirIndex(dirId: string, providerId?: string, withEmbedding: boolean = true): Promise<void> {
+  async rebuildDirIndex(dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
     const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
@@ -778,7 +778,7 @@ ${fileSummaries.join('\n')}
     }
     await indexManager.rebuildDirIndex(dirId, providerId, (progress) => {
       this.notifyProgress(progress)
-    }, withEmbedding)
+    }, withEmbedding, resetHotData)
   }
 
   async processCollectionDeep(collectionId: string): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {

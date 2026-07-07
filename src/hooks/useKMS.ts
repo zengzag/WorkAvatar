@@ -398,10 +398,10 @@ export function useKMS() {
     }
   }, [])
 
-  const buildIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
+  const buildIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.buildIndex(providerId, withEmbedding)
+    await window.electronAPI.kms.buildIndex(providerId, withEmbedding, resetHotData)
   }, [])
 
   const incrementalIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
@@ -410,10 +410,10 @@ export function useKMS() {
     await window.electronAPI.kms.incrementalIndex(providerId, withEmbedding)
   }, [])
 
-  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string, withEmbedding: boolean = true) => {
+  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding)
+    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData)
   }, [])
 
   const cancelIndex = useCallback(async () => {

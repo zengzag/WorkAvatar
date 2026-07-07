@@ -788,6 +788,7 @@ export default {
     updateIndex: 'Update Index',
     rebuildIndexConfirm: 'This will clear all index data and rebuild from scratch. This cannot be undone. Continue?',
     rebuildIndexSelectDir: 'Select directory to rebuild (empty = all)',
+      rebuildIndexResetHot: 'Also rebuild hot data (will clear LLM summaries and use full parser)',
     cancelIndex: 'Cancel',
     withEmbedding: 'Build Embedding',
     withEmbeddingTooltip: 'When enabled, vector embeddings are generated after indexing, enabling semantic search. When disabled, only full-text index is built (faster).',

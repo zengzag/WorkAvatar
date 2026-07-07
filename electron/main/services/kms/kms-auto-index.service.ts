@@ -1,5 +1,6 @@
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService from './kms-search-engine.service'
+import KMSDatabaseService from './kms-database.service'
 import FileParserService from '../file-parser.service'
 import LLMClientService from '../llm-client.service'
 import { createLogger } from '../logger'
@@ -174,24 +175,30 @@ class KMSAutoIndexService {
       for (const file of pendingFiles) {
         if (signal.aborted) break
         try {
-          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
-          searchEngine.deleteIndexByFile(file.id)
+          // 解析前：状态置为 indexing + 删除旧索引，合并为单个事务
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
+            searchEngine.deleteIndexByFile(file.id)
+          })
           const parseResult = await fileParser.parseFilePath(file.filePath, signal, file.dataTier as 'hot' | 'cold')
           if (signal.aborted) break
 
           // 保存解析模式
           const parseMode = parseResult.metadata?.parser
-          if (parseMode) {
-            indexManager.saveParseMode(file.id, parseMode)
-          }
 
           onProgress?.({ phase: 'indexing', current: processed + 1, total, message: `自动索引: ${file.fileName}` })
 
-          searchEngine.indexFileTitle(file.id, file.fileName)
-          if (parseResult.fullText) {
-            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
-            indexManager.saveLightSummary(file.id, file.fileName, parseResult.fullText)
-          }
+          // 解析后：标题/段落/解析模式/轻量摘要合并为单个事务
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            if (parseMode) {
+              indexManager.saveParseMode(file.id, parseMode)
+            }
+            searchEngine.indexFileTitle(file.id, file.fileName)
+            if (parseResult.fullText) {
+              searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
+              indexManager.saveLightSummary(file.id, file.fileName, parseResult.fullText)
+            }
+          })
 
           if (file.dataTier === 'hot' && summaryProviderId) {
             const llmClient = LLMClientService.getInstance()
@@ -219,6 +226,15 @@ class KMSAutoIndexService {
       if (!signal.aborted) {
         const KMSDataTierService = (await import('./kms-data-tier.service')).default
         KMSDataTierService.getInstance().evaluateDataTiers()
+      }
+
+      // 自动索引结束：主动触发 checkpoint，把累积的 WAL 内容合并回主库文件
+      if (!signal.aborted) {
+        try {
+          KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+        } catch (err: any) {
+          logger.warn('Post-auto-index checkpoint failed:', err?.message || err)
+        }
       }
 
       onProgress?.({ phase: 'done', current: processed, total, message: `自动索引完成，共处理 ${processed} 个文件` })

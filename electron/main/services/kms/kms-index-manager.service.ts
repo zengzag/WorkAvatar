@@ -90,24 +90,24 @@ class KMSIndexManagerService {
     return KMSIndexManagerService.instance
   }
 
-  async buildFullIndex(providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true): Promise<void> {
-    return this.runIndexPipeline('full', onProgress, { providerId, withEmbedding })
+  async buildFullIndex(providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
+    return this.runIndexPipeline('full', onProgress, { providerId, withEmbedding, resetHotData })
   }
 
   async incrementalIndex(providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true): Promise<void> {
     return this.runIndexPipeline('incremental', onProgress, { providerId, withEmbedding })
   }
 
-  async rebuildDirIndex(dirId: string, providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true): Promise<void> {
-    return this.runIndexPipeline('rebuild-dir', onProgress, { providerId, withEmbedding, dirId })
+  async rebuildDirIndex(dirId: string, providerId?: string, onProgress?: ProgressCallback, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
+    return this.runIndexPipeline('rebuild-dir', onProgress, { providerId, withEmbedding, dirId, resetHotData })
   }
 
   private async runIndexPipeline(
     mode: 'full' | 'incremental' | 'rebuild-dir',
     onProgress?: ProgressCallback,
-    options: { providerId?: string; withEmbedding?: boolean; dirId?: string } = {},
+    options: { providerId?: string; withEmbedding?: boolean; dirId?: string; resetHotData?: boolean } = {},
   ): Promise<void> {
-    const { withEmbedding = true, dirId } = options
+    const { withEmbedding = true, dirId, resetHotData = false } = options
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
@@ -135,8 +135,12 @@ class KMSIndexManagerService {
           this.db.prepare("DELETE FROM kms_paragraphs").run()
           this.db.prepare("DELETE FROM kms_embeddings").run()
           try { this.db.prepare("DELETE FROM vec_kms_embeddings").run() } catch {}
-          // 重建时所有文件降级为 cold，只做基础解析索引，不做 LLM 摘要/段落分析
-          this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
+          // 默认不重置热数据（保留 data_tier），勾选后才将热数据降级为 cold
+          if (resetHotData) {
+            this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
+          } else {
+            this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
+          }
         })()
         KMSSearchEngineService.getInstance().invalidateCache()
       }
@@ -199,17 +203,18 @@ class KMSIndexManagerService {
         if (signal.aborted) break
 
         try {
-          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
-          searchEngine.deleteIndexByFile(file.id)
+          // 解析前：状态置为 indexing + 删除旧索引，合并为单个事务
+          // 内层各方法的 transaction 会变成 SAVEPOINT，最终只触发一次 commit
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
+            searchEngine.deleteIndexByFile(file.id)
+          })
 
           const parseResult = await fileParser.parseFilePath(file.filePath, signal, file.dataTier as 'hot' | 'cold')
           if (signal.aborted) break
 
           // 保存解析模式，确保预览时用相同解析器
           const parseMode = parseResult.metadata?.parser
-          if (parseMode) {
-            this.saveParseMode(file.id, parseMode)
-          }
 
           onProgress?.({
             phase: 'indexing',
@@ -218,14 +223,21 @@ class KMSIndexManagerService {
             message: `索引: ${file.fileName}`,
           })
 
-          searchEngine.indexFileTitle(file.id, file.fileName)
-          if (parseResult.fullText) {
-            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
-          }
+          // 解析后：标题索引 + 段落索引 + 解析模式 + 轻量摘要，合并为单个事务
+          // 把原本 4-5 次小事务提交合并为 1 次，减少 fsync 次数（synchronous=NORMAL 下也减少 WAL 写入）
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            if (parseMode) {
+              this.saveParseMode(file.id, parseMode)
+            }
+            searchEngine.indexFileTitle(file.id, file.fileName)
+            if (parseResult.fullText) {
+              searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
+            }
+            if (isFull && parseResult.fullText) {
+              this.saveLightSummary(file.id, file.fileName, parseResult.fullText)
+            }
+          })
 
-          if (isFull && parseResult.fullText) {
-            this.saveLightSummary(file.id, file.fileName, parseResult.fullText)
-          }
           const isHot = file.dataTier === 'hot'
           if (isHot && summaryProviderId) {
             await this.processHotFile(file.id, parseResult.fullText, file.fileName, summaryProviderId, llmClient, searchEngine, signal, onProgress, { current: processed + 1, total }, summaryModelId, summaryEnableThinking)
@@ -263,6 +275,14 @@ class KMSIndexManagerService {
         onProgress?.({ phase: 'done', current: processed, total, message: '已取消', cancelled: true })
       } else {
         onProgress?.({ phase: 'done', current: processed, total, message: `${msgDonePrefix}，共处理 ${processed} 个文件` })
+      }
+
+      // 索引流程结束：主动触发 PASSIVE checkpoint，让 WAL 内容尽快合并回主库文件，
+      // 避免长期运行后 WAL 文件膨胀（即使 wal_autocheckpoint 已设阈值，主动 checkpoint 可让磁盘占用更可控）
+      try {
+        KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+      } catch (err: any) {
+        logger.warn('Post-index checkpoint failed:', err?.message || err)
       }
     } catch (err: any) {
       logger.error(errorLabel, err)
@@ -352,10 +372,13 @@ class KMSIndexManagerService {
             continue
           }
 
-          searchEngine.deleteIndexByFile(file.id)
-          searchEngine.indexFileTitle(file.id, file.file_name)
-          searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
-          this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
+          // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            searchEngine.deleteIndexByFile(file.id)
+            searchEngine.indexFileTitle(file.id, file.file_name)
+            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
+            this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
+          })
 
           await this.processHotFile(
             file.id,
@@ -371,8 +394,11 @@ class KMSIndexManagerService {
             llmConfig.enableThinking,
           )
 
-          KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
-          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+          // tier 和 status 更新也合并到一个事务
+          KMSDatabaseService.getInstance().runInTransaction(() => {
+            KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
+            KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+          })
         } catch (err: any) {
           if (signal.aborted) break
           logger.error(`Collection deep process failed for "${file.file_name}":`, err)
@@ -455,6 +481,13 @@ class KMSIndexManagerService {
         total,
         message: `合集处理完成: ${collection.name}（${fileProcessed} 个文件，摘要${summaryGenerated ? '已' : '未'}生成）`,
       })
+
+      // 合集深处理结束：主动触发 checkpoint，把大量写入的 WAL 内容合并回主库
+      try {
+        KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+      } catch (err: any) {
+        logger.warn('Post-collection checkpoint failed:', err?.message || err)
+      }
 
       return { fileProcessed, summaryGenerated, embeddingGenerated }
     } catch (err: any) {

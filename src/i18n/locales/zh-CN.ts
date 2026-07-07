@@ -791,6 +791,7 @@ export default {
     updateIndex: '更新索引',
     rebuildIndexConfirm: '将清空所有索引数据并重新构建，此操作不可撤销，是否继续？',
     rebuildIndexSelectDir: '选择重建目录（留空为全部目录）',
+      rebuildIndexResetHot: '同时重建热数据（将清空 LLM 摘要和段落分析，使用完整解析器重新解析）',
     cancelIndex: '取消',
     withEmbedding: '同时构建智能索引',
     withEmbeddingTooltip: '开启后，索引构建完成会同步生成向量嵌入（embedding），支持语义检索；关闭后仅构建全文索引，速度更快',

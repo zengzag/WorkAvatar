@@ -126,10 +126,10 @@ export function registerKMSHandlers(): void {
   // 不使用 ipcMain.handle 避免返回值序列化问题
   // 第二个参数 withEmbedding（默认 true）控制是否同步生成向量嵌入（智能索引）
   // 用 Promise.resolve().then() 包裹，确保同步抛错也能被 catch 捕获，避免异常逃逸
-  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
-    logger.info(`Build index requested (withEmbedding=${withEmbedding})`)
+  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
+    logger.info(`Build index requested (withEmbedding=${withEmbedding}, resetHot=${resetHotData})`)
     Promise.resolve()
-      .then(() => kmsService.buildFullIndex(providerId, withEmbedding))
+      .then(() => kmsService.buildFullIndex(providerId, withEmbedding, resetHotData))
       .catch((err: any) => {
         logger.error('buildFullIndex failed:', String(err?.message || err))
       })
@@ -144,10 +144,10 @@ export function registerKMSHandlers(): void {
       })
   })
 
-  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string, withEmbedding: boolean = true) => {
-    logger.info(`Rebuild dir index requested: ${dirId} (withEmbedding=${withEmbedding})`)
+  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
+    logger.info(`Rebuild dir index requested: ${dirId} (withEmbedding=${withEmbedding}, resetHot=${resetHotData})`)
     Promise.resolve()
-      .then(() => kmsService.rebuildDirIndex(dirId, providerId, withEmbedding))
+      .then(() => kmsService.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData))
       .catch((err: any) => {
         logger.error('rebuildDirIndex failed:', String(err?.message || err))
       })

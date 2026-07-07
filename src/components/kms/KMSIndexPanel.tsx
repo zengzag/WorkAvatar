@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App, Modal,
+  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App,
 } from 'antd'
 import {
   ThunderboltOutlined,
@@ -32,7 +32,7 @@ interface KMSIndexPanelProps {
   isIndexing: boolean
   indexProgress: IndexProgress | null
   onUpdateIndex: (withEmbedding?: boolean) => void
-  onRebuildIndex: (withEmbedding?: boolean, dirId?: string) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string, resetHotData?: boolean) => void
   onCancelIndex: () => void
   autoIndexConfig: KMSAutoIndexConfig
   autoIndexStatus: KMSAutoIndexStatus | null
@@ -127,6 +127,12 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
               </select>
             </div>
           )}
+          <div style={{ marginTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+              <input type="checkbox" id="rebuild-reset-hot" />
+              <span>{t('kms.rebuildIndexResetHot')}</span>
+            </label>
+          </div>
         </div>
       ),
       okText: t('common.confirm'),
@@ -134,7 +140,9 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
       onOk: () => {
         const selectEl = document.getElementById('rebuild-dir-select') as HTMLSelectElement | null
         const dirId = selectEl?.value || undefined
-        onRebuildIndex(withEmbedding, dirId || undefined)
+        const resetHotEl = document.getElementById('rebuild-reset-hot') as HTMLInputElement | null
+        const resetHotData = resetHotEl?.checked ?? false
+        onRebuildIndex(withEmbedding, dirId || undefined, resetHotData)
       },
     })
   }, [dirs, withEmbedding, onRebuildIndex, modal, t, token])

@@ -204,9 +204,9 @@ const electronAPI = {
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
     openFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE, filePath),
     openFileDir: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE_DIR, filePath),
-    buildIndex: (providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId, withEmbedding); return Promise.resolve({ success: true }) },
+    buildIndex: (providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId, withEmbedding, resetHotData); return Promise.resolve({ success: true }) },
     incrementalIndex: (providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId, withEmbedding); return Promise.resolve({ success: true }) },
-    rebuildDirIndex: (dirId: string, providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId, withEmbedding); return Promise.resolve({ success: true }) },
+    rebuildDirIndex: (dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId, withEmbedding, resetHotData); return Promise.resolve({ success: true }) },
     cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
     onIndexProgress: (callback: (progress: {

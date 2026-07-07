@@ -50,7 +50,7 @@ interface KMSSettingsPanelProps {
   isIndexing: boolean
   indexProgress: IndexProgress | null
   onUpdateIndex: (withEmbedding?: boolean) => void
-  onRebuildIndex: (withEmbedding?: boolean, dirId?: string) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string, resetHotData?: boolean) => void
   onCancelIndex: () => void
   autoIndexStatus: KMSAutoIndexStatus | null
   onRunAutoIndexCheck: () => void

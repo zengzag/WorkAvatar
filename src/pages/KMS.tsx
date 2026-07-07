@@ -233,7 +233,13 @@ const KMSPage: React.FC = () => {
           isIndexing={isIndexing}
           indexProgress={indexProgress}
           onUpdateIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}
-          onRebuildIndex={(withEmbedding, dirId) => dirId ? rebuildDirIndex(dirId, undefined, withEmbedding) : buildIndex(undefined, withEmbedding)}
+          onRebuildIndex={(withEmbedding, dirId, resetHotData) => {
+            if (dirId) {
+              rebuildDirIndex(dirId, undefined, withEmbedding, resetHotData)
+            } else {
+              buildIndex(undefined, withEmbedding, resetHotData)
+            }
+          }}
           onCancelIndex={cancelIndex}
           autoIndexStatus={autoIndexStatus}
           onRunAutoIndexCheck={runAutoIndexCheckNow}

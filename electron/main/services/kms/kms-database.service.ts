@@ -21,11 +21,29 @@ class KMSDatabaseService {
 
     this.db = new Database(kmsDbPath, {
       readonly: false,
-      timeout: 5000
+      timeout: 10000
     })
 
+    // ===== 性能 PRAGMA 配置（针对大库 2GB+ / 3000+ 文件场景优化） =====
+    // WAL 模式：写入走 WAL 文件，读不阻塞写，写不阻塞读
     this.db.pragma('journal_mode = WAL')
+    // 外键约束
     this.db.pragma('foreign_keys = ON')
+    // synchronous=NORMAL：WAL 模式下事务提交不强制 fsync（只在 checkpoint 时刷盘），
+    // 既保证事务安全又避免每次 commit 等磁盘同步（默认 FULL 会卡死大库写入）
+    this.db.pragma('synchronous = NORMAL')
+    // 临时表/索引/排序中间结果放内存，避免写 temp.db
+    this.db.pragma('temp_store = MEMORY')
+    // 页缓存 200MB（默认仅 2MB，对 2GB 库远远不够）
+    this.db.pragma('cache_size = -200000')
+    // mmap 256MB，用内存映射替代 read 系统调用，减少用户态/内核态切换
+    this.db.pragma('mmap_size = 268435456')
+    // WAL 自动 checkpoint 阈值提高到 8MB（默认 4MB），减少 checkpoint 频率
+    this.db.pragma('wal_autocheckpoint = 2000')
+    // busy_timeout 10s：多线程/进程争用时等待而不是立即抛 SQLITE_BUSY
+    this.db.pragma('busy_timeout = 10000')
+    // WAL 文件大小硬上限 512MB，避免无限膨胀（超过后自动 checkpoint）
+    this.db.pragma('journal_size_limit = 536870912')
 
     try {
       sqliteVec.load(this.db)
@@ -364,7 +382,44 @@ class KMSDatabaseService {
     return this.db
   }
 
+  /**
+   * 手动触发 WAL checkpoint。
+   *
+   * 默认 PASSIVE 模式：不等待读者，把 WAL 内容合并回主库文件后返回。
+   * 适合在以下时机调用：
+   * - 大批量索引完成后
+   * - 应用退出前
+   * - 用户空闲时（如定时任务）
+   *
+   * @param mode 'PASSIVE'|'FULL'|'RESTART'|'TRUNCATE'
+   * @returns { wal_pages, wal_frames, checkpointed } 信息
+   */
+  public checkpoint(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'PASSIVE'): { wal_pages: number; wal_frames: number; checkpointed: number } {
+    const result = this.db.pragma(`wal_checkpoint(${mode})`) as any[]
+    const row = result[0] || {}
+    return {
+      wal_pages: Number(row.busy ?? 0),
+      wal_frames: Number(row.log ?? 0),
+      checkpointed: Number(row.checkpointed ?? 0),
+    }
+  }
+
+  /**
+   * 在已存在的事务外执行回调，回调内所有数据库操作作为一个事务提交。
+   * 用于上层合并多个小事务为单个大事务，减少 fsync 次数。
+   */
+  public runInTransaction<T>(fn: () => T): T {
+    const tx = this.db.transaction(fn)
+    return tx()
+  }
+
   public close(): void {
+    // 关闭前执行 TRUNCATE checkpoint，确保 WAL 内容写回主库文件
+    try {
+      this.checkpoint('TRUNCATE')
+    } catch (err: any) {
+      logger.warn('关闭前 checkpoint 失败:', err?.message || err)
+    }
     this.db.close()
   }
 }

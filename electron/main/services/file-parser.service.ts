@@ -182,7 +182,7 @@ class FileParserService {
     }
   }
 
-  private async parsePPTX(filePath: string, signal?: AbortSignal, tier?: 'hot' | 'cold'): Promise<ParseResult> {
+  private async parsePPTX(filePath: string, signal?: AbortSignal): Promise<ParseResult> {
     if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
     const result = await convert(filePath, {
       preserveLayout: true,
@@ -321,7 +321,7 @@ class FileParserService {
         result = await this.parseExcel(filePath, signal, tier)
         break
       case 'pptx':
-        result = await this.parsePPTX(filePath, signal, tier)
+        result = await this.parsePPTX(filePath, signal)
         break
       case 'txt':
       case 'md':
