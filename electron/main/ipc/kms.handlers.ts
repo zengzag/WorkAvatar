@@ -17,6 +17,7 @@ import type {
   KMSAddFilesToCollectionParams,
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -60,6 +61,17 @@ export function registerKMSHandlers(): void {
       fileExtensions: params.fileExtensions,
       collectionIds: params.collectionIds,
       dirIds: params.dirIds,
+    })
+  })
+
+  // 文件搜索（按文件名匹配）
+  safeHandle(IPC_CHANNELS.KMS_SEARCH_FILES, async (params: KMSSearchFilesParams) => {
+    return kmsService.searchFiles(params.query, {
+      dirIds: params.dirIds,
+      collectionIds: params.collectionIds,
+      fileExtensions: params.fileExtensions,
+      timeRangeStart: params.timeRangeStart,
+      timeRangeEnd: params.timeRangeEnd,
     })
   })
 

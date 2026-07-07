@@ -168,11 +168,13 @@ export interface SearchHistoryItem {
   created_at: number
 }
 
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai' | 'file'
+
 export function useKMS() {
   const { t } = useTranslation()
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('hybrid')
+  const [searchMode, setSearchMode] = useState<SearchMode>('hybrid')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
   const [liveSteps, setLiveSteps] = useState<SearchTraceStep[]>([])
@@ -195,6 +197,9 @@ export function useKMS() {
   const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
   const progressUnsubscribe = useRef<(() => void) | null>(null)
+  // 用 ref 追踪最新设置，避免 search 回调因 kmsSettings 变化而频繁重建
+  const kmsSettingsRef = useRef(kmsSettings)
+  kmsSettingsRef.current = kmsSettings
 
   const loadDirs = useCallback(async () => {
     try {
@@ -244,7 +249,7 @@ export function useKMS() {
     }
   }, [loadDirs, loadStats])
 
-  const search = useCallback(async (query: string, mode?: 'keyword' | 'semantic' | 'hybrid' | 'ai', filters?: SearchFilters) => {
+  const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
       setSearchResults([])
       setAgentResult(null)
@@ -263,9 +268,10 @@ export function useKMS() {
 
     try {
       if (mode === 'ai') {
+        const aiTopK = kmsSettingsRef.current.searchParams?.topK || 10
         const result = await window.electronAPI.kms.agentSearch({
           query,
-          topK: 10,
+          topK: aiTopK,
           maxRounds: 3,
           dirIds: filters?.dirIds,
           collectionIds: filters?.collectionIds,
@@ -295,12 +301,30 @@ export function useKMS() {
           })
           setSearchResults([])
         }
+      } else if (mode === 'file') {
+        const results = await window.electronAPI.kms.searchFiles({
+          query,
+          dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
+          fileExtensions: filters?.fileExtensions,
+          timeRangeStart: filters?.timeRangeStart,
+          timeRangeEnd: filters?.timeRangeEnd,
+        })
+        setAgentResult(null)
+        setSearchResults(results || [])
+        window.electronAPI.kms.recordSearchHistory({
+          query,
+          searchMode: 'file',
+          resultCount: results?.length || 0,
+          filters,
+        }).catch(() => {})
       } else {
         const useSemantic = mode === 'semantic' || mode === 'hybrid'
+        // 手动搜索不限制返回数量，获取全部匹配结果
         const results = await window.electronAPI.kms.search({
           query,
           useSemantic,
-          topK: 20,
+          topK: 500,
           fileExtensions: filters?.fileExtensions,
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,

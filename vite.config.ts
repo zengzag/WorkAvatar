@@ -26,6 +26,8 @@ export default defineConfig({
                 'tesseract.js',
                 'unpdf',
                 'pdfjs-dist',
+                '@node-rs/jieba',
+                '@node-rs/jieba/dict',
               ]
             }
           }

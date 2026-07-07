@@ -57,6 +57,8 @@ export const KMS_CHANNELS = {
   // KMS 手动摘要生成（目录摘要/文件摘要）
   KMS_GENERATE_DIR_SUMMARY: 'kms:generate-dir-summary',
   KMS_GENERATE_FILE_SUMMARY: 'kms:generate-file-summary',
+  // KMS 文件搜索（按文件名匹配）
+  KMS_SEARCH_FILES: 'kms:search-files',
   // KMS MCP 服务
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -191,4 +193,13 @@ export interface KMSSetCollectionSummaryParams {
   collectionId: string
   summary: string
   keyTopics?: string[]
+}
+
+export interface KMSSearchFilesParams {
+  query: string
+  dirIds?: string[]
+  collectionIds?: string[]
+  fileExtensions?: string[]
+  timeRangeStart?: number
+  timeRangeEnd?: number
 }

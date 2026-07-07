@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Modal, Button, Spin, Typography, Space, Tooltip, theme, Alert } from 'antd'
 import {
-  FileOutlined, FolderOpenOutlined,
+  FileOutlined, FolderOpenOutlined, ArrowUpOutlined, ArrowDownOutlined,
 } from '@ant-design/icons'
 import HighlightText from './HighlightText'
 
@@ -31,6 +31,8 @@ interface SearchResult {
 interface KMSFilePreviewProps {
   open: boolean
   result: SearchResult | null
+  /** 同文件的所有匹配结果（用于预览中切换匹配位置） */
+  allMatches?: SearchResult[]
   keywords: string[]
   onClose: () => void
   onOpenFile: (filePath: string) => void
@@ -40,6 +42,7 @@ interface KMSFilePreviewProps {
 const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
   open,
   result,
+  allMatches,
   keywords,
   onClose,
   onOpenFile,
@@ -47,20 +50,46 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const { Text } = Typography
 
   const [content, setContent] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [truncated, setTruncated] = useState(false)
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<HTMLDivElement[]>([])
 
+  // 确定当前预览的匹配项
+  const effectiveMatches = useMemo(() => {
+    if (allMatches && allMatches.length > 0) return allMatches
+    return result ? [result] : []
+  }, [allMatches, result])
+
+  const currentResult = effectiveMatches[currentMatchIndex] || result
+
+  useEffect(() => {
+    // 找到用户点击的具体匹配项在 effectiveMatches 中的索引
+    if (result && effectiveMatches.length > 1) {
+      const idx = effectiveMatches.findIndex(m =>
+        m.paragraph_id === result.paragraph_id &&
+        m.start_offset === result.start_offset &&
+        m.start_line === result.start_line
+      )
+      setCurrentMatchIndex(idx >= 0 ? idx : 0)
+    } else {
+      setCurrentMatchIndex(0)
+    }
+  }, [result, open, effectiveMatches])
+
+  const currentFileId = currentResult?.file_id
+
   const loadContent = useCallback(async () => {
-    if (!result) return
+    if (!currentFileId) return
     setLoading(true)
     setContent('')
     setTruncated(false)
     try {
-      const res = await window.electronAPI.kms.getFileFullContent(result.file_id)
+      const res = await window.electronAPI.kms.getFileFullContent(currentFileId)
       setContent(res?.content || '')
       setTruncated(!!res?.truncated)
     } catch (err) {
@@ -69,21 +98,22 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
     } finally {
       setLoading(false)
     }
-  }, [result])
+  }, [currentFileId])
 
   useEffect(() => {
-    if (open && result) {
+    if (open && currentResult) {
+      // 仅当 file_id 不同时才重新加载内容（匹配切换时不需要重新加载）
       loadContent()
     } else {
       setContent('')
       lineRefs.current = []
     }
-  }, [open, result, loadContent])
+  }, [open, currentResult?.file_id, loadContent])
 
   useEffect(() => {
-    if (!open || !result || loading || !content) return
-    const targetLine = result.start_line
-    const targetOffset = result.start_offset
+    if (!open || !currentResult || loading || !content) return
+    const targetLine = currentResult.start_line
+    const targetOffset = currentResult.start_offset
 
     if (targetLine !== undefined && targetLine > 0) {
       const lineIdx = targetLine - 1
@@ -102,7 +132,15 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
       const targetScroll = ratio * contentRef.current.scrollHeight - 80
       contentRef.current.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' })
     }
-  }, [open, result, loading, content])
+  }, [open, currentResult, loading, content])
+
+  const handlePrevMatch = useCallback(() => {
+    setCurrentMatchIndex(prev => Math.max(0, prev - 1))
+  }, [])
+
+  const handleNextMatch = useCallback(() => {
+    setCurrentMatchIndex(prev => Math.min(effectiveMatches.length - 1, prev + 1))
+  }, [effectiveMatches.length])
 
   const lines = content ? content.split('\n') : []
 
@@ -114,10 +152,10 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
     }
   }, [])
 
-  const title = result ? (
+  const title = currentResult ? (
     <Space size={8}>
       <FileOutlined />
-      <span>{result.file_name}</span>
+      <span>{currentResult.file_name}</span>
     </Space>
   ) : t('kms.filePreview')
 
@@ -134,30 +172,65 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
       {/* 顶部操作栏 */}
       <div style={{
         display: 'flex',
-        justifyContent: 'flex-end',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         gap: 8,
         padding: '8px 16px',
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         flexShrink: 0,
       }}>
-        <Tooltip title={t('kms.openFile')}>
-          <Button
-            size="small"
-            icon={<FileOutlined />}
-            onClick={() => result && onOpenFile(result.file_path)}
-          >
-            {t('kms.openFile')}
-          </Button>
-        </Tooltip>
-        <Tooltip title={t('kms.openDir')}>
-          <Button
-            size="small"
-            icon={<FolderOpenOutlined />}
-            onClick={() => result && onOpenFileDir(result.file_path)}
-          >
-            {t('kms.openDir')}
-          </Button>
-        </Tooltip>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {effectiveMatches.length > 0 && (
+            <>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('kms.matchCount', { count: effectiveMatches.length })}
+              </Text>
+              {effectiveMatches.length > 1 && (
+                <Space size={2}>
+                  <Tooltip title={t('kms.prevMatch')}>
+                    <Button
+                      size="small"
+                      icon={<ArrowUpOutlined />}
+                      disabled={currentMatchIndex <= 0}
+                      onClick={handlePrevMatch}
+                    />
+                  </Tooltip>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {currentMatchIndex + 1}/{effectiveMatches.length}
+                  </Text>
+                  <Tooltip title={t('kms.nextMatch')}>
+                    <Button
+                      size="small"
+                      icon={<ArrowDownOutlined />}
+                      disabled={currentMatchIndex >= effectiveMatches.length - 1}
+                      onClick={handleNextMatch}
+                    />
+                  </Tooltip>
+                </Space>
+              )}
+            </>
+          )}
+        </div>
+        <Space size={4}>
+          <Tooltip title={t('kms.openFile')}>
+            <Button
+              size="small"
+              icon={<FileOutlined />}
+              onClick={() => currentResult && onOpenFile(currentResult.file_path)}
+            >
+              {t('kms.openFile')}
+            </Button>
+          </Tooltip>
+          <Tooltip title={t('kms.openDir')}>
+            <Button
+              size="small"
+              icon={<FolderOpenOutlined />}
+              onClick={() => currentResult && onOpenFileDir(currentResult.file_path)}
+            >
+              {t('kms.openDir')}
+            </Button>
+          </Tooltip>
+        </Space>
       </div>
 
       {/* 内容区域 */}

@@ -59,4 +59,5 @@ export type {
   KMSAddFilesToCollectionParams,
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from './channels/kms'

@@ -47,6 +47,7 @@ import type {
   KMSAddFilesToCollectionParams,
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -191,6 +192,7 @@ const electronAPI = {
     updateDir: (params: KMSUpdateDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_DIR, params),
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
+    searchFiles: (params: KMSSearchFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_FILES, params),
     agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
     onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
       const handler = (_event: any, step: any) => callback(step)

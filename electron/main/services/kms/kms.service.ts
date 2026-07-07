@@ -609,6 +609,55 @@ ${fileSummaries.join('\n')}
     return KMSFileReaderService.getInstance().getParagraphsByIds(paragraphIds)
   }
 
+  /**
+   * 按文件名搜索文件（不匹配文件内容）
+   * 支持与现有搜索相同的过滤条件（dirIds, collectionIds, fileExtensions, timeRangeStart, timeRangeEnd）
+   */
+  searchFiles(query: string, options?: SearchOptions): SearchResult[] {
+    let sql = `
+      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type
+      FROM kms_files f
+      LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
+      WHERE f.file_name LIKE ?
+    `
+    const params: any[] = [`%${query}%`]
+
+    if (options?.dirIds && options.dirIds.length > 0) {
+      const placeholders = options.dirIds.map(() => '?').join(',')
+      sql += ` AND f.dir_id IN (${placeholders})`
+      params.push(...options.dirIds)
+    }
+
+    if (options?.fileExtensions && options.fileExtensions.length > 0) {
+      const placeholders = options.fileExtensions.map(() => '?').join(',')
+      sql += ` AND f.file_ext IN (${placeholders})`
+      params.push(...options.fileExtensions)
+    }
+
+    if (options?.timeRangeStart !== undefined) {
+      sql += ' AND f.modified_time >= ?'
+      params.push(options.timeRangeStart)
+    }
+
+    if (options?.timeRangeEnd !== undefined) {
+      sql += ' AND f.modified_time <= ?'
+      params.push(options.timeRangeEnd)
+    }
+
+    if (options?.collectionIds && options.collectionIds.length > 0) {
+      const placeholders = options.collectionIds.map(() => '?').join(',')
+      sql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+      params.push(...options.collectionIds)
+    }
+
+    if (options?.topK !== undefined) {
+      sql += ' LIMIT ?'
+      params.push(options.topK)
+    }
+
+    return this.db.prepare(sql).all(...params) as SearchResult[]
+  }
+
   async search(query: string, options?: SearchOptions & { useSemantic?: boolean }): Promise<SearchResult[]> {
     const searchEngine = KMSSearchEngineService.getInstance()
     let queryEmbedding: Float32Array | undefined

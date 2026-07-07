@@ -1,13 +1,13 @@
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Radio, Select, DatePicker, Collapse, Tag, Typography, Space } from 'antd'
-import { FilterOutlined, RobotOutlined } from '@ant-design/icons'
+import { Select, DatePicker, Collapse, Tag, Typography, Space } from 'antd'
+import { FilterOutlined } from '@ant-design/icons'
 
 
 const { Text } = Typography
 const { RangePicker } = DatePicker
 
-type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai'
+type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai' | 'file'
 
 const FILE_FORMAT_OPTIONS = [
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -28,7 +28,6 @@ interface IndexDir {
 
 interface KMSFilterPanelProps {
   searchMode: SearchMode
-  onSearchModeChange: (mode: SearchMode) => void
   filterDirIds: string[]
   onFilterDirIdsChange: (ids: string[]) => void
   filterCollectionIds: string[]
@@ -42,8 +41,7 @@ interface KMSFilterPanelProps {
 }
 
 const KMSFilterPanel: React.FC<KMSFilterPanelProps> = ({
-  searchMode,
-  onSearchModeChange,
+  searchMode: _searchMode,
   filterDirIds,
   onFilterDirIdsChange,
   filterCollectionIds,
@@ -80,25 +78,10 @@ const KMSFilterPanel: React.FC<KMSFilterPanelProps> = ({
   }, [onFilterTimeRangeChange])
 
   const activeFilterCount = filterDirIds.length + filterCollectionIds.length + filterExtensions.length +
-    (filterTimeRange ? 1 : 0) + (searchMode === 'keyword' || searchMode === 'semantic' ? 1 : 0)
+    (filterTimeRange ? 1 : 0)
 
   return (
     <div style={{ marginBottom: 12 }}>
-      <Radio.Group
-        value={searchMode === 'keyword' || searchMode === 'semantic' ? '' : searchMode}
-        onChange={(e) => onSearchModeChange(e.target.value)}
-        optionType="button"
-        buttonStyle="solid"
-        size="small"
-        style={{ marginBottom: 8 }}
-      >
-        <Radio.Button value="hybrid">{t('kms.hybridSearch')}</Radio.Button>
-        <Radio.Button value="ai">
-          <RobotOutlined style={{ marginRight: 4 }} />
-          {t('kms.aiSearch')}
-        </Radio.Button>
-      </Radio.Group>
-
       <Collapse
         size="small"
         items={[{
@@ -116,22 +99,6 @@ const KMSFilterPanel: React.FC<KMSFilterPanelProps> = ({
           ),
           children: (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                  {t('kms.searchMode')}
-                </Text>
-                <Select
-                  style={{ width: '100%' }}
-                  value={searchMode}
-                  onChange={(v) => onSearchModeChange(v as SearchMode)}
-                  options={[
-                    { label: t('kms.hybridSearch'), value: 'hybrid' },
-                    { label: t('kms.keywordSearch'), value: 'keyword' },
-                    { label: t('kms.semanticSearch'), value: 'semantic' },
-                    { label: t('kms.aiSearch'), value: 'ai' },
-                  ]}
-                />
-              </div>
               <div>
                 <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
                   {t('kms.filterDirectory')}

@@ -7,6 +7,25 @@ import { useKMS } from '../hooks/useKMS'
 
 type ViewMode = 'search' | 'knowledge' | 'collections'
 
+interface HighlightRange { start: number; end: number }
+
+interface SearchResult {
+  file_id: string
+  file_name: string
+  file_path: string
+  paragraph_id?: string
+  paragraph_title?: string
+  text: string
+  match_type: string
+  start_offset?: number
+  end_offset?: number
+  start_line?: number
+  end_line?: number
+  score?: number
+  highlights?: HighlightRange[]
+  matched_keywords?: string[]
+}
+
 const KMSPage: React.FC = () => {
   const { t } = useTranslation()
 
@@ -57,12 +76,20 @@ const KMSPage: React.FC = () => {
   // 跨视图联动：合集页"在此合集中搜索"使用
   const [filterCollectionIds, setFilterCollectionIds] = useState<string[]>([])
 
+  // 收集当前文件的所有匹配结果（用于预览中切换匹配位置）
+  const [allPreivewMatches, setAllPreviewMatches] = useState<SearchResult[]>([])
+
   const handlePreview = useCallback((result: any) => {
     setPreviewFile(result)
-  }, [setPreviewFile])
+    // 收集同文件的所有匹配结果
+    const fileId = result.file_id
+    const matches = fileId ? searchResults.filter(r => r.file_id === fileId) : []
+    setAllPreviewMatches(matches)
+  }, [setPreviewFile, searchResults])
 
   const handleClosePreview = useCallback(() => {
     setPreviewFile(null)
+    setAllPreviewMatches([])
   }, [setPreviewFile])
 
   // 从合集视图跳转过来：设置合集筛选 + 切到搜索视图 + 触发一次空查询清空旧结果
@@ -212,6 +239,7 @@ const KMSPage: React.FC = () => {
       <KMSFilePreview
         open={!!previewFile}
         result={previewFile}
+        allMatches={allPreivewMatches}
         keywords={previewKeywords}
         onClose={handleClosePreview}
         onOpenFile={openFile}

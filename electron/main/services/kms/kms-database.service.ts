@@ -154,7 +154,10 @@ class KMSDatabaseService {
       -- 复合索引：支持 deleteIndexByFileAndType 的 WHERE file_id = ? AND source_type = ?
       CREATE INDEX IF NOT EXISTS idx_kms_search_index_file_type ON kms_search_index(file_id, source_type);
 
-      -- FTS5 全文检索虚拟表（prefix='2,3' 预建前缀索引加速中文 bigram 前缀匹配）
+      -- FTS5 全文检索虚拟表
+      -- tokenize='unicode61'：索引侧由 kmsTokenizer.segment() 预分词（jieba），
+      --   将连续中文切分为空格分隔的词序列，使 unicode61 按空格建立正确 token 边界
+      -- prefix='2,3'：预建 2/3 字符前缀索引，加速英文前缀匹配与中文子词召回
       CREATE VIRTUAL TABLE IF NOT EXISTS kms_fts USING fts5(
         title,
         content,

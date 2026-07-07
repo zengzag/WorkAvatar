@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
+import kmsTokenizer from './kms-tokenizer.service'
 
 const logger = createLogger('KMSSearchEngine')
 
@@ -53,13 +54,159 @@ export interface EmbeddingEntry {
   dimension: number
 }
 
+/**
+ * embedding 缓存条目字节数估算（用于 LRU 淘汰决策）
+ * - Float32Array: dimension * 4 字节
+ * - 字符串字段: 按 UTF-16 编码估算（length * 2 字节）
+ */
+function computeEmbeddingEntriesBytes(entries: EmbeddingEntry[]): number {
+  let total = 0
+  for (const e of entries) {
+    total += e.embedding.byteLength
+    total += e.id.length * 2
+    total += e.sourceType.length * 2
+    total += e.sourceId.length * 2
+    total += e.fileId.length * 2
+    total += e.model.length * 2
+  }
+  return total
+}
+
+/**
+ * LRU 字节受限缓存
+ *
+ * 替代原 `Map<string, EmbeddingEntry[]>` 无上限缓存，解决大索引场景
+ * （10 万条 × 768 维 ≈ 320MB）内存常驻不淘汰的问题。
+ *
+ * 特性：
+ * - 基于 Map 插入顺序的 LRU 淘汰（get/set 时移到末尾 = 最近使用）
+ * - 总字节数超限时从最旧条目开始淘汰
+ * - 单条目超过上限时拒绝缓存（避免缓存命中率为 0 的无效占用）
+ * - 支持 `update` 原地修改并重算字节（用于增量写入场景）
+ */
+class LRUBoundedCache<V> {
+  private cache: Map<string, V> = new Map()
+  private bytesMap: Map<string, number> = new Map()
+  private totalBytes = 0
+  private readonly maxBytes: number
+  private readonly computeSize: (value: V) => number
+
+  constructor(maxBytes: number, computeSize: (value: V) => number) {
+    this.maxBytes = maxBytes
+    this.computeSize = computeSize
+  }
+
+  get(key: string): V | undefined {
+    if (!this.cache.has(key)) return undefined
+    // LRU：命中时移到末尾（最近使用）
+    const value = this.cache.get(key)!
+    this.cache.delete(key)
+    this.cache.set(key, value)
+    return value
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key)
+  }
+
+  set(key: string, value: V): void {
+    // 移除旧条目
+    if (this.cache.has(key)) {
+      this.totalBytes -= this.bytesMap.get(key) || 0
+      this.cache.delete(key)
+      this.bytesMap.delete(key)
+    }
+
+    const size = this.computeSize(value)
+
+    // 单条目超过上限：拒绝缓存（返回但不存储，调用方下次需重新从 DB 加载）
+    if (size > this.maxBytes) {
+      return
+    }
+
+    // 从最旧条目开始淘汰，直到能容纳新条目
+    while (this.totalBytes + size > this.maxBytes && this.cache.size > 0) {
+      const oldestKey = this.cache.keys().next().value as string
+      this.totalBytes -= this.bytesMap.get(oldestKey) || 0
+      this.cache.delete(oldestKey)
+      this.bytesMap.delete(oldestKey)
+    }
+
+    this.cache.set(key, value)
+    this.bytesMap.set(key, size)
+    this.totalBytes += size
+  }
+
+  delete(key: string): void {
+    if (this.cache.delete(key)) {
+      this.totalBytes -= this.bytesMap.get(key) || 0
+      this.bytesMap.delete(key)
+    }
+  }
+
+  clear(): void {
+    this.cache.clear()
+    this.bytesMap.clear()
+    this.totalBytes = 0
+  }
+
+  /**
+   * 原地修改缓存条目并重算字节数
+   * 用于 storeEmbedding/storeEmbeddingsBatch 的增量追加场景，
+   * 避免 set() 替换整个数组导致的 O(N) 拷贝。
+   *
+   * 若修改后字节数超过上限，该条目将被淘汰。
+   */
+  update(key: string, mutator: (value: V) => void): void {
+    const value = this.cache.get(key)
+    if (!value) return
+
+    const oldSize = this.bytesMap.get(key) || 0
+    mutator(value)
+    const newSize = this.computeSize(value)
+
+    this.totalBytes = this.totalBytes - oldSize + newSize
+    this.bytesMap.set(key, newSize)
+
+    // 修改后超限：淘汰该条目
+    if (newSize > this.maxBytes) {
+      this.totalBytes -= newSize
+      this.cache.delete(key)
+      this.bytesMap.delete(key)
+    }
+  }
+
+  getBytes(): number {
+    return this.totalBytes
+  }
+}
+
+/** embedding 缓存字节上限：256MB（覆盖约 8 万条 768 维向量） */
+const EMBEDDING_CACHE_MAX_BYTES = 256 * 1024 * 1024
+
+/**
+ * RRF（Reciprocal Rank Fusion）常数
+ * 标准值 k=60（源自 Cormack et al. 2009 论文），控制排名靠后文档的得分衰减。
+ * k 越大，排名差异对分数的影响越平缓；k 越小，Top 命中优势越明显。
+ */
+const RRF_K = 60
+
 class KMSSearchEngineService {
   private db: Database.Database
   private static instance: KMSSearchEngineService
   private searchCache: Map<string, { results: SearchResult[]; timestamp: number }> = new Map()
   private static readonly CACHE_TTL = 60000
   private static readonly CACHE_MAX_SIZE = 100
-  private embeddingCache: Map<string, EmbeddingEntry[]> = new Map()
+  /**
+   * embedding 内存缓存（LRU + 字节上限）
+   *
+   * 替代原无上限 Map，限制总字节 ≤ EMBEDDING_CACHE_MAX_BYTES（256MB）。
+   * 大索引场景下超限的 __all__ 条目将不被缓存，向量检索回退到 DB 全量加载。
+   */
+  private embeddingCache: LRUBoundedCache<EmbeddingEntry[]> = new LRUBoundedCache(
+    EMBEDDING_CACHE_MAX_BYTES,
+    computeEmbeddingEntriesBytes
+  )
   private vecDimension: number | null = null
   private vecReady: boolean = false
 
@@ -594,56 +741,20 @@ class KMSSearchEngineService {
   }
 
   /**
-   * 从查询文本中提取关键词（支持中英文混合）
-   * - 英文/数字：按空格和标点分词
-   * - 中文：按2-4字符粒度切分为bigram（参考搜索引擎中文分词的简化方案）
+   * 从查询文本中提取关键词（基于 jieba 中文分词）
+   *
+   * 替代原 bigram 切分方案：
+   * - 旧方案：将中文按 2 字符滑动窗口切分，每个 bigram 加 `*` 前缀匹配，
+   *   导致 MATCH 表达式过长、前缀扫描开销随查询长度线性增长
+   * - 新方案：jieba 搜索引擎模式分词，产出真实词粒度的关键词，
+   *   匹配索引侧已分词的 FTS5 token，无需依赖前缀扫描即可精确命中
+   *
+   * 英文/数字由 jieba 自然按空格和标点分词，无需特殊处理。
    */
   private extractQueryKeywords(query: string): string[] {
     const lower = query.toLowerCase().trim()
     if (!lower) return []
-
-    // 中文停用词
-    const stopWords = new Set([
-      '的', '了', '和', '是', '在', '我', '有', '这', '不', '为', '之', '与', '或', '也', '都',
-      '如何', '怎么', '什么', '为什么', '哪里', '哪个', '吗', '呢', '吧', '啊', '哦', '嗯',
-      '可以', '能够', '应该', '需要', '关于', '对于', '通过', '进行', '以及', '但是', '因为',
-      'the', 'a', 'an', 'is', 'are', 'was', 'were', 'how', 'what', 'why', 'where', 'which', 'to', 'of', 'in', 'on', 'for', 'and', 'or',
-    ])
-
-    const keywords = new Set<string>()
-
-    // 1. 先按空格/标点分词（处理英文和已分词的中文）
-    const tokens = lower.split(/[\s,，。.!！?？;；:：、""''()（）\[\]【】{}]+/).filter(t => t.length > 0)
-    for (const token of tokens) {
-      if (stopWords.has(token)) continue
-      // 纯英文/数字 token，长度>1 才保留
-      if (/^[a-z0-9_\-\.]+$/i.test(token)) {
-        if (token.length > 1) keywords.add(token)
-        continue
-      }
-      // 中文 token：切分为 bigram（2-gram）以提升 FTS5 匹配率
-      const chars = token.replace(/[^\u4e00-\u9fa5a-z0-9]/gi, '')
-      if (chars.length <= 2) {
-        if (chars.length > 0 && !stopWords.has(chars)) keywords.add(chars)
-      } else if (chars.length <= 4) {
-        // 2-4字符：整体作为一个关键词
-        keywords.add(chars)
-        // 同时加入 bigram 提升召回率
-        for (let i = 0; i < chars.length - 1; i++) {
-          const bigram = chars.substring(i, i + 2)
-          if (!stopWords.has(bigram)) keywords.add(bigram)
-        }
-      } else {
-        // 长文本：仅切分为 bigram（不再生成 trigram，避免 MATCH 表达式过长导致前缀扫描开销线性增长）
-        // bigram 已能保证召回率，trigram 的精确度收益不足以抵消其带来的性能成本
-        for (let i = 0; i < chars.length - 1; i++) {
-          const bigram = chars.substring(i, i + 2)
-          if (!stopWords.has(bigram)) keywords.add(bigram)
-        }
-      }
-    }
-
-    return Array.from(keywords).filter(k => k.length > 0)
+    return kmsTokenizer.segmentForSearch(lower)
   }
 
   /**
@@ -933,40 +1044,61 @@ class KMSSearchEngineService {
   }
 
   /**
-   * 混合搜索（BM25 + 向量语义加权）
+   * 混合搜索（RRF 倒数排名融合）
+   *
+   * 替代原「线性加权」方案：
+   * - 旧方案：`sortKey = ftsRank * 0.6 + vectorScore * 0.4`，
+   *   其中 ftsRank 是基于排名位置的线性归一化（`(length - i) / length`），
+   *   丢弃了 FTS5 `fts.rank` 的 BM25 真实分数；vectorScore 也需 max 归一化。
+   *   两个尺度不同的归一化分数硬编码权重相加，对异常值敏感、不可调。
+   * - 新方案：RRF（Reciprocal Rank Fusion），公式 `Σ 1/(k + rank_i)`，
+   *   仅依赖排名位置（1-indexed），无需分数归一化，对尺度鲁棒。
+   *   标准常数 k=60（Cormack et al. 2009），平衡 Top 命中优势与长尾召回。
+   *
+   * RRF 的优势：
+   * 1. 无需归一化 BM25 与 cosine 分数（尺度不同导致的加权失真问题消失）
+   * 2. 同时出现在两个列表的文档自然获得更高分数（1/(k+r1) + 1/(k+r2)）
+   * 3. 仅出现在一个列表的文档也有非零分数，保留召回
+   * 4. 算法成熟，被 Elasticsearch、OpenSearch 等主流搜索引擎广泛采用
    */
   hybridSearch(query: string, queryEmbedding: Float32Array | null, options?: SearchOptions): SearchResult[] {
     const topK = options?.topK || 10
-    const keywordWeight = 0.6
-    const vectorWeight = 0.4
     const useVector = options?.useVector !== false && queryEmbedding !== null
     const queryWords = this.extractQueryKeywords(query)
 
     // FTS5 关键词搜索
     const ftsResults = this.ftsSearch(query, { ...options, topK: topK * 2 })
 
+    // 构建 FTS 排名映射（1-indexed 排名，越小越靠前）
     const ftsRankMap = new Map<string, number>()
     for (let i = 0; i < ftsResults.length; i++) {
       const r = ftsResults[i]
       const key = this.getResultKey(r)
-      ftsRankMap.set(key, (ftsResults.length - i) / ftsResults.length)
+      // 仅保留首次出现的排名（FTS 结果按相关性排序，首次出现即最佳排名）
+      if (!ftsRankMap.has(key)) {
+        ftsRankMap.set(key, i + 1)
+      }
     }
 
-    const vectorScoreMap = new Map<string, number>()
+    // 向量检索排名映射
+    const vecRankMap = new Map<string, number>()
     const vectorSourceMap = new Map<string, { sourceType: string; sourceId: string; fileId: string }>()
 
     if (useVector && queryEmbedding) {
       const vectorResults = this.vectorSearch(queryEmbedding, { ...options, topK: topK * 2 })
-
-      const maxVectorScore = Math.max(...vectorResults.map(r => r.score), 1)
-      for (const vr of vectorResults) {
+      for (let i = 0; i < vectorResults.length; i++) {
+        const vr = vectorResults[i]
         const key = `${vr.sourceType}-${vr.sourceId}`
-        vectorScoreMap.set(key, vr.score / maxVectorScore)
-        vectorSourceMap.set(key, vr)
+        if (!vecRankMap.has(key)) {
+          vecRankMap.set(key, i + 1)
+          vectorSourceMap.set(key, vr)
+        }
       }
     }
 
-    const allKeys = new Set([...ftsRankMap.keys(), ...vectorScoreMap.keys()])
+    // RRF 融合：score = 1/(k + fts_rank) + 1/(k + vec_rank)
+    // 文档仅在单列表出现时，另一列表贡献为 0（rank undefined → 跳过）
+    const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
     const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string }; sortKey: number }> = []
 
@@ -977,9 +1109,15 @@ class KMSSearchEngineService {
     }
 
     for (const key of allKeys) {
-      const ftsRank = ftsRankMap.get(key) || 0
-      const vectorScore = vectorScoreMap.get(key) || 0
-      const sortKey = ftsRank * keywordWeight + vectorScore * vectorWeight
+      let sortKey = 0
+      const ftsRank = ftsRankMap.get(key)
+      if (ftsRank !== undefined) {
+        sortKey += 1 / (RRF_K + ftsRank)
+      }
+      const vecRank = vecRankMap.get(key)
+      if (vecRank !== undefined) {
+        sortKey += 1 / (RRF_K + vecRank)
+      }
 
       const ftsResult = ftsResultMap.get(key)
 
@@ -992,7 +1130,8 @@ class KMSSearchEngineService {
           },
           sortKey,
         })
-      } else if (useVector && vectorScore > 0) {
+      } else if (useVector && vecRank !== undefined) {
+        // FTS 未命中但向量命中的文档，需回查索引表补充元数据
         const vs = vectorSourceMap.get(key)
         if (!vs) continue
         missingEntries.push({ key, vs, sortKey })
@@ -1047,8 +1186,17 @@ class KMSSearchEngineService {
     }
 
     hybridResults.sort((a, b) => b.sortKey - a.sortKey)
-    return hybridResults.slice(0, topK).map(h => ({
+    const topResults = hybridResults.slice(0, topK)
+
+    // RRF 分数归一化到 [0, 1]：除以本批最大分数，使 Top 结果 score=1.0
+    // 前端 KMSSearchResultList 按 score*100 渲染匹配度进度条，未归一化的 RRF 原始分数
+    //（最大约 2/61 ≈ 0.033）会导致进度条几乎不可见
+    const maxSortKey = topResults.length > 0 ? topResults[0].sortKey : 0
+    const safeMax = maxSortKey > 0 ? maxSortKey : 1
+
+    return topResults.map(h => ({
       ...h.result,
+      score: h.sortKey / safeMax,
       highlights: this.computeHighlights(h.result.text, queryWords),
       matched_keywords: queryWords,
     }))
@@ -1134,9 +1282,9 @@ class KMSSearchEngineService {
     this.syncVecIndex(rowid, buffer, fileId, sourceType, embedding.length)
 
     // 仅更新 __all__ 缓存（若已存在），追加新条目而非全量清空，避免批量写入时缓存命中率归零
-    const cached = this.embeddingCache.get('__all__')
-    if (cached) {
-      cached.push({
+    // 通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
+    this.embeddingCache.update('__all__', entries => {
+      entries.push({
         id: sourceId,
         sourceType,
         sourceId,
@@ -1145,7 +1293,7 @@ class KMSSearchEngineService {
         model,
         dimension: embedding.length,
       })
-    }
+    })
   }
 
   /**
@@ -1194,9 +1342,8 @@ class KMSSearchEngineService {
 
     tx()
 
-    // 增量更新缓存
-    const allCache = this.embeddingCache.get('__all__')
-    if (allCache) {
+    // 增量更新缓存：通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
+    this.embeddingCache.update('__all__', allCache => {
       for (const e of entries) {
         const existingIdx = allCache.findIndex(c => c.sourceType === e.sourceType && c.sourceId === e.sourceId)
         const entry: EmbeddingEntry = {
@@ -1214,20 +1361,23 @@ class KMSSearchEngineService {
           allCache.push(entry)
         }
       }
-    }
+    })
   }
 
   /**
    * 失效指定 fileId 的 embedding 缓存（删除文件时调用）
    * 从 __all__ 缓存数组中过滤掉该 fileId 的条目，避免全量重载
+   *
+   * 通过 LRU update 接口原地 filter 并重算字节，超限时自动淘汰整个 __all__ 条目。
+   * 注意：filter 会产生新数组引用，但 update 接口会将其重新 set 到缓存中。
    */
   private invalidateEmbeddingCacheForFile(fileId: string): void {
     const cached = this.embeddingCache.get('__all__')
-    if (cached) {
-      const filtered = cached.filter(e => e.fileId !== fileId)
-      if (filtered.length !== cached.length) {
-        this.embeddingCache.set('__all__', filtered)
-      }
+    if (!cached) return
+    const filtered = cached.filter(e => e.fileId !== fileId)
+    if (filtered.length !== cached.length) {
+      // 重新 set 以触发字节重算与超限淘汰检查
+      this.embeddingCache.set('__all__', filtered)
     }
   }
 
@@ -1271,10 +1421,15 @@ class KMSSearchEngineService {
   }
 
   private insertFtsRow(indexId: string, fileId: string, sourceType: SourceType, sourceId: string, title: string, content: string, keywords: string): void {
+    // 索引侧中文分词：将连续中文切分为空格分隔的词序列，
+    // 使 FTS5 unicode61 tokenizer 能按空格建立正确 token 边界，
+    // 从而 BM25 排序基于真实词粒度而非整段中文字符串。
+    const segmentedTitle = kmsTokenizer.segment(title)
+    const segmentedContent = kmsTokenizer.segment(content)
     this.db.prepare(`
       INSERT INTO kms_fts (index_id, file_id, source_type, source_id, title, content, keywords)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(indexId, fileId, sourceType, sourceId, title, content, keywords)
+    `).run(indexId, fileId, sourceType, sourceId, segmentedTitle, segmentedContent, keywords)
   }
 
   private deleteFtsRow(indexId: string): void {
@@ -1433,9 +1588,8 @@ class KMSSearchEngineService {
 
   private loadAllEmbeddings(): EmbeddingEntry[] {
     const cacheKey = '__all__'
-    if (this.embeddingCache.has(cacheKey)) {
-      return this.embeddingCache.get(cacheKey)!
-    }
+    const cached = this.embeddingCache.get(cacheKey)
+    if (cached) return cached
 
     const rows = this.db.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
 
@@ -1449,6 +1603,8 @@ class KMSSearchEngineService {
       dimension: row.dimension,
     }))
 
+    // LRU set：若 entries 总字节超过 EMBEDDING_CACHE_MAX_BYTES，
+    // 将拒绝缓存（下次仍从 DB 加载），避免内存占用过高
     this.embeddingCache.set(cacheKey, entries)
     return entries
   }

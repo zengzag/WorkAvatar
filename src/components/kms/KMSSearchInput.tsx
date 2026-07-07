@@ -1,8 +1,8 @@
 import React, { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Input, Button, Space, Tooltip, Popover, Typography, Tag, List, theme } from 'antd'
-import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined } from '@ant-design/icons'
-import type { SearchHistoryItem } from '../../hooks/useKMS'
+import { Input, Button, Space, Tooltip, Popover, Typography, Tag, List, Select, theme } from 'antd'
+import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined } from '@ant-design/icons'
+import type { SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
 
@@ -22,12 +22,11 @@ const formatHistoryTime = (timestamp: number, t: (key: string, options?: any) =>
   return date.toLocaleDateString()
 }
 
-type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai'
-
 interface KMSSearchInputProps {
   searchQuery: string
   onSearchQueryChange: (query: string) => void
   searchMode: SearchMode
+  onSearchModeChange: (mode: SearchMode) => void
   isSearching: boolean
   onSearch: () => void
   searchHistory?: SearchHistoryItem[]
@@ -41,6 +40,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   searchQuery,
   onSearchQueryChange,
   searchMode,
+  onSearchModeChange,
   isSearching,
   onSearch,
   searchHistory,
@@ -53,6 +53,8 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   const { token } = theme.useToken()
   const [historyOpen, setHistoryOpen] = React.useState(false)
   const historyBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasOpenedHistoryRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     return () => {
@@ -70,24 +72,44 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   }, [onSearch, isSearching])
 
   const handleInputFocus = useCallback(() => {
-    // 输入框获得焦点时不再自动显示历史记录，需点击历史图标手动触发
-  }, [])
+    // 输入框为空时，点击输入框显示历史记录
+    if (!searchQuery.trim() && !hasOpenedHistoryRef.current) {
+      setHistoryOpen(true)
+      onLoadSearchHistory?.({ limit: 20 })
+    }
+  }, [searchQuery, onLoadSearchHistory])
 
   const handleInputBlur = useCallback(() => {
     if (historyBlurTimerRef.current) clearTimeout(historyBlurTimerRef.current)
-    historyBlurTimerRef.current = setTimeout(() => setHistoryOpen(false), HISTORY_BLUR_DELAY_MS)
+    historyBlurTimerRef.current = setTimeout(() => {
+      setHistoryOpen(false)
+      hasOpenedHistoryRef.current = false
+    }, HISTORY_BLUR_DELAY_MS)
   }, [])
 
-  const handleHistoryBtnMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setHistoryOpen(v => !v)
-    if (!historyOpen) onLoadSearchHistory?.({ limit: 20 })
-  }, [onLoadSearchHistory, historyOpen])
+  const handleQueryChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    onSearchQueryChange(value)
+    // 用户开始输入时自动隐藏历史记录
+    if (value.trim()) {
+      hasOpenedHistoryRef.current = true
+      setHistoryOpen(false)
+    } else {
+      hasOpenedHistoryRef.current = false
+    }
+  }, [onSearchQueryChange])
 
   const handleDeleteHistory = useCallback((e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     onDeleteSearchHistory?.(id)
   }, [onDeleteSearchHistory])
+
+  const handleHistoryBtnMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const newOpen = !historyOpen
+    setHistoryOpen(newOpen)
+    if (newOpen) onLoadSearchHistory?.({ limit: 20 })
+  }, [onLoadSearchHistory, historyOpen])
 
   const renderHistoryContent = () => {
     if (!searchHistory || searchHistory.length === 0) {
@@ -140,49 +162,68 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
     )
   }
 
+  const searchModeOptions = [
+    { label: t('kms.hybridSearch'), value: 'hybrid' },
+    { label: t('kms.keywordSearch'), value: 'keyword' },
+    { label: t('kms.semanticSearch'), value: 'semantic' },
+    { label: t('kms.fileSearch'), value: 'file' },
+    { label: t('kms.aiSearch'), value: 'ai' },
+  ]
+
   return (
     <div style={{ marginBottom: 12 }}>
-      <Popover
-        content={renderHistoryContent()}
-        trigger={[]}
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        placement="bottomLeft"
-        overlayInnerStyle={{ padding: 0 }}
-        overlayStyle={{ paddingTop: 4 }}
-      >
-        <Input
-          value={searchQuery}
-          onChange={(e) => onSearchQueryChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={handleInputFocus}
-          onBlur={handleInputBlur}
-          placeholder={t('kms.searchPlaceholder')}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Select
+          value={searchMode}
+          onChange={(v) => onSearchModeChange(v)}
+          options={searchModeOptions}
           size="large"
-          prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
-          suffix={
-            <Space size={4}>
-              <Tooltip title={t('kms.searchHistory')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<HistoryOutlined />}
-                  onMouseDown={handleHistoryBtnMouseDown}
-                />
-              </Tooltip>
-              <Button
-                type="primary"
-                size="small"
-                icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
-                onClick={onSearch}
-                loading={isSearching}
-              >
-                {t('kms.search')}
-              </Button>
-            </Space>
-          }
+          style={{ width: 140, flexShrink: 0 }}
+          dropdownMatchSelectWidth={false}
         />
-      </Popover>
+        <Popover
+          content={renderHistoryContent()}
+          trigger={[]}
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          placement="bottomLeft"
+          overlayInnerStyle={{ padding: 0 }}
+          overlayStyle={{ paddingTop: 4 }}
+        >
+          <Input
+            ref={inputRef as any}
+            value={searchQuery}
+            onChange={handleQueryChange}
+            onKeyDown={handleKeyDown}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
+            placeholder={searchMode === 'file' ? t('kms.fileSearchPlaceholder') : t('kms.searchPlaceholder')}
+            size="large"
+            prefix={searchMode === 'ai' ? <RobotOutlined style={{ color: token.colorTextQuaternary }} /> : searchMode === 'file' ? <FileSearchOutlined style={{ color: token.colorTextQuaternary }} /> : <SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            suffix={
+              <Space size={4}>
+                <Tooltip title={t('kms.searchHistory')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<HistoryOutlined />}
+                    onMouseDown={handleHistoryBtnMouseDown}
+                  />
+                </Tooltip>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
+                  onClick={onSearch}
+                  loading={isSearching}
+                >
+                  {t('kms.search')}
+                </Button>
+              </Space>
+            }
+          />
+        </Popover>
+      </div>
     </div>
   )
 }

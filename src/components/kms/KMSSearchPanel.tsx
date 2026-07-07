@@ -5,11 +5,9 @@ import KMSSearchInput from './KMSSearchInput'
 import KMSFilterPanel from './KMSFilterPanel'
 import KMSSearchResultList from './KMSSearchResultList'
 import KMSAgentResult from './KMSAgentResult'
-import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem } from '../../hooks/useKMS'
+import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
-
-type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai'
 
 interface HighlightRange { start: number; end: number }
 
@@ -130,7 +128,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
   const handlePickHistory = useCallback((item: SearchHistoryItem) => {
     onSearchQueryChange(item.query)
-    const mode: SearchMode = (['keyword', 'semantic', 'hybrid', 'ai'].includes(item.search_mode)
+    const mode: SearchMode = (['keyword', 'semantic', 'hybrid', 'ai', 'file'].includes(item.search_mode)
       ? item.search_mode
       : 'hybrid') as SearchMode
     onSearch(item.query, mode, buildFilters())
@@ -160,6 +158,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
         searchQuery={searchQuery}
         onSearchQueryChange={onSearchQueryChange}
         searchMode={searchMode}
+        onSearchModeChange={onSearchModeChange}
         isSearching={isSearching}
         onSearch={handleSearch}
         searchHistory={searchHistory}
@@ -171,7 +170,6 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
       <KMSFilterPanel
         searchMode={searchMode}
-        onSearchModeChange={onSearchModeChange}
         filterDirIds={filterDirIds}
         onFilterDirIdsChange={setFilterDirIds}
         filterCollectionIds={filterCollectionIds}

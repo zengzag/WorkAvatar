@@ -468,7 +468,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             value={topK}
             onChange={v => setTopK(v || 10)}
             min={3}
-            max={30}
+            max={200}
             style={{ width: 120 }}
           />
         </div>
