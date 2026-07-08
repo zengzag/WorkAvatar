@@ -21,6 +21,10 @@ const nativeExternals = [
   '@node-rs/jieba/dict',
   'worker_threads',
   'adm-zip',
+  // OCR：PaddleOCR ONNX 推理
+  'paddleocr',
+  'onnxruntime-node',
+  'sharp',
 ]
 
 export default defineConfig({

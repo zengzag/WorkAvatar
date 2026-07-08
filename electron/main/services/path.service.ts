@@ -105,6 +105,24 @@ class PathService {
     return dir
   }
 
+  /**
+   * 应用只读资源目录。
+   *
+   * - 开发模式：`<project>/resources/`（git LFS 跟踪的大模型/二进制放在这里）
+   * - 打包模式：electron-builder `extraResources` 输出的 `<process.resourcesPath>/resources/`
+   *
+   * 用途：OCR 模型（ONNX）、Skills 静态资源等。
+   */
+  getResourcesDir(): string {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { app } = require('electron')
+    const isDev = !app.isPackaged
+    if (isDev) {
+      return path.join(process.cwd(), 'resources')
+    }
+    return path.join(process.resourcesPath, 'resources')
+  }
+
   setDataDir(newDir: string): { success: boolean; error?: string } {
     if (!fs.existsSync(newDir)) {
       try {

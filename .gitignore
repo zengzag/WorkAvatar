@@ -101,17 +101,6 @@ tsconfig.tsbuildinfo
 .pnp.*
 pnpm-lock.yaml
 
-# =====================================
-# Resources and Large Files
-# (Managed by Git LFS, see .gitattributes)
-# =====================================
-resources/rapidocr/
-resources/models/
-*.bin
-*.pb
-*.onnx
-*.pt
-*.pth
 
 # =====================================
 # OS Generated Files
