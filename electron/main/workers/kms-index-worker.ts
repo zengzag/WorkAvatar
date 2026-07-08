@@ -28,7 +28,7 @@ const logger = createLogger('KMS-Worker')
 interface StartMessage {
   type: 'start'
   id: string
-  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep'
+  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles'
   args: any[]
 }
 
@@ -40,11 +40,15 @@ interface CancelCollectionMessage {
   type: 'cancelCollectionDeep'
 }
 
+interface CancelPromotionMessage {
+  type: 'cancelPromotion'
+}
+
 interface PingMessage {
   type: 'ping'
 }
 
-type WorkerMessage = StartMessage | CancelMessage | CancelCollectionMessage | PingMessage
+type WorkerMessage = StartMessage | CancelMessage | CancelCollectionMessage | CancelPromotionMessage | PingMessage
 
 interface WorkerData {
   dataDir: string
@@ -86,6 +90,14 @@ const progressForwarder: ProgressCallback = (progress: IndexProgress) => {
   parentPort?.postMessage({ type: 'progress', progress })
 }
 
+/**
+ * Worker 内部晋升处理专用 AbortController
+ *
+ * 主线程通过 'cancelPromotion' 消息触发 abort，
+ * Worker 内的 processPromotedFiles 通过 signal 感知取消并优雅退出。
+ */
+let promotionAbort: AbortController | null = null
+
 parentPort?.on('message', async (msg: WorkerMessage) => {
   if (!ready) {
     if ((msg as any).type === 'ping') {
@@ -107,6 +119,15 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
 
     if (msg.type === 'cancelCollectionDeep') {
       KMSIndexManagerService.getInstance().cancelCollectionDeepProcess()
+      return
+    }
+
+    if (msg.type === 'cancelPromotion') {
+      // 取消 Worker 内正在进行的晋升处理
+      if (promotionAbort) {
+        promotionAbort.abort()
+        logger.info('Promotion cancelled by main thread')
+      }
       return
     }
 
@@ -137,6 +158,18 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
             result = await KMSIndexManagerService.getInstance().processCollectionDeep(
               args[0], progressForwarder,
             )
+            break
+          case 'processPromotedFiles':
+            // 冷数据晋升处理：在 Worker 执行避免 file2md 同步解析阻塞主线程 UI
+            promotionAbort = new AbortController()
+            try {
+              await KMSIndexManagerService.getInstance().processPromotedFilesPublic(
+                args[0], promotionAbort.signal,
+              )
+            } finally {
+              promotionAbort = null
+            }
+            result = undefined
             break
           default:
             throw new Error(`Unknown task: ${task}`)

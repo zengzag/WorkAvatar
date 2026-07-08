@@ -630,7 +630,7 @@ ${fileSummaries.join('\n')}
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()
     let sql = `
-      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type
+      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
       FROM kms_files f
       LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
       WHERE f.file_name LIKE ?
@@ -701,14 +701,34 @@ ${fileSummaries.join('\n')}
     const results = searchEngine.search(query, queryEmbedding, options)
     logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
 
-    const hitFileIds = new Set(results.map(r => r.file_id))
-    const crawler = KMSCrawlerService.getInstance()
-    for (const fileId of hitFileIds) {
-      crawler.logFileAccess(fileId, 'search_hit')
+    // 批量记录搜索命中（替代逐条插入，减少 DB 写入次数）
+    const hitFileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+    if (hitFileIds.length > 0) {
+      const crawler = KMSCrawlerService.getInstance()
+      crawler.logFileAccessBatch(hitFileIds, 'search_hit')
     }
+
+    // 搜索后异步触发冷热数据评估（去抖，5分钟内不重复）
+    // 高频命中的冷文件会自动晋升为热文件，并触发 file2md 重新解析 + LLM 摘要生成
+    this.evaluateAndPromote(false).catch((err: any) => {
+      logger.warn('Post-search evaluateAndPromote failed:', err?.message || err)
+    })
 
     logger.info(`search "${query}" total: ${results.length} results, ${Date.now() - startTime}ms`)
     return results
+  }
+
+  /**
+   * 评估冷热数据层级，并对晋升的冷文件自动执行热数据处理
+   *
+   * 委托至 KMSIndexManagerService.evaluateAndPromote，供搜索流程（普通搜索 & AI 智能检索）
+   * 在记录命中后统一触发冷热晋升评估。
+   *
+   * @param force 是否强制评估（忽略去抖间隔）。索引流程结束后传 true；
+   *              搜索触发的评估传 false，受 MIN_EVALUATION_INTERVAL_MS 去抖控制
+   */
+  async evaluateAndPromote(force: boolean = false): Promise<void> {
+    return KMSIndexManagerService.getInstance().evaluateAndPromote(force)
   }
 
   private getKmsEmbeddingConfig(): { providerId: string; modelName: string } | null {

@@ -108,6 +108,33 @@ class KMSFileReaderService {
     `).all(...paragraphIds) as any[]
   }
 
+  /**
+   * 获取热数据文件已存储的完整文本内容。
+   *
+   * 热数据文件在 processHotFile 流程中将 LLM 切分后的段落原文写入 kms_paragraphs.content，
+   * 因此可以直接从数据库读取，无需重新解析文件（file2md 较慢）。
+   *
+   * 冷数据文件没有 kms_paragraphs 记录（仅在 kms_search_index 中存截断的 500 字符），
+   * 此时返回 null，调用方需重新解析文件。
+   *
+   * @return 拼接后的完整文本；若无段落记录则返回 null
+   */
+  getStoredFullContent(fileId: string): string | null {
+    const rows = this.db.prepare(
+      'SELECT content FROM kms_paragraphs WHERE file_id = ? AND content != \'\' ORDER BY paragraph_index ASC'
+    ).all(fileId) as any[]
+    if (rows.length === 0) return null
+    return rows.map(r => r.content).join('\n\n')
+  }
+
+  /**
+   * 读取索引时保存的解析模式，用于决定重新解析时使用 file2md（hot）还是普通解析器（cold）
+   */
+  private getStoredParseMode(fileId: string): string | undefined {
+    const row = this.db.prepare('SELECT parse_mode FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+    return row?.parse_mode || undefined
+  }
+
   async getFileContent(fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }): Promise<string> {
     const file = this.db.prepare('SELECT * FROM kms_files WHERE id = ?').get(fileId) as any
     if (!file) throw new Error('File not found')
@@ -122,8 +149,18 @@ class KMSFileReaderService {
 
     const maxChars = options?.maxChars || 5000
     try {
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path, undefined, undefined)
-      let content = parseResult.fullText
+      // 优先使用已存储的段落内容（热数据），避免重新解析文件
+      // 冷数据没有段落记录，回退到重新解析
+      let content = this.getStoredFullContent(fileId)
+      if (content === null) {
+        const parseMode = this.getStoredParseMode(fileId)
+        const parseResult = await FileParserService.getInstance().parseFilePath(
+          file.file_path,
+          undefined,
+          parseMode === 'file2md' ? 'hot' : 'cold',
+        )
+        content = parseResult.fullText
+      }
 
       if (options?.startOffset !== undefined && options?.endOffset !== undefined) {
         content = content.substring(options.startOffset, options.endOffset)
@@ -160,16 +197,20 @@ class KMSFileReaderService {
     const MAX_CONTENT_CHARS = 20_000_000
 
     try {
-      // 读取索引时保存的解析模式，确保预览与索引使用相同解析器
-      const summary = this.db.prepare('SELECT parse_mode FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
-      const parseMode = summary?.parse_mode || undefined
+      // 优先使用已存储的段落内容（热数据），避免重新解析文件
+      let fullText = this.getStoredFullContent(fileId)
+      if (fullText === null) {
+        // 冷数据：读取索引时保存的解析模式，确保预览与索引使用相同解析器
+        const parseMode = this.getStoredParseMode(fileId)
 
-      const parseResult = await FileParserService.getInstance().parseFilePath(
-        file.file_path,
-        undefined, // signal
-        parseMode === 'file2md' ? 'hot' : 'cold', // file2md 对应 hot 路径
-      )
-      const fullText = parseResult.fullText || ''
+        const parseResult = await FileParserService.getInstance().parseFilePath(
+          file.file_path,
+          undefined, // signal
+          parseMode === 'file2md' ? 'hot' : 'cold', // file2md 对应 hot 路径
+        )
+        fullText = parseResult.fullText || ''
+      }
+
       const truncated = fullText.length > MAX_CONTENT_CHARS
       return {
         content: truncated ? fullText.substring(0, MAX_CONTENT_CHARS) : fullText,

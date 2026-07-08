@@ -353,7 +353,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
           </Space>
         )
       }
-      maskClosable={false}
+      mask={{ closable: false }}
       closable={true}
     >
       {/* 总体进度 */}

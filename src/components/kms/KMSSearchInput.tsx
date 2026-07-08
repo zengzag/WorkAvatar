@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Input, Button, Space, Tooltip, Popover, Typography, Tag, List, Select, theme } from 'antd'
+import { Input, Button, Space, Tooltip, Popover, Typography, Tag, Select, theme } from 'antd'
 import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined } from '@ant-design/icons'
 import type { SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
@@ -127,43 +127,39 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
         style={{ width: 380, maxHeight: 360, overflow: 'auto', padding: '4px 0' }}
         onMouseDown={(e) => e.preventDefault()}
       >
-        <List
-          size="small"
-          split={false}
-          dataSource={searchHistory}
-          renderItem={(item) => (
-            <List.Item
-              style={{ padding: '6px 12px', cursor: 'pointer', border: 'none' }}
-              onClick={() => {
-                setHistoryOpen(false)
-                hasOpenedHistoryRef.current = true
-                onPickHistory(item)
-              }}
-            >
-              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <HistoryOutlined style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
-                <Text ellipsis style={{ flex: 1, minWidth: 0, fontSize: 12 }}>{item.query}</Text>
-                <Tag style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>{item.result_count}{t('kms.historyResultsUnit')}</Tag>
-                <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>{formatHistoryTime(item.created_at, t)}</Text>
-                {onDeleteSearchHistory && (
-                  <Tooltip title={t('common.delete')}>
-                    <Button
-                      type="text"
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={(e) => handleDeleteHistory(e, item.id)}
-                      style={{ flexShrink: 0 }}
-                    />
-                  </Tooltip>
-                )}
-              </div>
-            </List.Item>
-          )}
-        />
+        {searchHistory.map((item) => (
+          <div
+            key={item.id}
+            style={{ padding: '6px 12px', cursor: 'pointer' }}
+            onClick={() => {
+              setHistoryOpen(false)
+              hasOpenedHistoryRef.current = true
+              onPickHistory(item)
+            }}
+          >
+            <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <HistoryOutlined style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />
+              <Text ellipsis style={{ flex: 1, minWidth: 0, fontSize: 12 }}>{item.query}</Text>
+              <Tag style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>{item.result_count}{t('kms.historyResultsUnit')}</Tag>
+              <Text type="secondary" style={{ fontSize: 10, flexShrink: 0 }}>{formatHistoryTime(item.created_at, t)}</Text>
+              {onDeleteSearchHistory && (
+                <Tooltip title={t('common.delete')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={(e) => handleDeleteHistory(e, item.id)}
+                    style={{ flexShrink: 0 }}
+                  />
+                </Tooltip>
+              )}
+            </div>
+          </div>
+        ))}
         {onClearSearchHistory && (
           <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, padding: '6px 12px', textAlign: 'right' }}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={onClearSearchHistory}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} onClick={(e) => { e.stopPropagation(); onClearSearchHistory() }}>
               {t('kms.clearHistory')}
             </Button>
           </div>
@@ -189,7 +185,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
           options={searchModeOptions}
           size="large"
           style={{ width: 140, flexShrink: 0 }}
-          dropdownMatchSelectWidth={false}
+          popupMatchSelectWidth={false}
         />
         <Popover
           content={renderHistoryContent()}
@@ -197,8 +193,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
           open={historyOpen}
           onOpenChange={setHistoryOpen}
           placement="bottomLeft"
-          overlayInnerStyle={{ padding: 0 }}
-          overlayStyle={{ paddingTop: 4 }}
+          styles={{ container: { padding: 0 }, root: { paddingTop: 4 } }}
         >
           <Input
             ref={inputRef as any}

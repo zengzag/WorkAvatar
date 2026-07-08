@@ -28,6 +28,8 @@ export interface SearchResult {
   score?: number
   highlights?: HighlightRange[]
   matched_keywords?: string[]
+  /** 文件最后修改时间（unix 秒） */
+  modified_time?: number
 }
 
 export interface SearchOptions {
@@ -1271,13 +1273,13 @@ class KMSSearchEngineService {
       ).all(...params) as any[]
 
       const fileIds = [...new Set(indexRows.map(r => r.file_id).filter(Boolean))]
-      const fileMap = new Map<string, { file_name: string; file_path: string }>()
+      const fileMap = new Map<string, { file_name: string; file_path: string; modified_time?: number }>()
       if (fileIds.length > 0) {
         const fileRows = this.db.prepare(
-          `SELECT id, file_name, file_path FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
+          `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
         ).all(...fileIds) as any[]
         for (const row of fileRows) {
-          fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path })
+          fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path, modified_time: row.modified_time })
         }
       }
 
@@ -1295,6 +1297,7 @@ class KMSSearchEngineService {
               file_id: indexEntry.file_id,
               file_name: file?.file_name || '',
               file_path: file?.file_path || '',
+              modified_time: file?.modified_time,
               paragraph_id: entry.vs.sourceType === 'paragraph' ? entry.vs.sourceId : undefined,
               paragraph_title: indexEntry.title,
               text: indexEntry.content.substring(0, 300),
@@ -1616,18 +1619,18 @@ class KMSSearchEngineService {
   private convertFtsResultsToSearchResults(ftsResults: any[], topK: number, queryWords?: string[]): SearchResult[] {
     // 批量预加载所有 fileId 对应的文件信息，避免循环内 N+1 查询
     const fileIds = [...new Set(ftsResults.map(r => r.file_id).filter(Boolean))]
-    const fileCache: Map<string, { name: string; path: string }> = new Map()
+    const fileCache: Map<string, { name: string; path: string; modified_time?: number }> = new Map()
     if (fileIds.length > 0) {
       const placeholders = fileIds.map(() => '?').join(',')
       const rows = this.db.prepare(
-        `SELECT id, file_name, file_path FROM kms_files WHERE id IN (${placeholders})`
+        `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${placeholders})`
       ).all(...fileIds) as any[]
       for (const row of rows) {
-        fileCache.set(row.id, { name: row.file_name || '', path: row.file_path || '' })
+        fileCache.set(row.id, { name: row.file_name || '', path: row.file_path || '', modified_time: row.modified_time })
       }
     }
     const getFile = (fileId: string) => {
-      return fileCache.get(fileId) ?? { name: '', path: '' }
+      return fileCache.get(fileId) ?? { name: '', path: '', modified_time: undefined }
     }
 
     const results: SearchResult[] = []
@@ -1649,6 +1652,7 @@ class KMSSearchEngineService {
             file_id: row.file_id,
             file_name: fileInfo.name,
             file_path: fileInfo.path,
+            modified_time: fileInfo.modified_time,
             text: `文件标题匹配: ${row.title}`,
             match_type: 'file_title',
           }
@@ -1659,6 +1663,7 @@ class KMSSearchEngineService {
             file_id: row.file_id,
             file_name: fileInfo.name,
             file_path: fileInfo.path,
+            modified_time: fileInfo.modified_time,
             text: `文件摘要: ${row.content.substring(0, 300)}${row.content.length > 300 ? '...' : ''}`,
             match_type: 'file_summary',
           }
@@ -1669,6 +1674,7 @@ class KMSSearchEngineService {
             file_id: row.file_id,
             file_name: fileInfo.name,
             file_path: fileInfo.path,
+            modified_time: fileInfo.modified_time,
             paragraph_id: row.source_id,
             paragraph_title: row.title,
             text: `段落「${row.title}」(${metadata.title_path || ''}): ${metadata.summary || row.content}`.substring(0, 400),
@@ -1683,6 +1689,7 @@ class KMSSearchEngineService {
             file_id: row.file_id,
             file_name: fileInfo.name,
             file_path: fileInfo.path,
+            modified_time: fileInfo.modified_time,
             text: row.content.substring(0, 400),
             match_type: 'content_paragraph',
             start_offset: row.start_offset,

@@ -37,7 +37,7 @@ const KMSParagraphPreviewDrawerComponent: React.FC<KMSParagraphPreviewDrawerProp
       title={previewParagraph?.title || t('kms.collectionDetails.previewParagraph')}
       open={open}
       onClose={onClose}
-      width={520}
+      size={520}
     >
       {previewLoading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
