@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
+import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DB')
@@ -539,6 +540,7 @@ class KMSDatabaseService {
    * 孤儿数据来源：
    * - kms_fts（FTS5 虚表）：不支持外键级联，删除文件后 file_id 指向已不存在的文件
    * - kms_embeddings（向量库）：跨库外键不可用，删除文件后 file_id 指向已不存在的文件
+   * - 孤儿文件（kms_files）：位于虚拟手动目录但不再属于任何合集的文件
    */
   public getDatabaseStats(): {
     mainDbSize: number
@@ -547,6 +549,7 @@ class KMSDatabaseService {
     vectorWalSize: number
     orphanedFtsCount: number
     orphanedEmbeddingCount: number
+    orphanedFileCount: number
   } {
     const pathService = PathService.getInstance()
     const mainDbPath = pathService.getKMSDbPath()
@@ -584,6 +587,20 @@ class KMSDatabaseService {
       logger.warn('查询孤儿 embedding 条目失败:', err?.message || err)
     }
 
+    // 孤儿文件：位于虚拟手动目录但不再属于任何合集的文件
+    let orphanedFileCount = 0
+    try {
+      const manualDir = this.db.prepare("SELECT id FROM kms_index_dirs WHERE dir_path = '__manual_files__'").get() as any
+      if (manualDir) {
+        const row = this.db.prepare(
+          `SELECT COUNT(*) as cnt FROM kms_files WHERE dir_id = ? AND id NOT IN (SELECT file_id FROM kms_file_collections)`
+        ).get(manualDir.id) as any
+        orphanedFileCount = row?.cnt ?? 0
+      }
+    } catch (err: any) {
+      logger.warn('查询孤儿文件失败:', err?.message || err)
+    }
+
     return {
       mainDbSize: fileSize(mainDbPath),
       vectorDbSize: fileSize(vectorDbPath),
@@ -591,6 +608,7 @@ class KMSDatabaseService {
       vectorWalSize: fileSize(vectorDbPath + '-wal'),
       orphanedFtsCount,
       orphanedEmbeddingCount,
+      orphanedFileCount,
     }
   }
 
@@ -603,14 +621,16 @@ class KMSDatabaseService {
    * @returns 清理前后的统计信息
    */
   public cleanupDatabase(): {
-    before: { mainDbSize: number; vectorDbSize: number; orphanedFtsCount: number; orphanedEmbeddingCount: number }
+    before: { mainDbSize: number; vectorDbSize: number; orphanedFtsCount: number; orphanedEmbeddingCount: number; orphanedFileCount: number }
     after: { mainDbSize: number; vectorDbSize: number }
     cleanedFts: number
     cleanedEmbeddings: number
+    cleanedFiles: number
   } {
     const before = this.getDatabaseStats()
     let cleanedFts = 0
     let cleanedEmbeddings = 0
+    let cleanedFiles = 0
 
     // 1. 清理孤儿 FTS5 条目
     try {
@@ -652,14 +672,35 @@ class KMSDatabaseService {
       logger.warn('清理孤儿 embedding 失败:', err?.message || err)
     }
 
-    // 3. 先 checkpoint 把 WAL 写回主库，再 VACUUM
+    // 3. 清理孤儿文件：位于虚拟手动目录但不再属于任何合集的文件
+    try {
+      const manualDir = this.db.prepare("SELECT id FROM kms_index_dirs WHERE dir_path = '__manual_files__'").get() as any
+      if (manualDir) {
+        const searchEngine = KMSSearchEngineService.getInstance()
+        const orphanFiles = this.db.prepare(
+          `SELECT id FROM kms_files WHERE dir_id = ? AND id NOT IN (SELECT file_id FROM kms_file_collections)`
+        ).all(manualDir.id) as any[]
+        for (const f of orphanFiles) {
+          searchEngine.deleteIndexByFile(f.id)
+          this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(f.id)
+        }
+        cleanedFiles = orphanFiles.length
+        if (cleanedFiles > 0) {
+          logger.info(`清理孤儿文件: ${cleanedFiles}`)
+        }
+      }
+    } catch (err: any) {
+      logger.warn('清理孤儿文件失败:', err?.message || err)
+    }
+
+    // 4. 先 checkpoint 把 WAL 写回主库，再 VACUUM
     try {
       this.checkpoint('TRUNCATE')
     } catch (err: any) {
       logger.warn('清理前 checkpoint 失败:', err?.message || err)
     }
 
-    // 4. VACUUM 主库（重建文件，回收空闲页）
+    // 5. VACUUM 主库（重建文件，回收空闲页）
     try {
       this.db.exec('VACUUM')
       logger.info('主库 VACUUM 完成')
@@ -667,7 +708,7 @@ class KMSDatabaseService {
       logger.warn('主库 VACUUM 失败:', err?.message || err)
     }
 
-    // 5. VACUUM 向量库
+    // 6. VACUUM 向量库
     try {
       this.vectorDb.exec('VACUUM')
       logger.info('向量库 VACUUM 完成')
@@ -684,6 +725,7 @@ class KMSDatabaseService {
         vectorDbSize: before.vectorDbSize,
         orphanedFtsCount: before.orphanedFtsCount,
         orphanedEmbeddingCount: before.orphanedEmbeddingCount,
+        orphanedFileCount: before.orphanedFileCount,
       },
       after: {
         mainDbSize: afterStats.mainDbSize,
@@ -691,6 +733,7 @@ class KMSDatabaseService {
       },
       cleanedFts,
       cleanedEmbeddings,
+      cleanedFiles,
     }
   }
 

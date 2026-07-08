@@ -6,7 +6,7 @@ import {
 } from 'antd'
 import {
   FolderOpenOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
-  FileTextOutlined, FileImageOutlined, CheckCircleOutlined,
+  FileTextOutlined, FileImageOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -63,7 +63,12 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       const result = await window.electronAPI.app.showOpenDialog({
         properties: ['openDirectory'],
       })
-      if (result && !result.canceled && result.filePaths.length > 0) {
+      // safeHandle 在主进程异常时返回 { error } 对象，需显式判定
+      if (result && (result as any).error) {
+        message.error(t('kms.dirPickerFailed') + ((result as any).error ? `: ${(result as any).error}` : ''))
+        return
+      }
+      if (result && !result.canceled && result.filePaths && result.filePaths.length > 0) {
         const dirPath = result.filePaths[0]
         const defaultName = dirPath.split(/[/\\]/).pop() || dirPath
         setEditingDir(null)
@@ -74,10 +79,11 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         setAllExts(true)
         setModalOpen(true)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to open directory picker:', err)
+      message.error(t('kms.dirPickerFailed') + (err?.message ? `: ${err.message}` : ''))
     }
-  }, [])
+  }, [message, t])
 
   const handleEditDir = useCallback((dir: IndexDir) => {
     const exts = parseExts(dir.file_extensions)
@@ -90,7 +96,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     setModalOpen(true)
   }, [parseExts])
 
-  const handleSaveDir = useCallback(() => {
+  const handleSaveDir = useCallback(async () => {
     const finalExts = allExts ? [] : selectedExts
     if (editingDir) {
       onUpdateDir(editingDir.id, {
@@ -99,11 +105,16 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         fileExtensions: finalExts,
       })
       message.success(t('kms.dirConfigSaved'))
+      setModalOpen(false)
     } else {
-      onAddDir(pendingDirPath, displayName.trim() || undefined, recursive, finalExts)
-      message.success(t('kms.dirConfigAdded'))
+      try {
+        await onAddDir(pendingDirPath, displayName.trim() || undefined, recursive, finalExts)
+        message.success(t('kms.dirConfigAdded'))
+        setModalOpen(false)
+      } catch (err: any) {
+        message.error(t('kms.dirAddFailed') + (err?.message ? `: ${err.message}` : ''))
+      }
     }
-    setModalOpen(false)
   }, [editingDir, pendingDirPath, displayName, recursive, allExts, selectedExts, onUpdateDir, onAddDir, message, t])
 
   const handleAllExtsChange = useCallback((checked: boolean) => {
@@ -112,25 +123,6 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       setSelectedExts([])
     }
   }, [])
-
-  const handleExtChange = useCallback((ext: string, checked: boolean) => {
-    setAllExts(false)
-    setSelectedExts(prev => {
-      if (checked) {
-        const next = [...prev, ext]
-        if (next.length === ALL_SUPPORTED_EXTS.length) {
-          setAllExts(true)
-          return []
-        }
-        return next
-      }
-      return prev.filter(e => e !== ext)
-    })
-  }, [])
-
-  const isExtSelected = useCallback((ext: string): boolean => {
-    return allExts || selectedExts.includes(ext)
-  }, [allExts, selectedExts])
 
   const formatDirExts = useCallback((dir: IndexDir): { text: string; count: number } => {
     const exts = parseExts(dir.file_extensions)
@@ -142,27 +134,122 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
 
   const modalTitle = editingDir ? t('kms.editDir') : t('kms.addDir')
 
+  // 目录配置弹窗（必须始终渲染，否则 dirs 为空时点击"添加目录"按钮后 Modal 不会挂载）
+  const dirConfigModal = (
+    <Modal
+      title={modalTitle}
+      open={modalOpen}
+      onOk={handleSaveDir}
+      onCancel={() => setModalOpen(false)}
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
+      width={560}
+      zIndex={1500}
+      styles={{ mask: { zIndex: 1499 }, wrapper: { zIndex: 1500 } }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 8 }}>
+        {/* 目录路径（只读） */}
+        <div>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+            {t('kms.dirPath')}
+          </Text>
+          <Input value={pendingDirPath} readOnly size="small" />
+        </div>
+
+        {/* 显示名称 */}
+        <div>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+            {t('kms.dirDisplayName')}
+          </Text>
+          <Input
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            placeholder={t('kms.dirDisplayNamePlaceholder')}
+            size="small"
+          />
+        </div>
+
+        {/* 递归扫描 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <Text style={{ fontSize: 13 }}>{t('kms.dirRecursive')}</Text>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+              {t('kms.dirRecursiveDesc')}
+            </Text>
+          </div>
+          <Switch checked={recursive} onChange={setRecursive} size="small" />
+        </div>
+
+        {/* 文件类型选择 */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ fontSize: 13 }}>{t('kms.fileTypes')}</Text>
+            <Checkbox checked={allExts} onChange={e => handleAllExtsChange(e.target.checked)}>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.allFileTypes')}</Text>
+            </Checkbox>
+          </div>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+            {t('kms.fileTypesDesc')}
+          </Text>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {FILE_TYPE_GROUPS.map((group) => (
+              <div key={group.labelKey}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  {group.icon}
+                  <Text style={{ fontSize: 12, fontWeight: 500 }}>{t(group.labelKey)}</Text>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {group.exts.map(ext => (
+                    <Tag.CheckableTag
+                      key={ext}
+                      checked={selectedExts.includes(ext)}
+                      onChange={(checked) => {
+                        if (checked) {
+                          setSelectedExts(prev => Array.from(new Set([...prev, ext])))
+                        } else {
+                          setSelectedExts(prev => prev.filter(e => e !== ext))
+                        }
+                        setAllExts(false)
+                      }}
+                      style={{ fontSize: 12 }}
+                    >
+                      .{ext}
+                    </Tag.CheckableTag>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+
+  // 空状态：仅显示 Empty + 添加按钮
   if (dirs.length === 0) {
     return (
-      <div style={{ padding: '60px 20px', textAlign: 'center' }}>
-        <Empty
-          image={<FolderOpenOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />}
-          description={
-            <div>
-              <Text style={{ display: 'block', marginBottom: 8, fontSize: 15, fontWeight: 500 }}>
-                {t('kms.noDirs')}
-              </Text>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleAddDir}
-              >
-                {t('kms.addDir')}
-              </Button>
-            </div>
-          }
-        />
-      </div>
+      <>
+        <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+          <Empty
+            image={<FolderOpenOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />}
+            description={
+              <div>
+                <Text style={{ display: 'block', marginBottom: 8, fontSize: 15, fontWeight: 500 }}>
+                  {t('kms.noDirs')}
+                </Text>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={handleAddDir}
+                >
+                  {t('kms.addDir')}
+                </Button>
+              </div>
+            }
+          />
+        </div>
+        {dirConfigModal}
+      </>
     )
   }
 
@@ -261,102 +348,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
           })}
         </Space>
       </div>
-
-      {/* 目录配置弹窗 */}
-      <Modal
-        title={modalTitle}
-        open={modalOpen}
-        onOk={handleSaveDir}
-        onCancel={() => setModalOpen(false)}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-        width={560}
-        destroyOnClose
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 8 }}>
-          {/* 目录路径（只读） */}
-          <div>
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-              {t('kms.dirPath')}
-            </Text>
-            <Input value={pendingDirPath} readOnly size="small" />
-          </div>
-
-          {/* 显示名称 */}
-          <div>
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-              {t('kms.dirDisplayName')}
-            </Text>
-            <Input
-              value={displayName}
-              onChange={e => setDisplayName(e.target.value)}
-              placeholder={t('kms.dirDisplayNamePlaceholder')}
-              size="small"
-            />
-          </div>
-
-          {/* 递归扫描 */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <Text style={{ fontSize: 13 }}>{t('kms.dirRecursive')}</Text>
-              <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-                {t('kms.dirRecursiveDesc')}
-              </Text>
-            </div>
-            <Switch checked={recursive} onChange={setRecursive} size="small" />
-          </div>
-
-          {/* 文件类型选择 */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <Text style={{ fontSize: 13 }}>{t('kms.fileTypes')}</Text>
-              <Checkbox checked={allExts} onChange={e => handleAllExtsChange(e.target.checked)}>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.allFileTypes')}</Text>
-              </Checkbox>
-            </div>
-            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
-              {t('kms.fileTypesDesc')}
-            </Text>
-            <div style={{
-              maxHeight: 240,
-              overflow: 'auto',
-              border: `1px solid ${token.colorBorderSecondary}`,
-              borderRadius: 6,
-              padding: 8,
-            }}>
-              {FILE_TYPE_GROUPS.map((group) => (
-                <div key={group.labelKey} style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <span style={{ color: token.colorTextTertiary, fontSize: 13 }}>{group.icon}</span>
-                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{t(group.labelKey)}</Text>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 22 }}>
-                    {group.exts.map(ext => (
-                      <Tag.CheckableTag
-                        key={ext}
-                        checked={isExtSelected(ext)}
-                        onChange={checked => handleExtChange(ext, checked)}
-                        style={{ fontSize: 12 }}
-                      >
-                        .{ext}
-                      </Tag.CheckableTag>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* 已选统计 */}
-            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 12 }} />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {allExts
-                  ? t('kms.allFileTypesSelected', { count: ALL_SUPPORTED_EXTS.length })
-                  : t('kms.fileTypesSelected', { count: selectedExts.length })}
-              </Text>
-            </div>
-          </div>
-        </div>
-      </Modal>
+      {dirConfigModal}
     </div>
   )
 }

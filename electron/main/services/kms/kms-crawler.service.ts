@@ -360,10 +360,17 @@ class KMSCrawlerService {
    * - 如果相同 hash 的文件已存在（不同位置的同内容文件），复用索引数据，避免重复计算
    */
   private async registerFile(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }): Promise<void> {
-    // 重叠目录检查：file_path 已存在说明该文件已注册在其他目录下（如父目录），直接跳过
     const existingByPath = this.db.prepare('SELECT id, dir_id FROM kms_files WHERE file_path = ? LIMIT 1').get(diskFile.filePath) as any
     if (existingByPath) {
-      logger.info(`File "${diskFile.filePath}" already registered under dir ${existingByPath.dir_id}, skipping`)
+      // 文件已注册在其他目录下：若来自虚拟手动目录（合集文件），迁移到真实索引目录
+      const manualDirPath = '__manual_files__'
+      const manualDir = this.db.prepare("SELECT id FROM kms_index_dirs WHERE dir_path = ?").get(manualDirPath) as any
+      if (manualDir && existingByPath.dir_id === manualDir.id) {
+        this.db.prepare('UPDATE kms_files SET dir_id = ? WHERE id = ?').run(dirId, existingByPath.id)
+        logger.info(`File "${diskFile.filePath}" migrated from manual source dir to real index dir ${dirId}`)
+      } else {
+        logger.info(`File "${diskFile.filePath}" already registered under dir ${existingByPath.dir_id}, skipping`)
+      }
       return
     }
 

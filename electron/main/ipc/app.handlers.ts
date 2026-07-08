@@ -1,4 +1,4 @@
-import { dialog, app, shell } from 'electron'
+import { dialog, app, shell, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -43,23 +43,32 @@ export function registerAppHandlers(
   )
 
   safeHandle(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, async (params: AppShowOpenDialogParams) => {
-    const result = await dialog.showOpenDialog({
+    const options = {
       title: params.title,
       defaultPath: params.defaultPath,
       buttonLabel: params.buttonLabel,
       filters: params.filters,
       properties: params.properties,
-    })
+    }
+    // 传入父窗口使对话框模态显示，避免在部分 Windows 环境下被主窗口遮挡而不显示
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
     return result
   })
 
   safeHandle(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, async (params: AppShowSaveDialogParams) => {
-    const result = await dialog.showSaveDialog({
+    const options = {
       title: params.title,
       defaultPath: params.defaultPath,
       buttonLabel: params.buttonLabel,
       filters: params.filters,
-    })
+    }
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
     return result
   })
 

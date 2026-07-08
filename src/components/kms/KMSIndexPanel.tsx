@@ -480,6 +480,12 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                   {dbStats.orphanedEmbeddingCount}
                 </Text>
               </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedFiles')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedFileCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedFileCount}
+                </Text>
+              </div>
             </div>
           )}
 

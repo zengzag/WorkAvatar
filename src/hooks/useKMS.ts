@@ -224,7 +224,11 @@ export function useKMS() {
 
   const addDir = useCallback(async (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => {
     try {
-      await window.electronAPI.kms.addDir({ dirPath, displayName, recursive, fileExtensions })
+      const result = await window.electronAPI.kms.addDir({ dirPath, displayName, recursive, fileExtensions })
+      // safeHandle 在主进程异常时返回 { error } 对象而非抛异常，需显式判定
+      if (result && (result as any).error) {
+        throw new Error((result as any).error)
+      }
       await loadDirs()
       await loadStats()
     } catch (err) {

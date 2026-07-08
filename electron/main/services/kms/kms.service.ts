@@ -82,6 +82,26 @@ class KMSService {
       throw new Error(`目录不存在: ${dirPath}`)
     }
 
+    // 兼容 Windows 大小写不敏感：先按原路径查，再用归一化路径查
+    const existing = this.db.prepare(
+      'SELECT * FROM kms_index_dirs WHERE dir_path = ? OR LOWER(dir_path) = LOWER(?)'
+    ).get(dirPath, dirPath) as any
+
+    if (existing) {
+      // 已存在相同目录，更新可修改字段并返回
+      this.db.prepare(`
+        UPDATE kms_index_dirs
+        SET display_name = ?, recursive = ?, file_extensions = ?, updated_at = unixepoch()
+        WHERE id = ?
+      `).run(
+        displayName || existing.display_name,
+        recursive !== undefined ? (recursive ? 1 : 0) : existing.recursive,
+        fileExtensions?.join(',') || existing.file_extensions,
+        existing.id
+      )
+      return this.getIndexDir(existing.id)
+    }
+
     const id = generateId()
     this.db.prepare(`
       INSERT INTO kms_index_dirs (id, dir_path, display_name, recursive, file_extensions)
@@ -122,14 +142,29 @@ class KMSService {
   }
 
   deleteIndexDir(id: string): void {
-    // 先收集该目录下所有文件 ID，显式清理 FTS5 全文索引和向量库 embedding。
-    // 原因：kms_fts 是 FTS5 虚表，不支持外键级联；kms_embeddings 在独立的向量库，
-    // 跨库外键不可用。仅靠 ON DELETE CASCADE 无法清理这两类数据，会留下孤儿记录。
+    // 收集该目录下所有文件 ID
     const files = this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(id) as any[]
     const searchEngine = KMSSearchEngineService.getInstance()
+
+    // 分类处理：属于合集的文件迁移到虚拟手动目录，不属于合集的文件彻底清理
+    const fileIdsInCollection = new Set(
+      (this.db.prepare(
+        'SELECT DISTINCT file_id FROM kms_file_collections'
+      ).all() as any[]).map(r => r.file_id)
+    )
+
     for (const f of files) {
-      searchEngine.deleteIndexByFile(f.id)
+      if (fileIdsInCollection.has(f.id)) {
+        // 文件仍属于合集，迁移到虚拟手动目录保留
+        this.db.prepare('UPDATE kms_files SET dir_id = ? WHERE id = ?')
+          .run(this.manualSourceDirId, f.id)
+        logger.info(`文件 ${f.id} 迁移到虚拟手动目录（属于合集）`)
+      } else {
+        // 不属于任何合集，彻底清理 FTS5、向量库和文件记录
+        searchEngine.deleteIndexByFile(f.id)
+      }
     }
+
     this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
     searchEngine.invalidateCache()
   }
@@ -180,7 +215,17 @@ class KMSService {
   }
 
   deleteCollection(id: string): void {
+    // 1. 收集该合集下的所有文件 ID（删除合集后级联会清除 kms_file_collections，需提前收集）
+    const collectionFiles = this.db.prepare(
+      'SELECT file_id FROM kms_file_collections WHERE collection_id = ?'
+    ).all(id) as any[]
+
+    // 2. 删除合集（级联删除 kms_file_collections、kms_collection_summaries）
     this.db.prepare('DELETE FROM kms_collections WHERE id = ?').run(id)
+
+    // 3. 清理孤儿文件：不再属于任何合集、且位于虚拟手动目录的文件
+    this.cleanupOrphanFiles(collectionFiles.map(f => f.file_id))
+
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
@@ -318,13 +363,18 @@ class KMSService {
   }
 
   /**
-   * 从合集中移除文件（仅解除关联，不删除文件本身）
+   * 从合集中移除文件
+   * 若该文件不再属于任何合集且仅存在于虚拟手动目录，则彻底清理
    */
   removeFileFromCollection(collectionId: string, fileId: string): void {
     this.db.prepare(
       'DELETE FROM kms_file_collections WHERE file_id = ? AND collection_id = ?'
     ).run(fileId, collectionId)
     this.db.prepare('UPDATE kms_collections SET updated_at = unixepoch() WHERE id = ?').run(collectionId)
+
+    // 清理孤儿文件：该文件不再属于任何合集、且位于虚拟手动目录时删除
+    this.cleanupOrphanFiles([fileId])
+
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
@@ -428,6 +478,40 @@ class KMSService {
 
   deleteCollectionSummary(collectionId: string): void {
     this.db.prepare('DELETE FROM kms_collection_summaries WHERE collection_id = ?').run(collectionId)
+  }
+
+  /**
+   * 清理孤儿文件：不再属于任何合集、且仅存在于虚拟手动目录的文件
+   *
+   * 背景：合集中的文件若不在任何索引目录下，其 dir_id 指向虚拟目录 __manual_files__。
+   * 删除合集或从合集中移除文件时，如果该文件不再属于任何合集，则它已无实际归属，
+   * 应从 kms_files、FTS5、embedding 等表中彻底清理，避免"幽灵文件"出现在搜索结果中。
+   *
+   * @param candidateFileIds 候选文件 ID 列表（通常是刚被解除合集关联的文件）
+   */
+  private cleanupOrphanFiles(candidateFileIds: string[]): void {
+    if (candidateFileIds.length === 0 || !this.manualSourceDirId) return
+
+    const searchEngine = KMSSearchEngineService.getInstance()
+
+    for (const fileId of candidateFileIds) {
+      // 检查文件是否仍在虚拟手动目录中（如果 dir_id 指向真实索引目录，则不算孤儿）
+      const file = this.db.prepare(
+        'SELECT dir_id FROM kms_files WHERE id = ?'
+      ).get(fileId) as any
+      if (!file || file.dir_id !== this.manualSourceDirId) continue
+
+      // 检查该文件是否仍属于至少一个合集
+      const stillInCollection = this.db.prepare(
+        'SELECT 1 FROM kms_file_collections WHERE file_id = ? LIMIT 1'
+      ).get(fileId)
+      if (stillInCollection) continue
+
+      // 孤儿文件：显式清理 FTS5、向量库，然后删除文件记录
+      searchEngine.deleteIndexByFile(fileId)
+      this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(fileId)
+      logger.info(`已清理孤儿文件: ${fileId}`)
+    }
   }
 
   async generateCollectionSummary(collectionId: string, signal?: AbortSignal): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {

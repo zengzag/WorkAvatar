@@ -750,6 +750,8 @@ export default {
     fileTypesSelected: '已选择 {{count}} 种文件类型',
     dirConfigSaved: '目录配置已保存',
     dirConfigAdded: '目录已添加',
+    dirAddFailed: '添加目录失败',
+    dirPickerFailed: '打开目录选择器失败',
     // 搜索
     search: '搜索',
     searching: '搜索中...',
@@ -911,6 +913,7 @@ export default {
       walSize: 'WAL 文件',
       orphanedFts: '孤儿全文索引',
       orphanedEmbeddings: '孤儿向量嵌入',
+      orphanedFiles: '孤儿文件',
       refreshStats: '刷新',
       cleanupDatabase: '清理数据库',
       cleanupConfirm: '确定清理数据库？将删除孤儿索引记录并执行 VACUUM 压缩，期间数据库会短暂锁定。',
