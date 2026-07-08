@@ -3,7 +3,6 @@ import { Layout, Menu, Typography, theme } from 'antd'
 import {
   RobotOutlined,
   SettingOutlined,
-  BookOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -27,7 +26,6 @@ const App: React.FC = () => {
     const path = location.pathname
     if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
     if (path.startsWith('/settings')) return 'settings'
-    if (path.startsWith('/knowledge-base')) return 'knowledge-base'
     if (path.startsWith('/kms')) return 'kms'
     return 'digital-employees'
   }, [location.pathname])
@@ -39,12 +37,6 @@ const App: React.FC = () => {
       icon: <RobotOutlined />,
       label: t('nav.digitalEmployees'),
       onClick: () => navigate('/'),
-    },
-    {
-      key: 'knowledge-base',
-      icon: <BookOutlined />,
-      label: t('nav.knowledgeBase'),
-      onClick: () => navigate('/knowledge-base'),
     },
     {
       key: 'kms',

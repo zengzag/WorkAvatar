@@ -160,7 +160,6 @@ class EmployeeMemoryService {
       `UPDATE employee_memories SET ${sets.join(', ')} WHERE id = ?`
     ).run(...values)
 
-    // 同步 FTS 表（key/topic/content 任一变更时）
     if (params.key !== undefined || params.topic !== undefined || params.content !== undefined) {
       const updated = this.getMemory(id)!
       this.syncMemoryFTS(id, updated.employee_id, updated.key, updated.topic, updated.content)
@@ -169,7 +168,6 @@ class EmployeeMemoryService {
     return this.getMemory(id)
   }
 
-  /** 同步单条记忆到 FTS5 表（先删后插，保证一致性） */
   private syncMemoryFTS(id: string, employeeId: string, key: string, topic: string, content: string): void {
     this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
     this.db.getDb().prepare(
@@ -214,11 +212,18 @@ class EmployeeMemoryService {
   }
 
   searchMemories(employeeId: string, query: string, limit: number = 10): EmployeeMemory[] {
+    return this.queryMemories(employeeId, query, limit)
+  }
+
+  getRelevantMemories(employeeId: string, query: string, limit: number = 5): EmployeeMemory[] {
+    return this.queryMemories(employeeId, query, limit)
+  }
+
+  private queryMemories(employeeId: string, query: string, limit: number): EmployeeMemory[] {
     const pinned = this.db.getDb().prepare(
       'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
 
-    // 使用 FTS5 全文检索替代 LIKE '%query%'（避免全表扫描）
     const ftsQuery = this.buildFtsQuery(query)
     const searchResults = ftsQuery
       ? (this.db.getDb().prepare(
@@ -232,69 +237,41 @@ class EmployeeMemoryService {
     return [...pinned, ...searchResults]
   }
 
-  getRelevantMemories(employeeId: string, query: string, limit: number = 5): EmployeeMemory[] {
-    const pinned = this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
-    ).all(employeeId) as EmployeeMemory[]
-
-    // 使用 FTS5 全文检索替代 LIKE '%query%'
-    const ftsQuery = this.buildFtsQuery(query)
-    const relevant = ftsQuery
-      ? (this.db.getDb().prepare(
-          `SELECT m.* FROM employee_memories m
-           JOIN employee_memories_fts f ON f.memory_id = m.id
-           WHERE f.employee_id = ? AND m.is_pinned = 0 AND employee_memories_fts MATCH ?
-           ORDER BY f.rank LIMIT ?`
-        ).all(employeeId, ftsQuery, limit) as EmployeeMemory[])
-      : []
-
-    return [...pinned, ...relevant]
-  }
-
-  /**
-   * 将用户查询转换为 FTS5 安全的查询字符串
-   * - 双引号包裹整体以支持短语匹配
-   * - 转义内部双引号
-   * - 过滤过短的查询
-   */
   private buildFtsQuery(query: string): string {
     const trimmed = query.trim()
     if (trimmed.length < 2) return ''
-    // FTS5 短语查询：用双引号包裹，内部双引号翻倍转义
-    const escaped = trimmed.replace(/"/g, '""')
-    return `"${escaped}"`
+    const clean = trimmed.replace(/"/g, '""').replace(/[*()^\-+]/g, '')
+    if (clean.length < 2) return ''
+    return `"${clean}"`
   }
 
   getMemoryStats(employeeId: string): MemoryStats {
-    const memories = this.listMemories(employeeId)
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
 
-    let totalChars = 0
-    let pinnedCount = 0
-    let autoCount = 0
-    let manualCount = 0
-    let oldestTimestamp: number | null = null
-    let staleCount = 0
-
-    for (const m of memories) {
-      totalChars += m.content.length
-      if (m.is_pinned) pinnedCount++
-      if (m.source === 'auto') autoCount++
-      if (m.source === 'manual') manualCount++
-      if (!oldestTimestamp || m.created_at < oldestTimestamp) oldestTimestamp = m.created_at
-      if (!m.is_pinned && m.last_referenced_at && m.last_referenced_at < staleThreshold) staleCount++
-      if (!m.is_pinned && !m.last_referenced_at && m.created_at < staleThreshold) staleCount++
-    }
+    const row = this.db.getDb().prepare(`
+      SELECT
+        COUNT(*) as count,
+        COALESCE(SUM(LENGTH(content)), 0) as totalChars,
+        SUM(CASE WHEN is_pinned = 1 THEN 1 ELSE 0 END) as pinnedCount,
+        SUM(CASE WHEN source = 'auto' THEN 1 ELSE 0 END) as autoCount,
+        SUM(CASE WHEN source = 'manual' THEN 1 ELSE 0 END) as manualCount,
+        MIN(created_at) as oldestTimestamp,
+        SUM(CASE WHEN is_pinned = 0 AND (
+          (last_referenced_at IS NOT NULL AND last_referenced_at < ?) OR
+          (last_referenced_at IS NULL AND created_at < ?)
+        ) THEN 1 ELSE 0 END) as staleCount
+      FROM employee_memories WHERE employee_id = ?
+    `).get(staleThreshold, staleThreshold, employeeId) as any
 
     return {
-      count: memories.length,
-      totalChars,
-      pinnedCount,
-      autoCount,
-      manualCount,
-      oldestTimestamp,
-      staleCount,
+      count: row?.count ?? 0,
+      totalChars: row?.totalChars ?? 0,
+      pinnedCount: row?.pinnedCount ?? 0,
+      autoCount: row?.autoCount ?? 0,
+      manualCount: row?.manualCount ?? 0,
+      oldestTimestamp: row?.oldestTimestamp ?? null,
+      staleCount: row?.staleCount ?? 0,
     }
   }
 
@@ -322,7 +299,7 @@ class EmployeeMemoryService {
 
     for (const m of sorted) {
       const line = `- [${m.topic}] ${m.content}`
-      if (maxChars && totalLen + line.length > limit && !m.is_pinned) break
+      if (totalLen + line.length > limit && !m.is_pinned) break
       lines.push(line)
       totalLen += line.length + 1
     }
@@ -463,15 +440,26 @@ ${contextParts.join('\n---\n')}
       const validExtracted = (parsed.memories || []).filter(m => m.key && m.topic && m.content)
 
       this.db.getDb().transaction(() => {
+        const now = Math.floor(Date.now() / 1000)
+        const allNewKeys = validExtracted.map(m => m.key)
+        const existingMap = new Map<string, EmployeeMemory>()
+        if (allNewKeys.length > 0) {
+          const keyPlaceholders = allNewKeys.map(() => '?').join(',')
+          const existingRows = this.db.getDb().prepare(
+            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${keyPlaceholders})`
+          ).all(employeeId, ...allNewKeys) as EmployeeMemory[]
+          for (const row of existingRows) {
+            existingMap.set(row.key, row)
+          }
+        }
+
         for (const memory of validExtracted) {
-          const existing = this.db.getDb().prepare(
-            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-          ).get(employeeId, memory.key) as EmployeeMemory | undefined
+          const existing = existingMap.get(memory.key)
 
           if (existing) {
             this.db.getDb().prepare(
               'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(memory.content, memory.topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+            ).run(memory.content, memory.topic, now, now, existing.id)
             this.syncMemoryFTS(existing.id, employeeId, existing.key, memory.topic, memory.content)
           } else {
             this.createMemory({
@@ -489,16 +477,26 @@ ${contextParts.join('\n---\n')}
           logger.info(`Deleted outdated memory key=${key} for employee ${employeeId}`)
         }
 
+        const allUpdateKeys = (parsed.update_memories || []).map(u => u.key).filter(Boolean)
+        const updateExistingMap = new Map<string, EmployeeMemory>()
+        if (allUpdateKeys.length > 0) {
+          const upPlaceholders = allUpdateKeys.map(() => '?').join(',')
+          const upRows = this.db.getDb().prepare(
+            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${upPlaceholders})`
+          ).all(employeeId, ...allUpdateKeys) as EmployeeMemory[]
+          for (const row of upRows) {
+            updateExistingMap.set(row.key, row)
+          }
+        }
+
         for (const update of (parsed.update_memories || [])) {
           if (!update.key || !update.content) continue
-          const existing = this.db.getDb().prepare(
-            'SELECT * FROM employee_memories WHERE employee_id = ? AND key = ?'
-          ).get(employeeId, update.key) as EmployeeMemory | undefined
+          const existing = updateExistingMap.get(update.key)
           if (existing) {
             const topic = update.topic || existing.topic
             this.db.getDb().prepare(
               'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(update.content, topic, Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000), existing.id)
+            ).run(update.content, topic, now, now, existing.id)
             this.syncMemoryFTS(existing.id, employeeId, existing.key, topic, update.content)
             logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
           }
@@ -509,7 +507,7 @@ ${contextParts.join('\n---\n')}
           if (newSummary) {
             this.db.getDb().prepare(
               'UPDATE conversations SET summary = ?, updated_at = ? WHERE id = ?'
-            ).run(newSummary, Math.floor(Date.now() / 1000), conversationId)
+            ).run(newSummary, now, conversationId)
           }
         }
       })()
@@ -695,7 +693,6 @@ JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":""
     const now = Math.floor(Date.now() / 1000)
     const staleThreshold = now - STALE_MEMORY_DAYS * 86400
 
-    // 先查出待删除的 id，同步清理 FTS 表
     const staleIds = this.db.getDb().prepare(
       `SELECT id FROM employee_memories
        WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'

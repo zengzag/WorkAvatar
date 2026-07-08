@@ -7,7 +7,6 @@ const EmployeeWorkbench = lazy(() => import('../pages/EmployeeWorkbench'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const EmployeeSettings = lazy(() => import('../pages/EmployeeSettings'))
 const Settings = lazy(() => import('../pages/Settings'))
-const KnowledgeBasePage = lazy(() => import('../pages/KnowledgeBase'))
 const KMSPage = lazy(() => import('../pages/KMS'))
 
 const lazyElement = (node: ReactNode) => (
@@ -40,10 +39,6 @@ const router = createHashRouter([
       {
         path: 'settings',
         element: lazyElement(<Settings />),
-      },
-      {
-        path: 'knowledge-base',
-        element: lazyElement(<KnowledgeBasePage />),
       },
       {
         path: 'kms',

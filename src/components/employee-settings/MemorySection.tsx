@@ -27,6 +27,7 @@ import {
   SearchOutlined,
   CompressOutlined,
 } from '@ant-design/icons'
+import type { LLMProvider } from '../../types'
 
 const { Text, Paragraph } = Typography
 
@@ -60,11 +61,22 @@ interface MemorySectionProps {
   onMemoryEnabledChange: (enabled: boolean) => void
 }
 
-const topicColors: Record<string, string> = {
-  '用户偏好': 'blue',
-  '决策结论': 'green',
-  '事实知识': 'orange',
+// 记忆主题常量（值为后端 LLM 提取时写入的中文标识）
+const MEMORY_TOPIC = {
+  USER_PREFERENCE: '用户偏好',
+  DECISION: '决策结论',
+  FACT: '事实知识',
+} as const
+
+// 主题对应的标签颜色
+const TOPIC_COLORS: Record<string, string> = {
+  [MEMORY_TOPIC.USER_PREFERENCE]: 'blue',
+  [MEMORY_TOPIC.DECISION]: 'green',
+  [MEMORY_TOPIC.FACT]: 'orange',
 }
+
+// 跨会话记忆总字符上限（与后端 memory 服务保持一致）
+const MEMORY_CAPACITY_LIMIT = 8000
 
 const MemorySection: React.FC<MemorySectionProps> = ({
   employeeId,
@@ -125,7 +137,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     }
   }, [employeeId, searchQuery, loadMemories, message, t])
 
-  const handleAddMemory = async (values: any) => {
+  const handleAddMemory = useCallback(async (values: any) => {
     try {
       await window.electronAPI.employee.createMemory({
         employee_id: employeeId,
@@ -142,9 +154,9 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [employeeId, message, t, addForm, loadMemories])
 
-  const handleEditMemory = async (values: any) => {
+  const handleEditMemory = useCallback(async (values: any) => {
     if (!editingMemory) return
     try {
       await window.electronAPI.employee.updateMemory({
@@ -161,9 +173,9 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [editingMemory, message, t, addForm, loadMemories])
 
-  const handleDeleteMemory = (memory: MemoryItem) => {
+  const handleDeleteMemory = useCallback((memory: MemoryItem) => {
     modal.confirm({
       title: t('employeeSettings.confirmDeleteMemory'),
       content: memory.content,
@@ -180,9 +192,9 @@ const MemorySection: React.FC<MemorySectionProps> = ({
         }
       },
     })
-  }
+  }, [modal, message, t, loadMemories])
 
-  const handleTogglePin = async (memory: MemoryItem) => {
+  const handleTogglePin = useCallback(async (memory: MemoryItem) => {
     try {
       await window.electronAPI.employee.togglePinMemory(memory.id)
       message.success(memory.is_pinned ? t('employeeSettings.memoryUnpinned') : t('employeeSettings.memoryPinned'))
@@ -190,15 +202,15 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
-  }
+  }, [message, t, loadMemories])
 
-  const handleConsolidate = async () => {
+  const handleConsolidate = useCallback(async () => {
     let providerId: string | undefined
     let modelId: string | undefined
     try {
       const providers = await window.electronAPI.llm.getProviders()
       const defaultProvider = (providers && providers.length > 0)
-        ? (providers.find((p: any) => p.is_default) || providers[0])
+        ? (providers.find((p: LLMProvider) => p.is_default) || providers[0])
         : null
       if (defaultProvider) {
         providerId = defaultProvider.id
@@ -231,15 +243,15 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     } finally {
       setConsolidating(false)
     }
-  }
+  }, [employeeId, message, t, loadMemories])
 
-  const openAddModal = () => {
+  const openAddModal = useCallback(() => {
     setEditingMemory(null)
     addForm.resetFields()
     setIsAddModalOpen(true)
-  }
+  }, [addForm])
 
-  const openEditModal = (memory: MemoryItem) => {
+  const openEditModal = useCallback((memory: MemoryItem) => {
     setEditingMemory(memory)
     addForm.setFieldsValue({
       key: memory.key,
@@ -248,9 +260,9 @@ const MemorySection: React.FC<MemorySectionProps> = ({
       importance: memory.importance,
     })
     setIsAddModalOpen(true)
-  }
+  }, [addForm])
 
-  const handleModalOk = async () => {
+  const handleModalOk = useCallback(async () => {
     try {
       const values = await addForm.validateFields()
       if (editingMemory) {
@@ -259,10 +271,10 @@ const MemorySection: React.FC<MemorySectionProps> = ({
         await handleAddMemory(values)
       }
     } catch {}
-  }
+  }, [addForm, editingMemory, handleEditMemory, handleAddMemory])
 
-  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / 8000) * 100)) : 0
-  const capacityStatus: 'normal' | 'success' | 'exception' | undefined = capacityPercent > 80 ? 'exception' : capacityPercent > 60 ? 'normal' : 'normal'
+  const capacityPercent = stats ? Math.min(100, Math.round((stats.totalChars / MEMORY_CAPACITY_LIMIT) * 100)) : 0
+  const capacityStatus: 'normal' | 'success' | 'exception' | 'active' | undefined = capacityPercent > 80 ? 'exception' : capacityPercent > 60 ? 'active' : 'success'
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -287,7 +299,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
         {!memoryEnabled ? (
           <Alert
             type="info"
-            message={t('employeeSettings.memoryDisabledHint')}
+            title={t('employeeSettings.memoryDisabledHint')}
             showIcon
           />
         ) : (
@@ -305,7 +317,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                     {t('employeeSettings.memoryCapacity')}
                   </Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {stats.totalChars} / 8000
+                    {stats.totalChars} / {MEMORY_CAPACITY_LIMIT}
                   </Text>
                 </div>
                 <Progress
@@ -366,7 +378,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-                          <Tag color={topicColors[m.topic] || 'default'} style={{ margin: 0 }}>
+                          <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>
                             {m.topic}
                           </Tag>
                           {m.source === 'auto' && (
@@ -474,4 +486,4 @@ const MemorySection: React.FC<MemorySectionProps> = ({
   )
 }
 
-export default MemorySection
+export default React.memo(MemorySection)

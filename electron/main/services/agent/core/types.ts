@@ -103,10 +103,3 @@ export type AgentState =
   | 'completed'
   | 'error'
   | 'aborted'
-
-export interface SubAgentDelegation {
-  agentId: string
-  task: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  result?: any
-}

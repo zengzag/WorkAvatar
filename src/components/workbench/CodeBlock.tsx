@@ -1,25 +1,17 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, memo } from 'react'
 import { theme } from 'antd'
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons'
 import { PrismAsync } from 'react-syntax-highlighter'
 import oneDark from 'react-syntax-highlighter/dist/esm/styles/prism/one-dark'
 import oneLight from 'react-syntax-highlighter/dist/esm/styles/prism/one-light'
+import { isColorDark } from '../../utils/format'
 
 interface CodeBlockProps {
   language: string
   code: string
 }
 
-function isColorDark(hex: string): boolean {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.substring(0, 2), 16)
-  const g = parseInt(h.substring(2, 4), 16)
-  const b = parseInt(h.substring(4, 6), 16)
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return luminance < 0.5
-}
-
-const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
+const CodeBlockInner: React.FC<CodeBlockProps> = ({ language, code }) => {
   const { token } = theme.useToken()
   const [copied, setCopied] = useState(false)
 
@@ -104,5 +96,8 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
     </div>
   )
 }
+
+// React.memo 避免代码块在父组件重渲染时重复渲染语法高亮（A#11）
+const CodeBlock = memo(CodeBlockInner)
 
 export default CodeBlock

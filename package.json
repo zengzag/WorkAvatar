@@ -8,7 +8,7 @@
     "build": "tsc && vite build && electron-builder",
     "build:win": "electron-builder --win",
     "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs"
   },
   "keywords": [
     "数字员工",
@@ -20,6 +20,7 @@
   "license": "ISC",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
+    "@node-rs/jieba": "^2.0.1",
     "@types/react-syntax-highlighter": "^15.5.13",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",

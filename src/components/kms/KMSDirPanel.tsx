@@ -18,6 +18,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }
@@ -30,10 +31,10 @@ interface KMSDirPanelProps {
 }
 
 /** 支持的文件扩展名分组 */
-const FILE_TYPE_GROUPS: { label: string; icon: React.ReactNode; exts: string[] }[] = [
-  { label: '文档', icon: <FileTextOutlined />, exts: ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx'] },
-  { label: '文本', icon: <FileTextOutlined />, exts: ['txt', 'md', 'html', 'htm'] },
-  { label: '图片', icon: <FileImageOutlined />, exts: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'] },
+const FILE_TYPE_GROUPS: { labelKey: string; icon: React.ReactNode; exts: string[] }[] = [
+  { labelKey: 'kms.fileGroupDocuments', icon: <FileTextOutlined />, exts: ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx'] },
+  { labelKey: 'kms.fileGroupText', icon: <FileTextOutlined />, exts: ['txt', 'md', 'html', 'htm'] },
+  { labelKey: 'kms.fileGroupImages', icon: <FileImageOutlined />, exts: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'] },
 ]
 
 /** 所有支持的扩展名 */
@@ -44,7 +45,6 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
   const { token } = theme.useToken()
   const { message } = App.useApp()
 
-  // 弹窗状态
   const [modalOpen, setModalOpen] = useState(false)
   const [editingDir, setEditingDir] = useState<IndexDir | null>(null)
   const [pendingDirPath, setPendingDirPath] = useState<string>('')
@@ -53,13 +53,11 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
   const [selectedExts, setSelectedExts] = useState<string[]>([])
   const [allExts, setAllExts] = useState(true)
 
-  // 解析已有目录的扩展名
   const parseExts = useCallback((extStr: string): string[] => {
     if (!extStr || !extStr.trim()) return []
     return extStr.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
   }, [])
 
-  // 打开添加目录弹窗（先选目录）
   const handleAddDir = useCallback(async () => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
@@ -81,7 +79,6 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     }
   }, [])
 
-  // 打开编辑目录弹窗
   const handleEditDir = useCallback((dir: IndexDir) => {
     const exts = parseExts(dir.file_extensions)
     setEditingDir(dir)
@@ -93,11 +90,9 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     setModalOpen(true)
   }, [parseExts])
 
-  // 保存目录配置
   const handleSaveDir = useCallback(() => {
     const finalExts = allExts ? [] : selectedExts
     if (editingDir) {
-      // 更新已有目录
       onUpdateDir(editingDir.id, {
         displayName: displayName.trim() || undefined,
         recursive,
@@ -105,14 +100,12 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       })
       message.success(t('kms.dirConfigSaved'))
     } else {
-      // 添加新目录
       onAddDir(pendingDirPath, displayName.trim() || undefined, recursive, finalExts)
       message.success(t('kms.dirConfigAdded'))
     }
     setModalOpen(false)
   }, [editingDir, pendingDirPath, displayName, recursive, allExts, selectedExts, onUpdateDir, onAddDir, message, t])
 
-  // 文件类型全选/取消
   const handleAllExtsChange = useCallback((checked: boolean) => {
     setAllExts(checked)
     if (checked) {
@@ -120,13 +113,11 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     }
   }, [])
 
-  // 单个文件类型选择
   const handleExtChange = useCallback((ext: string, checked: boolean) => {
     setAllExts(false)
     setSelectedExts(prev => {
       if (checked) {
         const next = [...prev, ext]
-        // 如果选中了全部，切换为"全部"模式
         if (next.length === ALL_SUPPORTED_EXTS.length) {
           setAllExts(true)
           return []
@@ -137,12 +128,10 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     })
   }, [])
 
-  // 判断某个扩展名是否选中
   const isExtSelected = useCallback((ext: string): boolean => {
     return allExts || selectedExts.includes(ext)
   }, [allExts, selectedExts])
 
-  // 格式化目录的文件类型显示
   const formatDirExts = useCallback((dir: IndexDir): { text: string; count: number } => {
     const exts = parseExts(dir.file_extensions)
     if (exts.length === 0) {
@@ -151,7 +140,6 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     return { text: exts.map(e => `.${e}`).join('  '), count: exts.length }
   }, [parseExts, t])
 
-  // 弹窗标题
   const modalTitle = editingDir ? t('kms.editDir') : t('kms.addDir')
 
   if (dirs.length === 0) {
@@ -228,6 +216,12 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                           {t('kms.dirRecursive')}
                         </Tag>
                       )}
+                      <Tag
+                        color={dir.file_count ? 'green' : undefined}
+                        style={{ fontSize: 11, margin: 0, lineHeight: '18px', padding: '0 6px' }}
+                      >
+                        {t('kms.dirFileCount', { count: dir.file_count || 0 })}
+                      </Tag>
                       <Tooltip title={extInfo.text}>
                         <Tag
                           color={extInfo.count === ALL_SUPPORTED_EXTS.length ? 'blue' : undefined}
@@ -331,10 +325,10 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
               padding: 8,
             }}>
               {FILE_TYPE_GROUPS.map((group) => (
-                <div key={group.label} style={{ marginBottom: 12 }}>
+                <div key={group.labelKey} style={{ marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                     <span style={{ color: token.colorTextTertiary, fontSize: 13 }}>{group.icon}</span>
-                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{group.label}</Text>
+                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>{t(group.labelKey)}</Text>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, paddingLeft: 22 }}>
                     {group.exts.map(ext => (

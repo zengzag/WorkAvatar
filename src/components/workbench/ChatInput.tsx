@@ -1,13 +1,19 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState } from 'react'
-import { getProviderModels } from '../../utils/llm'
+import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+
+interface AttachedFile {
+  id: string
+  path: string
+  name: string
+}
 
 const { Text } = Typography
 
-const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
-const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
+/** 模型选择的最大数量（对比模式上限） */
+const MAX_SELECTED_MODELS = 3
 
 export interface AttachedImage {
   id: string
@@ -31,17 +37,25 @@ const ChatInput: React.FC<{
   onImagesChange: (images: AttachedImage[]) => void
   selectedModels: ModelSelection[]
   onModelsChange: (models: ModelSelection[]) => void
-  selectedKbIds: string[]
-  onSelectedKbIdsChange: (ids: string[]) => void
-  allKBs: any[]
+  selectedCollectionIds: string[]
+  onSelectedCollectionIdsChange: (ids: string[]) => void
+  allCollections: any[]
   minimalMode: boolean
   onMinimalModeChange: (enabled: boolean) => void
   canToggleMinimalMode: boolean
-}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedKbIds, onSelectedKbIdsChange, allKBs, minimalMode, onMinimalModeChange, canToggleMinimalMode }) => {
+}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dragDepthRef = useRef(0)
   const [localValue, setLocalValue] = useState('')
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+
+  // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
+  // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
+  const attachedImagesRef = useRef(attachedImages)
+  attachedImagesRef.current = attachedImages
 
   const slashCommands = useMemo(() => [
     { key: '/clear', label: '/clear', description: t('workbench.cmdClear') },
@@ -66,15 +80,67 @@ const ChatInput: React.FC<{
   }
 
   const handleSend = useCallback(() => {
-    if (!localValue.trim() && attachedImages.length === 0) return
+    if (!localValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
-    onSend(localValue.trim(), imageUrls, selectedModels)
+    let content = localValue.trim()
+    if (attachedFiles.length > 0) {
+      const filePaths = attachedFiles.map(f => f.path).filter(Boolean).join('\n')
+      if (filePaths) {
+        content = content ? `${content}\n${filePaths}` : filePaths
+      }
+    }
+    onSend(content, imageUrls, selectedModels)
     setLocalValue('')
-  }, [localValue, attachedImages, selectedModels, onSend])
+    setAttachedFiles([])
+  }, [localValue, attachedImages, attachedFiles, selectedModels, onSend])
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current++
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return
+    e.preventDefault()
+    dragDepthRef.current--
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer?.files || e.dataTransfer.files.length === 0) return
+    e.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragOver(false)
+    const dropped = Array.from(e.dataTransfer.files)
+    const newFiles: AttachedFile[] = dropped.map(f => ({
+      id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+      name: f.name,
+    }))
+    if (newFiles.length > 0) {
+      setAttachedFiles(prev => [...prev, ...newFiles])
+    }
+  }, [])
+
+  const removeFile = useCallback((id: string) => {
+    setAttachedFiles(prev => prev.filter(f => f.id !== id))
+  }, [])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
+
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         e.preventDefault()
@@ -83,17 +149,34 @@ const ChatInput: React.FC<{
         const reader = new FileReader()
         reader.onload = (ev) => {
           const dataUrl = ev.target?.result as string
-          onImagesChange([...attachedImages, {
+          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
+          onImagesChange([...attachedImagesRef.current, {
             id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             dataUrl,
             name: file.name || 'pasted-image.png',
           }])
         }
         reader.readAsDataURL(file)
-        break
+        return
       }
     }
-  }, [attachedImages, onImagesChange])
+
+    const files = e.clipboardData?.files
+    if (files && files.length > 0) {
+      e.preventDefault()
+      const pasted = Array.from(files)
+      const newFiles: AttachedFile[] = pasted
+        .filter(f => !f.type.startsWith('image/')) // 图片已在上面处理
+        .map(f => ({
+          id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+          name: f.name,
+        }))
+      if (newFiles.length > 0) {
+        setAttachedFiles(prev => [...prev, ...newFiles])
+      }
+    }
+  }, [onImagesChange])
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -115,19 +198,20 @@ const ChatInput: React.FC<{
         })
         loadedCount++
         if (loadedCount === imageFiles.length) {
-          onImagesChange([...attachedImages, ...loadedImages])
+          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
+          onImagesChange([...attachedImagesRef.current, ...loadedImages])
         }
       }
       reader.onerror = () => {
         loadedCount++
         if (loadedCount === imageFiles.length && loadedImages.length > 0) {
-          onImagesChange([...attachedImages, ...loadedImages])
+          onImagesChange([...attachedImagesRef.current, ...loadedImages])
         }
       }
       reader.readAsDataURL(file)
     }
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [attachedImages, onImagesChange])
+  }, [onImagesChange])
 
   const removeImage = useCallback((id: string) => {
     onImagesChange(attachedImages.filter(img => img.id !== id))
@@ -154,7 +238,7 @@ const ChatInput: React.FC<{
   const toggleModel = useCallback((providerId: string, modelId: string) => {
     if (isModelSelected(providerId, modelId)) {
       onModelsChange(selectedModels.filter(s => !(s.providerId === providerId && s.modelId === modelId)))
-    } else if (selectedModels.length < 3) {
+    } else if (selectedModels.length < MAX_SELECTED_MODELS) {
       onModelsChange([...selectedModels, { providerId, modelId }])
     }
   }, [selectedModels, onModelsChange, isModelSelected])
@@ -174,7 +258,7 @@ const ChatInput: React.FC<{
     }).filter(group => group.models.length > 0)
   }, [providers, modelSearchText])
 
-  const modelPickerContent = (
+  const modelPickerContent = useMemo(() => (
     <div style={{ width: 320, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <Input
         placeholder={t('workbench.searchModel')}
@@ -187,7 +271,7 @@ const ChatInput: React.FC<{
         style={{ background: token.colorFillQuaternary, borderRadius: 6 }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
-        <span>{t('workbench.selectedModelCount', { count: selectedModels.length, max: 3 })}</span>
+        <span>{t('workbench.selectedModelCount', { count: selectedModels.length, max: MAX_SELECTED_MODELS })}</span>
       </div>
       <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
         {filteredProviderModels.map(({ provider, models }) => {
@@ -203,7 +287,7 @@ const ChatInput: React.FC<{
               </div>
               {models.map((model) => {
                 const selected = isModelSelected(provider.id, model.model)
-                const disabled = !selected && selectedModels.length >= 3
+                const disabled = !selected && selectedModels.length >= MAX_SELECTED_MODELS
                 return (
                   <div
                     key={`${provider.id}-${model.model}`}
@@ -238,36 +322,36 @@ const ChatInput: React.FC<{
         )}
       </div>
     </div>
-  )
+  ), [t, token, modelSearchText, selectedModels, filteredProviderModels, isModelSelected, toggleModel])
 
-  const kbPickerContent = (
+  const collectionPickerContent = useMemo(() => (
     <div style={{ width: 280, maxHeight: 360, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: token.colorTextTertiary }}>
-        <span>{t('workbench.selectedKbCount', { count: selectedKbIds.length })}</span>
-        {allKBs.length > 0 && (
+        <span>{t('workbench.selectedKbCount', { count: selectedCollectionIds.length })}</span>
+        {allCollections.length > 0 && (
           <>
             <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
-              onClick={() => onSelectedKbIdsChange(allKBs.map((kb: any) => kb.id))}>
+              onClick={() => onSelectedCollectionIdsChange(allCollections.map((c: any) => c.id))}>
               {t('common.selectAll')}
             </Button>
             <Button type="link" size="small" style={{ fontSize: 11, padding: 0, height: 'auto' }}
-              onClick={() => onSelectedKbIdsChange([])}>
+              onClick={() => onSelectedCollectionIdsChange([])}>
               {t('common.clearAll')}
             </Button>
           </>
         )}
       </div>
       <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {allKBs.map((kb: any) => {
-          const selected = selectedKbIds.includes(kb.id)
+        {allCollections.map((c: any) => {
+          const selected = selectedCollectionIds.includes(c.id)
           return (
             <div
-              key={kb.id}
+              key={c.id}
               onClick={() => {
                 if (selected) {
-                  onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kb.id))
+                  onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== c.id))
                 } else {
-                  onSelectedKbIdsChange([...selectedKbIds, kb.id])
+                  onSelectedCollectionIdsChange([...selectedCollectionIds, c.id])
                 }
               }}
               style={{
@@ -285,19 +369,19 @@ const ChatInput: React.FC<{
             >
               <Checkbox checked={selected} style={{ pointerEvents: 'none' }} />
               <DatabaseOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
-              <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{kb.name}</span>
+              <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
               {selected && <CheckOutlined style={{ fontSize: 11, color: token.colorPrimary }} />}
             </div>
           )
         })}
-        {allKBs.length === 0 && (
+        {allCollections.length === 0 && (
           <div style={{ padding: '16px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
             {t('creationWizard.noKbAvailable')}
           </div>
         )}
       </div>
     </div>
-  )
+  ), [t, token, selectedCollectionIds, allCollections, onSelectedCollectionIdsChange])
 
   return (
     <div style={{ padding: '12px 4% 20px 4%', flexShrink: 0 }}>
@@ -313,6 +397,28 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
+      {attachedFiles.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, padding: '4px 0 8px', flexWrap: 'wrap' }}>
+          {attachedFiles.map(f => (
+            <Tooltip title={f.path} key={f.id} mouseEnterDelay={0.4}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '4px 10px',
+                borderRadius: 8,
+                background: token.colorFillQuaternary,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                fontSize: 12,
+                color: token.colorTextSecondary,
+                maxWidth: 360,
+              }}>
+                <FileTextOutlined style={{ fontSize: 14, color: token.colorPrimary, flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer', color: token.colorTextTertiary, flexShrink: 0 }} onClick={() => removeFile(f.id)} />
+              </div>
+            </Tooltip>
+          ))}
+        </div>
+      )}
       {modelTags.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
           {modelTags.map(tag => (
@@ -324,16 +430,16 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      {selectedKbIds.length > 0 && (
+      {selectedCollectionIds.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
-          {selectedKbIds.map(kbId => {
-            const kb = allKBs.find((k: any) => k.id === kbId)
-            if (!kb) return null
+          {selectedCollectionIds.map(colId => {
+            const col = allCollections.find((c: any) => c.id === colId)
+            if (!col) return null
             return (
-              <div key={kbId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
+              <div key={colId} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 12, background: `${token.colorSuccessBg}`, border: `1px solid ${token.colorSuccessBorder}`, fontSize: 12, color: token.colorSuccess }}>
                 <DatabaseOutlined style={{ fontSize: 10 }} />
-                <span>{kb.name}</span>
-                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedKbIdsChange(selectedKbIds.filter((id: string) => id !== kbId))} />
+                <span>{col.name}</span>
+                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onSelectedCollectionIdsChange(selectedCollectionIds.filter((id: string) => id !== colId))} />
               </div>
             )
           })}
@@ -352,9 +458,29 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 16, padding: '6px 6px 6px 16px', border: '2px solid transparent', transition: 'border-color 0.3s' }}
-        onFocusCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
+      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 16, padding: '6px 6px 6px 16px', border: `2px solid ${isDragOver ? token.colorPrimary : 'transparent'}`, transition: 'border-color 0.3s' }}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
+        {isDragOver && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            borderRadius: 16,
+            background: token.colorPrimaryBg,
+            border: `2px dashed ${token.colorPrimary}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 10,
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <FileTextOutlined style={{ fontSize: 32, color: token.colorPrimary }} />
+              <Text style={{ color: token.colorPrimary, fontWeight: 500 }}>{t('workbench.dropFileHint')}</Text>
+            </div>
+          </div>
+        )}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Input.TextArea
             value={localValue}
@@ -389,7 +515,7 @@ const ChatInput: React.FC<{
                   title={t('workbench.compareModels')} />
               </Popover>
               <Popover
-                content={kbPickerContent}
+                content={collectionPickerContent}
                 trigger="click"
                 placement="topLeft"
                 arrow={false}
@@ -398,7 +524,7 @@ const ChatInput: React.FC<{
                 open={showKbPicker}
               >
                 <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
-                  style={{ color: selectedKbIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                  style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
                   title={t('workbench.knowledgeBase')} />
               </Popover>
               <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
@@ -421,7 +547,7 @@ const ChatInput: React.FC<{
           <Button icon={<StopOutlined />} danger onClick={onStop} shape="circle" size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
-            disabled={!localValue.trim() && attachedImages.length === 0}
+            disabled={!localValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
             shape="circle" size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>

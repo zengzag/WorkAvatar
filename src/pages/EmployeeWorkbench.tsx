@@ -1,16 +1,14 @@
-import { useState, useEffect, useMemo, useCallback, useLayoutEffect, useRef, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import {
   Button,
   Space,
   Typography,
-  Tag,
   Spin,
   Tooltip,
   theme,
   App,
-  Input,
   Popover,
   Checkbox,
 } from 'antd'
@@ -22,25 +20,50 @@ import {
   BulbOutlined,
   BulbFilled,
   PlusOutlined,
-  SearchOutlined,
-  DeleteOutlined,
   FolderOutlined,
   FolderOpenOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../components/llm/LLMSelector'
-import { ConversationSidebar, MessageBubble, ChatInput, MultiChatPanel } from '../components/workbench'
+import EmployeeSelector from '../components/workbench/EmployeeSelector'
+import MessageList from '../components/workbench/MessageList'
+import { ConversationSidebar, ChatInput, MultiChatPanel } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import type { Employee } from '../types'
-import { formatMessageTime, shouldShowTimeSeparator } from '../utils/format'
 
 const { Text, Paragraph } = Typography
 
-const AVATAR_COLORS = [
-  '#1677ff', '#52c41a', '#fa8c16', '#722ed1',
-  '#eb2f96', '#13c2c2', '#faad14', '#f5222d',
-]
+const LAST_USED_KEY = 'employeeWorkbench:lastUsedAt'
+
+function getLastUsedMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(LAST_USED_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function updateEmployeeLastUsed(employeeId: string): void {
+  try {
+    const map = getLastUsedMap()
+    map[employeeId] = Date.now()
+    localStorage.setItem(LAST_USED_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
+function sortEmployeesByLastUsed(employees: Employee[]): Employee[] {
+  const lastUsedMap = getLastUsedMap()
+  return [...employees].sort((a, b) => {
+    const aTime = lastUsedMap[a.id] || 0
+    const bTime = lastUsedMap[b.id] || 0
+    if (bTime !== aTime) return bTime - aTime
+    return (b.updated_at || 0) - (a.updated_at || 0)
+  })
+}
 
 const EmployeeWorkbench: React.FC = () => {
   const { message, modal } = App.useApp()
@@ -51,72 +74,48 @@ const EmployeeWorkbench: React.FC = () => {
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeeListLoaded, setEmployeeListLoaded] = useState(false)
-  const [employeeSearchText, setEmployeeSearchText] = useState('')
   const [employeeSelectorOpen, setEmployeeSelectorOpen] = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
-  const [allKBs, setAllKBs] = useState<any[]>([])
-
-  // 消息列表窗口化：长对话只渲染最后 N 条，避免一次性 mount 数百个 MessageBubble
-  // + ReactMarkdown + CodeBlock 导致切换对话卡顿
-  const INITIAL_VISIBLE_COUNT = 30
-  const VISIBLE_INCREMENT = 30
-  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
-  const prevScrollHeightRef = useRef(0)
-  const lastConvIdRef = useRef<string | null>(null)
+  const [allCollections, setAllCollections] = useState<any[]>([])
 
   useEffect(() => {
     loadEmployees()
-    loadAllKBs()
+    loadAllCollections()
   }, [])
-
-  useEffect(() => {
-    if (!employeeSelectorOpen) {
-      setContextMenu(null)
-      setEmployeeSearchText('')
-    }
-  }, [employeeSelectorOpen])
 
   const loadEmployees = async () => {
     try {
       const result = await window.electronAPI.employee.list()
-      setEmployees(result)
+      const sorted = sortEmployeesByLastUsed(result)
+      setEmployees(sorted)
       setEmployeeListLoaded(true)
     } catch {
       message.error(t('digitalEmployees.loadEmployeesFailed'))
     }
   }
 
-  const loadAllKBs = async () => {
+  const loadAllCollections = async () => {
     try {
-      const result = await window.electronAPI.kb.list()
-      setAllKBs(result)
+      const result = await window.electronAPI.kms.listCollections()
+      setAllCollections(result || [])
     } catch {}
   }
 
   const isEmptyRoute = routeId === '_empty'
   const id = isEmptyRoute ? undefined : routeId
 
-  const filteredEmployees = useMemo(() => {
-    if (!employeeSearchText.trim()) return employees
-    const search = employeeSearchText.toLowerCase()
-    return employees.filter(emp => emp.name.toLowerCase().includes(search))
-  }, [employees, employeeSearchText])
-
   useEffect(() => {
     if (id) {
       localStorage.setItem('employeeWorkbench:lastEmployeeId', id)
+      updateEmployeeLastUsed(id)
+      setEmployees(prev => sortEmployeesByLastUsed(prev))
     }
   }, [id])
 
   const handleDeleteEmployee = useCallback(async (emp: Employee) => {
     let deleteWorkspace = false
     const workspacePath = emp.workspace_path
-
-    const handleOpenExplorer = (path: string) => {
-      window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
-    }
 
     modal.confirm({
       title: t('employeeSettings.confirmDeleteEmployee'),
@@ -137,17 +136,15 @@ const EmployeeWorkbench: React.FC = () => {
             }}>
               <FolderOutlined style={{ color: token.colorPrimary, flexShrink: 0 }} />
               <Tooltip title={workspacePath}>
-                <Text
-                  style={{
-                    fontSize: 13,
-                    color: token.colorTextSecondary,
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
+                <Text style={{
+                  fontSize: 13,
+                  color: token.colorTextSecondary,
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
                   {t('employeeSettings.workspacePath')}: {workspacePath}
                 </Text>
               </Tooltip>
@@ -155,7 +152,7 @@ const EmployeeWorkbench: React.FC = () => {
                 type="link"
                 size="small"
                 icon={<FolderOpenOutlined />}
-                onClick={() => handleOpenExplorer(workspacePath)}
+                onClick={() => window.electronAPI.workspace.openInExplorer({ path: workspacePath }).catch(() => {})}
                 style={{ flexShrink: 0, padding: 0 }}
               />
             </div>
@@ -207,8 +204,8 @@ const EmployeeWorkbench: React.FC = () => {
     handleLlmChange,
     enableThinking,
     setEnableThinking,
-    selectedKbIds,
-    setSelectedKbIds,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     showSidePanel,
@@ -249,157 +246,136 @@ const EmployeeWorkbench: React.FC = () => {
     generateConversationTitle,
   } = chatHook
 
-  // 切换对话时重置可见窗口、强制滚到底部，让用户看到最新消息
-  useLayoutEffect(() => {
-    if (activeConversationId !== lastConvIdRef.current) {
-      lastConvIdRef.current = activeConversationId
-      setVisibleCount(INITIAL_VISIBLE_COUNT)
-      prevScrollHeightRef.current = 0
-      // 下一帧再滚到底部，确保新内容已完成布局
-      requestAnimationFrame(() => {
-        if (chatContainerRef.current) {
-          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
-        }
-      })
-    }
-  }, [activeConversationId])
-
-  // 加载更多历史消息后保持滚动位置（不出现跳动）
-  useEffect(() => {
-    if (prevScrollHeightRef.current > 0 && chatContainerRef.current) {
-      const newScrollHeight = chatContainerRef.current.scrollHeight
-      const scrollDiff = newScrollHeight - prevScrollHeightRef.current
-      chatContainerRef.current.scrollTop += scrollDiff
-      prevScrollHeightRef.current = 0
-    }
-  }, [visibleCount])
-
-  // 计算当前可见的消息窗口：始终展示最后 visibleCount 条
-  const visibleStartIndex = useMemo(
-    () => Math.max(0, messages.length - visibleCount),
-    [messages.length, visibleCount]
-  )
-  const visibleMessages = useMemo(
-    () => messages.slice(visibleStartIndex),
-    [messages, visibleStartIndex]
-  )
-
-  const handleLoadMoreOlder = useCallback(() => {
-    if (!chatContainerRef.current) return
-    // 记录加载前的滚动高度，加载完成后补偿回去，避免跳动
-    prevScrollHeightRef.current = chatContainerRef.current.scrollHeight
-    setVisibleCount(prev => Math.min(prev + VISIBLE_INCREMENT, messages.length))
-  }, [messages.length])
-
   const workbenchStyle = useMemo(() => `
-        .cursor-blink { animation: blink 1s infinite; }
-        @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
-        .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
-        .workbench-input:focus { outline: none; }
-        .workbench-input {
-          background: transparent !important;
-        }
-        .workbench-input:hover, .workbench-input:focus {
-          background: transparent !important;
-        }
-        .ant-input-textarea-focused {
-          background: transparent !important;
-        }
-        .markdown-content h1, .markdown-content h2, .markdown-content h3,
-        .markdown-content h4, .markdown-content h5, .markdown-content h6 {
-          margin-top: 16px;
-          margin-bottom: 8px;
-          font-weight: 600;
-          line-height: 1.4;
-        }
-        .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
-        .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
-        .markdown-content h3 { font-size: 1.1em; }
-        .markdown-content p { margin: 0 0 8px; }
-        .markdown-content p:last-child { margin-bottom: 0; }
-        .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
-        .markdown-content li { margin-bottom: 4px; }
-        .markdown-content code {
-          background: ${token.colorBgTextHover};
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-size: 0.9em;
-          font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-        }
-        .markdown-content pre {
-          background: ${token.colorBgTextHover};
-          padding: 12px 16px;
-          border-radius: 8px;
-          overflow-x: auto;
-          margin: 8px 0;
-          border: 1px solid ${token.colorBorderSecondary};
-        }
-        .markdown-content pre code {
-          background: transparent;
-          padding: 0;
-          border-radius: 0;
-          font-size: 0.85em;
-          line-height: 1.6;
-        }
-        .markdown-content blockquote {
-          border-left: 3px solid ${token.colorPrimary};
-          margin: 8px 0;
-          padding: 4px 12px;
-          color: ${token.colorTextSecondary};
-          background: ${token.colorPrimaryBg};
-          border-radius: 0 6px 6px 0;
-        }
-        .markdown-content table {
-          border-collapse: collapse;
-          width: 100%;
-          margin: 8px 0;
-        }
-        .markdown-content th, .markdown-content td {
-          border: 1px solid ${token.colorBorderSecondary};
-          padding: 6px 12px;
-          text-align: left;
-        }
-        .markdown-content th {
-          background: ${token.colorBgTextHover};
-          font-weight: 600;
-        }
-        .markdown-content a {
-          color: ${token.colorPrimary};
-          text-decoration: none;
-        }
-        .markdown-content a:hover {
-          text-decoration: underline;
-        }
-        .markdown-content hr {
-          border: none;
-          border-top: 1px solid ${token.colorBorderSecondary};
-          margin: 16px 0;
-        }
-        .markdown-content img {
-          max-width: 100%;
-          border-radius: 6px;
-        }
-      `, [token])
+    .cursor-blink { animation: blink 1s infinite; }
+    @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+    .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
+    .workbench-input:focus { outline: none; }
+    .workbench-input {
+      background: transparent !important;
+    }
+    .workbench-input:hover, .workbench-input:focus {
+      background: transparent !important;
+    }
+    .ant-input-textarea-focused {
+      background: transparent !important;
+    }
+    .markdown-content h1, .markdown-content h2, .markdown-content h3,
+    .markdown-content h4, .markdown-content h5, .markdown-content h6 {
+      margin-top: 16px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+    .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
+    .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
+    .markdown-content h3 { font-size: 1.1em; }
+    .markdown-content p { margin: 0 0 8px; }
+    .markdown-content p:last-child { margin-bottom: 0; }
+    .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
+    .markdown-content li { margin-bottom: 4px; }
+    .markdown-content code {
+      background: ${token.colorBgTextHover};
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    .markdown-content pre {
+      background: ${token.colorBgTextHover};
+      padding: 12px 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 8px 0;
+      border: 1px solid ${token.colorBorderSecondary};
+    }
+    .markdown-content pre code {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+      font-size: 0.85em;
+      line-height: 1.6;
+    }
+    .markdown-content blockquote {
+      border-left: 3px solid ${token.colorPrimary};
+      margin: 8px 0;
+      padding: 4px 12px;
+      color: ${token.colorTextSecondary};
+      background: ${token.colorPrimaryBg};
+      border-radius: 0 6px 6px 0;
+    }
+    .markdown-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 8px 0;
+    }
+    .markdown-content th, .markdown-content td {
+      border: 1px solid ${token.colorBorderSecondary};
+      padding: 6px 12px;
+      text-align: left;
+    }
+    .markdown-content th {
+      background: ${token.colorBgTextHover};
+      font-weight: 600;
+    }
+    .markdown-content a {
+      color: ${token.colorPrimary};
+      text-decoration: none;
+    }
+    .markdown-content a:hover {
+      text-decoration: underline;
+    }
+    .markdown-content hr {
+      border: none;
+      border-top: 1px solid ${token.colorBorderSecondary};
+      margin: 16px 0;
+    }
+    .markdown-content img {
+      max-width: 100%;
+      border-radius: 6px;
+    }
+  `, [token])
 
-  const handleEmployeeChange = (newEmployeeId: string) => {
+  const handleEmployeeSelect = useCallback((newEmployeeId: string) => {
     if (newEmployeeId === 'create-new') {
       navigate('/wizard')
       return
     }
+    updateEmployeeLastUsed(newEmployeeId)
     navigate(`/employee/${newEmployeeId}`)
-  }
+  }, [navigate])
 
   useEffect(() => {
-    // 仅当 URL 中的 id 明确不在员工列表时才回退到第一个员工
-    // 避免 employee.get(id) 异步加载期间因 employee 暂时为 null 而误触发跳转，
-    // 导致用户最后手动选定的智能体丢失
     if (id && employees.length > 0 && !employees.some(e => e.id === id)) {
       const firstEmployee = employees[0]
       if (firstEmployee) {
         navigate(`/employee/${firstEmployee.id}`, { replace: true })
       }
     }
-  }, [id, employees])
+  }, [id, employees, navigate])
+
+  const handleEditTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditingTitle(e.target.value)
+  }, [setEditingTitle])
+
+  const handleGenerateTitle = useCallback(async (conv: any) => {
+    try {
+      const fullConv = await window.electronAPI.conversation.get(conv.id)
+      if (fullConv?.messages_json) {
+        const msgs = JSON.parse(fullConv.messages_json)
+        const firstUserMsg = msgs.find((m: any) => m.role === 'user')
+        if (firstUserMsg?.content) {
+          generateConversationTitle(conv.id, firstUserMsg.content)
+        }
+      }
+    } catch {}
+  }, [generateConversationTitle])
+
+  const handleSendWithReset = useCallback((content: string, images: string[], models: ModelSelection[]) => {
+    setAttachedImages([])
+    setSelectedModels([])
+    handleSend(content, images, models)
+  }, [handleSend])
 
   if (!employeeListLoaded) {
     return (
@@ -429,133 +405,6 @@ const EmployeeWorkbench: React.FC = () => {
     )
   }
 
-  const employeeSelectorContent = (
-    <div style={{ width: 260 }}>
-      <Input
-        placeholder={t('workbench.searchEmployee')}
-        prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
-        value={employeeSearchText}
-        onChange={(e) => setEmployeeSearchText(e.target.value)}
-        allowClear
-        variant="borderless"
-        style={{ marginBottom: 4, padding: '4px 8px' }}
-      />
-      {filteredEmployees.length === 0 && (
-        <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 13 }}>
-          {employeeSearchText ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
-        </div>
-      )}
-      <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-        {filteredEmployees.map((emp, idx) => {
-          const color = AVATAR_COLORS[idx % AVATAR_COLORS.length]
-          const isActive = emp.id === id
-          return (
-            <div
-              key={emp.id}
-              onClick={() => {
-                setEmployeeSelectorOpen(false)
-                handleEmployeeChange(emp.id)
-              }}
-              onContextMenu={(e) => {
-                if (isActive) return
-                e.preventDefault()
-                setContextMenu({ emp, x: e.clientX, y: e.clientY })
-              }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 8px', borderRadius: 6,
-                cursor: 'pointer',
-                background: isActive ? token.colorPrimaryBg : 'transparent',
-                transition: 'background 0.2s',
-              }}
-              onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = token.colorBgTextHover
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) e.currentTarget.style.background = 'transparent'
-              }}
-            >
-              <div style={{
-                width: 28, height: 28, borderRadius: 6,
-                background: `${color}18`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
-              }}>
-                <RobotOutlined style={{ fontSize: 14, color }} />
-              </div>
-              <span style={{
-                flex: 1,
-                fontWeight: isActive ? 600 : 400,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                {emp.name}
-              </span>
-              {isActive && (
-                <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
-                  Active
-                </Tag>
-              )}
-            </div>
-          )
-        })}
-      </div>
-      <div style={{ borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 4, marginTop: 4 }}>
-        <Button
-          type="text"
-          icon={<PlusOutlined />}
-          style={{ width: '100%', justifyContent: 'flex-start', color: token.colorPrimary }}
-          onClick={() => {
-            setEmployeeSelectorOpen(false)
-            handleEmployeeChange('create-new')
-          }}
-        >
-          {t('workbench.createEmployee')}
-        </Button>
-      </div>
-
-      {contextMenu && (
-        <>
-          <div
-            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1050 }}
-            onClick={() => setContextMenu(null)}
-            onContextMenu={(e) => { e.preventDefault(); setContextMenu(null) }}
-          />
-          <div style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            zIndex: 1051,
-            background: token.colorBgElevated,
-            borderRadius: 8,
-            boxShadow: token.boxShadowSecondary,
-            padding: 4,
-            minWidth: 140,
-            border: `1px solid ${token.colorBorderSecondary}`,
-          }}>
-            <div
-              style={{
-                padding: '6px 12px', borderRadius: 6, cursor: 'pointer',
-                color: token.colorError, display: 'flex', alignItems: 'center', gap: 8,
-                fontSize: 13,
-              }}
-              onClick={() => {
-                setContextMenu(null)
-                handleDeleteEmployee(contextMenu.emp)
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = token.colorErrorBg }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-            >
-              <DeleteOutlined />
-              <span>{t('workbench.deleteEmployee')}</span>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
-
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
       <div style={{
@@ -576,7 +425,17 @@ const EmployeeWorkbench: React.FC = () => {
             />
           </Tooltip>
           <Popover
-            content={employeeSelectorContent}
+            content={
+              <EmployeeSelector
+                open={employeeSelectorOpen}
+                onOpenChange={setEmployeeSelectorOpen}
+                employees={employees}
+                activeEmployeeId={id}
+                onSelect={handleEmployeeSelect}
+                onCreateNew={() => handleEmployeeSelect('create-new')}
+                onDeleteEmployee={handleDeleteEmployee}
+              />
+            }
             trigger="click"
             open={employeeSelectorOpen}
             onOpenChange={setEmployeeSelectorOpen}
@@ -630,7 +489,7 @@ const EmployeeWorkbench: React.FC = () => {
             onStartEdit={startEditTitle}
             onSaveEdit={saveEditTitle}
             onCancelEdit={cancelEditTitle}
-            onEditTitleChange={(e) => setEditingTitle(e.target.value)}
+            onEditTitleChange={handleEditTitleChange}
             onEditKeyDown={handleEditKeyDown}
             onDelete={deleteConversation}
             onDeleteSelected={deleteSelectedConversations}
@@ -638,18 +497,7 @@ const EmployeeWorkbench: React.FC = () => {
             onLoadMore={loadMoreConversations}
             onListScroll={handleConversationListScroll}
             isConversationStreaming={isConversationStreaming}
-            onGenerateTitle={async (conv) => {
-              try {
-                const fullConv = await window.electronAPI.conversation.get(conv.id)
-                if (fullConv?.messages_json) {
-                  const msgs = JSON.parse(fullConv.messages_json)
-                  const firstUserMsg = msgs.find((m: any) => m.role === 'user')
-                  if (firstUserMsg?.content) {
-                    generateConversationTitle(conv.id, firstUserMsg.content)
-                  }
-                }
-              } catch {}
-            }}
+            onGenerateTitle={handleGenerateTitle}
             onExport={handleExportConversation}
           />
         )}
@@ -665,102 +513,38 @@ const EmployeeWorkbench: React.FC = () => {
               getToolDisplayName={getToolDisplayName}
             />
           ) : (
-          <div ref={chatContainerRef} onScroll={handleScroll}
-            style={{
-              flex: 1,
-              overflow: 'auto',
-              padding: '24px 4%',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 20,
-            }}
-          >
-            {loadingConversationId && loadingConversationId === activeConversationId ? (
-              <div
-                key={`loading-${loadingConversationId}`}
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 12,
-                  minHeight: 240,
-                }}
-              >
-                <Spin size="large" />
-                <Text type="secondary" style={{ fontSize: 13 }}>
-                  {t('workbench.loadingMessages')}
-                </Text>
-              </div>
-            ) : (
-              <>
-                {messages.length === 0 && activeConversationId && (
-                  <div style={{ textAlign: 'center', paddingTop: '20vh' }}>
-                    <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary, marginBottom: 16 }} />
-                    <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.startConvHint')}</Paragraph>
-                  </div>
-                )}
-
-                {visibleStartIndex > 0 && (
-                  <div style={{ textAlign: 'center', padding: '4px 0 8px' }}>
-                    <Button
-                      type="link"
-                      size="small"
-                      onClick={handleLoadMoreOlder}
-                      style={{ fontSize: 13, color: token.colorTextSecondary }}
-                    >
-                      {t('workbench.loadOlderMessages', { count: visibleStartIndex })}
-                    </Button>
-                  </div>
-                )}
-
-                {visibleMessages.map((msg, visibleIndex) => {
-                  const fullIndex = visibleStartIndex + visibleIndex
-                  const prevMsg = fullIndex > 0 ? messages[fullIndex - 1] : null
-                  const showTime = fullIndex === 0 || (prevMsg && shouldShowTimeSeparator(prevMsg.timestamp, msg.timestamp))
-
-                  return (
-                    <Fragment key={msg.id}>
-                      {showTime && (
-                        <div style={{
-                          textAlign: 'center',
-                          padding: '4px 0',
-                          color: token.colorTextQuaternary,
-                          fontSize: 12,
-                          userSelect: 'none',
-                        }}>
-                          {formatMessageTime(msg.timestamp, t)}
-                        </div>
-                      )}
-                      <MessageBubble
-                        msg={msg}
-                        onCopy={handleCopy}
-                        onDeleteMessage={handleDeleteMessage}
-                        onRegenerate={handleRegenerate}
-                        onSwitchModelRegenerate={handleSwitchModelRegenerate}
-                        onEditAndResubmit={handleEditAndResubmit}
-                        onToggleSegment={handleToggleSegment}
-                        onSwitchBranch={handleSwitchBranch}
-                        onOpenComparison={handleOpenComparison}
-                        getToolDisplayName={getToolDisplayName}
-                        providers={providers}
-                      />
-                    </Fragment>
-                  )
-                })}
-                <div ref={messagesEndRef} />
-              </>
-            )}
-          </div>
+            <div ref={chatContainerRef} onScroll={handleScroll}
+              style={{
+                flex: 1,
+                overflow: 'auto',
+                padding: '24px 4%',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 20,
+              }}
+            >
+              <MessageList
+                messages={messages}
+                loadingConversationId={loadingConversationId}
+                activeConversationId={activeConversationId}
+                chatContainerRef={chatContainerRef as React.RefObject<HTMLDivElement | null>}
+                onCopy={handleCopy}
+                onDeleteMessage={handleDeleteMessage}
+                onRegenerate={handleRegenerate}
+                onSwitchModelRegenerate={handleSwitchModelRegenerate}
+                onEditAndResubmit={handleEditAndResubmit}
+                onToggleSegment={handleToggleSegment}
+                onSwitchBranch={handleSwitchBranch}
+                onOpenComparison={handleOpenComparison}
+                getToolDisplayName={getToolDisplayName}
+                providers={providers}
+              />
+              <div ref={messagesEndRef} />
+            </div>
           )}
 
           <ChatInput
-            onSend={(content, images, models) => {
-              setAttachedImages([])
-              setSelectedModels([])
-              handleSend(content, images, models)
-            }}
+            onSend={handleSendWithReset}
             onStop={handleStop}
             onCommand={handleCommand}
             isStreaming={isStreaming}
@@ -770,9 +554,9 @@ const EmployeeWorkbench: React.FC = () => {
             onImagesChange={setAttachedImages}
             selectedModels={selectedModels}
             onModelsChange={setSelectedModels}
-            selectedKbIds={selectedKbIds}
-            onSelectedKbIdsChange={setSelectedKbIds}
-            allKBs={allKBs}
+            selectedCollectionIds={selectedCollectionIds}
+            onSelectedCollectionIdsChange={setSelectedCollectionIds}
+            allCollections={allCollections}
             minimalMode={minimalMode}
             onMinimalModeChange={handleToggleMinimalMode}
             canToggleMinimalMode={messages.length === 0}

@@ -1,7 +1,7 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Row, Col, Statistic } from 'antd'
-import { BarChartOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { MessageOutlined, CommentOutlined } from '@ant-design/icons'
 import type { Employee } from '../../types'
 
 interface ProfileSectionProps {
@@ -11,24 +11,41 @@ interface ProfileSectionProps {
 const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
   const { t } = useTranslation()
 
+  const [conversationCount, setConversationCount] = useState(0)
+  const [totalMessages, setTotalMessages] = useState(0)
+
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const conversations = await window.electronAPI.conversation.list({ employee_id: employee.id })
+        setConversationCount(conversations?.length || 0)
+        const total = (conversations || []).reduce((sum: number, conv: any) => sum + (conv.message_count || 0), 0)
+        setTotalMessages(total)
+      } catch {
+        // ignore
+      }
+    }
+    loadStats()
+  }, [employee.id])
+
   return (
     <>
       <Row gutter={16}>
         <Col span={8}>
           <Card>
             <Statistic
-              title={t('employeeSettings.totalTasks')}
-              value={employee.total_tasks}
-              prefix={<BarChartOutlined />}
+              title={t('employeeSettings.totalConversations')}
+              value={conversationCount}
+              prefix={<CommentOutlined />}
             />
           </Card>
         </Col>
         <Col span={8}>
           <Card>
             <Statistic
-              title={t('employeeSettings.userApprovals')}
-              value={employee.total_approvals}
-              prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+              title={t('employeeSettings.totalMessages')}
+              value={totalMessages}
+              prefix={<MessageOutlined />}
             />
           </Card>
         </Col>
@@ -42,4 +59,4 @@ const ProfileSection: React.FC<ProfileSectionProps> = ({ employee }) => {
   )
 }
 
-export default ProfileSection
+export default React.memo(ProfileSection)

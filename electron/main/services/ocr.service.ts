@@ -159,7 +159,9 @@ class OCRService {
     } finally {
       try {
         await fs.promises.unlink(tempPath)
-      } catch {}
+      } catch (error) {
+        logger.debug('Failed to delete OCR temp file', tempPath, error)
+      }
     }
   }
 

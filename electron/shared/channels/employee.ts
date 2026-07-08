@@ -57,6 +57,11 @@ export interface EmployeeUpdateParams {
   memory_enabled?: boolean
 }
 
+export interface EmployeeDeleteParams {
+  id: string
+  delete_workspace?: boolean
+}
+
 export interface ConversationListParams {
   employee_id: string
 }
@@ -69,7 +74,7 @@ export interface ConversationCreateParams {
 }
 
 export interface EmployeeProfileAnalyzeParams {
-  kb_ids: string[]
+  collection_ids: string[]
   provider_id?: string
   model_id?: string
   additional_context?: string

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface IndexDir {
   id: string
@@ -7,6 +8,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }
@@ -38,6 +40,16 @@ interface IndexProgress {
   current: number
   total: number
   message: string
+  /** 当前处理的文件ID（文件级阶段时填充） */
+  fileId?: string
+  /** 当前处理的文件名 */
+  fileName?: string
+  /** 当前处理的合集ID（合集级阶段时填充） */
+  collectionId?: string
+  /** 当前处理的合集名称 */
+  collectionName?: string
+  /** 阶段开始时间（秒） */
+  startedAt?: number
 }
 
 interface KMSStats {
@@ -80,6 +92,7 @@ export interface SearchTraceStep {
 
 export interface SearchFilters {
   dirIds?: string[]
+  collectionIds?: string[]
   fileExtensions?: string[]
   timeRangeStart?: number
   timeRangeEnd?: number
@@ -89,6 +102,7 @@ export interface SearchFilters {
 export interface KMSModelConfig {
   provider_id: string
   model_id: string
+  enable_thinking?: boolean
 }
 
 /** KMS 自动索引配置 */
@@ -111,23 +125,13 @@ export interface KMSAutoIndexStatus {
 export interface KMSSettings {
   model: KMSModelConfig | null
   embeddingModel: KMSModelConfig | null
+  summaryModel: KMSModelConfig | null
   searchParams: {
     maxRounds?: number
     topK?: number
+    resultLimit?: number
   }
   autoIndex: KMSAutoIndexConfig
-}
-
-/** 目录摘要 */
-export interface DirSummary {
-  dir_id: string
-  dir_path: string
-  display_name?: string
-  enabled?: number
-  summary: string
-  file_count: number
-  keywords_json: string
-  updated_at: number
 }
 
 /** 文件摘要项 */
@@ -147,6 +151,8 @@ export interface FileSummaryItem {
   keywords_json: string
   main_topics_json: string
   dir_name?: string
+  dir_path?: string
+  has_embedding?: number
 }
 
 export interface FileSummariesResult {
@@ -154,7 +160,7 @@ export interface FileSummariesResult {
   total: number
 }
 
-/** 搜索历史项 */
+/** 搜索历史项（不再保存结果数据，仅用于搜索框下拉提示） */
 export interface SearchHistoryItem {
   id: string
   query: string
@@ -163,21 +169,13 @@ export interface SearchHistoryItem {
   created_at: number
 }
 
-/** 搜索历史详情 */
-export interface SearchHistoryDetail {
-  id: string
-  query: string
-  search_mode: string
-  result_count: number
-  result_data: any
-  filters_json: any
-  created_at: number
-}
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai' | 'file'
 
 export function useKMS() {
+  const { t } = useTranslation()
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchMode, setSearchMode] = useState<'keyword' | 'semantic' | 'hybrid' | 'ai'>('keyword')
+  const [searchMode, setSearchMode] = useState<SearchMode>('hybrid')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
   const [liveSteps, setLiveSteps] = useState<SearchTraceStep[]>([])
@@ -188,24 +186,22 @@ export function useKMS() {
   const [fileContent, setFileContent] = useState<{ fileId: string; content: string; fileName: string } | null>(null)
   const [fileSummary, setFileSummary] = useState<any>(null)
   const [previewFile, setPreviewFile] = useState<SearchResult | null>(null)
-  // KMS 设置
   const [kmsSettings, setKmsSettings] = useState<KMSSettings>({
     model: null,
     embeddingModel: null,
-    searchParams: { maxRounds: 3, topK: 10 },
+    summaryModel: null,
+    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100 },
     autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
-  // 自动索引状态
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
-  // 知识沉淀
-  const [dirSummaries, setDirSummaries] = useState<DirSummary[]>([])
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
   const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
-  // 搜索历史
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
   const progressUnsubscribe = useRef<(() => void) | null>(null)
+  // 用 ref 追踪最新设置，避免 search 回调因 kmsSettings 变化而频繁重建
+  const kmsSettingsRef = useRef(kmsSettings)
+  kmsSettingsRef.current = kmsSettings
 
-  // 加载目录列表
   const loadDirs = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.listDirs()
@@ -215,7 +211,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 加载统计
   const loadStats = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.getStats()
@@ -225,7 +220,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 添加目录
   const addDir = useCallback(async (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => {
     try {
       await window.electronAPI.kms.addDir({ dirPath, displayName, recursive, fileExtensions })
@@ -237,7 +231,6 @@ export function useKMS() {
     }
   }, [loadDirs, loadStats])
 
-  // 更新目录
   const updateDir = useCallback(async (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => {
     try {
       await window.electronAPI.kms.updateDir({ id, ...updates })
@@ -247,7 +240,6 @@ export function useKMS() {
     }
   }, [loadDirs])
 
-  // 删除目录
   const deleteDir = useCallback(async (id: string) => {
     try {
       await window.electronAPI.kms.deleteDir(id)
@@ -258,8 +250,7 @@ export function useKMS() {
     }
   }, [loadDirs, loadStats])
 
-  // 搜索
-  const search = useCallback(async (query: string, mode?: 'keyword' | 'semantic' | 'hybrid' | 'ai', filters?: SearchFilters) => {
+  const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
       setSearchResults([])
       setAgentResult(null)
@@ -269,7 +260,6 @@ export function useKMS() {
     setIsSearching(true)
     setLiveSteps([])
 
-    // 订阅 AI 检索实时进度
     let unsubscribe: (() => void) | null = null
     if (mode === 'ai') {
       unsubscribe = window.electronAPI.kms.onAgentSearchProgress((step: SearchTraceStep) => {
@@ -279,12 +269,13 @@ export function useKMS() {
 
     try {
       if (mode === 'ai') {
-        // AI 智能检索：通过子智能体自主规划+提纯
+        const aiTopK = kmsSettingsRef.current.searchParams?.topK || 10
         const result = await window.electronAPI.kms.agentSearch({
           query,
-          topK: 10,
+          topK: aiTopK,
           maxRounds: 3,
           dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
           fileExtensions: filters?.fileExtensions,
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
@@ -292,21 +283,18 @@ export function useKMS() {
         if (result && !result.error) {
           setAgentResult(result)
           setSearchResults([])
-          // 记录AI搜索历史（含完整结果数据）
           window.electronAPI.kms.recordSearchHistory({
             query,
             searchMode: 'ai',
             resultCount: result.sources?.length || 0,
-            resultData: result,
             filters,
           }).catch(() => {})
         } else {
-          // 显示错误信息作为结论
           const errorMsg = result?.error || 'Unknown error'
           setAgentResult({
             queryType: 'locate',
-            queryTypeLabel: '定位查找',
-            conclusion: `AI 检索失败：${errorMsg}${errorMsg.includes('LLM provider') ? '\n\n请在设置中配置 LLM 提供商后再使用 AI 搜索。' : ''}`,
+            queryTypeLabel: t('kms.queryTypeLocate'),
+            conclusion: `${t('kms.aiSearchFailed', { error: errorMsg })}${errorMsg.includes('LLM provider') ? `\n\n${t('kms.aiSearchLLMHint')}` : ''}`,
             sources: [],
             searchRounds: 0,
             searchTrace: [],
@@ -314,20 +302,38 @@ export function useKMS() {
           })
           setSearchResults([])
         }
+      } else if (mode === 'file') {
+        const results = await window.electronAPI.kms.searchFiles({
+          query,
+          dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
+          fileExtensions: filters?.fileExtensions,
+          timeRangeStart: filters?.timeRangeStart,
+          timeRangeEnd: filters?.timeRangeEnd,
+        })
+        setAgentResult(null)
+        setSearchResults(results || [])
+        window.electronAPI.kms.recordSearchHistory({
+          query,
+          searchMode: 'file',
+          resultCount: results?.length || 0,
+          filters,
+        }).catch(() => {})
       } else {
         const useSemantic = mode === 'semantic' || mode === 'hybrid'
+        // 手动搜索限制返回数量，兼顾搜索覆盖面和渲染性能
         const results = await window.electronAPI.kms.search({
           query,
           useSemantic,
-          topK: 20,
+          topK: kmsSettingsRef.current.searchParams?.resultLimit ?? 100,
           fileExtensions: filters?.fileExtensions,
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
           dirIds: filters?.dirIds,
+          collectionIds: filters?.collectionIds,
         })
         setAgentResult(null)
         setSearchResults(results || [])
-        // 记录关键词/语义/混合搜索历史
         window.electronAPI.kms.recordSearchHistory({
           query,
           searchMode: mode || 'keyword',
@@ -345,7 +351,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 获取文件内容
   const getFileContent = useCallback(async (fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }) => {
     try {
       const content = await window.electronAPI.kms.getFileContent({ fileId, ...options })
@@ -357,7 +362,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 获取文件完整内容
   const getFileFullContent = useCallback(async (fileId: string) => {
     try {
       return await window.electronAPI.kms.getFileFullContent(fileId)
@@ -367,7 +371,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 获取文件摘要
   const getFileSummary = useCallback(async (fileId: string) => {
     try {
       const summary = await window.electronAPI.kms.getFileSummary(fileId)
@@ -379,7 +382,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 打开文件（系统默认应用）
   const openFile = useCallback(async (filePath: string) => {
     try {
       await window.electronAPI.kms.openFile(filePath)
@@ -388,7 +390,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 打开文件所在目录
   const openFileDir = useCallback(async (filePath: string) => {
     try {
       await window.electronAPI.kms.openFileDir(filePath)
@@ -397,35 +398,28 @@ export function useKMS() {
     }
   }, [])
 
-  // 构建索引（fire-and-forget，通过进度事件更新状态）
-  const buildIndex = useCallback(async (providerId?: string) => {
+  const buildIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.buildIndex(providerId)
+    await window.electronAPI.kms.buildIndex(providerId, withEmbedding, resetHotData)
   }, [])
 
-  // 增量索引
-  const incrementalIndex = useCallback(async (providerId?: string) => {
+  const incrementalIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.incrementalIndex(providerId)
+    await window.electronAPI.kms.incrementalIndex(providerId, withEmbedding)
   }, [])
 
-  // 重建目录索引
-  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string) => {
+  const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId)
+    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData)
   }, [])
 
-  // 取消索引
   const cancelIndex = useCallback(async () => {
     await window.electronAPI.kms.cancelIndex()
   }, [])
 
-  // ==================== KMS 设置 ====================
-
-  // 加载 KMS 设置
   const loadKmsSettings = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.getSettings()
@@ -433,9 +427,11 @@ export function useKMS() {
         setKmsSettings({
           model: result.model || null,
           embeddingModel: result.embeddingModel || null,
+          summaryModel: result.summaryModel || null,
           searchParams: {
             maxRounds: result.searchParams?.maxRounds ?? 3,
             topK: result.searchParams?.topK ?? 10,
+            resultLimit: result.searchParams?.resultLimit ?? 100,
           },
           autoIndex: {
             enabled: result.autoIndex?.enabled ?? false,
@@ -449,16 +445,19 @@ export function useKMS() {
     }
   }, [])
 
-  // 保存 KMS 设置
   const saveKmsSettings = useCallback(async (params: {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number }
+    summaryModel?: KMSModelConfig | null
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {
-      await window.electronAPI.kms.setSettings(params)
-      // 重新加载设置
+      const result = await window.electronAPI.kms.setSettings(params)
+      if (result?.error) {
+        console.error('Failed to save KMS settings:', result.error)
+        return false
+      }
       await loadKmsSettings()
       return true
     } catch (err) {
@@ -467,7 +466,6 @@ export function useKMS() {
     }
   }, [loadKmsSettings])
 
-  // 加载自动索引状态
   const loadAutoIndexStatus = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.getAutoIndexStatus()
@@ -477,7 +475,6 @@ export function useKMS() {
     }
   }, [])
 
-  // 手动触发一次自动索引检查
   const runAutoIndexCheckNow = useCallback(async () => {
     try {
       await window.electronAPI.kms.runAutoIndexCheck()
@@ -486,19 +483,6 @@ export function useKMS() {
     }
   }, [])
 
-  // ==================== 知识沉淀（摘要查看） ====================
-
-  // 加载目录摘要
-  const loadDirSummaries = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.kms.getDirSummaries()
-      setDirSummaries(result || [])
-    } catch (err) {
-      console.error('Failed to load dir summaries:', err)
-    }
-  }, [])
-
-  // 加载文件摘要列表
   const loadFileSummaries = useCallback(async (params?: {
     dirId?: string
     dataTier?: 'cold' | 'hot'
@@ -522,29 +506,17 @@ export function useKMS() {
     }
   }, [])
 
-  // ==================== 搜索历史 ====================
-
-  // 加载搜索历史
   const loadSearchHistory = useCallback(async (params?: { limit?: number; searchMode?: string }) => {
     try {
       const result = await window.electronAPI.kms.getSearchHistory(params)
       setSearchHistory(result || [])
+      return result || []
     } catch (err) {
       console.error('Failed to load search history:', err)
+      return []
     }
   }, [])
 
-  // 获取搜索历史详情
-  const getSearchHistoryDetail = useCallback(async (id: string) => {
-    try {
-      return await window.electronAPI.kms.getSearchHistoryDetail(id)
-    } catch (err) {
-      console.error('Failed to load search history detail:', err)
-      return null
-    }
-  }, [])
-
-  // 清空搜索历史
   const clearSearchHistory = useCallback(async (searchMode?: string) => {
     try {
       await window.electronAPI.kms.clearSearchHistory(searchMode)
@@ -554,7 +526,6 @@ export function useKMS() {
     }
   }, [loadSearchHistory])
 
-  // 删除单条搜索历史
   const deleteSearchHistory = useCallback(async (id: string) => {
     try {
       await window.electronAPI.kms.deleteSearchHistory(id)
@@ -564,7 +535,6 @@ export function useKMS() {
     }
   }, [loadSearchHistory])
 
-  // 监听索引进度
   useEffect(() => {
     if (progressUnsubscribe.current) {
       progressUnsubscribe.current()
@@ -574,8 +544,8 @@ export function useKMS() {
       if (progress.phase === 'done' || progress.phase === 'error') {
         setIsIndexing(false)
         setTimeout(() => setIndexProgress(null), 3000)
+        loadDirs()
         loadStats()
-        // 自动索引完成后刷新状态
         loadAutoIndexStatus()
       }
     })
@@ -584,9 +554,8 @@ export function useKMS() {
         progressUnsubscribe.current()
       }
     }
-  }, [loadStats, loadAutoIndexStatus])
+  }, [loadDirs, loadStats, loadAutoIndexStatus])
 
-  // 初始加载
   useEffect(() => {
     loadDirs()
     loadStats()
@@ -610,18 +579,13 @@ export function useKMS() {
     fileContent,
     fileSummary,
     previewFile,
-    // KMS 设置
     kmsSettings,
-    // 自动索引
     autoIndexStatus,
-    // 知识沉淀
-    dirSummaries,
     fileSummaries,
     isLoadingSummaries,
-    // 搜索历史
     searchHistory,
-    setFileContent: (v: null) => setFileContent(v),
-    setFileSummary: (v: null) => setFileSummary(v),
+    setFileContent: (v: { fileId: string; content: string; fileName: string } | null) => setFileContent(v),
+    setFileSummary: (v: any) => setFileSummary(v),
     setPreviewFile: (v: SearchResult | null) => setPreviewFile(v),
     loadDirs,
     loadStats,
@@ -638,18 +602,12 @@ export function useKMS() {
     incrementalIndex,
     rebuildDirIndex,
     cancelIndex,
-    // KMS 设置
     loadKmsSettings,
     saveKmsSettings,
-    // 自动索引
     loadAutoIndexStatus,
     runAutoIndexCheckNow,
-    // 知识沉淀
-    loadDirSummaries,
     loadFileSummaries,
-    // 搜索历史
     loadSearchHistory,
-    getSearchHistoryDetail,
     clearSearchHistory,
     deleteSearchHistory,
   }

@@ -56,14 +56,21 @@ export const systemInfoTool: ToolDefinition = {
         try {
           const drives: any[] = []
           if (IS_WINDOWS) {
-            const stdout = execSync('wmic logicaldisk get DeviceID,Size,FreeSpace /format:csv', { encoding: 'utf-8', windowsHide: true })
+            // wmic 在 Windows 10 21H1+ 已废弃，改用 PowerShell 的 Get-CimInstance
+            const stdout = execSync(
+              'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Csv -NoTypeInformation"',
+              { encoding: 'utf-8', windowsHide: true }
+            )
             const lines = stdout.trim().split('\n').slice(1)
             for (const line of lines) {
               const parts = line.trim().split(',')
-              if (parts.length >= 4 && parts[1]) {
-                const size = parseInt(parts[2]) || 0
-                const free = parseInt(parts[3]) || 0
-                drives.push({ drive: parts[1], total: formatBytes(size), free: formatBytes(free), used: formatBytes(size - free) })
+              if (parts.length >= 3 && parts[0]) {
+                const driveLetter = parts[0].replace(/"/g, '')
+                const size = parseInt(parts[1]) || 0
+                const free = parseInt(parts[2]) || 0
+                if (driveLetter) {
+                  drives.push({ drive: driveLetter, total: formatBytes(size), free: formatBytes(free), used: formatBytes(size - free) })
+                }
               }
             }
           } else {

@@ -19,6 +19,9 @@ loadOfficeModules()
 
 const ALLOWED_NODE_MODULES = ['fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto']
 
+/** 沙箱中允许暴露给 LLM 生成代码的环境变量白名单（避免泄漏 API key、数据库路径等敏感信息） */
+const ALLOWED_ENV_KEYS = ['PATH', 'Path', 'TEMP', 'TMP', 'OS', 'PLATFORM', 'LANG', 'LC_ALL', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']
+
 const MAX_CONSOLE_OUTPUT = 10000
 
 function createSandboxedRequire() {
@@ -60,6 +63,26 @@ export const officeExecTool: ToolDefinition = {
 
     const sandboxedRequire = createSandboxedRequire()
 
+    // 追踪沙箱内创建的定时器，执行结束后统一清理，避免事件循环无法退出
+    const trackedTimers: NodeJS.Timeout[] = []
+    const wrapTimer = (original: typeof setTimeout | typeof setInterval) => (fn: any, ms?: number, ...args: any[]) => {
+      const t = (original as any)(fn, ms, ...args) as NodeJS.Timeout
+      trackedTimers.push(t)
+      return t
+    }
+    const wrapImmediate = (original: typeof setImmediate) => (fn: any, ...args: any[]) => {
+      const t = (original as any)(fn, ...args) as NodeJS.Timeout
+      trackedTimers.push(t)
+      return t
+    }
+    const clearTracked = (t: NodeJS.Timeout) => {
+      clearTimeout(t)
+      clearInterval(t)
+      clearImmediate(t as unknown as NodeJS.Immediate)
+      const idx = trackedTimers.indexOf(t)
+      if (idx >= 0) trackedTimers.splice(idx, 1)
+    }
+
     const sandbox: Record<string, any> = {
       require: sandboxedRequire,
       console: {
@@ -72,7 +95,9 @@ export const officeExecTool: ToolDefinition = {
       __dirname: workingDir,
       process: {
         cwd: () => workingDir,
-        env: { ...process.env },
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(([k]) => ALLOWED_ENV_KEYS.includes(k))
+        ),
         platform: process.platform,
         versions: process.versions,
         nextTick: process.nextTick,
@@ -88,12 +113,12 @@ export const officeExecTool: ToolDefinition = {
       Float32Array,
       Float64Array,
       DataView,
-      setTimeout,
-      clearTimeout,
-      setInterval,
-      clearInterval,
-      setImmediate,
-      clearImmediate,
+      setTimeout: wrapTimer(setTimeout),
+      clearTimeout: clearTracked,
+      setInterval: wrapTimer(setInterval),
+      clearInterval: clearTracked,
+      setImmediate: wrapImmediate(setImmediate),
+      clearImmediate: clearTracked,
       Promise,
       JSON,
       Math,
@@ -138,11 +163,22 @@ export const officeExecTool: ToolDefinition = {
 
       const resultPromise = script.runInContext(context, { timeout: timeoutMs })
 
-      const asyncTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('执行超时（异步操作未在规定时间内完成）')), timeoutMs)
-      )
+      let asyncTimer: NodeJS.Timeout | undefined
+      const asyncTimeoutPromise = new Promise<never>((_, reject) => {
+        asyncTimer = setTimeout(() => reject(new Error('执行超时（异步操作未在规定时间内完成）')), timeoutMs)
+      })
 
-      await Promise.race([resultPromise, asyncTimeoutPromise])
+      try {
+        await Promise.race([resultPromise, asyncTimeoutPromise])
+      } finally {
+        if (asyncTimer) clearTimeout(asyncTimer)
+        for (const t of trackedTimers) {
+          clearTimeout(t)
+          clearInterval(t)
+          clearImmediate(t as unknown as NodeJS.Immediate)
+        }
+        trackedTimers.length = 0
+      }
 
       let output = consoleOutput.join('\n')
       if (output.length > MAX_CONSOLE_OUTPUT) {
@@ -153,7 +189,7 @@ export const officeExecTool: ToolDefinition = {
 
       return {
         success: true,
-        consoleOutput: output || undefined,
+        output: output || '(无输出)',
       }
     } catch (error: any) {
       let output = consoleOutput.join('\n')
@@ -178,7 +214,7 @@ export const officeExecTool: ToolDefinition = {
       return {
         success: false,
         error: errorMessage,
-        consoleOutput: output || undefined,
+        output: output || undefined,
       }
     }
   },

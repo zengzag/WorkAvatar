@@ -1,4 +1,4 @@
-import { ToolDefinition, OpenAIToolDefinition, ToolInfo, ToolParameter, ToolPermission } from './types'
+import { ToolDefinition, OpenAIToolDefinition, ToolInfo, ToolParameter } from './types'
 
 export class ToolRegistry {
   private functionMappings: Map<string, ToolDefinition> = new Map()
@@ -45,14 +45,6 @@ export class ToolRegistry {
     return Array.from(this.functionMappings.values())
   }
 
-  getToolsBySource(source: ToolDefinition['source']): ToolDefinition[] {
-    return this.getTools().filter(t => t.source === source)
-  }
-
-  getToolsByPermission(permission: ToolPermission): ToolDefinition[] {
-    return this.getTools().filter(t => (t.permission || 'safe') === permission)
-  }
-
   getOpenAISchemas(): OpenAIToolDefinition[] {
     return [...this.openaiFunctionSchemas]
   }
@@ -60,35 +52,6 @@ export class ToolRegistry {
   getOpenAISchemasByNames(names: string[]): OpenAIToolDefinition[] {
     const nameSet = new Set(names)
     return this.openaiFunctionSchemas.filter(s => nameSet.has(s.function.name))
-  }
-
-  getToolsString(): string {
-    return JSON.stringify(this.openaiFunctionSchemas, null, 2)
-  }
-
-  filterTools(toolReflectionResult: string): OpenAIToolDefinition[] {
-    try {
-      let refinedContent = toolReflectionResult.trim()
-      if (refinedContent.startsWith('```json')) {
-        refinedContent = refinedContent.substring(7)
-      }
-      if (refinedContent.endsWith('```')) {
-        refinedContent = refinedContent.substring(0, refinedContent.length - 3)
-      }
-      refinedContent = refinedContent.trim()
-
-      const parsedData = JSON.parse(refinedContent)
-      const validTools = new Set(
-        (parsedData.tools || []).map((t: any) => (t.name || '').toLowerCase().trim())
-      )
-
-      return this.openaiFunctionSchemas.filter(schema => {
-        const name = schema.function.name.toLowerCase().trim()
-        return validTools.has(name)
-      })
-    } catch (error) {
-      throw new Error(`Tool filtering failed: ${error}`)
-    }
   }
 
   unregisterTool(name: string): boolean {
@@ -102,24 +65,6 @@ export class ToolRegistry {
       s => s.function.name !== name
     )
     return true
-  }
-
-  hasTool(name: string): boolean {
-    return this.functionMappings.has(name)
-  }
-
-  getToolNames(): string[] {
-    return Array.from(this.functionMappings.keys())
-  }
-
-  getToolCount(): number {
-    return this.functionMappings.size
-  }
-
-  clear(): void {
-    this.functionMappings.clear()
-    this.functionInfo.clear()
-    this.openaiFunctionSchemas = []
   }
 
   private convertToToolParameters(params: Record<string, any>): ToolParameter[] {

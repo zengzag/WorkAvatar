@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Alert, Divider, Tag,
+  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Divider, Tag, Switch, Tooltip,
 } from 'antd'
 import {
   RobotOutlined, CloudServerOutlined, SaveOutlined, FolderOpenOutlined,
-  DatabaseOutlined, ThunderboltOutlined, AimOutlined,
+  DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined, SearchOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
@@ -22,6 +22,7 @@ interface IndexDir {
   enabled: number
   recursive: number
   file_extensions: string
+  file_count?: number
   created_at: number
   updated_at: number
 }
@@ -33,34 +34,24 @@ interface IndexProgress {
   message: string
 }
 
-interface KMSStats {
-  dirs: { total: number; enabled: number }
-  files: { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> }
-  index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
-}
-
 interface KMSSettingsPanelProps {
   settings: KMSSettings
   onSaveSettings: (params: {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number }
+    summaryModel?: KMSModelConfig | null
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
-  // 目录管理
   dirs: IndexDir[]
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
   onDeleteDir: (id: string) => void
-  // 索引管理
-  stats: KMSStats | null
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: () => void
-  onIncrementalIndex: () => void
-  onRebuildIndex: () => void
+  onUpdateIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string, resetHotData?: boolean) => void
   onCancelIndex: () => void
-  // 自动索引
   autoIndexStatus: KMSAutoIndexStatus | null
   onRunAutoIndexCheck: () => void
 }
@@ -72,11 +63,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onAddDir,
   onUpdateDir,
   onDeleteDir,
-  stats,
   isIndexing,
   indexProgress,
-  onBuildIndex,
-  onIncrementalIndex,
+  onUpdateIndex,
   onRebuildIndex,
   onCancelIndex,
   autoIndexStatus,
@@ -87,35 +76,60 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const { token } = theme.useToken()
 
   const [providers, setProviders] = useState<LLMProvider[]>([])
-  // 本地编辑态（避免每次选择都立即保存）
   const [modelConfig, setModelConfig] = useState<KMSModelConfig | null>(settings.model)
   const [embeddingModelConfig, setEmbeddingModelConfig] = useState<KMSModelConfig | null>(settings.embeddingModel)
+  const [summaryModelConfig, setSummaryModelConfig] = useState<KMSModelConfig | null>(settings.summaryModel)
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 3)
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
+  const [resultLimit, setResultLimit] = useState<number>(settings.searchParams?.resultLimit ?? 100)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
+  const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
+  const [savingEmbeddingMaxChars, setSavingEmbeddingMaxChars] = useState(false)
 
-  // 加载 LLM 提供商列表
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
       setProviders(result as LLMProvider[])
     }).catch(() => {})
+    loadEmbeddingMaxChars()
   }, [])
 
-  // 同步外部 settings 变化
   useEffect(() => {
     setModelConfig(settings.model)
     setEmbeddingModelConfig(settings.embeddingModel)
+    setSummaryModelConfig(settings.summaryModel)
     setMaxRounds(settings.searchParams?.maxRounds ?? 3)
     setTopK(settings.searchParams?.topK ?? 10)
+    setResultLimit(settings.searchParams?.resultLimit ?? 100)
   }, [settings])
 
-  // 保存模型设置
+  const loadEmbeddingMaxChars = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.settings.get({ key: 'embedding_max_chars' })
+      if (result?.value) {
+        setEmbeddingMaxChars(parseInt(result.value, 10))
+      }
+    } catch {}
+  }, [])
+
+  const handleSaveEmbeddingMaxChars = useCallback(async () => {
+    setSavingEmbeddingMaxChars(true)
+    try {
+      await window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
+      message.success(t('settings.embeddingMaxCharsSaved'))
+    } catch {
+      message.error(t('settings.defaultModelSaveFailed'))
+    } finally {
+      setSavingEmbeddingMaxChars(false)
+    }
+  }, [embeddingMaxChars, message, t])
+
   const handleSaveModel = useCallback(async () => {
     setSavingModel(true)
     const ok = await onSaveSettings({
       model: modelConfig,
       embeddingModel: embeddingModelConfig,
+      summaryModel: summaryModelConfig,
     })
     setSavingModel(false)
     if (ok) {
@@ -123,13 +137,12 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } else {
       message.error(t('kms.settingsPanel.modelSaveFailed'))
     }
-  }, [modelConfig, embeddingModelConfig, onSaveSettings, message, t])
+  }, [modelConfig, embeddingModelConfig, summaryModelConfig, onSaveSettings, message, t])
 
-  // 保存检索参数
   const handleSaveParams = useCallback(async () => {
     setSavingParams(true)
     const ok = await onSaveSettings({
-      searchParams: { maxRounds, topK },
+      searchParams: { maxRounds, topK, resultLimit },
     })
     setSavingParams(false)
     if (ok) {
@@ -137,67 +150,153 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } else {
       message.error(t('kms.settingsPanel.modelSaveFailed'))
     }
-  }, [maxRounds, topK, onSaveSettings, message, t])
+  }, [maxRounds, topK, resultLimit, onSaveSettings, message, t])
 
-  // 模型设置 Tab
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Alert
-        type="info"
-        showIcon
-        message={t('kms.settingsPanel.modelHint')}
-        description={t('kms.settingsPanel.modelHintDesc')}
-      />
-
       {/* AI 搜索模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
+              </div>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <LLMSelector
+                providerId={modelConfig?.provider_id || ''}
+                modelId={modelConfig?.model_id || ''}
+                onChange={(providerId, modelId) => {
+                  if (providerId) {
+                    setModelConfig(prev => ({
+                      provider_id: providerId,
+                      model_id: modelId,
+                      enable_thinking: prev?.enable_thinking ?? false,
+                    }))
+                  } else {
+                    setModelConfig(null)
+                  }
+                }}
+                modelCategory="chat"
+                providers={providers}
+              />
+              {modelConfig?.provider_id && (
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => setModelConfig(null)}
+                >
+                  {t('common.clearAll')}
+                </Text>
+              )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <LLMSelector
-              providerId={modelConfig?.provider_id || ''}
-              modelId={modelConfig?.model_id || ''}
-              onChange={(providerId, modelId) => {
-                if (providerId) {
-                  setModelConfig({ provider_id: providerId, model_id: modelId })
-                } else {
-                  setModelConfig(null)
-                }
-              }}
-              modelCategory="chat"
-              providers={providers}
-            />
-            {modelConfig?.provider_id && (
-              <Text
-                type="secondary"
-                style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                onClick={() => setModelConfig(null)}
-              >
-                {t('common.clearAll')}
-              </Text>
-            )}
-          </div>
+          {modelConfig?.provider_id && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
+                <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
+                  <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>ⓘ</Text>
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={modelConfig?.enable_thinking ?? false}
+                onChange={(checked) => {
+                  setModelConfig(prev => prev ? { ...prev, enable_thinking: checked } : prev)
+                }}
+              />
+            </div>
+          )}
         </div>
       </Card>
 
-      {/* Embedding 模型 */}
+      {/* 摘要模型 */}
+      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: 8,
+                background: token.colorBgTextHover,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <FileTextOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.summaryModel')}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.summaryModelDesc')}</Text>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <LLMSelector
+                providerId={summaryModelConfig?.provider_id || ''}
+                modelId={summaryModelConfig?.model_id || ''}
+                onChange={(providerId, modelId) => {
+                  if (providerId) {
+                    setSummaryModelConfig(prev => ({
+                      provider_id: providerId,
+                      model_id: modelId,
+                      enable_thinking: prev?.enable_thinking ?? false,
+                    }))
+                  } else {
+                    setSummaryModelConfig(null)
+                  }
+                }}
+                modelCategory="chat"
+                providers={providers}
+              />
+              {summaryModelConfig?.provider_id && (
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => setSummaryModelConfig(null)}
+                >
+                  {t('common.clearAll')}
+                </Text>
+              )}
+            </div>
+          </div>
+          {summaryModelConfig?.provider_id && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
+                <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
+                  <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>ⓘ</Text>
+                </Tooltip>
+              </div>
+              <Switch
+                size="small"
+                checked={summaryModelConfig?.enable_thinking ?? false}
+                onChange={(checked) => {
+                  setSummaryModelConfig(prev => prev ? { ...prev, enable_thinking: checked } : prev)
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* 智能索引模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
@@ -211,7 +310,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               justifyContent: 'center',
               flexShrink: 0,
             }}>
-              <CloudServerOutlined style={{ fontSize: 20, color: '#13c2c2' }} />
+              <CloudServerOutlined style={{ fontSize: 20, color: token.colorInfo }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.embeddingModel')}</Text>
@@ -245,6 +344,49 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         </div>
       </Card>
 
+      {/* 智能索引最大字符数 */}
+      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: token.colorBgTextHover,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}>
+              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorInfo }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
+            </div>
+          </div>
+          <Space style={{ flexShrink: 0 }}>
+            <InputNumber
+              value={embeddingMaxChars}
+              onChange={v => setEmbeddingMaxChars(v || 2000)}
+              min={100}
+              max={32000}
+              step={100}
+              style={{ width: 120 }}
+            />
+            <Button
+              type="primary"
+              size="small"
+              icon={<SaveOutlined />}
+              loading={savingEmbeddingMaxChars}
+              onClick={handleSaveEmbeddingMaxChars}
+            >
+              {t('common.save')}
+            </Button>
+          </Space>
+        </div>
+      </Card>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button
           type="primary"
@@ -258,16 +400,8 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 检索参数 Tab
   const renderParamsTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Alert
-        type="info"
-        showIcon
-        message={t('kms.settingsPanel.paramsHint')}
-        description={t('kms.settingsPanel.paramsHintDesc')}
-      />
-
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -280,7 +414,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <AimOutlined style={{ fontSize: 20, color: '#722ed1' }} />
+              <AimOutlined style={{ fontSize: 20, color: token.colorInfo }} />
             </div>
             <div>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.maxRounds')}</Text>
@@ -309,7 +443,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-              <ThunderboltOutlined style={{ fontSize: 20, color: '#fa8c16' }} />
+              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorWarning }} />
             </div>
             <div>
               <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.topK')}</Text>
@@ -320,7 +454,36 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             value={topK}
             onChange={v => setTopK(v || 10)}
             min={3}
-            max={30}
+            max={100}
+            style={{ width: 120 }}
+          />
+        </div>
+
+        <Divider style={{ margin: '12px 0' }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: token.colorBgTextHover,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <SearchOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
+            </div>
+            <div>
+              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.resultLimit')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.resultLimitDesc')}</Text>
+            </div>
+          </div>
+          <InputNumber
+            value={resultLimit}
+            onChange={v => setResultLimit(v || 100)}
+            min={5}
+            max={500}
             style={{ width: 120 }}
           />
         </div>
@@ -339,7 +502,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 目录管理 Tab
   const renderDirsTab = () => (
     <div>
       <div style={{ marginBottom: 12 }}>
@@ -360,7 +522,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     </div>
   )
 
-  // 索引管理 Tab
   const renderIndexTab = () => (
     <div>
       <div style={{ marginBottom: 12 }}>
@@ -373,17 +534,16 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         </Paragraph>
       </div>
       <KMSIndexPanel
-        stats={stats}
         isIndexing={isIndexing}
         indexProgress={indexProgress}
-        onBuildIndex={onBuildIndex}
-        onIncrementalIndex={onIncrementalIndex}
+        onUpdateIndex={onUpdateIndex}
         onRebuildIndex={onRebuildIndex}
         onCancelIndex={onCancelIndex}
         autoIndexConfig={settings.autoIndex}
         autoIndexStatus={autoIndexStatus}
         onSaveAutoIndex={async (config) => onSaveSettings({ autoIndex: config })}
         onRunAutoIndexCheck={onRunAutoIndexCheck}
+        dirs={dirs}
       />
     </div>
   )

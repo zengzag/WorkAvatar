@@ -4,14 +4,17 @@ import {
   Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App,
 } from 'antd'
 import {
-  DatabaseOutlined, FileTextOutlined, ThunderboltOutlined,
+  ThunderboltOutlined,
   SyncOutlined, BuildOutlined, StopOutlined,
-  FireOutlined, InboxOutlined, ClockCircleOutlined, RadarChartOutlined,
+  ClockCircleOutlined, RadarChartOutlined,
   PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
+  CloudServerOutlined, ExclamationCircleOutlined,
+  DatabaseOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import type { KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
+import { formatTime } from './kms-columns'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 
 interface IndexProgress {
   phase: string
@@ -20,25 +23,23 @@ interface IndexProgress {
   message: string
 }
 
-interface KMSStats {
-  dirs: { total: number; enabled: number }
-  files: { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> }
-  index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
+interface IndexDir {
+  id: string
+  dir_path: string
+  display_name: string
 }
 
 interface KMSIndexPanelProps {
-  stats: KMSStats | null
   isIndexing: boolean
   indexProgress: IndexProgress | null
-  onBuildIndex: () => void
-  onIncrementalIndex: () => void
-  onRebuildIndex: () => void
+  onUpdateIndex: (withEmbedding?: boolean) => void
+  onRebuildIndex: (withEmbedding?: boolean, dirId?: string, resetHotData?: boolean) => void
   onCancelIndex: () => void
-  // 自动索引
   autoIndexConfig: KMSAutoIndexConfig
   autoIndexStatus: KMSAutoIndexStatus | null
   onSaveAutoIndex: (config: KMSAutoIndexConfig) => Promise<boolean>
   onRunAutoIndexCheck: () => void
+  dirs?: IndexDir[]
 }
 
 const PHASE_LABEL_KEYS: Record<string, string> = {
@@ -51,33 +52,89 @@ const PHASE_LABEL_KEYS: Record<string, string> = {
 }
 
 const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
-  stats,
   isIndexing,
   indexProgress,
-  onBuildIndex,
-  onIncrementalIndex,
+  onUpdateIndex,
   onRebuildIndex,
   onCancelIndex,
   autoIndexConfig,
   autoIndexStatus,
   onSaveAutoIndex,
   onRunAutoIndexCheck,
+  dirs,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
 
-  // 本地编辑态
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
   const [savingAuto, setSavingAuto] = useState(false)
+  const [withEmbedding, setWithEmbedding] = useState(true)
+  const [dbStats, setDbStats] = useState<any>(null)
+  const [loadingStats, setLoadingStats] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
 
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
     setIntervalMin(autoIndexConfig.intervalMinutes)
     setStableThreshold(autoIndexConfig.stableThresholdSeconds)
   }, [autoIndexConfig])
+
+  const loadDbStats = useCallback(async () => {
+    setLoadingStats(true)
+    try {
+      const result = await window.electronAPI.kms.getDatabaseStats()
+      setDbStats(result)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingStats(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDbStats()
+  }, [loadDbStats])
+
+  const formatBytes = useCallback((bytes: number): string => {
+    if (!bytes || bytes <= 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let val = bytes
+    let unitIdx = 0
+    while (val >= 1024 && unitIdx < units.length - 1) {
+      val /= 1024
+      unitIdx++
+    }
+    return `${val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2)} ${units[unitIdx]}`
+  }, [])
+
+  const handleCleanup = useCallback(() => {
+    modal.confirm({
+      title: t('kms.settingsPanel.cleanupDatabase'),
+      icon: <ExclamationCircleOutlined />,
+      content: t('kms.settingsPanel.cleanupConfirm'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setCleaning(true)
+        try {
+          const result = await window.electronAPI.kms.cleanupDatabase()
+          const freed = (result?.before?.mainDbSize ?? 0) + (result?.before?.vectorDbSize ?? 0)
+            - (result?.after?.mainDbSize ?? 0) - (result?.after?.vectorDbSize ?? 0)
+          const freedStr = freed > 0 ? formatBytes(freed) : '0 B'
+          message.success(t('kms.settingsPanel.cleanupDone', { size: freedStr }))
+          await loadDbStats()
+        } catch (err: any) {
+          message.error(t('kms.settingsPanel.cleanupFailed') + (err?.message ? `: ${err.message}` : ''))
+        } finally {
+          setCleaning(false)
+        }
+      },
+    })
+  }, [modal, t, formatBytes, message, loadDbStats])
 
   const handleSaveAutoIndex = useCallback(async () => {
     setSavingAuto(true)
@@ -94,39 +151,59 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     }
   }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex, message, t])
 
-  // 格式化时间戳为可读字符串
-  const formatTime = (ts: number | null): string => {
-    if (!ts) return '-'
-    const d = new Date(ts * 1000)
-    const h = String(d.getHours()).padStart(2, '0')
-    const m = String(d.getMinutes()).padStart(2, '0')
-    const s = String(d.getSeconds()).padStart(2, '0')
-    return `${h}:${m}:${s}`
-  }
-
-  const totalFiles = stats?.files?.total ?? 0
-  const indexedFiles = stats?.files?.byStatus?.completed ?? 0
-  const pendingFiles = stats?.files?.byStatus?.pending ?? 0
-  const failedFiles = stats?.files?.byStatus?.failed ?? 0
-  const hotFiles = stats?.files?.byTier?.hot ?? 0
-  const coldFiles = stats?.files?.byTier?.cold ?? 0
-  const indexEntries = stats?.index?.totalEntries ?? 0
-  const embeddingCount = stats?.index?.embeddingCount ?? 0
-
-  const statCards = [
-    { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
-    { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
-    { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
-    { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
-    { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: '#f5222d' }} /> },
-    { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
-    { label: t('kms.indexEntries'), value: indexEntries, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
-    { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: '#722ed1' }} /> },
-  ]
+  const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
   const progressPercent = indexProgress && indexProgress.total > 0
     ? Math.round((indexProgress.current / indexProgress.total) * 100)
     : 0
+
+  const handleRebuild = useCallback(() => {
+    const dirOptions = (dirs && dirs.length > 0)
+      ? [
+          { label: t('kms.allDirs'), value: '' },
+          ...dirs.map(d => ({ label: d.display_name || d.dir_path, value: d.id })),
+        ]
+      : []
+
+    modal.confirm({
+      title: t('kms.rebuildIndex'),
+      icon: <ExclamationCircleOutlined />,
+      content: (
+        <div>
+          <p>{t('kms.rebuildIndexConfirm')}</p>
+          {dirOptions.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('kms.rebuildIndexSelectDir')}</Text>
+              <select
+                id="rebuild-dir-select"
+                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: `1px solid ${token.colorBorder}` }}
+                defaultValue=""
+              >
+                {dirOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+              <input type="checkbox" id="rebuild-reset-hot" />
+              <span>{t('kms.rebuildIndexResetHot')}</span>
+            </label>
+          </div>
+        </div>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => {
+        const selectEl = document.getElementById('rebuild-dir-select') as HTMLSelectElement | null
+        const dirId = selectEl?.value || undefined
+        const resetHotEl = document.getElementById('rebuild-reset-hot') as HTMLInputElement | null
+        const resetHotData = resetHotEl?.checked ?? false
+        onRebuildIndex(withEmbedding, dirId || undefined, resetHotData)
+      },
+    })
+  }, [dirs, withEmbedding, onRebuildIndex, modal, t, token])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
@@ -221,10 +298,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
           {autoIndexStatus && autoIndexStatus.config.enabled && (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: token.colorTextSecondary }}>
               {autoIndexStatus.lastRunAt && (
-                <span>{t('kms.settingsPanel.autoIndexLastRun')}: {formatTime(autoIndexStatus.lastRunAt)}</span>
+                <span>{t('kms.settingsPanel.autoIndexLastRun')}: {formatProgressTime(autoIndexStatus.lastRunAt)}</span>
               )}
               {autoIndexStatus.nextRunAt && (
-                <span>{t('kms.settingsPanel.autoIndexNextRun')}: {formatTime(autoIndexStatus.nextRunAt)}</span>
+                <span>{t('kms.settingsPanel.autoIndexNextRun')}: {formatProgressTime(autoIndexStatus.nextRunAt)}</span>
               )}
               {autoIndexStatus.lastResult && (
                 <span>
@@ -265,44 +342,19 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
         </div>
       </Card>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-        gap: 12,
-      }}>
-        {statCards.map((card) => (
-          <Card
-            key={card.label}
-            size="small"
-            style={{ textAlign: 'center' }}
-          >
-            <div style={{ marginBottom: 4 }}>{card.icon}</div>
-            <Title level={4} style={{ margin: 0, fontSize: 20 }}>{card.value}</Title>
-            <Text type="secondary" style={{ fontSize: 12 }}>{card.label}</Text>
-          </Card>
-        ))}
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           type="primary"
-          icon={<BuildOutlined />}
-          onClick={() => onBuildIndex()}
+          icon={<SyncOutlined />}
+          onClick={() => onUpdateIndex(withEmbedding)}
           disabled={isIndexing}
           loading={isIndexing && indexProgress?.phase === 'crawling'}
         >
-          {t('kms.buildIndex')}
+          {t('kms.updateIndex')}
         </Button>
         <Button
-          icon={<SyncOutlined />}
-          onClick={() => onIncrementalIndex()}
-          disabled={isIndexing}
-        >
-          {t('kms.incrementalIndex')}
-        </Button>
-        <Button
-          icon={<ThunderboltOutlined />}
-          onClick={() => onRebuildIndex()}
+          icon={<BuildOutlined />}
+          onClick={handleRebuild}
           disabled={isIndexing}
         >
           {t('kms.rebuildIndex')}
@@ -316,6 +368,21 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
             {t('kms.cancelIndex')}
           </Button>
         )}
+        <Tooltip title={t('kms.withEmbeddingTooltip')}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 10px', borderRadius: 6,
+            background: withEmbedding ? token.colorPrimaryBg : token.colorFillQuaternary,
+            border: `1px solid ${withEmbedding ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
+            fontSize: 12, color: withEmbedding ? token.colorPrimary : token.colorTextSecondary,
+            cursor: 'pointer', userSelect: 'none',
+            transition: 'all 0.2s',
+          }} onClick={() => setWithEmbedding(!withEmbedding)}>
+            <CloudServerOutlined style={{ fontSize: 12 }} />
+            <span>{t('kms.withEmbedding')}</span>
+            <Switch size="small" checked={withEmbedding} onChange={setWithEmbedding} />
+          </div>
+        </Tooltip>
       </div>
 
       {isIndexing && indexProgress && (
@@ -361,6 +428,79 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
           )}
         </Card>
       )}
+
+      {/* 数据库清理 */}
+      <Card
+        size="small"
+        style={{ borderColor: token.colorBorderSecondary }}
+        title={
+          <Space size={6}>
+            <DatabaseOutlined style={{ color: token.colorPrimary }} />
+            <Text strong style={{ fontSize: 13 }}>{t('kms.settingsPanel.dbCleanupTitle')}</Text>
+            <Tooltip title={t('kms.settingsPanel.dbCleanupHint')}>
+              <InfoCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12, cursor: 'help' }} />
+            </Tooltip>
+          </Space>
+        }
+        extra={
+          <Button
+            size="small"
+            type="text"
+            icon={<ReloadOutlined />}
+            onClick={loadDbStats}
+            loading={loadingStats}
+            disabled={cleaning}
+          >
+            {t('kms.settingsPanel.refreshStats')}
+          </Button>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.dbCleanupDesc')}</Text>
+
+          {dbStats && (
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.mainDbSize')}</Text>
+                <Text strong style={{ fontSize: 13 }}>{formatBytes(dbStats.mainDbSize)}</Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.vectorDbSize')}</Text>
+                <Text strong style={{ fontSize: 13 }}>{formatBytes(dbStats.vectorDbSize)}</Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedFts')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedFtsCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedFtsCount}
+                </Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedEmbeddings')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedEmbeddingCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedEmbeddingCount}
+                </Text>
+              </div>
+            </div>
+          )}
+
+          {!dbStats && loadingStats && (
+            <div style={{ textAlign: 'center', padding: '8px 0' }}><Spin size="small" /></div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleCleanup}
+              loading={cleaning}
+              disabled={cleaning || isIndexing}
+            >
+              {cleaning ? t('kms.settingsPanel.cleanupRunning') : t('kms.settingsPanel.cleanupDatabase')}
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }

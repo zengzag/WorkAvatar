@@ -1,8 +1,25 @@
 import DatabaseService from './database.service'
-import { safeStorage } from 'electron'
+import { isMainThread, workerData } from 'worker_threads'
 import type { LLMModelConfig } from '../../shared/types'
 import { generateId } from './common-utils'
 import LLMLoggerService from './llm-logger.service'
+import { createLogger } from './logger'
+
+const logger = createLogger('LLMClient')
+
+/**
+ * 延迟加载 electron.safeStorage（worker_threads 中不可用）
+ * 在 worker 模式下返回 null，调用方需处理 null 情况
+ */
+function getSafeStorage(): any | null {
+  if (!isMainThread) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('electron').safeStorage
+  } catch {
+    return null
+  }
+}
 
 interface LLMProviderConfig {
   id: string
@@ -203,7 +220,7 @@ function buildRequestBody(
     if (config.provider_type === 'deepseek') {
       body.thinking = { type: 'enabled' }
       body.reasoning_effort = 'high'
-    } else if (config.provider_type === 'qwen') {
+    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
       body.enable_thinking = true
       if (modelConfig?.thinking_budget) {
         body.thinking_budget = modelConfig.thinking_budget
@@ -216,6 +233,8 @@ function buildRequestBody(
   } else {
     if (config.provider_type === 'deepseek') {
       body.thinking = { type: 'disabled' }
+    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
+      body.enable_thinking = false
     } else if (config.provider_type === 'volcengine') {
       body.thinking = { type: 'disabled' }
     } else if (config.provider_type === 'zhipu') {
@@ -241,7 +260,8 @@ class SecureKeyStorage {
   }
 
   private encryptKey(plainText: string): string {
-    if (safeStorage.isEncryptionAvailable()) {
+    const safeStorage = getSafeStorage()
+    if (safeStorage?.isEncryptionAvailable()) {
       const buffer = safeStorage.encryptString(plainText)
       return buffer.toString('base64')
     }
@@ -251,7 +271,8 @@ class SecureKeyStorage {
   private decryptKey(encryptedText: string): string | null {
     if (!encryptedText) return null
     try {
-      if (safeStorage.isEncryptionAvailable()) {
+      const safeStorage = getSafeStorage()
+      if (safeStorage?.isEncryptionAvailable()) {
         const buffer = Buffer.from(encryptedText, 'base64')
         return safeStorage.decryptString(buffer)
       }
@@ -269,6 +290,12 @@ class SecureKeyStorage {
   }
 
   async getApiKey(providerId: string): Promise<string | null> {
+    // Worker 模式：从 workerData 读取主线程预解密的 API Key
+    // 避免依赖 safeStorage（worker_threads 中不可用）
+    if (!isMainThread && workerData?.apiKeys) {
+      return (workerData.apiKeys as Record<string, string>)[providerId] ?? null
+    }
+
     const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(`llm_api_key_${providerId}`) as any
     if (!row?.value) return null
     return this.decryptKey(row.value)
@@ -431,13 +458,24 @@ class LLMClientService {
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        controller.abort()
+      } else {
+        options.signal.addEventListener('abort', () => controller.abort(), { once: true })
+      }
+    }
+
     try {
       const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: options?.signal,
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -482,6 +520,10 @@ class LLMClientService {
 
       return result
     } catch (error: any) {
+      clearTimeout(timeout)
+      if (error.name === 'AbortError' && !options?.signal?.aborted) {
+        error.message = 'LLM API request timed out'
+      }
       if (!error.message?.includes('LLM API error')) {
         LLMLoggerService.getInstance().logCall({
           type: 'chat',
@@ -538,14 +580,25 @@ class LLMClientService {
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
+    if (signal) {
+      if (signal.aborted) {
+        controller.abort()
+      } else {
+        signal.addEventListener('abort', () => controller.abort(), { once: true })
+      }
+    }
+
     try {
       const thinkProcessor = createThinkProcessor()
       const response = await fetch(`${baseURL}/chat/completions`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        ...(signal ? { signal } : {}),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -632,7 +685,8 @@ class LLMClientService {
                 onChunk(result.content)
               }
             }
-          } catch {
+          } catch (e) {
+            logger.debug('Failed to parse stream chunk', e)
           }
         }
       }
@@ -668,19 +722,25 @@ class LLMClientService {
 
       onDone()
     } catch (err: any) {
-      LLMLoggerService.getInstance().logCall({
-        type: 'chatStream',
-        source: logSource,
-        model: modelName,
-        providerType: config.provider_type,
-        request: {
-          messages,
-          temperature: body.temperature,
-          max_tokens: body.max_tokens,
-          stream: true,
-        },
-        error: err.message,
-      })
+      clearTimeout(timeout)
+      if (err.name === 'AbortError' && !signal?.aborted) {
+        err.message = 'LLM API request timed out'
+      }
+      if (!err.message?.includes('LLM API error')) {
+        LLMLoggerService.getInstance().logCall({
+          type: 'chatStream',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: {
+            messages,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: true,
+          },
+          error: err.message,
+        })
+      }
       onError(err)
     }
   }
@@ -765,8 +825,15 @@ class LLMClientService {
     const updates: string[] = []
     const values: any[] = []
 
+    const ALLOWED_PROVIDER_COLUMNS = [
+      'name', 'provider_type', 'base_url', 'model',
+      'embedding_model', 'temperature', 'max_tokens',
+      'timeout_ms', 'extra_headers_json', 'extra_body_json',
+      'is_default', 'models_json'
+    ]
+
     for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
+      if (value !== undefined && ALLOWED_PROVIDER_COLUMNS.includes(key)) {
         updates.push(`${key} = ?`)
         if (key === 'is_default') {
           values.push(value ? 1 : 0)
@@ -923,4 +990,3 @@ class LLMClientService {
 }
 
 export default LLMClientService
-export { PROVIDER_DEFAULTS }

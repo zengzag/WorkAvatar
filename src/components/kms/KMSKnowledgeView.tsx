@@ -1,15 +1,22 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Space, Typography, Tag, Empty, Spin, Input, Select, Table, Tooltip, Button, theme,
+  Card, Space, Typography, Tag, Spin, Input, Select, Table, Button, theme, Tabs,
+  Statistic, Row, App,
 } from 'antd'
 import {
   FolderOpenOutlined, FileTextOutlined, FireOutlined, InboxOutlined,
-  SearchOutlined, ReloadOutlined, EyeOutlined, FolderOutlined,
+  SearchOutlined, ReloadOutlined,
+  ThunderboltOutlined,
+  DatabaseOutlined, BarChartOutlined,
 } from '@ant-design/icons'
-import type { DirSummary, FileSummaryItem, FileSummariesResult } from '../../hooks/useKMS'
+import type { FileSummariesResult } from '../../hooks/useKMS'
+import { useFileSummaryColumns } from './kms-columns'
 
-const { Text, Paragraph } = Typography
+const { Text, Title } = Typography
+
+/** 关键词搜索防抖延迟（毫秒） */
+const KEYWORD_DEBOUNCE_MS = 400
 
 interface IndexDir {
   id: string
@@ -18,12 +25,16 @@ interface IndexDir {
   enabled: number
 }
 
+interface KMSStats {
+  dirs: { total: number; enabled: number }
+  files: { total: number; byStatus: Record<string, number>; byTier: Record<string, number>; byExt: Record<string, number> }
+  index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
+}
+
 interface KMSKnowledgeViewProps {
   dirs: IndexDir[]
-  dirSummaries: DirSummary[]
   fileSummaries: FileSummariesResult
   isLoadingSummaries: boolean
-  onLoadDirSummaries: () => void
   onLoadFileSummaries: (params?: {
     dirId?: string
     dataTier?: 'cold' | 'hot'
@@ -33,35 +44,51 @@ interface KMSKnowledgeViewProps {
   }) => void
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
+  onRebuildFileIndex?: (fileId: string) => void
+  stats: KMSStats | null
+  onLoadStats: () => void
 }
 
 const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   dirs,
-  dirSummaries,
   fileSummaries,
   isLoadingSummaries,
-  onLoadDirSummaries,
   onLoadFileSummaries,
   onOpenFile,
   onOpenFileDir,
+  onRebuildFileIndex,
+  stats,
+  onLoadStats,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const { message } = App.useApp()
 
-  // 文件摘要筛选
   const [filterDirId, setFilterDirId] = useState<string | undefined>(undefined)
   const [filterTier, setFilterTier] = useState<'hot' | 'cold' | undefined>(undefined)
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-
-  // 初始加载
+  const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
+  const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
+  // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
+  const processingFileIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
-    onLoadDirSummaries()
-    onLoadFileSummaries({ page: 1, pageSize: 20 })
-  }, [onLoadDirSummaries, onLoadFileSummaries])
+    processingFileIdsRef.current = processingFileIds
+  }, [processingFileIds])
 
-  // 重新加载文件摘要
+  useEffect(() => {
+    onLoadFileSummaries({ page: 1, pageSize: 20 })
+    onLoadStats()
+  }, [onLoadFileSummaries, onLoadStats])
+
+  const handleTabChange = useCallback((key: string) => {
+    setActiveTab(key as 'files' | 'stats')
+    if (key === 'stats') {
+      onLoadStats()
+    }
+  }, [onLoadStats])
+
   const reloadFileSummaries = useCallback(() => {
     onLoadFileSummaries({
       dirId: filterDirId,
@@ -72,313 +99,168 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     })
   }, [filterDirId, filterTier, filterKeyword, page, pageSize, onLoadFileSummaries])
 
-  // 筛选条件变化时重新加载
-  useEffect(() => {
-    reloadFileSummaries()
-  }, [filterDirId, filterTier, page, pageSize, reloadFileSummaries])
+  const reloadRef = useRef(reloadFileSummaries)
+  useEffect(() => { reloadRef.current = reloadFileSummaries }, [reloadFileSummaries])
 
-  // 关键词搜索（防抖）
+  useEffect(() => {
+    reloadRef.current()
+  }, [filterDirId, filterTier, page, pageSize])
+
   useEffect(() => {
     const timer = setTimeout(() => {
       if (page !== 1) {
         setPage(1)
       } else {
-        reloadFileSummaries()
+        reloadRef.current()
       }
-    }, 400)
+    }, KEYWORD_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKeyword])
 
   const handleReload = useCallback(() => {
-    onLoadDirSummaries()
     reloadFileSummaries()
-  }, [onLoadDirSummaries, reloadFileSummaries])
+    onLoadStats()
+  }, [reloadFileSummaries, onLoadStats])
 
-  // 解析关键词 JSON
-  const parseKeywords = (json: string): string[] => {
-    if (!json) return []
+  const handleGenerateFileSummary = useCallback(async (fileId: string) => {
+    if (processingFileIdsRef.current.has(fileId)) return
+    const newSet = new Set(processingFileIdsRef.current)
+    newSet.add(fileId)
+    setProcessingFileIds(newSet)
     try {
-      const arr = JSON.parse(json)
-      return Array.isArray(arr) ? arr.map(String) : []
-    } catch {
-      return []
+      const result = await window.electronAPI.kms.generateFileSummary(fileId)
+      if (result?.success) {
+        if (result.embeddingError) {
+          message.warning(t('kms.knowledge.fileSummaryGeneratedButEmbeddingFailed', { error: result.embeddingError }))
+        } else {
+          message.success(t('kms.knowledge.fileSummaryGenerated'))
+        }
+        reloadFileSummaries()
+      } else {
+        const err = result?.error
+        if (err === 'NO_LLM_PROVIDER') {
+          message.warning(t('kms.collections.aiGenerateNoLLM'))
+        } else if (err === 'MODEL_NOT_CONFIGURED') {
+          message.error(t('kms.knowledge.modelNotConfigured'))
+        } else if (err === 'FILE_NOT_FOUND') {
+          message.warning(t('kms.knowledge.fileNotFound'))
+        } else if (err === 'EMPTY_CONTENT') {
+          message.warning(t('kms.knowledge.fileEmptyContent'))
+        } else {
+          message.error(t('kms.knowledge.fileSummaryFailed'))
+        }
+      }
+    } catch (err: any) {
+      message.error(err?.message || t('kms.knowledge.fileSummaryFailed'))
+    } finally {
+      const clearSet = new Set(processingFileIdsRef.current)
+      clearSet.delete(fileId)
+      setProcessingFileIds(clearSet)
     }
-  }
+  }, [t, message, reloadFileSummaries])
 
-  // 格式化文件大小
-  const formatSize = (bytes: number): string => {
-    if (!bytes) return '-'
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-    return `${(bytes / 1024 / 1024).toFixed(1)}MB`
-  }
-
-  // 格式化时间
-  const formatTime = (ts: number): string => {
-    if (!ts) return '-'
-    const d = new Date(ts * 1000)
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-
-  const dirOptions = [
+  const dirOptions = useMemo(() => [
     { label: t('kms.knowledge.allDirs'), value: '' },
     ...dirs.map(d => ({
       label: d.display_name || d.dir_path.split(/[/\\]/).pop() || d.dir_path,
       value: d.id,
     })),
-  ]
+  ], [dirs, t])
 
-  const tierOptions = [
+  const tierOptions = useMemo(() => [
     { label: t('kms.knowledge.allTiers'), value: '' },
-    { label: t('kms.hotFiles'), value: 'hot' },
-    { label: t('kms.coldFiles'), value: 'cold' },
-  ]
+    { label: t('kms.knowledge.hot'), value: 'hot' },
+    { label: t('kms.knowledge.cold'), value: 'cold' },
+  ], [t])
 
-  // 目录摘要卡片
-  const renderDirSummaries = () => {
-    if (dirSummaries.length === 0) {
-      return (
-        <Card size="small" style={{ marginBottom: 16 }}>
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={t('kms.knowledge.noDirSummaries')}
-          />
-        </Card>
-      )
+  const overviewStats = useMemo(() => {
+    return {
+      totalDirs: stats?.dirs?.total ?? 0,
+      totalFiles: stats?.files?.total ?? 0,
+      hotFiles: stats?.files?.byTier?.hot ?? 0,
     }
+  }, [stats])
 
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Space size={6}>
-            <FolderOpenOutlined style={{ color: token.colorPrimary }} />
-            <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.dirSummaries')}</Text>
-            <Tag style={{ fontSize: 11 }}>{dirSummaries.length}</Tag>
-          </Space>
-        </div>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-          gap: 8,
-        }}>
-          {dirSummaries.map((dir) => {
-            const keywords = parseKeywords(dir.keywords_json)
-            return (
-              <Card
-                key={dir.dir_id}
-                size="small"
-                style={{
-                  borderLeft: `3px solid ${dir.enabled === 0 ? token.colorTextQuaternary : token.colorPrimary}`,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <FolderOutlined style={{ color: dir.enabled === 0 ? token.colorTextQuaternary : token.colorPrimary }} />
-                  <Text strong style={{ fontSize: 12 }} ellipsis>
-                    {dir.display_name || dir.dir_path.split(/[/\\]/).pop() || dir.dir_path}
-                  </Text>
-                  <Tag style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 4px' }}>
-                    {dir.file_count}{t('kms.knowledge.filesUnit')}
-                  </Tag>
-                </div>
-                <Tooltip title={dir.dir_path}>
-                  <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 6 }} ellipsis>
-                    {dir.dir_path}
-                  </Text>
-                </Tooltip>
-                <Paragraph
-                  type="secondary"
-                  style={{
-                    fontSize: 11,
-                    margin: 0,
-                    maxHeight: 60,
-                    overflow: 'hidden',
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {dir.summary || t('kms.knowledge.noSummary')}
-                </Paragraph>
-                {keywords.length > 0 && (
-                  <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {keywords.slice(0, 5).map((kw, i) => (
-                      <Tag key={i} style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 4px' }}>
-                        {kw}
-                      </Tag>
-                    ))}
-                  </div>
-                )}
-                <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 6 }}>
-                  {t('kms.knowledge.updatedAt')}: {formatTime(dir.updated_at)}
-                </Text>
-              </Card>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
+  const columns = useFileSummaryColumns({
+    processingFileIdsRef,
+    onOpenFile,
+    onOpenFileDir,
+    onGenerateFileSummary: handleGenerateFileSummary,
+    onRebuildFileIndex,
+  })
 
-  // 文件摘要表格列定义
-  const columns = useMemo(() => [
-    {
-      title: t('kms.knowledge.fileName'),
-      dataIndex: 'file_name',
-      key: 'file_name',
-      width: 200,
-      render: (text: string, record: FileSummaryItem) => (
-        <Tooltip title={record.file_path}>
-          <Space size={4} style={{ minWidth: 0 }}>
-            <FileTextOutlined style={{ color: token.colorTextSecondary, flexShrink: 0 }} />
-            <Text
-              strong
-              style={{ fontSize: 12, cursor: 'pointer' }}
-              ellipsis
-              onClick={() => onOpenFile(record.file_path)}
-            >
-              {text}
-            </Text>
-          </Space>
-        </Tooltip>
-      ),
-    },
-    {
-      title: t('kms.knowledge.tier'),
-      dataIndex: 'data_tier',
-      key: 'data_tier',
-      width: 80,
-      render: (tier: string) => (
-        <Tag
-          color={tier === 'hot' ? 'red' : 'default'}
-          style={{ fontSize: 11, margin: 0 }}
-        >
-          {tier === 'hot' ? <FireOutlined /> : <InboxOutlined />}
-          <span style={{ marginLeft: 4 }}>
-            {tier === 'hot' ? t('kms.knowledge.hot') : t('kms.knowledge.cold')}
-          </span>
-        </Tag>
-      ),
-    },
-    {
-      title: t('kms.knowledge.dir'),
-      dataIndex: 'dir_name',
-      key: 'dir_name',
-      width: 120,
-      render: (text: string) => (
-        <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
-          {text || '-'}
-        </Text>
-      ),
-    },
-    {
-      title: t('kms.knowledge.summary'),
-      key: 'summary',
-      render: (_: any, record: FileSummaryItem) => {
-        const summary = record.summary || record.light_summary || record.preview_text || ''
-        const keywords = parseKeywords(record.keywords_json)
-        return (
-          <div>
-            <Paragraph
-              type="secondary"
-              style={{
-                fontSize: 11,
-                margin: 0,
-                maxHeight: 40,
-                overflow: 'hidden',
-                lineHeight: 1.5,
-              }}
-            >
-              {summary || t('kms.knowledge.noSummary')}
-            </Paragraph>
-            {keywords.length > 0 && (
-              <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {keywords.slice(0, 4).map((kw, i) => (
-                  <Tag key={i} style={{ fontSize: 10, margin: 0, lineHeight: '14px', padding: '0 3px' }}>
-                    {kw}
-                  </Tag>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      },
-    },
-    {
-      title: t('kms.knowledge.size'),
-      dataIndex: 'file_size',
-      key: 'file_size',
-      width: 80,
-      render: (size: number) => (
-        <Text type="secondary" style={{ fontSize: 11 }}>{formatSize(size)}</Text>
-      ),
-    },
-    {
-      title: t('kms.knowledge.updated'),
-      dataIndex: 'updated_at',
-      key: 'updated_at',
-      width: 100,
-      render: (ts: number) => (
-        <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ts)}</Text>
-      ),
-    },
-    {
-      title: t('common.actions'),
-      key: 'actions',
-      width: 80,
-      render: (_: any, record: FileSummaryItem) => (
-        <Space size={2}>
-          <Tooltip title={t('kms.openFile')}>
-            <Button
-              size="small"
-              type="text"
-              icon={<EyeOutlined />}
-              onClick={() => onOpenFile(record.file_path)}
-            />
-          </Tooltip>
-          <Tooltip title={t('kms.openDir')}>
-            <Button
-              size="small"
-              type="text"
-              icon={<FolderOpenOutlined />}
-              onClick={() => onOpenFileDir(record.file_path)}
-            />
-          </Tooltip>
-        </Space>
-      ),
-    },
-  ], [t, token, onOpenFile, onOpenFileDir])
+  const statCards = useMemo(() => {
+    const totalFiles = stats?.files?.total ?? 0
+    const indexedFiles = stats?.files?.byStatus?.completed ?? 0
+    const pendingFiles = stats?.files?.byStatus?.pending ?? 0
+    const failedFiles = stats?.files?.byStatus?.failed ?? 0
+    const hotFiles = stats?.files?.byTier?.hot ?? 0
+    const coldFiles = stats?.files?.byTier?.cold ?? 0
+    const indexEntries = stats?.index?.totalEntries ?? 0
+    const embeddingCount = stats?.index?.embeddingCount ?? 0
+    const ftsEntryCount = stats?.index?.ftsEntryCount ?? 0
+    const enabledDirs = stats?.dirs?.enabled ?? 0
+    const totalDirs = stats?.dirs?.total ?? 0
+    return [
+      { label: t('kms.totalDirs'), value: totalDirs, sub: `${enabledDirs} ${t('kms.knowledge.enabled')}`, icon: <FolderOpenOutlined style={{ color: token.colorPrimary }} /> },
+      { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
+      { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
+      { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
+      { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
+      { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: token.colorError }} /> },
+      { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
+      { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS`, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
+      { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: token.colorInfo }} /> },
+    ]
+  }, [t, token, stats])
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 顶部操作栏 */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+  const renderStatsBar = () => (
+    <Row
+      gutter={16}
+      style={{
+        padding: '8px 12px',
+        background: token.colorFillQuaternary,
+        borderRadius: 6,
         marginBottom: 12,
         flexShrink: 0,
-      }}>
-        <Space size={6}>
-          <Text strong style={{ fontSize: 14 }}>{t('kms.knowledge.title')}</Text>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('kms.knowledge.subtitle')}
-          </Text>
-        </Space>
-        <Button
-          size="small"
-          icon={<ReloadOutlined />}
-          onClick={handleReload}
-          loading={isLoadingSummaries}
-        >
-          {t('common.refresh')}
-        </Button>
-      </div>
+      }}
+    >
+      <Statistic
+        title={t('kms.knowledge.statsDirs')}
+        value={overviewStats.totalDirs}
+        prefix={<FolderOpenOutlined style={{ color: token.colorPrimary }} />}
+        valueStyle={{ fontSize: 16, color: token.colorText }}
+      />
+      <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
+      <Statistic
+        title={t('kms.knowledge.statsFiles')}
+        value={overviewStats.totalFiles}
+        prefix={<FileTextOutlined style={{ color: token.colorTextSecondary }} />}
+        valueStyle={{ fontSize: 16, color: token.colorText }}
+      />
+      <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
+      <Statistic
+        title={t('kms.knowledge.statsHot')}
+        value={overviewStats.hotFiles}
+        prefix={<FireOutlined style={{ color: token.colorError }} />}
+        valueStyle={{ fontSize: 16, color: token.colorText }}
+      />
+      <div style={{ flex: 1 }} />
+      <Button
+        size="small"
+        icon={<ReloadOutlined />}
+        onClick={handleReload}
+        loading={isLoadingSummaries}
+      >
+        {t('common.refresh')}
+      </Button>
+    </Row>
+  )
 
-      {/* 目录摘要 */}
-      <div style={{ flexShrink: 0, maxHeight: '40%', overflow: 'auto' }}>
-        {renderDirSummaries()}
-      </div>
-
-      {/* 文件摘要筛选 */}
+  const renderFilesTab = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 筛选栏 */}
       <div style={{
         display: 'flex',
         gap: 8,
@@ -393,11 +275,11 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
           placeholder={t('kms.knowledge.searchPlaceholder')}
           value={filterKeyword}
           onChange={e => setFilterKeyword(e.target.value)}
-          style={{ width: 200 }}
+          style={{ width: 220 }}
         />
         <Select
           size="small"
-          style={{ width: 160 }}
+          style={{ width: 180 }}
           value={filterDirId || ''}
           onChange={v => { setFilterDirId(v || undefined); setPage(1) }}
           options={dirOptions}
@@ -419,6 +301,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
             rowKey="id"
             columns={columns}
             dataSource={fileSummaries.items}
+            tableLayout="fixed"
             pagination={{
               current: page,
               pageSize,
@@ -429,9 +312,138 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
               onChange: (p, ps) => { setPage(p); setPageSize(ps) },
               size: 'small',
             }}
-            scroll={{ x: 'max-content' }}
+            scroll={{ x: 1000 }}
           />
         </Spin>
+      </div>
+    </div>
+  )
+
+  const renderStatsTab = () => {
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 4 }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+          gap: 12,
+        }}>
+          {statCards.map((card) => (
+            <Card
+              key={card.label}
+              size="small"
+              style={{ textAlign: 'center' }}
+            >
+              <div style={{ marginBottom: 4, fontSize: 20 }}>{card.icon}</div>
+              <Title level={4} style={{ margin: 0, fontSize: 22 }}>{card.value}</Title>
+              <Text type="secondary" style={{ fontSize: 12 }}>{card.label}</Text>
+              {card.sub && (
+                <div style={{ marginTop: 4 }}>
+                  <Tag style={{ fontSize: 10, margin: 0, lineHeight: '18px', padding: '0 6px' }}>{card.sub}</Tag>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+
+        {/* 按扩展名分布 */}
+        {stats?.files?.byExt && Object.keys(stats.files.byExt).length > 0 && (
+          <Card
+            size="small"
+            style={{ marginTop: 12 }}
+            title={
+              <Space size={6}>
+                <BarChartOutlined style={{ color: token.colorPrimary }} />
+                <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.byExt')}</Text>
+              </Space>
+            }
+          >
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {Object.entries(stats.files.byExt)
+                .sort((a, b) => b[1] - a[1])
+                .map(([ext, count]) => (
+                  <Tag key={ext} style={{ fontSize: 12, margin: 0, padding: '2px 8px' }}>
+                    .{ext}: {count}
+                  </Tag>
+                ))}
+            </div>
+          </Card>
+        )}
+
+        {/* 按索引类型分布 */}
+        {stats?.index?.byType && Object.keys(stats.index.byType).length > 0 && (
+          <Card
+            size="small"
+            style={{ marginTop: 12 }}
+            title={
+              <Space size={6}>
+                <DatabaseOutlined style={{ color: token.colorPrimary }} />
+                <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.byType')}</Text>
+              </Space>
+            }
+          >
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {Object.entries(stats.index.byType)
+                .sort((a, b) => b[1] - a[1])
+                .map(([type, count]) => (
+                  <Tag key={type} style={{ fontSize: 12, margin: 0, padding: '2px 8px' }}>
+                    {type}: {count}
+                  </Tag>
+                ))}
+            </div>
+          </Card>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 顶部标题 + 统计 */}
+      <div style={{ flexShrink: 0, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
+          <Title level={5} style={{ margin: 0 }}>{t('kms.knowledge.title')}</Title>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledge.subtitle')}</Text>
+        </div>
+      </div>
+
+      {renderStatsBar()}
+
+      {/* 主体：Tabs 切换文件摘要与统计信息 */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Tabs
+          activeKey={activeTab}
+          onChange={handleTabChange}
+          size="small"
+          style={{ height: '100%' }}
+          tabBarStyle={{ marginBottom: 12 }}
+          items={[
+            {
+              key: 'files',
+              label: (
+                <span>
+                  <FileTextOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledge.filesTab')}
+                  {fileSummaries.total > 0 && (
+                    <Tag color="blue" style={{ fontSize: 10, margin: '0 0 0 4px', lineHeight: '16px', padding: '0 4px' }}>
+                      {fileSummaries.total}
+                    </Tag>
+                  )}
+                </span>
+              ),
+              children: renderFilesTab(),
+            },
+            {
+              key: 'stats',
+              label: (
+                <span>
+                  <BarChartOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledge.statsTab')}
+                </span>
+              ),
+              children: renderStatsTab(),
+            },
+          ]}
+        />
       </div>
     </div>
   )

@@ -67,7 +67,7 @@ const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_search',
-    description: 'Search local files using keyword, semantic, or hybrid mode. Supports filtering by directory, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets).',
+    description: 'Search local files using keyword, semantic, or hybrid mode. Supports filtering by directory, collection, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -91,6 +91,11 @@ const MCP_TOOLS: MCPTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'Limit search to specific directory IDs (optional)',
+        },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Limit search to files within specified collections (optional). Use kms_list_collections to get available collection IDs.',
         },
         file_extensions: {
           type: 'array',
@@ -137,6 +142,11 @@ const MCP_TOOLS: MCPTool[] = [
           type: 'array',
           items: { type: 'string' },
           description: 'Limit search to specific directory IDs (optional)',
+        },
+        collection_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Limit search to files within specified collections (optional). Use kms_list_collections to get available collection IDs.',
         },
         file_extensions: {
           type: 'array',
@@ -204,24 +214,80 @@ const MCP_TOOLS: MCPTool[] = [
       required: ['file_id'],
     },
   },
+  {
+    name: 'kms_list_collections',
+    description: 'List all manual file collections (curated groups of files, e.g. "Product Spec", "HR Policies"). Each collection has an ID, name, description, and file count. Use collection IDs to filter kms_search and kms_agent_search.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'kms_list_files_in_collection',
+    description: 'List all files within a specific collection, including file name, path, extension, size, index status, and per-file summary.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collection_id: {
+          type: 'string',
+          description: 'Collection ID (obtain from kms_list_collections)',
+        },
+      },
+      required: ['collection_id'],
+    },
+  },
+  {
+    name: 'kms_get_collection_summary',
+    description: 'Get the high-level summary and key topics of a collection (if generated). Useful for understanding what a collection covers before searching within it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collection_id: {
+          type: 'string',
+          description: 'Collection ID (obtain from kms_list_collections)',
+        },
+      },
+      required: ['collection_id'],
+    },
+  },
+  {
+    name: 'kms_get_toc',
+    description: 'Get the table of contents (TOC) of a file - the hierarchical structure of its paragraphs/headings. Useful for understanding document structure before reading specific sections. The file_id must be the raw ID without "f:" prefix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_id: {
+          type: 'string',
+          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
+        },
+      },
+      required: ['file_id'],
+    },
+  },
+  {
+    name: 'kms_get_paragraphs',
+    description: 'Get all paragraphs of a file with their titles, hierarchy, and offsets. Useful for browsing document structure and locating specific sections. The file_id must be the raw ID without "f:" prefix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_id: {
+          type: 'string',
+          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
+        },
+      },
+      required: ['file_id'],
+    },
+  },
 ]
 
-/**
- * KMS MCP 服务
- * 将本地搜索引擎能力暴露为 MCP 工具，供第三方智能体（Claude Code、Cursor 等）调用
- *
- * 工具列表：
- * - kms_list_dirs: 列出索引目录
- * - kms_stats: 获取统计信息
- * - kms_search: 普通检索（关键词/语义/混合）
- * - kms_agent_search: 智能检索（子智能体自主规划+提纯）
- * - kms_get_content: 获取文件内容（精确定位）
- * - kms_get_summary: 获取文件摘要
- */
 class KMSMCPService {
   private server: http.Server | null = null
   private config: KMSMCPConfig = { ...DEFAULT_CONFIG }
-  private sessions: Map<string, { initialized: boolean; createdAt: number }> = new Map()
+  private sessions: Map<string, { initialized: boolean; createdAt: number; lastActivityAt: number }> = new Map()
+  private sessionCleanupTimer: NodeJS.Timeout | null = null
+  private static readonly SESSION_IDLE_TTL_MS = 60 * 60 * 1000
+  private static readonly SESSION_CLEANUP_INTERVAL_MS = 30 * 60 * 1000
   private static instance: KMSMCPService
 
   private constructor() {}
@@ -271,6 +337,11 @@ class KMSMCPService {
 
       this.server.listen(this.config.port, '127.0.0.1', () => {
         logger.info(`KMS MCP server started on port ${this.config.port}`)
+        this.sessionCleanupTimer = setInterval(
+          () => this.cleanupExpiredSessions(),
+          KMSMCPService.SESSION_CLEANUP_INTERVAL_MS
+        )
+        this.sessionCleanupTimer.unref?.()
         resolve({ success: true })
       })
     })
@@ -287,6 +358,10 @@ class KMSMCPService {
         return
       }
 
+      if (this.sessionCleanupTimer) {
+        clearInterval(this.sessionCleanupTimer)
+        this.sessionCleanupTimer = null
+      }
       this.sessions.clear()
       this.server.close(() => {
         this.server = null
@@ -346,6 +421,7 @@ class KMSMCPService {
 
     const response = await this.handleMessage(message, sessionId)
     const newSessionId = sessionId || this.getOrCreateSessionId(message)
+    this.touchSession(sessionId ?? newSessionId ?? undefined)
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -361,10 +437,35 @@ class KMSMCPService {
   private getOrCreateSessionId(message: JsonRpcRequest): string | null {
     if (message.method === 'initialize') {
       const sessionId = generateId()
-      this.sessions.set(sessionId, { initialized: false, createdAt: Date.now() })
+      const now = Date.now()
+      this.sessions.set(sessionId, { initialized: false, createdAt: now, lastActivityAt: now })
       return sessionId
     }
     return null
+  }
+
+  private touchSession(sessionId: string | undefined): void {
+    if (!sessionId) return
+    const session = this.sessions.get(sessionId)
+    if (session) {
+      session.lastActivityAt = Date.now()
+    }
+  }
+
+  /** 清理过期 session：移除超过 SESSION_IDLE_TTL_MS 未活动的条目 */
+  private cleanupExpiredSessions(): void {
+    if (this.sessions.size === 0) return
+    const now = Date.now()
+    let removed = 0
+    for (const [id, session] of this.sessions) {
+      if (now - session.lastActivityAt > KMSMCPService.SESSION_IDLE_TTL_MS) {
+        this.sessions.delete(id)
+        removed++
+      }
+    }
+    if (removed > 0) {
+      logger.info(`MCP: cleaned up ${removed} expired session(s)`)
+    }
   }
 
   private async handleMessage(message: JsonRpcRequest, sessionId?: string): Promise<JsonRpcResponse> {
@@ -463,204 +564,337 @@ class KMSMCPService {
     }
   }
 
-  private async executeTool(name: string, args: Record<string, any>): Promise<string> {
-    const kmsService = KMSService.getInstance()
-
-    switch (name) {
-      case 'kms_list_dirs': {
-        const dirs = kmsService.listIndexDirs() as any[]
-        if (dirs.length === 0) {
-          return 'No index directories configured.'
-        }
-
-        let output = `${dirs.length} index directory(ies):\n`
-        for (let i = 0; i < dirs.length; i++) {
-          const dir = dirs[i]
-          const fileCount = this.getFileCountByDir(dir.id)
-          output += `${i + 1}. ${dir.display_name || dir.dir_path} [${dir.id}] ${fileCount} files`
-          if (dir.enabled === 0) output += ' (disabled)'
-          output += `\n   ${dir.dir_path}\n`
-        }
-        return output
+  /**
+   * 工具处理字典：将工具名映射到对应的处理函数
+   * - 使用箭头函数形式，自动绑定 this 上下文，便于访问 getFileCountByDir/getFileById/stripIdPrefix 等私有方法
+   * - 每个处理函数接收 (args, kmsService) 参数，返回 Promise<string>
+   */
+  private toolHandlers: Record<string, (args: Record<string, any>, kmsService: KMSService) => Promise<string>> = {
+    'kms_list_dirs': async (_args, kmsService) => {
+      const dirs = kmsService.listIndexDirs() as any[]
+      if (dirs.length === 0) {
+        return 'No index directories configured.'
       }
 
-      case 'kms_stats': {
-        const stats = kmsService.getStats()
-        let output = 'KMS Statistics:\n'
-        output += `Directories: ${stats.dirs.total} (enabled: ${stats.dirs.enabled})\n`
-        output += `Files: ${stats.files.total}\n`
-        output += `  Status: ${JSON.stringify(stats.files.byStatus)}\n`
-        output += `  Tier: ${JSON.stringify(stats.files.byTier)}\n`
-        output += `  Extensions: ${JSON.stringify(stats.files.byExt)}\n`
-        output += `Index entries: ${stats.index.totalEntries}\n`
-        output += `  By type: ${JSON.stringify(stats.index.byType)}\n`
-        output += `Embeddings: ${stats.index.embeddingCount}\n`
-        return output
+      let output = `${dirs.length} index directory(ies):\n`
+      for (let i = 0; i < dirs.length; i++) {
+        const dir = dirs[i]
+        const fileCount = this.getFileCountByDir(dir.id)
+        output += `${i + 1}. ${dir.display_name || dir.dir_path} [${dir.id}] ${fileCount} files`
+        if (dir.enabled === 0) output += ' (disabled)'
+        output += `\n   ${dir.dir_path}\n`
+      }
+      return output
+    },
+
+    'kms_stats': async (_args, kmsService) => {
+      const stats = kmsService.getStats()
+      let output = 'KMS Statistics:\n'
+      output += `Directories: ${stats.dirs.total} (enabled: ${stats.dirs.enabled})\n`
+      output += `Collections: ${stats.collections?.total ?? 0}\n`
+      output += `Files: ${stats.files.total}\n`
+      output += `  Status: ${JSON.stringify(stats.files.byStatus)}\n`
+      output += `  Tier: ${JSON.stringify(stats.files.byTier)}\n`
+      output += `  Extensions: ${JSON.stringify(stats.files.byExt)}\n`
+      output += `Index entries: ${stats.index.totalEntries}\n`
+      output += `  By type: ${JSON.stringify(stats.index.byType)}\n`
+      output += `Embeddings: ${stats.index.embeddingCount}\n`
+      return output
+    },
+
+    'kms_search': async (args, kmsService) => {
+      const query = String(args.query || '').trim()
+      if (!query || query.length < 2) {
+        return 'Please enter at least 2 characters for the query.'
       }
 
-      case 'kms_search': {
-        const query = String(args.query || '').trim()
-        if (!query || query.length < 2) {
-          return 'Please enter at least 2 characters for the query.'
+      const topK = Math.min(Math.max(args.top_k || 10, 1), 50)
+      const useSemantic = Boolean(args.use_semantic)
+
+      const results = await kmsService.search(query, {
+        topK,
+        useSemantic,
+        fileExtensions: args.file_extensions,
+        timeRangeStart: args.time_range_start ? Math.floor(args.time_range_start / 1000) : undefined,
+        timeRangeEnd: args.time_range_end ? Math.floor(args.time_range_end / 1000) : undefined,
+        dirIds: args.dir_ids,
+        collectionIds: args.collection_ids,
+      })
+
+      if (results.length === 0) {
+        let msg = `No results for "${query}".`
+        if (!useSemantic) msg += ' Suggestions: enable semantic search (use_semantic:true)'
+        return msg
+      }
+
+      let output = `${results.length} result(s)${useSemantic ? ' (semantic)' : ' (keyword)'}:\n\n`
+      const typeLabels: Record<string, string> = {
+        file_title: 'Title',
+        file_summary: 'Summary',
+        paragraph: 'Paragraph',
+        content_paragraph: 'Content',
+        hybrid: 'Hybrid',
+      }
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i] as any
+        const typeLabel = typeLabels[r.match_type as string] || r.match_type
+
+        output += `[${i + 1}] ${typeLabel} | ${r.file_name}`
+        if (r.paragraph_title) output += ` > ${r.paragraph_title}`
+        output += '\n'
+        output += `${r.text}\n`
+        output += `file_id: ${r.file_id}\n`
+        if (r.paragraph_id) output += `paragraph_id: ${r.paragraph_id}\n`
+        if (r.start_line !== undefined && r.end_line !== undefined) {
+          output += `lines: ${r.start_line}-${r.end_line}\n`
         }
-
-        const topK = Math.min(Math.max(args.top_k || 10, 1), 50)
-        const useSemantic = Boolean(args.use_semantic)
-
-        const results = await kmsService.search(query, {
-          topK,
-          useSemantic,
-          fileExtensions: args.file_extensions,
-          timeRangeStart: args.time_range_start ? Math.floor(args.time_range_start / 1000) : undefined,
-          timeRangeEnd: args.time_range_end ? Math.floor(args.time_range_end / 1000) : undefined,
-        })
-
-        if (results.length === 0) {
-          let msg = `No results for "${query}".`
-          if (!useSemantic) msg += ' Suggestions: enable semantic search (use_semantic:true)'
-          return msg
+        if (r.start_offset !== undefined && r.end_offset !== undefined) {
+          output += `offset: ${r.start_offset}-${r.end_offset}\n`
         }
+        output += `path: ${r.file_path}\n\n`
+      }
 
-        let output = `${results.length} result(s)${useSemantic ? ' (semantic)' : ' (keyword)'}:\n\n`
-        const typeLabels: Record<string, string> = {
-          file_title: 'Title',
-          file_summary: 'Summary',
-          paragraph: 'Paragraph',
-          content_paragraph: 'Content',
-          hybrid: 'Hybrid',
-        }
-        for (let i = 0; i < results.length; i++) {
-          const r = results[i] as any
-          const typeLabel = typeLabels[r.match_type as string] || r.match_type
+      return output
+    },
 
-          output += `[${i + 1}] ${typeLabel} | ${r.file_name}`
-          if (r.paragraph_title) output += ` > ${r.paragraph_title}`
+    'kms_agent_search': async (args, kmsService) => {
+      const query = String(args.query || '').trim()
+      if (!query || query.length < 2) {
+        return 'Please enter at least 2 characters for the query.'
+      }
+
+      const result = await kmsService.agentSearch(query, {
+        maxRounds: args.max_rounds,
+        topK: args.top_k,
+        dirIds: args.dir_ids,
+        collectionIds: args.collection_ids,
+        fileExtensions: args.file_extensions,
+        timeRangeStart: args.time_range_start,
+        timeRangeEnd: args.time_range_end,
+      })
+
+      let output = `Query Type: ${result.queryTypeLabel}\n`
+      output += `Search Rounds: ${result.searchRounds}\n\n`
+      output += `Conclusion:\n${result.conclusion}\n`
+
+      if (result.sources.length > 0) {
+        output += '\nSources:\n'
+        for (let i = 0; i < result.sources.length; i++) {
+          const s = result.sources[i]
+          output += `[${i + 1}] ${s.fileName}`
+          if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
           output += '\n'
-          output += `${r.text}\n`
-          output += `file_id: ${r.file_id}\n`
-          if (r.paragraph_id) output += `paragraph_id: ${r.paragraph_id}\n`
-          if (r.start_line !== undefined && r.end_line !== undefined) {
-            output += `lines: ${r.start_line}-${r.end_line}\n`
+          output += `file_id: ${s.fileId}\n`
+          if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
+          if (s.startLine !== undefined && s.endLine !== undefined) {
+            output += `lines: ${s.startLine}-${s.endLine}\n`
           }
-          if (r.start_offset !== undefined && r.end_offset !== undefined) {
-            output += `offset: ${r.start_offset}-${r.end_offset}\n`
+          if (s.startOffset !== undefined && s.endOffset !== undefined) {
+            output += `offset: ${s.startOffset}-${s.endOffset}\n`
           }
-          output += `path: ${r.file_path}\n\n`
+          output += `path: ${s.filePath}\n`
+          if (s.snippet) output += `snippet: ${s.snippet.substring(0, 150)}...\n`
+          output += '\n'
         }
-
-        return output
       }
 
-      case 'kms_agent_search': {
-        const query = String(args.query || '').trim()
-        if (!query || query.length < 2) {
-          return 'Please enter at least 2 characters for the query.'
-        }
+      return output
+    },
 
-        const result = await kmsService.agentSearch(query, {
-          maxRounds: args.max_rounds,
-          topK: args.top_k,
-          dirIds: args.dir_ids,
-          fileExtensions: args.file_extensions,
-          timeRangeStart: args.time_range_start,
-          timeRangeEnd: args.time_range_end,
-        })
+    'kms_get_content': async (args, kmsService) => {
+      let fileId = String(args.file_id || '').trim()
+      if (!fileId) {
+        return 'Please provide file_id.'
+      }
+      // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
+      fileId = this.stripIdPrefix(fileId)
 
-        let output = `Query Type: ${result.queryTypeLabel}\n`
-        output += `Search Rounds: ${result.searchRounds}\n\n`
-        output += `Conclusion:\n${result.conclusion}\n`
+      const content = await kmsService.getFileContent(fileId, {
+        paragraphId: this.stripIdPrefix(String(args.paragraph_id || '')) || undefined,
+        startOffset: args.start_offset,
+        endOffset: args.end_offset,
+        startLine: args.start_line,
+        maxChars: args.max_chars || 5000,
+      })
 
-        if (result.sources.length > 0) {
-          output += '\nSources:\n'
-          for (let i = 0; i < result.sources.length; i++) {
-            const s = result.sources[i]
-            output += `[${i + 1}] ${s.fileName}`
-            if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
-            output += '\n'
-            output += `file_id: ${s.fileId}\n`
-            if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
-            if (s.startLine !== undefined && s.endLine !== undefined) {
-              output += `lines: ${s.startLine}-${s.endLine}\n`
-            }
-            if (s.startOffset !== undefined && s.endOffset !== undefined) {
-              output += `offset: ${s.startOffset}-${s.endOffset}\n`
-            }
-            output += `path: ${s.filePath}\n`
-            if (s.snippet) output += `snippet: ${s.snippet.substring(0, 150)}...\n`
-            output += '\n'
-          }
-        }
-
-        return output
+      const file = this.getFileById(fileId)
+      if (!file) {
+        return 'File not found.'
       }
 
-      case 'kms_get_content': {
-        let fileId = String(args.file_id || '').trim()
-        if (!fileId) {
-          return 'Please provide file_id.'
-        }
-        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
-        fileId = this.stripIdPrefix(fileId)
+      let output = `${file.file_name}\n`
+      output += `file_id: ${fileId}\n`
+      if (args.paragraph_id) output += `paragraph_id: ${this.stripIdPrefix(String(args.paragraph_id))}\n`
+      if (args.start_offset !== undefined && args.end_offset !== undefined) {
+        output += `offset: ${args.start_offset}-${args.end_offset}\n`
+      }
+      if (args.start_line !== undefined) {
+        output += `line: ${args.start_line}\n`
+      }
+      output += `path: ${file.file_path}\n\n`
+      output += content
+      return output
+    },
 
-        const content = await kmsService.getFileContent(fileId, {
-          paragraphId: this.stripIdPrefix(String(args.paragraph_id || '')) || undefined,
-          startOffset: args.start_offset,
-          endOffset: args.end_offset,
-          startLine: args.start_line,
-          maxChars: args.max_chars || 5000,
-        })
+    'kms_get_summary': async (args, kmsService) => {
+      let fileId = String(args.file_id || '').trim()
+      if (!fileId) {
+        return 'Please provide file_id.'
+      }
+      // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
+      fileId = this.stripIdPrefix(fileId)
 
-        const file = this.getFileById(fileId)
-        if (!file) {
-          return 'File not found.'
-        }
-
-        let output = `${file.file_name}\n`
-        output += `file_id: ${fileId}\n`
-        if (args.paragraph_id) output += `paragraph_id: ${this.stripIdPrefix(String(args.paragraph_id))}\n`
-        if (args.start_offset !== undefined && args.end_offset !== undefined) {
-          output += `offset: ${args.start_offset}-${args.end_offset}\n`
-        }
-        if (args.start_line !== undefined) {
-          output += `line: ${args.start_line}\n`
-        }
-        output += `path: ${file.file_path}\n\n`
-        output += content
-        return output
+      const summary = kmsService.getFileSummary(fileId) as any
+      if (!summary) {
+        return 'No summary available. Summary is only generated for hot data files.'
       }
 
-      case 'kms_get_summary': {
-        let fileId = String(args.file_id || '').trim()
-        if (!fileId) {
-          return 'Please provide file_id.'
+      let output = `File Summary:\n`
+      output += `${summary.summary || '(empty)'}\n`
+      try {
+        const keywords = JSON.parse(summary.keywords_json || '[]')
+        if (keywords.length > 0) {
+          output += `\nKeywords: ${keywords.join(', ')}\n`
         }
-        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
-        fileId = this.stripIdPrefix(fileId)
-
-        const summary = kmsService.getFileSummary(fileId) as any
-        if (!summary) {
-          return 'No summary available. Summary is only generated for hot data files.'
+        const topics = JSON.parse(summary.main_topics_json || '[]')
+        if (topics.length > 0) {
+          output += `Main Topics: ${topics.join(', ')}\n`
         }
+      } catch {}
 
-        let output = `File Summary:\n`
-        output += `${summary.summary || '(empty)'}\n`
+      return output
+    },
+
+    'kms_list_collections': async (_args, kmsService) => {
+      const collections = kmsService.listCollections() as any[]
+      if (collections.length === 0) {
+        return 'No collections available. Collections are curated groups of files created via the WorkAvatar UI.'
+      }
+
+      let output = `${collections.length} collection(s):\n`
+      for (let i = 0; i < collections.length; i++) {
+        const c = collections[i]
+        output += `${i + 1}. ${c.name} [${c.id}] ${c.file_count || 0} files`
+        if (c.description) output += ` - ${c.description}`
+        output += '\n'
+      }
+      return output
+    },
+
+    'kms_list_files_in_collection': async (args, kmsService) => {
+      const collectionId = String(args.collection_id || '').trim()
+      if (!collectionId) {
+        return 'Please provide collection_id.'
+      }
+
+      const files = kmsService.listFilesInCollection(collectionId) as any[]
+      if (files.length === 0) {
+        return 'Collection is empty or not found.'
+      }
+
+      let output = `${files.length} file(s) in collection:\n\n`
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        output += `[${i + 1}] ${f.file_name} [${f.id}]\n`
+        output += `  ext: ${f.file_ext || 'N/A'}, size: ${f.file_size || 0}, status: ${f.index_status}\n`
+        output += `  path: ${f.file_path}\n`
+        if (f.light_summary) {
+          output += `  summary: ${f.light_summary.substring(0, 200)}${f.light_summary.length > 200 ? '...' : ''}\n`
+        }
+        output += '\n'
+      }
+      return output
+    },
+
+    'kms_get_collection_summary': async (args, kmsService) => {
+      const collectionId = String(args.collection_id || '').trim()
+      if (!collectionId) {
+        return 'Please provide collection_id.'
+      }
+
+      const summary = kmsService.getCollectionSummary(collectionId) as any
+      if (!summary) {
+        return 'No summary available for this collection.'
+      }
+
+      let output = `Collection Summary:\n`
+      output += `${summary.summary || '(empty)'}\n`
+      try {
+        const topics = JSON.parse(summary.key_topics_json || '[]')
+        if (topics.length > 0) {
+          output += `\nKey Topics: ${topics.join(', ')}\n`
+        }
+      } catch {}
+      return output
+    },
+
+    'kms_get_toc': async (args, kmsService) => {
+      let fileId = String(args.file_id || '').trim()
+      if (!fileId) {
+        return 'Please provide file_id.'
+      }
+      fileId = this.stripIdPrefix(fileId)
+
+      const toc = kmsService.getFileToc(fileId) as any[]
+      if (!toc || toc.length === 0) {
+        return 'No table of contents available. TOC is generated when the file is indexed as hot data.'
+      }
+
+      let output = `Table of Contents (${toc.length} entries):\n\n`
+      for (const entry of toc) {
+        const indent = '  '.repeat(Math.max(0, (entry.level || 1) - 1))
+        output += `${indent}- ${entry.title || '(untitled)'}`
+        output += ` [paragraph_id: ${entry.id}]`
+        if (entry.startOffset !== undefined && entry.endOffset !== undefined) {
+          output += ` offset: ${entry.startOffset}-${entry.endOffset}`
+        }
+        output += '\n'
+      }
+      return output
+    },
+
+    'kms_get_paragraphs': async (args, kmsService) => {
+      let fileId = String(args.file_id || '').trim()
+      if (!fileId) {
+        return 'Please provide file_id.'
+      }
+      fileId = this.stripIdPrefix(fileId)
+
+      const paragraphs = kmsService.getFileParagraphs(fileId) as any[]
+      if (!paragraphs || paragraphs.length === 0) {
+        return 'No paragraphs available. Paragraphs are generated when the file is indexed as hot data.'
+      }
+
+      let output = `${paragraphs.length} paragraph(s):\n\n`
+      for (let i = 0; i < paragraphs.length; i++) {
+        const p = paragraphs[i]
+        const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
+        output += `[${i + 1}] ${indent}${p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
+        if (p.summary) {
+          output += `  summary: ${p.summary}\n`
+        }
+        if (p.start_offset !== undefined && p.end_offset !== undefined) {
+          output += `  offset: ${p.start_offset}-${p.end_offset}\n`
+        }
         try {
-          const keywords = JSON.parse(summary.keywords_json || '[]')
-          if (keywords.length > 0) {
-            output += `\nKeywords: ${keywords.join(', ')}\n`
-          }
-          const topics = JSON.parse(summary.main_topics_json || '[]')
-          if (topics.length > 0) {
-            output += `Main Topics: ${topics.join(', ')}\n`
+          const keywords = JSON.parse(p.keywords_json || '[]')
+          if (Array.isArray(keywords) && keywords.length > 0) {
+            output += `  keywords: ${keywords.join(', ')}\n`
           }
         } catch {}
-
-        return output
+        output += '\n'
       }
+      return output
+    },
+  }
 
-      default:
-        return `Unknown tool: ${name}`
+  private async executeTool(name: string, args: Record<string, any>): Promise<string> {
+    const kmsService = KMSService.getInstance()
+    const handler = this.toolHandlers[name]
+    if (!handler) {
+      return `Unknown tool: ${name}`
     }
+    return handler(args, kmsService)
   }
 
   private getFileCountByDir(dirId: string): number {

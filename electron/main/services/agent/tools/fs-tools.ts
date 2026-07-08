@@ -13,7 +13,6 @@ const ignoreDirs = new Set([
   'out', 'target', 'bin', 'obj'
 ])
 
-/** 获取当前员工的工作区路径 */
 function getWorkspacePath(): string | null {
   try {
     const ctx = interactionContext.getStore()
@@ -26,7 +25,6 @@ function getWorkspacePath(): string | null {
   }
 }
 
-/** 判断路径是否在工作区内 */
 function isPathInWorkspace(filePath: string): boolean {
   const workspacePath = getWorkspacePath()
   if (!workspacePath) return false
@@ -88,8 +86,6 @@ async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<
   }
 }
 
-// ─── list_dir ───
-
 export const listDirTool: ToolDefinition = {
   id: 'list_dir',
   name: 'list_dir',
@@ -117,6 +113,7 @@ export const listDirTool: ToolDefinition = {
       const maxEntries = Math.min(Math.max(args.max_entries || 200, 1), 1000)
       const items: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: string }> = []
       let total = 0
+      let truncated = false
 
       const walk = (current: string, prefix: string) => {
         let entries: fs.Dirent[]
@@ -127,7 +124,7 @@ export const listDirTool: ToolDefinition = {
         } catch { return }
 
         for (const entry of entries) {
-          if (total >= maxEntries) break
+          if (total >= maxEntries) { truncated = true; break }
           total++
           const fullPath = path.join(current, entry.name)
           const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
@@ -155,7 +152,6 @@ export const listDirTool: ToolDefinition = {
 
       if (items.length === 0) return { success: true, output: `目录 ${dirPath} 为空` }
 
-      // 格式化输出：兼顾可读性和结构化信息
       const lines = items.map(item => {
         if (item.type === 'dir') {
           return `📁 ${item.path}/`
@@ -166,7 +162,7 @@ export const listDirTool: ToolDefinition = {
       })
 
       let result = lines.join('\n')
-      if (total > maxEntries) result += `\n\n(已截断，显示前 ${maxEntries} 条，共 ${total} 条)`
+      if (truncated) result += `\n\n(已截断，显示前 ${total} 条)`
       return { success: true, output: result }
     } catch (error: any) {
       return { success: false, error: `列出目录失败: ${error.message || error}` }
@@ -174,8 +170,6 @@ export const listDirTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── read_file ───
 
 const PARSABLE_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
@@ -189,14 +183,15 @@ export const readFileTool: ToolDefinition = {
   id: 'read_file',
   name: 'read_file',
   title: '读取文件',
-  description: '读取本地文件内容。默认以纯文本方式读取，支持分段读取。设置 parse=true 可解析 PDF、DOCX、XLSX、PPTX、图片等二进制格式。',
+  description: '读取本地文件内容。默认以纯文本方式读取，支持分段读取和行号显示。设置 parse=true 可解析 PDF、DOCX、XLSX、PPTX、图片等二进制格式。输出中每行开头的 "行号|" 为便于定位而添加，不属于原始文件内容；若不需要行号可设置 show_line_numbers=false。',
   parameters: {
     type: 'object',
     properties: {
       path: { type: 'string', description: '文件绝对路径' },
       parse: { type: 'boolean', description: '是否启用文档解析（解析 PDF/DOCX/XLSX/PPTX/图片OCR 等二进制格式），默认false' },
       offset: { type: 'number', description: '起始字符偏移量（默认0）', minimum: 0 },
-      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，最大${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT }
+      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，最大${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
+      show_line_numbers: { type: 'boolean', description: '是否在每行开头显示行号（默认true），行号为便于定位而添加，不属于原始文件内容' }
     },
     required: ['path']
   },
@@ -214,7 +209,6 @@ export const readFileTool: ToolDefinition = {
       const enableParse = args.parse === true
       const ext = path.extname(resolved).toLowerCase().slice(1)
 
-      // 默认以纯文本读取，仅当显式设置 parse=true 时才解析二进制文档
       if (enableParse && PARSABLE_EXTENSIONS.has(ext)) {
         const parser = require('../../file-parser.service').default.getInstance()
         const result = await parser.parseFilePath(resolved)
@@ -238,7 +232,6 @@ export const readFileTool: ToolDefinition = {
         return { success: true, output }
       }
 
-      // 纯文本读取（默认路径）
       const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
       const totalChars = content.length
 
@@ -250,10 +243,16 @@ export const readFileTool: ToolDefinition = {
       const sliced = content.slice(offset, end)
 
       const beforeOffset = content.slice(0, offset)
+      const showLineNumbers = args.show_line_numbers !== false
       const startLine = (beforeOffset.match(/\n/g) || []).length + 1
       const lines = sliced.split('\n')
-      const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
-      let output = numbered.join('\n')
+      let output: string
+      if (showLineNumbers) {
+        const numbered = lines.map((line, i) => `${startLine + i}| ${line}`)
+        output = numbered.join('\n')
+      } else {
+        output = sliced
+      }
 
       const totalLines = (content.match(/\n/g) || []).length + 1
       if (end < totalChars) {
@@ -269,8 +268,6 @@ export const readFileTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── write_file ───
 
 export const writeFileTool: ToolDefinition = {
   id: 'write_file',
@@ -292,16 +289,15 @@ export const writeFileTool: ToolDefinition = {
       if (!filePath) return { success: false, error: '文件路径不能为空' }
 
       const resolved = path.resolve(filePath)
+      const append = args.append === true
 
-      // 工作区外需确认
-      const confirm = await confirmOutsideWorkspace('写入', resolved)
+      const confirm = await confirmOutsideWorkspace(append ? '追加' : '写入', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
       const dir = path.dirname(resolved)
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 
       const content = String(args.content || '')
-      const append = args.append === true
 
       if (append) {
         fs.appendFileSync(resolved, content, 'utf-8')
@@ -317,8 +313,6 @@ export const writeFileTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── create_folder ───
 
 export const createFolderTool: ToolDefinition = {
   id: 'create_folder',
@@ -339,7 +333,6 @@ export const createFolderTool: ToolDefinition = {
 
       const resolved = path.resolve(folderPath)
 
-      // 工作区外需确认
       const confirm = await confirmOutsideWorkspace('创建文件夹于', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -355,8 +348,6 @@ export const createFolderTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── delete_item ───
 
 export const deleteItemTool: ToolDefinition = {
   id: 'delete_item',
@@ -381,7 +372,6 @@ export const deleteItemTool: ToolDefinition = {
       const stat = fs.statSync(resolved)
       const isDirectory = stat.isDirectory()
 
-      // 所有删除操作均需确认
       const confirm = await confirmDelete(resolved, isDirectory)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -398,8 +388,6 @@ export const deleteItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── rename_item ───
 
 export const renameItemTool: ToolDefinition = {
   id: 'rename_item',
@@ -432,7 +420,6 @@ export const renameItemTool: ToolDefinition = {
       const dir = path.dirname(resolved)
       const newPath = path.join(dir, newName)
 
-      // 工作区外需确认
       const confirm = await confirmOutsideWorkspace('重命名', resolved)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
@@ -448,8 +435,6 @@ export const renameItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── move_item ───
 
 export const moveItemTool: ToolDefinition = {
   id: 'move_item',
@@ -477,13 +462,11 @@ export const moveItemTool: ToolDefinition = {
       if (!fs.existsSync(resolvedSource)) return { success: false, error: `源路径不存在: ${resolvedSource}` }
       if (fs.existsSync(resolvedDest)) return { success: false, error: `目标路径已存在: ${resolvedDest}` }
 
-      // 源或目标在工作区外需确认
       const confirmSrc = await confirmOutsideWorkspace('移动', resolvedSource)
       if (!confirmSrc.ok) return { success: false, error: confirmSrc.error }
       const confirmDest = await confirmOutsideWorkspace('移动至', resolvedDest)
       if (!confirmDest.ok) return { success: false, error: confirmDest.error }
 
-      // 确保目标父目录存在
       const destDir = path.dirname(resolvedDest)
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true })
 
@@ -495,8 +478,6 @@ export const moveItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── copy_item ───
 
 export const copyItemTool: ToolDefinition = {
   id: 'copy_item',
@@ -524,11 +505,9 @@ export const copyItemTool: ToolDefinition = {
       if (!fs.existsSync(resolvedSource)) return { success: false, error: `源路径不存在: ${resolvedSource}` }
       if (fs.existsSync(resolvedDest)) return { success: false, error: `目标路径已存在: ${resolvedDest}` }
 
-      // 目标在工作区外需确认
       const confirm = await confirmOutsideWorkspace('复制至', resolvedDest)
       if (!confirm.ok) return { success: false, error: confirm.error }
 
-      // 确保目标父目录存在
       const destDir = path.dirname(resolvedDest)
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true })
 
@@ -546,8 +525,6 @@ export const copyItemTool: ToolDefinition = {
   },
   source: 'builtin'
 }
-
-// ─── get_file_info ───
 
 export const getFileInfoTool: ToolDefinition = {
   id: 'get_file_info',
@@ -597,8 +574,6 @@ export const getFileInfoTool: ToolDefinition = {
   source: 'builtin'
 }
 
-// ─── search_files ───
-
 export const searchFilesTool: ToolDefinition = {
   id: 'search_files',
   name: 'search_files',
@@ -626,7 +601,6 @@ export const searchFilesTool: ToolDefinition = {
 
       const maxResults = Math.min(Math.max(args.max_results || 50, 1), 200)
 
-      // 将通配符模式转换为正则
       const regexStr = pattern
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
         .replace(/\*/g, '.*')
@@ -634,7 +608,6 @@ export const searchFilesTool: ToolDefinition = {
       const regex = new RegExp(`^${regexStr}$`, 'i')
 
       const results: string[] = []
-      let totalScanned = 0
 
       const walk = (current: string) => {
         if (results.length >= maxResults) return
@@ -651,7 +624,6 @@ export const searchFilesTool: ToolDefinition = {
           if (entry.isDirectory()) {
             walk(fullPath)
           } else {
-            totalScanned++
             if (regex.test(entry.name)) {
               const relativePath = path.relative(resolved, fullPath).replace(/\\/g, '/')
               const stat = fs.statSync(fullPath)

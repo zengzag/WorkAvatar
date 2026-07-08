@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -48,6 +48,16 @@ interface SkillsSectionProps {
   onToggleSkill: (skillId: string, enabled: boolean) => void
 }
 
+// 描述回退逻辑：优先 description，其次取 skillMdContent 前 200 字符去掉首行 Markdown 标题，最后回退到无描述
+function getSkillDescription(skill: InstalledSkill, fallback: string): string {
+  if (skill.description) return skill.description
+  if (skill.skillMdContent) {
+    const preview = skill.skillMdContent.substring(0, 200).replace(/^#\s+.+\n?/, '').trim()
+    if (preview) return preview
+  }
+  return fallback
+}
+
 const SkillsSection: React.FC<SkillsSectionProps> = ({
   installedSkills,
   employeeSkills,
@@ -60,7 +70,18 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
-  const enabledSkillIds = new Set(employeeSkills.filter((s) => s.enabled).map((s) => s.id))
+  // 已启用技能 id 集合，使用 useMemo 缓存避免每次渲染重新构造
+  const enabledSkillIds = useMemo(
+    () => new Set(employeeSkills.filter((s) => s.enabled).map((s) => s.id)),
+    [employeeSkills]
+  )
+
+  const noDescText = t('employeeSettings.noDesc')
+
+  // 包装 props 传入的回调，保证稳定引用
+  const handleToggle = useCallback((skillId: string, enabled: boolean) => {
+    onToggleSkill(skillId, enabled)
+  }, [onToggleSkill])
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
@@ -105,7 +126,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1, minWidth: 0 }}>
-                  <Avatar style={{ backgroundColor: '#722ed1', flexShrink: 0 }} icon={<BookOutlined />} />
+                  <Avatar style={{ backgroundColor: token.colorInfo, flexShrink: 0 }} icon={<BookOutlined />} />
                   <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
                     <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
@@ -113,7 +134,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                       <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
                     </div>
                     <Space orientation="vertical" size={0} style={{ width: '100%' }}>
-                      <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
+                      <Text type="secondary" ellipsis style={{ display: 'block' }}>{getSkillDescription(skill, noDescText)}</Text>
                       <Space size={4} style={{ marginTop: 4 }} wrap>
                         {skill.tags.map((tag) => (
                           <Tag key={tag}>{tag}</Tag>
@@ -173,12 +194,12 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                     </div>
-                    <Text type="secondary" ellipsis style={{ display: 'block' }}>{skill.description || skill.skillMdContent?.substring(0, 200).replace(/^#\s+.+\n?/, '').trim() || t('employeeSettings.noDesc')}</Text>
+                    <Text type="secondary" ellipsis style={{ display: 'block' }}>{getSkillDescription(skill, noDescText)}</Text>
                   </div>
                 </div>
                 <Switch
                   checked={skill.enabled}
-                  onChange={(checked) => onToggleSkill(skill.id, checked)}
+                  onChange={(checked) => handleToggle(skill.id, checked)}
                   checkedChildren={t('common.enable')}
                   unCheckedChildren={t('common.disable')}
                 />
@@ -191,4 +212,4 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
   )
 }
 
-export default SkillsSection
+export default React.memo(SkillsSection)

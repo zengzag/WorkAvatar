@@ -9,14 +9,12 @@ import { buildEmployeeSystemPrompt } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
   treeOfThought?: boolean
-  filterTools?: boolean
   totModel?: string
   totApiKey?: string
   totBaseUrl?: string
   totProviderType?: string
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
-  selfLearning?: boolean
   planningStrategy?: PlanningStrategy
   workspaceGuidance?: string
 }
@@ -79,12 +77,10 @@ export class EmployeeAgent extends BaseAgent {
     return this.minimalMode
   }
 
-  /** 设置对话级系统提示词缓存，后续 buildSystemPrompt 直接返回该缓存 */
   setCachedSystemPrompt(prompt: string | undefined): void {
     this.cachedSystemPrompt = prompt
   }
 
-  /** 获取当前对话缓存的系统提示词（如果有的话） */
   getCachedSystemPrompt(): string | undefined {
     return this.cachedSystemPrompt
   }
@@ -109,7 +105,6 @@ export class EmployeeAgent extends BaseAgent {
   }
 
   protected buildSystemPrompt(options: AgentRunOptions): string {
-    // 如果已有对话级缓存，直接返回，确保同一对话上下文内系统提示词不变
     if (this.cachedSystemPrompt) {
       return this.cachedSystemPrompt
     }
@@ -132,7 +127,6 @@ export class EmployeeAgent extends BaseAgent {
       minimalMode: this.minimalMode,
     })
 
-    // 首次构建后缓存，后续直接复用
     this.cachedSystemPrompt = prompt
     return prompt
   }
@@ -178,12 +172,10 @@ export class EmployeeAgent extends BaseAgent {
     callbacks: any,
     signal?: AbortSignal
   ): Promise<void> {
-    this.getContext().setMetadata('currentQuery', options.query)
     return super.runStream(options, callbacks, signal)
   }
 
   async run(options: AgentRunOptions): Promise<any> {
-    this.getContext().setMetadata('currentQuery', options.query)
     return super.run(options)
   }
 
@@ -208,7 +200,7 @@ export class EmployeeAgent extends BaseAgent {
       handler: (args: any) => {
         try {
           const instructions = this.skillManager.activateSkill(args.skill_name)
-          return { success: true, instructions }
+          return { success: true, output: instructions }
         } catch (error: any) {
           return { success: false, error: error.message }
         }
@@ -239,7 +231,7 @@ export class EmployeeAgent extends BaseAgent {
       },
       handler: (args: any) => {
         const content = this.skillManager.readReference(args.skill_name, args.reference_path)
-        return { content }
+        return { success: true, output: content }
       },
       source: 'skill',
       permission: 'safe',
@@ -258,8 +250,6 @@ export class EmployeeAgent extends BaseAgent {
     return {
       ...config,
       treeOfThought: config.treeOfThought || false,
-      filterTools: config.filterTools !== false,
-      selfLearning: config.selfLearning || false,
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
     }

@@ -1,8 +1,7 @@
 import type { ToolDefinition } from './types'
 import { exec as execCb } from 'child_process'
 import { promisify } from 'util'
-import UnifiedInteractionService from '../../unified-interaction.service'
-import { interactionContext } from '../../unified-interaction.service'
+import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
 
 const execAsync = promisify(execCb)
 const IS_WINDOWS = process.platform === 'win32'
@@ -15,7 +14,7 @@ const dangerousPatterns = [
 
 const fileDeletionPatterns = [
   /\brm\s+/i, /\bdel\s+/i, /\brmdir\s+/i, /\berase\s+/i,
-  /\bRemove-Item\b/i, /\brm\s+-/i, /\brd\s+\/s/i, /\brd\s+\/q/i,
+  /\bRemove-Item\b/i, /\brd\s+\/s/i, /\brd\s+\/q/i,
 ]
 
 function isFileDeletionCommand(command: string): boolean {
@@ -49,23 +48,25 @@ export const shellExecTool: ToolDefinition = {
 
       if (isFileDeletionCommand(command)) {
         const ctx = interactionContext.getStore()
-        if (ctx) {
-          try {
-            const interactionService = UnifiedInteractionService.getInstance()
-            const response = await interactionService.request({
-              type: 'confirm',
-              title: '确认执行删除命令',
-              message: `即将执行可能删除文件的命令：\n\n${command.length > 200 ? command.substring(0, 200) + '...' : command}\n\n此操作不可撤销，是否确认执行？`,
-              danger: true,
-              source: 'security:shell_delete',
-            })
+        if (!ctx) {
+          // 无交互上下文（后台任务/MCP 调用等）时默认拒绝删除类命令，避免无人值守场景误删
+          return { success: false, error: '删除类命令需要用户确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
+        }
+        try {
+          const interactionService = UnifiedInteractionService.getInstance()
+          const response = await interactionService.request({
+            type: 'confirm',
+            title: '确认执行删除命令',
+            message: `即将执行可能删除文件的命令：\n\n${command.length > 200 ? command.substring(0, 200) + '...' : command}\n\n此操作不可撤销，是否确认执行？`,
+            danger: true,
+            source: 'security:shell_delete',
+          })
 
-            if (response.cancelled || response.confirmed !== true) {
-              return { success: false, error: '用户取消了删除命令的执行' }
-            }
-          } catch {
-            return { success: false, error: '删除命令确认失败，操作已取消' }
+          if (response.cancelled || response.confirmed !== true) {
+            return { success: false, error: '用户取消了删除命令的执行' }
           }
+        } catch {
+          return { success: false, error: '删除命令确认失败，操作已取消' }
         }
       }
 

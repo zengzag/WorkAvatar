@@ -5,6 +5,7 @@ import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
 import { getDefaultProviderId } from '../common-utils'
 import { createLogger } from '../logger'
+import { callLLMForJSON } from './kms-llm-helpers'
 
 const logger = createLogger('KMS-SearchAgent')
 
@@ -79,6 +80,8 @@ export interface AgentSearchSource {
 export interface AgentSearchOptions {
   /** 限定目录ID列表 */
   dirIds?: string[]
+  /** 限定合集ID列表（与 dirIds 同时指定时取交集） */
+  collectionIds?: string[]
   /** 限定文件扩展名 */
   fileExtensions?: string[]
   /** 时间范围起始（毫秒时间戳） */
@@ -104,7 +107,6 @@ const QUERY_TYPE_LABELS: Record<QueryType, string> = {
   analysis: '综合分析',
 }
 
-/** 文件分片读取的字符数 */
 const READ_CHUNK_SIZE = 2000
 
 /**
@@ -140,6 +142,7 @@ class KMSSearchAgentService {
 
   /**
    * 执行智能检索
+   * 整体流程：初始化 → 查询类型识别 → 获取文件清单 → 检索路径规划 → 多轮检索 → 信息补充 → 内容提纯 → 输出
    */
   async search(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
     const steps: SearchTraceStep[] = []
@@ -147,16 +150,14 @@ class KMSSearchAgentService {
     const maxRounds = Math.min(Math.max(options?.maxRounds ?? 3, 1), 5)
     const topK = Math.min(Math.max(options?.topK ?? 10, 3), 30)
 
-    /** 记录一个步骤并通知回调 */
     const addStep = (step: SearchTraceStep) => {
       steps.push(step)
       trace.push(step.action + (step.detail ? `：${step.detail}` : ''))
       options?.onProgress?.(step)
     }
 
-    // 获取 LLM 提供商和模型
     const llmConfig = options?.providerId
-      ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId) }
+      ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId), enableThinking: false }
       : this.getDefaultLLMConfig()
     if (!llmConfig || !llmConfig.providerId) {
       throw new Error('No LLM provider configured. Please configure an LLM provider first.')
@@ -167,28 +168,21 @@ class KMSSearchAgentService {
 
     addStep({ phase: '初始化', action: '获取LLM配置', detail: `provider: ${llmConfig.providerId}`, type: 'info' })
 
-    // 构建基础检索选项
     const baseSearchOpts: SearchOptions = {
       topK,
       fileExtensions: options?.fileExtensions,
       timeRangeStart: options?.timeRangeStart ? Math.floor(options.timeRangeStart / 1000) : undefined,
       timeRangeEnd: options?.timeRangeEnd ? Math.floor(options.timeRangeEnd / 1000) : undefined,
-    }
-
-    // 如果指定了目录，转换为文件ID列表
-    if (options?.dirIds && options.dirIds.length > 0) {
-      const fileIds = this.getFileIdsByDirIds(options.dirIds)
-      if (fileIds.length > 0) {
-        baseSearchOpts.fileIds = fileIds
-      }
+      dirIds: options?.dirIds,
+      collectionIds: options?.collectionIds,
     }
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段1：查询类型识别 ==========
+    // === 阶段 1：查询类型识别 ===
     addStep({ phase: '查询类型识别', action: '分析查询意图', type: 'llm' })
     const t0 = Date.now()
-    const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal)
+    const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking)
     addStep({
       phase: '查询类型识别',
       action: `查询类型: ${QUERY_TYPE_LABELS[queryType]}`,
@@ -199,10 +193,10 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段2：获取文件清单（结合文件名/路径判断内容） ==========
+    // === 阶段 2：获取文件清单 + 作用域摘要 ===
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
-    const fileInventory = this.getFileInventory(options?.dirIds)
+    const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds, query)
     addStep({
       phase: '获取文件清单',
       action: `获取到 ${fileInventory.length} 个文件的信息`,
@@ -211,24 +205,23 @@ class KMSSearchAgentService {
       durationMs: Date.now() - t1,
     })
 
-    // 获取目录摘要
-    const dirSummaries = this.getDirSummaries(options?.dirIds)
+    const dirSummaries = this.getScopeSummaries(options?.dirIds, options?.collectionIds)
     if (dirSummaries.length > 0) {
       addStep({
         phase: '获取文件清单',
-        action: `获取到 ${dirSummaries.length} 个目录摘要`,
+        action: `获取到 ${dirSummaries.length} 个${options?.collectionIds ? '合集' : '目录'}摘要`,
         type: 'info',
       })
     }
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段3：检索路径规划（结合文件清单） ==========
+    // === 阶段 3：检索路径规划 ===
     addStep({ phase: '检索路径规划', action: 'LLM 规划检索策略', type: 'plan' })
     const t2 = Date.now()
     const searchPlan = await this.planSearchPath(
       query, queryType, fileInventory, dirSummaries,
-      llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal
+      llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking
     )
     addStep({
       phase: '检索路径规划',
@@ -240,13 +233,86 @@ class KMSSearchAgentService {
 
     if (options?.signal?.aborted) throw new Error('Search aborted')
 
-    // ========== 阶段4：多轮检索执行（搜索 + 文件读取） ==========
+    // === 阶段 4：多轮检索执行 ===
+    const { allResults, roundsExecuted } = await this.executeMultiRoundSearch(
+      searchPlan, baseSearchOpts, query, maxRounds, topK,
+      llmClient, searchEngine, options?.signal, addStep,
+    )
+
+    addStep({
+      phase: '检索完成',
+      action: `共收集 ${allResults.length} 条原始结果`,
+      type: 'result',
+    })
+
+    if (options?.signal?.aborted) throw new Error('Search aborted')
+
+    // === 阶段 5：信息补充（搜索结果不足或LLM规划了候选文件时） ===
+    const supplementaryContent = await this.gatherSupplementaryContent(
+      allResults, searchPlan, topK, options?.signal, addStep,
+    )
+
+    if (options?.signal?.aborted) throw new Error('Search aborted')
+
+    // === 阶段 6：内容提纯 ===
+    addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
+    const t5 = Date.now()
+    const distilled = await this.distillResults(
+      query,
+      queryType,
+      allResults,
+      supplementaryContent,
+      llmClient,
+      llmConfig.providerId,
+      llmConfig.modelId,
+      options?.signal,
+      llmConfig.enableThinking
+    )
+
+    addStep({
+      phase: '内容提纯',
+      action: `生成结论（${distilled.conclusion.length} 字符，${distilled.sources.length} 个来源）`,
+      type: 'result',
+      durationMs: Date.now() - t5,
+    })
+
+    // 记录搜索命中
+    this.logSearchHits(allResults)
+
+    return {
+      queryType,
+      queryTypeLabel: QUERY_TYPE_LABELS[queryType],
+      conclusion: distilled.conclusion,
+      sources: distilled.sources,
+      searchRounds: roundsExecuted,
+      searchTrace: trace,
+      searchSteps: steps,
+    }
+  }
+
+  /**
+   * 阶段 4：执行多轮检索
+   * - 第一轮使用语义搜索（若有 embedding 配置），后续轮次根据规划决定
+   * - 去重合并结果
+   * - 结果充足时提前结束；首轮无结果时用原始查询降级重试
+   */
+  private async executeMultiRoundSearch(
+    searchPlan: { queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] },
+    baseSearchOpts: SearchOptions,
+    originalQuery: string,
+    maxRounds: number,
+    topK: number,
+    llmClient: LLMClientService,
+    searchEngine: KMSSearchEngineService,
+    signal: AbortSignal | undefined,
+    addStep: (step: SearchTraceStep) => void,
+  ): Promise<{ allResults: SearchResult[]; roundsExecuted: number }> {
     const allResults: SearchResult[] = []
     const seenKeys = new Set<string>()
     let roundsExecuted = 0
 
     for (let i = 0; i < Math.min(searchPlan.queries.length, maxRounds); i++) {
-      if (options?.signal?.aborted) throw new Error('Search aborted')
+      if (signal?.aborted) throw new Error('Search aborted')
 
       const subQuery = searchPlan.queries[i]
       const t3 = Date.now()
@@ -301,7 +367,7 @@ class KMSSearchAgentService {
       // 如果首轮无结果，尝试放宽搜索
       if (i === 0 && results.length === 0) {
         addStep({ phase: `第${i + 1}轮检索`, action: '首轮无结果，尝试使用原始查询重试', type: 'search' })
-        const fallbackResults = searchEngine.search(query, queryEmbedding, baseSearchOpts)
+        const fallbackResults = searchEngine.search(originalQuery, queryEmbedding, baseSearchOpts)
         for (const r of fallbackResults) {
           const key = this.getResultKey(r)
           if (!seenKeys.has(key)) {
@@ -312,100 +378,69 @@ class KMSSearchAgentService {
       }
     }
 
-    addStep({
-      phase: '检索完成',
-      action: `共收集 ${allResults.length} 条原始结果`,
-      type: 'result',
-    })
-
-    if (options?.signal?.aborted) throw new Error('Search aborted')
-
-    // ========== 阶段5：信息补充（文件分片读取） ==========
-    // 如果搜索结果不足，或LLM规划了候选文件，读取相关文件片段补充信息
-    let supplementaryContent = ''
-    const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
-
-    if (filesToRead.length > 0) {
-      addStep({
-        phase: '信息补充',
-        action: `读取 ${filesToRead.length} 个文件片段补充信息`,
-        detail: filesToRead.map(f => f.fileName).join(', '),
-        type: 'read',
-      })
-
-      const t4 = Date.now()
-      const readChunks: string[] = []
-      for (const fileInfo of filesToRead.slice(0, 5)) { // 最多读取5个文件
-        try {
-          const chunk = await this.readFileChunk(fileInfo.fileId, 0, READ_CHUNK_SIZE)
-          if (chunk) {
-            readChunks.push(`【${fileInfo.fileName}】\n${chunk}`)
-            addStep({
-              phase: '信息补充',
-              action: `读取文件片段: ${fileInfo.fileName}`,
-              detail: `${chunk.length} 字符`,
-              type: 'read',
-            })
-          }
-        } catch (err) {
-          logger.warn(`Failed to read chunk from ${fileInfo.fileName}:`, err)
-        }
-      }
-      supplementaryContent = readChunks.join('\n\n---\n\n')
-      if (supplementaryContent) {
-        addStep({
-          phase: '信息补充',
-          action: `补充读取完成，共 ${supplementaryContent.length} 字符`,
-          type: 'read',
-          durationMs: Date.now() - t4,
-        })
-      }
-    }
-
-    if (options?.signal?.aborted) throw new Error('Search aborted')
-
-    // ========== 阶段6：内容筛选提纯 ==========
-    addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
-    const t5 = Date.now()
-    const distilled = await this.distillResults(
-      query,
-      queryType,
-      allResults,
-      supplementaryContent,
-      llmClient,
-      llmConfig.providerId,
-      llmConfig.modelId,
-      options?.signal
-    )
-
-    addStep({
-      phase: '内容提纯',
-      action: `生成结论（${distilled.conclusion.length} 字符，${distilled.sources.length} 个来源）`,
-      type: 'result',
-      durationMs: Date.now() - t5,
-    })
-
-    // 记录搜索命中
-    this.logSearchHits(allResults)
-
-    return {
-      queryType,
-      queryTypeLabel: QUERY_TYPE_LABELS[queryType],
-      conclusion: distilled.conclusion,
-      sources: distilled.sources,
-      searchRounds: roundsExecuted,
-      searchTrace: trace,
-      searchSteps: steps,
-    }
+    return { allResults, roundsExecuted }
   }
 
-  // ==================== 私有方法 ====================
+  /**
+   * 阶段 5：补充读取文件片段
+   * - 当搜索结果不足，或LLM规划了候选文件时，读取相关文件的开头片段补充上下文
+   * - 最多读取 5 个文件，每个文件读取 READ_CHUNK_SIZE 字符
+   */
+  private async gatherSupplementaryContent(
+    allResults: SearchResult[],
+    searchPlan: { candidateFileIds: string[] },
+    topK: number,
+    signal: AbortSignal | undefined,
+    addStep: (step: SearchTraceStep) => void,
+  ): Promise<string> {
+    const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
+    if (filesToRead.length === 0) {
+      return ''
+    }
+
+    addStep({
+      phase: '信息补充',
+      action: `读取 ${filesToRead.length} 个文件片段补充信息`,
+      detail: filesToRead.map(f => f.fileName).join(', '),
+      type: 'read',
+    })
+
+    const t4 = Date.now()
+    const readChunks: string[] = []
+    for (const fileInfo of filesToRead.slice(0, 5)) {
+      if (signal?.aborted) throw new Error('Search aborted')
+      try {
+        const chunk = await this.readFileChunk(fileInfo.fileId, 0, READ_CHUNK_SIZE)
+        if (chunk) {
+          readChunks.push(`【${fileInfo.fileName}】\n${chunk}`)
+          addStep({
+            phase: '信息补充',
+            action: `读取文件片段: ${fileInfo.fileName}`,
+            detail: `${chunk.length} 字符`,
+            type: 'read',
+          })
+        }
+      } catch (err) {
+        logger.warn(`Failed to read chunk from ${fileInfo.fileName}:`, err)
+      }
+    }
+    const supplementaryContent = readChunks.join('\n\n---\n\n')
+    if (supplementaryContent) {
+      addStep({
+        phase: '信息补充',
+        action: `补充读取完成，共 ${supplementaryContent.length} 字符`,
+        type: 'read',
+        durationMs: Date.now() - t4,
+      })
+    }
+    return supplementaryContent
+  }
 
   /**
-   * 获取默认 LLM 配置（providerId + modelId）
+   * 获取默认 LLM 配置（providerId + modelId + enableThinking）
    * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
    */
-  private getDefaultLLMConfig(): { providerId: string; modelId: string | undefined } | null {
+  private getDefaultLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
     const db = this.mainDb.getDb()
 
     // 1. 优先使用 KMS 专属模型设置
@@ -417,10 +452,13 @@ class KMSSearchAgentService {
           return {
             providerId: config.provider_id,
             modelId: config.model_id || undefined,
+            enableThinking: !!config.enable_thinking,
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_model setting, falling back to default', error)
+    }
 
     // 2. 回退到知识场景默认模型
     try {
@@ -433,15 +471,18 @@ class KMSSearchAgentService {
           return {
             providerId: config.provider_id,
             modelId: config.model_id || undefined,
+            enableThinking: false,
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read default_model_knowledge setting, falling back to first provider', error)
+    }
 
     // 3. 最后回退到任意可用提供商
     const fallbackProviderId = getDefaultProviderId(this.mainDb)
     if (fallbackProviderId) {
-      return { providerId: fallbackProviderId, modelId: undefined }
+      return { providerId: fallbackProviderId, modelId: undefined, enableThinking: false }
     }
     return null
   }
@@ -477,7 +518,9 @@ class KMSSearchAgentService {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
+    }
 
     // 2. 回退到默认 Embedding 配置
     return llmClient.getDefaultEmbeddingConfig()
@@ -504,37 +547,170 @@ class KMSSearchAgentService {
 
   /**
    * 获取文件清单（文件名、路径、轻量摘要）—— 用于LLM判断哪些文件可能相关
+   * 支持按目录或合集过滤，两者同时存在时取交集
+   *
+   * 优化策略：
+   * - 文件总数 <= 50 时：全部发送给 LLM
+   * - 文件总数 > 50 时：先用查询关键词对文件名/摘要做轻量匹配，取匹配的文件 + 部分代表性样本
    */
-  private getFileInventory(dirIds?: string[]): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
+  private getFileInventory(dirIds?: string[], collectionIds?: string[], query?: string): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
     try {
-      let sql = `
-        SELECT f.id as file_id, f.file_name, f.file_path, f.file_ext,
+      // 基础查询：获取所有已完成索引的文件
+      let baseSql = `
+        SELECT DISTINCT f.id as file_id, f.file_name, f.file_path, f.file_ext,
                COALESCE(s.light_summary, '') as light_summary,
                COALESCE(s.summary, '') as summary
         FROM kms_files f
         LEFT JOIN kms_file_summaries s ON s.file_id = f.id
         WHERE f.index_status = 'completed'
       `
-      const params: any[] = []
+      const baseParams: any[] = []
       if (dirIds && dirIds.length > 0) {
         const placeholders = dirIds.map(() => '?').join(',')
-        sql += ` AND f.dir_id IN (${placeholders})`
-        params.push(...dirIds)
+        baseSql += ` AND f.dir_id IN (${placeholders})`
+        baseParams.push(...dirIds)
       }
-      sql += ` ORDER BY f.file_name LIMIT 200`
+      if (collectionIds && collectionIds.length > 0) {
+        const placeholders = collectionIds.map(() => '?').join(',')
+        baseSql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+        baseParams.push(...collectionIds)
+      }
 
-      const rows = this.db.prepare(sql).all(...params) as any[]
-      return rows.map(r => ({
-        fileId: r.file_id,
-        fileName: r.file_name,
-        filePath: r.file_path,
-        fileExt: r.file_ext || '',
-        lightSummary: r.summary || r.light_summary || '',
-      }))
+      // 先获取总文件数
+      const countSql = `SELECT COUNT(*) as cnt FROM (${baseSql})`
+      const total = (this.db.prepare(countSql).get(...baseParams) as any)?.cnt || 0
+
+      // 文件数量较少时，全量返回
+      if (total <= 50) {
+        const rows = this.db.prepare(`${baseSql} ORDER BY f.file_name LIMIT 50`).all(...baseParams) as any[]
+        return rows.map(r => ({
+          fileId: r.file_id,
+          fileName: r.file_name,
+          filePath: r.file_path,
+          fileExt: r.file_ext || '',
+          lightSummary: r.summary || r.light_summary || '',
+        }))
+      }
+
+      // 文件数量较多时：基于查询关键词预筛选
+      const keywords = this.extractKeywords(query || '')
+      const results: Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> = []
+      const seenIds = new Set<string>()
+
+      // 1. 关键词匹配文件名/摘要的文件（优先）
+      if (keywords.length > 0) {
+        const matchSql = `${baseSql} AND (${keywords.map(() => `(f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)`).join(' OR ')}) ORDER BY f.file_name LIMIT 30`
+        const matchParams = [...baseParams]
+        for (const kw of keywords) {
+          const like = `%${kw}%`
+          matchParams.push(like, like, like)
+        }
+        const rows = this.db.prepare(matchSql).all(...matchParams) as any[]
+        for (const r of rows) {
+          if (!seenIds.has(r.file_id)) {
+            seenIds.add(r.file_id)
+            results.push({
+              fileId: r.file_id,
+              fileName: r.file_name,
+              filePath: r.file_path,
+              fileExt: r.file_ext || '',
+              lightSummary: r.summary || r.light_summary || '',
+            })
+          }
+        }
+      }
+
+      // 2. 补充代表性样本（按扩展名分组，每组取最新文件）
+      if (results.length < 50) {
+        const sampleSql = `${baseSql} ORDER BY f.file_ext, f.updated_at DESC LIMIT 50`
+        const sampleRows = this.db.prepare(sampleSql).all(...baseParams) as any[]
+        for (const r of sampleRows) {
+          if (!seenIds.has(r.file_id) && results.length < 50) {
+            seenIds.add(r.file_id)
+            results.push({
+              fileId: r.file_id,
+              fileName: r.file_name,
+              filePath: r.file_path,
+              fileExt: r.file_ext || '',
+              lightSummary: r.summary || r.light_summary || '',
+            })
+          }
+        }
+      }
+
+      return results
     } catch (err) {
       logger.warn('Failed to get file inventory:', err)
       return []
     }
+  }
+
+  /**
+   * 从查询中提取关键词（简单分词，用于文件名/摘要预匹配）
+   */
+  private extractKeywords(query: string): string[] {
+    // 去除常见疑问词和停用词
+    const stopWords = new Set(['如何', '怎么', '什么', '为什么', '的', '了', '吗', '呢', '在', '是', '有', '和', '与', '及', '等', '中', '上', '下', '不', '也', '都', '还', '就', '要', '会', '能', '可以', '这个', '那个', 'how', 'what', 'why', 'where', 'when', 'who', 'is', 'are', 'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or'])
+    // 中文按2-4字分词，英文按空格分割
+    const tokens: string[] = []
+    // 英文词
+    const enWords = query.match(/[a-zA-Z0-9]+/g) || []
+    tokens.push(...enWords.filter(w => !stopWords.has(w.toLowerCase()) && w.length > 1))
+    // 中文连续片段：按2字和3字滑动窗口提取
+    const cnSegments = query.match(/[\u4e00-\u9fff]+/g) || []
+    for (const seg of cnSegments) {
+      if (seg.length <= 4 && !stopWords.has(seg)) {
+        tokens.push(seg)
+      } else {
+        // 滑动窗口
+        for (let len = 2; len <= Math.min(4, seg.length); len++) {
+          for (let i = 0; i <= seg.length - len; i++) {
+            const sub = seg.substring(i, i + len)
+            if (!stopWords.has(sub)) tokens.push(sub)
+          }
+        }
+      }
+    }
+    // 去重，取前5个关键词
+    return [...new Set(tokens)].slice(0, 5)
+  }
+
+  /**
+   * 获取作用域摘要（目录摘要或合集摘要）
+   * - 仅传 dirIds：返回目录摘要
+   * - 仅传 collectionIds：返回合集摘要（包装为兼容结构）
+   * - 同时传：返回目录摘要（合集摘要作为补充信息，由调用方决定是否使用）
+   */
+  private getScopeSummaries(dirIds?: string[], collectionIds?: string[]): Array<{ dirPath: string; summary: string; fileCount: number }> {
+    // 优先返回目录摘要
+    const dirSummaries = this.getDirSummaries(dirIds)
+    if (dirSummaries.length > 0 || (dirIds && dirIds.length > 0)) {
+      return dirSummaries
+    }
+
+    // 没有目录过滤时，若指定了合集，返回合集摘要
+    if (collectionIds && collectionIds.length > 0) {
+      try {
+        const placeholders = collectionIds.map(() => '?').join(',')
+        const rows = this.db.prepare(`
+          SELECT cs.summary, cs.key_topics_json,
+                 (SELECT COUNT(*) FROM kms_file_collections fc WHERE fc.collection_id = cs.collection_id) as file_count,
+                 c.name as collection_name
+          FROM kms_collection_summaries cs
+          JOIN kms_collections c ON c.id = cs.collection_id
+          WHERE cs.collection_id IN (${placeholders})
+        `).all(...collectionIds) as any[]
+        return rows.map(r => ({
+          dirPath: `合集: ${r.collection_name}`,
+          summary: r.summary || '',
+          fileCount: r.file_count || 0,
+        }))
+      } catch {
+        return []
+      }
+    }
+
+    return []
   }
 
   /**
@@ -568,7 +744,8 @@ class KMSSearchAgentService {
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<QueryType> {
     const prompt = `分析以下用户查询的意图类型，只返回类型代码，不要其他内容。
 
@@ -586,7 +763,7 @@ class KMSSearchAgentService {
       const result = await llmClient.chat(providerId, [
         { role: 'system', content: '你是一个查询意图分类器，只输出类型代码。' },
         { role: 'user', content: prompt },
-      ], { temperature: 0, max_tokens: 20, model: modelId, signal, logSource: 'kms_agent_classify' })
+      ], { temperature: 0, max_tokens: 20, model: modelId, signal, logSource: 'kms_agent_classify', enable_thinking: enableThinking })
 
       const type = result.trim().toLowerCase()
       if (['locate', 'concept', 'trend', 'analysis'].includes(type)) {
@@ -623,7 +800,8 @@ class KMSSearchAgentService {
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] }> {
     const typeStrategy: Record<QueryType, string> = {
       locate: '提取核心实体名、术语、关键标识符进行精确搜索',
@@ -673,12 +851,22 @@ ${fileListText || '（无文件清单）'}
 - 用户问"用户登录失败怎么排查" → {"queries": ["登录 失败 排查", "登录 错误 日志", "登录 问题 诊断"], ...}`
 
     try {
-      const result = await llmClient.chat(providerId, [
-        { role: 'system', content: '你是一个搜索引擎查询规划器，只返回JSON。' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.1, max_tokens: 400, model: modelId, signal, logSource: 'kms_agent_plan' })
+      const parsed = await callLLMForJSON<{
+        queries: string[]
+        use_semantic_for_all: boolean
+        candidate_file_indices: number[]
+      }>(
+        llmClient,
+        providerId,
+        modelId,
+        [
+          { role: 'system', content: '你是一个搜索引擎查询规划器，只返回JSON。' },
+          { role: 'user', content: prompt },
+        ],
+        { queries: [], use_semantic_for_all: false, candidate_file_indices: [] },
+        { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_agent_plan', enable_thinking: enableThinking },
+      )
 
-      const parsed = JSON.parse(result)
       const queries = Array.isArray(parsed.queries) && parsed.queries.length > 0
         ? parsed.queries.slice(0, 3).map((q: any) => String(q).trim()).filter(Boolean)
         : [query]
@@ -727,12 +915,16 @@ ${fileListText || '（无文件清单）'}
       }
     }
 
-    // 添加LLM规划的候选文件
-    for (const fileId of candidateFileIds.slice(0, 3)) {
-      if (!fileMap.has(fileId)) {
-        const file = this.db.prepare('SELECT file_name FROM kms_files WHERE id = ?').get(fileId) as any
-        if (file) {
-          fileMap.set(fileId, file.file_name)
+    // 批量查询 LLM 规划的候选文件，消除 N+1
+    const candidateIds = candidateFileIds.filter(id => !fileMap.has(id)).slice(0, 3)
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT id, file_name FROM kms_files WHERE id IN (${placeholders})`
+      ).all(...candidateIds) as any[]
+      for (const row of rows) {
+        if (!fileMap.has(row.id)) {
+          fileMap.set(row.id, row.file_name)
         }
       }
     }
@@ -769,7 +961,8 @@ ${fileListText || '（无文件清单）'}
     llmClient: LLMClientService,
     providerId: string,
     modelId: string | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    enableThinking?: boolean,
   ): Promise<{ conclusion: string; sources: AgentSearchSource[] }> {
     if (results.length === 0 && !supplementaryContent) {
       return {
@@ -824,7 +1017,7 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
       const conclusion = await llmClient.chat(providerId, [
         { role: 'system', content: '你是一个内容提纯助手，输出简洁准确的结论。' },
         { role: 'user', content: prompt },
-      ], { temperature: 0.2, max_tokens: 800, model: modelId, signal, logSource: 'kms_agent_distill' })
+      ], { temperature: 0.2, max_tokens: 800, model: modelId, signal, logSource: 'kms_agent_distill', enable_thinking: enableThinking })
 
       // 构建溯源信息
       const sources: AgentSearchSource[] = limitedResults.map(r => ({
@@ -868,15 +1061,6 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
     }
   }
 
-  private getFileIdsByDirIds(dirIds: string[]): string[] {
-    if (dirIds.length === 0) return []
-    const placeholders = dirIds.map(() => '?').join(',')
-    const rows = this.db.prepare(
-      `SELECT id FROM kms_files WHERE dir_id IN (${placeholders})`
-    ).all(...dirIds) as any[]
-    return rows.map(r => r.id)
-  }
-
   private getResultKey(result: SearchResult): string {
     if (result.paragraph_id) return `paragraph-${result.paragraph_id}`
     if (result.match_type === 'content_paragraph' && result.start_offset !== undefined) {
@@ -886,12 +1070,13 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
   }
 
   private logSearchHits(results: SearchResult[]): void {
-    const fileIds = new Set(results.map(r => r.file_id))
-    const crawler = require('./kms-crawler.service').default.getInstance()
-    for (const fileId of fileIds) {
-      try {
-        crawler.logFileAccess(fileId, 'search_hit')
-      } catch {}
+    const fileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+    if (fileIds.length === 0) return
+    try {
+      const crawler = require('./kms-crawler.service').default.getInstance()
+      crawler.logFileAccessBatch(fileIds, 'search_hit')
+    } catch (error) {
+      logger.debug('Failed to log search hits batch', error)
     }
   }
 }

@@ -4,6 +4,9 @@ import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
+import { createLogger } from './logger'
+
+const logger = createLogger('WorkspaceManager')
 
 class WorkspaceManagerService {
   private db: DatabaseService
@@ -73,12 +76,8 @@ class WorkspaceManagerService {
     const values: any[] = []
 
     const ALLOWED_COLUMNS = [
-      'name', 'role_name', 'role_description', 'responsibilities_json',
-      'personality_traits_json', 'working_style', 'suggested_tools_json',
-      'status', 'avatar_url', 'prompt_template',
-      'system_prompt', 'kb_id', 'kb_ids_json', 'tool_ids_json',
-      'mcp_server_ids_json', 'skill_ids_json', 'workspace_dir',
-      'enable_thinking', 'description',
+      'name', 'description', 'profile_json',
+      'status', 'default_skill_id',
       'memory_enabled', 'workspace_path'
     ]
 
@@ -112,7 +111,7 @@ class WorkspaceManagerService {
       if (employee && employee.workspace_path) {
         const workspaceRoot = path.resolve(employee.workspace_path)
         if (fs.existsSync(workspaceRoot)) {
-          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch {}
+          try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch (error) { logger.warn('Failed to remove workspace directory', workspaceRoot, error) }
         }
       }
     }
@@ -151,13 +150,23 @@ class WorkspaceManagerService {
     const conversation = this.getConversation(id)
     if (!conversation) return null
 
+    const ALLOWED_CONVERSATION_COLUMNS = [
+      'title', 'messages_json', 'message_count',
+      'status', 'minimal_mode', 'last_message_at'
+    ]
+
     const updates: string[] = []
     const values: any[] = []
 
     Object.entries(data).forEach(([key, value]) => {
-      if (value !== undefined) {
-        updates.push(`${key} = ?`)
-        values.push(value)
+      if (value !== undefined && ALLOWED_CONVERSATION_COLUMNS.includes(key)) {
+        if (key === 'minimal_mode') {
+          updates.push(`${key} = ?`)
+          values.push(value ? 1 : 0)
+        } else {
+          updates.push(`${key} = ?`)
+          values.push(value)
+        }
       }
     })
 

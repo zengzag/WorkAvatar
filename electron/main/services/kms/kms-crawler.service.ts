@@ -8,14 +8,12 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-Crawler')
 
-/** 支持的文件扩展名 */
 const SUPPORTED_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
   'txt', 'md', 'html', 'htm',
   'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
 ])
 
-/** 需要跳过的目录名 */
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.svn', '.hg',
   '__pycache__', '.DS_Store', 'Thumbs.db',
@@ -51,10 +49,6 @@ export interface FileEntry {
   dataTier: string
 }
 
-/**
- * KMS 目录爬虫服务
- * 负责扫描索引目录、检测文件变更、管理文件注册表
- */
 class KMSCrawlerService {
   private db: Database.Database
   private static instance: KMSCrawlerService
@@ -70,10 +64,6 @@ class KMSCrawlerService {
     return KMSCrawlerService.instance
   }
 
-  /**
-   * 扫描指定索引目录，检测文件变更
-   * @param stableThresholdSeconds 文件稳定阈值（秒）：修改时间距今不足该值的文件视为"尚未稳定"，跳过不索引
-   */
   async crawlDirectory(dirId: string, signal?: AbortSignal, options?: CrawlOptions): Promise<CrawlResult> {
     const dirRow = this.db.prepare('SELECT * FROM kms_index_dirs WHERE id = ? AND enabled = 1').get(dirId) as any
     if (!dirRow) {
@@ -93,10 +83,8 @@ class KMSCrawlerService {
     const stableThreshold = options?.stableThresholdSeconds ?? 0
     const now = Math.floor(Date.now() / 1000)
 
-    // 收集磁盘上的文件
     const diskFiles = this.scanDiskFiles(dirPath, recursive, extensions, signal)
 
-    // 获取数据库中该目录的已注册文件
     const dbFiles = this.db.prepare('SELECT * FROM kms_files WHERE dir_id = ?').all(dirId) as any[]
     const dbFileMap = new Map(dbFiles.map(f => [f.file_path, f]))
 
@@ -111,37 +99,36 @@ class KMSCrawlerService {
 
     const diskPathSet = new Set(diskFiles.map(f => f.filePath))
 
-    // 检测新增和修改的文件
     for (const diskFile of diskFiles) {
       if (signal?.aborted) break
 
       const dbFile = dbFileMap.get(diskFile.filePath)
-      if (!dbFile) {
-        // 新文件
-        await this.registerFile(dirId, diskFile)
-        result.newFiles++
-      } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
-        // 可能修改的文件 - 先检查稳定阈值
-        // 如果文件最近被修改（距今不足稳定阈值），跳过以避免用户正在编辑时频繁更新
-        if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
-          result.skippedUnstableFiles++
-          continue
-        }
+      try {
+        if (!dbFile) {
+          await this.registerFile(dirId, diskFile)
+          result.newFiles++
+        } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
+          if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
+            result.skippedUnstableFiles++
+            continue
+          }
 
-        // 需要计算hash确认是否真的修改
-        const newHash = await calculateFileHash(diskFile.filePath)
-        if (newHash !== dbFile.file_hash) {
-          this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
-          result.modifiedFiles++
+          const newHash = await calculateFileHash(diskFile.filePath)
+          if (newHash !== dbFile.file_hash) {
+            this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
+            result.modifiedFiles++
+          } else {
+            result.unchangedFiles++
+          }
         } else {
           result.unchangedFiles++
         }
-      } else {
-        result.unchangedFiles++
+      } catch (err: any) {
+        // 单个文件注册失败不应中断整个目录的扫描
+        logger.warn(`Failed to process file "${diskFile.filePath}":`, err?.message || err)
       }
     }
 
-    // 检测已删除的文件
     for (const dbFile of dbFiles) {
       if (!diskPathSet.has(dbFile.file_path)) {
         this.unregisterFile(dbFile.id)
@@ -153,9 +140,6 @@ class KMSCrawlerService {
     return result
   }
 
-  /**
-   * 扫描所有启用的索引目录
-   */
   async crawlAllDirectories(signal?: AbortSignal, options?: CrawlOptions): Promise<CrawlResult> {
     const dirs = this.db.prepare('SELECT * FROM kms_index_dirs WHERE enabled = 1').all() as any[]
     const totalResult: CrawlResult = {
@@ -185,9 +169,6 @@ class KMSCrawlerService {
     return totalResult
   }
 
-  /**
-   * 获取需要索引的文件列表（status=pending 或 modified）
-   */
   getPendingFiles(): FileEntry[] {
     const rows = this.db.prepare(`
       SELECT f.*, d.dir_path
@@ -211,9 +192,6 @@ class KMSCrawlerService {
     }))
   }
 
-  /**
-   * 获取指定目录下的所有文件
-   */
   getFilesByDir(dirId: string): FileEntry[] {
     const rows = this.db.prepare('SELECT * FROM kms_files WHERE dir_id = ?').all(dirId) as any[]
     return rows.map(r => ({
@@ -230,9 +208,6 @@ class KMSCrawlerService {
     }))
   }
 
-  /**
-   * 更新文件索引状态
-   */
   updateFileStatus(fileId: string, status: string, error?: string): void {
     if (error) {
       this.db.prepare('UPDATE kms_files SET index_status = ?, parse_error = ?, updated_at = unixepoch() WHERE id = ?')
@@ -243,19 +218,12 @@ class KMSCrawlerService {
     }
   }
 
-  /**
-   * 更新文件数据层级（冷/热）
-   */
   updateFileDataTier(fileId: string, tier: 'cold' | 'hot'): void {
     this.db.prepare('UPDATE kms_files SET data_tier = ?, updated_at = unixepoch() WHERE id = ?')
       .run(tier, fileId)
   }
 
-  /**
-   * 记录文件访问
-   */
   logFileAccess(fileId: string, accessType: 'search_hit' | 'read' | 'summary_view'): void {
-    // 先检查文件是否存在，避免外键约束失败
     const exists = this.db.prepare('SELECT 1 FROM kms_files WHERE id = ?').get(fileId)
     if (!exists) return
 
@@ -265,29 +233,15 @@ class KMSCrawlerService {
     ).run(id, fileId, accessType)
   }
 
-  /**
-   * 获取文件访问统计
-   */
-  getFileAccessStats(fileId: string, days: number = 30): { hitCount: number; readCount: number; lastAccessed: number | null } {
-    const since = Math.floor(Date.now() / 1000) - days * 86400
-
-    const hitRow = this.db.prepare(
-      "SELECT COUNT(*) as count FROM kms_access_log WHERE file_id = ? AND access_type = 'search_hit' AND accessed_at >= ?"
-    ).get(fileId, since) as any
-
-    const readRow = this.db.prepare(
-      "SELECT COUNT(*) as count FROM kms_access_log WHERE file_id = ? AND access_type = 'read' AND accessed_at >= ?"
-    ).get(fileId, since) as any
-
-    const lastRow = this.db.prepare(
-      'SELECT MAX(accessed_at) as last FROM kms_access_log WHERE file_id = ?'
-    ).get(fileId) as any
-
-    return {
-      hitCount: hitRow?.count || 0,
-      readCount: readRow?.count || 0,
-      lastAccessed: lastRow?.last || null,
-    }
+  logFileAccessBatch(fileIds: string[], accessType: 'search_hit' | 'read' | 'summary_view'): void {
+    if (fileIds.length === 0) return
+    const uniqueIds = [...new Set(fileIds)]
+    const placeholders = uniqueIds.map(() => '?').join(',')
+    this.db.prepare(
+      `INSERT INTO kms_access_log (id, file_id, access_type, accessed_at)
+       SELECT lower(hex(randomblob(16))), id, ?, unixepoch()
+       FROM kms_files WHERE id IN (${placeholders})`
+    ).run(accessType, ...uniqueIds)
   }
 
   /**
@@ -362,7 +316,8 @@ class KMSCrawlerService {
       let entries: fs.Dirent[]
       try {
         entries = fs.readdirSync(currentDir, { withFileTypes: true })
-      } catch {
+      } catch (err: any) {
+        logger.warn(`Cannot read directory "${currentDir}", skipping:`, err?.message || err)
         return
       }
 
@@ -388,8 +343,8 @@ class KMSCrawlerService {
               fileSize: stat.size,
               modifiedTime: Math.floor(stat.mtimeMs / 1000),
             })
-          } catch {
-            // 跳过无法访问的文件
+          } catch (err: any) {
+            logger.warn(`Cannot stat file "${fullPath}", skipping:`, err?.message || err)
           }
         }
       }
@@ -401,9 +356,17 @@ class KMSCrawlerService {
 
   /**
    * 注册新文件到数据库
-   * 如果相同MD5的文件已存在（不同目录），直接复用索引数据，避免重复计算
+   * - 如果 file_path 已存在（重叠目录场景，如添加了父目录又添加子目录），直接跳过，复用已有索引
+   * - 如果相同 hash 的文件已存在（不同位置的同内容文件），复用索引数据，避免重复计算
    */
   private async registerFile(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }): Promise<void> {
+    // 重叠目录检查：file_path 已存在说明该文件已注册在其他目录下（如父目录），直接跳过
+    const existingByPath = this.db.prepare('SELECT id, dir_id FROM kms_files WHERE file_path = ? LIMIT 1').get(diskFile.filePath) as any
+    if (existingByPath) {
+      logger.info(`File "${diskFile.filePath}" already registered under dir ${existingByPath.dir_id}, skipping`)
+      return
+    }
+
     const id = generateId()
     const ext = path.extname(diskFile.fileName).toLowerCase().slice(1)
     const hash = await calculateFileHash(diskFile.filePath)
@@ -458,7 +421,11 @@ class KMSCrawlerService {
    * 注销已删除的文件
    */
   private unregisterFile(fileId: string): void {
-    // 级联删除会自动清理关联的段落、摘要、索引和嵌入
+    // 先显式清理 FTS5 全文索引和向量库 embedding：
+    // - kms_fts 是 FTS5 虚表，不支持外键级联删除
+    // - kms_embeddings 位于独立的向量库，跨库外键不可用
+    KMSSearchEngineService.getInstance().deleteIndexByFile(fileId)
+    // 主库的段落/摘要/搜索索引/访问日志/合集关联由 ON DELETE CASCADE 级联清理
     this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(fileId)
   }
 }

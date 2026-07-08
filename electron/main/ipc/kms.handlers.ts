@@ -11,6 +11,13 @@ import type {
   KMSSetSettingsParams,
   KMSRecordSearchHistoryParams,
   KMSGetSearchHistoryParams,
+  KMSCreateCollectionParams,
+  KMSUpdateCollectionParams,
+  KMSAddFileToCollectionParams,
+  KMSAddFilesToCollectionParams,
+  KMSRemoveFileFromCollectionParams,
+  KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -52,10 +59,25 @@ export function registerKMSHandlers(): void {
       timeRangeStart: params.timeRangeStart,
       timeRangeEnd: params.timeRangeEnd,
       fileExtensions: params.fileExtensions,
+      collectionIds: params.collectionIds,
+      dirIds: params.dirIds,
+    })
+  })
+
+  // 文件搜索（按文件名匹配）
+  safeHandle(IPC_CHANNELS.KMS_SEARCH_FILES, async (params: KMSSearchFilesParams) => {
+    return kmsService.searchFiles(params.query, {
+      dirIds: params.dirIds,
+      collectionIds: params.collectionIds,
+      fileExtensions: params.fileExtensions,
+      timeRangeStart: params.timeRangeStart,
+      timeRangeEnd: params.timeRangeEnd,
     })
   })
 
   // AI 智能检索（带实时进度推送）
+  // 注意：此处未使用 safeHandle，因为需要透传 event 用于进度推送；
+  // 同时需要在内部对 result 做序列化净化（与 safeHandle 行为一致）
   ipcMain.handle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (event, params: KMSAgentSearchParams) => {
     try {
       const sender = event.sender
@@ -63,6 +85,7 @@ export function registerKMSHandlers(): void {
         maxRounds: params.maxRounds,
         topK: params.topK,
         dirIds: params.dirIds,
+        collectionIds: params.collectionIds,
         fileExtensions: params.fileExtensions,
         timeRangeStart: params.timeRangeStart,
         timeRangeEnd: params.timeRangeEnd,
@@ -71,7 +94,9 @@ export function registerKMSHandlers(): void {
             if (!sender.isDestroyed()) {
               sender.send(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, step)
             }
-          } catch {}
+          } catch (e) {
+            /* 进度推送失败忽略，避免阻塞搜索流程 */
+          }
         },
       })
       return JSON.parse(JSON.stringify(result))
@@ -99,25 +124,33 @@ export function registerKMSHandlers(): void {
 
   // 索引管理 — 使用 ipcMain.on (fire-and-forget)，通过进度事件通知结果
   // 不使用 ipcMain.handle 避免返回值序列化问题
-  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string) => {
-    logger.info('Build index requested')
-    kmsService.buildFullIndex(providerId).catch((err: any) => {
-      logger.error('buildFullIndex failed:', String(err?.message || err))
-    })
+  // 第二个参数 withEmbedding（默认 true）控制是否同步生成向量嵌入（智能索引）
+  // 用 Promise.resolve().then() 包裹，确保同步抛错也能被 catch 捕获，避免异常逃逸
+  ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
+    logger.info(`Build index requested (withEmbedding=${withEmbedding}, resetHot=${resetHotData})`)
+    Promise.resolve()
+      .then(() => kmsService.buildFullIndex(providerId, withEmbedding, resetHotData))
+      .catch((err: any) => {
+        logger.error('buildFullIndex failed:', String(err?.message || err))
+      })
   })
 
-  ipcMain.on(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, (_event, providerId?: string) => {
-    logger.info('Incremental index requested')
-    kmsService.incrementalIndex(providerId).catch((err: any) => {
-      logger.error('incrementalIndex failed:', String(err?.message || err))
-    })
+  ipcMain.on(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, (_event, providerId?: string, withEmbedding: boolean = true) => {
+    logger.info(`Incremental index requested (withEmbedding=${withEmbedding})`)
+    Promise.resolve()
+      .then(() => kmsService.incrementalIndex(providerId, withEmbedding))
+      .catch((err: any) => {
+        logger.error('incrementalIndex failed:', String(err?.message || err))
+      })
   })
 
-  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string) => {
-    logger.info('Rebuild dir index requested:', dirId)
-    kmsService.rebuildDirIndex(dirId, providerId).catch((err: any) => {
-      logger.error('rebuildDirIndex failed:', String(err?.message || err))
-    })
+  ipcMain.on(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, (_event, dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
+    logger.info(`Rebuild dir index requested: ${dirId} (withEmbedding=${withEmbedding}, resetHot=${resetHotData})`)
+    Promise.resolve()
+      .then(() => kmsService.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData))
+      .catch((err: any) => {
+        logger.error('rebuildDirIndex failed:', String(err?.message || err))
+      })
   })
 
   ipcMain.on(IPC_CHANNELS.KMS_CANCEL_INDEX, () => {
@@ -128,6 +161,16 @@ export function registerKMSHandlers(): void {
   // 统计
   safeHandle(IPC_CHANNELS.KMS_GET_STATS, async () => {
     return kmsService.getStats()
+  })
+
+  // 数据库清理：获取占用统计（主库/向量库大小 + 孤儿数据条数）
+  safeHandle(IPC_CHANNELS.KMS_GET_DATABASE_STATS, async () => {
+    return kmsService.getDatabaseStats()
+  })
+
+  // 数据库清理：删除孤儿索引数据 + VACUUM 回收磁盘空间
+  safeHandle(IPC_CHANNELS.KMS_CLEANUP_DATABASE, async () => {
+    return kmsService.cleanupDatabase()
   })
 
   // 打开文件（使用系统默认程序）
@@ -158,11 +201,15 @@ export function registerKMSHandlers(): void {
         current: progress.current,
         total: progress.total,
         message: progress.message,
+        fileId: progress.fileId,
+        fileName: progress.fileName,
+        collectionId: progress.collectionId,
+        collectionName: progress.collectionName,
+        startedAt: progress.startedAt,
       })
     }
   })
 
-  // ==================== KMS 设置 ====================
   safeHandle(IPC_CHANNELS.KMS_GET_SETTINGS, async () => {
     return kmsService.getKmsSettings()
   })
@@ -172,7 +219,6 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== 自动索引 ====================
   safeHandle(IPC_CHANNELS.KMS_GET_AUTO_INDEX_STATUS, async () => {
     return kmsService.getAutoIndexStatus()
   })
@@ -184,7 +230,6 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== 知识沉淀（摘要查看） ====================
   safeHandle(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES, async () => {
     return kmsService.getDirSummaries()
   })
@@ -193,7 +238,19 @@ export function registerKMSHandlers(): void {
     return kmsService.getFileSummaries(params)
   })
 
-  // ==================== 搜索历史 ====================
+  // 文件内容浏览（段落、TOC）
+  safeHandle(IPC_CHANNELS.KMS_GET_FILE_PARAGRAPHS, async (fileId: string) => {
+    return kmsService.getFileParagraphs(fileId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_FILE_TOC, async (fileId: string) => {
+    return kmsService.getFileToc(fileId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_PARAGRAPH_CONTENT, async (paragraphId: string) => {
+    return kmsService.getParagraphContent(paragraphId)
+  })
+
   safeHandle(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, async (params: KMSRecordSearchHistoryParams) => {
     kmsService.recordSearchHistory(params)
     return { success: true }
@@ -201,10 +258,6 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, async (params: KMSGetSearchHistoryParams) => {
     return kmsService.getSearchHistory(params)
-  })
-
-  safeHandle(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, async (id: string) => {
-    return kmsService.getSearchHistoryDetail(id)
   })
 
   safeHandle(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, async (searchMode?: string) => {
@@ -217,7 +270,97 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
-  // ==================== KMS MCP 服务 ====================
+  safeHandle(IPC_CHANNELS.KMS_LIST_COLLECTIONS, async () => {
+    return kmsService.listCollections()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_CREATE_COLLECTION, async (params: KMSCreateCollectionParams) => {
+    return kmsService.createCollection(params.name, params.description || '')
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_UPDATE_COLLECTION, async (params: KMSUpdateCollectionParams) => {
+    return kmsService.updateCollection(params.id, params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_COLLECTION, async (id: string) => {
+    kmsService.deleteCollection(id)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION, async (id: string) => {
+    return kmsService.getCollection(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_FILE_TO_COLLECTION, async (params: KMSAddFileToCollectionParams) => {
+    return kmsService.addFileToCollection(params.collectionId, params.filePath)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_FILES_TO_COLLECTION, async (params: KMSAddFilesToCollectionParams) => {
+    return kmsService.addFilesToCollection(params.collectionId, params.filePaths)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_REMOVE_FILE_FROM_COLLECTION, async (params: KMSRemoveFileFromCollectionParams) => {
+    kmsService.removeFileFromCollection(params.collectionId, params.fileId)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_LIST_FILES_IN_COLLECTION, async (collectionId: string) => {
+    return kmsService.listFilesInCollection(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION_STATS, async (collectionId: string) => {
+    return kmsService.getCollectionStats(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_COLLECTION_SUMMARY, async (collectionId: string) => {
+    return kmsService.getCollectionSummary(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SET_COLLECTION_SUMMARY, async (params: KMSSetCollectionSummaryParams) => {
+    kmsService.setCollectionSummary(params.collectionId, params.summary, params.keyTopics || [])
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_COLLECTION_SUMMARY, async (collectionId: string) => {
+    kmsService.deleteCollectionSummary(collectionId)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_COLLECTION_SUMMARY, async (collectionId: string) => {
+    return kmsService.generateCollectionSummary(collectionId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SCAN_DIR_FILES, async (params: { dirPath: string; extensions?: string[] }) => {
+    return kmsService.scanDirFiles(params.dirPath, params.extensions)
+  })
+
+  // 触发合集深度处理，进度通过 KMS_INDEX_PROGRESS 通道推送（含 collectionId/collectionName 字段）
+  ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string) => {
+    logger.info('Process collection deep requested:', collectionId)
+    Promise.resolve()
+      .then(() => kmsService.processCollectionDeep(collectionId))
+      .catch((err: any) => {
+        logger.error('processCollectionDeep failed:', String(err?.message || err))
+      })
+  })
+
+  ipcMain.on(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP, () => {
+    logger.info('Cancel collection deep process requested')
+    kmsService.cancelCollectionDeepProcess()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, async (dirId: string) => {
+    return kmsService.generateDirSummaryManual(dirId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, async (fileId: string) => {
+    return kmsService.generateFileSummaryManual(fileId)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, async (fileId: string) => {
+    return kmsService.rebuildFileIndex(fileId)
+  })
+
   safeHandle(IPC_CHANNELS.KMS_MCP_START, async () => {
     return kmsMcpService.start()
   })

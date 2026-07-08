@@ -7,10 +7,9 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
-import { allBuiltinTools, createKMSTools, createKBAgentTools } from '../services/agent/tools'
+import { allBuiltinTools, createKMSTools, createKMSCollectionTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
-import KnowledgeBaseService from '../services/kb.service'
 import { safeHandle } from './_shared'
 
 function getUnifiedBuiltinToolCatalog() {
@@ -22,7 +21,7 @@ function getUnifiedBuiltinToolCatalog() {
     category: 'agent' as const,
   }))
 
-  // KMS 本地搜索工具
+  // KMS 资料库工具（搜索 + 内容获取）
   const kmsTools = createKMSTools().map(t => ({
     id: t.id,
     name: t.name,
@@ -31,19 +30,19 @@ function getUnifiedBuiltinToolCatalog() {
     category: 'kms' as const,
   }))
 
-  // 知识库工具
-  const kbTools = createKBAgentTools(KnowledgeBaseService.getInstance(), { current: [] }).map(t => ({
+  // KMS 合集管理工具
+  const kmsCollectionTools = createKMSCollectionTools({ current: [] }).map(t => ({
     id: t.id,
     name: t.name,
     title: t.title,
     description: t.description,
-    category: 'kb' as const,
+    category: 'kms_collection' as const,
   }))
 
   const seen = new Set<string>()
   const unified: Array<{ id: string; name: string; title: string; description: string; category: string }> = []
 
-  for (const tool of [...agentTools, ...kmsTools, ...kbTools]) {
+  for (const tool of [...agentTools, ...kmsTools, ...kmsCollectionTools]) {
     if (!seen.has(tool.id)) {
       seen.add(tool.id)
       unified.push(tool)
@@ -57,6 +56,14 @@ export function registerToolHandlers(
   db: ReturnType<DatabaseService['getDb']>,
   skillRegistry: SkillRegistryService
 ) {
+  // 缓存 prepared statement，避免每次调用都重新编译 SQL
+  const getEmployeeToolsStmt = db.prepare(
+    'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
+  )
+  const assignToolStmt = db.prepare(
+    'INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = ?'
+  )
+
   safeHandle(IPC_CHANNELS.TOOL_LIST_BUILTIN, () => {
     return getUnifiedBuiltinToolCatalog()
   })
@@ -64,9 +71,7 @@ export function registerToolHandlers(
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, (params: { employee_id: string }) => {
     const catalog = getUnifiedBuiltinToolCatalog()
 
-    const enabledRows = db.prepare(
-      'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
-    ).all(params.employee_id) as any[]
+    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as any[]
 
     const enabledMap = new Map<string, boolean>()
     for (const row of enabledRows) {
@@ -75,15 +80,13 @@ export function registerToolHandlers(
 
     return catalog.map(tool => ({
       ...tool,
-      is_enabled: enabledMap.has(tool.id) ? enabledMap.get(tool.id)! : true,
+      is_enabled: enabledMap.get(tool.id) ?? true,
       is_assigned: enabledMap.has(tool.id),
     }))
   })
 
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {
-    db.prepare(
-      'INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = ?'
-    ).run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
+    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
     return { success: true }
   })
 
@@ -100,7 +103,7 @@ export function registerToolHandlers(
         return await skillRegistry.installFromZip(params.path)
       }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return { success: false, error: error?.message || String(error) }
     }
   })
 
@@ -138,7 +141,7 @@ export function registerToolHandlers(
       await internetSearchService.openSearchWindow(params.engine as any)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return { success: false, error: error?.message || String(error) }
     }
   })
 

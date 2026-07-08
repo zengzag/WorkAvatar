@@ -1,11 +1,30 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Drawer, Button, Segmented } from 'antd'
-import { SettingOutlined, SearchOutlined, DatabaseOutlined, HistoryOutlined } from '@ant-design/icons'
-import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSHistoryView } from '../components/kms'
+import { SettingOutlined, SearchOutlined, DatabaseOutlined, FolderOutlined } from '@ant-design/icons'
+import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSCollectionsView } from '../components/kms'
 import { useKMS } from '../hooks/useKMS'
 
-type ViewMode = 'search' | 'knowledge' | 'history'
+type ViewMode = 'search' | 'knowledge' | 'collections'
+
+interface HighlightRange { start: number; end: number }
+
+interface SearchResult {
+  file_id: string
+  file_name: string
+  file_path: string
+  paragraph_id?: string
+  paragraph_title?: string
+  text: string
+  match_type: string
+  start_offset?: number
+  end_offset?: number
+  start_line?: number
+  end_line?: number
+  score?: number
+  highlights?: HighlightRange[]
+  matched_keywords?: string[]
+}
 
 const KMSPage: React.FC = () => {
   const { t } = useTranslation()
@@ -23,6 +42,7 @@ const KMSPage: React.FC = () => {
     indexProgress,
     isIndexing,
     stats,
+    loadStats,
     // KMS 设置
     kmsSettings,
     saveKmsSettings,
@@ -30,15 +50,12 @@ const KMSPage: React.FC = () => {
     autoIndexStatus,
     runAutoIndexCheckNow,
     // 知识沉淀
-    dirSummaries,
     fileSummaries,
     isLoadingSummaries,
-    loadDirSummaries,
     loadFileSummaries,
-    // 搜索历史
+    // 搜索历史（嵌入搜索框下拉）
     searchHistory,
     loadSearchHistory,
-    getSearchHistoryDetail,
     clearSearchHistory,
     deleteSearchHistory,
     addDir,
@@ -47,6 +64,7 @@ const KMSPage: React.FC = () => {
     search,
     buildIndex,
     incrementalIndex,
+    rebuildDirIndex,
     cancelIndex,
     openFile,
     openFileDir,
@@ -56,21 +74,30 @@ const KMSPage: React.FC = () => {
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('search')
+  // 跨视图联动：合集页"在此合集中搜索"使用
+  const [filterCollectionIds, setFilterCollectionIds] = useState<string[]>([])
 
-  // 切换到历史视图时加载历史数据
-  useEffect(() => {
-    if (viewMode === 'history') {
-      loadSearchHistory({ limit: 100 })
-    }
-  }, [viewMode, loadSearchHistory])
+  // 收集当前文件的所有匹配结果（用于预览中切换匹配位置）
+  const [allPreivewMatches, setAllPreviewMatches] = useState<SearchResult[]>([])
 
   const handlePreview = useCallback((result: any) => {
     setPreviewFile(result)
-  }, [setPreviewFile])
+    // 收集同文件的所有匹配结果
+    const fileId = result.file_id
+    const matches = fileId ? searchResults.filter(r => r.file_id === fileId) : []
+    setAllPreviewMatches(matches)
+  }, [setPreviewFile, searchResults])
 
   const handleClosePreview = useCallback(() => {
     setPreviewFile(null)
+    setAllPreviewMatches([])
   }, [setPreviewFile])
+
+  // 从合集视图跳转过来：设置合集筛选 + 切到搜索视图 + 触发一次空查询清空旧结果
+  const handleSearchInCollection = useCallback((collectionId: string) => {
+    setFilterCollectionIds([collectionId])
+    setViewMode('search')
+  }, [])
 
   // 收集当前搜索结果中的所有关键词用于预览高亮
   const previewKeywords = useMemo(() => {
@@ -114,20 +141,20 @@ const KMSPage: React.FC = () => {
             {
               label: (
                 <span>
+                  <FolderOutlined style={{ marginRight: 4 }} />
+                  {t('kms.collectionsView')}
+                </span>
+              ),
+              value: 'collections',
+            },
+            {
+              label: (
+                <span>
                   <DatabaseOutlined style={{ marginRight: 4 }} />
                   {t('kms.knowledgeView')}
                 </span>
               ),
               value: 'knowledge',
-            },
-            {
-              label: (
-                <span>
-                  <HistoryOutlined style={{ marginRight: 4 }} />
-                  {t('kms.historyView')}
-                </span>
-              ),
-              value: 'history',
             },
           ]}
         />
@@ -157,28 +184,33 @@ const KMSPage: React.FC = () => {
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
             onPreview={handlePreview}
+            filterCollectionIds={filterCollectionIds}
+            onFilterCollectionIdsChange={setFilterCollectionIds}
+            searchHistory={searchHistory}
+            onLoadSearchHistory={loadSearchHistory}
+            onDeleteSearchHistory={deleteSearchHistory}
+            onClearSearchHistory={clearSearchHistory}
           />
         ) : viewMode === 'knowledge' ? (
           <KMSKnowledgeView
             dirs={dirs}
-            dirSummaries={dirSummaries}
             fileSummaries={fileSummaries}
             isLoadingSummaries={isLoadingSummaries}
-            onLoadDirSummaries={loadDirSummaries}
             onLoadFileSummaries={loadFileSummaries}
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}
+            onRebuildFileIndex={async (fileId) => {
+              await window.electronAPI.kms.rebuildFileIndex(fileId)
+              loadFileSummaries({})
+              loadStats()
+            }}
+            stats={stats}
+            onLoadStats={loadStats}
           />
         ) : (
-          <KMSHistoryView
-            history={searchHistory}
-            onLoadHistory={loadSearchHistory}
-            onGetDetail={getSearchHistoryDetail}
-            onDelete={deleteSearchHistory}
-            onClear={clearSearchHistory}
-            onOpenFile={openFile}
-            onOpenFileDir={openFileDir}
-            onPreview={handlePreview}
+          <KMSCollectionsView
+            onSearchInCollection={handleSearchInCollection}
+            onPreviewFile={handlePreview}
           />
         )}
       </div>
@@ -198,12 +230,16 @@ const KMSPage: React.FC = () => {
           onAddDir={addDir}
           onUpdateDir={updateDir}
           onDeleteDir={deleteDir}
-          stats={stats}
           isIndexing={isIndexing}
           indexProgress={indexProgress}
-          onBuildIndex={buildIndex}
-          onIncrementalIndex={incrementalIndex}
-          onRebuildIndex={buildIndex}
+          onUpdateIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}
+          onRebuildIndex={(withEmbedding, dirId, resetHotData) => {
+            if (dirId) {
+              rebuildDirIndex(dirId, undefined, withEmbedding, resetHotData)
+            } else {
+              buildIndex(undefined, withEmbedding, resetHotData)
+            }
+          }}
           onCancelIndex={cancelIndex}
           autoIndexStatus={autoIndexStatus}
           onRunAutoIndexCheck={runAutoIndexCheckNow}
@@ -214,6 +250,7 @@ const KMSPage: React.FC = () => {
       <KMSFilePreview
         open={!!previewFile}
         result={previewFile}
+        allMatches={allPreivewMatches}
         keywords={previewKeywords}
         onClose={handleClosePreview}
         onOpenFile={openFile}

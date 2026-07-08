@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { generateId } from '../../utils/format'
 import {
   Form,
@@ -17,6 +17,7 @@ import {
   Collapse,
   Tooltip,
   App,
+  theme,
 } from 'antd'
 import {
   PlusOutlined,
@@ -34,7 +35,7 @@ import { useTranslation } from 'react-i18next'
 
 const { Text, Title } = Typography
 
-const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; icon?: string }[] = [
+const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string; group: string; icon?: string }[] = [
   { value: 'openai', label: 'OpenAI', group: 'international' },
   { value: 'groq', label: 'Groq', group: 'international' },
   { value: 'mistral', label: 'Mistral AI', group: 'international' },
@@ -42,13 +43,13 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; group: string; ic
   { value: 'azure', label: 'Azure OpenAI', group: 'international' },
   { value: 'vertex', label: 'Google Vertex AI', group: 'international' },
   { value: 'bedrock', label: 'AWS Bedrock', group: 'international' },
-  { value: 'deepseek', label: 'DeepSeek (深度求索)', group: 'domestic' },
-  { value: 'qwen', label: '通义千问 (Qwen)', group: 'domestic' },
-  { value: 'zhipu', label: '智谱 AI (GLM)', group: 'domestic' },
-  { value: 'volcengine', label: '火山引擎 (豆包)', group: 'domestic' },
+  { value: 'deepseek', label: 'DeepSeek (深度求索)', labelKey: 'settings.providerDeepseek', group: 'domestic' },
+  { value: 'qwen', label: '通义千问 (Qwen)', labelKey: 'settings.providerQwen', group: 'domestic' },
+  { value: 'zhipu', label: '智谱 AI (GLM)', labelKey: 'settings.providerZhipu', group: 'domestic' },
+  { value: 'volcengine', label: '火山引擎 (豆包)', labelKey: 'settings.providerVolcengine', group: 'domestic' },
   { value: 'moonshot', label: 'Moonshot (Kimi)', group: 'domestic' },
-  { value: 'yi', label: '零一万物 (Yi)', group: 'domestic' },
-  { value: 'openai-compatible', label: 'OpenAI 兼容接口', group: 'local' },
+  { value: 'yi', label: '零一万物 (Yi)', labelKey: 'settings.providerYi', group: 'domestic' },
+  { value: 'openai-compatible', label: 'OpenAI 兼容接口', labelKey: 'settings.providerOpenaiCompatible', group: 'local' },
   { value: 'lmstudio', label: 'LM Studio', group: 'local' },
 ]
 
@@ -70,9 +71,25 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   xai: { baseURL: 'https://api.x.ai/v1' },
 }
 
-const getProviderTypeLabel = (type: string): string => {
+// 解析 provider 的 models_json 字符串，统一处理异常与 category 默认值
+function parseModelsJson(modelsJson: string | undefined): LLMModelConfig[] {
+  if (!modelsJson) return []
+  try {
+    const parsed = JSON.parse(modelsJson)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((m: LLMModelConfig) => ({
+      ...m,
+      category: m.category || 'chat',
+    }))
+  } catch {
+    return []
+  }
+}
+
+const getProviderTypeLabel = (type: string, t: (key: string, options?: any) => string): string => {
   const info = PROVIDER_TYPES.find((p) => p.value === type)
-  return info?.label || type
+  if (!info) return type
+  return info.labelKey ? t(info.labelKey) : info.label
 }
 
 const getProviderTypeGroup = (type: string): string => {
@@ -94,6 +111,7 @@ const CATEGORY_TAG_MAP: Record<LLMModelCategory, { color: string }> = {
 const LLMSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modalVisible, setModalVisible] = useState(false)
   const [editingProvider, setEditingProvider] = useState<LLMProvider | null>(null)
@@ -105,20 +123,20 @@ const LLMSettings: React.FC = () => {
   const [modelCategory, setModelCategory] = useState<LLMModelCategory>('chat')
   const [modelForm] = Form.useForm()
 
-  useEffect(() => {
-    loadProviders()
-  }, [])
-
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
     try {
       const result = await window.electronAPI.llm.getProviders()
       setProviders(result as LLMProvider[])
     } catch (error) {
       console.error('Failed to load LLM providers:', error)
     }
-  }
+  }, [])
 
-  const handleAdd = () => {
+  useEffect(() => {
+    loadProviders()
+  }, [loadProviders])
+
+  const handleAdd = useCallback(() => {
     setEditingProvider(null)
     setModels([])
     form.resetFields()
@@ -128,9 +146,9 @@ const LLMSettings: React.FC = () => {
       api_key: '',
     })
     setModalVisible(true)
-  }
+  }, [form])
 
-  const handleProviderTypeChange = (type: string) => {
+  const handleProviderTypeChange = useCallback((type: string) => {
     const defaults = PROVIDER_DEFAULTS[type]
     if (defaults) {
       const currentBaseUrl = form.getFieldValue('base_url')
@@ -138,13 +156,11 @@ const LLMSettings: React.FC = () => {
         form.setFieldsValue({ base_url: defaults.baseURL })
       }
     }
-  }
+  }, [form])
 
-  const handleEdit = (provider: LLMProvider) => {
+  const handleEdit = useCallback((provider: LLMProvider) => {
     setEditingProvider(provider)
-    const loadedModels: LLMModelConfig[] = provider.models_json
-      ? (() => { try { return JSON.parse(provider.models_json).map((m: any) => ({ ...m, category: m.category || 'chat' })) } catch { return [] } })()
-      : []
+    const loadedModels = parseModelsJson(provider.models_json)
     setModels(loadedModels)
     form.resetFields()
     form.setFieldsValue({
@@ -158,9 +174,9 @@ const LLMSettings: React.FC = () => {
       api_key: '',
     })
     setModalVisible(true)
-  }
+  }, [form])
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback(async (id: string) => {
     try {
       await window.electronAPI.llm.deleteProvider(id)
       message.success(t('settings.deleted'))
@@ -168,9 +184,9 @@ const LLMSettings: React.FC = () => {
     } catch {
       message.error(t('settings.deleteFailed'))
     }
-  }
+  }, [message, t, loadProviders])
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     try {
       const values = await form.validateFields()
       const defaultChatModel = models.find(m => m.category === 'chat' && m.is_default)
@@ -202,9 +218,9 @@ const LLMSettings: React.FC = () => {
         message.error(error.message)
       }
     }
-  }
+  }, [form, models, editingProvider, message, t, loadProviders])
 
-  const handleTestConnection = async (id: string) => {
+  const handleTestConnection = useCallback(async (id: string) => {
     setTestingId(id)
     try {
       const result = await window.electronAPI.llm.testConnection({ provider_id: id })
@@ -218,9 +234,9 @@ const LLMSettings: React.FC = () => {
     } finally {
       setTestingId(null)
     }
-  }
+  }, [message, t])
 
-  const handleAddModel = () => {
+  const handleAddModel = useCallback(() => {
     setEditingModel(null)
     setModelCategory('chat')
     modelForm.resetFields()
@@ -232,9 +248,9 @@ const LLMSettings: React.FC = () => {
       is_default: false,
     })
     setModelModalVisible(true)
-  }
+  }, [modelForm])
 
-  const handleEditModel = (model: LLMModelConfig) => {
+  const handleEditModel = useCallback((model: LLMModelConfig) => {
     setEditingModel(model)
     setModelCategory(model.category || 'chat')
     modelForm.setFieldsValue({
@@ -250,18 +266,18 @@ const LLMSettings: React.FC = () => {
       is_default: model.is_default,
     })
     setModelModalVisible(true)
-  }
+  }, [modelForm])
 
-  const handleModelCategoryChange = (category: LLMModelCategory) => {
+  const handleModelCategoryChange = useCallback((category: LLMModelCategory) => {
     setModelCategory(category)
     if (category === 'embedding') {
       modelForm.setFieldsValue({
         is_default: false,
       })
     }
-  }
+  }, [modelForm])
 
-  const handleSaveModel = async () => {
+  const handleSaveModel = useCallback(async () => {
     try {
       const values = await modelForm.validateFields()
       const category = values.category || 'chat'
@@ -296,13 +312,13 @@ const LLMSettings: React.FC = () => {
         message.error(error.message)
       }
     }
-  }
+  }, [modelForm, editingModel, message])
 
-  const handleDeleteModel = (modelId: string) => {
+  const handleDeleteModel = useCallback((modelId: string) => {
     setModels(prev => prev.filter(m => m.id !== modelId))
-  }
+  }, [])
 
-  const modelColumns = [
+  const modelColumns = useMemo(() => [
     {
       title: t('settings.modelCategory'),
       dataIndex: 'category',
@@ -320,7 +336,7 @@ const LLMSettings: React.FC = () => {
       dataIndex: 'is_default',
       key: 'is_default',
       width: 50,
-      render: (isDefault: boolean) => isDefault ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null,
+      render: (isDefault: boolean) => isDefault ? <CheckCircleOutlined style={{ color: token.colorSuccess }} /> : null,
     },
     {
       title: t('common.edit'),
@@ -335,9 +351,9 @@ const LLMSettings: React.FC = () => {
         </Space>
       ),
     },
-  ]
+  ], [t, token.colorSuccess, handleEditModel, handleDeleteModel])
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: t('settings.providerName'),
       dataIndex: 'name',
@@ -351,7 +367,7 @@ const LLMSettings: React.FC = () => {
       width: 140,
       render: (type: string) => {
         const group = getProviderTypeGroup(type)
-        const label = getProviderTypeLabel(type)
+        const label = getProviderTypeLabel(type, t)
         const groupTranslationMap: Record<string, string> = {
           domestic: t('settings.providerGroupDomestic'),
           local: t('settings.providerGroupLocal'),
@@ -370,9 +386,9 @@ const LLMSettings: React.FC = () => {
       title: t('settings.modelConfig'),
       key: 'model_info',
       render: (_: any, record: LLMProvider) => {
-        const allModels: LLMModelConfig[] = record.models_json ? (() => { try { return JSON.parse(record.models_json) } catch { return [] } })() : []
-        const chatCount = allModels.filter((m: any) => (m.category || 'chat') === 'chat').length
-        const embeddingCount = allModels.filter((m: any) => m.category === 'embedding').length
+        const allModels = parseModelsJson(record.models_json)
+        const chatCount = allModels.filter(m => (m.category || 'chat') === 'chat').length
+        const embeddingCount = allModels.filter(m => m.category === 'embedding').length
         return (
           <Space size={4} orientation="vertical" style={{ lineHeight: 1.4 }}>
             {chatCount > 0 && <Text style={{ fontSize: 12 }}>{t('settings.modelCategory_chat')} {chatCount}</Text>}
@@ -388,7 +404,7 @@ const LLMSettings: React.FC = () => {
       key: 'is_default',
       width: 80,
       render: (isDefault: boolean) =>
-        isDefault ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : null,
+        isDefault ? <CheckCircleOutlined style={{ color: token.colorSuccess }} /> : null,
     },
     {
       title: t('common.edit'),
@@ -413,22 +429,22 @@ const LLMSettings: React.FC = () => {
         </Space>
       ),
     },
-  ]
+  ], [t, token.colorSuccess, testingId, handleTestConnection, handleEdit, handleDelete])
 
-  const providerTypeOptions = [
+  const providerTypeOptions = useMemo(() => [
     {
       label: t('settings.localProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'local').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'local').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
     {
       label: t('settings.domesticProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'domestic').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'domestic').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
     {
       label: t('settings.internationalProviders'),
-      options: PROVIDER_TYPES.filter(p => p.group === 'international').map(p => ({ value: p.value, label: p.label })),
+      options: PROVIDER_TYPES.filter(p => p.group === 'international').map(p => ({ value: p.value, label: p.labelKey ? t(p.labelKey) : p.label })),
     },
-  ]
+  ], [t])
 
   return (
     <>
@@ -632,4 +648,4 @@ const LLMSettings: React.FC = () => {
   )
 }
 
-export default LLMSettings
+export default React.memo(LLMSettings)

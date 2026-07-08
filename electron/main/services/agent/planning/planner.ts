@@ -88,7 +88,8 @@ class ReActPlanner extends BasePlanner {
   private parsePlan(query: string, response: string, availableTools: any[]): Plan {
     try {
       const parsed = this.extractJSON(response)
-      const selectedToolNames: string[] = parsed.selectedToolNames || parsed.tools?.map((t: any) => t.name) || []
+      const rawNames: string[] = parsed.selectedToolNames || parsed.tools?.map((t: any) => t.name) || []
+      const selectedToolNames: string[] = rawNames.map((n: any) => String(n || '').toLowerCase().trim()).filter(Boolean)
 
       return {
         goal: query,

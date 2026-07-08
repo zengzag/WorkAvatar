@@ -1,10 +1,11 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import type {
   WorkspaceOpenInExplorerParams,
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
+  EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
   AppShowOpenDialogParams,
@@ -19,13 +20,6 @@ import type {
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   ToolAssignParams,
-  KBCreateParams,
-  KBUpdateParams,
-  KBDocParseParams,
-  KBExportFullParams,
-  KBExportSummaryParams,
-  KBExportDocumentsParams,
-  KBImportFullParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -37,7 +31,6 @@ import type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
-  KBMCPSetConfigParams,
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
@@ -48,6 +41,13 @@ import type {
   KMSSetSettingsParams,
   KMSRecordSearchHistoryParams,
   KMSGetSearchHistoryParams,
+  KMSCreateCollectionParams,
+  KMSUpdateCollectionParams,
+  KMSAddFileToCollectionParams,
+  KMSAddFilesToCollectionParams,
+  KMSRemoveFileFromCollectionParams,
+  KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -60,7 +60,7 @@ const electronAPI = {
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET, id),
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
-    delete: (params: string | { id: string; delete_workspace?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    delete: (params: EmployeeDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
@@ -159,6 +159,9 @@ const electronAPI = {
     showSaveDialog: (params: AppShowSaveDialogParams) => ipcRenderer.invoke(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, params),
     getDataDir: () => ipcRenderer.invoke(IPC_CHANNELS.PATH_GET_DATA_DIR),
     setDataDir: (newDir: string) => ipcRenderer.invoke(IPC_CHANNELS.PATH_SET_DATA_DIR, newDir),
+    getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
+    openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
+    clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
   },
 
   tool: {
@@ -183,80 +186,13 @@ const electronAPI = {
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
   },
 
-  kb: {
-    list: () => ipcRenderer.invoke(IPC_CHANNELS.KB_LIST),
-    get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET, id),
-    create: (params: KBCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_CREATE, params),
-    update: (params: KBUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE, params),
-    delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DELETE, id),
-    uploadDocuments: (params: { kb_id: string; paths: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_UPLOAD, params),
-    onUploadProgress: (callback: (progress: { current: number; total: number; fileName: string }) => void) => {
-      const handler = (_event: any, progress: { current: number; total: number; fileName: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_UPLOAD_PROGRESS, handler)
-    },
-    parseDocument: (params: KBDocParseParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_PARSE, params),
-    deleteDocument: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_DELETE, id),
-    getDocumentList: (params: { kb_id: string; status?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_DOC_LIST, params),
-    parseAll: (params: { kb_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PARSE_ALL, params),
-    onParseAllProgress: (callback: (progress: { current: number; total: number; docName: string }) => void) => {
-      const handler = (_event: any, progress: { current: number; total: number; docName: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_PARSE_ALL_PROGRESS, handler)
-    },
-    processDocument: (params: { doc_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_DOCUMENT, params),
-    processAll: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_PROCESS_ALL, params),
-    buildGlobal: (params: { kb_id: string; provider_id?: string; model_id?: string; enable_thinking?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.KB_BUILD_GLOBAL, params),
-    getStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_STATS, kbId),
-    getParagraphs: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS, docId),
-    getDocSummary: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_SUMMARY, docId),
-    getGlobalSummary: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_GLOBAL_SUMMARY, kbId),
-    searchParagraphs: (params: { kb_id: string; query: string; top_k?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_PARAGRAPHS, params),
-    getDocContent: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_DOC_CONTENT, docId),
-    pauseParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_PARSE, docId),
-    resumeParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_PARSE, docId),
-    retryParse: (docId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_RETRY_PARSE, docId),
-    pauseAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_PAUSE_ALL_PARSES),
-    resumeAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_RESUME_ALL_PARSES),
-    cancelAllParses: () => ipcRenderer.invoke(IPC_CHANNELS.KB_CANCEL_ALL_PARSES),
-    exportFull: (params: KBExportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_FULL, params),
-    exportSummary: (params: KBExportSummaryParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_SUMMARY, params),
-    exportDocuments: (params: KBExportDocumentsParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_EXPORT_DOCUMENTS, params),
-    importFull: (params: KBImportFullParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_IMPORT_FULL, params),
-    scanFolder: (params: { folder_path: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SCAN_FOLDER, params),
-    onExportProgress: (callback: (progress: { kb_id: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { kb_id: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_EXPORT_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_EXPORT_PROGRESS, handler)
-    },
-    onImportProgress: (callback: (progress: { kb_id?: string; stage: string; detail: string }) => void) => {
-      const handler = (_event: any, progress: { kb_id?: string; stage: string; detail: string }) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KB_IMPORT_PROGRESS, handler)
-    },
-    search: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; source_types?: string[] }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH, params),
-    searchWithEmbedding: (params: { kb_id: string; query: string; top_k?: number; document_ids?: string[]; provider_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_WITH_EMBEDDING, params),
-    searchIndexStats: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_SEARCH_INDEX_STATS, kbId),
-    rebuildSearchIndex: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_REBUILD_SEARCH_INDEX, kbId),
-    updateParagraph: (params: { paragraph_id: string; updates: { summary?: string; keywords_json?: string; content?: string; title?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_PARAGRAPH, params),
-    updateDocSummary: (params: { document_id: string; updates: { summary?: string; keywords_json?: string; main_topics_json?: string } }) => ipcRenderer.invoke(IPC_CHANNELS.KB_UPDATE_DOC_SUMMARY, params),
-    getParagraphsByKb: (kbId: string) => ipcRenderer.invoke(IPC_CHANNELS.KB_GET_PARAGRAPHS_BY_KB, kbId),
-  },
-
-  kbMcp: {
-    start: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_START),
-    stop: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_STOP),
-    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_STATUS),
-    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_GET_CONFIG),
-    setConfig: (params: KBMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KB_MCP_SET_CONFIG, params),
-  },
-
   kms: {
     listDirs: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_DIRS),
     addDir: (params: KMSAddDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_DIR, params),
     updateDir: (params: KMSUpdateDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_DIR, params),
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
+    searchFiles: (params: KMSSearchFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_FILES, params),
     agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
     onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
       const handler = (_event: any, step: any) => callback(step)
@@ -268,31 +204,62 @@ const electronAPI = {
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),
     openFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE, filePath),
     openFileDir: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_OPEN_FILE_DIR, filePath),
-    buildIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId); return Promise.resolve({ success: true }) },
-    incrementalIndex: (providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId); return Promise.resolve({ success: true }) },
-    rebuildDirIndex: (dirId: string, providerId?: string) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId); return Promise.resolve({ success: true }) },
+    buildIndex: (providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => { ipcRenderer.send(IPC_CHANNELS.KMS_BUILD_INDEX, providerId, withEmbedding, resetHotData); return Promise.resolve({ success: true }) },
+    incrementalIndex: (providerId?: string, withEmbedding: boolean = true) => { ipcRenderer.send(IPC_CHANNELS.KMS_INCREMENTAL_INDEX, providerId, withEmbedding); return Promise.resolve({ success: true }) },
+    rebuildDirIndex: (dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => { ipcRenderer.send(IPC_CHANNELS.KMS_REBUILD_DIR_INDEX, dirId, providerId, withEmbedding, resetHotData); return Promise.resolve({ success: true }) },
     cancelIndex: () => { ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_INDEX); return Promise.resolve({ success: true }) },
     getStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STATS),
-    onIndexProgress: (callback: (progress: { phase: string; current: number; total: number; message: string }) => void) => {
-      const handler = (_event: any, progress: { phase: string; current: number; total: number; message: string }) => callback(progress)
+    onIndexProgress: (callback: (progress: {
+      phase: string
+      current: number
+      total: number
+      message: string
+      fileId?: string
+      fileName?: string
+      collectionId?: string
+      collectionName?: string
+      startedAt?: number
+      cancelled?: boolean
+    }) => void) => {
+      const handler = (_event: any, progress: any) => callback(progress)
       ipcRenderer.on(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_INDEX_PROGRESS, handler)
     },
-    // KMS 设置
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SETTINGS),
     setSettings: (params: KMSSetSettingsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_SETTINGS, params),
-    // 自动索引
     getAutoIndexStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_AUTO_INDEX_STATUS),
     runAutoIndexCheck: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_RUN_AUTO_INDEX_CHECK),
-    // 知识沉淀（摘要查看）
     getDirSummaries: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DIR_SUMMARIES),
     getFileSummaries: (params: KMSGetFileSummariesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARIES, params),
-    // 搜索历史
+    getFileParagraphs: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_PARAGRAPHS, fileId),
+    getFileToc: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_TOC, fileId),
+    getParagraphContent: (paragraphId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_PARAGRAPH_CONTENT, paragraphId),
     recordSearchHistory: (params: KMSRecordSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_RECORD_SEARCH_HISTORY, params),
     getSearchHistory: (params?: KMSGetSearchHistoryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY, params || {}),
-    getSearchHistoryDetail: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_SEARCH_HISTORY_DETAIL, id),
     clearSearchHistory: (searchMode?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_SEARCH_HISTORY, searchMode),
     deleteSearchHistory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_HISTORY, id),
+    listCollections: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_COLLECTIONS),
+    createCollection: (params: KMSCreateCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CREATE_COLLECTION, params),
+    updateCollection: (params: KMSUpdateCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_COLLECTION, params),
+    deleteCollection: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_COLLECTION, id),
+    getCollection: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_COLLECTION, id),
+    addFileToCollection: (params: KMSAddFileToCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_FILE_TO_COLLECTION, params),
+    addFilesToCollection: (params: KMSAddFilesToCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_FILES_TO_COLLECTION, params),
+    removeFileFromCollection: (params: KMSRemoveFileFromCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REMOVE_FILE_FROM_COLLECTION, params),
+    listFilesInCollection: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_FILES_IN_COLLECTION, collectionId),
+    getCollectionStats: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_COLLECTION_STATS, collectionId),
+    getCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_COLLECTION_SUMMARY, collectionId),
+    setCollectionSummary: (params: KMSSetCollectionSummaryParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SET_COLLECTION_SUMMARY, params),
+    deleteCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_COLLECTION_SUMMARY, collectionId),
+    generateCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_COLLECTION_SUMMARY, collectionId),
+    scanDirFiles: (dirPath: string, extensions?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SCAN_DIR_FILES, { dirPath, extensions }),
+    processCollectionDeep: (collectionId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId),
+    cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
+    generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
+    generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
+    rebuildFileIndex: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, fileId),
+    getDatabaseStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DATABASE_STATS),
+    cleanupDatabase: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEANUP_DATABASE),
   },
 
   kmsMcp: {
@@ -309,46 +276,21 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
     },
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) =>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
   },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
   ...electronAPI,
-  tasks: {
-    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_GET_ALL),
-    clearCompleted: () => ipcRenderer.invoke(IPC_CHANNELS.TASK_CLEAR_COMPLETED),
-    cancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_CANCEL, taskId),
-    pause: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_PAUSE, taskId),
-    resume: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME, taskId),
-    onTasksUpdated: (callback: (tasks: any[]) => void) => {
-      const handler = (_event: any, tasks: any[]) => callback(tasks)
-      ipcRenderer.on(IPC_CHANNELS.TASK_UPDATED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_UPDATED, handler)
-    },
-  },
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 })
 
 export type ElectronAPI = typeof electronAPI & {
-  tasks: {
-    getAll: () => Promise<any[]>
-    clearCompleted: () => Promise<boolean>
-    cancel: (taskId: string) => Promise<boolean>
-    pause: (taskId: string) => Promise<boolean>
-    resume: (taskId: string) => Promise<boolean>
-    onTasksUpdated: (callback: (tasks: any[]) => void) => () => void
-  }
+  getPathForFile: (file: File) => string
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean }) => Promise<{ success: boolean }>
-  }
-  kbMcp: {
-    start: () => Promise<{ success: boolean; error?: string }>
-    stop: () => Promise<{ success: boolean }>
-    getStatus: () => Promise<{ running: boolean; port: number; url: string }>
-    getConfig: () => Promise<{ enabled: boolean; port: number; allowedKbIds: string[]; apiKey: string }>
-    setConfig: (params: KBMCPSetConfigParams) => Promise<{ success: boolean }>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) => Promise<{ success: boolean }>
   }
 }
 

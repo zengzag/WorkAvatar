@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -12,6 +12,7 @@ import {
   Row,
   Col,
   App,
+  theme,
 } from 'antd'
 import {
   SaveOutlined,
@@ -24,13 +25,6 @@ import {
 } from '@ant-design/icons'
 
 const { TextArea } = Input
-
-const AVATAR_OPTIONS = [
-  { value: 'default', icon: <RobotOutlined />, color: '#1677ff' },
-  { value: 'business', icon: <UserOutlined />, color: '#52c41a' },
-  { value: 'document', icon: <FileTextOutlined />, color: '#faad14' },
-  { value: 'settings', icon: <SettingOutlined />, color: '#722ed1' },
-]
 
 interface BasicInfoSectionProps {
   form: ReturnType<typeof Form.useForm>[0]
@@ -51,8 +45,17 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
 }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
+  const { token } = theme.useToken()
 
-  const handleChangeWorkspacePath = async () => {
+  // 头像样式配置，颜色使用主题语义 token 以适配明暗主题
+  const avatarOptions = useMemo(() => [
+    { value: 'default', icon: <RobotOutlined />, color: token.colorPrimary, label: t('employeeSettings.avatarDefault') },
+    { value: 'business', icon: <UserOutlined />, color: token.colorSuccess, label: t('employeeSettings.avatarBusiness') },
+    { value: 'document', icon: <FileTextOutlined />, color: token.colorWarning, label: t('employeeSettings.avatarDocument') },
+    { value: 'settings', icon: <SettingOutlined />, color: token.colorInfo, label: t('employeeSettings.avatarSettings') },
+  ], [token, t])
+
+  const handleChangeWorkspacePath = useCallback(async () => {
     try {
       const result = await window.electronAPI.app.showOpenDialog({
         title: t('employeeSettings.selectWorkspaceDir'),
@@ -68,16 +71,16 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [t, employeeId, message])
 
-  const handleOpenInExplorer = async () => {
+  const handleOpenInExplorer = useCallback(async () => {
     if (!workspacePath) return
     try {
       await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
-  }
+  }, [workspacePath, message, t])
 
   return (
     <Card>
@@ -95,16 +98,13 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           <Col span={8}>
             <Form.Item name="avatar_type" label={t('employeeSettings.avatarStyle')}>
               <Select>
-                {AVATAR_OPTIONS.map((opt) => (
+                {avatarOptions.map((opt) => (
                   <Select.Option key={opt.value} value={opt.value}>
                     <Space>
                       <Avatar size="small" style={{ backgroundColor: opt.color }}>
                         {opt.icon}
                       </Avatar>
-                      {opt.value === 'default' && t('employeeSettings.avatarDefault')}
-                      {opt.value === 'business' && t('employeeSettings.avatarBusiness')}
-                      {opt.value === 'document' && t('employeeSettings.avatarDocument')}
-                      {opt.value === 'settings' && t('employeeSettings.avatarSettings')}
+                      {opt.label}
                     </Space>
                   </Select.Option>
                 ))}
@@ -162,4 +162,4 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   )
 }
 
-export default BasicInfoSection
+export default React.memo(BasicInfoSection)

@@ -21,7 +21,6 @@ class DatabaseService {
       timeout: 5000
     })
 
-    // 启用WAL模式以提升并发读性能
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
 
@@ -129,7 +128,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
-      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
 
       CREATE TABLE IF NOT EXISTS tools (
@@ -183,28 +181,6 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_skills_employee ON employee_skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_skills_skill ON employee_skills(skill_id);
 
-      CREATE TABLE IF NOT EXISTS background_tasks (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
-        title TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        progress REAL NOT NULL DEFAULT 0,
-        progress_text TEXT DEFAULT '',
-        error TEXT,
-        metadata_json TEXT DEFAULT '{}',
-        created_at INTEGER NOT NULL,
-        paused_at INTEGER,
-        resumed_at INTEGER,
-        speed REAL DEFAULT 0,
-        eta INTEGER DEFAULT 0,
-        stage TEXT DEFAULT '',
-        detail TEXT DEFAULT ''
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_type ON background_tasks(type);
-      CREATE INDEX IF NOT EXISTS idx_background_tasks_created ON background_tasks(created_at DESC);
-
       CREATE TABLE IF NOT EXISTS employee_memories (
         id TEXT PRIMARY KEY,
         employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -220,17 +196,14 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_memories_employee ON employee_memories(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_pinned ON employee_memories(employee_id, is_pinned);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
-      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
-      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
-      -- 复合索引：支持 ORDER BY is_pinned DESC, updated_at DESC 的常见查询，避免 filesort
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
-    this.addColumnIfNotExists('employees', 'profile_json', 'TEXT DEFAULT \'')
+    this.addColumnIfNotExists('employees', 'profile_json', "TEXT DEFAULT ''")
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
 
@@ -239,15 +212,19 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
 
-    // 迁移：为已有对话填充 last_message_at，确保排序正确
     this.migrateConversationLastMessageAt()
 
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
 
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
+    `)
+
     this.migrateEmployeeAddWorkspacePath()
 
-    // FTS5 全文检索表（替换 LIKE '%query%' 全表扫描）
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
         key,
@@ -255,16 +232,13 @@ class DatabaseService {
         content,
         memory_id UNINDEXED,
         employee_id UNINDEXED,
-        tokenize='unicode61'
+        tokenize='unicode61',
+        prefix='2,3'
       );
     `)
-    // 初始化：将已有记忆同步到 FTS 表（仅首次创建后需要）
     this.migrateEmployeeMemoriesFTS()
-
-    this.recoverStuckDocs()
   }
 
-  /** 将已有 employee_memories 数据同步到 FTS5 表（仅执行一次） */
   private migrateEmployeeMemoriesFTS(): void {
     const count = this.db.prepare('SELECT COUNT(*) AS n FROM employee_memories_fts').get() as { n: number }
     if (count.n > 0) return
@@ -313,22 +287,10 @@ class DatabaseService {
     }
   }
 
-  /** 为已有对话填充 last_message_at = updated_at，确保排序正确 */
   private migrateConversationLastMessageAt(): void {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {
       logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
-    }
-  }
-
-  private recoverStuckDocs(): void {
-    const runningTasksResult = this.db.prepare(`
-      UPDATE background_tasks
-      SET status = 'paused'
-      WHERE status IN ('running', 'pending')
-    `).run()
-    if (runningTasksResult.changes > 0) {
-      logger.info(`Recovered ${runningTasksResult.changes} background task(s) from running/pending to paused status`)
     }
   }
 

@@ -11,10 +11,6 @@ export class ToolDispatcher {
     this.middlewareChain = new ToolMiddlewareChain()
   }
 
-  setRegistry(registry: ToolRegistry): void {
-    this.registry = registry
-  }
-
   getMiddlewareChain(): ToolMiddlewareChain {
     return this.middlewareChain
   }
@@ -33,7 +29,6 @@ export class ToolDispatcher {
     const startTime = Date.now()
 
     try {
-      // 如果工具定义指定了 timeoutMs，注入到中间件参数中供超时中间件使用
       const middlewareParams = { ...toolParams }
       if (tool.timeoutMs) {
         middlewareParams._timeoutMs = tool.timeoutMs
@@ -42,11 +37,16 @@ export class ToolDispatcher {
       const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
         const result = await tool.handler(toolParams, context)
 
-        const output = this.serializeResult(result)
+        const success = result?.success !== false
+        const output = result?.output !== undefined
+          ? result.output
+          : this.serializeResult(result, ['success', 'error', 'toolName', 'rawOutput', 'output'])
+        const error = result?.error
 
         return {
-          success: true,
+          success,
           output,
+          error,
           toolName,
           rawOutput: result
         }
@@ -66,21 +66,7 @@ export class ToolDispatcher {
     }
   }
 
-  async dispatchMultiple(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
-    const results: ToolCallResult[] = []
-
-    for (const call of calls) {
-      results.push(await this.dispatch(call.name, call.params, context))
-    }
-
-    return results
-  }
-
-  async dispatchParallel(calls: Array<{ name: string; params: Record<string, any> }>, context?: ToolHandlerContext): Promise<ToolCallResult[]> {
-    return Promise.all(calls.map(call => this.dispatch(call.name, call.params, context)))
-  }
-
-  private serializeResult(result: any): any {
+  private serializeResult(result: any, excludeKeys: string[] = []): any {
     if (result === null || result === undefined) {
       return 'Tool executed successfully (no output)'
     }
@@ -95,6 +81,18 @@ export class ToolDispatcher {
 
     if (typeof result === 'object') {
       try {
+        if (excludeKeys.length > 0) {
+          const filtered: Record<string, any> = {}
+          for (const [k, v] of Object.entries(result)) {
+            if (!excludeKeys.includes(k)) {
+              filtered[k] = v
+            }
+          }
+          if (Object.keys(filtered).length === 0) {
+            return 'Tool executed successfully'
+          }
+          return JSON.stringify(filtered, null, 2)
+        }
         return JSON.stringify(result, null, 2)
       } catch {
         return String(result)

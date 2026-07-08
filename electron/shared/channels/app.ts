@@ -7,6 +7,10 @@ export const APP_CHANNELS = {
 
   PATH_GET_DATA_DIR: 'path:get-data-dir',
   PATH_SET_DATA_DIR: 'path:set-data-dir',
+
+  APP_GET_VERSION: 'app:get-version',
+  APP_OPEN_LOG_DIR: 'app:open-log-dir',
+  APP_CLEAR_ALL_DATA: 'app:clear-all-data',
 } as const
 
 export interface SettingsGetParams {

@@ -50,6 +50,7 @@ function mergeHighlights(highlights: HighlightRange[]): HighlightRange[] {
 
 const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keywords, keywordColor }) => {
   const { token } = theme.useToken()
+  const isDark = token.colorBgContainer === '#141414' || token.colorBgContainer === '#1f1f1f' || token.colorBgContainer?.toString().startsWith('#1')
 
   let effectiveHighlights = highlights || []
   if (keywords && keywords.length > 0) {
@@ -61,7 +62,10 @@ const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keyword
     return <>{text}</>
   }
 
-  const bgColor = keywordColor || token.colorWarningBg
+  // 暗色主题使用更鲜明的高亮色，亮色主题使用柔和的背景色
+  const bgColor = keywordColor || (isDark ? '#e6a817' : token.colorWarningBg)
+  const textColor = isDark ? '#1a1a1a' : 'inherit'
+
   const merged = mergeHighlights(effectiveHighlights)
 
   const segments: React.ReactNode[] = []
@@ -82,7 +86,7 @@ const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keyword
           padding: '1px 2px',
           borderRadius: 2,
           fontWeight: 500,
-          color: 'inherit',
+          color: textColor,
         }}
       >
         {text.slice(h.start, h.end)}
@@ -100,4 +104,4 @@ const HighlightText: React.FC<HighlightTextProps> = ({ text, highlights, keyword
   return <>{segments}</>
 }
 
-export default HighlightText
+export default React.memo(HighlightText)

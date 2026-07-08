@@ -82,7 +82,7 @@ export interface EmployeeChatStreamParams {
     max_tokens?: number
   }
   use_skills?: boolean
-  kb_ids?: string[]
+  collection_ids?: string[]
   enable_thinking?: boolean
   conversation_id?: string
   minimal_mode?: boolean

@@ -6,6 +6,7 @@ export type {
   EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
+  EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
   EmployeeProfileAnalyzeParams,
@@ -41,21 +42,6 @@ export type {
   AppShowSaveDialogParams,
 } from './channels/app'
 export type {
-  KBCreateParams,
-  KBUpdateParams,
-  KBDocParseParams,
-  KBProcessDocumentParams,
-  KBProcessAllParams,
-  KBBuildGlobalParams,
-  KBExportFullParams,
-  KBExportSummaryParams,
-  KBExportDocumentsParams,
-  KBImportFullParams,
-} from './channels/kb'
-export type {
-  KBMCPSetConfigParams,
-} from './channels/kb-mcp'
-export type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
@@ -67,4 +53,11 @@ export type {
   KMSAutoIndexConfig,
   KMSRecordSearchHistoryParams,
   KMSGetSearchHistoryParams,
+  KMSCreateCollectionParams,
+  KMSUpdateCollectionParams,
+  KMSAddFileToCollectionParams,
+  KMSAddFilesToCollectionParams,
+  KMSRemoveFileFromCollectionParams,
+  KMSSetCollectionSummaryParams,
+  KMSSearchFilesParams,
 } from './channels/kms'

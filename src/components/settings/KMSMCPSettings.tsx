@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   Typography, Switch, InputNumber, Input, Button, Divider, Space, Tag, App, theme, Descriptions, Alert
 } from 'antd'
@@ -52,7 +52,7 @@ const KMSMCPSettings: React.FC = () => {
     loadConfig()
   }, [loadConfig])
 
-  const handleToggle = async (checked: boolean) => {
+  const handleToggle = useCallback(async (checked: boolean) => {
     setSwitchLoading(true)
     try {
       if (checked) {
@@ -76,14 +76,14 @@ const KMSMCPSettings: React.FC = () => {
     } finally {
       setSwitchLoading(false)
     }
-  }
+  }, [message, t])
 
-  const handlePortChange = async (value: number | null) => {
+  const handlePortChange = useCallback(async (value: number | null) => {
     const port = value || 3101
     setConfig((prev) => ({ ...prev, port }))
-  }
+  }, [])
 
-  const handlePortSave = async () => {
+  const handlePortSave = useCallback(async () => {
     if (status.running) {
       message.warning(t('settings.kmsMcpStopFirst'))
       return
@@ -94,30 +94,31 @@ const KMSMCPSettings: React.FC = () => {
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [status.running, config.port, message, t])
 
-  const handleApiKeyChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleApiKeyChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const apiKey = e.target.value
     setConfig((prev) => ({ ...prev, apiKey }))
-  }
+  }, [])
 
-  const handleApiKeySave = async () => {
+  const handleApiKeySave = useCallback(async () => {
     try {
       await window.electronAPI.kmsMcp.setConfig({ apiKey: config.apiKey })
       message.success(t('settings.saved'))
     } catch {
       message.error(t('common.saveFailed'))
     }
-  }
+  }, [config.apiKey, message, t])
 
-  const handleCopyUrl = () => {
+  const handleCopyUrl = useCallback(() => {
     if (status.url) {
-      navigator.clipboard.writeText(status.url)
+      // clipboard API 在某些环境下可能被拒绝，吞掉错误避免未处理的 Promise 拒绝
+      navigator.clipboard.writeText(status.url).catch(() => {})
       message.success(t('settings.kmsMcpUrlCopied'))
     }
-  }
+  }, [status.url, message, t])
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setLoading(true)
     try {
       const st = await window.electronAPI.kmsMcp.getStatus()
@@ -125,7 +126,7 @@ const KMSMCPSettings: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   const mcpUrl = status.running ? status.url : `http://localhost:${config.port}/mcp`
 
@@ -229,7 +230,7 @@ const KMSMCPSettings: React.FC = () => {
               type="success"
               showIcon
               icon={<PlayCircleOutlined />}
-              message={t('settings.kmsMcpRunning')}
+              title={t('settings.kmsMcpRunning')}
               style={{ marginBottom: 12 }}
             />
           )}
@@ -239,7 +240,7 @@ const KMSMCPSettings: React.FC = () => {
               type="warning"
               showIcon
               icon={<StopOutlined />}
-              message={t('settings.kmsMcpStopped')}
+              title={t('settings.kmsMcpStopped')}
               style={{ marginBottom: 12 }}
             />
           )}
@@ -324,4 +325,4 @@ const KMSMCPSettings: React.FC = () => {
   )
 }
 
-export default KMSMCPSettings
+export default React.memo(KMSMCPSettings)

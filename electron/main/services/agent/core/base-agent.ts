@@ -9,6 +9,7 @@ import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../to
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
 import { generateId } from '../../common-utils'
+import { createLogger } from '../../logger'
 import type {
   AgentConfig,
   AgentRunOptions,
@@ -16,9 +17,12 @@ import type {
   AgentResponse,
   AgentResponseMetadata,
   Message,
+  ToolCall,
   ToolCallRecord,
   TokenUsage,
 } from './types'
+
+const logger = createLogger('BaseAgent')
 
 const DEFAULT_MAX_ITERATIONS = 100
 const DEFAULT_TOOL_TIMEOUT_MS = 30000
@@ -45,8 +49,6 @@ export abstract class BaseAgent {
   protected context: AgentContext
   protected middlewareChain: ToolMiddlewareChain
   protected agentOptions: BaseAgentOptions
-
-  private activeSkillInstructions: string[] = []
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
     this.config = this.normalizeConfig(config)
@@ -121,7 +123,6 @@ export abstract class BaseAgent {
 
     this.context.reset()
     this.context.setState('running')
-    this.activeSkillInstructions = []
 
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
@@ -144,8 +145,6 @@ export abstract class BaseAgent {
       if (stats.wasCompressed) {
         this.eventEmitter.emit('memory:compressed', stats)
       }
-
-      this.context.setMessages(messages)
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
@@ -187,7 +186,6 @@ export abstract class BaseAgent {
 
     this.context.reset()
     this.context.setState('running')
-    this.activeSkillInstructions = []
 
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
@@ -210,8 +208,6 @@ export abstract class BaseAgent {
       if (stats.wasCompressed) {
         this.eventEmitter.emit('memory:compressed', stats)
       }
-
-      this.context.setMessages(messages)
 
       const activeTools = await this.resolveActiveTools(options.tools)
 
@@ -250,23 +246,7 @@ export abstract class BaseAgent {
     return this.toolRegistry.getOpenAISchemas()
   }
 
-  protected async onToolCallExecuted(toolName: string, _args: any, result: ToolCallResult): Promise<void> {
-    if (toolName === 'activate_skill' && result.success) {
-      const rawOutput = result.rawOutput as Record<string, any> | undefined
-      const skillInstructions = rawOutput?.instructions as string | undefined
-      if (skillInstructions && !this.activeSkillInstructions.includes(skillInstructions)) {
-        this.activeSkillInstructions.push(skillInstructions)
-        this.eventEmitter.emit('skill:activated', { skillName: _args.skill_name })
-      }
-    }
-  }
-
-  public getActiveSkillInstructions(): string[] {
-    return [...this.activeSkillInstructions]
-  }
-
-  protected clearActiveSkillInstructions(): void {
-    this.activeSkillInstructions = []
+  protected async onToolCallExecuted(_toolName: string, _args: any, _result: ToolCallResult): Promise<void> {
   }
 
   protected createLLMProvider(): ILLMProvider {
@@ -308,7 +288,6 @@ export abstract class BaseAgent {
       this.eventEmitter.on('tool:call:end', (e) => handler('tool:call:end', e.data))
       this.eventEmitter.on('memory:compressed', (e) => handler('memory:compressed', e.data))
       this.eventEmitter.on('plan:generated', (e) => handler('plan:generated', e.data))
-      this.eventEmitter.on('skill:activated', (e) => handler('skill:activated', e.data))
       this.eventEmitter.on('state:change', (e) => handler('state:change', e.data))
     }
   }
@@ -354,36 +333,7 @@ export abstract class BaseAgent {
           }
         }
 
-        for (const toolCall of response.toolCalls) {
-          const toolName = toolCall.function.name
-          let args: any
-          try {
-            args = JSON.parse(toolCall.function.arguments)
-          } catch {
-            args = {}
-          }
-
-          this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
-
-          const result = await this.toolDispatcher.dispatch(toolName, args)
-          usedToolCalls.push({
-            name: toolName,
-            args,
-            result: result.success ? result.output : result.error,
-            latencyMs: result.latencyMs,
-            success: result.success,
-          })
-
-          this.eventEmitter.emit('tool:call:end', { tool: toolName, success: result.success })
-
-          await this.onToolCallExecuted(toolName, args, result)
-
-          currentMessages.push({
-            role: 'tool',
-            toolCallId: toolCall.id,
-            content: result.success ? String(result.output) : String(result.error),
-          })
-        }
+        await this.processToolCalls(response.toolCalls, usedToolCalls, currentMessages)
       } catch (error: any) {
         this.eventEmitter.emit('iteration:end', { iteration, error: error.message })
 
@@ -406,6 +356,7 @@ export abstract class BaseAgent {
         }
 
         await this.exponentialBackoff(iteration)
+        continue
       }
 
       this.eventEmitter.emit('iteration:end', { iteration })
@@ -485,50 +436,11 @@ export abstract class BaseAgent {
         }
 
         this.context.setState('tool_calling')
-        for (const toolCall of streamResponse.toolCalls) {
-          const toolName = toolCall.function.name
-          let args: any
-          try {
-            args = JSON.parse(toolCall.function.arguments)
-          } catch {
-            args = {}
-          }
-
-          this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
-          callbacks.onToolCall?.({ id: toolCall.id, name: toolName, args })
-
-          const toolContext = callbacks.onToolProgress
-            ? {
-                onProgress: (progress: any) => {
-                  callbacks.onToolProgress?.({ toolCallId: toolCall.id, name: toolName, progress })
-                },
-              }
-            : undefined
-
-          const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
-          usedToolCalls.push({
-            name: toolName,
-            args,
-            result: result.success ? result.output : result.error,
-            latencyMs: result.latencyMs,
-            success: result.success,
-          })
-
-          this.eventEmitter.emit('tool:call:end', { tool: toolName, success: result.success })
-          callbacks.onToolResult?.({
-            name: toolName,
-            result: result.success ? result.output : result.error,
-            rawResult: result.rawOutput,
-          })
-
-          await this.onToolCallExecuted(toolName, args, result)
-
-          currentMessages.push({
-            role: 'tool',
-            toolCallId: toolCall.id,
-            content: result.success ? String(result.output) : String(result.error),
-          })
-        }
+        await this.processToolCalls(streamResponse.toolCalls, usedToolCalls, currentMessages, {
+          onToolCall: callbacks.onToolCall,
+          onToolResult: callbacks.onToolResult,
+          onToolProgress: callbacks.onToolProgress,
+        })
       } catch (error: any) {
         this.eventEmitter.emit('iteration:end', { iteration, error: error.message })
         callbacks.onIterationEnd?.(iteration)
@@ -552,6 +464,62 @@ export abstract class BaseAgent {
     }
 
     return { tokenUsage: totalTokenUsage }
+  }
+
+  private async processToolCalls(
+    toolCalls: ToolCall[],
+    usedToolCalls: ToolCallRecord[],
+    currentMessages: Message[],
+    streamCallbacks?: {
+      onToolCall?: AgentRunStreamCallbacks['onToolCall']
+      onToolResult?: AgentRunStreamCallbacks['onToolResult']
+      onToolProgress?: AgentRunStreamCallbacks['onToolProgress']
+    }
+  ): Promise<void> {
+    for (const toolCall of toolCalls) {
+      const toolName = toolCall.function.name
+      let args: any
+      try {
+        args = JSON.parse(toolCall.function.arguments)
+      } catch {
+        args = {}
+      }
+
+      this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
+      streamCallbacks?.onToolCall?.({ id: toolCall.id, name: toolName, args })
+
+      const toolContext = streamCallbacks?.onToolProgress
+        ? {
+            onProgress: (progress: any) => {
+              streamCallbacks.onToolProgress?.({ toolCallId: toolCall.id, name: toolName, progress })
+            },
+          }
+        : undefined
+
+      const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
+      usedToolCalls.push({
+        name: toolName,
+        args,
+        result: result.success ? result.output : result.error,
+        latencyMs: result.latencyMs,
+        success: result.success,
+      })
+
+      this.eventEmitter.emit('tool:call:end', { tool: toolName, success: result.success })
+      streamCallbacks?.onToolResult?.({
+        name: toolName,
+        result: result.success ? result.output : result.error,
+        rawResult: result.rawOutput,
+      })
+
+      await this.onToolCallExecuted(toolName, args, result)
+
+      currentMessages.push({
+        role: 'tool',
+        toolCallId: toolCall.id,
+        content: result.success ? String(result.output) : String(result.error),
+      })
+    }
   }
 
   private convertToLLMMessages(messages: Message[]): any[] {
@@ -618,7 +586,7 @@ export abstract class BaseAgent {
     const msgLevel = levels[level] ?? 2
     if (msgLevel > configLevel) return
 
-    const timestamp = new Date().toISOString()
-    console.log(`[${timestamp}] [${level.toUpperCase()}] [${this.name}:${action}]`, data)
+    const fn = (logger as any)[level] ?? logger.info
+    fn.call(logger, `[${this.name}:${action}]`, data)
   }
 }

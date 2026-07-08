@@ -1,3 +1,4 @@
+import React from 'react'
 import { Typography, Radio, Divider } from 'antd'
 import { useAppearanceStore, type ThemeMode, type FontSizeLevel, type AppLocale } from '../../stores/appearance.store'
 import { useTranslation } from 'react-i18next'
@@ -57,4 +58,4 @@ const AppearanceSettings: React.FC = () => {
   )
 }
 
-export default AppearanceSettings
+export default React.memo(AppearanceSettings)
