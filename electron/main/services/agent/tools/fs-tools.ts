@@ -13,7 +13,7 @@ const ignoreDirs = new Set([
   'out', 'target', 'bin', 'obj'
 ])
 
-function getWorkspacePath(): string | null {
+export function getWorkspacePath(): string | null {
   try {
     const ctx = interactionContext.getStore()
     if (!ctx || !ctx.employeeId) return null
@@ -25,7 +25,7 @@ function getWorkspacePath(): string | null {
   }
 }
 
-function isPathInWorkspace(filePath: string): boolean {
+export function isPathInWorkspace(filePath: string): boolean {
   const workspacePath = getWorkspacePath()
   if (!workspacePath) return false
   const resolved = path.resolve(filePath)
@@ -34,7 +34,7 @@ function isPathInWorkspace(filePath: string): boolean {
 }
 
 /** 工作区外写/删除操作需用户确认 */
-async function confirmOutsideWorkspace(operation: string, targetPath: string): Promise<{ ok: boolean; error?: string }> {
+export async function confirmOutsideWorkspace(operation: string, targetPath: string): Promise<{ ok: boolean; error?: string }> {
   if (isPathInWorkspace(targetPath)) return { ok: true }
 
   const ctx = interactionContext.getStore()

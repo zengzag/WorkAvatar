@@ -20,6 +20,7 @@ const nativeExternals = [
   '@node-rs/jieba',
   '@node-rs/jieba/dict',
   'worker_threads',
+  'adm-zip',
 ]
 
 export default defineConfig({
