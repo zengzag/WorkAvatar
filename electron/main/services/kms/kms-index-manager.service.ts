@@ -273,7 +273,11 @@ class KMSIndexManagerService {
       }
 
       if (!signal.aborted && !isRebuildDir) {
-        KMSDataTierService.getInstance().evaluateDataTiers()
+        const { promotedFileIds } = KMSDataTierService.getInstance().evaluateDataTiers(true)
+        if (promotedFileIds.length > 0 && !signal.aborted) {
+          logger.info(`Processing ${promotedFileIds.length} promoted file(s) with hot-data pipeline...`)
+          await this.processPromotedFiles(promotedFileIds, signal)
+        }
       }
 
       if (!signal.aborted && isFull) {
@@ -567,6 +571,155 @@ class KMSIndexManagerService {
   cancelCollectionDeepProcess(): void {
     this.abortController?.abort()
     this.abortController = null
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // 冷热数据晋升处理
+  // ════════════════════════════════════════════════════════════════
+
+  /** 晋升处理是否正在运行，避免并发 */
+  private promotionRunning: boolean = false
+  /** 晋升处理专用取消信号 */
+  private promotionAbortController: AbortController | null = null
+
+  /**
+   * 评估冷热数据层级，并对晋升的冷文件自动执行热数据处理（file2md 重新解析 + LLM 摘要 + 向量嵌入）
+   *
+   * 处理通过 Worker 线程路由，避免 file2md 的同步原生解析阻塞 Electron 主线程导致 UI 卡死。
+   * Worker 不可用时降级为主线程直接执行。
+   *
+   * @param force 是否强制评估（忽略去抖间隔）。索引流程结束后传 true；
+   *              搜索触发的评估传 false，受 MIN_EVALUATION_INTERVAL_MS 去抖控制
+   */
+  async evaluateAndPromote(force: boolean = false): Promise<void> {
+    // 索引进行中或晋升处理进行中时跳过，避免冲突
+    if (this.abortController) return
+    if (this.promotionRunning) return
+
+    this.promotionRunning = true
+
+    try {
+      const { promotedFileIds } = KMSDataTierService.getInstance().evaluateDataTiers(force)
+      if (promotedFileIds.length === 0) return
+
+      logger.info(`Processing ${promotedFileIds.length} promoted file(s) with hot-data pipeline...`)
+
+      // 通过 Worker 线程路由晋升处理，避免 file2md 同步解析阻塞主线程 UI
+      const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
+      await KMSIndexWorkerClientService.getInstance().runTask(
+        'processPromotedFiles',
+        [promotedFileIds],
+        async () => {
+          // 降级：Worker 不可用时在主线程直接执行（会阻塞 UI，但保证功能可用）
+          this.promotionAbortController = new AbortController()
+          try {
+            await this.processPromotedFiles(promotedFileIds, this.promotionAbortController.signal)
+          } finally {
+            this.promotionAbortController = null
+          }
+        },
+      )
+    } catch (err: any) {
+      logger.error('evaluateAndPromote failed:', err?.message || err)
+    } finally {
+      this.promotionRunning = false
+    }
+  }
+
+  /** 取消正在进行的晋升处理（Worker 内或降级主线程） */
+  cancelPromotion(): void {
+    // 优先取消 Worker 内的处理
+    try {
+      const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
+      KMSIndexWorkerClientService.getInstance().cancelPromotion()
+    } catch {}
+    // 降级模式下取消主线程处理
+    this.promotionAbortController?.abort()
+    this.promotionAbortController = null
+    this.promotionRunning = false
+  }
+
+  /**
+   * 公开接口：批量处理晋升的文件（供 auto-index 等外部调用方使用，传入自己的 AbortSignal）
+   */
+  async processPromotedFilesPublic(fileIds: string[], signal: AbortSignal): Promise<void> {
+    return this.processPromotedFiles(fileIds, signal)
+  }
+
+  /**
+   * 批量处理晋升的文件：对每个文件重新解析（file2md）、生成摘要、段落索引和向量嵌入
+   */
+  private async processPromotedFiles(fileIds: string[], signal: AbortSignal): Promise<void> {
+    const KMSService = (await import('./kms.service')).default
+    const kmsService = KMSService.getInstance()
+    const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
+
+    if (!llmConfig) {
+      logger.warn('Promoted files skipped: no LLM provider configured for summary generation')
+      return
+    }
+
+    const searchEngine = KMSSearchEngineService.getInstance()
+    const fileParser = FileParserService.getInstance()
+    const llmClient = LLMClientService.getInstance()
+
+    for (const fileId of fileIds) {
+      if (signal.aborted) break
+
+      try {
+        const file = this.db.prepare('SELECT id, file_name, file_path FROM kms_files WHERE id = ?').get(fileId) as any
+        if (!file) continue
+
+        logger.info(`Processing promoted file: ${file.file_name}`)
+
+        // 1. 用热数据解析器（file2md）重新解析
+        const parseResult = await fileParser.parseFilePath(file.file_path, signal, 'hot')
+        if (signal.aborted) break
+        if (!parseResult.fullText) continue
+
+        const parseMode = parseResult.metadata?.parser
+
+        // 2. 删除旧索引并重新索引（标题 + 内容段落 + 解析模式 + 轻量摘要）
+        KMSDatabaseService.getInstance().runInTransaction(() => {
+          searchEngine.deleteIndexByFile(file.id)
+          if (parseMode) {
+            this.saveParseMode(file.id, parseMode)
+          }
+          searchEngine.indexFileTitle(file.id, file.file_name)
+          searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
+          this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
+        })
+
+        // 3. 热数据处理：LLM 目录分析 + 段落切分 + 段落摘要 + 文件摘要
+        await this.processHotFile(
+          file.id, parseResult.fullText, file.file_name,
+          llmConfig.providerId, llmClient, searchEngine,
+          signal, undefined, undefined,
+          llmConfig.modelId, llmConfig.enableThinking,
+        )
+
+        if (signal.aborted) break
+
+        // 4. 为该文件生成向量嵌入
+        try {
+          await KMSEmbeddingService.getInstance().generateEmbeddingsForFile(file.id, llmConfig.providerId)
+        } catch (embErr: any) {
+          logger.warn(`Embedding generation failed for promoted file ${file.file_name}:`, embErr?.message || embErr)
+        }
+
+        KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+      } catch (err: any) {
+        if (signal.aborted) break
+        logger.error(`Failed to process promoted file ${fileId}:`, err?.message || err)
+      }
+    }
+
+    // 晋升处理结束：主动 checkpoint
+    try {
+      KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+    } catch (err: any) {
+      logger.warn('Post-promotion checkpoint failed:', err?.message || err)
+    }
   }
 
   private async processHotFile(

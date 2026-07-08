@@ -220,7 +220,7 @@ const KMSPage: React.FC = () => {
         title={t('kms.settings')}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        width={640}
+        size={640}
         styles={{ body: { padding: 16, overflow: 'auto' } }}
       >
         <KMSSettingsPanel

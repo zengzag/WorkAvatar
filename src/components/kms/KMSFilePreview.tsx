@@ -277,7 +277,7 @@ const KMSFilePreview: React.FC<KMSFilePreviewProps> = ({
         )}
         {loading ? (
           <div style={{ textAlign: 'center', padding: 60 }}>
-            <Spin size="large" tip={t('kms.loadingContent')} />
+            <Spin size="large" description={t('kms.loadingContent')} />
           </div>
         ) : content ? (
           <div style={{ fontFamily: 'Consolas, "Courier New", monospace', fontSize: 13, lineHeight: 1.8 }}>

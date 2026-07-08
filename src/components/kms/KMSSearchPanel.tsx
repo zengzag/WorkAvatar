@@ -216,7 +216,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: 60 }}>
-              <Spin size="large" tip={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
+              <Spin size="large" description={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
             </div>
           )
         ) : searchMode === 'ai' ? (

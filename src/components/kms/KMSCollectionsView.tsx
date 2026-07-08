@@ -1103,7 +1103,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           }
           loadAllSummaryAndStats()
         }}
-        width={900}
+        size={900}
         styles={{ body: { padding: 12 } }}
         extra={
           <Space>

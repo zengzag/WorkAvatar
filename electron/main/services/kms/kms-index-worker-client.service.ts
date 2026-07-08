@@ -28,7 +28,7 @@ const logger = createLogger('KMS-WorkerClient')
  * 4. Worker 初始化失败时降级为“主线程直接执行”，保证功能可用。
  */
 
-type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep'
+type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles'
 
 interface StartMessage {
   type: 'start'
@@ -145,6 +145,15 @@ class KMSIndexWorkerClientService {
   cancelCollectionDeepProcess(): void {
     if (this.worker && this.workerReady) {
       this.worker.postMessage({ type: 'cancelCollectionDeep' })
+    }
+  }
+
+  /**
+   * 取消冷热数据晋升处理（Worker 内执行的 processPromotedFiles）
+   */
+  cancelPromotion(): void {
+    if (this.worker && this.workerReady) {
+      this.worker.postMessage({ type: 'cancelPromotion' })
     }
   }
 

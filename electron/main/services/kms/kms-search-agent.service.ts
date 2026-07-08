@@ -279,6 +279,10 @@ class KMSSearchAgentService {
     // 记录搜索命中
     this.logSearchHits(allResults)
 
+    // 搜索后异步触发冷热数据评估（去抖，5分钟内不重复）
+    // 高频命中的冷文件会自动晋升为热文件，并触发 file2md 重新解析 + LLM 摘要生成
+    this.triggerEvaluateAndPromote(false)
+
     return {
       queryType,
       queryTypeLabel: QUERY_TYPE_LABELS[queryType],
@@ -934,15 +938,33 @@ ${fileListText || '（无文件清单）'}
 
   /**
    * 读取文件分片（不直接读取全文，分片慢慢读取）
+   *
+   * 优化：优先从已存储的段落内容读取（热数据），避免每次调用都重新解析整个文件。
+   * 冷数据没有段落记录时，回退到重新解析（使用索引时保存的 parse_mode 决定 hot/cold）。
    */
   private async readFileChunk(fileId: string, startOffset: number, maxChars: number): Promise<string> {
     try {
-      const file = this.db.prepare('SELECT file_path FROM kms_files WHERE id = ?').get(fileId) as any
-      if (!file) return ''
+      // 优先使用已存储的段落内容（热数据，零解析开销）
+      const KMSFileReaderService = require('./kms-file-reader.service').default
+      const fileReader = KMSFileReaderService.getInstance()
+      let content = fileReader.getStoredFullContent(fileId)
 
-      const FileParserService = require('../file-parser.service').default
-      const parseResult = await FileParserService.getInstance().parseFilePath(file.file_path)
-      const content = parseResult.fullText || ''
+      if (content === null) {
+        // 冷数据：读取索引时保存的 parse_mode，决定使用 file2md 还是普通解析器
+        const file = this.db.prepare('SELECT file_path FROM kms_files WHERE id = ?').get(fileId) as any
+        if (!file) return ''
+        const summary = this.db.prepare('SELECT parse_mode FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
+        const parseMode = summary?.parse_mode || undefined
+
+        const FileParserService = require('../file-parser.service').default
+        const parseResult = await FileParserService.getInstance().parseFilePath(
+          file.file_path,
+          undefined,
+          parseMode === 'file2md' ? 'hot' : 'cold',
+        )
+        content = parseResult.fullText || ''
+      }
+
       return content.substring(startOffset, startOffset + maxChars)
     } catch (err) {
       logger.warn(`Failed to read chunk from file ${fileId}:`, err)
@@ -1077,6 +1099,25 @@ ${resultsText || '（无搜索结果）'}${supplementarySection}
       crawler.logFileAccessBatch(fileIds, 'search_hit')
     } catch (error) {
       logger.debug('Failed to log search hits batch', error)
+    }
+  }
+
+  /**
+   * 搜索完成后异步触发冷热数据评估（fire-and-forget）
+   *
+   * 通过 KMSService.evaluateAndPromote 委托到 KMSIndexManagerService：
+   * - 去抖：5分钟内的多次搜索只触发一次评估（force=false）
+   * - 晋升：高频命中的冷文件会被标记为热文件，并自动重新解析（file2md）+ 生成 LLM 摘要 + 向量嵌入
+   * - 隔离：使用动态 require 规避与 KMSService 的循环依赖
+   */
+  private triggerEvaluateAndPromote(force: boolean): void {
+    try {
+      const KMSService = require('./kms.service').default
+      KMSService.getInstance().evaluateAndPromote(force).catch((err: any) => {
+        logger.debug('Post-search evaluateAndPromote failed:', err?.message || err)
+      })
+    } catch (error) {
+      logger.debug('Failed to trigger evaluateAndPromote', error)
     }
   }
 }

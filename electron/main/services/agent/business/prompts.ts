@@ -39,7 +39,7 @@ export function buildEmployeeSystemPrompt(options: {
   }
 
   if (options.memoryPrompt) {
-    parts.push(`\n## 跨会话记忆（关于该用户的持久信息）\n${options.memoryPrompt}`)
+    parts.push(`\n## 跨任务记忆（关于该用户的持久信息）\n${options.memoryPrompt}`)
   }
 
   if (options.kbContextPrompt) {

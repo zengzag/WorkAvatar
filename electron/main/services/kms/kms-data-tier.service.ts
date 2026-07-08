@@ -5,14 +5,27 @@ import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DataTier')
 
-const HOT_PROMOTE_HIT_THRESHOLD = 5
-const HOT_PROMOTE_READ_THRESHOLD = 3
+// 晋升阈值：需要足够高的使用频率才升级为热数据，避免一搜索就变热数据
+// 命中阈值 15 次：30天内被搜索命中 15 次以上才晋升（约每两天命中 1 次）
+const HOT_PROMOTE_HIT_THRESHOLD = 15
+// 读取阈值 8 次：30天内被读取 8 次以上才晋升（读取权重高于命中）
+const HOT_PROMOTE_READ_THRESHOLD = 8
 const HOT_PROMOTE_DAYS = 30
 const COLD_DEMOTE_DAYS = 90
+
+/** 搜索触发的冷热评估最小间隔（5分钟），避免频繁搜索时反复评估 */
+const MIN_EVALUATION_INTERVAL_MS = 5 * 60 * 1000
+
+export interface DataTierEvaluationResult {
+  promotedFileIds: string[]
+  demotedFileIds: string[]
+}
 
 class KMSDataTierService {
   private db: Database.Database
   private static instance: KMSDataTierService
+  /** 上次评估时间戳（毫秒），用于搜索触发的去抖 */
+  private lastEvaluationAt: number = 0
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
@@ -25,7 +38,23 @@ class KMSDataTierService {
     return KMSDataTierService.instance
   }
 
-  evaluateDataTiers(): void {
+  /**
+   * 评估冷热数据层级，返回需要晋升/降级的文件ID列表
+   *
+   * @param force 是否强制评估（忽略去抖间隔）。索引流程结束后应传 true；
+   *              搜索触发的评估传 false，受 MIN_EVALUATION_INTERVAL_MS 去抖控制
+   * @returns 晋升的文件ID列表（cold→hot）和降级的文件ID列表（hot→cold）
+   */
+  evaluateDataTiers(force: boolean = false): DataTierEvaluationResult {
+    // 去抖：非强制模式下，5分钟内不重复评估
+    if (!force) {
+      const elapsed = Date.now() - this.lastEvaluationAt
+      if (elapsed < MIN_EVALUATION_INTERVAL_MS) {
+        return { promotedFileIds: [], demotedFileIds: [] }
+      }
+    }
+    this.lastEvaluationAt = Date.now()
+
     const crawler = KMSCrawlerService.getInstance()
     const now = Math.floor(Date.now() / 1000)
 
@@ -77,6 +106,8 @@ class KMSDataTierService {
       updateTierBatch(promoteIds, 'hot')
       logger.info(`Promoted ${promoteIds.length} file(s) from cold to hot`)
     }
+
+    return { promotedFileIds: promoteIds, demotedFileIds: demoteIds }
   }
 }
 

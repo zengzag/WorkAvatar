@@ -146,7 +146,7 @@ const UnifiedInteractionModal: React.FC = () => {
         </Space>
       }
       closable={false}
-      maskClosable={false}
+      mask={{ closable: false }}
       width={currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480}
       footer={
         <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>

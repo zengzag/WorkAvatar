@@ -230,21 +230,21 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
         title={t('kms.knowledge.statsDirs')}
         value={overviewStats.totalDirs}
         prefix={<FolderOpenOutlined style={{ color: token.colorPrimary }} />}
-        valueStyle={{ fontSize: 16, color: token.colorText }}
+        styles={{ content: { fontSize: 16, color: token.colorText } }}
       />
       <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
       <Statistic
         title={t('kms.knowledge.statsFiles')}
         value={overviewStats.totalFiles}
         prefix={<FileTextOutlined style={{ color: token.colorTextSecondary }} />}
-        valueStyle={{ fontSize: 16, color: token.colorText }}
+        styles={{ content: { fontSize: 16, color: token.colorText } }}
       />
       <div style={{ width: 1, background: token.colorBorderSecondary, margin: '0 16px' }} />
       <Statistic
         title={t('kms.knowledge.statsHot')}
         value={overviewStats.hotFiles}
         prefix={<FireOutlined style={{ color: token.colorError }} />}
-        valueStyle={{ fontSize: 16, color: token.colorText }}
+        styles={{ content: { fontSize: 16, color: token.colorText } }}
       />
       <div style={{ flex: 1 }} />
       <Button

@@ -224,8 +224,9 @@ class KMSAutoIndexService {
       }
 
       if (!signal.aborted) {
-        const KMSDataTierService = (await import('./kms-data-tier.service')).default
-        KMSDataTierService.getInstance().evaluateDataTiers()
+        // 评估冷热数据层级，对晋升的冷文件自动执行热数据处理
+        // 通过 evaluateAndPromote 统一路由到 Worker 线程，避免 file2md 同步解析阻塞主线程
+        await KMSIndexManagerService.getInstance().evaluateAndPromote(true)
       }
 
       // 自动索引结束：主动触发 checkpoint，把累积的 WAL 内容合并回主库文件

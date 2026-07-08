@@ -128,7 +128,7 @@ function createTray() {
   const iconPath = getResourcePath('resources', 'icons', 'icon.png')
   const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
   tray = new Tray(trayIcon)
-  tray.setToolTip('WorkAvatar 数字员工平台')
+  tray.setToolTip('WorkAvatar 数字员工')
 
   const contextMenu = Menu.buildFromTemplate([
     {
