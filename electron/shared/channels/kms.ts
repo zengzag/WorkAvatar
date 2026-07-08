@@ -66,6 +66,9 @@ export const KMS_CHANNELS = {
   KMS_MCP_GET_STATUS: 'kms-mcp:get-status',
   KMS_MCP_GET_CONFIG: 'kms-mcp:get-config',
   KMS_MCP_SET_CONFIG: 'kms-mcp:set-config',
+  // KMS 数据库清理（回收磁盘空间 + 清理孤儿索引数据）
+  KMS_GET_DATABASE_STATS: 'kms:get-database-stats',
+  KMS_CLEANUP_DATABASE: 'kms:cleanup-database',
 } as const
 
 export interface KMSAddDirParams {

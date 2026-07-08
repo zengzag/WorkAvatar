@@ -5,6 +5,7 @@ import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
+import KMSIndexWorkerClientService from './kms-index-worker-client.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
@@ -29,6 +30,10 @@ class KMSService {
     this.db = KMSDatabaseService.getInstance().getDb()
     // 将自动索引进度转发到进度通知通道，供前端感知
     KMSIndexManagerService.getInstance().setAutoIndexProgressCallback((progress) => {
+      this.notifyProgress(progress)
+    })
+    // Worker 客户端的进度回调也转发到统一进度通道
+    KMSIndexWorkerClientService.getInstance().setProgressCallback((progress) => {
       this.notifyProgress(progress)
     })
     // 确保"手动文件源"虚拟目录存在（用于合集文件注册）
@@ -117,8 +122,16 @@ class KMSService {
   }
 
   deleteIndexDir(id: string): void {
+    // 先收集该目录下所有文件 ID，显式清理 FTS5 全文索引和向量库 embedding。
+    // 原因：kms_fts 是 FTS5 虚表，不支持外键级联；kms_embeddings 在独立的向量库，
+    // 跨库外键不可用。仅靠 ON DELETE CASCADE 无法清理这两类数据，会留下孤儿记录。
+    const files = this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(id) as any[]
+    const searchEngine = KMSSearchEngineService.getInstance()
+    for (const f of files) {
+      searchEngine.deleteIndexByFile(f.id)
+    }
     this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
-    KMSSearchEngineService.getInstance().invalidateCache()
+    searchEngine.invalidateCache()
   }
 
   getIndexDir(id: string): any {
@@ -272,8 +285,9 @@ class KMSService {
     KMSSearchEngineService.getInstance().invalidateCache()
 
     // 7. 若有新增/变更的 pending 文件，异步触发增量索引（fire-and-forget）
+    // 通过 Worker 客户端路由，让索引在 Worker 线程执行避免阻塞 UI
     if (changed) {
-      KMSIndexManagerService.getInstance().incrementalIndex().catch((err: any) => {
+      this.incrementalIndex().catch((err: any) => {
         logger.error('Auto incrementalIndex after addFileToCollection failed:', err?.message || err)
       })
     }
@@ -749,46 +763,76 @@ ${fileSummaries.join('\n')}
   }
 
   async buildFullIndex(providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
-    const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
       providerId = llmConfig?.providerId
     }
-    await indexManager.buildFullIndex(providerId, (progress) => {
-      this.notifyProgress(progress)
-    }, withEmbedding, resetHotData)
+    const workerClient = KMSIndexWorkerClientService.getInstance()
+    await workerClient.runTask(
+      'buildFull',
+      [providerId, withEmbedding, resetHotData],
+      async () => {
+        const indexManager = KMSIndexManagerService.getInstance()
+        await indexManager.buildFullIndex(providerId, (progress) => {
+          this.notifyProgress(progress)
+        }, withEmbedding, resetHotData)
+      },
+    )
   }
 
   async incrementalIndex(providerId?: string, withEmbedding: boolean = true): Promise<void> {
-    const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
       providerId = llmConfig?.providerId
     }
-    await indexManager.incrementalIndex(providerId, (progress) => {
-      this.notifyProgress(progress)
-    }, withEmbedding)
+    const workerClient = KMSIndexWorkerClientService.getInstance()
+    await workerClient.runTask(
+      'incremental',
+      [providerId, withEmbedding],
+      async () => {
+        const indexManager = KMSIndexManagerService.getInstance()
+        await indexManager.incrementalIndex(providerId, (progress) => {
+          this.notifyProgress(progress)
+        }, withEmbedding)
+      },
+    )
   }
 
   async rebuildDirIndex(dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {
-    const indexManager = KMSIndexManagerService.getInstance()
     if (!providerId) {
       const llmConfig = this.getKmsLLMConfig()
       providerId = llmConfig?.providerId
     }
-    await indexManager.rebuildDirIndex(dirId, providerId, (progress) => {
-      this.notifyProgress(progress)
-    }, withEmbedding, resetHotData)
+    const workerClient = KMSIndexWorkerClientService.getInstance()
+    await workerClient.runTask(
+      'rebuildDir',
+      [dirId, providerId, withEmbedding, resetHotData],
+      async () => {
+        const indexManager = KMSIndexManagerService.getInstance()
+        await indexManager.rebuildDirIndex(dirId, providerId, (progress) => {
+          this.notifyProgress(progress)
+        }, withEmbedding, resetHotData)
+      },
+    )
   }
 
   async processCollectionDeep(collectionId: string): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
-    const indexManager = KMSIndexManagerService.getInstance()
-    return await indexManager.processCollectionDeep(collectionId, (progress) => {
-      this.notifyProgress(progress)
-    })
+    const workerClient = KMSIndexWorkerClientService.getInstance()
+    return await workerClient.runTask(
+      'processCollectionDeep',
+      [collectionId],
+      async () => {
+        const indexManager = KMSIndexManagerService.getInstance()
+        return await indexManager.processCollectionDeep(collectionId, (progress) => {
+          this.notifyProgress(progress)
+        })
+      },
+    )
   }
 
   cancelCollectionDeepProcess(): void {
+    // 优先取消 Worker 中的任务；同时取消主线程降级路径（如果有）
+    KMSIndexWorkerClientService.getInstance().cancelCollectionDeepProcess()
     KMSIndexManagerService.getInstance().cancelCollectionDeepProcess()
   }
 
@@ -806,8 +850,8 @@ ${fileSummaries.join('\n')}
       const crawler = KMSCrawlerService.getInstance()
       searchEngine.deleteIndexByFile(fileId)
       crawler.updateFileStatus(fileId, 'pending')
-      // 异步触发增量索引
-      KMSIndexManagerService.getInstance().incrementalIndex().catch((err: any) => {
+      // 异步触发增量索引（通过 Worker 路由，避免阻塞 UI）
+      this.incrementalIndex().catch((err: any) => {
         logger.error('Auto incrementalIndex after file rebuild failed:', err?.message || err)
       })
       return { success: true }
@@ -818,6 +862,8 @@ ${fileSummaries.join('\n')}
   }
 
   cancelIndexing(): void {
+    // 优先取消 Worker 中的任务；同时取消主线程降级路径（如果有）
+    KMSIndexWorkerClientService.getInstance().cancelIndexing()
     KMSIndexManagerService.getInstance().cancelIndexing()
   }
 
@@ -837,6 +883,17 @@ ${fileSummaries.join('\n')}
       files: fileStats,
       index: indexStats,
     }
+  }
+
+  getDatabaseStats(): any {
+    return KMSDatabaseService.getInstance().getDatabaseStats()
+  }
+
+  cleanupDatabase(): any {
+    const result = KMSDatabaseService.getInstance().cleanupDatabase()
+    // 清理后缓存可能失效，主动刷新
+    KMSSearchEngineService.getInstance().invalidateCache()
+    return result
   }
 
   getKmsSettings(): any {
@@ -986,6 +1043,17 @@ ${fileSummaries.join('\n')}
       `SELECT COUNT(*) as count FROM kms_files f LEFT JOIN kms_file_summaries s ON s.file_id = f.id ${whereClause}`
     ).get(...sqlParams) as any)?.count || 0
 
+    // kms_embeddings 已迁移到独立的向量库，跨库无法 JOIN/EXISTS。
+    // 先从向量库加载所有有 embedding 的 file_id 集合，再在应用层标记 has_embedding。
+    const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+    let embeddedFileIds: Set<string> = new Set()
+    try {
+      const rows = vectorDb.prepare('SELECT DISTINCT file_id FROM kms_embeddings').all() as any[]
+      embeddedFileIds = new Set(rows.map(r => r.file_id))
+    } catch (err: any) {
+      logger.warn('加载向量库 file_id 集合失败:', err?.message || err)
+    }
+
     const items = this.db.prepare(`
       SELECT f.id, f.file_name, f.file_path, f.file_ext, f.file_size, f.data_tier,
              f.index_status, f.modified_time, f.updated_at,
@@ -995,10 +1063,7 @@ ${fileSummaries.join('\n')}
              COALESCE(s.keywords_json, '[]') as keywords_json,
              COALESCE(s.main_topics_json, '[]') as main_topics_json,
              d.display_name as dir_name,
-             d.dir_path as dir_path,
-             CASE WHEN EXISTS (
-               SELECT 1 FROM kms_embeddings e WHERE e.file_id = f.id LIMIT 1
-             ) THEN 1 ELSE 0 END as has_embedding
+             d.dir_path as dir_path
       FROM kms_files f
       LEFT JOIN kms_file_summaries s ON s.file_id = f.id
       LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
@@ -1006,6 +1071,10 @@ ${fileSummaries.join('\n')}
       ORDER BY f.updated_at DESC
       LIMIT ? OFFSET ?
     `).all(...sqlParams, pageSize, offset) as any[]
+
+    for (const item of items) {
+      item.has_embedding = embeddedFileIds.has(item.id) ? 1 : 0
+    }
 
     return { items, total }
   }

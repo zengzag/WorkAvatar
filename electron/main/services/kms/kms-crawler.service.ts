@@ -421,7 +421,11 @@ class KMSCrawlerService {
    * 注销已删除的文件
    */
   private unregisterFile(fileId: string): void {
-    // 级联删除会自动清理关联的段落、摘要、索引和嵌入
+    // 先显式清理 FTS5 全文索引和向量库 embedding：
+    // - kms_fts 是 FTS5 虚表，不支持外键级联删除
+    // - kms_embeddings 位于独立的向量库，跨库外键不可用
+    KMSSearchEngineService.getInstance().deleteIndexByFile(fileId)
+    // 主库的段落/摘要/搜索索引/访问日志/合集关联由 ON DELETE CASCADE 级联清理
     this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(fileId)
   }
 }

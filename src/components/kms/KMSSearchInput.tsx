@@ -114,13 +114,19 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   const renderHistoryContent = () => {
     if (!searchHistory || searchHistory.length === 0) {
       return (
-        <div style={{ width: 380, padding: '12px 16px', textAlign: 'center' }}>
+        <div
+          style={{ width: 380, padding: '12px 16px', textAlign: 'center' }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
           <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.noHistory')}</Text>
         </div>
       )
     }
     return (
-      <div style={{ width: 380, maxHeight: 360, overflow: 'auto', padding: '4px 0' }}>
+      <div
+        style={{ width: 380, maxHeight: 360, overflow: 'auto', padding: '4px 0' }}
+        onMouseDown={(e) => e.preventDefault()}
+      >
         <List
           size="small"
           split={false}
@@ -128,7 +134,11 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
           renderItem={(item) => (
             <List.Item
               style={{ padding: '6px 12px', cursor: 'pointer', border: 'none' }}
-              onClick={() => onPickHistory(item)}
+              onClick={() => {
+                setHistoryOpen(false)
+                hasOpenedHistoryRef.current = true
+                onPickHistory(item)
+              }}
             >
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <HistoryOutlined style={{ color: token.colorTextQuaternary, flexShrink: 0 }} />

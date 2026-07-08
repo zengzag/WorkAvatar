@@ -258,6 +258,8 @@ const electronAPI = {
     generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
     generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
     rebuildFileIndex: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, fileId),
+    getDatabaseStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DATABASE_STATS),
+    cleanupDatabase: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEANUP_DATABASE),
   },
 
   kmsMcp: {

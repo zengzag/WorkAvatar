@@ -163,6 +163,16 @@ export function registerKMSHandlers(): void {
     return kmsService.getStats()
   })
 
+  // 数据库清理：获取占用统计（主库/向量库大小 + 孤儿数据条数）
+  safeHandle(IPC_CHANNELS.KMS_GET_DATABASE_STATS, async () => {
+    return kmsService.getDatabaseStats()
+  })
+
+  // 数据库清理：删除孤儿索引数据 + VACUUM 回收磁盘空间
+  safeHandle(IPC_CHANNELS.KMS_CLEANUP_DATABASE, async () => {
+    return kmsService.cleanupDatabase()
+  })
+
   // 打开文件（使用系统默认程序）
   safeHandle(IPC_CHANNELS.KMS_OPEN_FILE, async (filePath: string) => {
     const result = await shell.openPath(filePath)

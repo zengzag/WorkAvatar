@@ -129,12 +129,11 @@ class KMSIndexManagerService {
       // 全量重建：批量重置所有文件为 pending 并清除旧索引，确保重新索引
       if (isFull) {
         onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在重置索引...' })
+        // 主库事务：清理 FTS5/搜索索引/段落，重置文件状态
         this.db.transaction(() => {
           this.db.prepare("DELETE FROM kms_fts").run()
           this.db.prepare("DELETE FROM kms_search_index").run()
           this.db.prepare("DELETE FROM kms_paragraphs").run()
-          this.db.prepare("DELETE FROM kms_embeddings").run()
-          try { this.db.prepare("DELETE FROM vec_kms_embeddings").run() } catch {}
           // 默认不重置热数据（保留 data_tier），勾选后才将热数据降级为 cold
           if (resetHotData) {
             this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
@@ -142,6 +141,16 @@ class KMSIndexManagerService {
             this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
           }
         })()
+        // 向量库独立事务：清理 embedding（跨库不能同事务）
+        const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+        try {
+          vectorDb.transaction(() => {
+            vectorDb.prepare("DELETE FROM kms_embeddings").run()
+            try { vectorDb.prepare("DELETE FROM vec_kms_embeddings").run() } catch {}
+          })()
+        } catch (err: any) {
+          logger.warn('全量重建清理向量库失败:', err?.message || err)
+        }
         KMSSearchEngineService.getInstance().invalidateCache()
       }
 

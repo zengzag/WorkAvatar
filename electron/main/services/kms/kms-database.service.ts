@@ -9,50 +9,74 @@ const logger = createLogger('KMS-DB')
 
 class KMSDatabaseService {
   private db: Database.Database
+  private vectorDb: Database.Database
   private static instance: KMSDatabaseService
 
   private constructor() {
     const pathService = PathService.getInstance()
     const kmsDbPath = pathService.getKMSDbPath()
+    const vectorDbPath = pathService.getKMSVectorDbPath()
     const dir = path.dirname(kmsDbPath)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    this.db = new Database(kmsDbPath, {
+    this.db = this.openKmsDb(kmsDbPath)
+    this.vectorDb = this.openKmsDb(vectorDbPath)
+
+    // 主库加载 sqlite-vec（兼容旧代码访问主库的 vec 虚表，如 vec_kms_collection_summaries）
+    try {
+      sqliteVec.load(this.db)
+      logger.info('sqlite-vec 扩展加载成功（主库）')
+    } catch (err: any) {
+      logger.error('sqlite-vec 扩展加载失败（主库）:', err?.message || err)
+    }
+
+    // 向量库加载 sqlite-vec（kms_embeddings + vec_kms_embeddings 在此库）
+    try {
+      sqliteVec.load(this.vectorDb)
+      logger.info('sqlite-vec 扩展加载成功（向量库）')
+    } catch (err: any) {
+      logger.error('sqlite-vec 扩展加载失败（向量库）:', err?.message || err)
+    }
+
+    this.initializeSchema()
+    this.initializeVectorSchema()
+    this.migrateEmbeddingsToVectorDb()
+  }
+
+  /**
+   * 打开 KMS 数据库并应用性能 PRAGMA。
+   * 主库和向量库共用同一套配置。
+   */
+  private openKmsDb(dbPath: string): Database.Database {
+    const conn = new Database(dbPath, {
       readonly: false,
       timeout: 10000
     })
 
     // ===== 性能 PRAGMA 配置（针对大库 2GB+ / 3000+ 文件场景优化） =====
     // WAL 模式：写入走 WAL 文件，读不阻塞写，写不阻塞读
-    this.db.pragma('journal_mode = WAL')
-    // 外键约束
-    this.db.pragma('foreign_keys = ON')
+    conn.pragma('journal_mode = WAL')
+    // 外键约束（向量库无外键，但设置无害）
+    conn.pragma('foreign_keys = ON')
     // synchronous=NORMAL：WAL 模式下事务提交不强制 fsync（只在 checkpoint 时刷盘），
     // 既保证事务安全又避免每次 commit 等磁盘同步（默认 FULL 会卡死大库写入）
-    this.db.pragma('synchronous = NORMAL')
+    conn.pragma('synchronous = NORMAL')
     // 临时表/索引/排序中间结果放内存，避免写 temp.db
-    this.db.pragma('temp_store = MEMORY')
+    conn.pragma('temp_store = MEMORY')
     // 页缓存 200MB（默认仅 2MB，对 2GB 库远远不够）
-    this.db.pragma('cache_size = -200000')
+    conn.pragma('cache_size = -200000')
     // mmap 256MB，用内存映射替代 read 系统调用，减少用户态/内核态切换
-    this.db.pragma('mmap_size = 268435456')
+    conn.pragma('mmap_size = 268435456')
     // WAL 自动 checkpoint 阈值提高到 8MB（默认 4MB），减少 checkpoint 频率
-    this.db.pragma('wal_autocheckpoint = 2000')
+    conn.pragma('wal_autocheckpoint = 2000')
     // busy_timeout 10s：多线程/进程争用时等待而不是立即抛 SQLITE_BUSY
-    this.db.pragma('busy_timeout = 10000')
+    conn.pragma('busy_timeout = 10000')
     // WAL 文件大小硬上限 512MB，避免无限膨胀（超过后自动 checkpoint）
-    this.db.pragma('journal_size_limit = 536870912')
+    conn.pragma('journal_size_limit = 536870912')
 
-    try {
-      sqliteVec.load(this.db)
-      logger.info('sqlite-vec 扩展加载成功')
-    } catch (err: any) {
-      logger.error('sqlite-vec 扩展加载失败:', err?.message || err)
-    }
-
-    this.initializeSchema()
+    return conn
   }
 
   static getInstance(): KMSDatabaseService {
@@ -188,26 +212,6 @@ class KMSDatabaseService {
         prefix='2,3'
       );
 
-      -- 向量嵌入表
-      CREATE TABLE IF NOT EXISTS kms_embeddings (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        file_id TEXT NOT NULL REFERENCES kms_files(id) ON DELETE CASCADE,
-        embedding BLOB NOT NULL,
-        model TEXT NOT NULL DEFAULT '',
-        dimension INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source ON kms_embeddings(source_type, source_id);
-      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_file ON kms_embeddings(file_id);
-      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_dimension ON kms_embeddings(dimension);
-      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_updated ON kms_embeddings(updated_at DESC);
-      -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
-      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
-
       -- 访问追踪表（用于冷热数据判定）
       CREATE TABLE IF NOT EXISTS kms_access_log (
         id TEXT PRIMARY KEY,
@@ -286,6 +290,110 @@ class KMSDatabaseService {
     this.migrateSchema()
 
     this.recoverStuckFiles()
+  }
+
+  /**
+   * 向量库 schema：kms_embeddings + vec_kms_embeddings
+   *
+   * 这两张表从主库分离到独立的 workavatar-kms-vectors.db，主要目的：
+   * 1. 减小主库体积，让主库 checkpoint 更快，减少大库 IO 瓶颈
+   * 2. 向量 BLOB 的写入不与主库的 FTS5 / 段落写入争抢 IO
+   * 3. 主库更易于 mmap 到内存（剩余的数据更适合缓存）
+   *
+   * 注意：跨库外键不可用，kms_embeddings.file_id 不再 REFERENCES kms_files(id)，
+   * 级联删除由应用层在 deleteIndexByFile 中显式调用。
+   */
+  private initializeVectorSchema(): void {
+    this.vectorDb.exec(`
+      -- 向量嵌入表（从主库迁移到此独立库）
+      CREATE TABLE IF NOT EXISTS kms_embeddings (
+        id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        dimension INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source ON kms_embeddings(source_type, source_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_file ON kms_embeddings(file_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_dimension ON kms_embeddings(dimension);
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_updated ON kms_embeddings(updated_at DESC);
+      -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
+      CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
+    `)
+  }
+
+  /**
+   * 一次性迁移：把主库中的 kms_embeddings 数据迁移到独立的向量库。
+   *
+   * 迁移完成后删除主库中的 kms_embeddings 表和 vec_kms_embeddings 虚表，
+   * 释放主库空间（VACUUM 需手动触发，避免启动时阻塞）。
+   */
+  private migrateEmbeddingsToVectorDb(): void {
+    // 检查主库是否还有 kms_embeddings 表
+    const mainTable = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='kms_embeddings'"
+    ).get() as any
+
+    if (!mainTable) return
+
+    // 检查主库 kms_embeddings 是否有数据
+    const countRow = this.db.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
+    const mainCount = countRow?.cnt ?? 0
+
+    if (mainCount > 0) {
+      // 检查向量库是否已有数据（避免重复迁移）
+      const vecCountRow = this.vectorDb.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
+      const vecCount = vecCountRow?.cnt ?? 0
+
+      if (vecCount === 0) {
+        logger.info(`开始迁移 ${mainCount} 条 embedding 从主库到向量库...`)
+        // 分批迁移，避免大事务卡死
+        const BATCH = 500
+        let migrated = 0
+        const insertStmt = this.vectorDb.prepare(`
+          INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        while (true) {
+          const batch = this.db.prepare(
+            'SELECT id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at FROM kms_embeddings LIMIT ? OFFSET ?'
+          ).all(BATCH, migrated) as any[]
+          if (batch.length === 0) break
+          const tx = this.vectorDb.transaction(() => {
+            for (const row of batch) insertStmt.run(row.id, row.source_type, row.source_id, row.file_id, row.embedding, row.model, row.dimension, row.created_at, row.updated_at)
+          })
+          tx()
+          migrated += batch.length
+          if (batch.length < BATCH) break
+        }
+        logger.info(`迁移完成：${migrated} 条 embedding`)
+      } else {
+        logger.info(`向量库已有 ${vecCount} 条 embedding，跳过迁移`)
+      }
+    }
+
+    // 删除主库的 kms_embeddings 表和 vec_kms_embeddings 虚表（无论有无数据，避免后续代码误用）
+    try {
+      this.db.exec('DROP TABLE IF EXISTS vec_kms_embeddings')
+    } catch (err: any) {
+      logger.warn('删除主库 vec_kms_embeddings 失败:', err?.message || err)
+    }
+    try {
+      this.db.exec('DROP TABLE IF EXISTS kms_embeddings')
+    } catch (err: any) {
+      logger.warn('删除主库 kms_embeddings 失败:', err?.message || err)
+    }
+    // 释放主库的旧索引（DROP TABLE 会自动清理，这里防御性清理）
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_source')
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_file')
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_dimension')
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_updated')
+    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_source_covering')
   }
 
   private migrateSchema(): void {
@@ -383,6 +491,16 @@ class KMSDatabaseService {
   }
 
   /**
+   * 获取向量库连接（workavatar-kms-vectors.db）。
+   *
+   * 所有 kms_embeddings 和 vec_kms_embeddings 的读写操作都应使用此连接。
+   * 主库（getDb() 返回）不再包含这两张表。
+   */
+  public getVectorDb(): Database.Database {
+    return this.vectorDb
+  }
+
+  /**
    * 手动触发 WAL checkpoint。
    *
    * 默认 PASSIVE 模式：不等待读者，把 WAL 内容合并回主库文件后返回。
@@ -397,6 +515,8 @@ class KMSDatabaseService {
   public checkpoint(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'PASSIVE'): { wal_pages: number; wal_frames: number; checkpointed: number } {
     const result = this.db.pragma(`wal_checkpoint(${mode})`) as any[]
     const row = result[0] || {}
+    // 同步对向量库做 checkpoint
+    this.vectorDb.pragma(`wal_checkpoint(${mode})`)
     return {
       wal_pages: Number(row.busy ?? 0),
       wal_frames: Number(row.log ?? 0),
@@ -413,6 +533,167 @@ class KMSDatabaseService {
     return tx()
   }
 
+  /**
+   * 获取 KMS 数据库占用统计（主库 + 向量库 + WAL 文件大小，及孤儿数据条数）。
+   *
+   * 孤儿数据来源：
+   * - kms_fts（FTS5 虚表）：不支持外键级联，删除文件后 file_id 指向已不存在的文件
+   * - kms_embeddings（向量库）：跨库外键不可用，删除文件后 file_id 指向已不存在的文件
+   */
+  public getDatabaseStats(): {
+    mainDbSize: number
+    vectorDbSize: number
+    mainWalSize: number
+    vectorWalSize: number
+    orphanedFtsCount: number
+    orphanedEmbeddingCount: number
+  } {
+    const pathService = PathService.getInstance()
+    const mainDbPath = pathService.getKMSDbPath()
+    const vectorDbPath = pathService.getKMSVectorDbPath()
+
+    const fileSize = (p: string): number => {
+      try { return fs.existsSync(p) ? fs.statSync(p).size : 0 } catch { return 0 }
+    }
+
+    // 孤儿 FTS5 条目：file_id 不在 kms_files 中
+    let orphanedFtsCount = 0
+    try {
+      const row = this.db.prepare(
+        `SELECT COUNT(*) as cnt FROM kms_fts WHERE file_id NOT IN (SELECT id FROM kms_files)`
+      ).get() as any
+      orphanedFtsCount = row?.cnt ?? 0
+    } catch (err: any) {
+      logger.warn('查询孤儿 FTS 条目失败:', err?.message || err)
+    }
+
+    // 孤儿 embedding 条目：file_id 不在主库 kms_files 中（跨库无法 JOIN，用子查询）
+    let orphanedEmbeddingCount = 0
+    try {
+      const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
+      const idSet = new Set(fileIds.map(r => r.id))
+      const totalEmbeddings = this.vectorDb.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
+      if (totalEmbeddings?.cnt > 0 && idSet.size > 0) {
+        // 分批查询孤儿数（避免 IN 子句过长）
+        const allEmbeddings = this.vectorDb.prepare('SELECT file_id FROM kms_embeddings').all() as any[]
+        orphanedEmbeddingCount = allEmbeddings.filter(e => !idSet.has(e.file_id)).length
+      } else if (totalEmbeddings?.cnt > 0 && idSet.size === 0) {
+        orphanedEmbeddingCount = totalEmbeddings.cnt
+      }
+    } catch (err: any) {
+      logger.warn('查询孤儿 embedding 条目失败:', err?.message || err)
+    }
+
+    return {
+      mainDbSize: fileSize(mainDbPath),
+      vectorDbSize: fileSize(vectorDbPath),
+      mainWalSize: fileSize(mainDbPath + '-wal'),
+      vectorWalSize: fileSize(vectorDbPath + '-wal'),
+      orphanedFtsCount,
+      orphanedEmbeddingCount,
+    }
+  }
+
+  /**
+   * 清理数据库：删除孤儿数据（FTS5 / 向量库 embedding）并对主库和向量库执行 VACUUM 回收磁盘空间。
+   *
+   * VACUUM 会重建数据库文件、回收已删除记录占用的空闲页，使文件体积缩小。
+   * 注意：VACUUM 是同步阻塞操作且需要独占访问，应在用户主动触发时执行，不能在事务内调用。
+   *
+   * @returns 清理前后的统计信息
+   */
+  public cleanupDatabase(): {
+    before: { mainDbSize: number; vectorDbSize: number; orphanedFtsCount: number; orphanedEmbeddingCount: number }
+    after: { mainDbSize: number; vectorDbSize: number }
+    cleanedFts: number
+    cleanedEmbeddings: number
+  } {
+    const before = this.getDatabaseStats()
+    let cleanedFts = 0
+    let cleanedEmbeddings = 0
+
+    // 1. 清理孤儿 FTS5 条目
+    try {
+      const result = this.db.prepare(
+        `DELETE FROM kms_fts WHERE file_id NOT IN (SELECT id FROM kms_files)`
+      ).run()
+      cleanedFts = result.changes
+      logger.info(`清理孤儿 FTS5 条目: ${cleanedFts}`)
+    } catch (err: any) {
+      logger.warn('清理孤儿 FTS5 条目失败:', err?.message || err)
+    }
+
+    // 2. 清理向量库孤儿 embedding
+    try {
+      const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
+      const idSet = new Set(fileIds.map(r => r.id))
+      const allEmbeddings = this.vectorDb.prepare('SELECT id, file_id, rowid FROM kms_embeddings').all() as any[]
+      const orphanRows = allEmbeddings.filter(e => !idSet.has(e.file_id))
+      if (orphanRows.length > 0) {
+        const orphanIds = orphanRows.map(r => r.id)
+        const orphanRowids = orphanRows.map(r => r.rowid)
+        const delTx = this.vectorDb.transaction(() => {
+          const placeholders = orphanIds.map(() => '?').join(',')
+          this.vectorDb.prepare(`DELETE FROM kms_embeddings WHERE id IN (${placeholders})`).run(...orphanIds)
+          if (orphanRowids.length > 0) {
+            try {
+              const rowidPlaceholders = orphanRowids.map(() => '?').join(',')
+              this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...orphanRowids)
+            } catch (e: any) {
+              logger.warn('清理 vec_kms_embeddings 孤儿行失败:', e?.message || e)
+            }
+          }
+        })
+        delTx()
+        cleanedEmbeddings = orphanRows.length
+        logger.info(`清理孤儿 embedding 条目: ${cleanedEmbeddings}`)
+      }
+    } catch (err: any) {
+      logger.warn('清理孤儿 embedding 失败:', err?.message || err)
+    }
+
+    // 3. 先 checkpoint 把 WAL 写回主库，再 VACUUM
+    try {
+      this.checkpoint('TRUNCATE')
+    } catch (err: any) {
+      logger.warn('清理前 checkpoint 失败:', err?.message || err)
+    }
+
+    // 4. VACUUM 主库（重建文件，回收空闲页）
+    try {
+      this.db.exec('VACUUM')
+      logger.info('主库 VACUUM 完成')
+    } catch (err: any) {
+      logger.warn('主库 VACUUM 失败:', err?.message || err)
+    }
+
+    // 5. VACUUM 向量库
+    try {
+      this.vectorDb.exec('VACUUM')
+      logger.info('向量库 VACUUM 完成')
+    } catch (err: any) {
+      logger.warn('向量库 VACUUM 失败:', err?.message || err)
+    }
+
+    const afterStats = this.getDatabaseStats()
+    logger.info(`数据库清理完成: 主库 ${before.mainDbSize} → ${afterStats.mainDbSize}, 向量库 ${before.vectorDbSize} → ${afterStats.vectorDbSize}`)
+
+    return {
+      before: {
+        mainDbSize: before.mainDbSize,
+        vectorDbSize: before.vectorDbSize,
+        orphanedFtsCount: before.orphanedFtsCount,
+        orphanedEmbeddingCount: before.orphanedEmbeddingCount,
+      },
+      after: {
+        mainDbSize: afterStats.mainDbSize,
+        vectorDbSize: afterStats.vectorDbSize,
+      },
+      cleanedFts,
+      cleanedEmbeddings,
+    }
+  }
+
   public close(): void {
     // 关闭前执行 TRUNCATE checkpoint，确保 WAL 内容写回主库文件
     try {
@@ -421,6 +702,7 @@ class KMSDatabaseService {
       logger.warn('关闭前 checkpoint 失败:', err?.message || err)
     }
     this.db.close()
+    this.vectorDb.close()
   }
 }
 

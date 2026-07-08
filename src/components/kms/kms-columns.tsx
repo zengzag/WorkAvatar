@@ -115,12 +115,26 @@ export function useFileSummaryColumns(options: UseFileSummaryColumnsOptions) {
     {
       title: t('kms.knowledge.vector'),
       key: 'vector',
-      width: 65,
-      render: (_: any, record: FileSummaryItem) => (
-        <span style={{ fontSize: 12, color: record.has_embedding ? token.colorSuccess : token.colorTextQuaternary }}>
-          {record.has_embedding ? t('common.yes') : t('common.no')}
-        </span>
-      ),
+      width: 90,
+      render: (_: any, record: FileSummaryItem) => {
+        const status = record.index_status
+        const hasEmb = record.has_embedding
+        let label = t('kms.knowledge.statusUnindexed')
+        let color = token.colorTextQuaternary
+        if (status === 'completed') {
+          if (hasEmb) { label = t('kms.knowledge.statusFullIndexed'); color = token.colorSuccess }
+          else { label = t('kms.knowledge.statusIndexed'); color = token.colorPrimary }
+        } else if (status === 'indexing') {
+          label = t('kms.knowledge.statusIndexing'); color = token.colorPrimary
+        } else if (status === 'failed') {
+          label = t('kms.knowledge.statusFailed'); color = token.colorError
+        } else if (status === 'modified') {
+          label = t('kms.knowledge.statusModified'); color = token.colorWarning
+        } else if (status === 'pending') {
+          label = t('kms.knowledge.statusPending'); color = token.colorTextQuaternary
+        }
+        return <span style={{ fontSize: 12, color, whiteSpace: 'nowrap' }}>{label}</span>
+      },
     },
     {
       title: t('kms.knowledge.size'),

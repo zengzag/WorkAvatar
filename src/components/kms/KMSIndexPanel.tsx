@@ -9,6 +9,7 @@ import {
   ClockCircleOutlined, RadarChartOutlined,
   PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
   CloudServerOutlined, ExclamationCircleOutlined,
+  DatabaseOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons'
 import type { KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
 import { formatTime } from './kms-columns'
@@ -71,12 +72,69 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
   const [savingAuto, setSavingAuto] = useState(false)
   const [withEmbedding, setWithEmbedding] = useState(true)
+  const [dbStats, setDbStats] = useState<any>(null)
+  const [loadingStats, setLoadingStats] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
 
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
     setIntervalMin(autoIndexConfig.intervalMinutes)
     setStableThreshold(autoIndexConfig.stableThresholdSeconds)
   }, [autoIndexConfig])
+
+  const loadDbStats = useCallback(async () => {
+    setLoadingStats(true)
+    try {
+      const result = await window.electronAPI.kms.getDatabaseStats()
+      setDbStats(result)
+    } catch {
+      // ignore
+    } finally {
+      setLoadingStats(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDbStats()
+  }, [loadDbStats])
+
+  const formatBytes = useCallback((bytes: number): string => {
+    if (!bytes || bytes <= 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let val = bytes
+    let unitIdx = 0
+    while (val >= 1024 && unitIdx < units.length - 1) {
+      val /= 1024
+      unitIdx++
+    }
+    return `${val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2)} ${units[unitIdx]}`
+  }, [])
+
+  const handleCleanup = useCallback(() => {
+    modal.confirm({
+      title: t('kms.settingsPanel.cleanupDatabase'),
+      icon: <ExclamationCircleOutlined />,
+      content: t('kms.settingsPanel.cleanupConfirm'),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setCleaning(true)
+        try {
+          const result = await window.electronAPI.kms.cleanupDatabase()
+          const freed = (result?.before?.mainDbSize ?? 0) + (result?.before?.vectorDbSize ?? 0)
+            - (result?.after?.mainDbSize ?? 0) - (result?.after?.vectorDbSize ?? 0)
+          const freedStr = freed > 0 ? formatBytes(freed) : '0 B'
+          message.success(t('kms.settingsPanel.cleanupDone', { size: freedStr }))
+          await loadDbStats()
+        } catch (err: any) {
+          message.error(t('kms.settingsPanel.cleanupFailed') + (err?.message ? `: ${err.message}` : ''))
+        } finally {
+          setCleaning(false)
+        }
+      },
+    })
+  }, [modal, t, formatBytes, message, loadDbStats])
 
   const handleSaveAutoIndex = useCallback(async () => {
     setSavingAuto(true)
@@ -370,6 +428,79 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
           )}
         </Card>
       )}
+
+      {/* 数据库清理 */}
+      <Card
+        size="small"
+        style={{ borderColor: token.colorBorderSecondary }}
+        title={
+          <Space size={6}>
+            <DatabaseOutlined style={{ color: token.colorPrimary }} />
+            <Text strong style={{ fontSize: 13 }}>{t('kms.settingsPanel.dbCleanupTitle')}</Text>
+            <Tooltip title={t('kms.settingsPanel.dbCleanupHint')}>
+              <InfoCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12, cursor: 'help' }} />
+            </Tooltip>
+          </Space>
+        }
+        extra={
+          <Button
+            size="small"
+            type="text"
+            icon={<ReloadOutlined />}
+            onClick={loadDbStats}
+            loading={loadingStats}
+            disabled={cleaning}
+          >
+            {t('kms.settingsPanel.refreshStats')}
+          </Button>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.dbCleanupDesc')}</Text>
+
+          {dbStats && (
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.mainDbSize')}</Text>
+                <Text strong style={{ fontSize: 13 }}>{formatBytes(dbStats.mainDbSize)}</Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.vectorDbSize')}</Text>
+                <Text strong style={{ fontSize: 13 }}>{formatBytes(dbStats.vectorDbSize)}</Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedFts')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedFtsCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedFtsCount}
+                </Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedEmbeddings')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedEmbeddingCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedEmbeddingCount}
+                </Text>
+              </div>
+            </div>
+          )}
+
+          {!dbStats && loadingStats && (
+            <div style={{ textAlign: 'center', padding: '8px 0' }}><Spin size="small" /></div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleCleanup}
+              loading={cleaning}
+              disabled={cleaning || isIndexing}
+            >
+              {cleaning ? t('kms.settingsPanel.cleanupRunning') : t('kms.settingsPanel.cleanupDatabase')}
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }

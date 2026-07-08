@@ -1,11 +1,25 @@
 import DatabaseService from './database.service'
-import { safeStorage } from 'electron'
+import { isMainThread, workerData } from 'worker_threads'
 import type { LLMModelConfig } from '../../shared/types'
 import { generateId } from './common-utils'
 import LLMLoggerService from './llm-logger.service'
 import { createLogger } from './logger'
 
 const logger = createLogger('LLMClient')
+
+/**
+ * 延迟加载 electron.safeStorage（worker_threads 中不可用）
+ * 在 worker 模式下返回 null，调用方需处理 null 情况
+ */
+function getSafeStorage(): any | null {
+  if (!isMainThread) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('electron').safeStorage
+  } catch {
+    return null
+  }
+}
 
 interface LLMProviderConfig {
   id: string
@@ -246,7 +260,8 @@ class SecureKeyStorage {
   }
 
   private encryptKey(plainText: string): string {
-    if (safeStorage.isEncryptionAvailable()) {
+    const safeStorage = getSafeStorage()
+    if (safeStorage?.isEncryptionAvailable()) {
       const buffer = safeStorage.encryptString(plainText)
       return buffer.toString('base64')
     }
@@ -256,7 +271,8 @@ class SecureKeyStorage {
   private decryptKey(encryptedText: string): string | null {
     if (!encryptedText) return null
     try {
-      if (safeStorage.isEncryptionAvailable()) {
+      const safeStorage = getSafeStorage()
+      if (safeStorage?.isEncryptionAvailable()) {
         const buffer = Buffer.from(encryptedText, 'base64')
         return safeStorage.decryptString(buffer)
       }
@@ -274,6 +290,12 @@ class SecureKeyStorage {
   }
 
   async getApiKey(providerId: string): Promise<string | null> {
+    // Worker 模式：从 workerData 读取主线程预解密的 API Key
+    // 避免依赖 safeStorage（worker_threads 中不可用）
+    if (!isMainThread && workerData?.apiKeys) {
+      return (workerData.apiKeys as Record<string, string>)[providerId] ?? null
+    }
+
     const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(`llm_api_key_${providerId}`) as any
     if (!row?.value) return null
     return this.decryptKey(row.value)

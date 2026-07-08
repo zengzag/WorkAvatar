@@ -128,7 +128,12 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
   const handlePickHistory = useCallback((item: SearchHistoryItem) => {
     onSearchQueryChange(item.query)
-  }, [onSearchQueryChange])
+    // 直接用选中的 query 触发搜索（避免 state 异步更新导致读到旧值）
+    if (item.search_mode) {
+      onSearchModeChange(item.search_mode as SearchMode)
+    }
+    onSearch(item.query.trim(), (item.search_mode || searchMode) as SearchMode, buildFilters())
+  }, [onSearchQueryChange, onSearchModeChange, onSearch, searchMode, buildFilters])
 
   const searchKeywords = useMemo(() => {
     if (!searchQuery.trim()) return []

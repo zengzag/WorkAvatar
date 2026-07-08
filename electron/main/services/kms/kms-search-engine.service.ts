@@ -193,6 +193,14 @@ const RRF_K = 60
 
 class KMSSearchEngineService {
   private db: Database.Database
+  /**
+   * 向量库连接（独立的 workavatar-kms-vectors.db）。
+   *
+   * kms_embeddings 和 vec_kms_embeddings 表存储在此库中，
+   * 与主库分离以减小主库体积、降低 IO 竞争。
+   * 所有 embedding 读写操作使用此连接。
+   */
+  private vectorDb: Database.Database
   private static instance: KMSSearchEngineService
   private searchCache: Map<string, { results: SearchResult[]; timestamp: number }> = new Map()
   private static readonly CACHE_TTL = 60000
@@ -212,6 +220,7 @@ class KMSSearchEngineService {
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
+    this.vectorDb = KMSDatabaseService.getInstance().getVectorDb()
     this.initVecIndex()
   }
 
@@ -224,19 +233,19 @@ class KMSSearchEngineService {
 
   private initVecIndex(): void {
     try {
-      this.db.prepare('SELECT vec_version()').get()
+      this.vectorDb.prepare('SELECT vec_version()').get()
       this.vecReady = true
     } catch {
       logger.warn('sqlite-vec 扩展未加载，向量检索将回退到 JS 全扫描模式')
       return
     }
 
-    const existing = this.db.prepare(
+    const existing = this.vectorDb.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_kms_embeddings'"
     ).get() as any
 
     if (existing) {
-      const dimRow = this.db.prepare(
+      const dimRow = this.vectorDb.prepare(
         'SELECT dimension FROM kms_embeddings ORDER BY updated_at DESC LIMIT 1'
       ).get() as any
       if (dimRow?.dimension) {
@@ -246,7 +255,7 @@ class KMSSearchEngineService {
       return
     }
 
-    const countRow = this.db.prepare(
+    const countRow = this.vectorDb.prepare(
       'SELECT COUNT(*) as count, dimension FROM kms_embeddings GROUP BY dimension ORDER BY count DESC LIMIT 1'
     ).get() as any
     if (!countRow || countRow.count === 0) {
@@ -261,7 +270,7 @@ class KMSSearchEngineService {
 
   private createVecTable(dimension: number): void {
     try {
-      this.db.exec(`
+      this.vectorDb.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_kms_embeddings USING vec0(
           embedding float[${dimension}] distance_metric=cosine,
           file_id TEXT,
@@ -278,16 +287,16 @@ class KMSSearchEngineService {
 
   private migrateExistingEmbeddings(dimension: number): void {
     try {
-      const rows = this.db.prepare(
+      const rows = this.vectorDb.prepare(
         'SELECT rowid, embedding, file_id, source_type FROM kms_embeddings WHERE dimension = ?'
       ).all(dimension) as any[]
 
       if (rows.length === 0) return
 
-      const insertStmt = this.db.prepare(
+      const insertStmt = this.vectorDb.prepare(
         'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
       )
-      const migrate = this.db.transaction(() => {
+      const migrate = this.vectorDb.transaction(() => {
         for (const row of rows) {
           try {
             insertStmt.run(row.rowid, row.embedding, row.file_id, row.source_type)
@@ -413,6 +422,15 @@ class KMSSearchEngineService {
       offset += line.length + 1
     }
 
+    // kms_search_index.content 只存前 500 字符（用于搜索结果 snippet 和 embedding 生成），
+    // FTS5 仍索引完整原文（用于全文搜索）。
+    // 这样 kms_search_index 表体积减少 50%+，而搜索能力不受影响：
+    // - 搜索结果显示用 content.substring(0, 400)（< 500）
+    // - embedding 生成用 content.substring(0, 500)（= 500）
+    // - FTS5 全文搜索仍能匹配完整原文
+    // - LIKE 搜索只能匹配前 500 字符（可接受，LIKE 是 FTS5 的 fallback）
+    const SEARCH_INDEX_CONTENT_LIMIT = 500
+
     let currentOffset = 0
     const insertIndex = this.db.prepare(`
       INSERT INTO kms_search_index (id, file_id, source_type, source_id, paragraph_index, title, content, start_offset, end_offset, start_line, end_line, created_at, updated_at)
@@ -433,9 +451,14 @@ class KMSSearchEngineService {
         }
 
         const id = generateId()
-        insertIndex.run(id, fileId, fileId, pi, fileName, para,
+        // kms_search_index 只存截断后的 content，节省存储
+        const truncatedContent = para.length > SEARCH_INDEX_CONTENT_LIMIT
+          ? para.substring(0, SEARCH_INDEX_CONTENT_LIMIT)
+          : para
+        insertIndex.run(id, fileId, fileId, pi, fileName, truncatedContent,
           paraStartOffset, paraEndOffset, startLine, endLine)
 
+        // FTS5 索引完整原文，保证全文搜索能力
         this.insertFtsRow(id, fileId, 'content_paragraph', fileId, fileName, para, '')
 
         currentOffset = paraEndOffset
@@ -497,13 +520,10 @@ class KMSSearchEngineService {
         "DELETE FROM kms_search_index WHERE file_id = ? AND source_type = 'paragraph'"
       ).run(fileId)
     }
-    // 删除段落对应的向量
+    // 删除段落对应的向量（向量库独立事务）
     const paraIds = (this.db.prepare('SELECT id FROM kms_paragraphs WHERE file_id = ?').all(fileId) as any[]).map(r => r.id)
     if (paraIds.length > 0) {
-      const placeholders = paraIds.map(() => '?').join(',')
-      this.db.prepare(
-        `DELETE FROM kms_embeddings WHERE source_type = 'paragraph' AND source_id IN (${placeholders})`
-      ).run(...paraIds)
+      this.deleteEmbeddingsBySourceTypeAndIds('paragraph', paraIds)
     }
     // 删除段落本身
     this.db.prepare('DELETE FROM kms_paragraphs WHERE file_id = ?').run(fileId)
@@ -531,14 +551,49 @@ class KMSSearchEngineService {
       ).run(fileId, ...paraIds)
     }
 
-    this.db.prepare(
-      `DELETE FROM kms_embeddings WHERE source_type = 'paragraph' AND source_id IN (${placeholders})`
-    ).run(...paraIds)
+    // 删除段落对应的向量（向量库独立事务）
+    this.deleteEmbeddingsBySourceTypeAndIds('paragraph', paraIds)
 
     this.db.prepare(
       'DELETE FROM kms_paragraphs WHERE file_id = ? AND paragraph_index >= ?'
     ).run(fileId, fromIndex)
     this.invalidateCache()
+  }
+
+  /**
+   * 按 source_type + source_id 批量删除 embedding 记录和对应的 vec0 虚表行。
+   *
+   * 由于 kms_embeddings 在独立的向量库，需在向量库独立事务中执行。
+   */
+  private deleteEmbeddingsBySourceTypeAndIds(sourceType: string, sourceIds: string[]): void {
+    if (sourceIds.length === 0) return
+    const placeholders = sourceIds.map(() => '?').join(',')
+    const vecTx = this.vectorDb.transaction(() => {
+      // 收集要删除的 rowid
+      let rowids: number[] = []
+      try {
+        const rows = this.vectorDb.prepare(
+          `SELECT rowid FROM kms_embeddings WHERE source_type = ? AND source_id IN (${placeholders})`
+        ).all(sourceType, ...sourceIds) as any[]
+        rowids = rows.map(r => r.rowid)
+      } catch (err: any) {
+        logger.warn(`查询 ${sourceType} 的 embedding rowid 失败:`, err?.message || err)
+      }
+
+      this.vectorDb.prepare(
+        `DELETE FROM kms_embeddings WHERE source_type = ? AND source_id IN (${placeholders})`
+      ).run(sourceType, ...sourceIds)
+
+      if (rowids.length > 0 && this.vecReady) {
+        const rowidPlaceholders = rowids.map(() => '?').join(',')
+        try {
+          this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...rowids)
+        } catch (err: any) {
+          logger.warn(`清理 vec_kms_embeddings 失败 (${sourceType}):`, err?.message || err)
+        }
+      }
+    })
+    vecTx()
   }
 
   insertParagraphs(
@@ -590,6 +645,7 @@ class KMSSearchEngineService {
       'SELECT id FROM kms_search_index WHERE file_id = ?'
     ).all(fileId) as any[]
 
+    // 主库事务：删除 fts、search_index、paragraphs
     const tx = this.db.transaction(() => {
       if (rows.length > 0) {
         const ids = rows.map(r => r.id)
@@ -598,13 +654,49 @@ class KMSSearchEngineService {
       }
       this.db.prepare('DELETE FROM kms_search_index WHERE file_id = ?').run(fileId)
       this.db.prepare('DELETE FROM kms_paragraphs WHERE file_id = ?').run(fileId)
-      this.db.prepare('DELETE FROM kms_embeddings WHERE file_id = ?').run(fileId)
     })
     tx()
+
+    // 向量库独立事务：删除 kms_embeddings + vec_kms_embeddings（跨库不能同事务）
+    this.deleteEmbeddingsByFile(fileId)
 
     // 仅失效受影响 fileId 的缓存条目；__all__ 缓存通过过滤移除该文件向量，避免全量重载
     this.invalidateEmbeddingCacheForFile(fileId)
     this.invalidateCache()
+  }
+
+  /**
+   * 删除指定文件的所有 embedding 记录和对应的 vec0 虚表行。
+   *
+   * 由于 kms_embeddings 已迁移到独立的向量库，无法和主库共用事务，
+   * 需要在向量库独立事务中执行删除。
+   */
+  private deleteEmbeddingsByFile(fileId: string): void {
+    const vecTx = this.vectorDb.transaction(() => {
+      // 先收集要删除的 rowid（vec_kms_embeddings 通过 rowid 关联 kms_embeddings）
+      let rowids: number[] = []
+      try {
+        const rows = this.vectorDb.prepare(
+          'SELECT rowid FROM kms_embeddings WHERE file_id = ?'
+        ).all(fileId) as any[]
+        rowids = rows.map(r => r.rowid)
+      } catch (err: any) {
+        logger.warn(`查询 file_id=${fileId} 的 embedding rowid 失败:`, err?.message || err)
+      }
+
+      this.vectorDb.prepare('DELETE FROM kms_embeddings WHERE file_id = ?').run(fileId)
+
+      // 删除 vec_kms_embeddings 虚表中的对应行（不会自动级联）
+      if (rowids.length > 0 && this.vecReady) {
+        const placeholders = rowids.map(() => '?').join(',')
+        try {
+          this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${placeholders})`).run(...rowids)
+        } catch (err: any) {
+          logger.warn(`清理 vec_kms_embeddings 失败 (file_id=${fileId}):`, err?.message || err)
+        }
+      }
+    })
+    vecTx()
   }
 
   /**
@@ -637,8 +729,8 @@ class KMSSearchEngineService {
 
     if (sourceRows.length === 0) return
 
-    // 预加载源文件的 embedding 记录
-    const sourceEmbeddings = this.db.prepare(
+    // 预加载源文件的 embedding 记录（向量库）
+    const sourceEmbeddings = this.vectorDb.prepare(
       'SELECT * FROM kms_embeddings WHERE file_id = ?'
     ).all(sourceFileId) as any[]
 
@@ -648,6 +740,16 @@ class KMSSearchEngineService {
       embeddingMap.set(`${emb.source_type}:${emb.source_id}`, emb)
     }
 
+    // 收集需要克隆的 embedding 数据，待主库事务完成后在向量库独立事务中写入
+    const embeddingsToClone: Array<{
+      sourceType: string
+      sourceId: string
+      embedding: any
+      model: string
+      dimension: number
+    }> = []
+
+    // 主库事务：克隆 kms_search_index + kms_fts
     const transaction = this.db.transaction(() => {
       for (const row of sourceRows) {
         const newId = generateId()
@@ -664,35 +766,53 @@ class KMSSearchEngineService {
 
         this.insertFtsRow(newId, targetFileId, row.source_type as SourceType, row.source_id, row.title, row.content, '')
 
-        // 克隆对应的 embedding 记录
+        // 收集对应的 embedding 记录，稍后在向量库事务中写入
         const embKey = `${row.source_type}:${row.source_id}`
         const sourceEmb = embeddingMap.get(embKey)
         if (sourceEmb) {
-          const embResult = this.db.prepare(`
+          embeddingsToClone.push({
+            sourceType: sourceEmb.source_type,
+            sourceId: sourceEmb.source_id,
+            embedding: sourceEmb.embedding,
+            model: sourceEmb.model,
+            dimension: sourceEmb.dimension,
+          })
+        }
+      }
+    })
+
+    transaction()
+
+    // 向量库独立事务：克隆 kms_embeddings + vec_kms_embeddings
+    // 跨库不能共用事务，需在向量库独立事务中执行
+    if (embeddingsToClone.length > 0) {
+      const vecTx = this.vectorDb.transaction(() => {
+        for (const emb of embeddingsToClone) {
+          const embResult = this.vectorDb.prepare(`
             INSERT INTO kms_embeddings (source_type, source_id, file_id, embedding, model, dimension, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, unixepoch())
           `).run(
-            sourceEmb.source_type, sourceEmb.source_id, targetFileId,
-            sourceEmb.embedding, sourceEmb.model, sourceEmb.dimension
+            emb.sourceType, emb.sourceId, targetFileId,
+            emb.embedding, emb.model, emb.dimension
           )
 
-          if (this.vecReady && this.vecDimension && sourceEmb.dimension === this.vecDimension) {
+          if (this.vecReady && this.vecDimension && emb.dimension === this.vecDimension) {
             try {
               const vecRowId = Number(embResult.lastInsertRowid)
               if (vecRowId > 0) {
-                this.db.prepare(
+                this.vectorDb.prepare(
                   'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
-                ).run(vecRowId, sourceEmb.embedding, targetFileId, sourceEmb.source_type)
+                ).run(vecRowId, emb.embedding, targetFileId, emb.sourceType)
               }
             } catch (err: any) {
               logger.warn(`cloneIndexData: vec0 insert failed for targetFile=${targetFileId}:`, err?.message || err)
             }
           }
         }
-      }
-    })
+      })
+      vecTx()
+    }
 
-    transaction()
     this.invalidateCache()
   }
 
@@ -978,7 +1098,7 @@ class KMSSearchEngineService {
         params.push(...options.sourceTypes)
       }
 
-      const knnRows = this.db.prepare(
+      const knnRows = this.vectorDb.prepare(
         `SELECT rowid, distance FROM vec_kms_embeddings WHERE ${whereClause} ORDER BY distance`
       ).all(...params) as any[]
 
@@ -987,7 +1107,7 @@ class KMSSearchEngineService {
       // 回查 kms_embeddings 获取元数据
       const rowids = knnRows.map(r => r.rowid)
       const placeholders = rowids.map(() => '?').join(',')
-      const metaRows = this.db.prepare(
+      const metaRows = this.vectorDb.prepare(
         `SELECT rowid, source_type, source_id, file_id FROM kms_embeddings WHERE rowid IN (${placeholders})`
       ).all(...rowids) as any[]
 
@@ -1240,7 +1360,7 @@ class KMSSearchEngineService {
     const byType: Record<string, number> = {}
     for (const row of typeRows) byType[row.source_type] = row.count
 
-    const embeddingCount = (this.db.prepare(
+    const embeddingCount = (this.vectorDb.prepare(
       'SELECT COUNT(*) as count FROM kms_embeddings'
     ).get() as any)?.count || 0
 
@@ -1260,24 +1380,24 @@ class KMSSearchEngineService {
     const buffer = Buffer.from(embedding.buffer)
 
     // 事务包裹 check-then-insert，避免并发写入产生重复行
-    const upsert = this.db.transaction(() => {
-      const existing = this.db.prepare(
+    const upsert = this.vectorDb.transaction(() => {
+      const existing = this.vectorDb.prepare(
         'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
       ).get(sourceType, sourceId) as any
 
       if (existing) {
-        this.db.prepare(`
+        this.vectorDb.prepare(`
           UPDATE kms_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
         `).run(buffer, model, embedding.length, existing.id)
         return existing.rowid
       }
 
       const id = generateId()
-      this.db.prepare(`
+      this.vectorDb.prepare(`
         INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
       `).run(id, sourceType, sourceId, fileId, buffer, model, embedding.length)
-      return Number((this.db.prepare('SELECT last_insert_rowid() as r').get() as any).r)
+      return Number((this.vectorDb.prepare('SELECT last_insert_rowid() as r').get() as any).r)
     })
 
     const rowid = upsert()
@@ -1309,22 +1429,22 @@ class KMSSearchEngineService {
   ): void {
     if (entries.length === 0) return
 
-    const tx = this.db.transaction(() => {
+    const tx = this.vectorDb.transaction(() => {
       for (const e of entries) {
         const buffer = Buffer.from(e.embedding.buffer)
-        const existing = this.db.prepare(
+        const existing = this.vectorDb.prepare(
           'SELECT id, rowid FROM kms_embeddings WHERE source_type = ? AND source_id = ?'
         ).get(e.sourceType, e.sourceId) as any
 
         let rowid: number
         if (existing) {
-          this.db.prepare(`
+          this.vectorDb.prepare(`
             UPDATE kms_embeddings SET embedding = ?, model = ?, dimension = ?, updated_at = unixepoch() WHERE id = ?
           `).run(buffer, e.model, e.embedding.length, existing.id)
           rowid = existing.rowid
         } else {
           const id = generateId()
-          const result = this.db.prepare(`
+          const result = this.vectorDb.prepare(`
             INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
           `).run(id, e.sourceType, e.sourceId, e.fileId, buffer, e.model, e.embedding.length)
@@ -1333,8 +1453,8 @@ class KMSSearchEngineService {
 
         if (this.vecReady && this.vecDimension === e.embedding.length) {
           try {
-            this.db.prepare('DELETE FROM vec_kms_embeddings WHERE rowid = ?').run(rowid)
-            this.db.prepare(
+            this.vectorDb.prepare('DELETE FROM vec_kms_embeddings WHERE rowid = ?').run(rowid)
+            this.vectorDb.prepare(
               'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
             ).run(rowid, buffer, e.fileId, e.sourceType)
           } catch (err: any) {
@@ -1411,8 +1531,8 @@ class KMSSearchEngineService {
     }
 
     try {
-      this.db.prepare('DELETE FROM vec_kms_embeddings WHERE rowid = ?').run(rowid)
-      this.db.prepare(
+      this.vectorDb.prepare('DELETE FROM vec_kms_embeddings WHERE rowid = ?').run(rowid)
+      this.vectorDb.prepare(
         'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
       ).run(rowid, buffer, fileId, sourceType)
     } catch (err: any) {
@@ -1595,7 +1715,7 @@ class KMSSearchEngineService {
     const cached = this.embeddingCache.get(cacheKey)
     if (cached) return cached
 
-    const rows = this.db.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
+    const rows = this.vectorDb.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
 
     const entries: EmbeddingEntry[] = rows.map(row => ({
       id: row.id,
@@ -1631,7 +1751,7 @@ class KMSSearchEngineService {
       params.push(...sourceTypes)
     }
     const whereClause = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
-    const rows = this.db.prepare(
+    const rows = this.vectorDb.prepare(
       `SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings${whereClause}`
     ).all(...params) as any[]
 
