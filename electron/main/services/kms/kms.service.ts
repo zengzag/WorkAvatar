@@ -630,7 +630,7 @@ ${fileSummaries.join('\n')}
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()
     let sql = `
-      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type
+      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
       FROM kms_files f
       LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
       WHERE f.file_name LIKE ?

@@ -26,6 +26,8 @@ interface SearchResult {
   score?: number
   highlights?: HighlightRange[]
   matched_keywords?: string[]
+  /** 文件最后修改时间（unix 秒） */
+  modified_time?: number
 }
 
 interface IndexDir {

@@ -826,6 +826,7 @@ export default {
     matchItem: '匹配 {{index}}',
     prevMatch: '上一个匹配',
     nextMatch: '下一个匹配',
+    lastModified: '最后修改时间',
     // 高级筛选与设置
     advancedFilters: '高级筛选',
     filterDirectory: '限定目录',

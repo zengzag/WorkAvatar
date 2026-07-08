@@ -821,6 +821,7 @@ export default {
     matchItem: 'Match {{index}}',
     prevMatch: 'Previous Match',
     nextMatch: 'Next Match',
+    lastModified: 'Last Modified',
     advancedFilters: 'Advanced Filters',
     filterDirectory: 'Directory',
     filterCollection: 'Collection',

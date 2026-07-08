@@ -72,7 +72,7 @@ function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
     parts.push('')
     parts.push('可多选：如 `formats: ["docx", "docx-template"]` 同时获取 Word 从零创建和基于模板的详细指南。')
     parts.push('')
-    parts.push(buildCommonRules(availableModules, moduleStatus))
+    parts.push(buildCommonRules(moduleStatus))
     return parts.join('\n')
   }
 
@@ -368,14 +368,13 @@ function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
     parts.push('**关键陷阱**: ①修改单元格时需指定类型 `t`（"s" 字符串 / "n" 数字 / "b" 布尔）②追加行后需更新 `!ref` 范围③`XLSX.readFile` 会丢失部分格式（如公式、图表、样式），仅保留值和基本格式④如需完整保留格式，用 adm-zip 直接操作 xl/worksheets/sheet*.xml（类似 docx-template 的方式）')
   }
 
-  parts.push(buildCommonRules(availableModules, moduleStatus))
+  parts.push(buildCommonRules(moduleStatus))
 
   return parts.join('\n')
 }
 
 /** 通用规则（概览模式和详细模式都包含） */
 function buildCommonRules(
-  availableModules: string[],
   moduleStatus: Record<string, { loaded: boolean; error?: string }>,
 ): string {
   const parts: string[] = []
