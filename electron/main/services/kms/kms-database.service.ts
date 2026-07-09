@@ -27,7 +27,7 @@ class KMSDatabaseService {
 
     // 主库加载 sqlite-vec（兼容旧代码访问主库的 vec 虚表，如 vec_kms_collection_summaries）
     try {
-      sqliteVec.load(this.db)
+      this.loadSqliteVec(this.db)
       logger.info('sqlite-vec 扩展加载成功（主库）')
     } catch (err: any) {
       logger.error('sqlite-vec 扩展加载失败（主库）:', err?.message || err)
@@ -35,7 +35,7 @@ class KMSDatabaseService {
 
     // 向量库加载 sqlite-vec（kms_embeddings + vec_kms_embeddings 在此库）
     try {
-      sqliteVec.load(this.vectorDb)
+      this.loadSqliteVec(this.vectorDb)
       logger.info('sqlite-vec 扩展加载成功（向量库）')
     } catch (err: any) {
       logger.error('sqlite-vec 扩展加载失败（向量库）:', err?.message || err)
@@ -78,6 +78,22 @@ class KMSDatabaseService {
     conn.pragma('journal_size_limit = 536870912')
 
     return conn
+  }
+
+  /**
+   * 加载 sqlite-vec 扩展到指定数据库连接。
+   *
+   * sqlite-vec 的 getLoadablePath() 内部使用 require.resolve 解析平台包路径，
+   * 在 Electron 打包后返回的是 app.asar 内部的虚拟路径。
+   * 但 SQLite 的 loadExtension 调用操作系统的 LoadLibrary/dlopen，
+   * 无法识别 asar 虚拟路径，需要转换为 app.asar.unpacked 的真实文件系统路径。
+   */
+  private loadSqliteVec(db: Database.Database): void {
+    let extPath = sqliteVec.getLoadablePath()
+    if (extPath.includes('app.asar')) {
+      extPath = extPath.replace('app.asar', 'app.asar.unpacked')
+    }
+    db.loadExtension(extPath)
   }
 
   static getInstance(): KMSDatabaseService {

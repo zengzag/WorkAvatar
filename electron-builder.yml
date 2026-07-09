@@ -21,6 +21,7 @@ extraResources:
 asarUnpack:
   - '**/*.node'
   - '**/better_sqlite3/**'
+  - '**/sqlite-vec-*/**'
 
 win:
   target:
