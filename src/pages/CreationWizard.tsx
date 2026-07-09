@@ -5,19 +5,13 @@ import {
   Card,
   Button,
   Steps,
-  Checkbox,
-  Tag,
   Typography,
   Space,
   Input,
-  Empty,
   Alert,
-  Descriptions,
-  Progress,
-  Timeline,
+  Collapse,
   Tooltip,
   Modal,
-  Collapse,
   theme,
   App,
 } from 'antd'
@@ -30,24 +24,27 @@ import {
   BulbOutlined,
   BulbFilled,
   UserOutlined,
-  EditOutlined,
-  ToolOutlined,
-  CommentOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
 import PageHeader from '../components/common/PageHeader'
 import LLMSelector from '../components/llm/LLMSelector'
 import type { LLMProvider } from '../types'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
+import {
+  CollectionSelector,
+  AnalysisProgress,
+  AnalysisStreaming,
+  ProfileDisplay,
+  ToolCheckboxes,
+  type EmployeeProfile,
+  STAGE_PROGRESS_MAP,
+  DEFAULT_TOOL_NAMES,
+  matchSuggestedToolIds,
+  mergeToolIds,
+} from './creation-wizard'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
-
-interface EmployeeProfile {
-  roleName: string
-  roleDescription: string
-  suggestedTools: string[]
-}
 
 const CreationWizard: React.FC = () => {
   const { t } = useTranslation()
@@ -122,7 +119,8 @@ const CreationWizard: React.FC = () => {
   const loadAllCollections = async () => {
     try {
       const result = await window.electronAPI.kms.listCollections()
-      setAllCollections(result || [])
+      // safeHandle 异常时返回 { error }（truthy 但非数组），需 Array.isArray 兜底
+      setAllCollections(Array.isArray(result) ? result : [])
     } catch {
       message.error(t('creationWizard.loadKbFailed'))
     }
@@ -152,25 +150,14 @@ const CreationWizard: React.FC = () => {
       const result = await window.electronAPI.tool.listBuiltin()
       setBuiltinTools(result)
       const defaultToolIds = result
-        .filter((tool: any) =>
-          tool.name === 'kms_search' ||
-          tool.name === 'kms_agent_search' ||
-          tool.name === 'read_file' ||
-          tool.name === 'write_file'
-        )
+        .filter((tool: any) => DEFAULT_TOOL_NAMES.includes(tool.name))
         .map((tool: any) => tool.id)
       setSelectedToolIds(defaultToolIds)
     } catch {}
   }
 
-  const analyzeKBs = async () => {
-    setLoading(true)
-    setAnalyzeStage('')
-    setAnalyzeDetail('')
-    setAnalyzeChunks([])
-    setAnalyzeThinkChunks([])
-    setAnalyzeProgress(0)
-
+  /** 设置进度回调，返回清理函数 */
+  const setupProgressCallback = () => {
     if (progressCleanupRef.current) {
       progressCleanupRef.current()
     }
@@ -184,47 +171,58 @@ const CreationWizard: React.FC = () => {
           setAnalyzeChunks((prev) => [...prev, data.chunk!])
         }
       }
-      const stageMap: Record<string, number> = {
-        preparing: 10,
-        llm_calling: 30,
-        thinking: 45,
-        streaming: 60,
-        parsing: 90,
-        done: 100,
-        error: 100,
-      }
-      setAnalyzeProgress(stageMap[data.stage] ?? 50)
+      setAnalyzeProgress(STAGE_PROGRESS_MAP[data.stage] ?? 50)
     })
+  }
+
+  /** 重置分析状态 */
+  const resetAnalyzeState = () => {
+    setAnalyzeStage('')
+    setAnalyzeDetail('')
+    setAnalyzeChunks([])
+    setAnalyzeThinkChunks([])
+    setAnalyzeProgress(0)
+  }
+
+  /** 处理分析结果：更新 profile、消息、工具匹配 */
+  const handleAnalysisResult = (result: any) => {
+    if (result.success && result.profile) {
+      setProfile(result.profile)
+      if (result.messages) {
+        setAnalysisMessages(result.messages)
+      }
+      const matchedIds = matchSuggestedToolIds(result.profile.suggestedTools || [], builtinTools)
+      if (matchedIds.length > 0) {
+        setSelectedToolIds((prev) => mergeToolIds(prev, matchedIds))
+      }
+      return true
+    }
+    message.error(result.error || t('creationWizard.analysisFailed'))
+    return false
+  }
+
+  /** 清理进度回调 */
+  const cleanupProgress = () => {
+    if (progressCleanupRef.current) {
+      progressCleanupRef.current()
+      progressCleanupRef.current = null
+    }
+  }
+
+  const analyzeKBs = async () => {
+    setLoading(true)
+    resetAnalyzeState()
+    setupProgressCallback()
 
     try {
-      const enhancedDescription = businessDescription || undefined
-
       const result = await window.electronAPI.employee.analyzeProfile({
         collection_ids: selectedCollectionIds,
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
-        additional_context: enhancedDescription || undefined,
+        additional_context: businessDescription || undefined,
       })
 
-      if (result.success && result.profile) {
-        setProfile(result.profile)
-        if (result.messages) {
-          setAnalysisMessages(result.messages)
-        }
-
-        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
-          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
-          const matchedIds = builtinTools
-            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
-            .map((tool: any) => tool.id)
-          if (matchedIds.length > 0) {
-            setSelectedToolIds((prev) => {
-              const existing = new Set([...prev, ...matchedIds])
-              return Array.from(existing)
-            })
-          }
-        }
-
+      if (handleAnalysisResult(result)) {
         if (result.analysisMethod === 'llm') {
           message.success(t('creationWizard.llmAnalysisComplete'))
         } else if (result.analysisMethod === 'heuristic') {
@@ -236,17 +234,12 @@ const CreationWizard: React.FC = () => {
         } else {
           message.info(t('creationWizard.defaultConfig'))
         }
-      } else {
-        message.error(result.error || t('creationWizard.analysisFailed'))
       }
     } catch {
       message.error(t('creationWizard.analyzeKbFailed'))
     } finally {
       setLoading(false)
-      if (progressCleanupRef.current) {
-        progressCleanupRef.current()
-        progressCleanupRef.current = null
-      }
+      cleanupProgress()
     }
   }
 
@@ -265,36 +258,8 @@ const CreationWizard: React.FC = () => {
 
     setRefineModalOpen(false)
     setLoading(true)
-    setAnalyzeStage('')
-    setAnalyzeDetail('')
-    setAnalyzeChunks([])
-    setAnalyzeThinkChunks([])
-    setAnalyzeProgress(0)
-
-    if (progressCleanupRef.current) {
-      progressCleanupRef.current()
-    }
-    progressCleanupRef.current = window.electronAPI.employee.onProfileProgress((data) => {
-      setAnalyzeStage(data.stage)
-      if (data.detail) setAnalyzeDetail(data.detail)
-      if (data.chunk) {
-        if (data.stage === 'thinking') {
-          setAnalyzeThinkChunks((prev) => [...prev, data.chunk!])
-        } else {
-          setAnalyzeChunks((prev) => [...prev, data.chunk!])
-        }
-      }
-      const stageMap: Record<string, number> = {
-        preparing: 10,
-        llm_calling: 30,
-        thinking: 45,
-        streaming: 60,
-        parsing: 90,
-        done: 100,
-        error: 100,
-      }
-      setAnalyzeProgress(stageMap[data.stage] ?? 50)
-    })
+    resetAnalyzeState()
+    setupProgressCallback()
 
     try {
       const result = await window.electronAPI.employee.refineProfile({
@@ -309,68 +274,57 @@ const CreationWizard: React.FC = () => {
         model_id: selectedModelId || undefined,
       })
 
-      if (result.success && result.profile) {
-        setProfile(result.profile)
-        if (result.messages) {
-          setAnalysisMessages(result.messages)
-        }
-        if (result.profile.suggestedTools && result.profile.suggestedTools.length > 0 && builtinTools.length > 0) {
-          const suggestedSet = new Set(result.profile.suggestedTools.map((s: string) => s.toLowerCase()))
-          const matchedIds = builtinTools
-            .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
-            .map((tool: any) => tool.id)
-          if (matchedIds.length > 0) {
-            setSelectedToolIds((prev) => {
-              const existing = new Set([...prev, ...matchedIds])
-              return Array.from(existing)
-            })
-          }
-        }
+      if (handleAnalysisResult(result)) {
         if (result.error) {
           message.warning(result.error)
         } else {
           message.success(t('creationWizard.refineComplete'))
         }
-      } else {
-        message.error(result.error || t('creationWizard.refineFailed'))
       }
     } catch {
       message.error(t('creationWizard.refineFailed'))
     } finally {
       setLoading(false)
       setRefineFeedback('')
-      if (progressCleanupRef.current) {
-        progressCleanupRef.current()
-        progressCleanupRef.current = null
-      }
+      cleanupProgress()
     }
+  }
+
+  /** 创建员工并分配工具 */
+  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string) => {
+    const employee = await window.electronAPI.employee.create({
+      name,
+      description,
+      profile_json: profileJson,
+    })
+
+    if (selectedProviderId) {
+      await window.electronAPI.employee.update({
+        id: employee.id,
+        status: 'active',
+      })
+    }
+
+    for (const toolId of selectedToolIds) {
+      try {
+        await window.electronAPI.tool.assignToEmployee({
+          employee_id: employee.id,
+          tool_id: toolId,
+          is_enabled: true,
+        })
+      } catch {}
+    }
+
+    return employee
   }
 
   const handleQuickCreate = async () => {
     setCreating(true)
     try {
-      const employee = await window.electronAPI.employee.create({
-        name: t('creationWizard.quickCreateDefaultName'),
-        description: '',
-      })
-
-      if (selectedProviderId) {
-        await window.electronAPI.employee.update({
-          id: employee.id,
-          status: 'active',
-        })
-      }
-
-      for (const toolId of selectedToolIds) {
-        try {
-          await window.electronAPI.tool.assignToEmployee({
-            employee_id: employee.id,
-            tool_id: toolId,
-            is_enabled: true,
-          })
-        } catch {}
-      }
-
+      const employee = await createEmployeeWithTools(
+        t('creationWizard.quickCreateDefaultName'),
+        '',
+      )
       navigate(`/employee/${employee.id}`)
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
@@ -388,33 +342,14 @@ const CreationWizard: React.FC = () => {
     setCreating(true)
 
     try {
-      const employee = await window.electronAPI.employee.create({
-        name: employeeName,
-        description: profile?.roleDescription || businessDescription || '',
-        profile_json: profile ? JSON.stringify({
-          roleName: profile.roleName,
-          roleDescription: profile.roleDescription,
-          suggestedTools: profile.suggestedTools,
-        }) : undefined,
-      })
+      const profileJson = profile ? JSON.stringify({
+        roleName: profile.roleName,
+        roleDescription: profile.roleDescription,
+        suggestedTools: profile.suggestedTools,
+      }) : undefined
+      const description = profile?.roleDescription || businessDescription || ''
 
-      if (selectedProviderId) {
-        await window.electronAPI.employee.update({
-          id: employee.id,
-          status: 'active',
-        })
-      }
-
-      for (const toolId of selectedToolIds) {
-        try {
-          await window.electronAPI.tool.assignToEmployee({
-            employee_id: employee.id,
-            tool_id: toolId,
-            is_enabled: true,
-          })
-        } catch {}
-      }
-
+      const employee = await createEmployeeWithTools(employeeName, description, profileJson)
       navigate(`/employee/${employee.id}`)
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
@@ -428,8 +363,6 @@ const CreationWizard: React.FC = () => {
     { title: t('creationWizard.stepBasicConfig'), icon: <DatabaseOutlined /> },
     { title: t('creationWizard.stepConfirmCreate'), icon: <CheckOutlined /> },
   ]
-
-  const displayCollections = allCollections
 
   const renderStep1 = () => (
     <div>
@@ -445,67 +378,11 @@ const CreationWizard: React.FC = () => {
 
       <Card style={{ marginBottom: 16 }}>
         <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Text strong>{t('creationWizard.linkedKbLabel')}</Text>
-              <Space>
-                <Button
-                  size="small"
-                  onClick={() => setSelectedCollectionIds(displayCollections.map((c: any) => c.id))}
-                >
-                  {t('common.selectAll')}
-                </Button>
-                <Button size="small" onClick={() => setSelectedCollectionIds([])}>
-                  {t('common.clearAll')}
-                </Button>
-              </Space>
-            </div>
-            {displayCollections.length > 0 ? (
-              <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>
-                {displayCollections.map((c: any) => {
-                  const isSelected = selectedCollectionIds.includes(c.id)
-                  return (
-                    <div
-                      key={c.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '10px 16px',
-                        background: isSelected ? token.colorPrimaryBg : 'transparent',
-                        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                      }}
-                    >
-                      <Checkbox
-                        checked={isSelected}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedCollectionIds((prev) => [...prev, c.id])
-                          } else {
-                            setSelectedCollectionIds((prev) => prev.filter((i) => i !== c.id))
-                          }
-                        }}
-                        style={{ marginRight: 12 }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ marginBottom: 2 }}>
-                          <Space>
-                            <DatabaseOutlined style={{ color: token.colorPrimary }} />
-                            <Text strong>{c.name}</Text>
-                            <Tag>{t('common.documents', { count: c.file_count || 0 })}</Tag>
-                          </Space>
-                        </div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {c.description || t('common.noDescription')}
-                        </Text>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <Empty description={t('creationWizard.noKbAvailable')} />
-            )}
-          </div>
+          <CollectionSelector
+            collections={allCollections}
+            selectedIds={selectedCollectionIds}
+            onChange={setSelectedCollectionIds}
+          />
 
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -545,118 +422,6 @@ const CreationWizard: React.FC = () => {
     </div>
   )
 
-  const renderAnalysisProgress = () => (
-    <Card title={t('creationWizard.analysisProgress')} style={{ marginBottom: 16 }}>
-      <Progress percent={analyzeProgress} status={analyzeStage === 'error' ? 'exception' : 'active'} />
-      <Timeline
-        items={[
-          { color: analyzeProgress >= 10 ? 'green' : 'gray', content: t('creationWizard.stepPrepare') },
-          { color: analyzeProgress >= 30 ? 'green' : 'gray', content: t('creationWizard.stepCallLlm') },
-          { color: analyzeProgress >= 45 ? 'green' : 'gray', content: t('creationWizard.stepLlmThinking') },
-          { color: analyzeProgress >= 60 ? 'green' : 'gray', content: t('creationWizard.stepReceiveStream') },
-          { color: analyzeProgress >= 90 ? 'green' : 'gray', content: t('creationWizard.stepParseResult') },
-        ]}
-      />
-      {analyzeDetail && (
-        <Alert title={analyzeDetail} type="info" showIcon style={{ marginTop: 12 }} />
-      )}
-    </Card>
-  )
-
-  const renderAnalysisStreaming = () => (
-    <>
-      {analyzeThinkChunks.length > 0 && (
-        <Card title={t('creationWizard.llmThinkingProcess')} size="small" style={{ marginBottom: 16, maxHeight: 200, overflow: 'auto' }}>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0, color: '#8c8c8c' }}>
-            {analyzeThinkChunks.join('')}
-          </pre>
-        </Card>
-      )}
-      {analyzeChunks.length > 0 && (
-        <Card title={t('creationWizard.llmRealtimeOutput')} size="small" style={{ marginBottom: 16, maxHeight: 300, overflow: 'auto' }}>
-          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, margin: 0 }}>
-            {analyzeChunks.join('')}
-          </pre>
-        </Card>
-      )}
-    </>
-  )
-
-  const renderProfileDisplay = () => (
-    <>
-      <Alert
-        title={t('creationWizard.analysisComplete', { roleName: profile!.roleName })}
-        type="success"
-        showIcon
-        style={{ marginBottom: 16 }}
-        action={
-          <Space>
-            <Button size="small" onClick={analyzeKBs} icon={<EditOutlined />}>
-              {t('creationWizard.reAnalyze')}
-            </Button>
-            {analysisMessages.length > 0 && (
-              <Button size="small" onClick={() => setRefineModalOpen(true)} icon={<CommentOutlined />}>
-                {t('creationWizard.refineProfile')}
-              </Button>
-            )}
-          </Space>
-        }
-      />
-
-      <Card style={{ marginBottom: 16 }}>
-        <Descriptions title={t('creationWizard.employeeProfile')} bordered column={1} size="small">
-          <Descriptions.Item label={t('creationWizard.roleName')}>
-            <Space>
-              <UserOutlined />
-              <Text strong>{profile!.roleName}</Text>
-            </Space>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile!.roleDescription}</Descriptions.Item>
-          {profile!.suggestedTools.length > 0 && (
-            <Descriptions.Item label={t('creationWizard.suggestedTools')}>
-              <Space wrap>
-                {profile!.suggestedTools.map((tool, i) => {
-                  const found = builtinTools.find((bt: any) => bt.name === tool)
-                  return (
-                    <Tag key={i} icon={<ToolOutlined />} color="orange">
-                      {found ? (found.title || found.name) : tool}
-                    </Tag>
-                  )
-                })}
-              </Space>
-            </Descriptions.Item>
-          )}
-        </Descriptions>
-      </Card>
-    </>
-  )
-
-  const renderToolCheckboxes = () => (
-    <div>
-      <Text strong style={{ display: 'block', marginBottom: 8 }}>
-        <ToolOutlined style={{ marginRight: 4 }} />
-        {t('creationWizard.toolsHint')}
-      </Text>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {builtinTools.map((tool: any) => (
-          <Checkbox
-            key={tool.id}
-            checked={selectedToolIds.includes(tool.id)}
-            onChange={(e) => {
-              if (e.target.checked) {
-                setSelectedToolIds((prev) => [...prev, tool.id])
-              } else {
-                setSelectedToolIds((prev) => prev.filter((id) => id !== tool.id))
-              }
-            }}
-          >
-            {tool.title || tool.name}
-          </Checkbox>
-        ))}
-      </div>
-    </div>
-  )
-
   const renderStep2 = () => (
     <div>
       <Alert
@@ -680,11 +445,17 @@ const CreationWizard: React.FC = () => {
 
       {loading ? (
         <div style={{ padding: '0 0 16px' }}>
-          {renderAnalysisProgress()}
-          {renderAnalysisStreaming()}
+          <AnalysisProgress progress={analyzeProgress} stage={analyzeStage} detail={analyzeDetail} />
+          <AnalysisStreaming thinkChunks={analyzeThinkChunks} contentChunks={analyzeChunks} />
         </div>
       ) : profile ? (
-        renderProfileDisplay()
+        <ProfileDisplay
+          profile={profile}
+          builtinTools={builtinTools}
+          hasAnalysisMessages={analysisMessages.length > 0}
+          onReAnalyze={analyzeKBs}
+          onRefine={() => setRefineModalOpen(true)}
+        />
       ) : (
         <div style={{ textAlign: 'center', padding: 40 }}>
           <RobotOutlined style={{ fontSize: 48, marginBottom: 16, color: token.colorPrimary }} />
@@ -701,7 +472,11 @@ const CreationWizard: React.FC = () => {
           {
             key: 'tools',
             label: t('creationWizard.toolSettings'),
-            children: renderToolCheckboxes(),
+            children: <ToolCheckboxes
+              tools={builtinTools}
+              selectedIds={selectedToolIds}
+              onChange={setSelectedToolIds}
+            />,
           },
         ]}
       />

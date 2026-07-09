@@ -86,7 +86,8 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     setLoadingStats(true)
     try {
       const result = await window.electronAPI.kms.getDatabaseStats()
-      setDbStats(result)
+      // safeHandle 异常时返回 { error }，需兜底避免下游访问 undefined 字段
+      setDbStats(result && !result.error ? result : null)
     } catch {
       // ignore
     } finally {
@@ -122,6 +123,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
         setCleaning(true)
         try {
           const result = await window.electronAPI.kms.cleanupDatabase()
+          if (result && result.error) {
+            message.error(t('kms.settingsPanel.cleanupFailed') + `: ${result.error}`)
+            return
+          }
           const freed = (result?.before?.mainDbSize ?? 0) + (result?.before?.vectorDbSize ?? 0)
             - (result?.after?.mainDbSize ?? 0) - (result?.after?.vectorDbSize ?? 0)
           const freedStr = freed > 0 ? formatBytes(freed) : '0 B'

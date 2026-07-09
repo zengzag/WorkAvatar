@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input, Button, Space, Tooltip, Popover, Typography, Tag, Select, theme } from 'antd'
-import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined } from '@ant-design/icons'
+import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined, CloseCircleFilled } from '@ant-design/icons'
 import type { SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
@@ -111,6 +111,12 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
     if (newOpen) onLoadSearchHistory?.({ limit: 20 })
   }, [onLoadSearchHistory, historyOpen])
 
+  const handleClearQuery = useCallback(() => {
+    onSearchQueryChange('')
+    hasOpenedHistoryRef.current = false
+    inputRef.current?.focus()
+  }, [onSearchQueryChange])
+
   const renderHistoryContent = () => {
     if (!searchHistory || searchHistory.length === 0) {
       return (
@@ -207,14 +213,25 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
             prefix={searchMode === 'ai' ? <RobotOutlined style={{ color: token.colorTextQuaternary }} /> : searchMode === 'file' ? <FileSearchOutlined style={{ color: token.colorTextQuaternary }} /> : <SearchOutlined style={{ color: token.colorTextQuaternary }} />}
             suffix={
               <Space size={4}>
-                <Tooltip title={t('kms.searchHistory')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<HistoryOutlined />}
-                    onMouseDown={handleHistoryBtnMouseDown}
-                  />
-                </Tooltip>
+                {searchQuery ? (
+                  <Tooltip title={t('common.clearAll')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CloseCircleFilled style={{ color: token.colorTextQuaternary }} />}
+                      onClick={handleClearQuery}
+                    />
+                  </Tooltip>
+                ) : (
+                  <Tooltip title={t('kms.searchHistory')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<HistoryOutlined />}
+                      onMouseDown={handleHistoryBtnMouseDown}
+                    />
+                  </Tooltip>
+                )}
                 <Button
                   type="primary"
                   size="small"

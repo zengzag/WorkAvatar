@@ -1,4 +1,4 @@
-import { dialog, app, shell, BrowserWindow } from 'electron'
+import { dialog, app, shell, BrowserWindow, ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -10,6 +10,7 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
+import { LoggerBackend } from '../services/logger'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -41,6 +42,17 @@ export function registerAppHandlers(
   const settingsSetStmt = db.prepare(
     'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
   )
+
+  // 渲染进程日志转发：接收渲染进程 console 输出，写入主进程日志文件
+  // fire-and-forget（ipcMain.on），不阻塞渲染进程；仅写文件不打印主进程控制台，避免重复
+  ipcMain.on(IPC_CHANNELS.APP_RENDERER_LOG, (_event, payload: { level: string; message: string }) => {
+    try {
+      const level = (payload?.level || 'info') as 'debug' | 'info' | 'warn' | 'error'
+      const message = String(payload?.message ?? '')
+      if (!message) return
+      LoggerBackend.getInstance().writeToFile(level, 'Renderer', message)
+    } catch {}
+  })
 
   safeHandle(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, async (params: AppShowOpenDialogParams) => {
     const options = {

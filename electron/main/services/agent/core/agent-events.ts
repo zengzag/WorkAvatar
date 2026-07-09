@@ -1,3 +1,7 @@
+import { createLogger } from '../../logger'
+
+const logger = createLogger('AgentEvent')
+
 export type AgentEventName =
   | 'run:start'
   | 'run:end'
@@ -51,8 +55,9 @@ export class AgentEventEmitter {
       for (const handler of handlers) {
         try {
           handler(agentEvent)
-        } catch {
-          // handler errors should not break the event chain
+        } catch (err: any) {
+          // handler 错误不应中断事件链，但需记录便于排查
+          logger.error(`Event handler error for "${event}":`, err?.message || err)
         }
       }
     }

@@ -15,6 +15,10 @@ import {
   FONT_SIZE_LG_MAP,
   listenSystemThemeChange,
 } from './stores/appearance.store'
+import { installConsoleForwarder } from './utils/logger'
+
+// 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
+installConsoleForwarder()
 
 const ANT_LOCALE_MAP: Record<string, any> = {
   'zh-CN': zhCN,

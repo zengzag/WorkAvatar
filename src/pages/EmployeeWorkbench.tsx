@@ -98,7 +98,8 @@ const EmployeeWorkbench: React.FC = () => {
   const loadAllCollections = async () => {
     try {
       const result = await window.electronAPI.kms.listCollections()
-      setAllCollections(result || [])
+      // safeHandle 异常时返回 { error }（truthy 但非数组），需 Array.isArray 兜底
+      setAllCollections(Array.isArray(result) ? result : [])
     } catch {}
   }
 

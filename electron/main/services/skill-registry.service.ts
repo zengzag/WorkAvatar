@@ -4,6 +4,9 @@ import AdmZip from 'adm-zip'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId } from './common-utils'
+import { createLogger } from './logger'
+
+const logger = createLogger('SkillRegistry')
 
 export interface ClaudeSkillManifest {
   name: string
@@ -234,7 +237,8 @@ class SkillRegistryService {
         try {
           const content = fs.readFileSync(filePath, 'utf-8')
           refs.push({ name: file, content })
-        } catch {
+        } catch (err: any) {
+          logger.warn(`Failed to read skill reference file ${file}:`, err?.message || err)
         }
       }
     }
@@ -255,7 +259,8 @@ class SkillRegistryService {
         try {
           const content = fs.readFileSync(filePath, 'utf-8')
           scripts.push({ name: file, content })
-        } catch {
+        } catch (err: any) {
+          logger.warn(`Failed to read skill script file ${file}:`, err?.message || err)
         }
       }
     }

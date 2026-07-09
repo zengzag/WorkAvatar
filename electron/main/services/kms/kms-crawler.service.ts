@@ -82,62 +82,162 @@ class KMSCrawlerService {
 
     const stableThreshold = options?.stableThresholdSeconds ?? 0
     const now = Math.floor(Date.now() / 1000)
+    const t0 = Date.now()
 
+    // ===== Phase 1: 快速检测（仅 readdirSync + statSync + Map 对比，无文件内容哈希） =====
     const diskFiles = this.scanDiskFiles(dirPath, recursive, extensions, signal)
 
-    const dbFiles = this.db.prepare('SELECT * FROM kms_files WHERE dir_id = ?').all(dirId) as any[]
+    // 只取检测需要的 5 个字段，避免 SELECT * 加载 parse_error 等无用列
+    const dbFiles = this.db.prepare(
+      'SELECT id, file_path, file_hash, modified_time, file_size FROM kms_files WHERE dir_id = ?'
+    ).all(dirId) as any[]
     const dbFileMap = new Map(dbFiles.map(f => [f.file_path, f]))
-
-    const result: CrawlResult = {
-      totalFiles: diskFiles.length,
-      newFiles: 0,
-      modifiedFiles: 0,
-      deletedFiles: 0,
-      unchangedFiles: 0,
-      skippedUnstableFiles: 0,
-    }
-
     const diskPathSet = new Set(diskFiles.map(f => f.filePath))
+
+    const newCandidates: Array<{ filePath: string; fileName: string; fileSize: number; modifiedTime: number }> = []
+    const modifiedCandidates: Array<{ diskFile: typeof diskFiles[0]; dbFile: any }> = []
+    let deletedFiles = 0
+    let unchangedFiles = 0
+    let skippedUnstableFiles = 0
 
     for (const diskFile of diskFiles) {
       if (signal?.aborted) break
-
       const dbFile = dbFileMap.get(diskFile.filePath)
-      try {
-        if (!dbFile) {
-          await this.registerFile(dirId, diskFile)
-          result.newFiles++
-        } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
-          if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
-            result.skippedUnstableFiles++
-            continue
-          }
-
-          const newHash = await calculateFileHash(diskFile.filePath)
-          if (newHash !== dbFile.file_hash) {
-            this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
-            result.modifiedFiles++
-          } else {
-            result.unchangedFiles++
-          }
-        } else {
-          result.unchangedFiles++
+      if (!dbFile) {
+        newCandidates.push(diskFile)
+      } else if (diskFile.modifiedTime > dbFile.modified_time || diskFile.fileSize !== dbFile.file_size) {
+        if (stableThreshold > 0 && (now - diskFile.modifiedTime) < stableThreshold) {
+          skippedUnstableFiles++
+          continue
         }
-      } catch (err: any) {
-        // 单个文件注册失败不应中断整个目录的扫描
-        logger.warn(`Failed to process file "${diskFile.filePath}":`, err?.message || err)
+        modifiedCandidates.push({ diskFile, dbFile })
+      } else {
+        unchangedFiles++
       }
     }
 
+    // 已删除文件：无需哈希，立即注销
     for (const dbFile of dbFiles) {
       if (!diskPathSet.has(dbFile.file_path)) {
-        this.unregisterFile(dbFile.id)
-        result.deletedFiles++
+        try {
+          this.unregisterFile(dbFile.id)
+          deletedFiles++
+        } catch (err: any) {
+          logger.warn(`Failed to unregister file "${dbFile.file_path}":`, err?.message || err)
+        }
       }
     }
 
-    logger.info(`Crawled "${dirPath}": ${result.newFiles} new, ${result.modifiedFiles} modified, ${result.deletedFiles} deleted, ${result.unchangedFiles} unchanged, ${result.skippedUnstableFiles} skipped(unstable)`)
-    return result
+    const t1 = Date.now()
+    logger.info(`Crawl phase1 "${dirPath}": detect=${t1 - t0}ms, total=${diskFiles.length}, newCandidates=${newCandidates.length}, modifiedCandidates=${modifiedCandidates.length}, deleted=${deletedFiles}, unchanged=${unchangedFiles}, skippedUnstable=${skippedUnstableFiles}`)
+
+    // 没有 new/modified 候选时直接返回，跳过哈希阶段
+    if (newCandidates.length === 0 && modifiedCandidates.length === 0) {
+      logger.info(`Crawled "${dirPath}": 0 new, 0 modified, ${deletedFiles} deleted, ${unchangedFiles} unchanged, ${skippedUnstableFiles} skipped(unstable)`)
+      return {
+        totalFiles: diskFiles.length,
+        newFiles: 0,
+        modifiedFiles: 0,
+        deletedFiles,
+        unchangedFiles,
+        skippedUnstableFiles,
+      }
+    }
+
+    // ===== Phase 2: 并行哈希（并发 16，I/O 密集型场景下近线性加速） =====
+    // 收集所有需要哈希的文件路径，统一并行计算
+    const hashItems: Array<{ filePath: string }> = [
+      ...newCandidates,
+      ...modifiedCandidates.map(c => c.diskFile),
+    ]
+    const hashMap = await this.parallelCalculateFileHash(hashItems, 16, signal)
+
+    // ===== Phase 3: 根据哈希结果写入数据库（同步 better-sqlite3，顺序执行即可） =====
+    let newFiles = 0
+    let modifiedFiles = 0
+
+    for (const diskFile of newCandidates) {
+      if (signal?.aborted) break
+      const hash = hashMap.get(diskFile.filePath)
+      if (!hash) continue // 哈希失败的文件跳过
+      try {
+        this.registerFileWithHash(dirId, diskFile, hash)
+        newFiles++
+      } catch (err: any) {
+        logger.warn(`Failed to register file "${diskFile.filePath}":`, err?.message || err)
+      }
+    }
+
+    for (const { diskFile, dbFile } of modifiedCandidates) {
+      if (signal?.aborted) break
+      const newHash = hashMap.get(diskFile.filePath)
+      if (!newHash) continue
+      try {
+        if (newHash !== dbFile.file_hash) {
+          this.updateFileHash(dbFile.id, newHash, diskFile.modifiedTime, diskFile.fileSize)
+          modifiedFiles++
+        } else {
+          // 内容未变，仅 mtime/size 变化（如复制、touch），更新元数据即可，避免无谓重索引
+          this.updateFileMeta(dbFile.id, diskFile.modifiedTime, diskFile.fileSize)
+          unchangedFiles++
+        }
+      } catch (err: any) {
+        logger.warn(`Failed to update file "${diskFile.filePath}":`, err?.message || err)
+      }
+    }
+
+    const t2 = Date.now()
+    logger.info(`Crawl phase2 "${dirPath}": hash+write=${t2 - t1}ms (${hashItems.length} files hashed in parallel)`)
+    logger.info(`Crawled "${dirPath}": ${newFiles} new, ${modifiedFiles} modified, ${deletedFiles} deleted, ${unchangedFiles} unchanged, ${skippedUnstableFiles} skipped(unstable)`)
+
+    return {
+      totalFiles: diskFiles.length,
+      newFiles,
+      modifiedFiles,
+      deletedFiles,
+      unchangedFiles,
+      skippedUnstableFiles,
+    }
+  }
+
+  /**
+   * 并发计算多个文件的哈希值（I/O 密集型，并发读取远快于串行）。
+   *
+   * 采用固定数量的 worker 协程从共享索引队列拉取任务，
+   * 避免一次性创建 N 个 Promise 导致内存/fd 压力。
+   *
+   * @param files 需要哈希的文件列表（仅取 filePath）
+   * @param concurrency 并发度（建议 8-16）
+   * @param signal 取消信号
+   * @returns Map<filePath, hash>
+   */
+  private async parallelCalculateFileHash(
+    files: Array<{ filePath: string }>,
+    concurrency: number,
+    signal?: AbortSignal,
+  ): Promise<Map<string, string>> {
+    const results = new Map<string, string>()
+    if (files.length === 0) return results
+
+    let index = 0
+    const actualConcurrency = Math.min(concurrency, files.length)
+
+    const worker = async () => {
+      while (index < files.length) {
+        if (signal?.aborted) return
+        const current = files[index++]
+        if (!current) return
+        try {
+          const hash = await calculateFileHash(current.filePath)
+          results.set(current.filePath, hash)
+        } catch (err: any) {
+          logger.warn(`Failed to hash "${current.filePath}":`, err?.message || err)
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: actualConcurrency }, () => worker()))
+    return results
   }
 
   async crawlAllDirectories(signal?: AbortSignal, options?: CrawlOptions): Promise<CrawlResult> {
@@ -331,6 +431,8 @@ class KMSCrawlerService {
             walk(fullPath)
           }
         } else if (entry.isFile()) {
+          // 跳过 Office/WPS 临时锁文件（如 ~$test.docx、.~test.docx）
+          if (entry.name.startsWith('~$') || entry.name.startsWith('.~')) continue
           const ext = path.extname(entry.name).toLowerCase().slice(1)
           if (!SUPPORTED_EXTENSIONS.has(ext)) continue
           if (extensions.length > 0 && !extensions.includes(ext)) continue
@@ -355,11 +457,11 @@ class KMSCrawlerService {
   }
 
   /**
-   * 注册新文件到数据库
+   * 注册新文件到数据库（使用预计算的哈希，避免重复读取文件内容）
    * - 如果 file_path 已存在（重叠目录场景，如添加了父目录又添加子目录），直接跳过，复用已有索引
    * - 如果相同 hash 的文件已存在（不同位置的同内容文件），复用索引数据，避免重复计算
    */
-  private async registerFile(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }): Promise<void> {
+  private registerFileWithHash(dirId: string, diskFile: { filePath: string; fileName: string; fileSize: number; modifiedTime: number }, hash: string): void {
     const existingByPath = this.db.prepare('SELECT id, dir_id FROM kms_files WHERE file_path = ? LIMIT 1').get(diskFile.filePath) as any
     if (existingByPath) {
       // 文件已注册在其他目录下：若来自虚拟手动目录（合集文件），迁移到真实索引目录
@@ -376,7 +478,6 @@ class KMSCrawlerService {
 
     const id = generateId()
     const ext = path.extname(diskFile.fileName).toLowerCase().slice(1)
-    const hash = await calculateFileHash(diskFile.filePath)
 
     // 检查是否已有相同hash的文件（不同位置的同内容文件）
     const existingFile = this.db.prepare('SELECT id FROM kms_files WHERE file_hash = ? LIMIT 1').get(hash) as any
@@ -398,6 +499,15 @@ class KMSCrawlerService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'cold')
       `).run(id, dirId, diskFile.filePath, diskFile.fileName, ext, diskFile.fileSize, hash, diskFile.modifiedTime)
     }
+  }
+
+  /**
+   * 更新文件元数据（mtime/size 变化但内容哈希未变时调用，避免无谓重索引）
+   */
+  private updateFileMeta(fileId: string, modifiedTime: number, fileSize: number): void {
+    this.db.prepare(`
+      UPDATE kms_files SET modified_time = ?, file_size = ?, updated_at = unixepoch() WHERE id = ?
+    `).run(modifiedTime, fileSize, fileId)
   }
 
   /**

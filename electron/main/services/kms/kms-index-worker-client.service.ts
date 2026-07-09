@@ -8,7 +8,7 @@ import {
   type IndexProgress,
   type ProgressCallback,
 } from './kms-index-manager.service'
-import { createLogger } from '../logger'
+import { createLogger, LoggerBackend } from '../logger'
 
 const logger = createLogger('KMS-WorkerClient')
 
@@ -28,7 +28,7 @@ const logger = createLogger('KMS-WorkerClient')
  * 4. Worker 初始化失败时降级为“主线程直接执行”，保证功能可用。
  */
 
-type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles'
+type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles' | 'autoIndexCheck'
 
 interface StartMessage {
   type: 'start'
@@ -102,6 +102,8 @@ class KMSIndexWorkerClientService {
 
   /**
    * 启动一个批量任务。如果 Worker 不可用，降级为主线程直接执行。
+   * 增加任务级超时：Worker 任务挂起时（如原生模块在打包环境卡死），
+   * 主动 reject 并降级，避免 pendingTasks 永久驻留、autoIndexRunning 永久为 true。
    */
   async runTask(
     task: WorkerTask,
@@ -116,8 +118,21 @@ class KMSIndexWorkerClientService {
     try {
       const worker = await this.ensureWorker()
       const id = this.nextTaskId()
+      // 任务级超时：索引大库可能很久，给 30 分钟；autoIndexCheck 通常很快，给 10 分钟
+      const timeoutMs = task === 'autoIndexCheck' ? 10 * 60 * 1000 : 30 * 60 * 1000
+      logger.info(`Dispatching worker task "${task}" (id=${id}, timeout=${timeoutMs / 1000}s)`)
       const result = await new Promise<any>((resolve, reject) => {
-        this.pendingTasks.set(id, { resolve, reject, task })
+        const timer = setTimeout(() => {
+          if (this.pendingTasks.has(id)) {
+            this.pendingTasks.delete(id)
+            reject(new Error(`Worker task ${task} timed out after ${timeoutMs / 1000}s`))
+          }
+        }, timeoutMs)
+        this.pendingTasks.set(id, {
+          resolve: (v: any) => { clearTimeout(timer); resolve(v) },
+          reject: (e: any) => { clearTimeout(timer); reject(e) },
+          task,
+        })
         const msg: StartMessage = { type: 'start', id, task, args }
         worker.postMessage(msg)
       })
@@ -158,6 +173,15 @@ class KMSIndexWorkerClientService {
   }
 
   /**
+   * 取消 Worker 内正在执行的自动索引检查
+   */
+  cancelAutoIndex(): void {
+    if (this.worker && this.workerReady) {
+      this.worker.postMessage({ type: 'cancelAutoIndex' })
+    }
+  }
+
+  /**
    * 主动销毁 Worker（用于应用退出或数据目录切换）
    */
   async terminate(): Promise<void> {
@@ -167,7 +191,9 @@ class KMSIndexWorkerClientService {
         this.worker.postMessage({ type: 'cancel' })
         await new Promise((r) => setTimeout(r, 100))
         await this.worker.terminate()
-      } catch {}
+      } catch (err: any) {
+        logger.warn('Failed to terminate index worker gracefully:', err?.message || err)
+      }
       this.worker = null
       this.workerReady = false
     }
@@ -195,7 +221,9 @@ class KMSIndexWorkerClientService {
           if (config?.api_key) {
             apiKeys[p.id] = config.api_key
           }
-        } catch {}
+        } catch (err: any) {
+          logger.warn(`Failed to decrypt API key for provider ${p.id}:`, err?.message || err)
+        }
       }
     } catch (err: any) {
       logger.warn('Failed to collect decrypted API keys for worker:', err?.message || err)
@@ -217,6 +245,11 @@ class KMSIndexWorkerClientService {
 
     const dataDir = PathService.getInstance().getDataDir()
     const apiKeys = await this.collectDecryptedApiKeys()
+    // 主进程判断的 isDev 透传给 worker，避免 worker 中访问 electron.app.isPackaged
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const isDev = !require('electron').app.isPackaged
+    // 透传当前日志文件路径，让 Worker 复用同一文件，避免日志碎片化
+    const logFilePath = LoggerBackend.getInstance().getLogFilePath()
 
     logger.info(`Spawning KMS index worker: ${workerPath}`)
 
@@ -224,6 +257,8 @@ class KMSIndexWorkerClientService {
       workerData: {
         dataDir,
         apiKeys,
+        isDev,
+        logFilePath,
       },
     })
 
