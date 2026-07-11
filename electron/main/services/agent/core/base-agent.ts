@@ -404,6 +404,9 @@ export abstract class BaseAgent {
               callbacks.onThought?.(thought)
             },
             onToolCall: (_toolCalls: any[]) => {},
+            onToolCallDelta: (delta) => {
+              callbacks.onToolCallDelta?.(delta)
+            },
           },
           signal
         )

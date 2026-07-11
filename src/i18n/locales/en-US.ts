@@ -152,6 +152,7 @@ export default {
     collapse: 'Collapse ▾',
     toolCall: 'Tool Call',
     executing: 'Executing',
+    generatingArgs: 'Generating Args',
     completed: 'Completed',
     inputParams: 'Input Parameters',
     outputResult: 'Result',

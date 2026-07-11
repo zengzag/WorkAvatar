@@ -99,6 +99,26 @@ export function registerLLMHandlers(
       }
     }
 
+    // tool_call delta 批量缓冲：LLM 生成工具参数时可能产生大量增量，合并后发送
+    const toolCallDeltaBuffer: Map<number, { index: number; id?: string; name?: string; arguments: string }> = new Map()
+    let toolCallDeltaFlushScheduled = false
+    const flushToolCallDeltas = () => {
+      toolCallDeltaFlushScheduled = false
+      if (toolCallDeltaBuffer.size === 0) return
+      if (abortController.signal.aborted) { toolCallDeltaBuffer.clear(); return }
+      const deltas = Array.from(toolCallDeltaBuffer.values())
+      toolCallDeltaBuffer.clear()
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
+      }
+    }
+    const scheduleToolCallDeltaFlush = () => {
+      if (!toolCallDeltaFlushScheduled) {
+        toolCallDeltaFlushScheduled = true
+        setImmediate(flushToolCallDeltas)
+      }
+    }
+
     interactionContext.run(
       {
         sessionId,
@@ -129,7 +149,18 @@ export function registerLLMHandlers(
                 }
               },
               onThought: (thought: string) => { if (!abortController.signal.aborted && !event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.LLM_THOUGHT, { sessionId, thought }) },
-              onToolCall: (toolCall: { id: string; name: string; args: any }) => { if (!abortController.signal.aborted && !event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args }) },
+              onToolCallDelta: (delta: { index: number; id?: string; name?: string; arguments: string }) => {
+                if (!abortController.signal.aborted) {
+                  toolCallDeltaBuffer.set(delta.index, delta)
+                  scheduleToolCallDeltaFlush()
+                }
+              },
+              onToolCall: (toolCall: { id: string; name: string; args: any }) => {
+                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                  flushToolCallDeltas()
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args })
+                }
+              },
               onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any }) => {
                 if (abortController.signal.aborted) return
                 const { rawResult: _rawResult, ...safeResult } = toolResult
@@ -145,6 +176,7 @@ export function registerLLMHandlers(
               },
               onDone: (metadata?: any) => {
                 flushChunks() // 确保缓冲区中的 token 不丢失
+                flushToolCallDeltas()
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
                 }
@@ -152,6 +184,7 @@ export function registerLLMHandlers(
               },
               onError: (error: string) => {
                 flushChunks()
+                flushToolCallDeltas()
                 if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error })
                   sentError = true
@@ -163,6 +196,7 @@ export function registerLLMHandlers(
           )
         } catch (error: any) {
           flushChunks()
+          flushToolCallDeltas()
           if (abortController.signal.aborted) {
             if (!event.sender.isDestroyed()) {
               event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })

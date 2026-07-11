@@ -48,6 +48,7 @@ interface EmployeeChatCallbacks {
   onChunk: (chunk: string) => void
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
+  onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
   onToolResult: (toolResult: { name: string; result: any; generatedFiles?: any }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
@@ -328,6 +329,7 @@ class EmployeeAgentService {
           onChunk: callbacks.onChunk,
           onThought: callbacks.onThought,
           onToolCall: callbacks.onToolCall,
+          onToolCallDelta: callbacks.onToolCallDelta,
           onToolResult: callbacks.onToolResult,
           onToolProgress: callbacks.onToolProgress,
           onDone: (metadata?: any) => {

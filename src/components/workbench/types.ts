@@ -21,6 +21,10 @@ export interface MessageSegment {
   toolResult?: any
   isToolComplete?: boolean
   toolCallId?: string
+  /** LLM 正在流式生成工具参数（arguments JSON 尚未完成） */
+  isToolArgsStreaming?: boolean
+  /** 流式生成中的原始参数文本（JSON 字符串，可能不完整） */
+  toolArgsRaw?: string
   /** 工具执行中间进度步骤（仅UI展示，不进入LLM上下文） */
   toolProgress?: any[]
   /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */

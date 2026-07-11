@@ -224,6 +224,15 @@ export class OpenAIProvider implements ILLMProvider {
                 if (tc.id) accumulatedToolCalls[index].id = tc.id
                 if (tc.function?.name) accumulatedToolCalls[index].function.name += tc.function.name
                 if (tc.function?.arguments) accumulatedToolCalls[index].function.arguments += tc.function.arguments
+
+                // 流式推送 tool_call 增量，让前端在 LLM 生成参数阶段即可看到进度
+                const tc2 = accumulatedToolCalls[index]
+                callbacks.onToolCallDelta?.({
+                  index,
+                  id: tc2.id || undefined,
+                  name: tc2.function.name || undefined,
+                  arguments: tc2.function.arguments,
+                })
               }
             }
 

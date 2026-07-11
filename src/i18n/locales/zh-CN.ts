@@ -152,6 +152,7 @@ export default {
     collapse: '折叠 ▾',
     toolCall: '工具调用',
     executing: '执行中',
+    generatingArgs: '生成参数中',
     completed: '完成',
     inputParams: '输入参数',
     outputResult: '返回结果',

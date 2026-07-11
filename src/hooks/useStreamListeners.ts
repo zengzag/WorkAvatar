@@ -119,6 +119,65 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
+    const toolCallDeltaCleanup = window.electronAPI.llm.onToolCallDelta((data: { sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }) => {
+      const { sessionId, deltas } = data
+      const streamState = streamStatesRef.current.get(sessionId)
+      if (!streamState) return
+
+      updateConvMessages(streamState.conversationId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+
+          for (const delta of deltas) {
+            const { index, id, name, arguments: argsText } = delta
+
+            let targetIndex = -1
+            if (id) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.toolCallId === id)
+            }
+            if (targetIndex === -1) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.isToolArgsStreaming && s.toolCallId === `delta_${index}`)
+            }
+            if (targetIndex === -1 && name) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.isToolArgsStreaming && s.toolName === name && !s.isToolComplete)
+            }
+
+            // 关闭正在流式输出的 answer/thinking 段
+            const lastSeg = segs[segs.length - 1]
+            if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+            }
+            if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+            }
+
+            if (targetIndex !== -1) {
+              segs[targetIndex] = {
+                ...segs[targetIndex],
+                toolName: name || segs[targetIndex].toolName,
+                toolCallId: id || segs[targetIndex].toolCallId,
+                toolArgsRaw: argsText,
+              }
+            } else {
+              segs.push({
+                type: 'tool_call',
+                id: `${streamState.assistantMessageId}_tool_${streamState.toolCallCounter++}`,
+                toolName: name || '',
+                toolCallId: id || `delta_${index}`,
+                isToolArgsStreaming: true,
+                toolArgsRaw: argsText,
+                isToolComplete: false,
+                collapsed: false,
+                timestamp: Date.now(),
+              })
+            }
+          }
+          return { ...m, segments: segs }
+        })
+      )
+    })
+
     const toolCallCleanup = window.electronAPI.llm.onToolCall((data: { sessionId: string; id: string; name: string; args: any }) => {
       const { sessionId, id: toolCallId, name, args } = data
       const streamState = streamStatesRef.current.get(sessionId)
@@ -128,23 +187,44 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
-          const lastSeg = segs[segs.length - 1]
-          if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+
+          // 优先复用 delta 阶段已创建的 streaming segment
+          let targetIndex = segs.findIndex(s =>
+            s.type === 'tool_call' && s.isToolArgsStreaming &&
+            (s.toolCallId === toolCallId || (s.toolName === name && !s.isToolComplete))
+          )
+
+          if (targetIndex !== -1) {
+            segs[targetIndex] = {
+              ...segs[targetIndex],
+              toolName: name,
+              toolArgs: args,
+              toolArgsRaw: undefined,
+              isToolArgsStreaming: false,
+              toolCallId,
+              isToolComplete: false,
+              collapsed: true,
+            }
+          } else {
+            // 无 delta 预创建的 segment，走原有逻辑
+            const lastSeg = segs[segs.length - 1]
+            if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+            }
+            if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+            }
+            segs.push({
+              type: 'tool_call',
+              id: `${streamState.assistantMessageId}_tool_${streamState.toolCallCounter++}`,
+              toolName: name,
+              toolArgs: args,
+              toolCallId,
+              isToolComplete: false,
+              collapsed: true,
+              timestamp: Date.now(),
+            })
           }
-          if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-            segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
-          }
-          segs.push({
-            type: 'tool_call',
-            id: `${streamState.assistantMessageId}_tool_${streamState.toolCallCounter++}`,
-            toolName: name,
-            toolArgs: args,
-            toolCallId,
-            isToolComplete: false,
-            collapsed: true,
-            timestamp: Date.now(),
-          })
           return { ...m, segments: segs }
         })
       )
@@ -221,6 +301,21 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
         if (!assistantMsg) return prev
         const segs = (assistantMsg.segments || []).map(s => {
           const completedAt = s.completedAt || Date.now()
+          // 清理参数流式生成残留状态（LLM 中断或异常时 delta segment 可能未转为执行态）
+          if (s.type === 'tool_call' && s.isToolArgsStreaming) {
+            let parsedArgs = s.toolArgs
+            if (!parsedArgs && s.toolArgsRaw) {
+              try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* incomplete JSON, keep raw */ }
+            }
+            return {
+              ...s,
+              isStreaming: false,
+              isToolArgsStreaming: false,
+              toolArgs: parsedArgs,
+              completedAt,
+              collapsed: true,
+            }
+          }
           return {
             ...s,
             isStreaming: false,
@@ -279,7 +374,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) =>
           m.id === streamState.assistantMessageId
-            ? { ...m, content: tt('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false, completedAt: s.completedAt || Date.now() })) }
+            ? { ...m, content: tt('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() })) }
             : m
         )
       )
@@ -301,6 +396,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
     const cleanup = () => {
       chunkCleanup()
       thoughtCleanup()
+      toolCallDeltaCleanup()
       toolCallCleanup()
       toolResultCleanup()
       toolProgressCleanup()

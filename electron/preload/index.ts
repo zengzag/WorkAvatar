@@ -137,6 +137,11 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
+    onToolCallDelta: (callback: (data: { sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
+    },
     onToolResult: (callback: (data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
