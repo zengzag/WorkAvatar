@@ -887,6 +887,8 @@ export default {
       topKDesc: 'Max results per round in AI search, controls token consumption (3-100)',
       resultLimit: 'Search Result Limit',
       resultLimitDesc: 'Max results returned for keyword/semantic/hybrid search (5-500)',
+      autoReparseHotData: 'Auto-reparse Hot Data',
+      autoReparseHotDataDesc: 'Whether to automatically re-parse and generate LLM summaries when files are promoted to hot data. When off, files are only marked as hot without re-parsing',
       paramsSaved: 'Search parameters saved',
       dirsDesc: 'Manage local directories to be indexed',
       indexDesc: 'Manage file index building, incremental updates and rebuilding',

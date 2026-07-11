@@ -34,6 +34,7 @@ import type {
   AutoIndexConfig,
   AutoIndexStatus,
 } from './kms-index-types'
+import { getKmsSettings } from './kms-config-helpers'
 
 export type { IndexPhase, IndexProgress, ProgressCallback, AutoIndexConfig, AutoIndexStatus }
 
@@ -828,6 +829,13 @@ class KMSIndexManagerService {
     try {
       const { promotedFileIds } = KMSDataTierService.getInstance().evaluateDataTiers(force)
       if (promotedFileIds.length === 0) return
+
+      // 读取"热数据自动重解析"开关：关闭时仅完成层级晋升（data_tier=hot），不触发重新解析与摘要
+      const { autoReparseHotData } = getKmsSettings().searchParams
+      if (!autoReparseHotData) {
+        logger.info(`Skipped hot-data reparse for ${promotedFileIds.length} promoted file(s): autoReparseHotData disabled`)
+        return
+      }
 
       logger.info(`Processing ${promotedFileIds.length} promoted file(s) with hot-data pipeline...`)
 

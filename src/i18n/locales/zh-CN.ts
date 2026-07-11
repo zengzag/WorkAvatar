@@ -893,6 +893,8 @@ export default {
       topKDesc: 'AI 检索时每轮返回的结果数量上限，用于控制 Token 消耗（3-100）',
       resultLimit: '搜索结果数量',
       resultLimitDesc: '关键词/语义/混合搜索时返回的结果数量上限（5-500）',
+      autoReparseHotData: '热数据自动重解析',
+      autoReparseHotDataDesc: '文件晋升为热数据后是否自动重新解析并生成 LLM 摘要。关闭后仅标记为热数据，不触发重新解析',
       paramsSaved: '检索参数已保存',
       dirsDesc: '管理需要建立索引的本地目录',
       indexDesc: '管理文件索引的构建、增量更新与重建',

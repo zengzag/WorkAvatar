@@ -680,8 +680,8 @@ class KMSService {
     const results = searchEngine.search(query, queryEmbedding, normalizedOptions)
     logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
 
-    // 批量记录搜索命中（替代逐条插入，减少 DB 写入次数）
-    const hitFileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+    // 批量记录搜索命中（仅取排名靠前的有限条，避免 resultLimit 过大时大量低相关结果被计入命中计数）
+    const hitFileIds = [...new Set(results.slice(0, 10).map(r => r.file_id).filter(Boolean))]
     if (hitFileIds.length > 0) {
       const crawler = KMSCrawlerService.getInstance()
       crawler.logFileAccessBatch(hitFileIds, 'search_hit')

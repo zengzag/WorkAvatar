@@ -398,9 +398,17 @@ export function getResultKey(result: SearchResult): string {
   return `${result.match_type}-${result.file_id}`
 }
 
-/** 记录搜索命中（用于冷热数据评估） */
+/**
+ * 记录搜索命中（用于冷热数据评估）
+ *
+ * 仅记录排名靠前的有限条结果作为命中，避免 topK 过大时大量低相关结果被计入命中计数，
+ * 导致文件被轻易晋升为热数据。结果已按相关性排序，取前 N 条即可。
+ */
+const SEARCH_HIT_RECORD_LIMIT = 10
+
 export function logSearchHits(results: SearchResult[]): void {
-  const fileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+  const topResults = results.slice(0, SEARCH_HIT_RECORD_LIMIT)
+  const fileIds = [...new Set(topResults.map(r => r.file_id).filter(Boolean))]
   if (fileIds.length === 0) return
   try {
     const crawler = require('./kms-crawler.service').default.getInstance()

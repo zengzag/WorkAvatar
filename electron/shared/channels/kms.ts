@@ -154,7 +154,7 @@ export interface KMSSetSettingsParams {
   model?: KMSModelConfig | null
   embeddingModel?: KMSModelConfig | null
   summaryModel?: KMSModelConfig | null
-  searchParams?: { maxRounds?: number; topK?: number }
+  searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean }
   autoIndex?: KMSAutoIndexConfig
 }
 
