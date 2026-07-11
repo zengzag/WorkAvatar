@@ -28,7 +28,7 @@ const logger = createLogger('KMS-WorkerClient')
  * 4. Worker 初始化失败时降级为“主线程直接执行”，保证功能可用。
  */
 
-type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles' | 'autoIndexCheck'
+type WorkerTask = 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processSingleFileDeep' | 'processPromotedFiles' | 'autoIndexCheck'
 
 interface StartMessage {
   type: 'start'

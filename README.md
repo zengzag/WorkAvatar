@@ -30,6 +30,15 @@ WorkAvatar 的思路是：**让资料库轻量起步、智能体按需深挖、�
 
 ---
 
+## 产品预览
+
+<div align="center">
+  <img src="images/agent.gif" alt="数字员工" width="49%" />
+  <img src="images/kms.gif" alt="本地资料库" width="49%" />
+</div>
+
+---
+
 ## 核心功能
 
 ### 1. AI 原生本地搜索

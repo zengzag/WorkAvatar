@@ -54,6 +54,8 @@ export const KMS_CHANNELS = {
   // 进度事件复用 KMS_INDEX_PROGRESS 通道，含 collectionId 字段供前端按合集过滤
   KMS_PROCESS_COLLECTION_DEEP: 'kms:process-collection-deep',
   KMS_CANCEL_COLLECTION_DEEP: 'kms:cancel-collection-deep',
+  // KMS 单文件深度处理（合集文件列表中单个文件的深度处理）
+  KMS_PROCESS_FILE_DEEP: 'kms:process-file-deep',
   // KMS 手动摘要生成（目录摘要/文件摘要）
   KMS_GENERATE_DIR_SUMMARY: 'kms:generate-dir-summary',
   KMS_GENERATE_FILE_SUMMARY: 'kms:generate-file-summary',

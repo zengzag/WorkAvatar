@@ -3,6 +3,7 @@ import { Space, Tooltip, Tag, Button, Popconfirm, Typography, theme } from 'antd
 import type { ColumnsType } from 'antd/es/table'
 import {
   FileOutlined, FolderOutlined, EyeOutlined, DeleteOutlined, ExclamationCircleOutlined,
+  ThunderboltOutlined, LoadingOutlined, CheckCircleFilled,
 } from '@ant-design/icons'
 import { formatFileSize } from '../../../utils/format'
 import { formatTime } from '../kms-columns'
@@ -15,6 +16,8 @@ export interface CollectionFileColumnsHandlers {
   onPreviewFile: (file: CollectionFile) => void
   onOpenFileDir: (filePath: string) => void
   onRemoveFile: (file: CollectionFile) => void
+  onProcessFileDeep: (file: CollectionFile) => void
+  processingFileIds: Set<string>
 }
 
 export const buildFileColumns = (
@@ -62,6 +65,35 @@ export const buildFileColumns = (
     },
   },
   {
+    title: t('kms.collections.deepProcessStatus'),
+    key: 'deep_processed',
+    width: 100,
+    render: (_: any, record: CollectionFile) => {
+      const isProcessing = handlers.processingFileIds.has(record.id)
+      if (isProcessing) {
+        return (
+          <Tag color="processing" style={{ fontSize: 11 }}>
+            <LoadingOutlined style={{ marginRight: 2 }} />
+            {t('kms.collections.deepProcessing')}
+          </Tag>
+        )
+      }
+      if (record.deep_processed) {
+        return (
+          <Tag color="success" style={{ fontSize: 11 }}>
+            <CheckCircleFilled style={{ marginRight: 2 }} />
+            {t('kms.collections.deepProcessed')}
+          </Tag>
+        )
+      }
+      return (
+        <Tag color="default" style={{ fontSize: 11 }}>
+          {t('kms.collections.deepNotProcessed')}
+        </Tag>
+      )
+    },
+  },
+  {
     title: t('kms.collections.fileSummary'),
     dataIndex: 'summary',
     key: 'summary',
@@ -83,23 +115,35 @@ export const buildFileColumns = (
   {
     title: '',
     key: 'actions',
-    width: 140,
-    render: (_: any, record: CollectionFile) => (
-      <Space size={4}>
-        <Tooltip title={t('kms.collections.previewFile')}>
-          <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => handlers.onPreviewFile(record)} />
-        </Tooltip>
-        <Tooltip title={t('kms.openDir')}>
-          <Button type="text" size="small" icon={<FolderOutlined />} onClick={() => handlers.onOpenFileDir(record.file_path)} />
-        </Tooltip>
-        <Popconfirm
-          title={t('kms.collections.removeFileConfirm')}
-          icon={<ExclamationCircleOutlined style={{ color: token.colorError }} />}
-          onConfirm={() => handlers.onRemoveFile(record)}
-        >
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
-      </Space>
-    ),
+    width: 170,
+    render: (_: any, record: CollectionFile) => {
+      const isProcessing = handlers.processingFileIds.has(record.id)
+      return (
+        <Space size={4}>
+          <Tooltip title={isProcessing ? t('kms.collections.deepProcessing') : t('kms.collections.deepProcessFile')}>
+            <Button
+              type="text"
+              size="small"
+              icon={isProcessing ? <LoadingOutlined /> : <ThunderboltOutlined />}
+              disabled={isProcessing}
+              onClick={() => handlers.onProcessFileDeep(record)}
+            />
+          </Tooltip>
+          <Tooltip title={t('kms.collections.previewFile')}>
+            <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => handlers.onPreviewFile(record)} />
+          </Tooltip>
+          <Tooltip title={t('kms.openDir')}>
+            <Button type="text" size="small" icon={<FolderOutlined />} onClick={() => handlers.onOpenFileDir(record.file_path)} />
+          </Tooltip>
+          <Popconfirm
+            title={t('kms.collections.removeFileConfirm')}
+            icon={<ExclamationCircleOutlined style={{ color: token.colorError }} />}
+            onConfirm={() => handlers.onRemoveFile(record)}
+          >
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      )
+    },
   },
 ]

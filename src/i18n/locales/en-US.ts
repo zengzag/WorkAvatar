@@ -1024,6 +1024,11 @@ export default {
       noCollectionSummary: 'No summary yet. Click AI generate or edit manually',
       keyTopicsLabel: 'Topics',
       viewDetails: 'View Details',
+      deepProcessStatus: 'Deep Process',
+      deepProcessed: 'Processed',
+      deepNotProcessed: 'Not Processed',
+      deepProcessing: 'Processing',
+      deepProcessFile: 'Deep process this file',
     },
     // 合集详情抽屉（查看 AI 生成的摘要/章节/段落）
     collectionDetails: {

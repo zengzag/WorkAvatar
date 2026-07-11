@@ -389,7 +389,11 @@ class KMSIndexManagerService {
     await KMSAutoIndexService.getInstance().runCheck()
   }
 
-  async processCollectionDeep(collectionId: string, onProgress?: ProgressCallback): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
+  async processCollectionDeep(
+    collectionId: string,
+    onProgress?: ProgressCallback,
+    incremental: boolean = true,
+  ): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
@@ -401,13 +405,19 @@ class KMSIndexManagerService {
         logger.warn(`Collection deep process skipped: collection ${collectionId} not found`)
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'Collection not found' }
       }
-      const files = kmsService.listFilesInCollection(collectionId)
-      if (files.length === 0) {
+      const allFiles = kmsService.listFilesInCollection(collectionId)
+      if (allFiles.length === 0) {
         logger.warn(`Collection deep process skipped: collection "${collection.name}" has no files`)
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_FILES' }
       }
 
-      logger.info(`Collection deep process started: collection="${collection.name}"(${collectionId}), files=${files.length}`)
+      // 增量模式：跳过已深度处理的文件（data_tier='hot' 且有 LLM 摘要）
+      const files = incremental
+        ? allFiles.filter(f => !(f.data_tier === 'hot' && f.summary))
+        : allFiles
+      const skipped = allFiles.length - files.length
+
+      logger.info(`Collection deep process started: collection="${collection.name}"(${collectionId}), total=${allFiles.length}, toProcess=${files.length}, skipped=${skipped}, incremental=${incremental}`)
 
       const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
       if (!llmConfig) {
@@ -421,11 +431,26 @@ class KMSIndexManagerService {
 
       const reportProgress = this.makeCollectionProgress(collectionId, collection.name, onProgress)
 
+      if (total === 0) {
+        // 没有需要处理的文件，但可能需要生成合集摘要
+        const hasSummary = !!kmsService.getCollectionSummary(collectionId)
+        if (!hasSummary) {
+          return await this.generateCollectionSummaryPhase(collectionId, collection.name, kmsService, reportProgress, signal, 0, 0)
+        }
+        reportProgress({
+          phase: 'done',
+          current: 0,
+          total: 0,
+          message: `无需处理: ${collection.name}（所有文件已深度处理）`,
+        })
+        return { fileProcessed: 0, summaryGenerated: hasSummary, embeddingGenerated: false }
+      }
+
       reportProgress({
         phase: 'parsing',
         current: 0,
         total,
-        message: `合集深度处理: ${collection.name}（${total} 个文件）`,
+        message: `合集深度处理: ${collection.name}（${total} 个文件${skipped > 0 ? `，跳过 ${skipped} 个已处理` : ''}）`,
       })
 
       let fileProcessed = 0
@@ -433,40 +458,7 @@ class KMSIndexManagerService {
         if (signal.aborted) break
 
         try {
-          const parseResult = await fileParser.parseFilePath(file.file_path, signal)
-          if (signal.aborted) break
-          if (!parseResult.fullText) {
-            fileProcessed++
-            continue
-          }
-
-          // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
-          KMSDatabaseService.getInstance().runInTransaction(() => {
-            searchEngine.deleteIndexByFile(file.id)
-            searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
-            searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
-            this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
-          })
-
-          await this.processHotFile(
-            file.id,
-            parseResult.fullText,
-            file.file_name,
-            llmConfig.providerId,
-            llmClient,
-            searchEngine,
-            signal,
-            reportProgress,
-            { current: fileProcessed + 1, total },
-            llmConfig.modelId,
-            llmConfig.enableThinking,
-          )
-
-          // tier 和 status 更新也合并到一个事务
-          KMSDatabaseService.getInstance().runInTransaction(() => {
-            KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
-            KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
-          })
+          await this.processCollectionFileDeep(file, llmConfig, searchEngine, fileParser, llmClient, signal, reportProgress, { current: fileProcessed + 1, total })
         } catch (err: any) {
           if (signal.aborted) break
           logger.error(`Collection deep process failed for "${file.file_name}":`, err)
@@ -512,53 +504,7 @@ class KMSIndexManagerService {
         return { fileProcessed, summaryGenerated: false, embeddingGenerated: false, error: 'ABORTED' }
       }
 
-      reportProgress({
-        phase: 'collection_summary',
-        current: 0,
-        total: 1,
-        message: `生成合集摘要: ${collection.name}`,
-      })
-      const summaryResult = await kmsService.generateCollectionSummary(collectionId, signal)
-      const summaryGenerated = !('error' in summaryResult)
-
-      if (signal.aborted) {
-        reportProgress({
-          phase: 'done',
-          current: fileProcessed,
-          total,
-          message: `已取消处理: ${collection.name}`,
-          cancelled: true,
-        })
-        return { fileProcessed, summaryGenerated, embeddingGenerated: false, error: 'ABORTED' }
-      }
-
-      let embeddingGenerated = false
-      if (summaryGenerated) {
-        reportProgress({
-          phase: 'collection_embedding',
-          current: 0,
-          total: 1,
-          message: `合集摘要向量化: ${collection.name}`,
-        })
-        embeddingGenerated = await this.generateCollectionSummaryEmbedding(collectionId, signal)
-      }
-
-      reportProgress({
-        phase: 'done',
-        current: fileProcessed,
-        total,
-        message: `合集处理完成: ${collection.name}（${fileProcessed} 个文件，摘要${summaryGenerated ? '已' : '未'}生成）`,
-      })
-
-      // 合集深处理结束：主动触发 checkpoint，把大量写入的 WAL 内容合并回主库
-      try {
-        KMSDatabaseService.getInstance().checkpoint('PASSIVE')
-      } catch (err: any) {
-        logger.warn('Post-collection checkpoint failed:', err?.message || err)
-      }
-
-      logger.info(`Collection deep process completed: collection="${collection.name}"(${collectionId}), files=${fileProcessed}, summary=${summaryGenerated}, embedding=${embeddingGenerated}`)
-      return { fileProcessed, summaryGenerated, embeddingGenerated }
+      return await this.generateCollectionSummaryPhase(collectionId, collection.name, kmsService, reportProgress, signal, fileProcessed, total)
     } catch (err: any) {
       logger.error(`Collection deep process failed (collection=${collectionId}):`, err?.message || err)
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', collectionId })
@@ -566,6 +512,231 @@ class KMSIndexManagerService {
     } finally {
       this.abortController = null
     }
+  }
+
+  /**
+   * 处理合集中单个文件的深度处理（解析→索引→段落切分→TOC→段落摘要→文件摘要→tier晋升）
+   * 用于合集文件列表中的"深度处理单个文件"按钮
+   */
+  async processSingleFileDeep(
+    fileId: string,
+    collectionId?: string,
+    onProgress?: ProgressCallback,
+  ): Promise<{ success: boolean; error?: string }> {
+    this.abortController = new AbortController()
+    const signal = this.abortController.signal
+
+    try {
+      const file = this.db.prepare('SELECT id, file_name, file_path FROM kms_files WHERE id = ?').get(fileId) as any
+      if (!file) {
+        return { success: false, error: 'FILE_NOT_FOUND' }
+      }
+
+      const KMSService = (await import('./kms.service')).default
+      const kmsService = KMSService.getInstance()
+      const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
+      if (!llmConfig) {
+        return { success: false, error: 'NO_LLM_PROVIDER' }
+      }
+
+      let collectionName = ''
+      if (collectionId) {
+        const collection = kmsService.getCollection(collectionId)
+        collectionName = collection?.name || ''
+      }
+
+      const reportProgress = collectionId
+        ? this.makeCollectionProgress(collectionId, collectionName, onProgress)
+        : (onProgress || (() => {}))
+
+      const searchEngine = KMSSearchEngineService.getInstance()
+      const fileParser = FileParserService.getInstance()
+      const llmClient = LLMClientService.getInstance()
+
+      reportProgress({
+        phase: 'parsing',
+        current: 0,
+        total: 1,
+        message: `深度处理: ${file.file_name}`,
+        fileId: file.id,
+        fileName: file.file_name,
+      })
+
+      try {
+        await this.processCollectionFileDeep(
+          { id: file.id, file_name: file.file_name, file_path: file.file_path },
+          llmConfig, searchEngine, fileParser, llmClient,
+          signal, reportProgress,
+          { current: 1, total: 1 },
+        )
+      } catch (err: any) {
+        if (signal.aborted) {
+          reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+          return { success: false, error: 'ABORTED' }
+        }
+        logger.error(`Single file deep process failed for "${file.file_name}":`, err)
+        KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
+        return { success: false, error: err?.message || 'UNKNOWN' }
+      }
+
+      if (signal.aborted) {
+        reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+        return { success: false, error: 'ABORTED' }
+      }
+
+      // 生成该文件的向量嵌入
+      reportProgress({
+        phase: 'embedding',
+        current: 0,
+        total: 1,
+        message: `生成段落向量嵌入: ${file.file_name}`,
+        fileId: file.id,
+        fileName: file.file_name,
+      })
+      try {
+        await KMSEmbeddingService.getInstance().generateEmbeddingsForFile(file.id, llmConfig.providerId)
+      } catch (embErr: any) {
+        logger.warn(`Embedding generation failed for "${file.file_name}":`, embErr?.message || embErr)
+      }
+
+      if (signal.aborted) {
+        reportProgress({ phase: 'done', current: 1, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+        return { success: false, error: 'ABORTED' }
+      }
+
+      reportProgress({
+        phase: 'done',
+        current: 1,
+        total: 1,
+        message: `深度处理完成: ${file.file_name}`,
+      })
+
+      // checkpoint 合并 WAL
+      try {
+        KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+      } catch (err: any) {
+        logger.warn('Post-single-file checkpoint failed:', err?.message || err)
+      }
+
+      logger.info(`Single file deep process completed: ${file.file_name}(${fileId})`)
+      return { success: true }
+    } catch (err: any) {
+      logger.error(`Single file deep process failed (fileId=${fileId}):`, err?.message || err)
+      const extras = collectionId ? { collectionId } : {}
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', ...extras })
+      return { success: false, error: err?.message || 'Unknown error' }
+    } finally {
+      this.abortController = null
+    }
+  }
+
+  /**
+   * 合集深度处理中单个文件的处理逻辑（解析→索引→段落切分→TOC→段落摘要→文件摘要→tier晋升）
+   * 被 processCollectionDeep 和 processSingleFileDeep 共用
+   */
+  private async processCollectionFileDeep(
+    file: { id: string; file_name: string; file_path: string },
+    llmConfig: { providerId: string; modelId?: string; enableThinking?: boolean },
+    searchEngine: KMSSearchEngineService,
+    fileParser: FileParserService,
+    llmClient: LLMClientService,
+    signal: AbortSignal,
+    reportProgress: ProgressCallback,
+    progressBase: { current: number; total: number },
+  ): Promise<void> {
+    const parseResult = await fileParser.parseFilePath(file.file_path, signal)
+    if (signal.aborted) return
+    if (!parseResult.fullText) return
+
+    // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
+    KMSDatabaseService.getInstance().runInTransaction(() => {
+      searchEngine.deleteIndexByFile(file.id)
+      searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
+      searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
+      this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
+    })
+
+    await this.processHotFile(
+      file.id,
+      parseResult.fullText,
+      file.file_name,
+      llmConfig.providerId,
+      llmClient,
+      searchEngine,
+      signal,
+      reportProgress,
+      progressBase,
+      llmConfig.modelId,
+      llmConfig.enableThinking,
+    )
+
+    // tier 和 status 更新也合并到一个事务
+    KMSDatabaseService.getInstance().runInTransaction(() => {
+      KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
+      KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
+    })
+  }
+
+  /**
+   * 合集摘要生成 + 合集摘要向量化阶段
+   * 被 processCollectionDeep 的增量模式和全量模式共用
+   */
+  private async generateCollectionSummaryPhase(
+    collectionId: string,
+    collectionName: string,
+    kmsService: any,
+    reportProgress: ProgressCallback,
+    signal: AbortSignal,
+    fileProcessed: number,
+    total: number,
+  ): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean }> {
+    reportProgress({
+      phase: 'collection_summary',
+      current: 0,
+      total: 1,
+      message: `生成合集摘要: ${collectionName}`,
+    })
+    const summaryResult = await kmsService.generateCollectionSummary(collectionId, signal)
+    const summaryGenerated = !('error' in summaryResult)
+
+    if (signal.aborted) {
+      reportProgress({
+        phase: 'done',
+        current: fileProcessed,
+        total,
+        message: `已取消处理: ${collectionName}`,
+        cancelled: true,
+      })
+      return { fileProcessed, summaryGenerated, embeddingGenerated: false }
+    }
+
+    let embeddingGenerated = false
+    if (summaryGenerated) {
+      reportProgress({
+        phase: 'collection_embedding',
+        current: 0,
+        total: 1,
+        message: `合集摘要向量化: ${collectionName}`,
+      })
+      embeddingGenerated = await this.generateCollectionSummaryEmbedding(collectionId, signal)
+    }
+
+    reportProgress({
+      phase: 'done',
+      current: fileProcessed,
+      total,
+      message: `合集处理完成: ${collectionName}（${fileProcessed} 个文件，摘要${summaryGenerated ? '已' : '未'}生成）`,
+    })
+
+    // 合集深处理结束：主动触发 checkpoint
+    try {
+      KMSDatabaseService.getInstance().checkpoint('PASSIVE')
+    } catch (err: any) {
+      logger.warn('Post-collection checkpoint failed:', err?.message || err)
+    }
+
+    logger.info(`Collection deep process completed: collection="${collectionName}"(${collectionId}), files=${fileProcessed}, summary=${summaryGenerated}, embedding=${embeddingGenerated}`)
+    return { fileProcessed, summaryGenerated, embeddingGenerated }
   }
 
   private makeCollectionProgress(

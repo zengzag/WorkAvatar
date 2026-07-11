@@ -30,7 +30,7 @@ const logger = createLogger('KMS-Worker')
 interface StartMessage {
   type: 'start'
   id: string
-  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles' | 'autoIndexCheck'
+  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processSingleFileDeep' | 'processPromotedFiles' | 'autoIndexCheck'
   args: any[]
 }
 
@@ -179,7 +179,12 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
             break
           case 'processCollectionDeep':
             result = await KMSIndexManagerService.getInstance().processCollectionDeep(
-              args[0], progressForwarder,
+              args[0], progressForwarder, args[1] ?? true,
+            )
+            break
+          case 'processSingleFileDeep':
+            result = await KMSIndexManagerService.getInstance().processSingleFileDeep(
+              args[0], args[1], progressForwarder,
             )
             break
           case 'processPromotedFiles':

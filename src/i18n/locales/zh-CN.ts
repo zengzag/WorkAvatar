@@ -1030,6 +1030,11 @@ export default {
       noCollectionSummary: '暂无合集摘要，点击 AI 生成或手动编辑',
       keyTopicsLabel: '主题',
       viewDetails: '查看详情',
+      deepProcessStatus: '深度处理',
+      deepProcessed: '已处理',
+      deepNotProcessed: '未处理',
+      deepProcessing: '处理中',
+      deepProcessFile: '深度处理此文件',
     },
     // 合集详情抽屉（查看 AI 生成的摘要/章节/段落）
     collectionDetails: {

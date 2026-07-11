@@ -17,6 +17,7 @@ export interface CollectionFile {
   light_summary: string
   keywords_json: string
   main_topics_json: string
+  deep_processed: number
 }
 
 export interface CollectionStats {
@@ -24,6 +25,7 @@ export interface CollectionStats {
   indexedCount: number
   hotCount: number
   pendingCount: number
+  deepProcessedCount: number
   hasSummary: boolean
 }
 

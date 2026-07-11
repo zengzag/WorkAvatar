@@ -345,14 +345,28 @@ export function registerKMSHandlers(): void {
   })
 
   // 触发合集深度处理，进度通过 KMS_INDEX_PROGRESS 通道推送（含 collectionId/collectionName 字段）
-  ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string) => {
-    logger.info('Process collection deep requested:', collectionId)
+  // 第二个参数 incremental（默认 true）控制是否增量处理（跳过已深度处理的文件）
+  ipcMain.on(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, (_event, collectionId: string, incremental: boolean = true) => {
+    logger.info(`Process collection deep requested: ${collectionId} (incremental=${incremental})`)
     Promise.resolve()
-      .then(() => kmsService.processCollectionDeep(collectionId))
+      .then(() => kmsService.processCollectionDeep(collectionId, incremental))
       .catch((err: any) => {
         const msg = String(err?.message || err)
         logger.error('processCollectionDeep failed:', msg)
         kmsService.notifyIndexError(msg, { collectionId })
+      })
+  })
+
+  // 单文件深度处理（合集文件列表中的"深度处理"按钮）
+  ipcMain.on(IPC_CHANNELS.KMS_PROCESS_FILE_DEEP, (_event, fileId: string, collectionId?: string) => {
+    logger.info(`Process single file deep requested: ${fileId}${collectionId ? ` (collection=${collectionId})` : ''}`)
+    Promise.resolve()
+      .then(() => kmsService.processSingleFileDeep(fileId, collectionId))
+      .catch((err: any) => {
+        const msg = String(err?.message || err)
+        logger.error('processSingleFileDeep failed:', msg)
+        const extras = collectionId ? { collectionId } : {}
+        kmsService.notifyIndexError(msg, extras)
       })
   })
 
