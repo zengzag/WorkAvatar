@@ -586,7 +586,7 @@ export default {
     language: '界面语言',
     aboutTitle: '关于 WorkAvatar',
     version: '版本号',
-    buildDate: '构建日期',
+    buildTime: '构建时间',
     exportLogs: '导出日志',
     deleted: '已删除',
     deleteFailed: '删除失败',

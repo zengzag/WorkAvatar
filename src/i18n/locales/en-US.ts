@@ -586,7 +586,7 @@ export default {
     language: 'Language',
     aboutTitle: 'About WorkAvatar',
     version: 'Version',
-    buildDate: 'Build Date',
+    buildTime: 'Build Time',
     exportLogs: 'Export Logs',
     deleted: 'Deleted',
     deleteFailed: 'Delete failed',

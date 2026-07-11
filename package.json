@@ -1,9 +1,12 @@
 {
   "name": "workavatar",
-  "version": "1.0.0",
-  "description": "本地优先的数字员工自动生成平台",
+  "version": "0.1.0",
+  "description": "本地优先的办公数字员工",
   "main": "dist-electron/main/index.js",
   "scripts": {
+    "gen:buildinfo": "node scripts/generate-build-info.mjs",
+    "predev": "npm run gen:buildinfo",
+    "prebuild": "npm run gen:buildinfo",
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "build:win": "electron-builder --win",

@@ -106,13 +106,38 @@ function registerAppFileProtocol() {
   })
 }
 
+// 读取构建元信息（prebuild 由 scripts/generate-build-info.mjs 生成），缺失时降级到 app.getVersion()
+// 打包模式下文件位于 app.getAppPath()（electron-builder files 列表已包含 build-info.json）
+function readBuildInfo(): { version: string; commit: string; buildTime: string } {
+  const fallback = { version: app.getVersion(), commit: 'unknown', buildTime: '' }
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const candidate = isDev
+      ? path.join(process.cwd(), 'build-info.json')
+      : path.join(app.getAppPath(), 'build-info.json')
+    if (!fs.existsSync(candidate)) return fallback
+    const data = JSON.parse(fs.readFileSync(candidate, 'utf-8'))
+    return {
+      version: typeof data.version === 'string' ? data.version : fallback.version,
+      commit: typeof data.commit === 'string' ? data.commit : fallback.commit,
+      buildTime: typeof data.buildTime === 'string' ? data.buildTime : fallback.buildTime,
+    }
+  } catch {
+    return fallback
+  }
+}
+
 // 初始化日志文件（每次启动新建一个以时间命名的文件），必须在 PathService 可用后尽早调用
 try {
   // PathService 依赖 electron.app，需在 app.whenReady 之前也能实例化（它内部 require electron）
   // 但 dataDir 读取发生在 PathService 构造期，这里 app 尚未 ready，仍可调用 getPath
   const PathService = require('./services/path.service').default
   LoggerBackend.getInstance().init(PathService.getInstance().getDataDir())
-  logger.info(`Application starting (v${app.getVersion()}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`)
+  const buildInfo = readBuildInfo()
+  logger.info(
+    `Application starting (v${buildInfo.version}(${buildInfo.commit}), build=${buildInfo.buildTime}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`
+  )
 } catch (err: any) {
   // 日志初始化失败不阻断启动
   logger.warn('Logger init failed, falling back to console-only:', err?.message || err)
@@ -155,7 +180,7 @@ function getAppIconPath(): string {
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    title: 'WorkAvatar 数字员工平台',
+    title: 'WorkAvatar 数字员工',
     width: 1280,
     height: 720,
     minWidth: 1024,

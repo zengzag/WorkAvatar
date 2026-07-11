@@ -13,6 +13,8 @@ dist-electron/
 release/
 out/
 build/
+# 构建元信息（predev/prebuild 由 scripts/generate-build-info.mjs 自动生成）
+build-info.json
 
 # =====================================
 # Electron Specific
