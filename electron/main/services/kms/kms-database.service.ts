@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
+import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
 
 const logger = createLogger('KMS-DB')
@@ -26,7 +27,7 @@ class KMSDatabaseService {
 
     // 主库加载 sqlite-vec（兼容旧代码访问主库的 vec 虚表，如 vec_kms_collection_summaries）
     try {
-      sqliteVec.load(this.db)
+      this.loadSqliteVec(this.db)
       logger.info('sqlite-vec 扩展加载成功（主库）')
     } catch (err: any) {
       logger.error('sqlite-vec 扩展加载失败（主库）:', err?.message || err)
@@ -34,7 +35,7 @@ class KMSDatabaseService {
 
     // 向量库加载 sqlite-vec（kms_embeddings + vec_kms_embeddings 在此库）
     try {
-      sqliteVec.load(this.vectorDb)
+      this.loadSqliteVec(this.vectorDb)
       logger.info('sqlite-vec 扩展加载成功（向量库）')
     } catch (err: any) {
       logger.error('sqlite-vec 扩展加载失败（向量库）:', err?.message || err)
@@ -77,6 +78,22 @@ class KMSDatabaseService {
     conn.pragma('journal_size_limit = 536870912')
 
     return conn
+  }
+
+  /**
+   * 加载 sqlite-vec 扩展到指定数据库连接。
+   *
+   * sqlite-vec 的 getLoadablePath() 内部使用 require.resolve 解析平台包路径，
+   * 在 Electron 打包后返回的是 app.asar 内部的虚拟路径。
+   * 但 SQLite 的 loadExtension 调用操作系统的 LoadLibrary/dlopen，
+   * 无法识别 asar 虚拟路径，需要转换为 app.asar.unpacked 的真实文件系统路径。
+   */
+  private loadSqliteVec(db: Database.Database): void {
+    let extPath = sqliteVec.getLoadablePath()
+    if (extPath.includes('app.asar')) {
+      extPath = extPath.replace('app.asar', 'app.asar.unpacked')
+    }
+    db.loadExtension(extPath)
   }
 
   static getInstance(): KMSDatabaseService {
@@ -534,11 +551,12 @@ class KMSDatabaseService {
   }
 
   /**
-   * 获取 KMS 数据库占用统计（主库 + 向量库 + WAL 文件大小，及孤儿数据条数）。
+   * 获取 KMS 数据库占用统计（主库 + 向量库 + WAL 文件大小，及残留数据条数）。
    *
-   * 孤儿数据来源：
+   * 残留数据来源：
    * - kms_fts（FTS5 虚表）：不支持外键级联，删除文件后 file_id 指向已不存在的文件
    * - kms_embeddings（向量库）：跨库外键不可用，删除文件后 file_id 指向已不存在的文件
+   * - 游离文件（kms_files）：位于虚拟手动目录但不再属于任何合集的文件
    */
   public getDatabaseStats(): {
     mainDbSize: number
@@ -547,6 +565,7 @@ class KMSDatabaseService {
     vectorWalSize: number
     orphanedFtsCount: number
     orphanedEmbeddingCount: number
+    orphanedFileCount: number
   } {
     const pathService = PathService.getInstance()
     const mainDbPath = pathService.getKMSDbPath()
@@ -556,7 +575,7 @@ class KMSDatabaseService {
       try { return fs.existsSync(p) ? fs.statSync(p).size : 0 } catch { return 0 }
     }
 
-    // 孤儿 FTS5 条目：file_id 不在 kms_files 中
+    // 残留 FTS5 条目：file_id 不在 kms_files 中
     let orphanedFtsCount = 0
     try {
       const row = this.db.prepare(
@@ -564,24 +583,38 @@ class KMSDatabaseService {
       ).get() as any
       orphanedFtsCount = row?.cnt ?? 0
     } catch (err: any) {
-      logger.warn('查询孤儿 FTS 条目失败:', err?.message || err)
+      logger.warn('查询残留 FTS 条目失败:', err?.message || err)
     }
 
-    // 孤儿 embedding 条目：file_id 不在主库 kms_files 中（跨库无法 JOIN，用子查询）
+    // 残留 embedding 条目：file_id 不在主库 kms_files 中（跨库无法 JOIN，用子查询）
     let orphanedEmbeddingCount = 0
     try {
       const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
       const idSet = new Set(fileIds.map(r => r.id))
       const totalEmbeddings = this.vectorDb.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
       if (totalEmbeddings?.cnt > 0 && idSet.size > 0) {
-        // 分批查询孤儿数（避免 IN 子句过长）
+        // 分批查询残留数（避免 IN 子句过长）
         const allEmbeddings = this.vectorDb.prepare('SELECT file_id FROM kms_embeddings').all() as any[]
         orphanedEmbeddingCount = allEmbeddings.filter(e => !idSet.has(e.file_id)).length
       } else if (totalEmbeddings?.cnt > 0 && idSet.size === 0) {
         orphanedEmbeddingCount = totalEmbeddings.cnt
       }
     } catch (err: any) {
-      logger.warn('查询孤儿 embedding 条目失败:', err?.message || err)
+      logger.warn('查询残留 embedding 条目失败:', err?.message || err)
+    }
+
+    // 游离文件：位于虚拟手动目录但不再属于任何合集的文件
+    let orphanedFileCount = 0
+    try {
+      const manualDir = this.db.prepare("SELECT id FROM kms_index_dirs WHERE dir_path = '__manual_files__'").get() as any
+      if (manualDir) {
+        const row = this.db.prepare(
+          `SELECT COUNT(*) as cnt FROM kms_files WHERE dir_id = ? AND id NOT IN (SELECT file_id FROM kms_file_collections)`
+        ).get(manualDir.id) as any
+        orphanedFileCount = row?.cnt ?? 0
+      }
+    } catch (err: any) {
+      logger.warn('查询游离文件失败:', err?.message || err)
     }
 
     return {
@@ -591,11 +624,30 @@ class KMSDatabaseService {
       vectorWalSize: fileSize(vectorDbPath + '-wal'),
       orphanedFtsCount,
       orphanedEmbeddingCount,
+      orphanedFileCount,
     }
   }
 
   /**
-   * 清理数据库：删除孤儿数据（FTS5 / 向量库 embedding）并对主库和向量库执行 VACUUM 回收磁盘空间。
+   * 优化 FTS5 虚表：重建或合并 FTS5 内部 segment，回收已删除文档占用的空间。
+   *
+   * FTS5 的 DELETE 只标记文档为已删除，实际数据仍保留在 segment 中。
+   * SQLite 的 VACUUM 对 FTS5 虚表无效（只重建普通表 b-tree），无法回收 FTS5 空间。
+   * 重建索引时大量 DELETE+INSERT 会导致 FTS5 segment 持续膨胀，必须通过 FTS5 专有命令回收。
+   *
+   * @param mode 'rebuild' 完全重建（彻底回收，较慢）；'merge' 合并 segment（轻量级）
+   */
+  public optimizeFts5Index(mode: 'rebuild' | 'merge' = 'merge'): void {
+    try {
+      this.db.exec(`INSERT INTO kms_fts(kms_fts) VALUES('${mode}')`)
+      logger.info(`FTS5 ${mode} 完成`)
+    } catch (err: any) {
+      logger.warn(`FTS5 ${mode} 失败:`, err?.message || err)
+    }
+  }
+
+  /**
+   * 清理数据库：删除残留数据（FTS5 / 向量库 embedding）并对主库和向量库执行 VACUUM 回收磁盘空间。
    *
    * VACUUM 会重建数据库文件、回收已删除记录占用的空闲页，使文件体积缩小。
    * 注意：VACUUM 是同步阻塞操作且需要独占访问，应在用户主动触发时执行，不能在事务内调用。
@@ -603,27 +655,29 @@ class KMSDatabaseService {
    * @returns 清理前后的统计信息
    */
   public cleanupDatabase(): {
-    before: { mainDbSize: number; vectorDbSize: number; orphanedFtsCount: number; orphanedEmbeddingCount: number }
+    before: { mainDbSize: number; vectorDbSize: number; orphanedFtsCount: number; orphanedEmbeddingCount: number; orphanedFileCount: number }
     after: { mainDbSize: number; vectorDbSize: number }
     cleanedFts: number
     cleanedEmbeddings: number
+    cleanedFiles: number
   } {
     const before = this.getDatabaseStats()
     let cleanedFts = 0
     let cleanedEmbeddings = 0
+    let cleanedFiles = 0
 
-    // 1. 清理孤儿 FTS5 条目
+    // 1. 清理残留 FTS5 条目
     try {
       const result = this.db.prepare(
         `DELETE FROM kms_fts WHERE file_id NOT IN (SELECT id FROM kms_files)`
       ).run()
       cleanedFts = result.changes
-      logger.info(`清理孤儿 FTS5 条目: ${cleanedFts}`)
+      logger.info(`清理残留 FTS5 条目: ${cleanedFts}`)
     } catch (err: any) {
-      logger.warn('清理孤儿 FTS5 条目失败:', err?.message || err)
+      logger.warn('清理残留 FTS5 条目失败:', err?.message || err)
     }
 
-    // 2. 清理向量库孤儿 embedding
+    // 2. 清理向量库残留 embedding
     try {
       const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
       const idSet = new Set(fileIds.map(r => r.id))
@@ -638,28 +692,54 @@ class KMSDatabaseService {
           if (orphanRowids.length > 0) {
             try {
               const rowidPlaceholders = orphanRowids.map(() => '?').join(',')
-              this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...orphanRowids)
+              // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 在加载了原生扩展时的类型校验回归
+              this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...orphanRowids.map(r => BigInt(r)))
             } catch (e: any) {
-              logger.warn('清理 vec_kms_embeddings 孤儿行失败:', e?.message || e)
+              logger.warn('清理 vec_kms_embeddings 残留行失败:', e?.message || e)
             }
           }
         })
         delTx()
         cleanedEmbeddings = orphanRows.length
-        logger.info(`清理孤儿 embedding 条目: ${cleanedEmbeddings}`)
+        logger.info(`清理残留 embedding 条目: ${cleanedEmbeddings}`)
       }
     } catch (err: any) {
-      logger.warn('清理孤儿 embedding 失败:', err?.message || err)
+      logger.warn('清理残留 embedding 失败:', err?.message || err)
     }
 
-    // 3. 先 checkpoint 把 WAL 写回主库，再 VACUUM
+    // 3. 清理游离文件：位于虚拟手动目录但不再属于任何合集的文件
+    try {
+      const manualDir = this.db.prepare("SELECT id FROM kms_index_dirs WHERE dir_path = '__manual_files__'").get() as any
+      if (manualDir) {
+        const searchEngine = KMSSearchEngineService.getInstance()
+        const orphanFiles = this.db.prepare(
+          `SELECT id FROM kms_files WHERE dir_id = ? AND id NOT IN (SELECT file_id FROM kms_file_collections)`
+        ).all(manualDir.id) as any[]
+        for (const f of orphanFiles) {
+          searchEngine.deleteIndexByFile(f.id)
+          this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(f.id)
+        }
+        cleanedFiles = orphanFiles.length
+        if (cleanedFiles > 0) {
+          logger.info(`清理游离文件: ${cleanedFiles}`)
+        }
+      }
+    } catch (err: any) {
+      logger.warn('清理游离文件失败:', err?.message || err)
+    }
+
+    // 3.5 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
+    // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 中累积已删除文档残留，VACUUM 对 FTS5 无效
+    this.optimizeFts5Index('rebuild')
+
+    // 4. 先 checkpoint 把 WAL 写回主库，再 VACUUM
     try {
       this.checkpoint('TRUNCATE')
     } catch (err: any) {
       logger.warn('清理前 checkpoint 失败:', err?.message || err)
     }
 
-    // 4. VACUUM 主库（重建文件，回收空闲页）
+    // 5. VACUUM 主库（重建文件，回收空闲页）
     try {
       this.db.exec('VACUUM')
       logger.info('主库 VACUUM 完成')
@@ -667,7 +747,7 @@ class KMSDatabaseService {
       logger.warn('主库 VACUUM 失败:', err?.message || err)
     }
 
-    // 5. VACUUM 向量库
+    // 6. VACUUM 向量库
     try {
       this.vectorDb.exec('VACUUM')
       logger.info('向量库 VACUUM 完成')
@@ -684,6 +764,7 @@ class KMSDatabaseService {
         vectorDbSize: before.vectorDbSize,
         orphanedFtsCount: before.orphanedFtsCount,
         orphanedEmbeddingCount: before.orphanedEmbeddingCount,
+        orphanedFileCount: before.orphanedFileCount,
       },
       after: {
         mainDbSize: afterStats.mainDbSize,
@@ -691,6 +772,7 @@ class KMSDatabaseService {
       },
       cleanedFts,
       cleanedEmbeddings,
+      cleanedFiles,
     }
   }
 

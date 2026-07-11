@@ -200,6 +200,11 @@ export function useKMS() {
   const [isLoadingSummaries, setIsLoadingSummaries] = useState(false)
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([])
   const progressUnsubscribe = useRef<(() => void) | null>(null)
+  // 进度节流：后端已节流，这里再加一层防止 React 高频重渲染。
+  // 终止阶段（done/error）立即刷新；中间阶段每 300ms 至多更新一次。
+  const progressLastFlushAt = useRef(0)
+  const progressPendingRef = useRef<IndexProgress | null>(null)
+  const progressFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 用 ref 追踪最新设置，避免 search 回调因 kmsSettings 变化而频繁重建
   const kmsSettingsRef = useRef(kmsSettings)
   kmsSettingsRef.current = kmsSettings
@@ -207,7 +212,8 @@ export function useKMS() {
   const loadDirs = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.listDirs()
-      setDirs(result || [])
+      // safeHandle 在主进程异常时返回 { error } 对象（truthy），需用 Array.isArray 兜底
+      setDirs(Array.isArray(result) ? result : [])
     } catch (err) {
       console.error('Failed to load KMS dirs:', err)
     }
@@ -216,7 +222,8 @@ export function useKMS() {
   const loadStats = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.getStats()
-      setStats(result)
+      // safeHandle 异常时返回 { error }，需兜底避免下游访问 undefined 字段
+      setStats(result && !result.error ? result : null)
     } catch (err) {
       console.error('Failed to load KMS stats:', err)
     }
@@ -224,7 +231,11 @@ export function useKMS() {
 
   const addDir = useCallback(async (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => {
     try {
-      await window.electronAPI.kms.addDir({ dirPath, displayName, recursive, fileExtensions })
+      const result = await window.electronAPI.kms.addDir({ dirPath, displayName, recursive, fileExtensions })
+      // safeHandle 在主进程异常时返回 { error } 对象而非抛异常，需显式判定
+      if (result && (result as any).error) {
+        throw new Error((result as any).error)
+      }
       await loadDirs()
       await loadStats()
     } catch (err) {
@@ -314,11 +325,13 @@ export function useKMS() {
           timeRangeEnd: filters?.timeRangeEnd,
         })
         setAgentResult(null)
-        setSearchResults(results || [])
+        // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
+        const fileResults = Array.isArray(results) ? results : []
+        setSearchResults(fileResults)
         window.electronAPI.kms.recordSearchHistory({
           query,
           searchMode: 'file',
-          resultCount: results?.length || 0,
+          resultCount: fileResults.length,
           filters,
         }).catch(() => {})
       } else {
@@ -335,11 +348,13 @@ export function useKMS() {
           collectionIds: filters?.collectionIds,
         })
         setAgentResult(null)
-        setSearchResults(results || [])
+        // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
+        const listResults = Array.isArray(results) ? results : []
+        setSearchResults(listResults)
         window.electronAPI.kms.recordSearchHistory({
           query,
           searchMode: mode || 'keyword',
-          resultCount: results?.length || 0,
+          resultCount: listResults.length,
           filters,
         }).catch(() => {})
       }
@@ -471,23 +486,35 @@ export function useKMS() {
   const loadAutoIndexStatus = useCallback(async () => {
     try {
       const result = await window.electronAPI.kms.getAutoIndexStatus()
-      setAutoIndexStatus(result)
+      // safeHandle 异常时返回 { error }，需兜底
+      setAutoIndexStatus(result && !result.error ? result : null)
     } catch (err) {
       console.error('Failed to load auto-index status:', err)
     }
   }, [])
 
   const runAutoIndexCheckNow = useCallback(async () => {
+    // 设置 isIndexing 以便显示进度；后端会通过进度事件推送 done/error 来复位
+    // 若后端"已在运行"会立即推送 done 进度，isIndexing 会被复位，不会卡死
+    setIsIndexing(true)
+    setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
     try {
-      await window.electronAPI.kms.runAutoIndexCheck()
+      const result = await window.electronAPI.kms.runAutoIndexCheck()
+      if (result && result.error) {
+        setIsIndexing(false)
+        setIndexProgress(null)
+      }
     } catch (err) {
       console.error('Failed to trigger auto-index check:', err)
+      setIsIndexing(false)
+      setIndexProgress(null)
     }
   }, [])
 
   const loadFileSummaries = useCallback(async (params?: {
     dirId?: string
     dataTier?: 'cold' | 'hot'
+    indexStatus?: string
     keyword?: string
     page?: number
     pageSize?: number
@@ -511,8 +538,10 @@ export function useKMS() {
   const loadSearchHistory = useCallback(async (params?: { limit?: number; searchMode?: string }) => {
     try {
       const result = await window.electronAPI.kms.getSearchHistory(params)
-      setSearchHistory(result || [])
-      return result || []
+      // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底，否则下游迭代会抛 "e is not iterable"
+      const list = Array.isArray(result) ? result : []
+      setSearchHistory(list)
+      return list
     } catch (err) {
       console.error('Failed to load search history:', err)
       return []
@@ -541,7 +570,10 @@ export function useKMS() {
     if (progressUnsubscribe.current) {
       progressUnsubscribe.current()
     }
-    progressUnsubscribe.current = window.electronAPI.kms.onIndexProgress((progress: IndexProgress) => {
+    const PROGRESS_THROTTLE_MS = 300
+    const flushProgress = (progress: IndexProgress) => {
+      progressLastFlushAt.current = Date.now()
+      progressPendingRef.current = null
       setIndexProgress(progress)
       if (progress.phase === 'done' || progress.phase === 'error') {
         setIsIndexing(false)
@@ -550,10 +582,46 @@ export function useKMS() {
         loadStats()
         loadAutoIndexStatus()
       }
+    }
+    progressUnsubscribe.current = window.electronAPI.kms.onIndexProgress((progress: IndexProgress) => {
+      const isTerminal = progress.phase === 'done' || progress.phase === 'error'
+      if (isTerminal) {
+        // 终止阶段：取消待刷定时器，立即刷新
+        if (progressFlushTimer.current) {
+          clearTimeout(progressFlushTimer.current)
+          progressFlushTimer.current = null
+        }
+        flushProgress(progress)
+        return
+      }
+      const now = Date.now()
+      if (now - progressLastFlushAt.current >= PROGRESS_THROTTLE_MS) {
+        if (progressFlushTimer.current) {
+          clearTimeout(progressFlushTimer.current)
+          progressFlushTimer.current = null
+        }
+        flushProgress(progress)
+      } else {
+        // 节流窗口内：缓存最新进度，安排定时刷新
+        progressPendingRef.current = progress
+        if (!progressFlushTimer.current) {
+          const delay = PROGRESS_THROTTLE_MS - (now - progressLastFlushAt.current)
+          progressFlushTimer.current = setTimeout(() => {
+            progressFlushTimer.current = null
+            if (progressPendingRef.current) {
+              flushProgress(progressPendingRef.current)
+            }
+          }, Math.max(50, delay))
+        }
+      }
     })
     return () => {
       if (progressUnsubscribe.current) {
         progressUnsubscribe.current()
+      }
+      if (progressFlushTimer.current) {
+        clearTimeout(progressFlushTimer.current)
+        progressFlushTimer.current = null
       }
     }
   }, [loadDirs, loadStats, loadAutoIndexStatus])

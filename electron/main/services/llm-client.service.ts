@@ -1,310 +1,25 @@
 import DatabaseService from './database.service'
-import { isMainThread, workerData } from 'worker_threads'
-import type { LLMModelConfig } from '../../shared/types'
 import { generateId } from './common-utils'
 import LLMLoggerService from './llm-logger.service'
 import { createLogger } from './logger'
+import {
+  type LLMProviderConfig,
+  type ChatMessage,
+  type ChatOptions,
+  PROVIDER_DEFAULTS,
+} from './llm-client-types'
+import { createThinkProcessor } from './llm-think-processor'
+import { buildRequestBody, resolveModelName, buildHeaders } from './llm-request-builder'
+import { SecureKeyStorage } from './secure-key-storage'
 
 const logger = createLogger('LLMClient')
 
-/**
- * 延迟加载 electron.safeStorage（worker_threads 中不可用）
- * 在 worker 模式下返回 null，调用方需处理 null 情况
- */
-function getSafeStorage(): any | null {
-  if (!isMainThread) return null
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require('electron').safeStorage
-  } catch {
-    return null
-  }
-}
-
-interface LLMProviderConfig {
-  id: string
-  name: string
-  provider_type: string
-  base_url?: string
-  model: string
-  embedding_model?: string
-  api_key?: string
-  temperature: number
-  max_tokens: number
-  timeout_ms: number
-  extra_headers_json?: string
-  extra_body_json?: string
-  models_json?: string
-}
-
-interface ChatMessage {
-  role: string
-  content: string
-}
-
-interface ChatCompletionRequest {
-  model: string
-  messages: ChatMessage[]
-  temperature?: number
-  max_tokens?: number
-  top_p?: number
-  frequency_penalty?: number
-  presence_penalty?: number
-  stream?: boolean
-  [key: string]: any
-}
-
-interface ProcessThinkChunkResult {
-  thought?: string
-  content?: string
-}
-
-const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: string; defaultEmbeddingModel: string }> = {
-  openai: { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  'openai-compatible': { baseURL: 'https://api.openai.com/v1', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  lmstudio: { baseURL: 'http://localhost:1234/v1', defaultModel: '', defaultEmbeddingModel: '' },
-  deepseek: { baseURL: 'https://api.deepseek.com/v1', defaultModel: 'deepseek-chat', defaultEmbeddingModel: 'text-embedding-3-small' },
-  qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', defaultEmbeddingModel: 'text-embedding-v3' },
-  zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', defaultEmbeddingModel: 'embedding-3' },
-  volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k', defaultEmbeddingModel: 'text-embedding-v3' },
-  moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k', defaultEmbeddingModel: 'text-embedding-3-small' },
-  yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning', defaultEmbeddingModel: 'text-embedding-3-small' },
-  groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', defaultEmbeddingModel: 'text-embedding-3-small' },
-  mistral: { baseURL: 'https://api.mistral.ai/v1', defaultModel: 'mistral-small-latest', defaultEmbeddingModel: 'mistral-embed' },
-  azure: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  vertex: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-  xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-}
-
-function createThinkProcessor() {
-  let state: 'normal' | 'thinking' = 'normal'
-  let buffer = ''
-
-  function reset(): void {
-    state = 'normal'
-    buffer = ''
-  }
-
-  function processChunk(rawChunk: string): ProcessThinkChunkResult {
-    buffer += rawChunk
-    let thought = ''
-    let content = ''
-
-    while (buffer.length > 0) {
-      if (state === 'normal') {
-        const openIdx = buffer.toLowerCase().indexOf('<think')
-        if (openIdx === -1) {
-          const partials = ['<', '<t', '<th', '<thi', '<thin']
-          let hasPartial = false
-          for (const p of partials) {
-            if (buffer.endsWith(p)) { hasPartial = true; break }
-          }
-          if (!hasPartial) {
-            content += buffer
-            buffer = ''
-          }
-          break
-        } else {
-          content += buffer.substring(0, openIdx)
-          const afterOpen = buffer.substring(openIdx)
-          const closeBracketIdx = afterOpen.indexOf('>')
-          if (closeBracketIdx === -1) {
-            buffer = ''
-            state = 'thinking'
-            break
-          }
-          buffer = afterOpen.substring(closeBracketIdx + 1)
-          state = 'thinking'
-        }
-      } else if (state === 'thinking') {
-        const closeIdx = buffer.toLowerCase().indexOf('</think')
-        if (closeIdx === -1) {
-          const partials = ['<', '</', '</t', '</th', '</thi', '</thin', '</think']
-          let hasPartial = false
-          for (const p of partials) {
-            if (buffer.endsWith(p)) { hasPartial = true; break }
-          }
-          if (!hasPartial) {
-            thought += buffer
-            buffer = ''
-          }
-          break
-        } else {
-          thought += buffer.substring(0, closeIdx)
-          const afterClose = buffer.substring(closeIdx)
-          const closeBracketIdx = afterClose.indexOf('>')
-          if (closeBracketIdx === -1) {
-            buffer = ''
-            state = 'normal'
-            break
-          }
-          buffer = afterClose.substring(closeBracketIdx + 1)
-          state = 'normal'
-        }
-      }
-    }
-
-    return {
-      thought: thought || undefined,
-      content: content || undefined,
-    }
-  }
-
-  function finalize(): ProcessThinkChunkResult {
-    let thought = ''
-    let content = ''
-
-    if (buffer.length > 0) {
-      if (state === 'thinking') {
-        thought = buffer
-          .replace(/<\/?(?:think|t|th|thi|thin)$/gi, '')
-          .trim()
-      } else {
-        content = buffer
-          .replace(/^<?\/?t(?:h(?:i(?:n(?:k)?)?)?)?$/gi, '')
-          .trim()
-      }
-      buffer = ''
-    }
-    state = 'normal'
-
-    return {
-      thought: thought || undefined,
-      content: content || undefined,
-    }
-  }
-
-  return { reset, processChunk, finalize }
-}
-
-function getModelConfig(provider: LLMProviderConfig, modelIdentifier: string): LLMModelConfig | null {
-  if (!provider.models_json) return null
-  try {
-    const models: LLMModelConfig[] = JSON.parse(provider.models_json)
-    return models.find(m => m.id === modelIdentifier) || models.find(m => m.model === modelIdentifier) || null
-  } catch {
-    return null
-  }
-}
-
-function buildRequestBody(
-  config: LLMProviderConfig,
-  modelName: string,
-  messages: ChatMessage[],
-  stream: boolean,
-  overrides?: { temperature?: number; max_tokens?: number; enable_thinking?: boolean }
-): ChatCompletionRequest {
-  const modelConfig = getModelConfig(config, modelName)
-  const enableThinking = overrides?.enable_thinking ?? modelConfig?.enable_thinking ?? false
-  const body: ChatCompletionRequest = {
-    model: modelName,
-    messages,
-    temperature: overrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
-    max_tokens: overrides?.max_tokens ?? modelConfig?.max_tokens ?? config.max_tokens,
-    stream,
-    ...(stream ? { stream_options: { include_usage: true } } : {}),
-  }
-
-  if (modelConfig?.top_p != null) {
-    body.top_p = modelConfig.top_p
-  }
-  if (modelConfig?.frequency_penalty != null) {
-    body.frequency_penalty = modelConfig.frequency_penalty
-  }
-  if (modelConfig?.presence_penalty != null) {
-    body.presence_penalty = modelConfig.presence_penalty
-  }
-
-  if (enableThinking) {
-    if (config.provider_type === 'deepseek') {
-      body.thinking = { type: 'enabled' }
-      body.reasoning_effort = 'high'
-    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
-      body.enable_thinking = true
-      if (modelConfig?.thinking_budget) {
-        body.thinking_budget = modelConfig.thinking_budget
-      }
-    } else if (config.provider_type === 'volcengine') {
-      body.thinking = { type: 'enabled' }
-    } else if (config.provider_type === 'zhipu') {
-      body.thinking = { type: 'enabled' }
-    }
-  } else {
-    if (config.provider_type === 'deepseek') {
-      body.thinking = { type: 'disabled' }
-    } else if (config.provider_type === 'qwen' || config.provider_type === 'lmstudio') {
-      body.enable_thinking = false
-    } else if (config.provider_type === 'volcengine') {
-      body.thinking = { type: 'disabled' }
-    } else if (config.provider_type === 'zhipu') {
-      body.thinking = { type: 'disabled' }
-    }
-  }
-
-  if (config.extra_body_json) {
-    try {
-      const extra = JSON.parse(config.extra_body_json)
-      Object.assign(body, extra)
-    } catch {}
-  }
-
-  return body
-}
-
-class SecureKeyStorage {
-  private db: any
-
-  constructor(db: any) {
-    this.db = db
-  }
-
-  private encryptKey(plainText: string): string {
-    const safeStorage = getSafeStorage()
-    if (safeStorage?.isEncryptionAvailable()) {
-      const buffer = safeStorage.encryptString(plainText)
-      return buffer.toString('base64')
-    }
-    return plainText
-  }
-
-  private decryptKey(encryptedText: string): string | null {
-    if (!encryptedText) return null
-    try {
-      const safeStorage = getSafeStorage()
-      if (safeStorage?.isEncryptionAvailable()) {
-        const buffer = Buffer.from(encryptedText, 'base64')
-        return safeStorage.decryptString(buffer)
-      }
-      return encryptedText
-    } catch {
-      return null
-    }
-  }
-
-  async saveApiKey(providerId: string, apiKey: string): Promise<void> {
-    const encrypted = this.encryptKey(apiKey)
-    this.db.prepare(
-      'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
-    ).run(`llm_api_key_${providerId}`, encrypted)
-  }
-
-  async getApiKey(providerId: string): Promise<string | null> {
-    // Worker 模式：从 workerData 读取主线程预解密的 API Key
-    // 避免依赖 safeStorage（worker_threads 中不可用）
-    if (!isMainThread && workerData?.apiKeys) {
-      return (workerData.apiKeys as Record<string, string>)[providerId] ?? null
-    }
-
-    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(`llm_api_key_${providerId}`) as any
-    if (!row?.value) return null
-    return this.decryptKey(row.value)
-  }
-
-  async deleteApiKey(providerId: string): Promise<void> {
-    this.db.prepare('DELETE FROM settings WHERE key = ?').run(`llm_api_key_${providerId}`)
-  }
-}
+const ALLOWED_PROVIDER_COLUMNS = [
+  'name', 'provider_type', 'base_url', 'model',
+  'embedding_model', 'temperature', 'max_tokens',
+  'timeout_ms', 'extra_headers_json', 'extra_body_json',
+  'is_default', 'models_json',
+]
 
 class LLMClientService {
   private db: DatabaseService
@@ -375,21 +90,7 @@ class LLMClientService {
     const timeout = setTimeout(() => controller.abort(), 10000)
 
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      }
-
-      if (config.api_key) {
-        headers['Authorization'] = `Bearer ${config.api_key}`
-      }
-
-      if (config.extra_headers_json) {
-        try {
-          const extra = JSON.parse(config.extra_headers_json)
-          Object.assign(headers, extra)
-        } catch {}
-      }
-
+      const headers = buildHeaders(config)
       const response = await fetch(`${baseURL}/models`, {
         method: 'GET',
         headers,
@@ -416,21 +117,10 @@ class LLMClientService {
     }
   }
 
-  private resolveModelName(config: LLMProviderConfig, modelIdentifier: string): string {
-    if (config.models_json) {
-      try {
-        const models: LLMModelConfig[] = JSON.parse(config.models_json)
-        const matched = models.find(m => m.id === modelIdentifier)
-        if (matched) return matched.model
-      } catch {}
-    }
-    return modelIdentifier
-  }
-
   async chat(
     providerId: string,
     messages: ChatMessage[],
-    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; signal?: AbortSignal; logSource?: string }
+    options?: ChatOptions,
   ): Promise<string> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
@@ -438,22 +128,8 @@ class LLMClientService {
     }
 
     const baseURL = this.getBaseURL(config)
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-
-    if (config.api_key) {
-      headers['Authorization'] = `Bearer ${config.api_key}`
-    }
-
-    if (config.extra_headers_json) {
-      try {
-        const extra = JSON.parse(config.extra_headers_json)
-        Object.assign(headers, extra)
-      } catch {}
-    }
-
-    const modelName = this.resolveModelName(config, options?.model || config.model)
+    const headers = buildHeaders(config)
+    const modelName = resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, false, options)
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
@@ -466,6 +142,13 @@ class LLMClientService {
       } else {
         options.signal.addEventListener('abort', () => controller.abort(), { once: true })
       }
+    }
+
+    const requestLog = {
+      messages,
+      temperature: body.temperature,
+      max_tokens: body.max_tokens,
+      stream: false as const,
     }
 
     try {
@@ -484,12 +167,7 @@ class LLMClientService {
           source: logSource,
           model: modelName,
           providerType: config.provider_type,
-          request: {
-            messages,
-            temperature: body.temperature,
-            max_tokens: body.max_tokens,
-            stream: false,
-          },
+          request: requestLog,
           error: `${response.status} - ${errorText}`,
         })
         throw new Error(`LLM API error (${response.status}): ${errorText}`)
@@ -505,12 +183,7 @@ class LLMClientService {
         source: logSource,
         model: modelName,
         providerType: config.provider_type,
-        request: {
-          messages,
-          temperature: body.temperature,
-          max_tokens: body.max_tokens,
-          stream: false,
-        },
+        request: requestLog,
         response: {
           content: result,
           usage: data.usage,
@@ -524,18 +197,14 @@ class LLMClientService {
       if (error.name === 'AbortError' && !options?.signal?.aborted) {
         error.message = 'LLM API request timed out'
       }
+      logger.error(`chat failed (provider=${providerId}, model=${modelName}):`, error?.message || error)
       if (!error.message?.includes('LLM API error')) {
         LLMLoggerService.getInstance().logCall({
           type: 'chat',
           source: logSource,
           model: modelName,
           providerType: config.provider_type,
-          request: {
-            messages,
-            temperature: body.temperature,
-            max_tokens: body.max_tokens,
-            stream: false,
-          },
+          request: requestLog,
           error: error.message,
         })
       }
@@ -549,9 +218,9 @@ class LLMClientService {
     onChunk: (chunk: string) => void,
     onDone: () => void,
     onError: (error: Error) => void,
-    options?: { temperature?: number; max_tokens?: number; model?: string; enable_thinking?: boolean; logSource?: string },
+    options?: Omit<ChatOptions, 'signal'>,
     signal?: AbortSignal,
-    onThought?: (thoughtChunk: string) => void
+    onThought?: (thoughtChunk: string) => void,
   ): Promise<void> {
     const config = await this.getProviderConfig(providerId)
     if (!config) {
@@ -560,22 +229,8 @@ class LLMClientService {
     }
 
     const baseURL = this.getBaseURL(config)
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-
-    if (config.api_key) {
-      headers['Authorization'] = `Bearer ${config.api_key}`
-    }
-
-    if (config.extra_headers_json) {
-      try {
-        const extra = JSON.parse(config.extra_headers_json)
-        Object.assign(headers, extra)
-      } catch {}
-    }
-
-    const modelName = this.resolveModelName(config, options?.model || config.model)
+    const headers = buildHeaders(config)
+    const modelName = resolveModelName(config, options?.model || config.model)
     const body = buildRequestBody(config, modelName, messages, true, options)
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
@@ -588,6 +243,13 @@ class LLMClientService {
       } else {
         signal.addEventListener('abort', () => controller.abort(), { once: true })
       }
+    }
+
+    const requestLog = {
+      messages,
+      temperature: body.temperature,
+      max_tokens: body.max_tokens,
+      stream: true as const,
     }
 
     try {
@@ -607,12 +269,7 @@ class LLMClientService {
           source: logSource,
           model: modelName,
           providerType: config.provider_type,
-          request: {
-            messages,
-            temperature: body.temperature,
-            max_tokens: body.max_tokens,
-            stream: true,
-          },
+          request: requestLog,
           error: `${response.status} - ${errorText}`,
         })
         throw new Error(`LLM API error (${response.status}): ${errorText}`)
@@ -628,6 +285,21 @@ class LLMClientService {
       let fullContent = ''
       let fullThought = ''
 
+      const logSuccess = () => {
+        LLMLoggerService.getInstance().logCall({
+          type: 'chatStream',
+          source: logSource,
+          model: modelName,
+          providerType: config.provider_type,
+          request: requestLog,
+          response: {
+            content: fullContent,
+            reasoningContent: fullThought || undefined,
+            latencyMs: Date.now() - startTime,
+          },
+        })
+      }
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -642,24 +314,7 @@ class LLMClientService {
 
           const data = trimmed.slice(6)
           if (data === '[DONE]') {
-            const latencyMs = Date.now() - startTime
-            LLMLoggerService.getInstance().logCall({
-              type: 'chatStream',
-              source: logSource,
-              model: modelName,
-              providerType: config.provider_type,
-              request: {
-                messages,
-                temperature: body.temperature,
-                max_tokens: body.max_tokens,
-                stream: true,
-              },
-              response: {
-                content: fullContent,
-                reasoningContent: fullThought || undefined,
-                latencyMs,
-              },
-            })
+            logSuccess()
             onDone()
             return
           }
@@ -701,43 +356,21 @@ class LLMClientService {
         onChunk(finalResult.content)
       }
 
-      const latencyMs = Date.now() - startTime
-      LLMLoggerService.getInstance().logCall({
-        type: 'chatStream',
-        source: logSource,
-        model: modelName,
-        providerType: config.provider_type,
-        request: {
-          messages,
-          temperature: body.temperature,
-          max_tokens: body.max_tokens,
-          stream: true,
-        },
-        response: {
-          content: fullContent,
-          reasoningContent: fullThought || undefined,
-          latencyMs,
-        },
-      })
-
+      logSuccess()
       onDone()
     } catch (err: any) {
       clearTimeout(timeout)
       if (err.name === 'AbortError' && !signal?.aborted) {
         err.message = 'LLM API request timed out'
       }
+      logger.error(`chatStream failed (provider=${providerId}, model=${modelName}):`, err?.message || err)
       if (!err.message?.includes('LLM API error')) {
         LLMLoggerService.getInstance().logCall({
           type: 'chatStream',
           source: logSource,
           model: modelName,
           providerType: config.provider_type,
-          request: {
-            messages,
-            temperature: body.temperature,
-            max_tokens: body.max_tokens,
-            stream: true,
-          },
+          request: requestLog,
           error: err.message,
         })
       }
@@ -825,13 +458,6 @@ class LLMClientService {
     const updates: string[] = []
     const values: any[] = []
 
-    const ALLOWED_PROVIDER_COLUMNS = [
-      'name', 'provider_type', 'base_url', 'model',
-      'embedding_model', 'temperature', 'max_tokens',
-      'timeout_ms', 'extra_headers_json', 'extra_body_json',
-      'is_default', 'models_json'
-    ]
-
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && ALLOWED_PROVIDER_COLUMNS.includes(key)) {
         updates.push(`${key} = ?`)
@@ -865,21 +491,7 @@ class LLMClientService {
 
   private async callEmbeddingAPI(config: any, input: string | string[], timeoutMs?: number, modelName?: string): Promise<any> {
     const baseURL = this.getBaseURL(config)
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-
-    if (config.api_key) {
-      headers['Authorization'] = `Bearer ${config.api_key}`
-    }
-
-    if (config.extra_headers_json) {
-      try {
-        const extra = JSON.parse(config.extra_headers_json)
-        Object.assign(headers, extra)
-      } catch {}
-    }
-
+    const headers = buildHeaders(config)
     const embeddingModel = modelName || config.embedding_model || 'text-embedding-3-small'
     const body = {
       model: embeddingModel,
@@ -910,6 +522,7 @@ class LLMClientService {
       if (err.name === 'AbortError') {
         throw new Error('Embedding API request timed out')
       }
+      logger.error(`embedding API failed (model=${modelName}):`, err?.message || err)
       throw err
     }
   }

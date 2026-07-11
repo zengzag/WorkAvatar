@@ -1,113 +1,51 @@
 import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
-import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
+import KMSSearchEngineService, { type SearchOptions } from './kms-search-engine.service'
 import LLMClientService from '../llm-client.service'
 import DatabaseService from '../database.service'
-import { getDefaultProviderId } from '../common-utils'
 import { createLogger } from '../logger'
-import { callLLMForJSON } from './kms-llm-helpers'
+import {
+  type SearchTraceStep,
+  type AgentSearchResult,
+  type AgentSearchOptions,
+  type AgentLLMConfig,
+  type FileInventoryItem,
+  type ScopeSummaryItem,
+  type SearchPlan,
+  type DistilledResult,
+  type FileToRead,
+  QUERY_TYPE_LABELS,
+  READ_CHUNK_SIZE,
+} from './kms-search-agent-types'
+import {
+  identifyQueryType,
+  planSearchPath,
+  distillResults,
+} from './kms-search-agent-llm'
+import {
+  getDefaultLLMConfig,
+  getKmsEmbeddingConfig,
+  getModelIdByProvider,
+  getFileInventory,
+  getScopeSummaries,
+  selectFilesToRead,
+  readFileChunk,
+  getResultKey,
+  logSearchHits,
+  triggerEvaluateAndPromote,
+} from './kms-search-agent-helpers'
+import type { SearchResult } from './kms-search-engine.service'
 
 const logger = createLogger('KMS-SearchAgent')
 
-/**
- * 查询类型枚举
- * - locate: 定位查找（找某个具体信息在哪）
- * - concept: 概念解释（解释某个概念/术语）
- * - trend: 趋势梳理（梳理时间线/变化趋势）
- * - analysis: 综合分析（汇总多源信息得出结论）
- */
-export type QueryType = 'locate' | 'concept' | 'trend' | 'analysis'
-
-/**
- * 检索过程步骤（结构化中间过程）
- */
-export interface SearchTraceStep {
-  /** 阶段名称 */
-  phase: string
-  /** 步骤描述 */
-  action: string
-  /** 详细信息 */
-  detail?: string
-  /** 耗时（毫秒） */
-  durationMs?: number
-  /** 步骤类型：info/llm/search/read/plan */
-  type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result'
-}
-
-/**
- * 检索子智能体输出结果
- */
-export interface AgentSearchResult {
-  /** 查询类型 */
-  queryType: QueryType
-  /** 查询类型说明 */
-  queryTypeLabel: string
-  /** 核心结论（已整理的干净内容，无冗余原文） */
-  conclusion: string
-  /** 精准溯源信息列表 */
-  sources: AgentSearchSource[]
-  /** 实际执行的检索轮次 */
-  searchRounds: number
-  /** 检索过程摘要（兼容旧格式，简单字符串列表） */
-  searchTrace: string[]
-  /** 结构化检索过程（详细中间步骤） */
-  searchSteps: SearchTraceStep[]
-}
-
-export interface AgentSearchSource {
-  /** 文件ID */
-  fileId: string
-  /** 文件名 */
-  fileName: string
-  /** 文件路径 */
-  filePath: string
-  /** 段落ID（如有） */
-  paragraphId?: string
-  /** 段落标题（如有） */
-  paragraphTitle?: string
-  /** 命中片段（精简） */
-  snippet: string
-  /** 行号定位 */
-  startLine?: number
-  endLine?: number
-  /** 字符偏移定位 */
-  startOffset?: number
-  endOffset?: number
-  /** 相关度评分 */
-  score?: number
-}
-
-export interface AgentSearchOptions {
-  /** 限定目录ID列表 */
-  dirIds?: string[]
-  /** 限定合集ID列表（与 dirIds 同时指定时取交集） */
-  collectionIds?: string[]
-  /** 限定文件扩展名 */
-  fileExtensions?: string[]
-  /** 时间范围起始（毫秒时间戳） */
-  timeRangeStart?: number
-  /** 时间范围结束（毫秒时间戳） */
-  timeRangeEnd?: number
-  /** 最大检索轮次（默认3） */
-  maxRounds?: number
-  /** 每轮检索的topK（默认10） */
-  topK?: number
-  /** 中止信号 */
-  signal?: AbortSignal
-  /** 指定LLM提供商ID */
-  providerId?: string
-  /** 中间过程回调（实时输出检索步骤） */
-  onProgress?: (step: SearchTraceStep) => void
-}
-
-const QUERY_TYPE_LABELS: Record<QueryType, string> = {
-  locate: '定位查找',
-  concept: '概念解释',
-  trend: '趋势梳理',
-  analysis: '综合分析',
-}
-
-const READ_CHUNK_SIZE = 2000
+// 向后兼容：重新导出类型供外部使用
+export type {
+  QueryType,
+  SearchTraceStep,
+  AgentSearchResult,
+  AgentSearchOptions,
+  AgentSearchSource,
+} from './kms-search-agent-types'
 
 /**
  * KMS 检索子智能体
@@ -156,7 +94,7 @@ class KMSSearchAgentService {
       options?.onProgress?.(step)
     }
 
-    const llmConfig = options?.providerId
+    const llmConfig: AgentLLMConfig | null = options?.providerId
       ? { providerId: options.providerId, modelId: this.getModelIdByProvider(options.providerId), enableThinking: false }
       : this.getDefaultLLMConfig()
     if (!llmConfig || !llmConfig.providerId) {
@@ -182,7 +120,7 @@ class KMSSearchAgentService {
     // === 阶段 1：查询类型识别 ===
     addStep({ phase: '查询类型识别', action: '分析查询意图', type: 'llm' })
     const t0 = Date.now()
-    const queryType = await this.identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking)
+    const queryType = await identifyQueryType(query, llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking)
     addStep({
       phase: '查询类型识别',
       action: `查询类型: ${QUERY_TYPE_LABELS[queryType]}`,
@@ -196,7 +134,7 @@ class KMSSearchAgentService {
     // === 阶段 2：获取文件清单 + 作用域摘要 ===
     addStep({ phase: '获取文件清单', action: '读取索引目录文件列表', type: 'info' })
     const t1 = Date.now()
-    const fileInventory = this.getFileInventory(options?.dirIds, options?.collectionIds, query)
+    const fileInventory: FileInventoryItem[] = getFileInventory(this.db, options?.dirIds, options?.collectionIds, query)
     addStep({
       phase: '获取文件清单',
       action: `获取到 ${fileInventory.length} 个文件的信息`,
@@ -205,7 +143,7 @@ class KMSSearchAgentService {
       durationMs: Date.now() - t1,
     })
 
-    const dirSummaries = this.getScopeSummaries(options?.dirIds, options?.collectionIds)
+    const dirSummaries: ScopeSummaryItem[] = getScopeSummaries(this.db, options?.dirIds, options?.collectionIds)
     if (dirSummaries.length > 0) {
       addStep({
         phase: '获取文件清单',
@@ -219,7 +157,7 @@ class KMSSearchAgentService {
     // === 阶段 3：检索路径规划 ===
     addStep({ phase: '检索路径规划', action: 'LLM 规划检索策略', type: 'plan' })
     const t2 = Date.now()
-    const searchPlan = await this.planSearchPath(
+    const searchPlan: SearchPlan = await planSearchPath(
       query, queryType, fileInventory, dirSummaries,
       llmClient, llmConfig.providerId, llmConfig.modelId, options?.signal, llmConfig.enableThinking
     )
@@ -257,7 +195,7 @@ class KMSSearchAgentService {
     // === 阶段 6：内容提纯 ===
     addStep({ phase: '内容提纯', action: 'LLM 生成核心结论', type: 'llm' })
     const t5 = Date.now()
-    const distilled = await this.distillResults(
+    const distilled: DistilledResult = await distillResults(
       query,
       queryType,
       allResults,
@@ -277,11 +215,11 @@ class KMSSearchAgentService {
     })
 
     // 记录搜索命中
-    this.logSearchHits(allResults)
+    logSearchHits(allResults)
 
     // 搜索后异步触发冷热数据评估（去抖，5分钟内不重复）
     // 高频命中的冷文件会自动晋升为热文件，并触发 file2md 重新解析 + LLM 摘要生成
-    this.triggerEvaluateAndPromote(false)
+    triggerEvaluateAndPromote(false)
 
     return {
       queryType,
@@ -301,7 +239,7 @@ class KMSSearchAgentService {
    * - 结果充足时提前结束；首轮无结果时用原始查询降级重试
    */
   private async executeMultiRoundSearch(
-    searchPlan: { queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] },
+    searchPlan: SearchPlan,
     baseSearchOpts: SearchOptions,
     originalQuery: string,
     maxRounds: number,
@@ -326,7 +264,7 @@ class KMSSearchAgentService {
       let queryEmbedding: Float32Array | undefined
       if (useSemantic) {
         try {
-          const defaultEmbConfig = this.getKmsEmbeddingConfig(llmClient)
+          const defaultEmbConfig = getKmsEmbeddingConfig(llmClient, this.mainDb)
           if (defaultEmbConfig) {
             queryEmbedding = await llmClient.createEmbedding(
               defaultEmbConfig.providerId,
@@ -344,7 +282,7 @@ class KMSSearchAgentService {
       // 去重
       let newCount = 0
       for (const r of results) {
-        const key = this.getResultKey(r)
+        const key = getResultKey(r)
         if (!seenKeys.has(key)) {
           seenKeys.add(key)
           allResults.push(r)
@@ -373,7 +311,7 @@ class KMSSearchAgentService {
         addStep({ phase: `第${i + 1}轮检索`, action: '首轮无结果，尝试使用原始查询重试', type: 'search' })
         const fallbackResults = searchEngine.search(originalQuery, queryEmbedding, baseSearchOpts)
         for (const r of fallbackResults) {
-          const key = this.getResultKey(r)
+          const key = getResultKey(r)
           if (!seenKeys.has(key)) {
             seenKeys.add(key)
             allResults.push(r)
@@ -392,12 +330,12 @@ class KMSSearchAgentService {
    */
   private async gatherSupplementaryContent(
     allResults: SearchResult[],
-    searchPlan: { candidateFileIds: string[] },
+    searchPlan: SearchPlan,
     topK: number,
     signal: AbortSignal | undefined,
     addStep: (step: SearchTraceStep) => void,
   ): Promise<string> {
-    const filesToRead = this.selectFilesToRead(allResults, searchPlan.candidateFileIds, allResults.length < topK)
+    const filesToRead: FileToRead[] = selectFilesToRead(this.db, allResults, searchPlan.candidateFileIds, allResults.length < topK)
     if (filesToRead.length === 0) {
       return ''
     }
@@ -414,7 +352,7 @@ class KMSSearchAgentService {
     for (const fileInfo of filesToRead.slice(0, 5)) {
       if (signal?.aborted) throw new Error('Search aborted')
       try {
-        const chunk = await this.readFileChunk(fileInfo.fileId, 0, READ_CHUNK_SIZE)
+        const chunk = await readFileChunk(this.db, fileInfo.fileId, 0, READ_CHUNK_SIZE)
         if (chunk) {
           readChunks.push(`【${fileInfo.fileName}】\n${chunk}`)
           addStep({
@@ -440,685 +378,12 @@ class KMSSearchAgentService {
     return supplementaryContent
   }
 
-  /**
-   * 获取默认 LLM 配置（providerId + modelId + enableThinking）
-   * 优先级：KMS 专属设置 (kms_model) > 知识场景默认模型 (default_model_knowledge) > 任意可用提供商
-   */
-  private getDefaultLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
-    const db = this.mainDb.getDb()
-
-    // 1. 优先使用 KMS 专属模型设置
-    try {
-      const kmsModelRow = db.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
-      if (kmsModelRow?.value) {
-        const config = JSON.parse(kmsModelRow.value)
-        if (config.provider_id) {
-          return {
-            providerId: config.provider_id,
-            modelId: config.model_id || undefined,
-            enableThinking: !!config.enable_thinking,
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read kms_model setting, falling back to default', error)
-    }
-
-    // 2. 回退到知识场景默认模型
-    try {
-      const row = db.prepare(
-        "SELECT value FROM settings WHERE key = 'default_model_knowledge'"
-      ).get() as any
-      if (row?.value) {
-        const config = JSON.parse(row.value)
-        if (config.provider_id) {
-          return {
-            providerId: config.provider_id,
-            modelId: config.model_id || undefined,
-            enableThinking: false,
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read default_model_knowledge setting, falling back to first provider', error)
-    }
-
-    // 3. 最后回退到任意可用提供商
-    const fallbackProviderId = getDefaultProviderId(this.mainDb)
-    if (fallbackProviderId) {
-      return { providerId: fallbackProviderId, modelId: undefined, enableThinking: false }
-    }
-    return null
+  private getDefaultLLMConfig(): AgentLLMConfig | null {
+    return getDefaultLLMConfig(this.mainDb)
   }
 
-  /**
-   * 获取 KMS 专属 Embedding 配置
-   * 优先级：KMS 专属设置 (kms_embedding_model) > 默认 Embedding 配置
-   */
-  private getKmsEmbeddingConfig(llmClient: LLMClientService): { providerId: string; modelName: string } | null {
-    const db = this.mainDb.getDb()
-    // 1. 优先使用 KMS 专属 Embedding 模型设置
-    try {
-      const kmsEmbRow = db.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
-      if (kmsEmbRow?.value) {
-        const config = JSON.parse(kmsEmbRow.value)
-        if (config.provider_id) {
-          const provider = llmClient.getProvider(config.provider_id) as any
-          if (provider) {
-            let modelName = ''
-            if (config.model_id && provider.models_json) {
-              try {
-                const models = JSON.parse(provider.models_json)
-                const model = models.find((m: any) => m.id === config.model_id)
-                if (model) {
-                  modelName = model.model
-                }
-              } catch {}
-            }
-            if (!modelName) {
-              modelName = provider.embedding_model || 'text-embedding-3-small'
-            }
-            return { providerId: config.provider_id, modelName }
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
-    }
-
-    // 2. 回退到默认 Embedding 配置
-    return llmClient.getDefaultEmbeddingConfig()
-  }
-
-  /**
-   * 根据 providerId 获取其默认 model_id
-   */
   private getModelIdByProvider(providerId: string): string | undefined {
-    const row = this.mainDb.getDb().prepare(
-      'SELECT model, models_json FROM llm_providers WHERE id = ?'
-    ).get(providerId) as any
-    if (!row) return undefined
-    if (row.models_json) {
-      try {
-        const models = JSON.parse(row.models_json)
-        if (Array.isArray(models) && models.length > 0 && models[0].id) {
-          return models[0].id
-        }
-      } catch {}
-    }
-    return row.model || undefined
-  }
-
-  /**
-   * 获取文件清单（文件名、路径、轻量摘要）—— 用于LLM判断哪些文件可能相关
-   * 支持按目录或合集过滤，两者同时存在时取交集
-   *
-   * 优化策略：
-   * - 文件总数 <= 50 时：全部发送给 LLM
-   * - 文件总数 > 50 时：先用查询关键词对文件名/摘要做轻量匹配，取匹配的文件 + 部分代表性样本
-   */
-  private getFileInventory(dirIds?: string[], collectionIds?: string[], query?: string): Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> {
-    try {
-      // 基础查询：获取所有已完成索引的文件
-      let baseSql = `
-        SELECT DISTINCT f.id as file_id, f.file_name, f.file_path, f.file_ext,
-               COALESCE(s.light_summary, '') as light_summary,
-               COALESCE(s.summary, '') as summary
-        FROM kms_files f
-        LEFT JOIN kms_file_summaries s ON s.file_id = f.id
-        WHERE f.index_status = 'completed'
-      `
-      const baseParams: any[] = []
-      if (dirIds && dirIds.length > 0) {
-        const placeholders = dirIds.map(() => '?').join(',')
-        baseSql += ` AND f.dir_id IN (${placeholders})`
-        baseParams.push(...dirIds)
-      }
-      if (collectionIds && collectionIds.length > 0) {
-        const placeholders = collectionIds.map(() => '?').join(',')
-        baseSql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
-        baseParams.push(...collectionIds)
-      }
-
-      // 先获取总文件数
-      const countSql = `SELECT COUNT(*) as cnt FROM (${baseSql})`
-      const total = (this.db.prepare(countSql).get(...baseParams) as any)?.cnt || 0
-
-      // 文件数量较少时，全量返回
-      if (total <= 50) {
-        const rows = this.db.prepare(`${baseSql} ORDER BY f.file_name LIMIT 50`).all(...baseParams) as any[]
-        return rows.map(r => ({
-          fileId: r.file_id,
-          fileName: r.file_name,
-          filePath: r.file_path,
-          fileExt: r.file_ext || '',
-          lightSummary: r.summary || r.light_summary || '',
-        }))
-      }
-
-      // 文件数量较多时：基于查询关键词预筛选
-      const keywords = this.extractKeywords(query || '')
-      const results: Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }> = []
-      const seenIds = new Set<string>()
-
-      // 1. 关键词匹配文件名/摘要的文件（优先）
-      if (keywords.length > 0) {
-        const matchSql = `${baseSql} AND (${keywords.map(() => `(f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)`).join(' OR ')}) ORDER BY f.file_name LIMIT 30`
-        const matchParams = [...baseParams]
-        for (const kw of keywords) {
-          const like = `%${kw}%`
-          matchParams.push(like, like, like)
-        }
-        const rows = this.db.prepare(matchSql).all(...matchParams) as any[]
-        for (const r of rows) {
-          if (!seenIds.has(r.file_id)) {
-            seenIds.add(r.file_id)
-            results.push({
-              fileId: r.file_id,
-              fileName: r.file_name,
-              filePath: r.file_path,
-              fileExt: r.file_ext || '',
-              lightSummary: r.summary || r.light_summary || '',
-            })
-          }
-        }
-      }
-
-      // 2. 补充代表性样本（按扩展名分组，每组取最新文件）
-      if (results.length < 50) {
-        const sampleSql = `${baseSql} ORDER BY f.file_ext, f.updated_at DESC LIMIT 50`
-        const sampleRows = this.db.prepare(sampleSql).all(...baseParams) as any[]
-        for (const r of sampleRows) {
-          if (!seenIds.has(r.file_id) && results.length < 50) {
-            seenIds.add(r.file_id)
-            results.push({
-              fileId: r.file_id,
-              fileName: r.file_name,
-              filePath: r.file_path,
-              fileExt: r.file_ext || '',
-              lightSummary: r.summary || r.light_summary || '',
-            })
-          }
-        }
-      }
-
-      return results
-    } catch (err) {
-      logger.warn('Failed to get file inventory:', err)
-      return []
-    }
-  }
-
-  /**
-   * 从查询中提取关键词（简单分词，用于文件名/摘要预匹配）
-   */
-  private extractKeywords(query: string): string[] {
-    // 去除常见疑问词和停用词
-    const stopWords = new Set(['如何', '怎么', '什么', '为什么', '的', '了', '吗', '呢', '在', '是', '有', '和', '与', '及', '等', '中', '上', '下', '不', '也', '都', '还', '就', '要', '会', '能', '可以', '这个', '那个', 'how', 'what', 'why', 'where', 'when', 'who', 'is', 'are', 'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or'])
-    // 中文按2-4字分词，英文按空格分割
-    const tokens: string[] = []
-    // 英文词
-    const enWords = query.match(/[a-zA-Z0-9]+/g) || []
-    tokens.push(...enWords.filter(w => !stopWords.has(w.toLowerCase()) && w.length > 1))
-    // 中文连续片段：按2字和3字滑动窗口提取
-    const cnSegments = query.match(/[\u4e00-\u9fff]+/g) || []
-    for (const seg of cnSegments) {
-      if (seg.length <= 4 && !stopWords.has(seg)) {
-        tokens.push(seg)
-      } else {
-        // 滑动窗口
-        for (let len = 2; len <= Math.min(4, seg.length); len++) {
-          for (let i = 0; i <= seg.length - len; i++) {
-            const sub = seg.substring(i, i + len)
-            if (!stopWords.has(sub)) tokens.push(sub)
-          }
-        }
-      }
-    }
-    // 去重，取前5个关键词
-    return [...new Set(tokens)].slice(0, 5)
-  }
-
-  /**
-   * 获取作用域摘要（目录摘要或合集摘要）
-   * - 仅传 dirIds：返回目录摘要
-   * - 仅传 collectionIds：返回合集摘要（包装为兼容结构）
-   * - 同时传：返回目录摘要（合集摘要作为补充信息，由调用方决定是否使用）
-   */
-  private getScopeSummaries(dirIds?: string[], collectionIds?: string[]): Array<{ dirPath: string; summary: string; fileCount: number }> {
-    // 优先返回目录摘要
-    const dirSummaries = this.getDirSummaries(dirIds)
-    if (dirSummaries.length > 0 || (dirIds && dirIds.length > 0)) {
-      return dirSummaries
-    }
-
-    // 没有目录过滤时，若指定了合集，返回合集摘要
-    if (collectionIds && collectionIds.length > 0) {
-      try {
-        const placeholders = collectionIds.map(() => '?').join(',')
-        const rows = this.db.prepare(`
-          SELECT cs.summary, cs.key_topics_json,
-                 (SELECT COUNT(*) FROM kms_file_collections fc WHERE fc.collection_id = cs.collection_id) as file_count,
-                 c.name as collection_name
-          FROM kms_collection_summaries cs
-          JOIN kms_collections c ON c.id = cs.collection_id
-          WHERE cs.collection_id IN (${placeholders})
-        `).all(...collectionIds) as any[]
-        return rows.map(r => ({
-          dirPath: `合集: ${r.collection_name}`,
-          summary: r.summary || '',
-          fileCount: r.file_count || 0,
-        }))
-      } catch {
-        return []
-      }
-    }
-
-    return []
-  }
-
-  /**
-   * 获取目录摘要
-   */
-  private getDirSummaries(dirIds?: string[]): Array<{ dirPath: string; summary: string; fileCount: number }> {
-    try {
-      let sql = 'SELECT dir_path, summary, file_count FROM kms_dir_summaries'
-      const params: any[] = []
-      if (dirIds && dirIds.length > 0) {
-        const placeholders = dirIds.map(() => '?').join(',')
-        sql += ` WHERE dir_id IN (${placeholders})`
-        params.push(...dirIds)
-      }
-      const rows = this.db.prepare(sql).all(...params) as any[]
-      return rows.map(r => ({
-        dirPath: r.dir_path,
-        summary: r.summary,
-        fileCount: r.file_count,
-      }))
-    } catch {
-      return []
-    }
-  }
-
-  /**
-   * 识别查询类型
-   */
-  private async identifyQueryType(
-    query: string,
-    llmClient: LLMClientService,
-    providerId: string,
-    modelId: string | undefined,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<QueryType> {
-    const prompt = `分析以下用户查询的意图类型，只返回类型代码，不要其他内容。
-
-查询：${query}
-
-类型定义：
-- locate: 定位查找（找某个具体信息在哪里，如"xxx在哪"、"xxx的联系方式"、"找出包含xxx的文件"）
-- concept: 概念解释（解释某个概念、术语、定义，如"什么是xxx"、"xxx是什么意思"）
-- trend: 趋势梳理（梳理时间线、变化趋势、发展过程，如"xxx的发展历程"、"xxx的变化趋势"）
-- analysis: 综合分析（汇总多源信息得出结论，如"总结xxx"、"分析xxx的现状"、"对比xxx和yyy"）
-
-只返回类型代码（locate/concept/trend/analysis）：`
-
-    try {
-      const result = await llmClient.chat(providerId, [
-        { role: 'system', content: '你是一个查询意图分类器，只输出类型代码。' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0, max_tokens: 20, model: modelId, signal, logSource: 'kms_agent_classify', enable_thinking: enableThinking })
-
-      const type = result.trim().toLowerCase()
-      if (['locate', 'concept', 'trend', 'analysis'].includes(type)) {
-        return type as QueryType
-      }
-    } catch (err) {
-      logger.warn('Failed to identify query type:', err)
-    }
-
-    return this.fallbackClassify(query)
-  }
-
-  /**
-   * 降级查询类型分类
-   */
-  private fallbackClassify(query: string): QueryType {
-    const lower = query.toLowerCase()
-    if (/在哪|哪里|位置|定位|找出|找到|查找|哪个文件/.test(lower)) return 'locate'
-    if (/什么是|是什么|解释|定义|含义|意思/.test(lower)) return 'concept'
-    if (/趋势|变化|发展|历程|时间线|演变/.test(lower)) return 'trend'
-    if (/总结|分析|对比|汇总|概括|综述/.test(lower)) return 'analysis'
-    return 'locate'
-  }
-
-  /**
-   * 规划检索路径（结合文件清单和目录摘要）
-   * LLM 基于文件名/路径/轻量摘要判断哪些文件可能包含相关信息
-   */
-  private async planSearchPath(
-    query: string,
-    queryType: QueryType,
-    fileInventory: Array<{ fileId: string; fileName: string; filePath: string; fileExt: string; lightSummary: string }>,
-    dirSummaries: Array<{ dirPath: string; summary: string; fileCount: number }>,
-    llmClient: LLMClientService,
-    providerId: string,
-    modelId: string | undefined,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<{ queries: string[]; useSemanticForAll: boolean; candidateFileIds: string[] }> {
-    const typeStrategy: Record<QueryType, string> = {
-      locate: '提取核心实体名、术语、关键标识符进行精确搜索',
-      concept: '提取概念名称和定义关键词，先搜概念再搜上下文',
-      trend: '提取主题词和时间相关关键词，关注历史与最新数据',
-      analysis: '提取多角度关键词，覆盖不同方面的核心术语',
-    }
-
-    // 构建文件清单文本（限制数量避免token过多）
-    const maxFiles = 50
-    const fileListText = fileInventory.slice(0, maxFiles).map((f, i) => {
-      const summary = f.lightSummary ? ` | 摘要: ${f.lightSummary.substring(0, 60)}` : ''
-      return `${i + 1}. ${f.fileName} (${f.fileExt})${summary}`
-    }).join('\n')
-
-    // 构建目录摘要文本
-    const dirSummaryText = dirSummaries.map(d =>
-      `目录: ${d.dirPath} (${d.fileCount}个文件)\n摘要: ${d.summary}`
-    ).join('\n\n')
-
-    const prompt = `你是一个搜索引擎查询规划器。参考主流搜索引擎的做法，将用户的自然语言问题转化为适合全文检索的关键词查询。
-
-用户问题：${query}
-查询类型：${queryType}（${QUERY_TYPE_LABELS[queryType]}）
-检索策略：${typeStrategy[queryType]}
-
-${dirSummaryText ? `目录摘要：\n${dirSummaryText}\n\n` : ''}可用文件清单：
-${fileListText || '（无文件清单）'}
-
-【关键词提取规则】（参考搜索引擎做法）：
-1. 从用户问题中提取核心关键词（实体名、术语、专有名词、关键动词/名词），去掉"如何、怎么、什么、为什么、的、了、吗、呢、在、是"等无意义词
-2. 每个关键词用空格分隔，形成关键词组合，例如：用户问"如何配置数据库连接" → 关键词 "配置 数据库 连接"
-3. 中文关键词保持2-4个字符的粒度，不要整句作为关键词
-4. 生成 1-3 组关键词查询：
-   - 第1组：最核心的关键词（从原问题提取）
-   - 第2组：同义词或相关术语扩展（如"配置"→"设置"，"数据库"→"DB"）
-   - 第3组：不同角度的补充关键词
-5. 每组关键词不超过 5 个词，总长度不超过 30 字符
-6. 基于文件名和摘要，判断哪些文件可能包含相关信息，列出候选文件序号（1-based）
-
-返回 JSON 格式：
-{"queries": ["关键词1 关键词2 关键词3", "同义词1 同义词2", "补充词1 补充词2"], "use_semantic_for_all": false, "candidate_file_indices": [1, 3]}
-
-示例：
-- 用户问"项目部署流程是什么" → {"queries": ["部署 流程", "部署 步骤", "发布 上线"], ...}
-- 用户问"数据库连接池配置" → {"queries": ["数据库 连接池 配置", "连接池 设置", "DB pool"], ...}
-- 用户问"用户登录失败怎么排查" → {"queries": ["登录 失败 排查", "登录 错误 日志", "登录 问题 诊断"], ...}`
-
-    try {
-      const parsed = await callLLMForJSON<{
-        queries: string[]
-        use_semantic_for_all: boolean
-        candidate_file_indices: number[]
-      }>(
-        llmClient,
-        providerId,
-        modelId,
-        [
-          { role: 'system', content: '你是一个搜索引擎查询规划器，只返回JSON。' },
-          { role: 'user', content: prompt },
-        ],
-        { queries: [], use_semantic_for_all: false, candidate_file_indices: [] },
-        { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_agent_plan', enable_thinking: enableThinking },
-      )
-
-      const queries = Array.isArray(parsed.queries) && parsed.queries.length > 0
-        ? parsed.queries.slice(0, 3).map((q: any) => String(q).trim()).filter(Boolean)
-        : [query]
-
-      // 将候选文件序号转换为文件ID
-      const candidateFileIds: string[] = []
-      if (Array.isArray(parsed.candidate_file_indices)) {
-        for (const idx of parsed.candidate_file_indices) {
-          const i = Number(idx) - 1
-          if (i >= 0 && i < fileInventory.length) {
-            candidateFileIds.push(fileInventory[i].fileId)
-          }
-        }
-      }
-
-      return {
-        queries,
-        useSemanticForAll: Boolean(parsed.use_semantic_for_all),
-        candidateFileIds,
-      }
-    } catch (err) {
-      logger.warn('Failed to plan search path:', err)
-    }
-
-    // 降级：直接使用原始查询
-    return { queries: [query], useSemanticForAll: false, candidateFileIds: [] }
-  }
-
-  /**
-   * 选择需要读取片段的文件
-   * 综合考虑：搜索结果中的文件 + LLM规划的候选文件
-   */
-  private selectFilesToRead(
-    searchResults: SearchResult[],
-    candidateFileIds: string[],
-    resultsInsufficient: boolean
-  ): Array<{ fileId: string; fileName: string }> {
-    const fileMap = new Map<string, string>() // fileId -> fileName
-
-    // 如果搜索结果不足，读取搜索结果中的文件
-    if (resultsInsufficient) {
-      for (const r of searchResults.slice(0, 3)) {
-        if (r.file_id && r.file_name) {
-          fileMap.set(r.file_id, r.file_name)
-        }
-      }
-    }
-
-    // 批量查询 LLM 规划的候选文件，消除 N+1
-    const candidateIds = candidateFileIds.filter(id => !fileMap.has(id)).slice(0, 3)
-    if (candidateIds.length > 0) {
-      const placeholders = candidateIds.map(() => '?').join(',')
-      const rows = this.db.prepare(
-        `SELECT id, file_name FROM kms_files WHERE id IN (${placeholders})`
-      ).all(...candidateIds) as any[]
-      for (const row of rows) {
-        if (!fileMap.has(row.id)) {
-          fileMap.set(row.id, row.file_name)
-        }
-      }
-    }
-
-    return Array.from(fileMap.entries()).map(([fileId, fileName]) => ({ fileId, fileName }))
-  }
-
-  /**
-   * 读取文件分片（不直接读取全文，分片慢慢读取）
-   *
-   * 优化：优先从已存储的段落内容读取（热数据），避免每次调用都重新解析整个文件。
-   * 冷数据没有段落记录时，回退到重新解析（使用索引时保存的 parse_mode 决定 hot/cold）。
-   */
-  private async readFileChunk(fileId: string, startOffset: number, maxChars: number): Promise<string> {
-    try {
-      // 优先使用已存储的段落内容（热数据，零解析开销）
-      const KMSFileReaderService = require('./kms-file-reader.service').default
-      const fileReader = KMSFileReaderService.getInstance()
-      let content = fileReader.getStoredFullContent(fileId)
-
-      if (content === null) {
-        // 冷数据：读取索引时保存的 parse_mode，决定使用 file2md 还是普通解析器
-        const file = this.db.prepare('SELECT file_path FROM kms_files WHERE id = ?').get(fileId) as any
-        if (!file) return ''
-        const summary = this.db.prepare('SELECT parse_mode FROM kms_file_summaries WHERE file_id = ?').get(fileId) as any
-        const parseMode = summary?.parse_mode || undefined
-
-        const FileParserService = require('../file-parser.service').default
-        const parseResult = await FileParserService.getInstance().parseFilePath(
-          file.file_path,
-          undefined,
-          parseMode === 'file2md' ? 'hot' : 'cold',
-        )
-        content = parseResult.fullText || ''
-      }
-
-      return content.substring(startOffset, startOffset + maxChars)
-    } catch (err) {
-      logger.warn(`Failed to read chunk from file ${fileId}:`, err)
-      return ''
-    }
-  }
-
-  /**
-   * 筛选提纯结果
-   */
-  private async distillResults(
-    query: string,
-    queryType: QueryType,
-    results: SearchResult[],
-    supplementaryContent: string,
-    llmClient: LLMClientService,
-    providerId: string,
-    modelId: string | undefined,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<{ conclusion: string; sources: AgentSearchSource[] }> {
-    if (results.length === 0 && !supplementaryContent) {
-      return {
-        conclusion: `未找到与"${query}"相关的内容。建议：\n1. 尝试更宽泛的关键词\n2. 检查索引目录是否已添加并完成索引\n3. 使用更通用的术语`,
-        sources: [],
-      }
-    }
-
-    // 限制传入LLM的结果数量，避免token过多
-    const maxResults = Math.min(results.length, 15)
-    const limitedResults = results.slice(0, maxResults)
-
-    // 构建结果摘要
-    const resultsText = limitedResults.map((r, i) => {
-      const parts: string[] = [`[${i + 1}] ${r.file_name}`]
-      if (r.paragraph_title) parts.push(`段落: ${r.paragraph_title}`)
-      if (r.start_line !== undefined && r.end_line !== undefined) {
-        parts.push(`行: ${r.start_line}-${r.end_line}`)
-      }
-      parts.push(`内容: ${r.text.substring(0, 300)}`)
-      return parts.join(' | ')
-    }).join('\n')
-
-    const typeInstruction: Record<QueryType, string> = {
-      locate: '直接指出查询内容所在的位置，包括文件名和具体位置（行号/段落）。',
-      concept: '基于检索到的内容解释概念，整合多个来源的信息给出完整解释。',
-      trend: '按时间顺序梳理趋势变化，标注关键节点和对应来源。',
-      analysis: '综合分析多源信息，得出结论并标注各结论的依据来源。',
-    }
-
-    const supplementarySection = supplementaryContent
-      ? `\n\n补充读取的文件内容：\n${supplementaryContent.substring(0, 3000)}`
-      : ''
-
-    const prompt = `你是一个内容提纯助手。基于检索结果，针对用户查询生成核心结论。
-
-用户查询：${query}
-查询类型：${queryType}（${QUERY_TYPE_LABELS[queryType]}）
-
-检索结果：
-${resultsText || '（无搜索结果）'}${supplementarySection}
-
-要求：
-1. ${typeInstruction[queryType]}
-2. 结论简洁明了，不要堆砌原文
-3. 在结论中用 [序号] 标注信息来源，如"xxx [1]"
-4. 如果信息不足以回答，明确说明缺失的内容
-5. 结论不超过 500 字
-6. 直接输出结论，不要添加"根据检索结果"之类的开场白`
-
-    try {
-      const conclusion = await llmClient.chat(providerId, [
-        { role: 'system', content: '你是一个内容提纯助手，输出简洁准确的结论。' },
-        { role: 'user', content: prompt },
-      ], { temperature: 0.2, max_tokens: 800, model: modelId, signal, logSource: 'kms_agent_distill', enable_thinking: enableThinking })
-
-      // 构建溯源信息
-      const sources: AgentSearchSource[] = limitedResults.map(r => ({
-        fileId: r.file_id,
-        fileName: r.file_name,
-        filePath: r.file_path,
-        paragraphId: r.paragraph_id,
-        paragraphTitle: r.paragraph_title,
-        snippet: r.text.substring(0, 200),
-        startLine: r.start_line,
-        endLine: r.end_line,
-        startOffset: r.start_offset,
-        endOffset: r.end_offset,
-        score: r.score,
-      }))
-
-      return { conclusion: conclusion.trim(), sources }
-    } catch (err) {
-      logger.warn('Failed to distill results:', err)
-
-      // 降级：直接返回原始结果摘要
-      const conclusion = limitedResults.map((r, i) =>
-        `[${i + 1}] ${r.file_name}${r.paragraph_title ? ` > ${r.paragraph_title}` : ''}: ${r.text.substring(0, 150)}`
-      ).join('\n')
-
-      const sources: AgentSearchSource[] = limitedResults.map(r => ({
-        fileId: r.file_id,
-        fileName: r.file_name,
-        filePath: r.file_path,
-        paragraphId: r.paragraph_id,
-        paragraphTitle: r.paragraph_title,
-        snippet: r.text.substring(0, 200),
-        startLine: r.start_line,
-        endLine: r.end_line,
-        startOffset: r.start_offset,
-        endOffset: r.end_offset,
-        score: r.score,
-      }))
-
-      return { conclusion, sources }
-    }
-  }
-
-  private getResultKey(result: SearchResult): string {
-    if (result.paragraph_id) return `paragraph-${result.paragraph_id}`
-    if (result.match_type === 'content_paragraph' && result.start_offset !== undefined) {
-      return `content-${result.file_id}-${result.start_offset}`
-    }
-    return `${result.match_type}-${result.file_id}`
-  }
-
-  private logSearchHits(results: SearchResult[]): void {
-    const fileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
-    if (fileIds.length === 0) return
-    try {
-      const crawler = require('./kms-crawler.service').default.getInstance()
-      crawler.logFileAccessBatch(fileIds, 'search_hit')
-    } catch (error) {
-      logger.debug('Failed to log search hits batch', error)
-    }
-  }
-
-  /**
-   * 搜索完成后异步触发冷热数据评估（fire-and-forget）
-   *
-   * 通过 KMSService.evaluateAndPromote 委托到 KMSIndexManagerService：
-   * - 去抖：5分钟内的多次搜索只触发一次评估（force=false）
-   * - 晋升：高频命中的冷文件会被标记为热文件，并自动重新解析（file2md）+ 生成 LLM 摘要 + 向量嵌入
-   * - 隔离：使用动态 require 规避与 KMSService 的循环依赖
-   */
-  private triggerEvaluateAndPromote(force: boolean): void {
-    try {
-      const KMSService = require('./kms.service').default
-      KMSService.getInstance().evaluateAndPromote(force).catch((err: any) => {
-        logger.debug('Post-search evaluateAndPromote failed:', err?.message || err)
-      })
-    } catch (error) {
-      logger.debug('Failed to trigger evaluateAndPromote', error)
-    }
+    return getModelIdByProvider(this.mainDb, providerId)
   }
 }
 

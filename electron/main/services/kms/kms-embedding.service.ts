@@ -105,6 +105,8 @@ class KMSEmbeddingService {
     const totalCandidates = totalRow?.cnt ?? 0
     const totalToProcess = Math.max(0, totalCandidates - existingKeys.size)
 
+    logger.info(`Embedding generation: ${totalToProcess} entry(s) to process (forceRegenerate=${forceRegenerate}, provider=${providerId})`)
+
     // keyset 分页：用 id > ? 替代 OFFSET，避免大表 OFFSET 性能退化
     let lastId = ''
     while (!signal?.aborted) {

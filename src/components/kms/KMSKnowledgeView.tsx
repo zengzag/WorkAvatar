@@ -38,6 +38,7 @@ interface KMSKnowledgeViewProps {
   onLoadFileSummaries: (params?: {
     dirId?: string
     dataTier?: 'cold' | 'hot'
+    indexStatus?: string
     keyword?: string
     page?: number
     pageSize?: number
@@ -66,6 +67,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
 
   const [filterDirId, setFilterDirId] = useState<string | undefined>(undefined)
   const [filterTier, setFilterTier] = useState<'hot' | 'cold' | undefined>(undefined)
+  const [filterStatus, setFilterStatus] = useState<string | undefined>(undefined)
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -93,18 +95,19 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onLoadFileSummaries({
       dirId: filterDirId,
       dataTier: filterTier,
+      indexStatus: filterStatus,
       keyword: filterKeyword.trim() || undefined,
       page,
       pageSize,
     })
-  }, [filterDirId, filterTier, filterKeyword, page, pageSize, onLoadFileSummaries])
+  }, [filterDirId, filterTier, filterStatus, filterKeyword, page, pageSize, onLoadFileSummaries])
 
   const reloadRef = useRef(reloadFileSummaries)
   useEffect(() => { reloadRef.current = reloadFileSummaries }, [reloadFileSummaries])
 
   useEffect(() => {
     reloadRef.current()
-  }, [filterDirId, filterTier, page, pageSize])
+  }, [filterDirId, filterTier, filterStatus, page, pageSize])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -172,6 +175,15 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     { label: t('kms.knowledge.allTiers'), value: '' },
     { label: t('kms.knowledge.hot'), value: 'hot' },
     { label: t('kms.knowledge.cold'), value: 'cold' },
+  ], [t])
+
+  const statusOptions = useMemo(() => [
+    { label: t('kms.knowledge.allStatuses'), value: '' },
+    { label: t('kms.knowledge.statusFailed'), value: 'failed' },
+    { label: t('kms.knowledge.statusPending'), value: 'pending' },
+    { label: t('kms.knowledge.statusModified'), value: 'modified' },
+    { label: t('kms.knowledge.statusIndexing'), value: 'indexing' },
+    { label: t('kms.knowledge.statusIndexed'), value: 'completed' },
   ], [t])
 
   const overviewStats = useMemo(() => {
@@ -290,6 +302,13 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
           value={filterTier || ''}
           onChange={v => { setFilterTier((v || undefined) as 'hot' | 'cold' | undefined); setPage(1) }}
           options={tierOptions}
+        />
+        <Select
+          size="small"
+          style={{ width: 130 }}
+          value={filterStatus || ''}
+          onChange={v => { setFilterStatus(v || undefined); setPage(1) }}
+          options={statusOptions}
         />
       </div>
 

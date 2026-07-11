@@ -1,160 +1,40 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Button, Empty, Spin, Space, Tag, Tooltip, Popconfirm,
-  Drawer, Table, App, theme, Typography, Tree, Alert,
+  Card, Button, Empty, Spin, Space, Tag, Tooltip,
+  Drawer, Table, App, theme, Typography,
 } from 'antd'
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, FileOutlined, FolderOutlined,
-  ReloadOutlined, ExclamationCircleOutlined, FileAddOutlined,
-  FileTextOutlined, SearchOutlined, FolderAddOutlined,
-  EyeOutlined, ThunderboltOutlined, LoadingOutlined,
-  RobotOutlined, TagOutlined, NodeIndexOutlined,
+  PlusOutlined, ReloadOutlined, FileAddOutlined, FolderAddOutlined,
+  FolderOutlined, RobotOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import KMSCollectionProcessModal from './KMSCollectionProcessModal'
 import {
   KMSCollectionEditModal,
   KMSCollectionSummaryModal,
   KMSParagraphPreviewDrawer,
+  CollectionFileDetail,
+  CollectionCard,
+  ProcessingAlerts,
+  buildFileColumns,
   type CollectionItem,
 } from './collection'
-import { formatFileSize } from '../../utils/format'
+import {
+  type CollectionFile,
+  type CollectionStats,
+  type CollectionSummary,
+  type FileDetailCache,
+  type ProcessingCollectionState,
+  type KMSCollectionsViewProps,
+  POLL_INTERVAL_MS,
+  STAGE_KEYS,
+  STAGE_INDEX,
+  SUPPORTED_EXTS,
+  parseJsonArray,
+} from './collection/collection-types'
 import { formatTime } from './kms-columns'
 
 const { Text, Paragraph } = Typography
-
-interface CollectionFile {
-  id: string
-  file_name: string
-  file_path: string
-  file_ext: string
-  file_size: number
-  data_tier: string
-  index_status: string
-  modified_time: number
-  added_at: number
-  summary: string
-  light_summary: string
-  keywords_json: string
-  main_topics_json: string
-}
-
-interface CollectionStats {
-  fileCount: number
-  indexedCount: number
-  hotCount: number
-  pendingCount: number
-  hasSummary: boolean
-}
-
-interface CollectionSummary {
-  collection_id: string
-  summary: string
-  key_topics_json: string
-  updated_at?: number
-}
-
-interface FileSummary {
-  file_id: string
-  summary: string
-  toc_json: string
-  keywords_json: string
-  main_topics_json: string
-  updated_at?: number
-}
-
-interface ParagraphItem {
-  id: string
-  title: string
-  title_path: string
-  level: number
-  paragraph_index: number
-  start_offset: number
-  end_offset: number
-  summary?: string
-  keywords_json?: string
-}
-
-interface FileDetailCache {
-  summary: FileSummary | null
-  paragraphs: ParagraphItem[]
-  loading: boolean
-  error?: string
-}
-
-/** 后台处理中合集的实时状态 */
-interface ProcessingCollectionState {
-  id: string
-  name: string
-  phase: string
-  message: string
-  current: number
-  total: number
-  percent: number
-  lastUpdated: number
-}
-
-interface KMSCollectionsViewProps {
-  /** 点击"在此合集中搜索"时触发，由父组件切换到搜索视图并设置筛选 */
-  onSearchInCollection?: (collectionId: string) => void
-  /** 预览文件，由父组件打开 KMSFilePreview */
-  onPreviewFile?: (file: { file_id: string; file_name: string; file_path: string; text: string; match_type: string }) => void
-}
-
-/** 合集深度处理轮询间隔（毫秒） */
-const POLL_INTERVAL_MS = 3000
-
-/** 8 阶段定义（用于计算总体百分比） */
-const STAGE_KEYS = ['parsing', 'paragraph_split', 'toc', 'paragraph_summary', 'doc_summary', 'embedding', 'collection_summary', 'collection_embedding'] as const
-const STAGE_INDEX: Record<string, number> = {}
-STAGE_KEYS.forEach((k, i) => { STAGE_INDEX[k] = i })
-
-const parseJsonArray = (json?: string): string[] => {
-  if (!json) return []
-  try {
-    const arr = JSON.parse(json)
-    return Array.isArray(arr) ? arr.map(String) : []
-  } catch {
-    return []
-  }
-}
-
-const buildTocTree = (paragraphs: ParagraphItem[], t: (key: string, options?: any) => string): any[] => {
-  const sorted = [...paragraphs].sort((a, b) => a.paragraph_index - b.paragraph_index)
-  const roots: any[] = []
-  const stack: { node: any; level: number }[] = []
-
-  sorted.forEach((p) => {
-    const node = {
-      key: p.id,
-      title: (
-        <span>
-          <Text style={{ fontSize: 12 }}>{p.title || t('kms.collectionDetails.unnamedParagraph')}</Text>
-          {p.summary ? (
-            <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
-              {p.summary.length > 50 ? p.summary.slice(0, 50) + '…' : p.summary}
-            </Text>
-          ) : null}
-        </span>
-      ),
-      raw: p,
-    }
-    while (stack.length > 0 && stack[stack.length - 1].level >= p.level) {
-      stack.pop()
-    }
-    if (stack.length === 0) {
-      roots.push(node)
-    } else {
-      const parent = stack[stack.length - 1].node
-      if (!parent.children) parent.children = []
-      parent.children.push(node)
-    }
-    stack.push({ node, level: p.level })
-  })
-  return roots
-}
-
-const SUPPORTED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv', 'txt', 'md', 'html', 'htm']
 
 const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInCollection, onPreviewFile }) => {
   const { t } = useTranslation()
@@ -206,7 +86,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     setLoading(true)
     try {
       const result = await window.electronAPI.kms.listCollections()
-      setCollections(result || [])
+      // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底
+      setCollections(Array.isArray(result) ? result : [])
     } catch (err: any) {
       message.error(err?.message || 'Failed to load collections')
     } finally {
@@ -217,7 +98,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const loadAllSummaryAndStats = useCallback(async () => {
     try {
       const list = await window.electronAPI.kms.listCollections()
-      const ids = (list || []).map((c: any) => c.id)
+      // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底
+      const ids = (Array.isArray(list) ? list : []).map((c: any) => c.id)
       const [summaries, statsList] = await Promise.all([
         Promise.all(ids.map((id: string) => window.electronAPI.kms.getCollectionSummary(id).catch(() => null))),
         Promise.all(ids.map((id: string) => window.electronAPI.kms.getCollectionStats(id).catch(() => null))),
@@ -350,7 +232,12 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
 
     try {
       const stats = await window.electronAPI.kms.getCollectionStats(collection.id)
-      if (!stats || stats.fileCount === 0) {
+      // safeHandle 异常时返回 { error }（truthy），需显式判定避免误判为有效 stats
+      if (!stats || stats.error || stats.fileCount === 0) {
+        if (stats?.error) {
+          message.error(stats.error)
+          return
+        }
         message.warning(t('kms.collections.aiGenerateNoFiles'))
         return
       }
@@ -430,8 +317,9 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         window.electronAPI.kms.listFilesInCollection(collectionId),
         window.electronAPI.kms.getCollectionStats(collectionId),
       ])
-      setFiles(fileList || [])
-      setFilesStats(stats || null)
+      // safeHandle 异常时返回 { error }（truthy），需类型兜底避免下游迭代/字段访问出错
+      setFiles(Array.isArray(fileList) ? fileList : [])
+      setFilesStats(stats && !stats.error ? stats : null)
     } catch (err: any) {
       message.error(err?.message || 'Failed to load files')
     } finally {
@@ -480,7 +368,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         ...prev,
         [fileId]: {
           summary: fileSummary,
-          paragraphs: paragraphs || [],
+          // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底
+          paragraphs: Array.isArray(paragraphs) ? paragraphs : [],
           loading: false,
         },
       }))
@@ -682,213 +571,23 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }
 
-  const getStatsTag = (collectionId: string) => {
-    const stats = statsMap[collectionId]
-    if (!stats) return null
-    const { indexedCount, fileCount, pendingCount } = stats
-    if (fileCount === 0) {
-      return <Tag style={{ fontSize: 11 }}>{t('kms.collections.fileCount', { count: 0 })}</Tag>
-    }
-    let color = 'success'
-    if (pendingCount > 0 || indexedCount < fileCount) color = 'processing'
-    return (
-      <Tooltip title={pendingCount > 0 ? t('kms.collections.pendingIndexHint', { count: pendingCount }) : ''}>
-        <Tag color={color} style={{ fontSize: 11 }}>
-          {t('kms.collections.indexedCount', { count: indexedCount, total: fileCount })}
-        </Tag>
-      </Tooltip>
-    )
-  }
-
-  const renderFileDetail = (file: CollectionFile) => {
+  const renderFileDetail = useCallback((file: CollectionFile) => {
     const detail = detailCache[file.id]
-    if (!detail || detail.loading) {
-      return <div style={{ padding: '12px 24px' }}><Spin size="small" /></div>
-    }
-    if (detail.error) {
-      return <div style={{ padding: '12px 24px' }}><Text type="danger" style={{ fontSize: 12 }}>{detail.error}</Text></div>
-    }
-    const fileSummary = detail.summary
-    const keywords = parseJsonArray(fileSummary?.keywords_json)
-    const mainTopics = parseJsonArray(fileSummary?.main_topics_json)
-    const hasParagraphs = detail.paragraphs.length > 0
-
-    if (!fileSummary?.summary && !hasParagraphs) {
-      return (
-        <div style={{ padding: '12px 24px' }}>
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={t('kms.collectionDetails.noAiContent')}
-          />
-        </div>
-      )
-    }
-
     return (
-      <div style={{ padding: '12px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* 文件摘要 */}
-        {fileSummary?.summary && (
-          <Card size="small" style={{ borderColor: token.colorBorderSecondary, background: token.colorFillQuaternary }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <RobotOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
-              <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.fileSummaryTitle')}</Text>
-            </div>
-            <Paragraph style={{ fontSize: 12, margin: 0, color: token.colorTextSecondary }}>
-              {fileSummary.summary}
-            </Paragraph>
-            {(keywords.length > 0 || mainTopics.length > 0) && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {keywords.length > 0 && (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <TagOutlined style={{ fontSize: 11, color: token.colorTextTertiary }} />
-                    {keywords.slice(0, 8).map((kw, i) => (
-                      <Tag key={`kw-${i}-${kw}`} style={{ fontSize: 10, margin: 0 }}>{kw}</Tag>
-                    ))}
-                  </div>
-                )}
-                {mainTopics.length > 0 && (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <NodeIndexOutlined style={{ fontSize: 11, color: token.colorTextTertiary }} />
-                    {mainTopics.slice(0, 8).map((topic, i) => (
-                      <Tag key={`topic-${i}-${topic}`} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </Card>
-        )}
-
-        {/* 章节目录 TOC */}
-        {hasParagraphs && (
-          <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-              <NodeIndexOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
-              <Text strong style={{ fontSize: 12 }}>{t('kms.collectionDetails.tocTitle')}</Text>
-              <Tag style={{ fontSize: 10, margin: 0 }}>{detail.paragraphs.length}</Tag>
-            </div>
-            <Tree
-              treeData={buildTocTree(detail.paragraphs, t)}
-              defaultExpandAll
-              showLine
-              selectable={false}
-              titleRender={(node: any) => {
-                const raw = node?.raw as ParagraphItem
-                if (!raw) return node?.title
-                return (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0, flex: 1 }}>
-                      <Text style={{ fontSize: 12 }}>{raw.title || t('kms.collectionDetails.unnamed')}</Text>
-                      {raw.summary && (
-                        <Tooltip title={raw.summary}>
-                          <Text type="secondary" style={{ fontSize: 11 }}>
-                            {raw.summary.length > 60 ? raw.summary.slice(0, 60) + '…' : raw.summary}
-                          </Text>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <Tooltip title={t('kms.collectionDetails.previewParagraph')}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EyeOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePreviewParagraph(raw.id)
-                        }}
-                        style={{ flexShrink: 0 }}
-                      />
-                    </Tooltip>
-                  </div>
-                )
-              }}
-            />
-          </Card>
-        )}
-      </div>
+      <CollectionFileDetail
+        file={file}
+        detail={detail}
+        onPreviewParagraph={handlePreviewParagraph}
+      />
     )
-  }
+  }, [detailCache, handlePreviewParagraph])
 
-  const fileColumns = useMemo(() => [
-    {
-      title: t('kms.collections.fileName'),
-      dataIndex: 'file_name',
-      key: 'file_name',
-      render: (name: string, record: CollectionFile) => (
-        <Tooltip title={record.file_path}>
-          <Space size={4}>
-            <FileOutlined style={{ color: token.colorPrimary }} />
-            <a onClick={() => handleOpenFile(record.file_path)} style={{ fontSize: 12 }}>{name}</a>
-          </Space>
-        </Tooltip>
-      ),
-    },
-    {
-      title: t('kms.collections.fileSize'),
-      dataIndex: 'file_size',
-      key: 'file_size',
-      width: 90,
-      render: (size: number) => <Text type="secondary" style={{ fontSize: 12 }}>{formatFileSize(size)}</Text>,
-    },
-    {
-      title: t('kms.collections.fileStatus'),
-      dataIndex: 'index_status',
-      key: 'index_status',
-      width: 90,
-      render: (status: string) => {
-        const colorMap: Record<string, string> = {
-          completed: 'success',
-          pending: 'processing',
-          failed: 'error',
-        }
-        const labelMap: Record<string, string> = {
-          completed: t('kms.collections.statusCompleted'),
-          pending: t('kms.collections.statusPending'),
-          failed: t('kms.collections.statusFailed'),
-        }
-        return <Tag color={colorMap[status] || 'default'} style={{ fontSize: 11 }}>{labelMap[status] || status}</Tag>
-      },
-    },
-    {
-      title: t('kms.collections.fileSummary'),
-      dataIndex: 'summary',
-      key: 'summary',
-      ellipsis: true,
-      render: (summary: string, record: CollectionFile) => {
-        const text = summary || record.light_summary
-        return text ? <Text type="secondary" style={{ fontSize: 12 }}>{text}</Text> : <Text type="secondary" style={{ fontSize: 12, opacity: 0.5 }}>-</Text>
-      },
-    },
-    {
-      title: t('kms.collections.addedAt'),
-      dataIndex: 'added_at',
-      key: 'added_at',
-      width: 130,
-      render: (ts: number) => <Text type="secondary" style={{ fontSize: 11 }}>{formatTime(ts, 'datetime')}</Text>,
-    },
-    {
-      title: '',
-      key: 'actions',
-      width: 140,
-      render: (_: any, record: CollectionFile) => (
-        <Space size={4}>
-          <Tooltip title={t('kms.collections.previewFile')}>
-            <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => handlePreviewFile(record)} />
-          </Tooltip>
-          <Tooltip title={t('kms.openDir')}>
-            <Button type="text" size="small" icon={<FolderOutlined />} onClick={() => handleOpenFileDir(record.file_path)} />
-          </Tooltip>
-          <Popconfirm
-            title={t('kms.collections.removeFileConfirm')}
-            icon={<ExclamationCircleOutlined style={{ color: token.colorError }} />}
-            onConfirm={() => handleRemoveFile(record)}
-          >
-            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ], [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile])
+  const fileColumns = useMemo(() => buildFileColumns(t, token, {
+    onOpenFile: handleOpenFile,
+    onPreviewFile: handlePreviewFile,
+    onOpenFileDir: handleOpenFileDir,
+    onRemoveFile: handleRemoveFile,
+  }), [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile])
 
   const drawerKeyTopics = parseJsonArray(drawerSummary?.key_topics_json)
 
@@ -911,43 +610,13 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       </div>
 
       {/* 后台处理指示器：弹窗关闭后仍持续跟踪后台处理进度，可点击重新打开弹窗 */}
-      {Object.values(processingMap).length > 0 && (
-        <div style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
-          {Object.values(processingMap).map((p) => (
-            <Alert
-              key={p.id}
-              type="info"
-              showIcon
-              icon={<LoadingOutlined />}
-              message={
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <Text strong style={{ fontSize: 13 }}>
-                      {t('kms.collectionProcess.backgroundRunningHint', { name: p.name, percent: p.percent })}
-                    </Text>
-                    {p.message && (
-                      <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
-                        - {p.message}
-                      </Text>
-                    )}
-                  </div>
-                  <Button
-                    type="link"
-                    size="small"
-                    onClick={() => {
-                      setProcessCollection({ id: p.id, name: p.name })
-                      setProcessModalOpen(true)
-                    }}
-                  >
-                    {t('kms.collectionProcess.viewProgress')}
-                  </Button>
-                </div>
-              }
-              style={{ padding: '6px 12px' }}
-            />
-          ))}
-        </div>
-      )}
+      <ProcessingAlerts
+        processingMap={processingMap}
+        onViewProgress={(id, name) => {
+          setProcessCollection({ id, name })
+          setProcessModalOpen(true)
+        }}
+      />
 
       {/* 合集列表 */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
@@ -962,95 +631,23 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
-            {collections.map(c => {
-              const summary = summaryMap[c.id]
-              const keyTopics: string[] = (() => {
-                try { return JSON.parse(summary?.key_topics_json || '[]') } catch { return [] }
-              })()
-              return (
-                <Card
-                  key={c.id}
-                  size="small"
-                  hoverable
-                  styles={{ body: { padding: 12 } }}
-                  onClick={() => openFilesDrawer(c)}
-                >
-                  {/* 标题行 + 操作 */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                    <Space size={6} style={{ minWidth: 0, flex: 1 }}>
-                      <FolderOutlined style={{ color: token.colorPrimary, fontSize: 16, flexShrink: 0 }} />
-                      <Text strong ellipsis style={{ fontSize: 14 }}>{c.name}</Text>
-                    </Space>
-                    <Space size={2} onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title={t('kms.collections.searchInCollection')}>
-                        <Button type="text" size="small" icon={<SearchOutlined />} onClick={() => onSearchInCollection?.(c.id)} />
-                      </Tooltip>
-                      <Tooltip title={processingMap[c.id] ? t('kms.collectionProcess.viewProgress') : t('kms.collectionProcess.title')}>
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={processingMap[c.id] ? <LoadingOutlined /> : <ThunderboltOutlined />}
-                          onClick={() => handleProcessDeep(c)}
-                        />
-                      </Tooltip>
-                      <Tooltip title={t('kms.collections.editSummary')}>
-                        <Button type="text" size="small" icon={<FileTextOutlined />} onClick={() => openSummaryModal(c)} />
-                      </Tooltip>
-                      <Tooltip title={t('kms.collections.editCollection')}>
-                        <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditModal(c)} />
-                      </Tooltip>
-                      <Popconfirm
-                        title={t('kms.collections.deleteCollectionConfirm')}
-                        icon={<ExclamationCircleOutlined style={{ color: token.colorError }} />}
-                        onConfirm={() => handleDeleteCollection(c)}
-                      >
-                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                      </Popconfirm>
-                    </Space>
-                  </div>
-
-                  {/* 描述 */}
-                  {c.description && (
-                    <Paragraph type="secondary" ellipsis={{ rows: 1 }} style={{ fontSize: 12, marginBottom: 6, marginTop: 2 }}>
-                      {c.description}
-                    </Paragraph>
-                  )}
-
-                  {/* 摘要预览 */}
-                  {summary?.summary ? (
-                    <Tooltip title={summary.summary}>
-                      <Paragraph type="secondary" ellipsis={{ rows: 2 }} style={{ fontSize: 12, marginBottom: 6, color: token.colorTextSecondary }}>
-                        {summary.summary}
-                      </Paragraph>
-                    </Tooltip>
-                  ) : (
-                    <div style={{ marginBottom: 6 }}>
-                      <Text type="secondary" style={{ fontSize: 11, opacity: 0.6, fontStyle: 'italic' }}>
-                        {t('kms.collections.noCollectionSummary')}
-                      </Text>
-                    </div>
-                  )}
-
-                  {/* 关键主题 */}
-                  {keyTopics.length > 0 && (
-                    <div style={{ marginBottom: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {keyTopics.slice(0, 4).map((topic, idx) => (
-                        <Tag key={`topic-${idx}-${topic}`} color="purple" style={{ fontSize: 10, margin: 0 }}>{topic}</Tag>
-                      ))}
-                      {keyTopics.length > 4 && (
-                        <Tag style={{ fontSize: 10, margin: 0 }}>+{keyTopics.length - 4}</Tag>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 状态行 */}
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 4 }}>
-                    {getStatsTag(c.id)}
-                    <Tag style={{ fontSize: 11 }}>{formatTime(c.updated_at, 'datetime')}</Tag>
-                  </div>
-                </Card>
-              )
-            })}
+            {collections.map(c => (
+              <CollectionCard
+                key={c.id}
+                collection={c}
+                summary={summaryMap[c.id]}
+                stats={statsMap[c.id]}
+                processing={processingMap[c.id]}
+                handlers={{
+                  onSearchInCollection,
+                  onProcessDeep: handleProcessDeep,
+                  onOpenSummaryModal: openSummaryModal,
+                  onOpenEditModal: openEditModal,
+                  onDeleteCollection: handleDeleteCollection,
+                  onOpenFilesDrawer: openFilesDrawer,
+                }}
+              />
+            ))}
           </div>
         )}
       </div>

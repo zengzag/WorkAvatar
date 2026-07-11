@@ -11,6 +11,8 @@ export const APP_CHANNELS = {
   APP_GET_VERSION: 'app:get-version',
   APP_OPEN_LOG_DIR: 'app:open-log-dir',
   APP_CLEAR_ALL_DATA: 'app:clear-all-data',
+  // 渲染进程日志转发（fire-and-forget）：渲染进程 console 输出转发到主进程写入日志文件
+  APP_RENDERER_LOG: 'app:renderer-log',
 } as const
 
 export interface SettingsGetParams {
@@ -36,3 +38,4 @@ export interface AppShowSaveDialogParams {
   buttonLabel?: string
   filters?: Array<{ name: string; extensions: string[] }>
 }
+

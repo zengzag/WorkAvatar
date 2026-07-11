@@ -2,35 +2,66 @@ import fs from 'fs'
 import path from 'path'
 import { createWorker } from 'tesseract.js'
 import { createLogger } from './logger'
+import PathService from './path.service'
 
 const logger = createLogger('OCR')
 
+/**
+ * OCR 引擎选择。
+ *
+ * 优先级：paddleocr > tesseract
+ *
+ * - paddleocr：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，中文识别精度显著优于 Tesseract
+ * - tesseract：纯 JS (WebAssembly) 兜底，通用性强但中文/复杂排版识别能力弱
+ */
+type OCREngineName = 'paddleocr' | 'tesseract' | 'auto'
+
 interface OCROptions {
   language?: string
-  engine?: 'tesseract' | 'rapidocr'
+  engine?: OCREngineName
+}
+
+interface OCRBlock {
+  text: string
+  confidence: number
+  bbox: {
+    x0: number
+    y0: number
+    x1: number
+    y1: number
+  }
 }
 
 interface OCRResult {
   text: string
   confidence: number
   engine: string
-  blocks?: Array<{
+  blocks?: OCRBlock[]
+}
+
+interface PaddleOcrLike {
+  recognize: (input: { width: number; height: number; data: Uint8Array }) => Promise<Array<{
     text: string
+    box: { x: number; y: number; width: number; height: number }
     confidence: number
-    bbox: {
-      x0: number
-      y0: number
-      x1: number
-      y1: number
-    }
-  }>
+  }>>
+  processRecognition: (
+    results: Array<{ text: string; box: { x: number; y: number; width: number; height: number }; confidence: number }>,
+    options?: { lineMergeThresholdRatio?: number }
+  ) => { text: string }
+  destroy: () => Promise<void>
+}
+
+interface PaddleOcrCtor {
+  createInstance: (options: Record<string, unknown>) => Promise<PaddleOcrLike>
 }
 
 class OCRService {
   private static instance: OCRService
   private tesseractWorker: Tesseract.Worker | null = null
-  private rapidOCRAvailable: boolean = false
-  private rapidOCRPath: string | null = null
+  private paddleocr: PaddleOcrLike | null = null
+  private paddleocrAvailable = false
+  private initPromise: Promise<void> | null = null
 
   private constructor() {}
 
@@ -41,72 +72,127 @@ class OCRService {
     return OCRService.instance
   }
 
+  /**
+   * 初始化 PaddleOCR 引擎。多次调用只会初始化一次。
+   *
+   * PaddleOCR 模型文件位于 `<resourcesDir>/paddleocr/ppocr_v5_mobile/`，由 electron-builder
+   * 的 `extraResources` 打包到生产包内；开发态从项目根的 `resources/` 读取。
+   */
   async initialize(): Promise<void> {
-    await this.checkRapidOCR()
+    if (this.initPromise) return this.initPromise
+    this.initPromise = this.doInitialize()
+    return this.initPromise
   }
 
-  private async checkRapidOCR(): Promise<void> {
+  private async doInitialize(): Promise<void> {
     try {
-      const { app } = require('electron')
-      const rapidOCRDir = path.join(app.getAppPath(), 'resources', 'rapidocr')
-      const executableName = process.platform === 'win32' ? 'RapidOCR.exe' : 'RapidOCR'
-      const rapidOCRExe = path.join(rapidOCRDir, executableName)
+      const modelDir = this.getPaddleOcrModelDir()
+      const detPath = path.join(modelDir, 'PP-OCRv5_mobile_det_infer.onnx')
+      const recPath = path.join(modelDir, 'PP-OCRv5_mobile_rec_infer.onnx')
+      const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
 
-      if (fs.existsSync(rapidOCRExe)) {
-        this.rapidOCRPath = rapidOCRExe
-        this.rapidOCRAvailable = true
-        logger.info('RapidOCR found at:', rapidOCRExe)
-      } else {
-        logger.info('RapidOCR not found, will use Tesseract.js')
+      if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
+        logger.warn('PaddleOCR model files missing, falling back to Tesseract.js:', {
+          detPath, recPath, dictPath,
+        })
+        return
       }
-    } catch {
-      logger.info('RapidOCR check failed, will use Tesseract.js')
+
+      // paddleocr / onnxruntime-node 是 ESM/CJS 混合包，使用动态 import 延迟加载
+      const [{ PaddleOcrService }, ort] = await Promise.all([
+        import('paddleocr') as unknown as Promise<{ PaddleOcrService: PaddleOcrCtor['createInstance'] extends (...args: any[]) => any ? PaddleOcrCtor : never }>,
+        import('onnxruntime-node') as unknown as Promise<{ default: unknown }>,
+      ])
+
+      const detBuffer = this.toArrayBuffer(await fs.promises.readFile(detPath))
+      const recBuffer = this.toArrayBuffer(await fs.promises.readFile(recPath))
+      const dictText = await fs.promises.readFile(dictPath, 'utf-8')
+      let charactersDictionary = dictText.split(/\r?\n/).filter(line => line.length > 0)
+      // PP-OCRv5 模型输出 18385 类，官方字典文件 18383 行。
+      // 末尾需要补齐 2 个空字符串占位（CTC blank/space），否则解码越界。
+      // 见 https://github.com/PaddlePaddle/PaddleOCR 官方说明
+      if (charactersDictionary.length < 18385) {
+        const padding = 18385 - charactersDictionary.length
+        charactersDictionary = charactersDictionary.concat(new Array(padding).fill(''))
+        logger.info(`Padded PaddleOCR dictionary with ${padding} empty entries (total ${charactersDictionary.length})`)
+      }
+
+      this.paddleocr = await (PaddleOcrService as unknown as PaddleOcrCtor).createInstance({
+        ort: ort.default ?? ort,
+        modelPreset: 'PP-OCRv5_mobile',
+        detection: { modelBuffer: detBuffer },
+        recognition: {
+          modelBuffer: recBuffer,
+          charactersDictionary,
+        },
+      })
+
+      this.paddleocrAvailable = true
+      logger.info('PaddleOCR v5 mobile engine initialized')
+    } catch (err) {
+      logger.warn('PaddleOCR initialization failed, falling back to Tesseract.js:', err)
+      this.paddleocrAvailable = false
     }
   }
 
-  private async runRapidOCR(imagePath: string, language: string = 'ch_sim+en'): Promise<OCRResult> {
-    return new Promise((resolve, reject) => {
-      const { spawn } = require('child_process')
-      const proc = spawn(this.rapidOCRPath!, [
-        '--image', imagePath,
-        '--output', 'json',
-        '--lang', language,
-      ], { timeout: 60000 })
+  private getPaddleOcrModelDir(): string {
+    const resourcesDir = PathService.getInstance().getResourcesDir()
+    return path.join(resourcesDir, 'paddleocr', 'ppocr_v5_mobile')
+  }
 
-      let stdout = ''
-      let stderr = ''
+  private toArrayBuffer(buffer: Buffer): ArrayBuffer {
+    return buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength,
+    ) as ArrayBuffer
+  }
 
-      proc.stdout.on('data', (data: Buffer) => { stdout += data.toString() })
-      proc.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+  private async runPaddleOcr(imagePath: string): Promise<OCRResult> {
+    if (!this.paddleocr) {
+      throw new Error('PaddleOCR not initialized')
+    }
+    // 使用 sharp 把任意格式图片解码为 RGB 像素（PaddleOcrService 期望的输入格式）
+    const sharpMod = await import('sharp')
+    const sharp = (sharpMod as unknown as { default: (input: string | Buffer) => any }).default
+    const decoded = await sharp(imagePath)
+      .removeAlpha()
+      .raw({ resolveWithObject: true })
+      .toBuffer({ resolveWithObject: true }) as { data: Buffer; info: { width: number; height: number; channels: number } }
 
-      proc.on('close', (code: number | null) => {
-        if (code !== 0) {
-          reject(new Error(`RapidOCR exited with code ${code}: ${stderr}`))
-          return
-        }
-        try {
-          const result = JSON.parse(stdout)
-          const blocks = result.blocks?.map((b: any) => ({
-            text: b.text || '',
-            confidence: b.confidence || 0.85,
-            bbox: b.bbox || { x0: 0, y0: 0, x1: 0, y1: 0 },
-          })) || []
+    const input = {
+      width: decoded.info.width,
+      height: decoded.info.height,
+      data: new Uint8Array(
+        decoded.data.buffer,
+        decoded.data.byteOffset,
+        decoded.data.byteLength,
+      ),
+    }
 
-          resolve({
-            text: result.text || blocks.map((b: any) => b.text).join('\n') || '',
-            confidence: result.confidence || 0.85,
-            engine: 'rapidocr',
-            blocks,
-          })
-        } catch {
-          reject(new Error('Failed to parse RapidOCR output'))
-        }
-      })
+    const raw = await this.paddleocr.recognize(input)
+    const { text } = this.paddleocr.processRecognition(raw, { lineMergeThresholdRatio: 0.5 })
 
-      proc.on('error', (err: Error) => {
-        reject(err)
-      })
-    })
+    const blocks: OCRBlock[] = raw.map(r => ({
+      text: r.text,
+      confidence: r.confidence,
+      bbox: {
+        x0: r.box.x,
+        y0: r.box.y,
+        x1: r.box.x + r.box.width,
+        y1: r.box.y + r.box.height,
+      },
+    }))
+
+    const confidence = blocks.length > 0
+      ? blocks.reduce((sum, b) => sum + b.confidence, 0) / blocks.length
+      : 0
+
+    return {
+      text,
+      confidence,
+      engine: 'paddleocr',
+      blocks,
+    }
   }
 
   private async runTesseract(imagePath: string, language: string = 'chi_sim+eng'): Promise<OCRResult> {
@@ -116,7 +202,7 @@ class OCRService {
 
     const { data } = await this.tesseractWorker.recognize(imagePath)
 
-    const blocks = data.blocks?.map((block: any) => ({
+    const blocks: OCRBlock[] = data.blocks?.map((block: any) => ({
       text: block.text || '',
       confidence: block.confidence || 0,
       bbox: block.bbox || { x0: 0, y0: 0, x1: 0, y1: 0 },
@@ -135,18 +221,24 @@ class OCRService {
       throw new Error(`Image file not found: ${imagePath}`)
     }
 
-    const engine = options?.engine || (this.rapidOCRAvailable ? 'rapidocr' : 'tesseract')
-    const language = options?.language || 'chi_sim+eng'
+    // 确保 PaddleOCR 已尝试初始化（首次调用是异步加载的）
+    await this.initialize()
 
-    if (engine === 'rapidocr' && this.rapidOCRAvailable && this.rapidOCRPath) {
+    const requested = options?.engine || 'auto'
+    const usePaddle = requested === 'paddleocr' || (requested === 'auto' && this.paddleocrAvailable)
+
+    if (usePaddle && this.paddleocr) {
       try {
-        return await this.runRapidOCR(imagePath, language)
+        return await this.runPaddleOcr(imagePath)
       } catch (err) {
-        logger.warn('RapidOCR failed, falling back to Tesseract.js:', err)
-        return await this.runTesseract(imagePath, language)
+        if (requested === 'paddleocr') {
+          throw err
+        }
+        logger.warn('PaddleOCR runtime failed, falling back to Tesseract.js:', err)
       }
     }
 
+    const language = options?.language || 'chi_sim+eng'
     return await this.runTesseract(imagePath, language)
   }
 
@@ -154,8 +246,7 @@ class OCRService {
     const tempPath = path.join(require('os').tmpdir(), `ocr_${Date.now()}.png`)
     try {
       await fs.promises.writeFile(tempPath, imageBuffer)
-      const result = await this.recognize(tempPath, options)
-      return result
+      return await this.recognize(tempPath, options)
     } finally {
       try {
         await fs.promises.unlink(tempPath)
@@ -167,13 +258,26 @@ class OCRService {
 
   async terminate(): Promise<void> {
     if (this.tesseractWorker) {
-      await this.tesseractWorker.terminate()
+      try {
+        await this.tesseractWorker.terminate()
+      } catch (err) {
+        logger.debug('Tesseract terminate error:', err)
+      }
       this.tesseractWorker = null
+    }
+    if (this.paddleocr) {
+      try {
+        await this.paddleocr.destroy()
+      } catch (err) {
+        logger.debug('PaddleOCR destroy error:', err)
+      }
+      this.paddleocr = null
+      this.paddleocrAvailable = false
     }
   }
 
-  isRapidOCRAvailable(): boolean {
-    return this.rapidOCRAvailable
+  isPaddleOcrAvailable(): boolean {
+    return this.paddleocrAvailable
   }
 }
 

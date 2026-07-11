@@ -292,6 +292,8 @@ class EmployeeAgentService {
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
     const employeeName = employee?.name || 'unknown'
 
+    logger.info(`Chat stream started: employee="${employeeName}"(${employee_id}), conversation=${conversation_id || 'none'}, msgs=${messages.length}, skills=${use_skills}, thinking=${enable_thinking ?? 'auto'}, minimal=${minimal_mode}`)
+
     const logCtx = {
       employeeId: employee_id,
       employeeName,
@@ -396,7 +398,9 @@ class EmployeeAgentService {
       if (matched?.max_retry !== undefined) {
         return matched.max_retry
       }
-    } catch {}
+    } catch (err: any) {
+      logger.warn(`Failed to parse models_json for max_iterations (provider=${providerId}):`, err?.message || err)
+    }
     return 100
   }
 

@@ -2,7 +2,9 @@ import { parentPort, workerData } from 'worker_threads'
 import KMSIndexManagerService, {
   type IndexProgress,
   type ProgressCallback,
+  type AutoIndexConfig,
 } from '../services/kms/kms-index-manager.service'
+import KMSAutoIndexService from '../services/kms/kms-auto-index.service'
 import KMSSearchEngineService from '../services/kms/kms-search-engine.service'
 import { createLogger } from '../services/logger'
 
@@ -28,7 +30,7 @@ const logger = createLogger('KMS-Worker')
 interface StartMessage {
   type: 'start'
   id: string
-  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles'
+  task: 'buildFull' | 'incremental' | 'rebuildDir' | 'processCollectionDeep' | 'processPromotedFiles' | 'autoIndexCheck'
   args: any[]
 }
 
@@ -44,11 +46,15 @@ interface CancelPromotionMessage {
   type: 'cancelPromotion'
 }
 
+interface CancelAutoIndexMessage {
+  type: 'cancelAutoIndex'
+}
+
 interface PingMessage {
   type: 'ping'
 }
 
-type WorkerMessage = StartMessage | CancelMessage | CancelCollectionMessage | CancelPromotionMessage | PingMessage
+type WorkerMessage = StartMessage | CancelMessage | CancelCollectionMessage | CancelPromotionMessage | CancelAutoIndexMessage | PingMessage
 
 interface WorkerData {
   dataDir: string
@@ -113,7 +119,14 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
     }
 
     if (msg.type === 'cancel') {
+      // 取消索引任务（buildFull/incremental/rebuildDir）
       KMSIndexManagerService.getInstance().cancelIndexing()
+      // 同步取消 Worker 内的自动索引检查（"立即检查" 触发的任务有独立的 AbortController）
+      const autoIndexAc = KMSAutoIndexService.getInstance().getAbortController()
+      if (autoIndexAc) {
+        autoIndexAc.abort()
+        logger.info('Auto-index cancelled by main thread')
+      }
       return
     }
 
@@ -127,6 +140,16 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
       if (promotionAbort) {
         promotionAbort.abort()
         logger.info('Promotion cancelled by main thread')
+      }
+      return
+    }
+
+    if (msg.type === 'cancelAutoIndex') {
+      // 取消 Worker 内正在进行的自动索引检查
+      const ac = KMSAutoIndexService.getInstance().getAbortController()
+      if (ac) {
+        ac.abort()
+        logger.info('Auto-index cancelled by main thread')
       }
       return
     }
@@ -171,6 +194,12 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
             }
             result = undefined
             break
+          case 'autoIndexCheck':
+            // 自动索引检查：在 Worker 执行避免爬虫同步 fs + 解析阻塞主线程 UI
+            // 将 Worker 内 auto-index 的进度回调接到 progressForwarder，转发到主线程
+            KMSIndexManagerService.getInstance().setAutoIndexProgressCallback(progressForwarder)
+            result = await KMSAutoIndexService.getInstance().runCheckInternal(args[0] as AutoIndexConfig)
+            break
           default:
             throw new Error(`Unknown task: ${task}`)
         }
@@ -194,7 +223,9 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
 process.on('exit', () => {
   try {
     KMSSearchEngineService.getInstance().invalidateCache()
-  } catch {}
+  } catch (err: any) {
+    logger.warn('Worker exit cleanup failed:', err?.message || err)
+  }
 })
 
 // 捕获未处理异常，避免 Worker 静默崩溃

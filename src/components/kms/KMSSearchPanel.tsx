@@ -105,7 +105,9 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     let cancelled = false
     window.electronAPI.kms.listCollections().then((result: any[]) => {
       if (cancelled) return
-      setCollectionOptions((result || []).map((c: any) => ({ label: c.name, value: c.id })))
+      // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底，否则后续 .map 会抛错
+      const list = Array.isArray(result) ? result : []
+      setCollectionOptions(list.map((c: any) => ({ label: c.name, value: c.id })))
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])

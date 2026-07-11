@@ -14,65 +14,30 @@ import {
   splitParagraphs,
   generateFileToc,
   needsTocRestoration,
-  addLineNumbers,
-  deduplicateTocEntries,
-  validateTocEntries,
-  buildTocContext,
   identifyParagraphsFromLLMToc,
   filterTocByContentVolume,
   buildTocWithPath,
-  TOC_CHUNK_LINES,
-  TOC_OVERLAP_LINES,
   MIN_CONTENT_WORDS,
-  type LLMTocEntry,
-  type ValidatedTocEntry,
 } from './kms-paragraph-processor'
-import { callLLMForJSON } from './kms-llm-helpers'
+import {
+  restoreTocWithLLM,
+  generateParagraphSummary,
+  generateDocumentSummaryFromParagraphs,
+  updateParagraphSummaries,
+  generateFileSummary as generateFileSummaryViaLLM,
+  generateDirSummaryViaLLM,
+} from './kms-index-llm-helpers'
+import type {
+  IndexPhase,
+  IndexProgress,
+  ProgressCallback,
+  AutoIndexConfig,
+  AutoIndexStatus,
+} from './kms-index-types'
+
+export type { IndexPhase, IndexProgress, ProgressCallback, AutoIndexConfig, AutoIndexStatus }
 
 const logger = createLogger('KMS-Index')
-
-export type IndexPhase =
-  | 'crawling'
-  | 'parsing'
-  | 'indexing'
-  | 'toc'
-  | 'paragraph_split'
-  | 'paragraph_summary'
-  | 'doc_summary'
-  | 'collection_summary'
-  | 'collection_embedding'
-  | 'embedding'
-  | 'done'
-  | 'error'
-
-export interface IndexProgress {
-  phase: IndexPhase
-  current: number
-  total: number
-  message: string
-  fileId?: string
-  fileName?: string
-  collectionId?: string
-  collectionName?: string
-  startedAt?: number
-  cancelled?: boolean
-}
-
-export type ProgressCallback = (progress: IndexProgress) => void
-
-export interface AutoIndexConfig {
-  enabled: boolean
-  intervalMinutes: number
-  stableThresholdSeconds: number
-}
-
-export interface AutoIndexStatus {
-  running: boolean
-  config: AutoIndexConfig
-  lastRunAt: number | null
-  nextRunAt: number | null
-  lastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null
-}
 
 class KMSIndexManagerService {
   private db: Database.Database
@@ -124,32 +89,51 @@ class KMSIndexManagerService {
       : 'Rebuild dir index failed:'
 
     try {
+      logger.info(`Index pipeline started: mode=${mode}, withEmbedding=${withEmbedding}${dirId ? `, dirId=${dirId}` : ''}${resetHotData ? ', resetHotData=true' : ''}`)
       onProgress?.({ phase: 'crawling', current: 0, total: 0, message: msgCrawl })
 
-      // 全量重建：批量重置所有文件为 pending 并清除旧索引，确保重新索引
+      // 全量重建：批量重置文件为 pending 并清除旧索引，确保重新索引
       if (isFull) {
         onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在重置索引...' })
-        // 主库事务：清理 FTS5/搜索索引/段落，重置文件状态
-        this.db.transaction(() => {
-          this.db.prepare("DELETE FROM kms_fts").run()
-          this.db.prepare("DELETE FROM kms_search_index").run()
-          this.db.prepare("DELETE FROM kms_paragraphs").run()
-          // 默认不重置热数据（保留 data_tier），勾选后才将热数据降级为 cold
-          if (resetHotData) {
+        if (resetHotData) {
+          // 勾选"同时重建热数据"：清空所有索引，所有文件降级为 cold 并重置为 pending
+          this.db.transaction(() => {
+            this.db.prepare("DELETE FROM kms_fts").run()
+            this.db.prepare("DELETE FROM kms_search_index").run()
+            this.db.prepare("DELETE FROM kms_paragraphs").run()
             this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
-          } else {
-            this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
-          }
-        })()
-        // 向量库独立事务：清理 embedding（跨库不能同事务）
-        const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
-        try {
-          vectorDb.transaction(() => {
-            vectorDb.prepare("DELETE FROM kms_embeddings").run()
-            try { vectorDb.prepare("DELETE FROM vec_kms_embeddings").run() } catch {}
           })()
-        } catch (err: any) {
-          logger.warn('全量重建清理向量库失败:', err?.message || err)
+          this.cleanupVectorDb()
+        } else {
+          // 未勾选"同时重建热数据"：保留热数据文件及其索引，只清理并重置冷数据文件
+          const hotFileCount = (this.db.prepare("SELECT COUNT(*) as count FROM kms_files WHERE data_tier = 'hot'").get() as any)?.count ?? 0
+          if (hotFileCount > 0) {
+            // 有热数据文件：只清理冷数据文件的索引，保留热数据文件
+            this.db.transaction(() => {
+              this.db.prepare(`
+                DELETE FROM kms_fts WHERE index_id IN (
+                  SELECT si.id FROM kms_search_index si
+                  JOIN kms_files f ON si.file_id = f.id
+                  WHERE f.data_tier != 'hot'
+                )
+              `).run()
+              this.db.prepare("DELETE FROM kms_search_index WHERE file_id IN (SELECT id FROM kms_files WHERE data_tier != 'hot')").run()
+              this.db.prepare("DELETE FROM kms_paragraphs WHERE file_id IN (SELECT id FROM kms_files WHERE data_tier != 'hot')").run()
+              this.db.prepare("UPDATE kms_files SET index_status = 'pending' WHERE data_tier != 'hot'").run()
+            })()
+            // 向量库：批量删除冷数据文件的 embedding
+            const coldFileIds = (this.db.prepare("SELECT id FROM kms_files WHERE data_tier != 'hot'").all() as any[]).map(r => r.id)
+            this.cleanupVectorDb(coldFileIds)
+          } else {
+            // 没有热数据文件：直接清空所有
+            this.db.transaction(() => {
+              this.db.prepare("DELETE FROM kms_fts").run()
+              this.db.prepare("DELETE FROM kms_search_index").run()
+              this.db.prepare("DELETE FROM kms_paragraphs").run()
+              this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
+            })()
+            this.cleanupVectorDb()
+          }
         }
         KMSSearchEngineService.getInstance().invalidateCache()
       }
@@ -169,6 +153,8 @@ class KMSIndexManagerService {
         const files = KMSCrawlerService.getInstance().getFilesByDir(dirId!)
         const searchEngine = KMSSearchEngineService.getInstance()
         for (const file of files) {
+          // 未勾选"同时重建热数据"时跳过热数据文件，保留其索引和处理结果
+          if (!resetHotData && file.dataTier === 'hot') continue
           searchEngine.deleteIndexByFile(file.id)
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'pending')
         }
@@ -176,6 +162,8 @@ class KMSIndexManagerService {
 
       const pendingFiles = KMSCrawlerService.getInstance().getPendingFiles()
       const total = pendingFiles.length
+
+      logger.info(`Index pipeline: ${total} file(s) to process (mode=${mode})`)
 
       if (total === 0) {
         if (withEmbedding) {
@@ -238,7 +226,7 @@ class KMSIndexManagerService {
             if (parseMode) {
               this.saveParseMode(file.id, parseMode)
             }
-            searchEngine.indexFileTitle(file.id, file.fileName)
+            searchEngine.indexFileTitle(file.id, file.fileName, file.filePath)
             if (parseResult.fullText) {
               searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
             }
@@ -266,6 +254,11 @@ class KMSIndexManagerService {
           total,
           message: `已处理 ${processed}/${total} 个文件`,
         })
+
+        // 每处理完一个文件主动让出事件循环：
+        // - Worker 模式下可及时响应 cancel 消息；
+        // - 主线程降级模式下避免长时间独占事件循环导致 UI 卡死。
+        await new Promise((resolve) => setImmediate(resolve))
       }
 
       if (!signal.aborted && withEmbedding) {
@@ -285,12 +278,24 @@ class KMSIndexManagerService {
       }
 
       if (signal.aborted) {
+        logger.info(`Index pipeline cancelled: mode=${mode}, processed=${processed}/${total}`)
         onProgress?.({ phase: 'done', current: processed, total, message: '已取消', cancelled: true })
       } else {
+        logger.info(`Index pipeline completed: mode=${mode}, processed=${processed}/${total} files`)
         onProgress?.({ phase: 'done', current: processed, total, message: `${msgDonePrefix}，共处理 ${processed} 个文件` })
       }
 
-      // 索引流程结束：主动触发 PASSIVE checkpoint，让 WAL 内容尽快合并回主库文件，
+      // 索引流程结束：FTS5 merge 回收已删除文档残留 + PASSIVE checkpoint 合并 WAL
+      // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 累积残留，VACUUM 对 FTS5 无效，必须用 FTS5 merge
+      if (!signal.aborted) {
+        try {
+          KMSDatabaseService.getInstance().optimizeFts5Index('merge')
+        } catch (err: any) {
+          logger.warn('Post-index FTS5 merge failed:', err?.message || err)
+        }
+      }
+
+      // 主动触发 PASSIVE checkpoint，让 WAL 内容尽快合并回主库文件，
       // 避免长期运行后 WAL 文件膨胀（即使 wal_autocheckpoint 已设阈值，主动 checkpoint 可让磁盘占用更可控）
       try {
         KMSDatabaseService.getInstance().checkpoint('PASSIVE')
@@ -308,6 +313,52 @@ class KMSIndexManagerService {
   cancelIndexing(): void {
     this.abortController?.abort()
     this.abortController = null
+  }
+
+  /**
+   * 清理向量库数据（kms_embeddings + vec_kms_embeddings）
+   * @param fileIds 若提供则只清理指定文件的 embedding，否则清空全部
+   */
+  private cleanupVectorDb(fileIds?: string[]): void {
+    const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+    try {
+      vectorDb.transaction(() => {
+        if (fileIds && fileIds.length > 0) {
+          // 分批处理避免 SQL 参数过多
+          const batchSize = 500
+          for (let i = 0; i < fileIds.length; i += batchSize) {
+            const batch = fileIds.slice(i, i + batchSize)
+            const placeholders = batch.map(() => '?').join(',')
+            // 先收集 rowid（vec_kms_embeddings 通过 rowid 关联，不会自动级联删除）
+            let rowids: number[] = []
+            try {
+              const rows = vectorDb.prepare(`SELECT rowid FROM kms_embeddings WHERE file_id IN (${placeholders})`).all(...batch) as any[]
+              rowids = rows.map(r => r.rowid)
+            } catch (err: any) {
+              logger.warn('收集 embedding rowid 失败:', err?.message || err)
+            }
+            vectorDb.prepare(`DELETE FROM kms_embeddings WHERE file_id IN (${placeholders})`).run(...batch)
+            if (rowids.length > 0) {
+              const rowidPlaceholders = rowids.map(() => '?').join(',')
+              try {
+                // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 的类型校验回归
+                vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...rowids.map(r => BigInt(r)))
+              } catch (err: any) {
+                logger.debug('vec_kms_embeddings 批量清理失败:', err?.message || err)
+              }
+            }
+          }
+        } else {
+          vectorDb.prepare("DELETE FROM kms_embeddings").run()
+          try { vectorDb.prepare("DELETE FROM vec_kms_embeddings").run() } catch (err: any) {
+            // vec0 表可能尚未创建（首次全量重建前），忽略
+            logger.debug('vec_kms_embeddings cleanup skipped (table may not exist):', err?.message || err)
+          }
+        }
+      })()
+    } catch (err: any) {
+      logger.warn('清理向量库失败:', err?.message || err)
+    }
   }
 
   setAutoIndexProgressCallback(cb: ProgressCallback | null): void {
@@ -347,12 +398,16 @@ class KMSIndexManagerService {
       const kmsService = KMSService.getInstance()
       const collection = kmsService.getCollection(collectionId)
       if (!collection) {
+        logger.warn(`Collection deep process skipped: collection ${collectionId} not found`)
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'Collection not found' }
       }
       const files = kmsService.listFilesInCollection(collectionId)
       if (files.length === 0) {
+        logger.warn(`Collection deep process skipped: collection "${collection.name}" has no files`)
         return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: 'NO_FILES' }
       }
+
+      logger.info(`Collection deep process started: collection="${collection.name}"(${collectionId}), files=${files.length}`)
 
       const llmConfig = kmsService.getKmsSummaryLLMConfigPublic()
       if (!llmConfig) {
@@ -388,7 +443,7 @@ class KMSIndexManagerService {
           // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
           KMSDatabaseService.getInstance().runInTransaction(() => {
             searchEngine.deleteIndexByFile(file.id)
-            searchEngine.indexFileTitle(file.id, file.file_name)
+            searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
             searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
             this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
           })
@@ -502,9 +557,10 @@ class KMSIndexManagerService {
         logger.warn('Post-collection checkpoint failed:', err?.message || err)
       }
 
+      logger.info(`Collection deep process completed: collection="${collection.name}"(${collectionId}), files=${fileProcessed}, summary=${summaryGenerated}, embedding=${embeddingGenerated}`)
       return { fileProcessed, summaryGenerated, embeddingGenerated }
     } catch (err: any) {
-      logger.error('processCollectionDeep failed:', err)
+      logger.error(`Collection deep process failed (collection=${collectionId}):`, err?.message || err)
       onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', collectionId })
       return { fileProcessed: 0, summaryGenerated: false, embeddingGenerated: false, error: err?.message || 'Unknown error' }
     } finally {
@@ -632,7 +688,9 @@ class KMSIndexManagerService {
     try {
       const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
       KMSIndexWorkerClientService.getInstance().cancelPromotion()
-    } catch {}
+    } catch (err: any) {
+      logger.debug('cancelPromotion in worker unavailable:', err?.message || err)
+    }
     // 降级模式下取消主线程处理
     this.promotionAbortController?.abort()
     this.promotionAbortController = null
@@ -685,7 +743,7 @@ class KMSIndexManagerService {
           if (parseMode) {
             this.saveParseMode(file.id, parseMode)
           }
-          searchEngine.indexFileTitle(file.id, file.file_name)
+          searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
           searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
           this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
         })
@@ -840,7 +898,7 @@ class KMSIndexManagerService {
       })
 
       try {
-        const restoredToc = await this.restoreTocWithLLM(
+        const restoredToc = await restoreTocWithLLM(
           fullText, providerId, modelId, llmClient, onProgress, signal, enableThinking
         )
 
@@ -953,7 +1011,7 @@ class KMSIndexManagerService {
     for (const sp of summaryCandidates) {
       if (signal?.aborted) {
         if (paragraphSummaries.length > 0) {
-          this.updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
+          updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
         }
         return paragraphSummaries
       }
@@ -962,14 +1020,14 @@ class KMSIndexManagerService {
       if (!p) continue
 
       try {
-        const summary = await this.generateParagraphSummary(
+        const summary = await generateParagraphSummary(
           p.content, p.title || fileName, providerId, modelId, llmClient, signal, enableThinking
         )
         paragraphSummaries.push(summary)
       } catch (err: any) {
         if (err?.name === 'AbortError' || signal?.aborted) {
           if (paragraphSummaries.length > 0) {
-            this.updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
+            updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
           }
           return paragraphSummaries
         }
@@ -989,7 +1047,7 @@ class KMSIndexManagerService {
       })
     }
 
-    this.updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
+    updateParagraphSummaries(fileId, paragraphs, savedParagraphs, paragraphSummaries, searchEngine)
     return paragraphSummaries
   }
 
@@ -1021,7 +1079,7 @@ class KMSIndexManagerService {
       })
 
       try {
-        const docSummary = await this.generateDocumentSummaryFromParagraphs(
+        const docSummary = await generateDocumentSummaryFromParagraphs(
           paragraphSummaries, fileName, providerId, modelId, llmClient, signal, enableThinking
         )
         this.saveFileSummary(fileId, docSummary.summary, docSummary.keywords, docSummary.mainTopics)
@@ -1040,281 +1098,8 @@ class KMSIndexManagerService {
         fileName,
         startedAt: Math.floor(Date.now() / 1000),
       })
-      await this.generateFileSummary(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal, enableThinking)
+      await generateFileSummaryViaLLM(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal, enableThinking, (fid, summary, keywords, mainTopics) => this.saveFileSummary(fid, summary, keywords, mainTopics))
     }
-  }
-
-  private async callLLMForToc(
-    numberedContent: string,
-    providerId: string,
-    modelId: string | undefined,
-    llmClient: LLMClientService,
-    existingTocContext?: string,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<LLMTocEntry[]> {
-    const systemPrompt = `你是一个专业的文档结构分析专家。你的任务是分析文档内容，准确识别其中的章节标题、层级关系和位置。
-
-识别规则：
-1. 只识别真正的结构性标题，不要把正文中的强调文本、列表项、表格内容误认为标题
-2. 标题特征：通常是独立成行的短文本（一般不超过60字），具有概括性
-3. 常见标题模式：
-   - 编号型："第X章/节/部分"、"1."/"1.1"/"1.1.1"、"一、"/"二、"
-   - 无编号型：独立成行的概括性短句，后续跟随详细说明内容
-4. level表示层级深度，最大3级：1=最高级（章/部分），2=次级（节），3=最细粒度（小节），不允许超过3级
-5. lineNumber必须精确对应内容中的行号标记[L数字]
-6. 标题对应的正文内容太少（例如小于50词）时，忽略该标题
-7. 如果提供了已识别的上层目录上下文，请参考该上下文来确定当前标题的层级，避免将低层级标题误判为高层级${existingTocContext ? `\n\n已识别的上层目录上下文（供参考）：\n${existingTocContext}` : ''}
-
-输出要求：
-- 严格按照JSON格式输出
-- 只返回JSON，不要包含任何解释文字
-- 如果无法识别任何标题结构，返回{"toc":[]}`
-
-    const userPrompt = `请分析以下文档内容，识别所有章节标题及其位置。
-
-文档内容：
-${numberedContent}
-
-返回格式：
-{"toc":[{"title":"标题文字","level":1,"lineNumber":5}]}`
-
-    const parsed = await callLLMForJSON<{ toc: LLMTocEntry[] }>(
-      llmClient,
-      providerId,
-      modelId,
-      [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      { toc: [] },
-      { temperature: 0.1, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking },
-    )
-    return Array.isArray(parsed.toc) ? parsed.toc : []
-  }
-
-  private async restoreTocWithLLM(
-    text: string,
-    providerId: string,
-    modelId: string | undefined,
-    llmClient: LLMClientService,
-    onProgress?: ProgressCallback,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<ValidatedTocEntry[]> {
-    const lines = text.split('\n')
-
-    if (lines.length <= TOC_CHUNK_LINES) {
-      const numberedContent = addLineNumbers(text)
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, undefined, signal, enableThinking)
-      return validateTocEntries(text, entries)
-    }
-
-    const allEntries: LLMTocEntry[] = []
-    let startLine = 0
-    let chunkIndex = 0
-
-    let totalChunks = 0
-    {
-      let s = 0
-      while (s < lines.length) {
-        totalChunks++
-        const e = Math.min(s + TOC_CHUNK_LINES, lines.length)
-        if (e >= lines.length) break
-        s = e - TOC_OVERLAP_LINES
-      }
-    }
-
-    while (startLine < lines.length) {
-      if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
-
-      const endLine = Math.min(startLine + TOC_CHUNK_LINES, lines.length)
-      const chunkLines = lines.slice(startLine, endLine)
-      const numberedContent = addLineNumbers(chunkLines.join('\n'), startLine + 1)
-
-      const existingTocContext = buildTocContext(allEntries)
-
-      onProgress?.({
-        phase: 'toc',
-        current: chunkIndex + 1,
-        total: totalChunks,
-        message: `LLM目录分析: 第${chunkIndex + 1}/${totalChunks}块 (行${startLine + 1}-${endLine})`,
-        startedAt: Math.floor(Date.now() / 1000),
-      })
-
-      const entries = await this.callLLMForToc(numberedContent, providerId, modelId, llmClient, existingTocContext, signal, enableThinking)
-      allEntries.push(...entries)
-
-      chunkIndex++
-      if (endLine >= lines.length) break
-      startLine = endLine - TOC_OVERLAP_LINES
-    }
-
-    const deduplicated = deduplicateTocEntries(allEntries)
-    const validated = validateTocEntries(text, deduplicated)
-
-    return validated
-  }
-
-  private async generateParagraphSummary(
-    paragraphContent: string,
-    paragraphTitle: string,
-    providerId: string,
-    modelId: string | undefined,
-    llmClient: LLMClientService,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<{ title: string; summary: string; keywords: string[] }> {
-    const prompt = `为以下段落生成摘要，JSON格式返回。
-段落标题：${paragraphTitle}
-段落内容：
-${paragraphContent.substring(0, 8000)}
-
-返回字段：
-- title: 段落标题
-- summary: 摘要（50字以内，简洁精炼）
-- keywords: 关键词列表（3-5个）
-
-只返回JSON。`
-
-    return callLLMForJSON<{ title: string; summary: string; keywords: string[] }>(
-      llmClient,
-      providerId,
-      modelId,
-      [
-        { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
-        { role: 'user', content: prompt },
-      ],
-      { title: paragraphTitle, summary: '', keywords: [] },
-      {
-        signal,
-        logSource: 'knowledge_paragraph_summary',
-        throwOnError: true,
-        enable_thinking: enableThinking,
-        errorMessage: (err) => `Paragraph summary generation failed (${paragraphTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
-      },
-    )
-  }
-
-  private async generateDocumentSummaryFromParagraphs(
-    paragraphSummaries: Array<{ title: string; summary: string; keywords: string[] }>,
-    documentTitle: string,
-    providerId: string,
-    modelId: string | undefined,
-    llmClient: LLMClientService,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<{ summary: string; keywords: string[]; mainTopics: string[] }> {
-    const summariesText = paragraphSummaries.map((ps, i) =>
-      `### 段落${i + 1}: ${ps.title}\n${ps.summary}\n关键词: ${ps.keywords.join(', ')}`
-    ).join('\n\n')
-
-    const prompt = `基于段落摘要生成文档全局摘要，JSON格式返回。
-文档标题：${documentTitle}
-段落摘要：
-${summariesText.substring(0, 15000)}
-
-返回字段：
-- summary: 全局摘要（150字以内，简洁精炼）
-- keywords: 关键词列表（5-8个）
-- mainTopics: 主要主题列表（3-5个）
-
-只返回JSON。`
-
-    return callLLMForJSON<{ summary: string; keywords: string[]; mainTopics: string[] }>(
-      llmClient,
-      providerId,
-      modelId,
-      [
-        { role: 'system', content: 'You are a professional knowledge engineer. Return only valid JSON.' },
-        { role: 'user', content: prompt },
-      ],
-      { summary: '', keywords: [], mainTopics: [] },
-      {
-        signal,
-        logSource: 'knowledge_document_summary',
-        throwOnError: true,
-        enable_thinking: enableThinking,
-        errorMessage: (err) => `Document summary generation failed (${documentTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
-      },
-    )
-  }
-
-  private updateParagraphSummaries(
-    fileId: string,
-    paragraphs: Array<{ title: string; titlePath: string; level: number; paragraphIndex: number; startOffset: number; endOffset: number; content?: string }>,
-    savedParagraphs: Array<{ id: string; paragraphIndex: number }>,
-    summaries: Array<{ title: string; summary: string; keywords: string[] }>,
-    searchEngine: KMSSearchEngineService,
-  ): void {
-    const paraById = new Map<number, string>()
-    for (const sp of savedParagraphs) paraById.set(sp.paragraphIndex, sp.id)
-    const paraByIndex = new Map<number, any>()
-    for (const p of paragraphs) paraByIndex.set(p.paragraphIndex, p)
-
-    for (let i = 0; i < summaries.length; i++) {
-      const summary = summaries[i]
-      if (!summary.summary && summary.keywords.length === 0) continue
-
-      const paraId = paraById.get(i)
-      if (!paraId) continue
-
-      searchEngine.updateParagraphSummary(paraId, summary.summary, summary.keywords)
-
-      const p = paraByIndex.get(i)
-      if (p) {
-        searchEngine.indexParagraph(
-          fileId,
-          paraId,
-          p.title,
-          p.titlePath,
-          summary.summary,
-          summary.keywords,
-          p.startOffset,
-          p.endOffset
-        )
-      }
-    }
-  }
-
-  private async generateFileSummary(
-    fileId: string,
-    fullText: string,
-    providerId: string,
-    modelId: string | undefined,
-    llmClient: LLMClientService,
-    searchEngine: KMSSearchEngineService,
-    signal?: AbortSignal,
-    enableThinking?: boolean,
-  ): Promise<void> {
-    if (!modelId) {
-      throw new Error('MODEL_NOT_CONFIGURED')
-    }
-    const truncatedText = fullText.substring(0, 3000)
-    const summaryPrompt = `请为以下文档内容生成简洁摘要（150字以内），并提取5-8个关键词和3-5个主要主题。\n\n文档内容：\n${truncatedText}\n\n请以JSON格式返回：{"summary": "...", "keywords": ["..."], "main_topics": ["..."]}`
-
-    if (signal?.aborted) return
-
-    const parsed = await callLLMForJSON<{ summary: string; keywords: string[]; main_topics: string[] }>(
-      llmClient,
-      providerId,
-      modelId,
-      [
-        { role: 'system', content: '你是一个文档摘要助手。请严格按照JSON格式返回结果。' },
-        { role: 'user', content: summaryPrompt },
-      ],
-      { summary: '', keywords: [], main_topics: [] },
-      { temperature: 0.1, maxTokens: 500, signal, enable_thinking: enableThinking },
-    )
-
-    if (signal?.aborted) return
-
-    const summary = parsed.summary || ''
-    const keywords = parsed.keywords || []
-    const mainTopics = parsed.main_topics || []
-
-    this.saveFileSummary(fileId, summary, keywords, mainTopics)
-    searchEngine.indexFileSummary(fileId, summary, keywords)
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1420,47 +1205,9 @@ ${summariesText.substring(0, 15000)}
 
           if (files.length === 0) continue
 
-          const fileList = files.map(f => {
-            const summary = f.summary || f.light_summary || ''
-            return `- ${f.file_name} (${f.file_ext || '无扩展名'}, ${this.formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
-          }).join('\n')
-
-          let dirSummary: string
-          let keywords: string[] = []
-
-          if (providerId && modelId && files.length <= 100) {
-            const prompt = `请为以下目录生成简洁摘要（200字以内），概括目录内容主题和结构，并提取5-10个关键词。
-
-目录路径：${dir.dir_path}
-文件数量：${files.length}
-文件清单：
-${fileList}
-
-请以JSON格式返回：{"summary": "...", "keywords": ["..."]}`
-
-            try {
-              const parsed = await callLLMForJSON<{ summary: string; keywords: string[] }>(
-                llmClient,
-                providerId,
-                modelId,
-                [
-                  { role: 'system', content: '你是一个目录内容摘要助手，输出简洁准确的JSON。' },
-                  { role: 'user', content: prompt },
-                ],
-                { summary: '', keywords: [] },
-                { temperature: 0.1, maxTokens: 400, signal, logSource: 'kms_dir_summary', enable_thinking: enableThinking },
-              )
-              dirSummary = parsed.summary || ''
-              keywords = parsed.keywords || []
-              if (!dirSummary) {
-                dirSummary = this.generateSimpleDirSummary(files)
-              }
-            } catch {
-              dirSummary = this.generateSimpleDirSummary(files)
-            }
-          } else {
-            dirSummary = this.generateSimpleDirSummary(files)
-          }
+          const { summary: dirSummary, keywords } = await generateDirSummaryViaLLM(
+            dir.dir_path, files, providerId, modelId, llmClient, signal, enableThinking,
+          )
 
           this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)
         } catch (err) {
@@ -1470,21 +1217,6 @@ ${fileList}
     } catch (err) {
       logger.warn('Failed to generate dir summaries:', err)
     }
-  }
-
-  private generateSimpleDirSummary(files: any[]): string {
-    const extCount: Record<string, number> = {}
-    for (const f of files) {
-      const ext = f.file_ext || '其他'
-      extCount[ext] = (extCount[ext] || 0) + 1
-    }
-    const extList = Object.entries(extCount)
-      .sort((a, b) => b[1] - a[1])
-      .map(([ext, count]) => `${ext}(${count})`)
-      .join(', ')
-
-    const sampleFiles = files.slice(0, 10).map(f => f.file_name).join(', ')
-    return `目录包含 ${files.length} 个文件（${extList}）。代表文件：${sampleFiles}`
   }
 
   private saveDirSummary(dirId: string, dirPath: string, summary: string, fileCount: number, keywords: string[]): void {
@@ -1500,12 +1232,6 @@ ${fileList}
         VALUES (?, ?, ?, ?, ?, ?, unixepoch())
       `).run(generateId(), dirId, dirPath, summary, fileCount, JSON.stringify(keywords))
     }
-  }
-
-  private formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes}B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
   }
 
   async generateDirSummaryManual(dirId: string): Promise<{ success: boolean; error?: string }> {
@@ -1536,47 +1262,9 @@ ${fileList}
         modelId = llmConfig.modelId || config?.model || undefined
       }
 
-      const fileList = files.map(f => {
-        const summary = f.summary || f.light_summary || ''
-        return `- ${f.file_name} (${f.file_ext || '无扩展名'}, ${this.formatSize(f.file_size)})${summary ? ': ' + summary.substring(0, 80) : ''}`
-      }).join('\n')
-
-      let dirSummary: string
-      let keywords: string[] = []
-
-      if (llmConfig?.providerId && modelId && files.length <= 100) {
-        const prompt = `请为以下目录生成简洁摘要（200字以内），概括目录内容主题和结构，并提取5-10个关键词。
-
-目录路径：${dir.dir_path}
-文件数量：${files.length}
-文件清单：
-${fileList}
-
-请以JSON格式返回：{"summary": "...", "keywords": ["..."]}`
-
-        try {
-          const parsed = await callLLMForJSON<{ summary: string; keywords: string[] }>(
-            llmClient,
-            llmConfig.providerId,
-            modelId,
-            [
-              { role: 'system', content: '你是一个目录内容摘要助手，输出简洁准确的JSON。' },
-              { role: 'user', content: prompt },
-            ],
-            { summary: '', keywords: [] },
-            { temperature: 0.1, maxTokens: 400, logSource: 'kms_dir_summary_manual', enable_thinking: llmConfig.enableThinking },
-          )
-          dirSummary = parsed.summary || ''
-          keywords = parsed.keywords || []
-          if (!dirSummary) {
-            dirSummary = this.generateSimpleDirSummary(files)
-          }
-        } catch {
-          dirSummary = this.generateSimpleDirSummary(files)
-        }
-      } else {
-        dirSummary = this.generateSimpleDirSummary(files)
-      }
+      const { summary: dirSummary, keywords } = await generateDirSummaryViaLLM(
+        dir.dir_path, files, llmConfig?.providerId, modelId, llmClient, undefined, llmConfig?.enableThinking, 'kms_dir_summary_manual',
+      )
 
       this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)
       return { success: true }

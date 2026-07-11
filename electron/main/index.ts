@@ -4,7 +4,7 @@ import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
 import { registerIpcHandlers } from './ipc'
-import { createLogger } from './services/logger'
+import { createLogger, LoggerBackend } from './services/logger'
 
 const logger = createLogger('Main')
 
@@ -24,11 +24,23 @@ if (!gotTheLock) {
 
 app.setAppUserModelId('com.workavatar.desktop')
 
+const isDev = !app.isPackaged
+
+// 初始化日志文件（每次启动新建一个以时间命名的文件），必须在 PathService 可用后尽早调用
+try {
+  // PathService 依赖 electron.app，需在 app.whenReady 之前也能实例化（它内部 require electron）
+  // 但 dataDir 读取发生在 PathService 构造期，这里 app 尚未 ready，仍可调用 getPath
+  const PathService = require('./services/path.service').default
+  LoggerBackend.getInstance().init(PathService.getInstance().getDataDir())
+  logger.info(`Application starting (v${app.getVersion()}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`)
+} catch (err: any) {
+  // 日志初始化失败不阻断启动
+  logger.warn('Logger init failed, falling back to console-only:', err?.message || err)
+}
+
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
-
-const isDev = !app.isPackaged
 
 function getDistPath(...paths: string[]): string {
   if (isDev) {
@@ -161,6 +173,7 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  logger.info('App ready, registering IPC handlers and creating window')
   registerIpcHandlers()
   createWindow()
   createTray()
@@ -168,6 +181,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  logger.info('Application quitting, cleaning up resources')
   // 清理资源：关闭 LLM 日志定时器与数据库连接
   try {
     LLMLoggerService.getInstance().destroy()
@@ -178,6 +192,12 @@ app.on('before-quit', () => {
     DatabaseService.getInstance().close()
   } catch (error) {
     logger.error('Failed to close database:', error)
+  }
+  // 关闭应用日志文件流
+  try {
+    LoggerBackend.getInstance().destroy()
+  } catch (error) {
+    logger.error('Failed to destroy logger:', error)
   }
 })
 

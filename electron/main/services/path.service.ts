@@ -9,6 +9,7 @@ const CONFIG_FILENAME = 'workavatar-path.json'
 
 class PathService {
   private dataDir: string
+  private isDev: boolean
   private static instance: PathService
 
   private constructor() {
@@ -16,11 +17,15 @@ class PathService {
     // 避免依赖 electron.app（worker_threads 中不可用）
     if (!isMainThread && workerData?.dataDir) {
       this.dataDir = workerData.dataDir as string
+      this.isDev = workerData.isDev === true
       this.ensureDir(this.dataDir)
       return
     }
 
     // 主线程模式：从 electron.app 读取默认目录或用户配置
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { app } = require('electron')
+    this.isDev = !app.isPackaged
     this.dataDir = this.readConfig() || this.getDefaultDir()
     this.ensureDir(this.dataDir)
   }
@@ -39,12 +44,10 @@ class PathService {
   }
 
   private getConfigPath(): string {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { app } = require('electron')
-    const isDev = !app.isPackaged
-    const configDir = isDev
+    const configDir = this.isDev
       ? path.join(process.cwd(), '.workavatar-data')
-      : app.getPath('userData')
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      : require('electron').app.getPath('userData')
     if (!fs.existsSync(configDir)) {
       fs.mkdirSync(configDir, { recursive: true })
     }
@@ -58,7 +61,9 @@ class PathService {
         const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
         return data.dataDir || null
       }
-    } catch {}
+    } catch (err: any) {
+      logger.warn('Failed to read path config:', err?.message || err)
+    }
     return null
   }
 
@@ -103,6 +108,22 @@ class PathService {
     const dir = path.join(this.dataDir, 'skills')
     this.ensureDir(dir)
     return dir
+  }
+
+  /**
+   * 应用只读资源目录。
+   *
+   * - 开发模式：`<project>/resources/`（git LFS 跟踪的大模型/二进制放在这里）
+   * - 打包模式：electron-builder `extraResources` 输出的 `<process.resourcesPath>/resources/`
+   *
+   * 用途：OCR 模型（ONNX）、Skills 静态资源等。
+   */
+  getResourcesDir(): string {
+    // Worker 线程中无 electron.app，使用主线程传入的 isDev 与 process.resourcesPath
+    if (this.isDev) {
+      return path.join(process.cwd(), 'resources')
+    }
+    return path.join(process.resourcesPath, 'resources')
   }
 
   setDataDir(newDir: string): { success: boolean; error?: string } {

@@ -10,6 +10,9 @@ import {
   LLMUsage,
 } from './types'
 import LLMLoggerService from '../../llm-logger.service'
+import { createLogger } from '../../logger'
+
+const logger = createLogger('LLM-OpenAI')
 
 export class OpenAIProvider implements ILLMProvider {
   readonly name = 'openai-compatible'
@@ -227,7 +230,9 @@ export class OpenAIProvider implements ILLMProvider {
             if (parsed.usage) {
               streamUsage = this.normalizeUsage(parsed.usage)
             }
-          } catch {
+          } catch (err: any) {
+            // SSE 分块可能在边界处不完整，解析失败属正常情况；记录 debug 便于排查连续失败
+            logger.debug('SSE chunk parse skipped:', err?.message || err)
           }
         }
       }

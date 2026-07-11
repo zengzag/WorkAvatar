@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App,
+  Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App, Select, Checkbox,
 } from 'antd'
 import {
   ThunderboltOutlined,
@@ -51,6 +51,52 @@ const PHASE_LABEL_KEYS: Record<string, string> = {
   error: 'kms.indexPhaseError',
 }
 
+interface RebuildFormValue {
+  dirId: string
+  resetHotData: boolean
+}
+
+interface RebuildConfirmContentProps {
+  dirs: IndexDir[]
+}
+
+const RebuildConfirmContent = forwardRef<RebuildFormValue, RebuildConfirmContentProps>(({ dirs }, ref) => {
+  const { t } = useTranslation()
+  const [dirId, setDirId] = useState<string>('')
+  const [resetHot, setResetHot] = useState(false)
+
+  useImperativeHandle(ref, () => ({ dirId, resetHotData: resetHot }), [dirId, resetHot])
+
+  const dirOptions = dirs && dirs.length > 0
+    ? [
+        { label: t('kms.allDirs'), value: '' },
+        ...dirs.map(d => ({ label: d.display_name || d.dir_path, value: d.id })),
+      ]
+    : []
+
+  return (
+    <div>
+      <p>{t('kms.rebuildIndexConfirm')}</p>
+      {dirOptions.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('kms.rebuildIndexSelectDir')}</Text>
+          <Select
+            value={dirId}
+            onChange={setDirId}
+            style={{ width: '100%' }}
+            options={dirOptions}
+          />
+        </div>
+      )}
+      <div style={{ marginTop: 12 }}>
+        <Checkbox checked={resetHot} onChange={e => setResetHot(e.target.checked)}>
+          {t('kms.rebuildIndexResetHot')}
+        </Checkbox>
+      </div>
+    </div>
+  )
+})
+
 const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   isIndexing,
   indexProgress,
@@ -86,7 +132,8 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     setLoadingStats(true)
     try {
       const result = await window.electronAPI.kms.getDatabaseStats()
-      setDbStats(result)
+      // safeHandle 异常时返回 { error }，需兜底避免下游访问 undefined 字段
+      setDbStats(result && !result.error ? result : null)
     } catch {
       // ignore
     } finally {
@@ -122,6 +169,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
         setCleaning(true)
         try {
           const result = await window.electronAPI.kms.cleanupDatabase()
+          if (result && result.error) {
+            message.error(t('kms.settingsPanel.cleanupFailed') + `: ${result.error}`)
+            return
+          }
           const freed = (result?.before?.mainDbSize ?? 0) + (result?.before?.vectorDbSize ?? 0)
             - (result?.after?.mainDbSize ?? 0) - (result?.after?.vectorDbSize ?? 0)
           const freedStr = freed > 0 ? formatBytes(freed) : '0 B'
@@ -158,52 +209,22 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     : 0
 
   const handleRebuild = useCallback(() => {
-    const dirOptions = (dirs && dirs.length > 0)
-      ? [
-          { label: t('kms.allDirs'), value: '' },
-          ...dirs.map(d => ({ label: d.display_name || d.dir_path, value: d.id })),
-        ]
-      : []
+    const formRef = React.createRef<RebuildFormValue>()
 
     modal.confirm({
       title: t('kms.rebuildIndex'),
       icon: <ExclamationCircleOutlined />,
       content: (
-        <div>
-          <p>{t('kms.rebuildIndexConfirm')}</p>
-          {dirOptions.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('kms.rebuildIndexSelectDir')}</Text>
-              <select
-                id="rebuild-dir-select"
-                style={{ width: '100%', padding: '4px 8px', borderRadius: 4, border: `1px solid ${token.colorBorder}` }}
-                defaultValue=""
-              >
-                {dirOptions.map(o => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div style={{ marginTop: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
-              <input type="checkbox" id="rebuild-reset-hot" />
-              <span>{t('kms.rebuildIndexResetHot')}</span>
-            </label>
-          </div>
-        </div>
+        <RebuildConfirmContent ref={formRef} dirs={dirs ?? []} />
       ),
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: () => {
-        const selectEl = document.getElementById('rebuild-dir-select') as HTMLSelectElement | null
-        const dirId = selectEl?.value || undefined
-        const resetHotEl = document.getElementById('rebuild-reset-hot') as HTMLInputElement | null
-        const resetHotData = resetHotEl?.checked ?? false
+        const { dirId, resetHotData } = formRef.current ?? { dirId: '', resetHotData: false }
         onRebuildIndex(withEmbedding, dirId || undefined, resetHotData)
       },
     })
-  }, [dirs, withEmbedding, onRebuildIndex, modal, t, token])
+  }, [dirs, withEmbedding, onRebuildIndex, modal, t])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 16 }}>
@@ -478,6 +499,12 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                 <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedEmbeddings')}</Text>
                 <Text strong style={{ fontSize: 13, color: dbStats.orphanedEmbeddingCount > 0 ? token.colorWarning : undefined }}>
                   {dbStats.orphanedEmbeddingCount}
+                </Text>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Text type="secondary" style={{ fontSize: 11 }}>{t('kms.settingsPanel.orphanedFiles')}</Text>
+                <Text strong style={{ fontSize: 13, color: dbStats.orphanedFileCount > 0 ? token.colorWarning : undefined }}>
+                  {dbStats.orphanedFileCount}
                 </Text>
               </div>
             </div>

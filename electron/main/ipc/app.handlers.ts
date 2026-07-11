@@ -1,4 +1,4 @@
-import { dialog, app, shell } from 'electron'
+import { dialog, app, shell, BrowserWindow, ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -10,6 +10,7 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
+import { LoggerBackend } from '../services/logger'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -42,24 +43,44 @@ export function registerAppHandlers(
     'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
   )
 
+  // 渲染进程日志转发：接收渲染进程 console 输出，写入主进程日志文件
+  // fire-and-forget（ipcMain.on），不阻塞渲染进程；仅写文件不打印主进程控制台，避免重复
+  ipcMain.on(IPC_CHANNELS.APP_RENDERER_LOG, (_event, payload: { level: string; message: string }) => {
+    try {
+      const level = (payload?.level || 'info') as 'debug' | 'info' | 'warn' | 'error'
+      const message = String(payload?.message ?? '')
+      if (!message) return
+      LoggerBackend.getInstance().writeToFile(level, 'Renderer', message)
+    } catch {}
+  })
+
   safeHandle(IPC_CHANNELS.APP_SHOW_OPEN_DIALOG, async (params: AppShowOpenDialogParams) => {
-    const result = await dialog.showOpenDialog({
+    const options = {
       title: params.title,
       defaultPath: params.defaultPath,
       buttonLabel: params.buttonLabel,
       filters: params.filters,
       properties: params.properties,
-    })
+    }
+    // 传入父窗口使对话框模态显示，避免在部分 Windows 环境下被主窗口遮挡而不显示
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
     return result
   })
 
   safeHandle(IPC_CHANNELS.APP_SHOW_SAVE_DIALOG, async (params: AppShowSaveDialogParams) => {
-    const result = await dialog.showSaveDialog({
+    const options = {
       title: params.title,
       defaultPath: params.defaultPath,
       buttonLabel: params.buttonLabel,
       filters: params.filters,
-    })
+    }
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
     return result
   })
 

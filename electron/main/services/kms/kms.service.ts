@@ -6,14 +6,27 @@ import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
+import KMSAutoIndexService from './kms-auto-index.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
 import LLMClientService from '../llm-client.service'
-import DatabaseService from '../database.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
-import { callLLMForJSON } from './kms-llm-helpers'
+import {
+  getKmsLLMConfig as resolveKmsLLMConfig,
+  getKmsSummaryLLMConfig as resolveKmsSummaryLLMConfig,
+  getKmsEmbeddingConfig as resolveKmsEmbeddingConfig,
+  getKmsSettings as readKmsSettings,
+  setKmsSettings as writeKmsSettings,
+  type KmsLLMConfig,
+  type KmsEmbeddingConfig,
+  type KmsSettings,
+} from './kms-config-helpers'
+import {
+  generateCollectionSummary as generateCollectionSummaryViaLLM,
+  saveCollectionSummary,
+} from './kms-collection-llm-helpers'
 
 const logger = createLogger('KMS')
 
@@ -25,6 +38,17 @@ class KMSService {
   private db: Database.Database
   private static instance: KMSService
   private progressListeners: Set<(progress: IndexProgress) => void> = new Set()
+  /**
+   * 进度推送节流：批量索引上千文件时，逐文件/逐段落产生大量进度事件，
+   * 直接转发会导致 IPC 消息洪泛 → 主线程事件循环饱和 + 渲染进程 React 频繁重渲染 → UI 卡死。
+   *
+   * 策略：trailing-edge 节流，间隔 PROGRESS_THROTTLE_MS 内只保留最新一条进度，到点刷新；
+   * done/error 等终止阶段立即下发，保证 UI 及时感知完成/取消。
+   */
+  private static readonly PROGRESS_THROTTLE_MS = 300
+  private lastProgressNotifyAt: number = 0
+  private pendingProgress: IndexProgress | null = null
+  private progressFlushTimer: NodeJS.Timeout | null = null
 
   private constructor() {
     this.db = KMSDatabaseService.getInstance().getDb()
@@ -82,6 +106,26 @@ class KMSService {
       throw new Error(`目录不存在: ${dirPath}`)
     }
 
+    // 兼容 Windows 大小写不敏感：先按原路径查，再用归一化路径查
+    const existing = this.db.prepare(
+      'SELECT * FROM kms_index_dirs WHERE dir_path = ? OR LOWER(dir_path) = LOWER(?)'
+    ).get(dirPath, dirPath) as any
+
+    if (existing) {
+      // 已存在相同目录，更新可修改字段并返回
+      this.db.prepare(`
+        UPDATE kms_index_dirs
+        SET display_name = ?, recursive = ?, file_extensions = ?, updated_at = unixepoch()
+        WHERE id = ?
+      `).run(
+        displayName || existing.display_name,
+        recursive !== undefined ? (recursive ? 1 : 0) : existing.recursive,
+        fileExtensions?.join(',') || existing.file_extensions,
+        existing.id
+      )
+      return this.getIndexDir(existing.id)
+    }
+
     const id = generateId()
     this.db.prepare(`
       INSERT INTO kms_index_dirs (id, dir_path, display_name, recursive, file_extensions)
@@ -122,14 +166,29 @@ class KMSService {
   }
 
   deleteIndexDir(id: string): void {
-    // 先收集该目录下所有文件 ID，显式清理 FTS5 全文索引和向量库 embedding。
-    // 原因：kms_fts 是 FTS5 虚表，不支持外键级联；kms_embeddings 在独立的向量库，
-    // 跨库外键不可用。仅靠 ON DELETE CASCADE 无法清理这两类数据，会留下孤儿记录。
+    // 收集该目录下所有文件 ID
     const files = this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(id) as any[]
     const searchEngine = KMSSearchEngineService.getInstance()
+
+    // 分类处理：属于合集的文件迁移到虚拟手动目录，不属于合集的文件彻底清理
+    const fileIdsInCollection = new Set(
+      (this.db.prepare(
+        'SELECT DISTINCT file_id FROM kms_file_collections'
+      ).all() as any[]).map(r => r.file_id)
+    )
+
     for (const f of files) {
-      searchEngine.deleteIndexByFile(f.id)
+      if (fileIdsInCollection.has(f.id)) {
+        // 文件仍属于合集，迁移到虚拟手动目录保留
+        this.db.prepare('UPDATE kms_files SET dir_id = ? WHERE id = ?')
+          .run(this.manualSourceDirId, f.id)
+        logger.info(`文件 ${f.id} 迁移到虚拟手动目录（属于合集）`)
+      } else {
+        // 不属于任何合集，彻底清理 FTS5、向量库和文件记录
+        searchEngine.deleteIndexByFile(f.id)
+      }
     }
+
     this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
     searchEngine.invalidateCache()
   }
@@ -180,7 +239,17 @@ class KMSService {
   }
 
   deleteCollection(id: string): void {
+    // 1. 收集该合集下的所有文件 ID（删除合集后级联会清除 kms_file_collections，需提前收集）
+    const collectionFiles = this.db.prepare(
+      'SELECT file_id FROM kms_file_collections WHERE collection_id = ?'
+    ).all(id) as any[]
+
+    // 2. 删除合集（级联删除 kms_file_collections、kms_collection_summaries）
     this.db.prepare('DELETE FROM kms_collections WHERE id = ?').run(id)
+
+    // 3. 清理游离文件：不再属于任何合集、且位于虚拟手动目录的文件
+    this.cleanupOrphanFiles(collectionFiles.map(f => f.file_id))
+
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
@@ -209,6 +278,12 @@ class KMSService {
     }
 
     const fileName = path.basename(filePath)
+
+    // 跳过 Office/WPS 临时锁文件（如 ~$test.docx、.~test.docx）
+    if (fileName.startsWith('~$') || fileName.startsWith('.~')) {
+      throw new Error(`不支持添加 Office/WPS 临时文件: ${fileName}`)
+    }
+
     const ext = path.extname(fileName).toLowerCase().slice(1)
     const stat = fs.statSync(filePath)
     const fileSize = stat.size
@@ -318,13 +393,18 @@ class KMSService {
   }
 
   /**
-   * 从合集中移除文件（仅解除关联，不删除文件本身）
+   * 从合集中移除文件
+   * 若该文件不再属于任何合集且仅存在于虚拟手动目录，则彻底清理
    */
   removeFileFromCollection(collectionId: string, fileId: string): void {
     this.db.prepare(
       'DELETE FROM kms_file_collections WHERE file_id = ? AND collection_id = ?'
     ).run(fileId, collectionId)
     this.db.prepare('UPDATE kms_collections SET updated_at = unixepoch() WHERE id = ?').run(collectionId)
+
+    // 清理游离文件：该文件不再属于任何合集、且位于虚拟手动目录时删除
+    this.cleanupOrphanFiles([fileId])
+
     KMSSearchEngineService.getInstance().invalidateCache()
   }
 
@@ -407,200 +487,78 @@ class KMSService {
   }
 
   setCollectionSummary(collectionId: string, summary: string, keyTopics: string[] = []): void {
-    const existing = this.db.prepare(
-      'SELECT id FROM kms_collection_summaries WHERE collection_id = ?'
-    ).get(collectionId) as any
-
-    if (existing) {
-      this.db.prepare(`
-        UPDATE kms_collection_summaries
-        SET summary = ?, key_topics_json = ?, updated_at = unixepoch()
-        WHERE collection_id = ?
-      `).run(summary, JSON.stringify(keyTopics), collectionId)
-    } else {
-      const id = generateId()
-      this.db.prepare(`
-        INSERT INTO kms_collection_summaries (id, collection_id, summary, key_topics_json)
-        VALUES (?, ?, ?, ?)
-      `).run(id, collectionId, summary, JSON.stringify(keyTopics))
-    }
+    saveCollectionSummary(this.db, collectionId, summary, keyTopics)
   }
 
   deleteCollectionSummary(collectionId: string): void {
     this.db.prepare('DELETE FROM kms_collection_summaries WHERE collection_id = ?').run(collectionId)
   }
 
+  /**
+   * 清理游离文件：不再属于任何合集、且仅存在于虚拟手动目录的文件
+   *
+   * 背景：合集中的文件若不在任何索引目录下，其 dir_id 指向虚拟目录 __manual_files__。
+   * 删除合集或从合集中移除文件时，如果该文件不再属于任何合集，则它已无实际归属，
+   * 应从 kms_files、FTS5、embedding 等表中彻底清理，避免"幽灵文件"出现在搜索结果中。
+   *
+   * @param candidateFileIds 候选文件 ID 列表（通常是刚被解除合集关联的文件）
+   */
+  private cleanupOrphanFiles(candidateFileIds: string[]): void {
+    if (candidateFileIds.length === 0 || !this.manualSourceDirId) return
+
+    const searchEngine = KMSSearchEngineService.getInstance()
+
+    for (const fileId of candidateFileIds) {
+      // 检查文件是否仍在虚拟手动目录中（如果 dir_id 指向真实索引目录，则不算游离文件）
+      const file = this.db.prepare(
+        'SELECT dir_id FROM kms_files WHERE id = ?'
+      ).get(fileId) as any
+      if (!file || file.dir_id !== this.manualSourceDirId) continue
+
+      // 检查该文件是否仍属于至少一个合集
+      const stillInCollection = this.db.prepare(
+        'SELECT 1 FROM kms_file_collections WHERE file_id = ? LIMIT 1'
+      ).get(fileId)
+      if (stillInCollection) continue
+
+      // 游离文件：显式清理 FTS5、向量库，然后删除文件记录
+      searchEngine.deleteIndexByFile(fileId)
+      this.db.prepare('DELETE FROM kms_files WHERE id = ?').run(fileId)
+      logger.info(`已清理游离文件: ${fileId}`)
+    }
+  }
+
   async generateCollectionSummary(collectionId: string, signal?: AbortSignal): Promise<{ summary: string; keyTopics: string[] } | { error: string }> {
-    const collection = this.db.prepare('SELECT id, name, description FROM kms_collections WHERE id = ?').get(collectionId) as any
-    if (!collection) {
-      return { error: 'Collection not found' }
-    }
-
-    if (signal?.aborted) {
-      return { error: 'ABORTED' }
-    }
-
-    const files = this.listFilesInCollection(collectionId)
-    if (files.length === 0) {
-      return { error: 'NO_FILES' }
-    }
-
-    // 获取摘要模型 LLM 配置（KMS 摘要模型 → KMS AI搜索模型 → 知识场景默认 → 任意可用）
     const llmConfig = this.getKmsSummaryLLMConfig()
     if (!llmConfig) {
       return { error: 'NO_LLM_PROVIDER' }
     }
 
-    // 拼接文件信息+轻量摘要作为 LLM 输入（控制总长度避免超 token）
-    const fileSummaries: string[] = []
-    let totalChars = 0
-    const MAX_INPUT_CHARS = 12000
-    for (const f of files) {
-      const lightSummary = f.light_summary || f.summary || ''
-      const line = `【${f.file_name}】${lightSummary ? ' ' + lightSummary : ''}`
-      if (totalChars + line.length > MAX_INPUT_CHARS) {
-        fileSummaries.push(`...（其余 ${files.length - fileSummaries.length} 个文件省略）`)
-        break
-      }
-      fileSummaries.push(line)
-      totalChars += line.length
+    const result = await generateCollectionSummaryViaLLM(this.db, collectionId, llmConfig, signal)
+    if ('summary' in result && result.summary) {
+      this.setCollectionSummary(collectionId, result.summary, result.keyTopics)
     }
-
-    const prompt = `请基于以下合集内文件的摘要信息，生成该合集的整体摘要和关键主题词。
-
-合集名称：${collection.name}
-合集描述：${collection.description || '（无）'}
-文件数量：${files.length}
-
-文件摘要列表：
-${fileSummaries.join('\n')}
-
-要求：
-1. summary：用 150-300 字概括这个合集的核心内容、覆盖范围与价值，不要罗列文件名。
-2. keyTopics：提取 3-8 个关键主题词（短语），用于快速了解合集主题。
-
-只返回 JSON：{"summary":"...","keyTopics":["..."]}`
-
-    try {
-      const llmClient = LLMClientService.getInstance()
-
-      const parsed = await callLLMForJSON<{ summary: string; keyTopics: string[] }>(
-        llmClient,
-        llmConfig.providerId,
-        llmConfig.modelId,
-        [
-          { role: 'system', content: '你是一个资料库合集分析助手。只输出 JSON，不要添加其他文本。' },
-          { role: 'user', content: prompt },
-        ],
-        { summary: '', keyTopics: [] },
-        { temperature: 0.3, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking },
-      )
-
-      // 取消检查
-      if (signal?.aborted) {
-        return { error: 'ABORTED' }
-      }
-
-      const summary: string = (parsed.summary || '').trim()
-      const keyTopics: string[] = Array.isArray(parsed.keyTopics)
-        ? parsed.keyTopics.map((k: any) => String(k).trim()).filter(Boolean).slice(0, 8)
-        : []
-
-      if (!summary) {
-        return { error: 'LLM returned empty summary' }
-      }
-
-      this.setCollectionSummary(collectionId, summary, keyTopics)
-      logger.info(`Collection summary generated for ${collectionId}: ${summary.length} chars, ${keyTopics.length} topics`)
-
-      return { summary, keyTopics }
-    } catch (err: any) {
-      if (signal?.aborted || err?.name === 'AbortError') {
-        return { error: 'ABORTED' }
-      }
-      logger.error('generateCollectionSummary failed:', err?.message || err)
-      return { error: err?.message || 'LLM call failed' }
-    }
+    return result
   }
 
-  getKmsLLMConfigPublic(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
+  getKmsLLMConfigPublic(): KmsLLMConfig | null {
     return this.getKmsLLMConfig()
   }
 
-  /**
-   * 获取摘要模型配置（用于文件摘要、目录摘要、合集摘要、合集深度处理等）
-   * 优先级：KMS 摘要模型 (kms_summary_model) > KMS AI搜索模型 (kms_model) > 知识场景默认模型 > 任意可用提供商
-   */
-  getKmsSummaryLLMConfigPublic(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
+  getKmsSummaryLLMConfigPublic(): KmsLLMConfig | null {
     return this.getKmsSummaryLLMConfig()
   }
 
-  getKmsEmbeddingConfigPublic(): { providerId: string; modelName: string } | null {
+  getKmsEmbeddingConfigPublic(): KmsEmbeddingConfig | null {
     return this.getKmsEmbeddingConfig()
   }
 
-  private getKmsLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
-    const llmClient = LLMClientService.getInstance()
-    const mainDb = DatabaseService.getInstance().getDb()
-
-    try {
-      const kmsModelRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
-      if (kmsModelRow?.value) {
-        const config = JSON.parse(kmsModelRow.value)
-        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
-          return {
-            providerId: config.provider_id,
-            modelId: config.model_id || undefined,
-            enableThinking: !!config.enable_thinking,
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read kms_model setting, falling back to default', error)
-    }
-
-    try {
-      const row = mainDb.prepare("SELECT value FROM settings WHERE key = 'default_model_knowledge'").get() as any
-      if (row?.value) {
-        const config = JSON.parse(row.value)
-        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
-          return {
-            providerId: config.provider_id,
-            modelId: config.model_id || undefined,
-            enableThinking: false,
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read default_model_knowledge setting, falling back to first provider', error)
-    }
-
-    const providers = llmClient.getProviderList?.() as any[] || []
-    const first = providers[0]
-    return first ? { providerId: first.id, modelId: undefined, enableThinking: false } : null
+  private getKmsLLMConfig(): KmsLLMConfig | null {
+    return resolveKmsLLMConfig()
   }
 
-  getKmsSummaryLLMConfig(): { providerId: string; modelId: string | undefined; enableThinking: boolean } | null {
-    const llmClient = LLMClientService.getInstance()
-    const mainDb = DatabaseService.getInstance().getDb()
-
-    try {
-      const summaryRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_summary_model'").get() as any
-      if (summaryRow?.value) {
-        const config = JSON.parse(summaryRow.value)
-        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
-          return {
-            providerId: config.provider_id,
-            modelId: config.model_id || undefined,
-            enableThinking: !!config.enable_thinking,
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read kms_summary_model setting, falling back to kms_model', error)
-    }
-
-    return this.getKmsLLMConfig()
+  getKmsSummaryLLMConfig(): KmsLLMConfig | null {
+    return resolveKmsSummaryLLMConfig()
   }
 
   scanDirFiles(dirPath: string, extensions?: string[]): { files: string[]; skipped: number } {
@@ -651,12 +609,14 @@ ${fileSummaries.join('\n')}
 
     if (options?.timeRangeStart !== undefined) {
       sql += ' AND f.modified_time >= ?'
-      params.push(options.timeRangeStart)
+      // 前端传入毫秒，modified_time 存储为 unix 秒
+      params.push(Math.floor(options.timeRangeStart / 1000))
     }
 
     if (options?.timeRangeEnd !== undefined) {
       sql += ' AND f.modified_time <= ?'
-      params.push(options.timeRangeEnd)
+      // 前端传入毫秒，modified_time 存储为 unix 秒
+      params.push(Math.floor(options.timeRangeEnd / 1000))
     }
 
     if (options?.collectionIds && options.collectionIds.length > 0) {
@@ -698,7 +658,16 @@ ${fileSummaries.join('\n')}
     }
 
     const searchStart = Date.now()
-    const results = searchEngine.search(query, queryEmbedding, options)
+    // 前端传入的 timeRangeStart/End 为毫秒，kms_files.modified_time 存储为 unix 秒，
+    // 此处统一转换为秒，与 agentSearch / searchFiles 保持一致
+    const normalizedOptions = options
+      ? {
+          ...options,
+          timeRangeStart: options.timeRangeStart !== undefined ? Math.floor(options.timeRangeStart / 1000) : undefined,
+          timeRangeEnd: options.timeRangeEnd !== undefined ? Math.floor(options.timeRangeEnd / 1000) : undefined,
+        }
+      : options
+    const results = searchEngine.search(query, queryEmbedding, normalizedOptions)
     logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
 
     // 批量记录搜索命中（替代逐条插入，减少 DB 写入次数）
@@ -731,39 +700,8 @@ ${fileSummaries.join('\n')}
     return KMSIndexManagerService.getInstance().evaluateAndPromote(force)
   }
 
-  private getKmsEmbeddingConfig(): { providerId: string; modelName: string } | null {
-    const llmClient = LLMClientService.getInstance()
-    const mainDb = DatabaseService.getInstance().getDb()
-
-    try {
-      const kmsEmbRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
-      if (kmsEmbRow?.value) {
-        const config = JSON.parse(kmsEmbRow.value)
-        if (config.provider_id) {
-          const provider = llmClient.getProvider(config.provider_id) as any
-          if (provider) {
-            let modelName = ''
-            if (config.model_id && provider.models_json) {
-              try {
-                const models = JSON.parse(provider.models_json)
-                const model = models.find((m: any) => m.id === config.model_id)
-                if (model) {
-                  modelName = model.model
-                }
-              } catch {}
-            }
-            if (!modelName) {
-              modelName = provider.embedding_model || 'text-embedding-3-small'
-            }
-            return { providerId: config.provider_id, modelName }
-          }
-        }
-      }
-    } catch (error) {
-      logger.warn('Failed to read kms_embedding_model setting, falling back to default embedding config', error)
-    }
-
-    return llmClient.getDefaultEmbeddingConfig()
+  private getKmsEmbeddingConfig(): KmsEmbeddingConfig | null {
+    return resolveKmsEmbeddingConfig()
   }
 
   async getFileContent(fileId: string, options?: { paragraphId?: string; startOffset?: number; endOffset?: number; startLine?: number; maxChars?: number }): Promise<string> {
@@ -885,6 +823,8 @@ ${fileSummaries.join('\n')}
     // 优先取消 Worker 中的任务；同时取消主线程降级路径（如果有）
     KMSIndexWorkerClientService.getInstance().cancelIndexing()
     KMSIndexManagerService.getInstance().cancelIndexing()
+    // 同步取消自动索引检查（"立即检查" 触发的索引任务有独立的 AbortController）
+    KMSAutoIndexService.getInstance().cancelCurrentRun()
   }
 
   getStats(): any {
@@ -916,89 +856,13 @@ ${fileSummaries.join('\n')}
     return result
   }
 
-  getKmsSettings(): any {
-    const mainDb = DatabaseService.getInstance().getDb()
-    const result: any = {
-      model: null,
-      embeddingModel: null,
-      summaryModel: null,
-      searchParams: { maxRounds: 3, topK: 10, resultLimit: 100 },
-      autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
-    }
-
-    try {
-      const modelRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_model'").get() as any
-      if (modelRow?.value) {
-        result.model = JSON.parse(modelRow.value)
-      }
-    } catch {}
-
-    try {
-      const embRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_embedding_model'").get() as any
-      if (embRow?.value) {
-        result.embeddingModel = JSON.parse(embRow.value)
-      }
-    } catch {}
-
-    try {
-      const summaryRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_summary_model'").get() as any
-      if (summaryRow?.value) {
-        result.summaryModel = JSON.parse(summaryRow.value)
-      }
-    } catch {}
-
-    try {
-      const paramsRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_search_params'").get() as any
-      if (paramsRow?.value) {
-        result.searchParams = { ...result.searchParams, ...JSON.parse(paramsRow.value) }
-      }
-    } catch {}
-
-    try {
-      const autoIndexRow = mainDb.prepare("SELECT value FROM settings WHERE key = 'kms_auto_index'").get() as any
-      if (autoIndexRow?.value) {
-        result.autoIndex = { ...result.autoIndex, ...JSON.parse(autoIndexRow.value) }
-      }
-    } catch {}
-
-    return result
+  getKmsSettings(): KmsSettings {
+    return readKmsSettings()
   }
 
   setKmsSettings(params: any): void {
-    const mainDb = DatabaseService.getInstance().getDb()
-    const setSetting = (key: string, value: any) => {
-      const jsonStr = JSON.stringify(value)
-      mainDb.prepare(
-        'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
-      ).run(key, jsonStr)
-    }
-
-    if (params.model !== undefined) {
-      if (params.model) {
-        setSetting('kms_model', params.model)
-      } else {
-        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_model'").run()
-      }
-    }
-    if (params.embeddingModel !== undefined) {
-      if (params.embeddingModel) {
-        setSetting('kms_embedding_model', params.embeddingModel)
-      } else {
-        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_embedding_model'").run()
-      }
-    }
-    if (params.summaryModel !== undefined) {
-      if (params.summaryModel) {
-        setSetting('kms_summary_model', params.summaryModel)
-      } else {
-        mainDb.prepare("DELETE FROM settings WHERE key = 'kms_summary_model'").run()
-      }
-    }
-    if (params.searchParams !== undefined) {
-      setSetting('kms_search_params', params.searchParams)
-    }
+    writeKmsSettings(params)
     if (params.autoIndex !== undefined) {
-      setSetting('kms_auto_index', params.autoIndex)
       const config: AutoIndexConfig = {
         enabled: !!params.autoIndex.enabled,
         intervalMinutes: Math.max(1, Math.min(1440, params.autoIndex.intervalMinutes ?? 10)),
@@ -1032,7 +896,7 @@ ${fileSummaries.join('\n')}
     `).all() as any[]
   }
 
-  getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
+  getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; indexStatus?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
     const page = params?.page || 1
     const pageSize = params?.pageSize || 20
     const offset = (page - 1) * pageSize
@@ -1052,6 +916,10 @@ ${fileSummaries.join('\n')}
     if (params?.dataTier) {
       whereClause += ' AND f.data_tier = ?'
       sqlParams.push(params.dataTier)
+    }
+    if (params?.indexStatus) {
+      whereClause += ' AND f.index_status = ?'
+      sqlParams.push(params.indexStatus)
     }
     if (params?.keyword) {
       whereClause += ' AND (f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)'
@@ -1137,7 +1005,65 @@ ${fileSummaries.join('\n')}
     return () => this.progressListeners.delete(listener)
   }
 
+  /**
+   * 推送一条错误进度到前端。
+   * 用于 fire-and-forget IPC（ipcMain.on）在操作失败时通知 UI，
+   * 避免 release 下错误被静默吞掉导致界面永久卡在"索引中"。
+   */
+  notifyIndexError(message: string, extras?: Partial<IndexProgress>): void {
+    this.notifyProgress({
+      phase: 'error',
+      current: 0,
+      total: 0,
+      message,
+      ...extras,
+    })
+  }
+
   private notifyProgress(progress: IndexProgress): void {
+    const isTerminal = progress.phase === 'done' || progress.phase === 'error'
+
+    if (isTerminal) {
+      // 终止阶段：取消待刷定时器，立即下发，保证 UI 及时感知完成/取消/错误
+      if (this.progressFlushTimer) {
+        clearTimeout(this.progressFlushTimer)
+        this.progressFlushTimer = null
+      }
+      this.pendingProgress = null
+      this.lastProgressNotifyAt = Date.now()
+      this.dispatchProgress(progress)
+      return
+    }
+
+    const now = Date.now()
+    if (now - this.lastProgressNotifyAt >= KMSService.PROGRESS_THROTTLE_MS) {
+      // 已过节流窗口：立即下发
+      if (this.progressFlushTimer) {
+        clearTimeout(this.progressFlushTimer)
+        this.progressFlushTimer = null
+      }
+      this.pendingProgress = null
+      this.lastProgressNotifyAt = now
+      this.dispatchProgress(progress)
+    } else {
+      // 节流窗口内：缓存最新进度，安排定时刷新（只保留一个 timer）
+      this.pendingProgress = progress
+      if (!this.progressFlushTimer) {
+        const delay = KMSService.PROGRESS_THROTTLE_MS - (now - this.lastProgressNotifyAt)
+        this.progressFlushTimer = setTimeout(() => {
+          this.progressFlushTimer = null
+          if (this.pendingProgress) {
+            const pending = this.pendingProgress
+            this.pendingProgress = null
+            this.lastProgressNotifyAt = Date.now()
+            this.dispatchProgress(pending)
+          }
+        }, Math.max(50, delay))
+      }
+    }
+  }
+
+  private dispatchProgress(progress: IndexProgress): void {
     for (const listener of this.progressListeners) {
       try {
         listener(progress)

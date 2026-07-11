@@ -162,6 +162,9 @@ const electronAPI = {
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
+    // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
+    log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) =>
+      ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
   },
 
   tool: {

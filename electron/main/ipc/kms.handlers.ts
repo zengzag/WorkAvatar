@@ -126,12 +126,15 @@ export function registerKMSHandlers(): void {
   // 不使用 ipcMain.handle 避免返回值序列化问题
   // 第二个参数 withEmbedding（默认 true）控制是否同步生成向量嵌入（智能索引）
   // 用 Promise.resolve().then() 包裹，确保同步抛错也能被 catch 捕获，避免异常逃逸
+  // catch 中必须推送 error 进度，否则 release 下失败被静默吞掉、UI 永久卡在"索引中"
   ipcMain.on(IPC_CHANNELS.KMS_BUILD_INDEX, (_event, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     logger.info(`Build index requested (withEmbedding=${withEmbedding}, resetHot=${resetHotData})`)
     Promise.resolve()
       .then(() => kmsService.buildFullIndex(providerId, withEmbedding, resetHotData))
       .catch((err: any) => {
-        logger.error('buildFullIndex failed:', String(err?.message || err))
+        const msg = String(err?.message || err)
+        logger.error('buildFullIndex failed:', msg)
+        kmsService.notifyIndexError(msg)
       })
   })
 
@@ -140,7 +143,9 @@ export function registerKMSHandlers(): void {
     Promise.resolve()
       .then(() => kmsService.incrementalIndex(providerId, withEmbedding))
       .catch((err: any) => {
-        logger.error('incrementalIndex failed:', String(err?.message || err))
+        const msg = String(err?.message || err)
+        logger.error('incrementalIndex failed:', msg)
+        kmsService.notifyIndexError(msg)
       })
   })
 
@@ -149,7 +154,9 @@ export function registerKMSHandlers(): void {
     Promise.resolve()
       .then(() => kmsService.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData))
       .catch((err: any) => {
-        logger.error('rebuildDirIndex failed:', String(err?.message || err))
+        const msg = String(err?.message || err)
+        logger.error('rebuildDirIndex failed:', msg)
+        kmsService.notifyIndexError(msg)
       })
   })
 
@@ -163,12 +170,12 @@ export function registerKMSHandlers(): void {
     return kmsService.getStats()
   })
 
-  // 数据库清理：获取占用统计（主库/向量库大小 + 孤儿数据条数）
+  // 数据库清理：获取占用统计（主库/向量库大小 + 残留数据条数）
   safeHandle(IPC_CHANNELS.KMS_GET_DATABASE_STATS, async () => {
     return kmsService.getDatabaseStats()
   })
 
-  // 数据库清理：删除孤儿索引数据 + VACUUM 回收磁盘空间
+  // 数据库清理：删除残留索引数据 + VACUUM 回收磁盘空间
   safeHandle(IPC_CHANNELS.KMS_CLEANUP_DATABASE, async () => {
     return kmsService.cleanupDatabase()
   })
@@ -225,7 +232,10 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_RUN_AUTO_INDEX_CHECK, async () => {
     kmsService.runAutoIndexCheckNow().catch((err: any) => {
-      logger.error('runAutoIndexCheckNow failed:', String(err?.message || err))
+      const msg = String(err?.message || err)
+      logger.error('runAutoIndexCheckNow failed:', msg)
+      // 推送 error 进度，避免 release 下失败被静默吞掉、前端无反馈
+      kmsService.notifyIndexError(msg)
     })
     return { success: true }
   })
@@ -340,7 +350,9 @@ export function registerKMSHandlers(): void {
     Promise.resolve()
       .then(() => kmsService.processCollectionDeep(collectionId))
       .catch((err: any) => {
-        logger.error('processCollectionDeep failed:', String(err?.message || err))
+        const msg = String(err?.message || err)
+        logger.error('processCollectionDeep failed:', msg)
+        kmsService.notifyIndexError(msg, { collectionId })
       })
   })
 

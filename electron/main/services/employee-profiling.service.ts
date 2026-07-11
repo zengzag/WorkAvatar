@@ -200,7 +200,9 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
       const collectionSummary = db.prepare('SELECT * FROM kms_collection_summaries WHERE collection_id = ?').get(collectionId) as any
       if (collectionSummary) {
         content.globalSummary = collectionSummary.summary || ''
-        try { content.keyTopics = JSON.parse(collectionSummary.key_topics_json || '[]') } catch {}
+        try { content.keyTopics = JSON.parse(collectionSummary.key_topics_json || '[]') } catch (err: any) {
+          logger.debug(`Failed to parse key_topics_json for collection ${collectionId}:`, err?.message || err)
+        }
       }
 
       const fileSummaries = db.prepare(`
@@ -216,7 +218,9 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
           summary: fs.summary || '',
           mainTopics: [],
         }
-        try { docSummary.mainTopics = JSON.parse(fs.main_topics_json || '[]') } catch {}
+        try { docSummary.mainTopics = JSON.parse(fs.main_topics_json || '[]') } catch (err: any) {
+          logger.debug(`Failed to parse main_topics_json for file ${fs.file_name}:`, err?.message || err)
+        }
         content.documentSummaries.push(docSummary)
       }
 
@@ -274,6 +278,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
 
     let prompt: string
+    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"read_file"、"calculator"等）`
     if (hasCollection) {
       prompt = `分析资料库合集内容，设计数字员工角色，JSON格式输出。
 
@@ -285,14 +290,7 @@ ${truncatedText}${userGuidance}
 2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
 3. 基于合集内容推导员工应承担的职责（如解答相关咨询、处理对应业务请求等）
 4. 根据业务特性确定工作流程和注意事项
-
-可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
-${toolsListText}
-
-输出字段（只输出JSON）：
-- roleName: 角色名称（简洁明了）
-- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）
-- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"read_file"、"calculator"等）`
+${toolsSection}`
     } else {
       prompt = `根据业务描述设计数字员工角色，JSON格式输出。
 
@@ -303,14 +301,7 @@ ${userGuidance}
 2. 根据业务场景确定数字员工的角色定位（根据实际分析结果给出恰当的员工角色名称）
 3. 基于业务描述推导员工应承担的职责
 4. 根据业务特性确定工作流程和注意事项
-
-可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：
-${toolsListText}
-
-输出字段（只输出JSON）：
-- roleName: 角色名称（简洁明了）
-- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）
-- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"read_file"、"calculator"等）`
+${toolsSection}`
     }
 
     onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 进行智能分析...' })

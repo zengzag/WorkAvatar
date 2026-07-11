@@ -21,12 +21,13 @@ extraResources:
 asarUnpack:
   - '**/*.node'
   - '**/better_sqlite3/**'
+  - '**/sqlite-vec-*/**'
 
 win:
   target:
     - portable
   icon: resources/icons/icon.ico
-  signAndEditExecutable: false
+  signAndEditExecutable: true
   artifactName: '${productName}-Setup-${version}.${ext}'
 
 nsis:
