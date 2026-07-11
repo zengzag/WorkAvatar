@@ -80,6 +80,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
   const [errorMessage, setErrorMessage] = useState('')
   const [startedAt, setStartedAt] = useState<number>(0)
   const [, setTick] = useState(0)
+  const [latestProgress, setLatestProgress] = useState<{ phase: string; current: number; total: number }>({ phase: '', current: 0, total: 0 })
   const unsubscribeRef = useRef<(() => void) | null>(null)
 
   const resetState = useCallback(() => {
@@ -92,6 +93,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
     setIsCancelled(false)
     setErrorMessage('')
     setStartedAt(0)
+    setLatestProgress({ phase: '', current: 0, total: 0 })
   }, [])
 
   useEffect(() => {
@@ -150,10 +152,25 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       const stageDef = STAGES.find((s) => s.key === progress.phase)
       if (!stageDef) return
 
+      setLatestProgress({ phase: progress.phase, current: progress.current, total: progress.total })
+
+      const currentIdx = STAGES.findIndex((s) => s.key === progress.phase)
+      const FILE_STAGE_COUNT = 5
+
       setStages((prev) => {
         const next = { ...prev }
 
-        const currentIdx = STAGES.findIndex((s) => s.key === progress.phase)
+        // 文件级阶段循环：已 done 的文件级阶段再次出现，说明进入了新文件迭代，重置所有文件级阶段
+        if (currentIdx < FILE_STAGE_COUNT && next[progress.phase]?.status === 'done') {
+          for (let i = 0; i < FILE_STAGE_COUNT; i++) {
+            const key = STAGES[i].key
+            if (next[key]) {
+              next[key] = { status: 'pending', current: 0, total: 0, message: '' }
+            }
+          }
+        }
+
+        // 标记当前阶段之前的阶段为 done
         for (let i = 0; i < currentIdx; i++) {
           const prevKey = STAGES[i].key
           if (!next[prevKey]) {
@@ -163,16 +180,14 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
           }
         }
 
-        const existingStage = next[progress.phase]
-        if (!existingStage || existingStage.status !== 'done') {
-          next[progress.phase] = {
-            status: progress.current >= progress.total && progress.total > 0 ? 'done' : 'processing',
-            current: progress.current,
-            total: progress.total,
-            message: progress.message || '',
-            startedAt: progress.startedAt,
-            finishedAt: progress.current >= progress.total && progress.total > 0 ? Math.floor(Date.now() / 1000) : existingStage?.finishedAt,
-          }
+        // 更新当前阶段（始终更新，不跳过已 done 的阶段）
+        next[progress.phase] = {
+          status: progress.current >= progress.total && progress.total > 0 ? 'done' : 'processing',
+          current: progress.current,
+          total: progress.total,
+          message: progress.message || '',
+          startedAt: progress.startedAt,
+          finishedAt: progress.current >= progress.total && progress.total > 0 ? Math.floor(Date.now() / 1000) : next[progress.phase]?.finishedAt,
         }
         return next
       })
@@ -180,7 +195,9 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       if (progress.fileName) {
         setCurrentFileName(progress.fileName)
       }
-      if (progress.phase === 'parsing' && progress.total > 0) {
+      // 从文件级进度阶段更新文件索引（paragraph_summary 使用段落数而非文件索引，排除）
+      const isFileProgressPhase = progress.phase === 'parsing' || progress.phase === 'paragraph_split' || progress.phase === 'toc' || progress.phase === 'doc_summary'
+      if (isFileProgressPhase && progress.total > 0) {
         setTotalFiles(progress.total)
         setCurrentFileIndex(progress.current)
       }
@@ -202,14 +219,12 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
 
   const overallPercent = (() => {
     if (isDone) return 100
-    const completed = STAGES.filter((s) => stages[s.key]?.status === 'done').length
-    const processingStage = STAGES.find((s) => stages[s.key]?.status === 'processing')
-    let fraction = completed / STAGES.length
-    if (processingStage && stages[processingStage.key]) {
-      const st = stages[processingStage.key]
-      if (st.total > 0) {
-        fraction += (st.current / st.total) / STAGES.length
-      }
+    // 与非弹窗顶部进度使用相同的直接计算方式，避免累积 stage 状态导致偏差
+    const currentIdx = STAGES.findIndex((s) => s.key === latestProgress.phase)
+    if (currentIdx < 0) return 0
+    let fraction = currentIdx / STAGES.length
+    if (latestProgress.total > 0) {
+      fraction += (latestProgress.current / latestProgress.total) / STAGES.length
     }
     return Math.min(Math.round(fraction * 100), 99)
   })()
