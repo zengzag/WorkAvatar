@@ -1,5 +1,7 @@
-import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol } from 'electron'
 import path from 'path'
+import fs from 'fs'
+import { Readable } from 'stream'
 import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
@@ -26,13 +28,116 @@ app.setAppUserModelId('com.workavatar.desktop')
 
 const isDev = !app.isPackaged
 
+// 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+])
+
+const MIME_MAP: Record<string, string> = {
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  doc: 'application/msword',
+  dotx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
+  docm: 'application/vnd.ms-word.document.macroEnabled.12',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  xlsb: 'application/vnd.ms-excel.sheet.binary.macroEnabled.12',
+  xltx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
+  csv: 'text/csv',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ppt: 'application/vnd.ms-powerpoint',
+  pptm: 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+  potx: 'application/vnd.openxmlformats-officedocument.presentationml.template',
+  ppsx: 'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
+  pdf: 'application/pdf',
+  ofd: 'application/ofd',
+  txt: 'text/plain',
+  md: 'text/markdown',
+  json: 'application/json',
+  xml: 'text/xml',
+  html: 'text/html',
+  htm: 'text/html',
+  yaml: 'text/yaml',
+  yml: 'text/yaml',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+  ico: 'image/x-icon',
+  tiff: 'image/tiff',
+  tif: 'image/tiff',
+}
+
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).slice(1).toLowerCase()
+  return MIME_MAP[ext] || 'application/octet-stream'
+}
+
+function registerAppFileProtocol() {
+  protocol.handle('app-file', (request) => {
+    const url = new URL(request.url)
+    let filePath = decodeURIComponent(url.pathname)
+    if (process.platform === 'win32' && filePath.startsWith('/') && /^[a-zA-Z]:/.test(filePath.slice(1))) {
+      filePath = filePath.slice(1)
+    }
+    const resolvedPath = path.resolve(filePath)
+    if (!fs.existsSync(resolvedPath)) {
+      return new Response('File not found', { status: 404 })
+    }
+    const stat = fs.statSync(resolvedPath)
+    if (!stat.isFile()) {
+      return new Response('Not a file', { status: 400 })
+    }
+    const fileStream = fs.createReadStream(resolvedPath)
+    const headers = { 'Content-Type': getMimeType(resolvedPath) }
+    return new Response(Readable.toWeb(fileStream) as ReadableStream, { headers })
+  })
+}
+
+// 读取构建元信息（prebuild 由 scripts/generate-build-info.mjs 生成），缺失时降级到 app.getVersion()
+// 打包模式下文件位于 app.getAppPath()（electron-builder files 列表已包含 build-info.json）
+function readBuildInfo(): { version: string; commit: string; buildTime: string } {
+  const fallback = { version: app.getVersion(), commit: 'unknown', buildTime: '' }
+  try {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const candidate = isDev
+      ? path.join(process.cwd(), 'build-info.json')
+      : path.join(app.getAppPath(), 'build-info.json')
+    if (!fs.existsSync(candidate)) return fallback
+    const data = JSON.parse(fs.readFileSync(candidate, 'utf-8'))
+    return {
+      version: typeof data.version === 'string' ? data.version : fallback.version,
+      commit: typeof data.commit === 'string' ? data.commit : fallback.commit,
+      buildTime: typeof data.buildTime === 'string' ? data.buildTime : fallback.buildTime,
+    }
+  } catch {
+    return fallback
+  }
+}
+
 // 初始化日志文件（每次启动新建一个以时间命名的文件），必须在 PathService 可用后尽早调用
 try {
   // PathService 依赖 electron.app，需在 app.whenReady 之前也能实例化（它内部 require electron）
   // 但 dataDir 读取发生在 PathService 构造期，这里 app 尚未 ready，仍可调用 getPath
   const PathService = require('./services/path.service').default
   LoggerBackend.getInstance().init(PathService.getInstance().getDataDir())
-  logger.info(`Application starting (v${app.getVersion()}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`)
+  const buildInfo = readBuildInfo()
+  logger.info(
+    `Application starting (v${buildInfo.version}(${buildInfo.commit}), build=${buildInfo.buildTime}, dev=${isDev}, log=${LoggerBackend.getInstance().getLogFilePath()})`
+  )
 } catch (err: any) {
   // 日志初始化失败不阻断启动
   logger.warn('Logger init failed, falling back to console-only:', err?.message || err)
@@ -75,7 +180,7 @@ function getAppIconPath(): string {
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    title: 'WorkAvatar 数字员工平台',
+    title: 'WorkAvatar 数字员工',
     width: 1280,
     height: 720,
     minWidth: 1024,
@@ -174,6 +279,7 @@ function createTray() {
 
 app.whenReady().then(() => {
   logger.info('App ready, registering IPC handlers and creating window')
+  registerAppFileProtocol()
   registerIpcHandlers()
   createWindow()
   createTray()

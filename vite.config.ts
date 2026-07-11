@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import path from 'path'
+import fs from 'fs'
 
 // 主进程与 Worker 共用的原生模块外部化列表
 // 这些模块必须在打包产物中保留为 require(...)，由 Node 运行时加载
@@ -27,7 +28,32 @@ const nativeExternals = [
   'sharp',
 ]
 
+// 读取 build-info.json（在 predev/prebuild 中由 scripts/generate-build-info.mjs 生成）
+// 缺失时降级为占位值，保证 dev 启动不会因未生成而报错
+function readBuildInfo() {
+  const fallback = { version: '0.0.0', commit: 'unknown', buildTime: '' }
+  try {
+    const raw = fs.readFileSync(path.resolve(__dirname, 'build-info.json'), 'utf-8')
+    const data = JSON.parse(raw)
+    return {
+      version: typeof data.version === 'string' ? data.version : fallback.version,
+      commit: typeof data.commit === 'string' ? data.commit : fallback.commit,
+      buildTime: typeof data.buildTime === 'string' ? data.buildTime : fallback.buildTime,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+const buildInfo = readBuildInfo()
+
 export default defineConfig({
+  define: {
+    // 注入渲染进程可用的全局常量（由 build-info.json 生成，predev/prebuild 自动触发）
+    __APP_VERSION__: JSON.stringify(buildInfo.version),
+    __APP_COMMIT__: JSON.stringify(buildInfo.commit),
+    __APP_BUILD_TIME__: JSON.stringify(buildInfo.buildTime),
+  },
   plugins: [
     react(),
     electron([
@@ -100,6 +126,9 @@ export default defineConfig({
           }
           if (/[\\/]node_modules[\\/](antd|@ant-design)[\\/]/.test(id)) {
             return 'antd'
+          }
+          if (/[\\/]node_modules[\\/]@file-viewer[\\/]/.test(id)) {
+            return 'file-viewer'
           }
         }
       }

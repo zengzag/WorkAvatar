@@ -76,6 +76,10 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [processingMap, setProcessingMap] = useState<Record<string, ProcessingCollectionState>>({})
   const processingUnsubscribeRef = useRef<(() => void) | null>(null)
 
+  const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
+  const processingFileIdsRef = useRef<Set<string>>(new Set())
+  const loadCollectionFilesRef = useRef<(collectionId: string) => Promise<void>>(async () => {})
+
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewParagraph, setPreviewParagraph] = useState<{
     title: string; titlePath: string; content: string; summary: string; keywords: string[]
@@ -123,7 +127,25 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     processingUnsubscribeRef.current = window.electronAPI.kms.onIndexProgress((progress) => {
       if (!progress.collectionId) return
 
+      // 单文件深度处理：fileId 在 processingFileIdsRef 中时为单文件操作
+      const isSingleFileOp = progress.fileId && processingFileIdsRef.current.has(progress.fileId)
+
       if (progress.phase === 'done' || progress.phase === 'error') {
+        if (isSingleFileOp) {
+          // 单文件深度处理完成：移除 fileId 并刷新文件列表
+          setProcessingFileIds((prev) => {
+            const next = new Set(prev)
+            next.delete(progress.fileId!)
+            return next
+          })
+          processingFileIdsRef.current.delete(progress.fileId!)
+          if (drawerCollection) {
+            loadCollectionFilesRef.current(drawerCollection.id)
+          }
+          loadAllSummaryAndStats()
+          return
+        }
+        // 合集级深度处理完成
         setProcessingMap((prev) => {
           const next = { ...prev }
           delete next[progress.collectionId!]
@@ -133,6 +155,9 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         loadAllSummaryAndStats()
         return
       }
+
+      // 单文件操作的中间进度不更新 processingMap（避免显示合集级处理指示器）
+      if (isSingleFileOp) return
 
       if (!(progress.phase in STAGE_INDEX)) return
 
@@ -162,7 +187,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         processingUnsubscribeRef.current = null
       }
     }
-  }, [loadCollections, loadAllSummaryAndStats])
+  }, [loadCollections, loadAllSummaryAndStats, drawerCollection])
 
   useEffect(() => {
     loadCollections()
@@ -242,7 +267,9 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         return
       }
 
-      if (stats.hasSummary || (stats.indexedCount > 0 && stats.indexedCount === stats.fileCount)) {
+      // 所有文件均已深度处理 → 询问是否强制全量重处理
+      const deepProcessedCount = stats.deepProcessedCount ?? 0
+      if (deepProcessedCount === stats.fileCount) {
         modal.confirm({
           title: t('kms.collectionProcess.reprocessTitle'),
           icon: <ExclamationCircleOutlined style={{ color: token.colorWarning }} />,
@@ -252,16 +279,17 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           onOk: () => {
             setProcessCollection({ id: collection.id, name: collection.name })
             setProcessModalOpen(true)
-            window.electronAPI.kms.processCollectionDeep(collection.id)
+            window.electronAPI.kms.processCollectionDeep(collection.id, false)
           },
         })
         return
       }
     } catch {
     }
+    // 有未处理的文件 → 增量处理（无需确认）
     setProcessCollection({ id: collection.id, name: collection.name })
     setProcessModalOpen(true)
-    window.electronAPI.kms.processCollectionDeep(collection.id)
+    window.electronAPI.kms.processCollectionDeep(collection.id, true)
   }
 
   const handleCloseProcessModal = useCallback(() => {
@@ -326,6 +354,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       setFilesLoading(false)
     }
   }, [message])
+  loadCollectionFilesRef.current = loadCollectionFiles
 
   const startPollingIfNeeded = useCallback((collectionId: string, stats: CollectionStats | null) => {
     if (pollTimerRef.current) {
@@ -499,6 +528,21 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     }
   }, [onPreviewFile, handleOpenFile])
 
+  const handleProcessFileDeep = useCallback(async (file: CollectionFile) => {
+    if (!drawerCollection) return
+    if (processingFileIdsRef.current.has(file.id)) return
+
+    // 添加到处理中集合（同时更新 state 和 ref）
+    setProcessingFileIds((prev) => {
+      const next = new Set(prev)
+      next.add(file.id)
+      return next
+    })
+    processingFileIdsRef.current.add(file.id)
+
+    window.electronAPI.kms.processFileDeep(file.id, drawerCollection.id)
+  }, [drawerCollection])
+
   const openSummaryModal = async (collection: CollectionItem) => {
     setSummaryCollection(collection)
     setSummaryText('')
@@ -587,7 +631,9 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     onPreviewFile: handlePreviewFile,
     onOpenFileDir: handleOpenFileDir,
     onRemoveFile: handleRemoveFile,
-  }), [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile])
+    onProcessFileDeep: handleProcessFileDeep,
+    processingFileIds,
+  }), [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile, handleProcessFileDeep, processingFileIds])
 
   const drawerKeyTopics = parseJsonArray(drawerSummary?.key_topics_json)
 

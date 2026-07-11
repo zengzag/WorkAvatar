@@ -137,6 +137,7 @@ const ToolCallSegmentInner: React.FC<{
   const [resultExpanded, setResultExpanded] = useState(false)
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
   const contentRef = useRef<HTMLDivElement>(null)
+  const isArgsStreaming = !!seg.isToolArgsStreaming
   const isToolPending = !seg.isToolComplete
   const isExpanded = !seg.collapsed
 
@@ -145,9 +146,11 @@ const ToolCallSegmentInner: React.FC<{
   const resultStr = seg.toolResult !== undefined
     ? (typeof seg.toolResult === 'string' ? seg.toolResult : JSON.stringify(seg.toolResult, null, 2))
     : ''
-  const argsStr = seg.toolArgs !== undefined
-    ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
-    : ''
+  const argsStr = isArgsStreaming
+    ? (seg.toolArgsRaw || '')
+    : (seg.toolArgs !== undefined
+        ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
+        : '')
 
   const isResultLong = resultStr.length > TRUNCATE_THRESHOLD
   const displayResult = isResultLong && !resultExpanded
@@ -214,8 +217,8 @@ const ToolCallSegmentInner: React.FC<{
       <div
         style={{
           borderRadius: 8,
-          border: `1px solid ${isToolPending ? token.colorPrimaryBorder : token.colorSuccessBorder}`,
-          borderLeft: `3px solid ${isToolPending ? token.colorPrimary : token.colorSuccess}`,
+          border: `1px solid ${isArgsStreaming ? token.colorInfoBorder : (isToolPending ? token.colorPrimaryBorder : token.colorSuccessBorder)}`,
+          borderLeft: `3px solid ${isArgsStreaming ? token.colorInfo : (isToolPending ? token.colorPrimary : token.colorSuccess)}`,
           background: token.colorBgLayout,
           overflow: 'hidden',
         }}
@@ -229,9 +232,11 @@ const ToolCallSegmentInner: React.FC<{
             gap: 8,
             cursor: 'pointer',
             userSelect: 'none',
-            background: isToolPending
-              ? `linear-gradient(90deg, ${token.colorPrimaryBg} 0%, transparent 100%)`
-              : `linear-gradient(90deg, ${token.colorSuccessBg} 0%, transparent 100%)`,
+            background: isArgsStreaming
+              ? `linear-gradient(90deg, ${token.colorInfoBg} 0%, transparent 100%)`
+              : (isToolPending
+                  ? `linear-gradient(90deg, ${token.colorPrimaryBg} 0%, transparent 100%)`
+                  : `linear-gradient(90deg, ${token.colorSuccessBg} 0%, transparent 100%)`),
           }}
         >
           {isExpanded ? (
@@ -239,7 +244,7 @@ const ToolCallSegmentInner: React.FC<{
           ) : (
             <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
           )}
-          <CodeOutlined style={{ fontSize: 13, color: isToolPending ? token.colorPrimary : token.colorSuccess }} />
+          <CodeOutlined style={{ fontSize: 13, color: isArgsStreaming ? token.colorInfo : (isToolPending ? token.colorPrimary : token.colorSuccess) }} />
           <Text strong style={{ fontSize: 13, color: token.colorText }}>
             {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
           </Text>
@@ -250,7 +255,11 @@ const ToolCallSegmentInner: React.FC<{
               {t('workbench.executionTime', { time: duration })}
             </Text>
           )}
-          {isToolPending ? (
+          {isArgsStreaming ? (
+            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+              <LoadingOutlined spin /> {t('workbench.generatingArgs')}
+            </Tag>
+          ) : isToolPending ? (
             <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
               <LoadingOutlined spin /> {t('workbench.executing')}
             </Tag>
@@ -287,18 +296,29 @@ const ToolCallSegmentInner: React.FC<{
             {argsStr && (
               <div style={{ marginBottom: seg.toolResult !== undefined ? 10 : 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>{t('workbench.inputParams')}</Text>
-                  <Tooltip title={t('common.copied')}>
-                    <CopyOutlined
-                      onClick={(e) => { e.stopPropagation(); handleCopy(argsStr) }}
-                      style={{ fontSize: 11, color: token.colorTextQuaternary, cursor: 'pointer' }}
-                    />
-                  </Tooltip>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {isArgsStreaming
+                      ? t('workbench.generatingArgs')
+                      : t('workbench.inputParams')}
+                  </Text>
+                  {!isArgsStreaming && (
+                    <Tooltip title={t('common.copied')}>
+                      <CopyOutlined
+                        onClick={(e) => { e.stopPropagation(); handleCopy(argsStr) }}
+                        style={{ fontSize: 11, color: token.colorTextQuaternary, cursor: 'pointer' }}
+                      />
+                    </Tooltip>
+                  )}
+                  {isArgsStreaming && (
+                    <Text type="secondary" style={{ fontSize: 10 }}>
+                      {argsStr.length} chars
+                    </Text>
+                  )}
                 </div>
                 <pre style={{
                   margin: 0,
                   padding: '8px 10px',
-                  background: token.colorBgContainer,
+                  background: isArgsStreaming ? token.colorInfoBg : token.colorBgContainer,
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
@@ -306,9 +326,9 @@ const ToolCallSegmentInner: React.FC<{
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  border: `1px solid ${token.colorBorderSecondary}`,
+                  border: `1px solid ${isArgsStreaming ? token.colorInfoBorder : token.colorBorderSecondary}`,
                 }}>
-                  {renderHighlighted(argsStr)}
+                  {isArgsStreaming ? argsStr : renderHighlighted(argsStr)}
                 </pre>
               </div>
             )}

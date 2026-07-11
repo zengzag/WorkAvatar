@@ -419,7 +419,8 @@ class KMSService {
              COALESCE(s.summary, '') as summary,
              COALESCE(s.light_summary, '') as light_summary,
              COALESCE(s.keywords_json, '[]') as keywords_json,
-             COALESCE(s.main_topics_json, '[]') as main_topics_json
+             COALESCE(s.main_topics_json, '[]') as main_topics_json,
+             CASE WHEN f.data_tier = 'hot' AND COALESCE(s.summary, '') != '' THEN 1 ELSE 0 END as deep_processed
       FROM kms_file_collections fc
       JOIN kms_files f ON fc.file_id = f.id
       LEFT JOIN kms_file_summaries s ON s.file_id = f.id
@@ -454,6 +455,14 @@ class KMSService {
       WHERE fc.collection_id = ? AND f.index_status = 'pending'
     `).get(collectionId) as any)?.count || 0
 
+    // 深度处理完成数：data_tier='hot' 且有 LLM 摘要
+    const deepProcessedCount = (this.db.prepare(`
+      SELECT COUNT(*) as count FROM kms_file_collections fc
+      JOIN kms_files f ON fc.file_id = f.id
+      LEFT JOIN kms_file_summaries s ON s.file_id = f.id
+      WHERE fc.collection_id = ? AND f.data_tier = 'hot' AND COALESCE(s.summary, '') != ''
+    `).get(collectionId) as any)?.count || 0
+
     const hasSummary = !!this.db.prepare(
       'SELECT 1 FROM kms_collection_summaries WHERE collection_id = ?'
     ).get(collectionId)
@@ -463,6 +472,7 @@ class KMSService {
       indexedCount,
       hotCount,
       pendingCount,
+      deepProcessedCount,
       hasSummary,
     }
   }
@@ -670,8 +680,8 @@ class KMSService {
     const results = searchEngine.search(query, queryEmbedding, normalizedOptions)
     logger.info(`search engine returned ${results.length} results in ${Date.now() - searchStart}ms`)
 
-    // 批量记录搜索命中（替代逐条插入，减少 DB 写入次数）
-    const hitFileIds = [...new Set(results.map(r => r.file_id).filter(Boolean))]
+    // 批量记录搜索命中（仅取排名靠前的有限条，避免 resultLimit 过大时大量低相关结果被计入命中计数）
+    const hitFileIds = [...new Set(results.slice(0, 10).map(r => r.file_id).filter(Boolean))]
     if (hitFileIds.length > 0) {
       const crawler = KMSCrawlerService.getInstance()
       crawler.logFileAccessBatch(hitFileIds, 'search_hit')
@@ -774,18 +784,37 @@ class KMSService {
     )
   }
 
-  async processCollectionDeep(collectionId: string): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
+  async processCollectionDeep(collectionId: string, incremental: boolean = true): Promise<{ fileProcessed: number; summaryGenerated: boolean; embeddingGenerated: boolean; error?: string }> {
     const workerClient = KMSIndexWorkerClientService.getInstance()
     return await workerClient.runTask(
       'processCollectionDeep',
-      [collectionId],
+      [collectionId, incremental],
       async () => {
         const indexManager = KMSIndexManagerService.getInstance()
         return await indexManager.processCollectionDeep(collectionId, (progress) => {
           this.notifyProgress(progress)
+        }, incremental)
+      },
+    )
+  }
+
+  async processSingleFileDeep(fileId: string, collectionId?: string): Promise<{ success: boolean; error?: string }> {
+    const workerClient = KMSIndexWorkerClientService.getInstance()
+    return await workerClient.runTask(
+      'processSingleFileDeep',
+      [fileId, collectionId],
+      async () => {
+        const indexManager = KMSIndexManagerService.getInstance()
+        return await indexManager.processSingleFileDeep(fileId, collectionId, (progress) => {
+          this.notifyProgress(progress)
         })
       },
     )
+  }
+
+  cancelSingleFileDeepProcess(): void {
+    KMSIndexWorkerClientService.getInstance().cancelCollectionDeepProcess()
+    KMSIndexManagerService.getInstance().cancelCollectionDeepProcess()
   }
 
   cancelCollectionDeepProcess(): void {

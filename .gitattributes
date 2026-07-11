@@ -2,7 +2,6 @@
 # Git LFS Configuration for WorkAvatar
 # Large file storage for binary and media files
 # =====================================
-
 # =====================================
 # Application Binaries
 # =====================================
@@ -11,7 +10,6 @@
 *.so filter=lfs diff=lfs merge=lfs -text
 *.dylib filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Installer Packages
 # =====================================
@@ -21,7 +19,6 @@
 *.deb filter=lfs diff=lfs merge=lfs -text
 *.rpm filter=lfs diff=lfs merge=lfs -text
 *.AppImage filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Archives and Compressed Files
 # =====================================
@@ -32,7 +29,6 @@
 *.tar.gz filter=lfs diff=lfs merge=lfs -text
 *.tgz filter=lfs diff=lfs merge=lfs -text
 *.gz filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Icons and Images
 # =====================================
@@ -46,7 +42,6 @@
 *.tiff filter=lfs diff=lfs merge=lfs -text
 *.webp filter=lfs diff=lfs merge=lfs -text
 *.svg filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # AI Models and ML Files
 # =====================================
@@ -59,14 +54,12 @@
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
 *.model filter=lfs diff=lfs merge=lfs -text
 *.weights filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # OCR Resources
 # =====================================
 resources/rapidocr/** filter=lfs diff=lfs merge=lfs -text
 resources/paddleocr/** filter=lfs diff=lfs merge=lfs -text
 resources/models/** filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Font Files
 # =====================================
@@ -74,7 +67,6 @@ resources/models/** filter=lfs diff=lfs merge=lfs -text
 *.otf filter=lfs diff=lfs merge=lfs -text
 *.woff filter=lfs diff=lfs merge=lfs -text
 *.woff2 filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Documents (Large binary formats)
 # =====================================
@@ -85,7 +77,6 @@ resources/models/** filter=lfs diff=lfs merge=lfs -text
 *.xlsx filter=lfs diff=lfs merge=lfs -text
 *.ppt filter=lfs diff=lfs merge=lfs -text
 *.pptx filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Audio and Video
 # =====================================
@@ -95,12 +86,10 @@ resources/models/** filter=lfs diff=lfs merge=lfs -text
 *.avi filter=lfs diff=lfs merge=lfs -text
 *.mov filter=lfs diff=lfs merge=lfs -text
 *.mkv filter=lfs diff=lfs merge=lfs -text
-
 # =====================================
 # Line Ending Normalization
 # =====================================
 * text=auto eol=lf
-
 # =====================================
 # Explicit Text Files (Force LF)
 # =====================================
@@ -118,7 +107,6 @@ resources/models/** filter=lfs diff=lfs merge=lfs -text
 *.sh text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
-
 # =====================================
 # Always Treat as Binary
 # =====================================

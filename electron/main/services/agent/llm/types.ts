@@ -33,10 +33,18 @@ export interface LLMUsage {
   cachedTokens?: number
 }
 
+export interface LLMToolCallDelta {
+  index: number
+  id?: string
+  name?: string
+  arguments: string
+}
+
 export interface LLMStreamCallbacks {
   onChunk: (chunk: string) => void
   onThought: (thought: string) => void
   onToolCall: (toolCalls: LLMToolCall[]) => void
+  onToolCallDelta?: (delta: LLMToolCallDelta) => void
 }
 
 export interface ILLMProvider {

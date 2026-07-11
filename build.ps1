@@ -23,14 +23,23 @@ Write-Host ""
 
 Set-Location $PSScriptRoot
 
+# 生成 build-info.json（version + commit + buildTime），供 vite define 与主进程日志共用
+Write-Step "1/6" "Generating build-info.json..."
+node scripts/generate-build-info.mjs
+if ($LASTEXITCODE -ne 0) {
+    Write-Error-Msg "build-info generation failed"
+    exit 1
+}
+Write-Host ""
+
 $pkg = Get-Content "package.json" -Encoding UTF8 | ConvertFrom-Json
 $version = $pkg.version
 
 $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
 $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
 
-# Step 1: Check Node.js
-Write-Step "1/5" "Checking Node.js..."
+# Step 2: Check Node.js
+Write-Step "2/6" "Checking Node.js..."
 try {
     $nodeVersion = node -v
     Write-Success "  Node.js: $nodeVersion"
@@ -40,8 +49,8 @@ try {
 }
 Write-Host ""
 
-# Step 2: Install dependencies
-Write-Step "2/5" "Checking dependencies..."
+# Step 3: Install dependencies
+Write-Step "3/6" "Checking dependencies..."
 if (-not (Test-Path "node_modules")) {
     Write-Host "  Installing dependencies..."
     npm install
@@ -54,16 +63,16 @@ if (-not (Test-Path "node_modules")) {
 }
 Write-Host ""
 
-# Step 3: Rebuild native modules
-Write-Step "3/5" "Rebuilding native modules (better-sqlite3)..."
+# Step 4: Rebuild native modules
+Write-Step "4/6" "Rebuilding native modules (better-sqlite3)..."
 npx electron-builder install-app-deps
 if ($LASTEXITCODE -ne 0) {
     Write-Warning-Msg "Native module rebuild failed, packaging may be affected"
 }
 Write-Host ""
 
-# Step 4: TypeScript check + Vite build
-Write-Step "4/5" "TypeScript type checking + Vite build..."
+# Step 5: TypeScript check + Vite build
+Write-Step "5/6" "TypeScript type checking + Vite build..."
 npx tsc --noEmit
 if ($LASTEXITCODE -ne 0) {
     Write-Error-Msg "TypeScript type check failed, fix errors and retry"
@@ -79,8 +88,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "  Vite build completed"
 Write-Host ""
 
-# Step 5: Electron Builder packaging (portable only)
-Write-Step "5/5" "Electron Builder packaging (portable)..."
+# Step 6: Electron Builder packaging (portable only)
+Write-Step "6/6" "Electron Builder packaging (portable)..."
 Write-Host "  Generating portable build..."
 
 npx electron-builder --win --dir

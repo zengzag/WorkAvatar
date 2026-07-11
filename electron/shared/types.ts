@@ -84,6 +84,14 @@ export interface LLMProvider {
   created_at: number
 }
 
+export interface GeneratedFileInfo {
+  path: string
+  name: string
+  ext: string
+  size: number
+  mtime: number
+}
+
 export interface ParseResult {
   type: string
   fullText: string

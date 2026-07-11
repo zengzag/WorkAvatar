@@ -14,6 +14,7 @@ export const LLM_CHANNELS = {
   LLM_CHAT_ERROR: 'llm:chat-error',
   LLM_THOUGHT: 'llm:thought',
   AGENT_TOOL_CALL: 'agent:tool-call',
+  AGENT_TOOL_CALL_DELTA: 'agent:tool-call-delta',
   AGENT_TOOL_RESULT: 'agent:tool-result',
   AGENT_TOOL_PROGRESS: 'agent:tool-progress',
   INTERACTION_REQUEST: 'interaction:request',

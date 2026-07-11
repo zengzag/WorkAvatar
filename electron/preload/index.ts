@@ -137,7 +137,12 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
-    onToolResult: (callback: (data: { sessionId: string; name: string; result: any }) => void) => {
+    onToolCallDelta: (callback: (data: { sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
+    },
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
@@ -256,8 +261,9 @@ const electronAPI = {
     deleteCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_COLLECTION_SUMMARY, collectionId),
     generateCollectionSummary: (collectionId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_COLLECTION_SUMMARY, collectionId),
     scanDirFiles: (dirPath: string, extensions?: string[]) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SCAN_DIR_FILES, { dirPath, extensions }),
-    processCollectionDeep: (collectionId: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId),
+    processCollectionDeep: (collectionId: string, incremental: boolean = true) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_COLLECTION_DEEP, collectionId, incremental),
     cancelCollectionDeepProcess: () => ipcRenderer.send(IPC_CHANNELS.KMS_CANCEL_COLLECTION_DEEP),
+    processFileDeep: (fileId: string, collectionId?: string) => ipcRenderer.send(IPC_CHANNELS.KMS_PROCESS_FILE_DEEP, fileId, collectionId),
     generateDirSummary: (dirId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_DIR_SUMMARY, dirId),
     generateFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_FILE_SUMMARY, fileId),
     rebuildFileIndex: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, fileId),

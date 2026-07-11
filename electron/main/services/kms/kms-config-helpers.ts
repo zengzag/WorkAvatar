@@ -19,11 +19,11 @@ export interface KmsSettings {
   model: any
   embeddingModel: any
   summaryModel: any
-  searchParams: { maxRounds: number; topK: number; resultLimit: number }
+  searchParams: { maxRounds: number; topK: number; resultLimit: number; autoReparseHotData: boolean }
   autoIndex: { enabled: boolean; intervalMinutes: number; stableThresholdSeconds: number }
 }
 
-const DEFAULT_SEARCH_PARAMS = { maxRounds: 3, topK: 10, resultLimit: 100 }
+const DEFAULT_SEARCH_PARAMS = { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true }
 const DEFAULT_AUTO_INDEX = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
 
 /** 读取主库 settings 表中的 JSON 配置 */

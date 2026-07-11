@@ -6,6 +6,7 @@ import {
 import {
   RobotOutlined, CloudServerOutlined, SaveOutlined, FolderOpenOutlined,
   DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined, SearchOutlined,
+  FireOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
@@ -40,7 +41,7 @@ interface KMSSettingsPanelProps {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean }
     autoIndex?: KMSAutoIndexConfig
   }) => Promise<boolean>
   dirs: IndexDir[]
@@ -82,6 +83,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 3)
   const [topK, setTopK] = useState<number>(settings.searchParams?.topK ?? 10)
   const [resultLimit, setResultLimit] = useState<number>(settings.searchParams?.resultLimit ?? 100)
+  const [autoReparseHotData, setAutoReparseHotData] = useState<boolean>(settings.searchParams?.autoReparseHotData ?? true)
   const [savingModel, setSavingModel] = useState(false)
   const [savingParams, setSavingParams] = useState(false)
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
@@ -101,6 +103,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     setMaxRounds(settings.searchParams?.maxRounds ?? 3)
     setTopK(settings.searchParams?.topK ?? 10)
     setResultLimit(settings.searchParams?.resultLimit ?? 100)
+    setAutoReparseHotData(settings.searchParams?.autoReparseHotData ?? true)
   }, [settings])
 
   const loadEmbeddingMaxChars = useCallback(async () => {
@@ -142,7 +145,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const handleSaveParams = useCallback(async () => {
     setSavingParams(true)
     const ok = await onSaveSettings({
-      searchParams: { maxRounds, topK, resultLimit },
+      searchParams: { maxRounds, topK, resultLimit, autoReparseHotData },
     })
     setSavingParams(false)
     if (ok) {
@@ -150,7 +153,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } else {
       message.error(t('kms.settingsPanel.modelSaveFailed'))
     }
-  }, [maxRounds, topK, resultLimit, onSaveSettings, message, t])
+  }, [maxRounds, topK, resultLimit, autoReparseHotData, onSaveSettings, message, t])
 
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -485,6 +488,32 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             min={5}
             max={500}
             style={{ width: 120 }}
+          />
+        </div>
+
+        <Divider style={{ margin: '12px 0' }} />
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 40,
+              height: 40,
+              borderRadius: 8,
+              background: token.colorBgTextHover,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <FireOutlined style={{ fontSize: 20, color: token.colorError }} />
+            </div>
+            <div>
+              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.autoReparseHotData')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.autoReparseHotDataDesc')}</Text>
+            </div>
+          </div>
+          <Switch
+            checked={autoReparseHotData}
+            onChange={setAutoReparseHotData}
           />
         </div>
       </Card>

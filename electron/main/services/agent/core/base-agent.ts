@@ -404,6 +404,9 @@ export abstract class BaseAgent {
               callbacks.onThought?.(thought)
             },
             onToolCall: (_toolCalls: any[]) => {},
+            onToolCallDelta: (delta) => {
+              callbacks.onToolCallDelta?.(delta)
+            },
           },
           signal
         )
@@ -510,6 +513,7 @@ export abstract class BaseAgent {
         name: toolName,
         result: result.success ? result.output : result.error,
         rawResult: result.rawOutput,
+        generatedFiles: result.generatedFiles,
       })
 
       await this.onToolCallExecuted(toolName, args, result)

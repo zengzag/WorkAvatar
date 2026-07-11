@@ -11,6 +11,8 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
+  # 构建元信息（prebuild 由 scripts/generate-build-info.mjs 生成），主进程启动日志读取
+  - build-info.json
 
 extraResources:
   - from: resources/

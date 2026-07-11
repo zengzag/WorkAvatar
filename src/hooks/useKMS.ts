@@ -132,6 +132,7 @@ export interface KMSSettings {
     maxRounds?: number
     topK?: number
     resultLimit?: number
+    autoReparseHotData?: boolean
   }
   autoIndex: KMSAutoIndexConfig
 }
@@ -192,7 +193,7 @@ export function useKMS() {
     model: null,
     embeddingModel: null,
     summaryModel: null,
-    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100 },
+    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true },
     autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
@@ -449,6 +450,7 @@ export function useKMS() {
             maxRounds: result.searchParams?.maxRounds ?? 3,
             topK: result.searchParams?.topK ?? 10,
             resultLimit: result.searchParams?.resultLimit ?? 100,
+            autoReparseHotData: result.searchParams?.autoReparseHotData ?? true,
           },
           autoIndex: {
             enabled: result.autoIndex?.enabled ?? false,
@@ -466,7 +468,7 @@ export function useKMS() {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number }
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean }
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {

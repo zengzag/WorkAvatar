@@ -1,3 +1,5 @@
+import type { GeneratedFileInfo } from '../../../../shared/types'
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
@@ -85,7 +87,8 @@ export interface AgentRunStreamCallbacks {
   onChunk?: (chunk: string) => void
   onThought?: (thought: string) => void
   onToolCall?: (toolCall: { id: string; name: string; args: any }) => void
-  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any }) => void
+  onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: GeneratedFileInfo[] }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: AgentResponseMetadata) => void
   onError?: (error: string) => void
