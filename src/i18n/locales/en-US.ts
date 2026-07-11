@@ -235,6 +235,10 @@ export default {
     openInExplorer: 'Open in File Explorer',
     reloadPreview: 'Reload Preview',
     generatedFiles: 'Generated Files',
+    fileNotFoundTitle: 'File Not Found',
+    fileNotFoundDesc: 'The file may have been moved or deleted: {{path}}',
+    fileNotFoundOpenDir: 'Open Containing Folder',
+    fileNotFoundRetry: 'Recheck',
   },
   employeeSettings: {
     subtitle: 'Digital Employee Configuration',

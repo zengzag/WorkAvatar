@@ -1,4 +1,4 @@
-import { Modal, Spin, theme, Button, Space } from 'antd'
+import { Modal, Spin, theme, Button, Space, Result } from 'antd'
 import {
   FileWordOutlined,
   FileExcelOutlined,
@@ -10,10 +10,11 @@ import {
   DownloadOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
-import { lazy, Suspense, useCallback, useMemo } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedFileInfo } from '../../types'
 import { pathToAppFileUrl } from '../../utils/file-url'
+import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 
 const FileViewer = lazy(() => import('@file-viewer/react-full'))
 
@@ -55,11 +56,48 @@ interface FileViewerModalProps {
 const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, open, onClose }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const themeMode = useAppearanceStore((s) => s.themeMode)
+  const effectiveTheme = getEffectiveTheme(themeMode)
 
   const fileUrl = useMemo(() => {
     if (!file) return ''
     return pathToAppFileUrl(file.path)
   }, [file])
+
+  const viewerOptions = useMemo(() => ({ theme: effectiveTheme }), [effectiveTheme])
+
+  // 探测文件是否存在；文件被用户删除时 app-file:// 协议会返回 404，
+  // 此处提前拦截并显示提示，避免在预览器内出现空白
+  const [fileMissing, setFileMissing] = useState(false)
+  const [probing, setProbing] = useState(false)
+  const [probeNonce, setProbeNonce] = useState(0)
+
+  useEffect(() => {
+    if (!open || !file || !fileUrl) {
+      setFileMissing(false)
+      setProbing(false)
+      return
+    }
+    let cancelled = false
+    setProbing(true)
+    setFileMissing(false)
+    fetch(fileUrl, { method: 'HEAD' })
+      .then((res) => {
+        if (cancelled) return
+        setFileMissing(!res.ok)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setFileMissing(true)
+      })
+      .finally(() => {
+        if (cancelled) return
+        setProbing(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, file, fileUrl, probeNonce])
 
   const handleDownload = useCallback(() => {
     if (!file) return
@@ -106,34 +144,70 @@ const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, open, onClose }
             overflow: 'hidden',
             position: 'relative',
           }}>
-            <FileViewer
-              url={fileUrl}
-              style={{ height: '100%', width: '100%' }}
-            />
-            <div style={{
-              position: 'absolute',
-              bottom: 12,
-              right: 12,
-              zIndex: 10,
-            }}>
-              <Space>
-                <Button
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  onClick={() => {
-                    const url = fileUrl
-                    window.open(url, '_blank')
-                  }}
-                  title={t('workbench.reloadPreview')}
+            {probing ? (
+              <div style={{
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <Spin size="large" />
+              </div>
+            ) : fileMissing ? (
+              <div style={{
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 24,
+              }}>
+                <Result
+                  status="warning"
+                  title={t('workbench.fileNotFoundTitle')}
+                  subTitle={t('workbench.fileNotFoundDesc', { path: file.path })}
+                  extra={[
+                    <Button key="open" type="primary" onClick={handleDownload}>
+                      {t('workbench.fileNotFoundOpenDir')}
+                    </Button>,
+                    <Button key="retry" icon={<ReloadOutlined />} onClick={() => setProbeNonce((n) => n + 1)}>
+                      {t('workbench.fileNotFoundRetry')}
+                    </Button>,
+                  ]}
                 />
-                <Button
-                  size="small"
-                  icon={<DownloadOutlined />}
-                  onClick={handleDownload}
-                  title={t('workbench.openInExplorer')}
+              </div>
+            ) : (
+              <>
+                <FileViewer
+                  url={fileUrl}
+                  options={viewerOptions}
+                  style={{ height: '100%', width: '100%' }}
                 />
-              </Space>
-            </div>
+                <div style={{
+                  position: 'absolute',
+                  bottom: 12,
+                  right: 12,
+                  zIndex: 10,
+                }}>
+                  <Space>
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        const url = fileUrl
+                        window.open(url, '_blank')
+                      }}
+                      title={t('workbench.reloadPreview')}
+                    />
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={handleDownload}
+                      title={t('workbench.openInExplorer')}
+                    />
+                  </Space>
+                </div>
+              </>
+            )}
           </div>
         </Suspense>
       )}

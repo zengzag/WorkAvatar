@@ -235,6 +235,10 @@ export default {
     openInExplorer: '在文件管理器中打开',
     reloadPreview: '重新加载预览',
     generatedFiles: '生成的文件',
+    fileNotFoundTitle: '文件不存在',
+    fileNotFoundDesc: '文件可能已被移动或删除：{{path}}',
+    fileNotFoundOpenDir: '打开所在目录',
+    fileNotFoundRetry: '重新检测',
   },
   employeeSettings: {
     subtitle: '数字员工配置管理',
