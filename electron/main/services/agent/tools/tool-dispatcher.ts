@@ -48,7 +48,8 @@ export class ToolDispatcher {
           output,
           error,
           toolName,
-          rawOutput: result
+          rawOutput: result,
+          generatedFiles: result?.generatedFiles,
         }
       })
 

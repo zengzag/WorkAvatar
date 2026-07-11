@@ -1,3 +1,5 @@
+import type { GeneratedFileInfo } from '../../../../shared/types'
+
 export interface ToolParameter {
   name: string
   description: string
@@ -66,4 +68,5 @@ export interface ToolCallResult {
   toolName?: string
   rawOutput?: any
   latencyMs?: number
+  generatedFiles?: GeneratedFileInfo[]
 }

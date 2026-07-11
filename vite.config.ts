@@ -101,6 +101,9 @@ export default defineConfig({
           if (/[\\/]node_modules[\\/](antd|@ant-design)[\\/]/.test(id)) {
             return 'antd'
           }
+          if (/[\\/]node_modules[\\/]@file-viewer[\\/]/.test(id)) {
+            return 'file-viewer'
+          }
         }
       }
     }

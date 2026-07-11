@@ -1,4 +1,4 @@
-import type { Message } from '../../types'
+import type { Message, GeneratedFileInfo } from '../../types'
 
 export interface ToolCallInfo {
   id: string
@@ -23,6 +23,8 @@ export interface MessageSegment {
   toolCallId?: string
   /** 工具执行中间进度步骤（仅UI展示，不进入LLM上下文） */
   toolProgress?: any[]
+  /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */
+  generatedFiles?: GeneratedFileInfo[]
 }
 
 export interface TokenUsage {

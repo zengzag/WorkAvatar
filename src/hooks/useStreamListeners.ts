@@ -150,8 +150,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any }) => {
-      const { sessionId, name, result } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => {
+      const { sessionId, name, result, generatedFiles } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -164,7 +164,14 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           )
           if (lastIncompleteIndex === -1) return m
           const actualIndex = segs.length - 1 - lastIncompleteIndex
-          segs[actualIndex] = { ...segs[actualIndex], toolResult: result, isToolComplete: true, collapsed: true, completedAt: Date.now() }
+          segs[actualIndex] = {
+            ...segs[actualIndex],
+            toolResult: result,
+            isToolComplete: true,
+            collapsed: true,
+            completedAt: Date.now(),
+            generatedFiles: generatedFiles && generatedFiles.length > 0 ? generatedFiles : undefined,
+          }
           return { ...m, segments: segs }
         })
       )

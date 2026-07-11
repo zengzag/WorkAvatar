@@ -137,7 +137,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL, handler)
     },
-    onToolResult: (callback: (data: { sessionId: string; name: string; result: any }) => void) => {
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => void) => {
       const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)

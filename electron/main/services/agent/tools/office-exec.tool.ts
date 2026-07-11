@@ -1,9 +1,11 @@
 import type { ToolDefinition } from './types'
+import type { GeneratedFileInfo } from '../../../../shared/types'
 import * as vm from 'vm'
 import * as path from 'path'
+import * as fs from 'fs'
 import * as docxTemplateHelper from './docx-template.helper'
 import * as pptxTemplateHelper from './pptx-template.helper'
-import { isPathInWorkspace, confirmOutsideWorkspace } from './fs-tools'
+import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
 
 const OFFICE_MODULES: Record<string, any> = {}
 const MODULE_LOAD_ERRORS: Record<string, string> = {}
@@ -39,18 +41,19 @@ function extractWritePathsFromCode(code: string): string[] {
   const paths: string[] = []
   let m: RegExpExecArray | null
 
-  // 1. fs 写/删方法：路径为第一个字符串参数
-  const fsWriteRe = /\.(writeFileSync|appendFileSync|unlinkSync|rmSync|rmdirSync|mkdirSync|copyFileSync|renameSync|truncateSync|writeFile|appendFile|unlink|rm|rmdir|mkdir|copyFile|rename|truncate)\s*\(\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
-  while ((m = fsWriteRe.exec(code)) !== null) {
+  // 1. file 对象写方法：路径为第一个字符串参数（file.save/append/delete/createFolder 第1参，file.copy/move 第2参即 dest）
+  const fileWriteRe = /file\.(save|append|delete|createFolder)\s*\(\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
+  while ((m = fileWriteRe.exec(code)) !== null) {
+    if (!m[2].includes('node_modules')) paths.push(m[2])
+  }
+  const fileCopyMoveRe = /file\.(copy|move)\s*\([^,]*,\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
+  while ((m = fileCopyMoveRe.exec(code)) !== null) {
     if (!m[2].includes('node_modules')) paths.push(m[2])
   }
 
   // 2. docx-template / pptx-template 写函数：outputPath 为最后一个字符串参数
-  //    函数列表：createFromTemplate, renderTemplate, replaceText, setParagraphText, spliceParagraphs (docx)
-  //              replaceText (pptx)
   const tplFuncs = ['createFromTemplate', 'renderTemplate', 'replaceText', 'setParagraphText', 'spliceParagraphs']
   for (const fn of tplFuncs) {
-    // 匹配 .fn( ... ) 调用体，提取其中最后一个绝对路径字符串（即 outputPath）
     const re = new RegExp(`\\.${fn}\\s*\\(([^)]*)\\)`, 'g')
     let match: RegExpExecArray | null
     while ((match = re.exec(code)) !== null) {
@@ -65,122 +68,165 @@ function extractWritePathsFromCode(code: string): string[] {
     }
   }
 
+  // 3. xlsx.writeFile / xlsx.writeFileSync：第二个参数为 outputPath
+  const xlsxWriteRe = /(?:XLSX|xlsx)\.(?:writeFile|writeFileSync)\s*\(\s*[^,]+,\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
+  while ((m = xlsxWriteRe.exec(code)) !== null) {
+    if (!m[1].includes('node_modules')) paths.push(m[1])
+  }
+
+  // 4. pptxgenjs writeFile({ fileName: "..." })
+  const pptxWriteRe = /\.writeFile\s*\(\s*\{[^}]*fileName\s*:\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
+  while ((m = pptxWriteRe.exec(code)) !== null) {
+    if (!m[1].includes('node_modules')) paths.push(m[1])
+  }
+
   return [...new Set(paths)]
 }
 
-/** 创建带路径校验的 fs 包装：写/删操作仅允许工作区内或已确认的路径 */
-function createSandboxedFs(workspacePath: string, authorizedPaths: Set<string>): any {
+/**
+ * 创建沙箱只读 fs：保留读方法，写方法替换为抛错提示用 `file` 对象。
+ * 写操作不再走 fs（同步方法无法 await 异步弹窗），改由注入的 `file` 异步对象处理。
+ */
+function createSandboxedReadOnlyFs(): any {
   const realFs = require('fs')
-  const workspaceRoot = path.resolve(workspacePath)
-
-  const checkPath = (p: string): void => {
-    if (typeof p !== 'string') return
-    let resolved: string
-    try { resolved = path.resolve(p) } catch { return }
-    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) return
-    if (authorizedPaths.has(resolved.toLowerCase())) return
-    throw new Error(
-      `安全限制：office_exec 禁止操作工作区外文件 ${resolved}（工作区: ${workspaceRoot}）。` +
-      `如需操作工作区外文件，请使用 write_file/delete_item 等文件工具，它们会弹出确认对话框。`
-    )
-  }
-
-  // 写/删/新建类同步方法
-  const writeSyncMethods = new Set([
+  const wrappedFs: any = {}
+  // 写/删方法黑名单：这些方法不暴露给沙箱
+  const blockedMethods = new Set([
     'writeFileSync', 'appendFileSync', 'unlinkSync', 'rmSync', 'rmdirSync',
     'mkdirSync', 'copyFileSync', 'renameSync', 'createWriteStream',
     'truncateSync', 'ftruncateSync',
-  ])
-  // 写/删/新建类异步方法
-  const writeAsyncMethods = new Set([
     'writeFile', 'appendFile', 'unlink', 'rm', 'rmdir',
     'mkdir', 'copyFile', 'rename', 'truncate',
   ])
-
-  const wrapFn = (target: any, method: string, check: (p: string) => void) => {
-    const original = target[method]
-    if (typeof original !== 'function') return
-    target[method] = (...args: any[]) => {
-      if (args.length > 0 && typeof args[0] === 'string') check(args[0])
-      return original.apply(target, args)
+  const blockedMsg = 'office_exec 沙箱中 fs 不支持写/删操作。请使用注入的 `file` 对象（如 await file.save(path, content)）进行文件写入。'
+  for (const key of Object.keys(realFs)) {
+    if (blockedMethods.has(key)) {
+      wrappedFs[key] = () => { throw new Error(blockedMsg) }
+    } else {
+      wrappedFs[key] = realFs[key]
     }
   }
-
-  const wrappedFs: any = {}
-  // 拷贝所有属性
-  for (const key of Object.keys(realFs)) {
-    wrappedFs[key] = realFs[key]
-  }
-  // 包装同步写/删方法
-  for (const method of writeSyncMethods) {
-    wrapFn(wrappedFs, method, checkPath)
-  }
-  for (const method of writeAsyncMethods) {
-    wrapFn(wrappedFs, method, checkPath)
-  }
-
-  // 包装 fs.promises
+  // fs.promises：写方法同样替换
   if (realFs.promises) {
     const realPromises = realFs.promises
     const wrappedPromises: any = {}
     for (const key of Object.keys(realPromises)) {
-      wrappedPromises[key] = realPromises[key]
-    }
-    for (const method of writeAsyncMethods) {
-      if (typeof realPromises[method] === 'function') {
-        wrapFn(wrappedPromises, method, checkPath)
-      }
-    }
-    // promises 中特有的写方法（rmdir 已废弃改为 rm，但都覆盖）
-    for (const method of ['mkdir', 'rm', 'unlink', 'copyFile', 'rename', 'writeFile', 'appendFile', 'truncate']) {
-      if (typeof realPromises[method] === 'function') {
-        wrapFn(wrappedPromises, method, checkPath)
+      if (blockedMethods.has(key)) {
+        wrappedPromises[key] = () => Promise.reject(new Error(blockedMsg))
+      } else {
+        wrappedPromises[key] = realPromises[key]
       }
     }
     wrappedFs.promises = wrappedPromises
   }
-
   return wrappedFs
 }
 
 /**
- * 包装 docx-template / pptx-template 模块：写函数（outputPath 为最后一个参数）
- * 在运行时检查输出路径是否在工作区内或已确认，作为预扫描的运行时兜底。
+ * 创建异步 `file` 对象：沙箱代码用 `await file.save(path, content)` 等异步方法写文件。
+ * 内部先 await confirmOutsideWorkspace（统一弹窗），再调用真实 fs，并追踪 writtenFiles。
+ */
+function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>, writtenFiles: Set<string>): any {
+  const workspaceRoot = path.resolve(workspacePath)
+
+  const checkAndTrack = async (operation: string, targetPath: string): Promise<void> => {
+    if (typeof targetPath !== 'string') return
+    let resolved: string
+    try { resolved = path.resolve(targetPath) } catch { return }
+    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
+    if (isInWorkspace) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    if (authorizedPaths.has(resolved.toLowerCase())) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    const result = await confirmOutsideWorkspace(operation, resolved)
+    if (!result.ok) {
+      throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
+    }
+    authorizedPaths.add(resolved.toLowerCase())
+    try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+  }
+
+  return {
+    save: async (filePath: string, content: string | Buffer): Promise<void> => {
+      await checkAndTrack('写入', filePath)
+      fs.writeFileSync(filePath, content)
+    },
+    append: async (filePath: string, content: string | Buffer): Promise<void> => {
+      await checkAndTrack('追加', filePath)
+      fs.appendFileSync(filePath, content)
+    },
+    copy: async (src: string, dest: string): Promise<void> => {
+      await checkAndTrack('复制至', dest)
+      fs.copyFileSync(src, dest)
+    },
+    move: async (src: string, dest: string): Promise<void> => {
+      await checkAndTrack('移动至', dest)
+      fs.renameSync(src, dest)
+    },
+    delete: async (filePath: string): Promise<void> => {
+      await checkAndTrack('删除', filePath)
+      fs.unlinkSync(filePath)
+    },
+    createFolder: async (folderPath: string): Promise<void> => {
+      await checkAndTrack('创建文件夹于', folderPath)
+      fs.mkdirSync(folderPath, { recursive: true })
+    },
+    exists: (filePath: string): boolean => {
+      return fs.existsSync(filePath)
+    },
+  }
+}
+
+/**
+ * 包装 docx-template / pptx-template 模块：写函数改为异步，内部先 await confirmOutsideWorkspace。
+ * 原始写函数用 zip.writeZip(outputPath) 同步写，包装后返回 Promise。
  */
 function createSandboxedTemplateModule(
   moduleName: string,
   rawModule: any,
   workspacePath: string,
   authorizedPaths: Set<string>,
+  writtenFiles: Set<string>,
 ): any {
   const workspaceRoot = path.resolve(workspacePath)
-  // 这些函数的最后一个参数是 outputPath
   const writeFunctions = new Set([
     'createFromTemplate', 'renderTemplate', 'replaceText',
     'setParagraphText', 'spliceParagraphs',
   ])
 
-  const checkOutputPath = (p: string): void => {
+  const checkOutputPath = async (p: string): Promise<void> => {
     if (typeof p !== 'string') return
     let resolved: string
     try { resolved = path.resolve(p) } catch { return }
     const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) return
-    if (authorizedPaths.has(resolved.toLowerCase())) return
-    throw new Error(
-      `安全限制：${moduleName} 输出路径 ${resolved} 在工作区外（工作区: ${workspaceRoot}）。` +
-      `请将文件保存到工作区内，或先确认工作区外路径后再执行。`
-    )
+    if (isInWorkspace) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    if (authorizedPaths.has(resolved.toLowerCase())) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    const result = await confirmOutsideWorkspace(`${moduleName} 输出`, resolved)
+    if (!result.ok) {
+      throw new Error(result.error || `用户取消了${moduleName} 输出工作区外文件的操作`)
+    }
+    authorizedPaths.add(resolved.toLowerCase())
   }
 
   const wrapper: any = {}
   for (const key of Object.keys(rawModule)) {
     const original = rawModule[key]
     if (typeof original === 'function' && writeFunctions.has(key)) {
-      wrapper[key] = (...args: any[]) => {
+      wrapper[key] = async (...args: any[]) => {
         const outputPath = args[args.length - 1]
-        if (typeof outputPath === 'string') checkOutputPath(outputPath)
+        if (typeof outputPath === 'string') {
+          await checkOutputPath(outputPath)
+        }
         return original.apply(rawModule, args)
       }
     } else {
@@ -190,15 +236,40 @@ function createSandboxedTemplateModule(
   return wrapper
 }
 
-function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>) {
+function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>, writtenFiles: Set<string>, sandboxFile: any) {
   let cachedFs: any = null
   let cachedDocxTemplate: any = null
   let cachedPptxTemplate: any = null
+  let cachedXlsx: any = null
+  let cachedPptxgenjs: any = null
+
+  /** 检查路径权限并追踪，工作区外路径异步弹窗确认 */
+  const checkAndTrack = async (operation: string, targetPath: string): Promise<void> => {
+    if (typeof targetPath !== 'string') return
+    let resolved: string
+    try { resolved = path.resolve(targetPath) } catch { return }
+    const workspaceRoot = path.resolve(workspacePath)
+    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
+    if (isInWorkspace) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    if (authorizedPaths.has(resolved.toLowerCase())) {
+      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
+      return
+    }
+    const result = await confirmOutsideWorkspace(operation, resolved)
+    if (!result.ok) {
+      throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
+    }
+    authorizedPaths.add(resolved.toLowerCase())
+  }
+
   return (moduleName: string) => {
     if (moduleName === 'docx-template') {
       if (!cachedDocxTemplate) {
         cachedDocxTemplate = createSandboxedTemplateModule(
-          'docx-template', OFFICE_MODULES['docx-template'], workspacePath, authorizedPaths,
+          'docx-template', OFFICE_MODULES['docx-template'], workspacePath, authorizedPaths, writtenFiles,
         )
       }
       return cachedDocxTemplate
@@ -206,28 +277,92 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
     if (moduleName === 'pptx-template') {
       if (!cachedPptxTemplate) {
         cachedPptxTemplate = createSandboxedTemplateModule(
-          'pptx-template', OFFICE_MODULES['pptx-template'], workspacePath, authorizedPaths,
+          'pptx-template', OFFICE_MODULES['pptx-template'], workspacePath, authorizedPaths, writtenFiles,
         )
       }
       return cachedPptxTemplate
     }
+    // xlsx：writeFile 是同步方法，包装为异步
+    if (moduleName === 'xlsx' && OFFICE_MODULES['xlsx']) {
+      if (!cachedXlsx) {
+        const rawXlsx = OFFICE_MODULES['xlsx']
+        const originalWriteFile = rawXlsx.writeFile
+        const originalWriteFileSync = rawXlsx.writeFileSync || rawXlsx.writeFile
+        cachedXlsx = { ...rawXlsx }
+        cachedXlsx.writeFile = async (wb: any, filename: string, opts?: any) => {
+          await checkAndTrack('写入', filename)
+          return originalWriteFile.call(rawXlsx, wb, filename, opts)
+        }
+        cachedXlsx.writeFileSync = async (wb: any, filename: string, opts?: any) => {
+          await checkAndTrack('写入', filename)
+          return originalWriteFileSync.call(rawXlsx, wb, filename, opts)
+        }
+      }
+      return cachedXlsx
+    }
+    // pptxgenjs：实例方法 writeFile({ fileName }) 返回 Promise
+    if (moduleName === 'pptxgenjs' && OFFICE_MODULES['pptxgenjs']) {
+      if (!cachedPptxgenjs) {
+        cachedPptxgenjs = class extends OFFICE_MODULES['pptxgenjs'] {
+          writeFile(options: any) {
+            const fileName = typeof options === 'string' ? options : options?.fileName
+            return checkAndTrack('写入', fileName).then(() => super.writeFile(options))
+          }
+        }
+      }
+      return cachedPptxgenjs
+    }
     // 其他 OFFICE_MODULES 直接返回（不涉及文件写入）
-    if (OFFICE_MODULES[moduleName] && moduleName !== 'docx-template' && moduleName !== 'pptx-template') {
+    if (OFFICE_MODULES[moduleName] && moduleName !== 'docx-template' && moduleName !== 'pptx-template' && moduleName !== 'xlsx' && moduleName !== 'pptxgenjs') {
       return OFFICE_MODULES[moduleName]
     }
     if (moduleName === 'fs') {
-      if (!cachedFs) cachedFs = createSandboxedFs(workspacePath, authorizedPaths)
+      if (!cachedFs) cachedFs = createSandboxedReadOnlyFs()
       return cachedFs
+    }
+    if (moduleName === 'file') {
+      return sandboxFile
     }
     if (ALLOWED_NODE_MODULES.includes(moduleName)) return require(moduleName)
     const available = [
       ...Object.keys(OFFICE_MODULES).filter(k => OFFICE_MODULES[k]),
+      'fs', 'file',
       ...ALLOWED_NODE_MODULES,
     ]
     throw new Error(
       `Module "${moduleName}" is not available in the office sandbox. Available modules: ${available.join(', ')}`
     )
   }
+}
+
+const PREVIEWABLE_EXTS = new Set([
+  'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
+  'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
+  'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
+  'pdf', 'ofd',
+  'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
+  'gif', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif', 'png', 'svg', 'webp', 'ico', 'heic',
+])
+
+function collectGeneratedFiles(writtenFiles: Set<string>): GeneratedFileInfo[] {
+  const result: GeneratedFileInfo[] = []
+  for (const filePath of writtenFiles) {
+    try {
+      if (!fs.existsSync(filePath)) continue
+      const stat = fs.statSync(filePath)
+      if (!stat.isFile()) continue
+      const ext = path.extname(filePath).slice(1).toLowerCase()
+      if (!PREVIEWABLE_EXTS.has(ext)) continue
+      result.push({
+        path: filePath,
+        name: path.basename(filePath),
+        ext,
+        size: stat.size,
+        mtime: stat.mtimeMs,
+      })
+    } catch { /* 忽略 stat 失败的文件 */ }
+  }
+  return result
 }
 
 export const officeExecTool: ToolDefinition = {
@@ -248,7 +383,9 @@ export const officeExecTool: ToolDefinition = {
     const code = String(args.code || '').trim()
     if (!code) return { success: false, error: '代码不能为空' }
 
-    const workingDir = String(args.working_dir || process.cwd())
+    // 优先使用数字员工工作区目录，其次 LLM 传入的 working_dir，最后 process.cwd()
+    const employeeWorkspace = getWorkspacePath()
+    const workingDir = String(args.working_dir || employeeWorkspace || process.cwd())
     const timeoutMs = Math.min(Math.max((args.timeout || 60), 1), 300) * 1000
 
     const consoleOutput: string[] = []
@@ -265,7 +402,9 @@ export const officeExecTool: ToolDefinition = {
       }
     }
 
-    const sandboxedRequire = createSandboxedRequire(workingDir, authorizedPaths)
+    const writtenFiles = new Set<string>()
+    const sandboxFile = createSandboxedFile(workingDir, authorizedPaths, writtenFiles)
+    const sandboxedRequire = createSandboxedRequire(workingDir, authorizedPaths, writtenFiles, sandboxFile)
 
     // 追踪沙箱内创建的定时器，执行结束后统一清理，避免事件循环无法退出
     const trackedTimers: NodeJS.Timeout[] = []
@@ -289,6 +428,7 @@ export const officeExecTool: ToolDefinition = {
 
     const sandbox: Record<string, any> = {
       require: sandboxedRequire,
+      file: sandboxFile,
       console: {
         log: (...a: any[]) => consoleOutput.push(a.map(v => typeof v === 'object' ? JSON.stringify(v) : String(v)).join(' ')),
         error: (...a: any[]) => consoleOutput.push('[ERROR] ' + a.map(v => typeof v === 'object' ? JSON.stringify(v) : String(v)).join(' ')),
@@ -391,9 +531,19 @@ export const officeExecTool: ToolDefinition = {
           + output.substring(output.length - MAX_CONSOLE_OUTPUT / 2)
       }
 
+      const generatedFiles = collectGeneratedFiles(writtenFiles)
+      const statusLines: string[] = []
+      if (generatedFiles.length > 0) {
+        statusLines.push(`[office_exec] 写入成功，共 ${generatedFiles.length} 个文件：`)
+        for (const f of generatedFiles) statusLines.push(`  ✓ ${f.path}`)
+      }
+      const statusBlock = statusLines.join('\n')
+      const finalOutput = [statusBlock, output].filter(Boolean).join('\n') || '(无输出)'
+
       return {
         success: true,
-        output: output || '(无输出)',
+        output: finalOutput,
+        generatedFiles,
       }
     } catch (error: any) {
       let output = consoleOutput.join('\n')
@@ -415,10 +565,22 @@ export const officeExecTool: ToolDefinition = {
         }
       }
 
+      const generatedFiles = collectGeneratedFiles(writtenFiles)
+      const statusLines: string[] = []
+      if (generatedFiles.length > 0) {
+        statusLines.push(`[office_exec] 错误前已写入 ${generatedFiles.length} 个文件：`)
+        for (const f of generatedFiles) statusLines.push(`  ✓ ${f.path}`)
+      } else {
+        statusLines.push('[office_exec] 错误：未写入任何文件')
+      }
+      const statusBlock = statusLines.join('\n')
+      const finalOutput = [statusBlock, output].filter(Boolean).join('\n')
+
       return {
         success: false,
         error: errorMessage,
-        output: output || undefined,
+        output: finalOutput || undefined,
+        generatedFiles,
       }
     }
   },

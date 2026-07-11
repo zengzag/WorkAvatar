@@ -230,6 +230,10 @@ export default {
     minimalModeDisabledTooltip: 'Cannot toggle minimal mode when task has messages',
     dropFileHint: 'Release to attach file path',
     attachedFile: 'Attached File',
+    previewFile: 'Preview File',
+    openInExplorer: 'Open in File Explorer',
+    reloadPreview: 'Reload Preview',
+    generatedFiles: 'Generated Files',
   },
   employeeSettings: {
     subtitle: 'Digital Employee Configuration',

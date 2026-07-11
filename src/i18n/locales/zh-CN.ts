@@ -230,6 +230,10 @@ export default {
     minimalModeDisabledTooltip: '任务已有内容，无法切换极简模式',
     dropFileHint: '松开以附加文件路径',
     attachedFile: '附件文件',
+    previewFile: '预览文件',
+    openInExplorer: '在文件管理器中打开',
+    reloadPreview: '重新加载预览',
+    generatedFiles: '生成的文件',
   },
   employeeSettings: {
     subtitle: '数字员工配置管理',

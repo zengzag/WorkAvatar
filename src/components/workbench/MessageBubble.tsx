@@ -23,6 +23,7 @@ import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
+import GeneratedFilesBar from './GeneratedFilesBar'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 
 const { Text } = Typography
@@ -330,6 +331,10 @@ const MessageBubble: React.FC<{
                   </ReactMarkdown>
                 </div>
               </div>
+            )}
+
+            {!displayIsStreaming && displaySegments && (
+              <GeneratedFilesBar segments={displaySegments} />
             )}
 
             {!displayIsStreaming && (

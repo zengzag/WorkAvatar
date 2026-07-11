@@ -1,8 +1,10 @@
 import type { ToolDefinition } from './types'
 import { exec as execCb } from 'child_process'
 import { promisify } from 'util'
+import * as fs from 'fs'
+import * as path from 'path'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
-import { isPathInWorkspace, confirmOutsideWorkspace } from './fs-tools'
+import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
 
 const execAsync = promisify(execCb)
 const IS_WINDOWS = process.platform === 'win32'
@@ -134,7 +136,8 @@ export const shellExecTool: ToolDefinition = {
         }
       }
 
-      const cwd = args.working_dir || process.cwd()
+      const employeeWorkspace = getWorkspacePath()
+      const cwd = args.working_dir || employeeWorkspace || process.cwd()
       const timeout = Math.min(Math.max((args.timeout || 30), 1), 300) * 1000
 
       const { stdout, stderr } = await execAsync(command, {
@@ -152,7 +155,35 @@ export const shellExecTool: ToolDefinition = {
         ? result.substring(0, maxOutput / 2) + `\n\n... (${result.length - maxOutput} 字符已截断) ...\n\n` + result.substring(result.length - maxOutput / 2)
         : result
 
-      return { success: true, output: finalOutput }
+      // 收集可预览的生成文件（仅从命令中已提取的绝对路径中收集）
+      const generatedFiles: any[] = []
+      const PREVIEWABLE_EXTS = new Set([
+        'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
+        'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
+        'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
+        'pdf', 'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
+        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp',
+      ])
+      const candidatePaths = extractPathsFromCommand(command)
+      for (const p of candidatePaths) {
+        try {
+          const resolved = path.resolve(p)
+          if (!fs.existsSync(resolved)) continue
+          const stat = fs.statSync(resolved)
+          if (!stat.isFile()) continue
+          const ext = path.extname(resolved).slice(1).toLowerCase()
+          if (!PREVIEWABLE_EXTS.has(ext)) continue
+          generatedFiles.push({
+            path: resolved,
+            name: path.basename(resolved),
+            ext,
+            size: stat.size,
+            mtime: stat.mtimeMs,
+          })
+        } catch { /* 忽略单个文件检查失败 */ }
+      }
+
+      return { success: true, output: finalOutput, generatedFiles }
     } catch (error: any) {
       return {
         success: false,
