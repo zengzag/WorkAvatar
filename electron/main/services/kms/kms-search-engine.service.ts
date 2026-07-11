@@ -158,27 +158,31 @@ class KMSSearchEngineService {
     }
   }
 
-  indexFileTitle(fileId: string, fileName: string): void {
+  indexFileTitle(fileId: string, fileName: string, filePath?: string): void {
     const tx = this.db.transaction(() => {
       const existing = this.db.prepare(
         "SELECT id FROM kms_search_index WHERE source_type = 'file_title' AND source_id = ?"
       ).get(fileId) as any
 
+      // 将文件路径纳入索引内容，使路径中的目录名也可被搜索命中
+      // （如文件在"公文模板"目录下，搜索"公文"也能匹配到该文件）
+      const indexContent = filePath ? `${fileName} ${filePath}` : fileName
+
       if (existing) {
         this.db.prepare(
           'UPDATE kms_search_index SET title = ?, content = ?, updated_at = unixepoch() WHERE id = ?'
-        ).run(fileName, fileName, existing.id)
+        ).run(fileName, indexContent, existing.id)
 
         this.deleteFtsRow(existing.id)
-        this.insertFtsRow(existing.id, fileId, 'file_title', fileId, fileName, fileName, '')
+        this.insertFtsRow(existing.id, fileId, 'file_title', fileId, fileName, indexContent, '')
       } else {
         const id = generateId()
         this.db.prepare(`
           INSERT INTO kms_search_index (id, file_id, source_type, source_id, title, content, created_at, updated_at)
           VALUES (?, ?, 'file_title', ?, ?, ?, unixepoch(), unixepoch())
-        `).run(id, fileId, fileId, fileName, fileName)
+        `).run(id, fileId, fileId, fileName, indexContent)
 
-        this.insertFtsRow(id, fileId, 'file_title', fileId, fileName, fileName, '')
+        this.insertFtsRow(id, fileId, 'file_title', fileId, fileName, indexContent, '')
       }
     })
     tx()
@@ -730,26 +734,27 @@ class KMSSearchEngineService {
     const { whereClause, params } = buildLikeWhereClause(options)
 
     // 将关键词 LIKE 匹配下推到 SQL，避免加载无匹配的行；取 topK*5 候选供 JS 精排
+    // 同时匹配 f.file_path，使文件路径中的目录名也可被 LIKE 搜索命中
     const likeClauses: string[] = []
     const likeParams: any[] = []
     for (const word of queryWords) {
       const pattern = `%${word}%`
-      likeClauses.push('(LOWER(si.title) LIKE ? OR LOWER(si.content) LIKE ? OR LOWER(si.keywords_json) LIKE ?)')
-      likeParams.push(pattern, pattern, pattern)
+      likeClauses.push('(LOWER(si.title) LIKE ? OR LOWER(si.content) LIKE ? OR LOWER(si.keywords_json) LIKE ? OR LOWER(f.file_path) LIKE ?)')
+      likeParams.push(pattern, pattern, pattern, pattern)
     }
     const likeWhere = likeClauses.join(' OR ')
     const candidateLimit = Math.min(topK * 5, 500)
 
     const rows = this.db.prepare(`
-      SELECT si.* FROM kms_search_index si
+      SELECT si.*, f.file_path AS f_file_path FROM kms_search_index si
       JOIN kms_files f ON si.file_id = f.id
       WHERE ${whereClause} AND (${likeWhere})
       LIMIT ${candidateLimit}
     `).all(...params, ...likeParams) as any[]
 
-    // 对每条记录计算匹配分数
+    // 对每条记录计算匹配分数（含文件路径）
     const scored = rows.map(row => {
-      const text = `${row.title || ''} ${row.content || ''} ${row.keywords_json || ''}`.toLowerCase()
+      const text = `${row.title || ''} ${row.content || ''} ${row.keywords_json || ''} ${row.f_file_path || ''}`.toLowerCase()
       let score = 0
       let matchCount = 0
       for (const word of queryWords) {
@@ -1010,7 +1015,103 @@ class KMSSearchEngineService {
   }
 
   /**
+   * 文件名搜索（基于 kms_files.file_name 的 LIKE 匹配）
+   *
+   * 作为混合搜索的第三个 RRF 来源，与 FTS（关键词）和 vector（语义）并列。
+   * 不依赖任何已建立的索引/向量，可与现有过滤条件（dirIds / collectionIds /
+   * fileExtensions / timeRange）协同工作；timeRange 单位为 unix 秒（与
+   * kms_files.modified_time 一致），调用方（hybridSearch）负责毫秒→秒转换。
+   */
+  fileNameSearch(query: string, options: SearchOptions): SearchResult[] {
+    const topK = options?.topK || 10
+    const queryWords = extractQueryKeywords(query)
+    if (queryWords.length === 0) return []
+
+    // 构建文件名 LIKE 子句（OR 关系，任一关键词命中即可）
+    const nameClauses: string[] = []
+    const nameParams: any[] = []
+    for (const word of queryWords) {
+      nameClauses.push('LOWER(f.file_name) LIKE ?')
+      nameParams.push(`%${word}%`)
+    }
+    const nameWhere = nameClauses.join(' OR ')
+
+    // 过滤条件：复用 buildLikeWhereClause 中除 si 相关外的语义，
+    // 改为直接引用 f.* 字段，collectionIds/dirIds 走子查询。
+    const conditions: string[] = ['1=1']
+    const filterParams: any[] = []
+
+    if (options?.dirIds && options.dirIds.length > 0) {
+      const placeholders = options.dirIds.map(() => '?').join(',')
+      conditions.push(`f.dir_id IN (${placeholders})`)
+      filterParams.push(...options.dirIds)
+    }
+    if (options?.fileExtensions && options.fileExtensions.length > 0) {
+      const placeholders = options.fileExtensions.map(() => '?').join(',')
+      conditions.push(`f.file_ext IN (${placeholders})`)
+      filterParams.push(...options.fileExtensions)
+    }
+    if (options?.timeRangeStart !== undefined) {
+      conditions.push('f.modified_time >= ?')
+      filterParams.push(options.timeRangeStart)
+    }
+    if (options?.timeRangeEnd !== undefined) {
+      conditions.push('f.modified_time <= ?')
+      filterParams.push(options.timeRangeEnd)
+    }
+    if (options?.collectionIds && options.collectionIds.length > 0) {
+      const placeholders = options.collectionIds.map(() => '?').join(',')
+      conditions.push(`f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`)
+      filterParams.push(...options.collectionIds)
+    }
+
+    // 多取 topK*3 候选供 JS 精排
+    const candidateLimit = Math.min(topK * 3, 500)
+    const rows = this.db.prepare(`
+      SELECT f.id as file_id, f.file_name, f.file_path, f.modified_time
+      FROM kms_files f
+      WHERE ${conditions.join(' AND ')} AND (${nameWhere})
+      LIMIT ${candidateLimit}
+    `).all(...filterParams, ...nameParams) as any[]
+
+    // JS 精排：长词权重 + 关键词匹配率，与 likeSearch 一致
+    const scored = rows.map(row => {
+      const name = (row.file_name || '').toLowerCase()
+      let score = 0
+      let matchCount = 0
+      for (const word of queryWords) {
+        if (name.includes(word)) {
+          score += word.length * 2
+          matchCount++
+        }
+      }
+      const matchRatio = matchCount / queryWords.length
+      return { row, score: score * (0.5 + matchRatio * 0.5) }
+    }).filter(r => r.score > 0)
+
+    scored.sort((a, b) => b.score - a.score)
+    const top = scored.slice(0, topK)
+
+    return top.map(s => {
+      const text = s.row.file_name || ''
+      return {
+        file_id: s.row.file_id,
+        file_name: s.row.file_name,
+        file_path: s.row.file_path,
+        modified_time: s.row.modified_time,
+        text,
+        match_type: 'file_name' as SourceType,
+        highlights: this.computeHighlights(text, queryWords),
+        matched_keywords: queryWords,
+      } as SearchResult
+    })
+  }
+
+  /**
    * 混合搜索（RRF 倒数排名融合）
+   *
+   * 三个独立来源的 RRF 融合：关键词（FTS5）+ 语义（向量）+ 文件名（LIKE）。
+   * 文档在任意单一来源命中即可被召回，同时命中多来源时按各来源排名叠加得分。
    *
    * 替代原「线性加权」方案：
    * - 旧方案：`sortKey = ftsRank * 0.6 + vectorScore * 0.4`，
@@ -1023,9 +1124,14 @@ class KMSSearchEngineService {
    *
    * RRF 的优势：
    * 1. 无需归一化 BM25 与 cosine 分数（尺度不同导致的加权失真问题消失）
-   * 2. 同时出现在两个列表的文档自然获得更高分数（1/(k+r1) + 1/(k+r2)）
-   * 3. 仅出现在一个列表的文档也有非零分数，保留召回
+   * 2. 同时出现在多个来源的文档自然获得更高分数（Σ 1/(k+r_i)）
+   * 3. 仅出现在一个来源的文档也有非零分数，保留召回
    * 4. 算法成熟，被 Elasticsearch、OpenSearch 等主流搜索引擎广泛采用
+   *
+   * 文件名来源（file_name）：与 FTS/向量并列的第三个来源，键格式 `file_name-${fileId}`，
+   * 与 `file_title-${fileId}` / `content-${fileId}-${offset}` 等键不冲突。
+   * 当一个文件在 FTS 中通过 file_title 命中、向量中通过 file_title embedding 命中、
+   * 同时文件名直接包含查询关键词时，三个来源的 RRF 贡献叠加，得分最高。
    */
   hybridSearch(query: string, queryEmbedding: Float32Array | null, options?: SearchOptions): SearchResult[] {
     const topK = options?.topK || 10
@@ -1069,21 +1175,49 @@ class KMSSearchEngineService {
           }
         }
       } catch (err: any) {
-        // 向量检索失败时不阻断混合搜索，仅使用 FTS 结果
-        logger.warn('Vector search failed, falling back to FTS only:', err?.message || err)
+        // 向量检索失败时不阻断混合搜索，仅使用 FTS + 文件名结果
+        logger.warn('Vector search failed, falling back to FTS + file_name only:', err?.message || err)
       }
     }
 
-    // RRF 融合：score = 1/(k + fts_rank) + 1/(k + vec_rank)
-    // 文档仅在单列表出现时，另一列表贡献为 0（rank undefined → 跳过）
-    const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys()])
+    // 文件名搜索：第三个 RRF 来源
+    // 与 FTS 文件标题索引（file_title）独立，作为对文件名匹配意图的显式信号。
+    // 文件名不含中文分词的段索引意义弱、纯语义匹配噪声大，关键词 LIKE 是最稳定的方式。
+    let fileNameResults: SearchResult[] = []
+    try {
+      fileNameResults = this.fileNameSearch(query, { ...options, topK: topK * 2 })
+    } catch (err: any) {
+      // 文件名搜索失败时不影响主流程
+      logger.warn('fileNameSearch failed in hybridSearch, continuing without file_name results:', err?.message || err)
+    }
+
+    const fileNameRankMap = new Map<string, number>()
+    for (let i = 0; i < fileNameResults.length; i++) {
+      const r = fileNameResults[i]
+      const key = `file_name-${r.file_id}`
+      if (!fileNameRankMap.has(key)) {
+        fileNameRankMap.set(key, i + 1)
+      }
+    }
+
+    // RRF 融合：score = Σ 1/(k + rank_i)，i ∈ {fts, vec, file_name}
+    // 来源缺失的贡献为 0（rank undefined → 跳过）
+    const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys(), ...fileNameRankMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
     const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string }; sortKey: number }> = []
+    // 仅文件名来源命中的条目：使用 fileNameResultMap 直接出结果，无需回查 DB
+    const fileNameOnlyResults: Array<{ result: SearchResult; sortKey: number }> = []
 
     // 预建 ftsResults 的 key → result 索引，避免循环内 O(N) find 造成 O(N²)
     const ftsResultMap = new Map<string, SearchResult>()
     for (const r of ftsResults) {
       ftsResultMap.set(getResultKey(r), r)
+    }
+
+    // 预建 fileNameResults 的 key → result 索引
+    const fileNameResultMap = new Map<string, SearchResult>()
+    for (const r of fileNameResults) {
+      fileNameResultMap.set(`file_name-${r.file_id}`, r)
     }
 
     for (const key of allKeys) {
@@ -1096,6 +1230,10 @@ class KMSSearchEngineService {
       if (vecRank !== undefined) {
         sortKey += 1 / (RRF_K + vecRank)
       }
+      const fileNameRank = fileNameRankMap.get(key)
+      if (fileNameRank !== undefined) {
+        sortKey += 1 / (RRF_K + fileNameRank)
+      }
 
       const ftsResult = ftsResultMap.get(key)
 
@@ -1103,7 +1241,7 @@ class KMSSearchEngineService {
         hybridResults.push({
           result: {
             ...ftsResult,
-            match_type: useVector ? 'hybrid' : ftsResult.match_type,
+            match_type: (useVector || fileNameRank !== undefined) ? 'hybrid' : ftsResult.match_type,
             score: sortKey,
           },
           sortKey,
@@ -1113,6 +1251,21 @@ class KMSSearchEngineService {
         const vs = vectorSourceMap.get(key)
         if (!vs) continue
         missingEntries.push({ key, vs, sortKey })
+      } else if (fileNameRank !== undefined) {
+        // 仅文件名命中：fileNameResult 已含完整元数据（file_name/file_path/modified_time），
+        // 无需回查 kms_search_index
+        const fnResult = fileNameResultMap.get(key)
+        if (!fnResult) continue
+        // 多来源命中时（如同时有 vector/file_name），结果用 'hybrid' 标识
+        const isHybrid = useVector && vecRank !== undefined
+        fileNameOnlyResults.push({
+          result: {
+            ...fnResult,
+            match_type: isHybrid ? 'hybrid' : 'file_name',
+            score: sortKey,
+          },
+          sortKey,
+        })
       }
     }
 
@@ -1164,6 +1317,8 @@ class KMSSearchEngineService {
       }
     }
 
+    // 合并文件名命中结果后统一排序
+    hybridResults.push(...fileNameOnlyResults)
     hybridResults.sort((a, b) => b.sortKey - a.sortKey)
     const topResults = hybridResults.slice(0, topK)
 

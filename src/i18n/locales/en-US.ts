@@ -932,6 +932,7 @@ export default {
       searchPlaceholder: 'Search file name or summary...',
       allDirs: 'All Directories',
       allTiers: 'All Tiers',
+      allStatuses: 'All Statuses',
       statsDirs: 'Directories',
       statsFiles: 'Files',
       statsHot: 'Hot',

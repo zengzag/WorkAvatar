@@ -514,6 +514,7 @@ export function useKMS() {
   const loadFileSummaries = useCallback(async (params?: {
     dirId?: string
     dataTier?: 'cold' | 'hot'
+    indexStatus?: string
     keyword?: string
     page?: number
     pageSize?: number

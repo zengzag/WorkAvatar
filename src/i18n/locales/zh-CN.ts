@@ -938,6 +938,7 @@ export default {
       searchPlaceholder: '搜索文件名或摘要...',
       allDirs: '全部目录',
       allTiers: '全部冷热',
+      allStatuses: '全部状态',
       statsDirs: '目录',
       statsFiles: '文件',
       statsHot: '热数据',

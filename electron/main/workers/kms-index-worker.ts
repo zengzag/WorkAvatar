@@ -119,7 +119,14 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
     }
 
     if (msg.type === 'cancel') {
+      // 取消索引任务（buildFull/incremental/rebuildDir）
       KMSIndexManagerService.getInstance().cancelIndexing()
+      // 同步取消 Worker 内的自动索引检查（"立即检查" 触发的任务有独立的 AbortController）
+      const autoIndexAc = KMSAutoIndexService.getInstance().getAbortController()
+      if (autoIndexAc) {
+        autoIndexAc.abort()
+        logger.info('Auto-index cancelled by main thread')
+      }
       return
     }
 

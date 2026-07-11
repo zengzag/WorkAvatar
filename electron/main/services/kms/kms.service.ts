@@ -6,6 +6,7 @@ import KMSCrawlerService from './kms-crawler.service'
 import KMSSearchEngineService, { type SearchResult, type SearchOptions } from './kms-search-engine.service'
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
+import KMSAutoIndexService from './kms-auto-index.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
@@ -822,6 +823,8 @@ class KMSService {
     // 优先取消 Worker 中的任务；同时取消主线程降级路径（如果有）
     KMSIndexWorkerClientService.getInstance().cancelIndexing()
     KMSIndexManagerService.getInstance().cancelIndexing()
+    // 同步取消自动索引检查（"立即检查" 触发的索引任务有独立的 AbortController）
+    KMSAutoIndexService.getInstance().cancelCurrentRun()
   }
 
   getStats(): any {
@@ -893,7 +896,7 @@ class KMSService {
     `).all() as any[]
   }
 
-  getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
+  getFileSummaries(params?: { dirId?: string; collectionId?: string; dataTier?: string; indexStatus?: string; keyword?: string; page?: number; pageSize?: number }): { items: any[]; total: number } {
     const page = params?.page || 1
     const pageSize = params?.pageSize || 20
     const offset = (page - 1) * pageSize
@@ -913,6 +916,10 @@ class KMSService {
     if (params?.dataTier) {
       whereClause += ' AND f.data_tier = ?'
       sqlParams.push(params.dataTier)
+    }
+    if (params?.indexStatus) {
+      whereClause += ' AND f.index_status = ?'
+      sqlParams.push(params.indexStatus)
     }
     if (params?.keyword) {
       whereClause += ' AND (f.file_name LIKE ? OR s.light_summary LIKE ? OR s.summary LIKE ?)'

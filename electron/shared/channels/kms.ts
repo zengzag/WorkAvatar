@@ -130,6 +130,7 @@ export interface KMSGetFileSummariesParams {
   dirId?: string
   collectionId?: string
   dataTier?: 'cold' | 'hot'
+  indexStatus?: string
   keyword?: string
   page?: number
   pageSize?: number

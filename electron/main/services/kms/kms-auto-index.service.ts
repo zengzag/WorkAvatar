@@ -57,24 +57,35 @@ class KMSAutoIndexService {
     }, intervalMs)
   }
 
-  stop(): void {
-    if (this.autoIndexTimer) {
-      clearInterval(this.autoIndexTimer)
-      this.autoIndexTimer = null
-      logger.info('Auto-index timer stopped')
-    }
-    // 取消 Worker 内正在执行的自动索引检查
+  /**
+   * 取消当前正在执行的自动索引检查（不影响定时器）。
+   *
+   * 行为：
+   * 1. 通过 Worker 客户端发送 'cancelAutoIndex' 消息，触发 Worker 内的 auto-index controller abort；
+   * 2. 直接 abort 降级主线程路径上的 auto-index controller（如果有）。
+   *
+   * 用于"取消"按钮的即时响应场景（与 stop() 的语义区别：stop 还会停掉定时器）。
+   */
+  cancelCurrentRun(): void {
     try {
       const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
       KMSIndexWorkerClientService.getInstance().cancelAutoIndex()
     } catch (err: any) {
       logger.debug('cancelAutoIndex in worker unavailable:', err?.message || err)
     }
-    // 降级模式下取消主线程执行
     if (this.abortController) {
       this.abortController.abort()
       this.abortController = null
     }
+  }
+
+  stop(): void {
+    if (this.autoIndexTimer) {
+      clearInterval(this.autoIndexTimer)
+      this.autoIndexTimer = null
+      logger.info('Auto-index timer stopped')
+    }
+    this.cancelCurrentRun()
   }
 
   pause(): void {
@@ -234,7 +245,7 @@ class KMSAutoIndexService {
             if (parseMode) {
               indexManager.saveParseMode(file.id, parseMode)
             }
-            searchEngine.indexFileTitle(file.id, file.fileName)
+            searchEngine.indexFileTitle(file.id, file.fileName, file.filePath)
             if (parseResult.fullText) {
               searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
               indexManager.saveLightSummary(file.id, file.fileName, parseResult.fullText)
@@ -288,7 +299,12 @@ class KMSAutoIndexService {
         }
       }
 
-      onProgress?.({ phase: 'done', current: processed, total, message: `自动索引完成，共处理 ${processed} 个文件` })
+      if (signal.aborted) {
+        logger.info(`Auto-index cancelled: processed=${processed}/${total}`)
+        onProgress?.({ phase: 'done', current: processed, total, message: '已取消', cancelled: true })
+      } else {
+        onProgress?.({ phase: 'done', current: processed, total, message: `自动索引完成，共处理 ${processed} 个文件` })
+      }
       return crawlStats
     } catch (err: any) {
       logger.error('Auto-index check failed:', err)

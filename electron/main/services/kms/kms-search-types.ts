@@ -1,4 +1,4 @@
-export type SourceType = 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph'
+export type SourceType = 'file_title' | 'file_summary' | 'paragraph' | 'content_paragraph' | 'file_name'
 
 export interface HighlightRange {
   start: number

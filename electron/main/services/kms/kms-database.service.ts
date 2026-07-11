@@ -629,6 +629,24 @@ class KMSDatabaseService {
   }
 
   /**
+   * 优化 FTS5 虚表：重建或合并 FTS5 内部 segment，回收已删除文档占用的空间。
+   *
+   * FTS5 的 DELETE 只标记文档为已删除，实际数据仍保留在 segment 中。
+   * SQLite 的 VACUUM 对 FTS5 虚表无效（只重建普通表 b-tree），无法回收 FTS5 空间。
+   * 重建索引时大量 DELETE+INSERT 会导致 FTS5 segment 持续膨胀，必须通过 FTS5 专有命令回收。
+   *
+   * @param mode 'rebuild' 完全重建（彻底回收，较慢）；'merge' 合并 segment（轻量级）
+   */
+  public optimizeFts5Index(mode: 'rebuild' | 'merge' = 'merge'): void {
+    try {
+      this.db.exec(`INSERT INTO kms_fts(kms_fts) VALUES('${mode}')`)
+      logger.info(`FTS5 ${mode} 完成`)
+    } catch (err: any) {
+      logger.warn(`FTS5 ${mode} 失败:`, err?.message || err)
+    }
+  }
+
+  /**
    * 清理数据库：删除残留数据（FTS5 / 向量库 embedding）并对主库和向量库执行 VACUUM 回收磁盘空间。
    *
    * VACUUM 会重建数据库文件、回收已删除记录占用的空闲页，使文件体积缩小。
@@ -709,6 +727,10 @@ class KMSDatabaseService {
     } catch (err: any) {
       logger.warn('清理游离文件失败:', err?.message || err)
     }
+
+    // 3.5 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
+    // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 中累积已删除文档残留，VACUUM 对 FTS5 无效
+    this.optimizeFts5Index('rebuild')
 
     // 4. 先 checkpoint 把 WAL 写回主库，再 VACUUM
     try {

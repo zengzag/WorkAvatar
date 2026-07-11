@@ -92,33 +92,48 @@ class KMSIndexManagerService {
       logger.info(`Index pipeline started: mode=${mode}, withEmbedding=${withEmbedding}${dirId ? `, dirId=${dirId}` : ''}${resetHotData ? ', resetHotData=true' : ''}`)
       onProgress?.({ phase: 'crawling', current: 0, total: 0, message: msgCrawl })
 
-      // 全量重建：批量重置所有文件为 pending 并清除旧索引，确保重新索引
+      // 全量重建：批量重置文件为 pending 并清除旧索引，确保重新索引
       if (isFull) {
         onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '正在重置索引...' })
-        // 主库事务：清理 FTS5/搜索索引/段落，重置文件状态
-        this.db.transaction(() => {
-          this.db.prepare("DELETE FROM kms_fts").run()
-          this.db.prepare("DELETE FROM kms_search_index").run()
-          this.db.prepare("DELETE FROM kms_paragraphs").run()
-          // 默认不重置热数据（保留 data_tier），勾选后才将热数据降级为 cold
-          if (resetHotData) {
+        if (resetHotData) {
+          // 勾选"同时重建热数据"：清空所有索引，所有文件降级为 cold 并重置为 pending
+          this.db.transaction(() => {
+            this.db.prepare("DELETE FROM kms_fts").run()
+            this.db.prepare("DELETE FROM kms_search_index").run()
+            this.db.prepare("DELETE FROM kms_paragraphs").run()
             this.db.prepare("UPDATE kms_files SET index_status = 'pending', data_tier = 'cold'").run()
-          } else {
-            this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
-          }
-        })()
-        // 向量库独立事务：清理 embedding（跨库不能同事务）
-        const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
-        try {
-          vectorDb.transaction(() => {
-            vectorDb.prepare("DELETE FROM kms_embeddings").run()
-            try { vectorDb.prepare("DELETE FROM vec_kms_embeddings").run() } catch (err: any) {
-              // vec0 表可能尚未创建（首次全量重建前），忽略
-              logger.debug('vec_kms_embeddings cleanup skipped (table may not exist):', err?.message || err)
-            }
           })()
-        } catch (err: any) {
-          logger.warn('全量重建清理向量库失败:', err?.message || err)
+          this.cleanupVectorDb()
+        } else {
+          // 未勾选"同时重建热数据"：保留热数据文件及其索引，只清理并重置冷数据文件
+          const hotFileCount = (this.db.prepare("SELECT COUNT(*) as count FROM kms_files WHERE data_tier = 'hot'").get() as any)?.count ?? 0
+          if (hotFileCount > 0) {
+            // 有热数据文件：只清理冷数据文件的索引，保留热数据文件
+            this.db.transaction(() => {
+              this.db.prepare(`
+                DELETE FROM kms_fts WHERE index_id IN (
+                  SELECT si.id FROM kms_search_index si
+                  JOIN kms_files f ON si.file_id = f.id
+                  WHERE f.data_tier != 'hot'
+                )
+              `).run()
+              this.db.prepare("DELETE FROM kms_search_index WHERE file_id IN (SELECT id FROM kms_files WHERE data_tier != 'hot')").run()
+              this.db.prepare("DELETE FROM kms_paragraphs WHERE file_id IN (SELECT id FROM kms_files WHERE data_tier != 'hot')").run()
+              this.db.prepare("UPDATE kms_files SET index_status = 'pending' WHERE data_tier != 'hot'").run()
+            })()
+            // 向量库：批量删除冷数据文件的 embedding
+            const coldFileIds = (this.db.prepare("SELECT id FROM kms_files WHERE data_tier != 'hot'").all() as any[]).map(r => r.id)
+            this.cleanupVectorDb(coldFileIds)
+          } else {
+            // 没有热数据文件：直接清空所有
+            this.db.transaction(() => {
+              this.db.prepare("DELETE FROM kms_fts").run()
+              this.db.prepare("DELETE FROM kms_search_index").run()
+              this.db.prepare("DELETE FROM kms_paragraphs").run()
+              this.db.prepare("UPDATE kms_files SET index_status = 'pending'").run()
+            })()
+            this.cleanupVectorDb()
+          }
         }
         KMSSearchEngineService.getInstance().invalidateCache()
       }
@@ -138,6 +153,8 @@ class KMSIndexManagerService {
         const files = KMSCrawlerService.getInstance().getFilesByDir(dirId!)
         const searchEngine = KMSSearchEngineService.getInstance()
         for (const file of files) {
+          // 未勾选"同时重建热数据"时跳过热数据文件，保留其索引和处理结果
+          if (!resetHotData && file.dataTier === 'hot') continue
           searchEngine.deleteIndexByFile(file.id)
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'pending')
         }
@@ -209,7 +226,7 @@ class KMSIndexManagerService {
             if (parseMode) {
               this.saveParseMode(file.id, parseMode)
             }
-            searchEngine.indexFileTitle(file.id, file.fileName)
+            searchEngine.indexFileTitle(file.id, file.fileName, file.filePath)
             if (parseResult.fullText) {
               searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.fileName)
             }
@@ -268,7 +285,17 @@ class KMSIndexManagerService {
         onProgress?.({ phase: 'done', current: processed, total, message: `${msgDonePrefix}，共处理 ${processed} 个文件` })
       }
 
-      // 索引流程结束：主动触发 PASSIVE checkpoint，让 WAL 内容尽快合并回主库文件，
+      // 索引流程结束：FTS5 merge 回收已删除文档残留 + PASSIVE checkpoint 合并 WAL
+      // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 累积残留，VACUUM 对 FTS5 无效，必须用 FTS5 merge
+      if (!signal.aborted) {
+        try {
+          KMSDatabaseService.getInstance().optimizeFts5Index('merge')
+        } catch (err: any) {
+          logger.warn('Post-index FTS5 merge failed:', err?.message || err)
+        }
+      }
+
+      // 主动触发 PASSIVE checkpoint，让 WAL 内容尽快合并回主库文件，
       // 避免长期运行后 WAL 文件膨胀（即使 wal_autocheckpoint 已设阈值，主动 checkpoint 可让磁盘占用更可控）
       try {
         KMSDatabaseService.getInstance().checkpoint('PASSIVE')
@@ -286,6 +313,52 @@ class KMSIndexManagerService {
   cancelIndexing(): void {
     this.abortController?.abort()
     this.abortController = null
+  }
+
+  /**
+   * 清理向量库数据（kms_embeddings + vec_kms_embeddings）
+   * @param fileIds 若提供则只清理指定文件的 embedding，否则清空全部
+   */
+  private cleanupVectorDb(fileIds?: string[]): void {
+    const vectorDb = KMSDatabaseService.getInstance().getVectorDb()
+    try {
+      vectorDb.transaction(() => {
+        if (fileIds && fileIds.length > 0) {
+          // 分批处理避免 SQL 参数过多
+          const batchSize = 500
+          for (let i = 0; i < fileIds.length; i += batchSize) {
+            const batch = fileIds.slice(i, i + batchSize)
+            const placeholders = batch.map(() => '?').join(',')
+            // 先收集 rowid（vec_kms_embeddings 通过 rowid 关联，不会自动级联删除）
+            let rowids: number[] = []
+            try {
+              const rows = vectorDb.prepare(`SELECT rowid FROM kms_embeddings WHERE file_id IN (${placeholders})`).all(...batch) as any[]
+              rowids = rows.map(r => r.rowid)
+            } catch (err: any) {
+              logger.warn('收集 embedding rowid 失败:', err?.message || err)
+            }
+            vectorDb.prepare(`DELETE FROM kms_embeddings WHERE file_id IN (${placeholders})`).run(...batch)
+            if (rowids.length > 0) {
+              const rowidPlaceholders = rowids.map(() => '?').join(',')
+              try {
+                // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 的类型校验回归
+                vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...rowids.map(r => BigInt(r)))
+              } catch (err: any) {
+                logger.debug('vec_kms_embeddings 批量清理失败:', err?.message || err)
+              }
+            }
+          }
+        } else {
+          vectorDb.prepare("DELETE FROM kms_embeddings").run()
+          try { vectorDb.prepare("DELETE FROM vec_kms_embeddings").run() } catch (err: any) {
+            // vec0 表可能尚未创建（首次全量重建前），忽略
+            logger.debug('vec_kms_embeddings cleanup skipped (table may not exist):', err?.message || err)
+          }
+        }
+      })()
+    } catch (err: any) {
+      logger.warn('清理向量库失败:', err?.message || err)
+    }
   }
 
   setAutoIndexProgressCallback(cb: ProgressCallback | null): void {
@@ -370,7 +443,7 @@ class KMSIndexManagerService {
           // 解析后写入：删除旧索引 + 标题/段落索引 + 轻量摘要合并为单个事务
           KMSDatabaseService.getInstance().runInTransaction(() => {
             searchEngine.deleteIndexByFile(file.id)
-            searchEngine.indexFileTitle(file.id, file.file_name)
+            searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
             searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
             this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
           })
@@ -670,7 +743,7 @@ class KMSIndexManagerService {
           if (parseMode) {
             this.saveParseMode(file.id, parseMode)
           }
-          searchEngine.indexFileTitle(file.id, file.file_name)
+          searchEngine.indexFileTitle(file.id, file.file_name, file.file_path)
           searchEngine.indexContentParagraphs(file.id, parseResult.fullText, file.file_name)
           this.saveLightSummary(file.id, file.file_name, parseResult.fullText)
         })
