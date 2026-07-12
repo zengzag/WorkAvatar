@@ -9,9 +9,11 @@ import {
   SearchOutlined, ReloadOutlined,
   ThunderboltOutlined,
   DatabaseOutlined, BarChartOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import type { FileSummariesResult } from '../../hooks/useKMS'
 import { useFileSummaryColumns } from './kms-columns'
+import KMSKnowledgeCardsView from './KMSKnowledgeCardsView'
 
 const { Text, Title } = Typography
 
@@ -71,7 +73,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-  const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'cards' | 'stats'>('files')
   const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
   // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
   const processingFileIdsRef = useRef<Set<string>>(new Set())
@@ -85,7 +87,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   }, [onLoadFileSummaries, onLoadStats])
 
   const handleTabChange = useCallback((key: string) => {
-    setActiveTab(key as 'files' | 'stats')
+    setActiveTab(key as 'files' | 'cards' | 'stats')
     if (key === 'stats') {
       onLoadStats()
     }
@@ -450,6 +452,16 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
                 </span>
               ),
               children: renderFilesTab(),
+            },
+            {
+              key: 'cards',
+              label: (
+                <span>
+                  <BookOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledgeCards.cardsTab')}
+                </span>
+              ),
+              children: <KMSKnowledgeCardsView onOpenFile={onOpenFile} />,
             },
             {
               key: 'stats',

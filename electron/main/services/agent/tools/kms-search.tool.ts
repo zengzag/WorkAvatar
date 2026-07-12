@@ -1,18 +1,34 @@
 import KMSService from '../../kms/kms.service'
 import type { ToolDefinition, ToolHandlerContext } from './types'
 
-export interface CollectionIdsRef {
-  current: string[]
+export interface SearchScopeRef {
+  current: {
+    collectionIds: string[]
+    dirIds?: string[]
+    fileExtensions?: string[]
+  }
 }
 
-export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinition[] {
+export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
   const kmsService = KMSService.getInstance()
 
   function resolveCollectionIds(args: any): string[] | undefined {
     const explicit = Array.isArray(args?.collection_ids) ? args.collection_ids as string[] : []
     if (explicit.length > 0) return explicit
-    const ref = collectionIdsRef?.current || []
+    const ref = scopeRef?.current.collectionIds || []
     return ref.length > 0 ? ref : undefined
+  }
+
+  function resolveDirIds(): string[] | undefined {
+    const ref = scopeRef?.current.dirIds
+    return ref && ref.length > 0 ? ref : undefined
+  }
+
+  function resolveFileExtensions(args: any): string[] | undefined {
+    const explicit = Array.isArray(args?.file_extensions) ? args.file_extensions as string[] : undefined
+    if (explicit && explicit.length > 0) return explicit
+    const ref = scopeRef?.current.fileExtensions
+    return ref && ref.length > 0 ? ref : undefined
   }
 
   const kmsSearchTool: ToolDefinition = {
@@ -62,12 +78,15 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
         const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
         const useSemantic = Boolean(args.use_semantic)
         const collectionIds = resolveCollectionIds(args)
+        const dirIds = resolveDirIds()
+        const fileExtensions = resolveFileExtensions(args)
 
         const results = await kmsService.search(query, {
           topK,
           useSemantic,
           collectionIds,
-          fileExtensions: args.file_extensions,
+          dirIds,
+          fileExtensions,
         })
 
         if (results.length === 0) {
@@ -268,5 +287,76 @@ export function createKMSTools(collectionIdsRef?: CollectionIdsRef): ToolDefinit
     source: 'builtin',
   }
 
-  return [kmsSearchTool, kmsAgentSearchTool, kmsGetContentTool]
+  const kmsKnowledgeCardTool: ToolDefinition = {
+    id: 'kms_knowledge_card',
+    name: 'kms_knowledge_card',
+    title: '知识卡片查询',
+    description: '查找本地资料库中已沉淀的知识卡片。知识卡片是基于用户高频搜索自动生成的主题摘要，包含结构化的要点和原文引用。对于常见问题可快速获取答案，无需重新检索全文。建议在 kms_search 之前先查询知识卡片，若卡片已包含答案则无需再搜索。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: '查询主题，将与卡片关键词进行精确和语义匹配',
+        },
+        top_k: {
+          type: 'number',
+          description: '返回卡片数量（1-5，默认3）',
+          minimum: 1,
+          maximum: 5,
+          default: 3,
+        },
+      },
+      required: ['query'],
+    },
+    handler: async (args: any) => {
+      try {
+        const query = String(args.query || '').trim()
+        if (!query) {
+          return { success: true, output: '请提供查询主题。' }
+        }
+        const topK = Math.min(Math.max(args.top_k || 3, 1), 5)
+        const cards = await kmsService.searchKnowledgeCards(query, topK)
+
+        if (cards.length === 0) {
+          return { success: true, output: `未找到与"${query}"匹配的知识卡片。可使用 kms_search 进行全文检索。` }
+        }
+
+        let output = `找到 ${cards.length} 张知识卡片：\n\n`
+        for (let i = 0; i < cards.length; i++) {
+          const c = cards[i]
+          output += `[${i + 1}] ${c.displayKeyword}（搜索${c.searchCount}次，${c.status === 'stale' ? '需刷新' : '活跃'}）\n`
+          output += `${c.summary}\n`
+          if (c.keyPoints.length > 0) {
+            output += '要点：\n'
+            for (const kp of c.keyPoints) {
+              const citation = c.citations[kp.sourceIndex]
+              const source = citation ? `（来源：${citation.fileName}）` : ''
+              output += `- ${kp.point}${source}\n`
+            }
+          }
+          if (c.citations.length > 0) {
+            output += `引用来源：\n`
+            for (let j = 0; j < c.citations.length; j++) {
+              const cite = c.citations[j]
+              output += `  [${j}] ${cite.fileName}`
+              if (cite.paragraphTitle) output += ` > ${cite.paragraphTitle}`
+              if (cite.startLine !== undefined && cite.endLine !== undefined) {
+                output += ` (行${cite.startLine}-${cite.endLine})`
+              }
+              output += `\n    ${cite.snippet}\n`
+            }
+          }
+          output += '\n'
+        }
+
+        return { success: true, output }
+      } catch (error: any) {
+        return { success: false, error: `知识卡片查询失败: ${error.message}` }
+      }
+    },
+    source: 'builtin',
+  }
+
+  return [kmsSearchTool, kmsAgentSearchTool, kmsGetContentTool, kmsKnowledgeCardTool]
 }

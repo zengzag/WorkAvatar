@@ -277,7 +277,7 @@ class EmployeeMemoryService {
         providerId,
         [{ role: 'user', content: prompt }],
         {
-          temperature: 0.1,
+          temperature: 0.7,
           max_tokens: 800,
           model: modelId,
           logSource: 'memory_extract',
@@ -398,7 +398,7 @@ class EmployeeMemoryService {
         providerId,
         [{ role: 'user', content: prompt }],
         {
-          temperature: 0.1,
+          temperature: 0.7,
           max_tokens: 1200,
           model: modelId,
           logSource: 'memory_consolidate',
@@ -542,7 +542,7 @@ class EmployeeMemoryService {
         providerId,
         [{ role: 'user', content: prompt }],
         {
-          temperature: 0.1,
+          temperature: 0.7,
           max_tokens: 1000,
           model: modelId,
           logSource: 'memory_summary',

@@ -1,12 +1,12 @@
 import KMSService from '../../kms/kms.service'
 import type { ToolDefinition } from './types'
-import type { CollectionIdsRef } from './kms-search.tool'
+import type { SearchScopeRef } from './kms-search.tool'
 
-export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): ToolDefinition[] {
+export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefinition[] {
   const kmsService = KMSService.getInstance()
 
   function isAccessible(collectionId: string): boolean {
-    const ref = collectionIdsRef.current || []
+    const ref = scopeRef.current.collectionIds || []
     if (ref.length === 0) return true
     return ref.includes(collectionId)
   }
@@ -34,7 +34,7 @@ export function createKMSCollectionTools(collectionIdsRef: CollectionIdsRef): To
     handler: async () => {
       try {
         const allCollections = kmsService.listCollections()
-        const ref = collectionIdsRef.current || []
+        const ref = scopeRef.current.collectionIds || []
         const visible = ref.length > 0
           ? allCollections.filter((c: any) => ref.includes(c.id))
           : allCollections

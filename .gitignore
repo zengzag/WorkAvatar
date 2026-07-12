@@ -36,6 +36,7 @@ electron-builder-*.json
 # =====================================
 .idea/
 .vscode/
+.trae
 *.swp
 *.swo
 *~

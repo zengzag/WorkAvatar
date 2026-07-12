@@ -133,6 +133,9 @@ export interface KMSSettings {
     topK?: number
     resultLimit?: number
     autoReparseHotData?: boolean
+    enableKnowledgeCards?: boolean
+    knowledgeCardThreshold?: number
+    autoRefreshStaleCards?: boolean
   }
   autoIndex: KMSAutoIndexConfig
 }
@@ -193,7 +196,7 @@ export function useKMS() {
     model: null,
     embeddingModel: null,
     summaryModel: null,
-    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true },
+    searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
     autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
@@ -451,6 +454,9 @@ export function useKMS() {
             topK: result.searchParams?.topK ?? 10,
             resultLimit: result.searchParams?.resultLimit ?? 100,
             autoReparseHotData: result.searchParams?.autoReparseHotData ?? true,
+            enableKnowledgeCards: result.searchParams?.enableKnowledgeCards ?? true,
+            knowledgeCardThreshold: result.searchParams?.knowledgeCardThreshold ?? 5,
+            autoRefreshStaleCards: result.searchParams?.autoRefreshStaleCards ?? true,
           },
           autoIndex: {
             enabled: result.autoIndex?.enabled ?? false,
@@ -468,7 +474,7 @@ export function useKMS() {
     model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
-    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean }
+    searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
     autoIndex?: KMSAutoIndexConfig
   }) => {
     try {

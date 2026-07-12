@@ -71,3 +71,31 @@ export function formatMessageTime(timestamp: number, t: (key: string, options?: 
 export function shouldShowTimeSeparator(prevTimestamp: number, currentTimestamp: number): boolean {
   return currentTimestamp - prevTimestamp > 5 * 60 * 1000
 }
+
+/**
+ * 格式化相对时间片段（不含"前/ago"），配合 i18n key kms.knowledgeCards.refreshedAgo 使用
+ * @param timestampSec 秒级时间戳
+ * @param lang 当前语言代码
+ */
+export function formatRelativeTimeShort(timestampSec: number, lang: string = 'zh-CN'): string {
+  if (!timestampSec) return '-'
+  const now = Math.floor(Date.now() / 1000)
+  const diff = now - timestampSec
+  if (diff < 0) return '-'
+  const isZh = lang.startsWith('zh')
+  if (diff < 60) return isZh ? '1分钟' : '1 minute'
+  if (diff < 3600) {
+    const m = Math.floor(diff / 60)
+    return isZh ? `${m}分钟` : `${m} minute${m > 1 ? 's' : ''}`
+  }
+  if (diff < 86400) {
+    const h = Math.floor(diff / 3600)
+    return isZh ? `${h}小时` : `${h} hour${h > 1 ? 's' : ''}`
+  }
+  if (diff < 86400 * 30) {
+    const d = Math.floor(diff / 86400)
+    return isZh ? `${d}天` : `${d} day${d > 1 ? 's' : ''}`
+  }
+  const date = new Date(timestampSec * 1000)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}

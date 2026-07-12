@@ -355,6 +355,48 @@ export const toolHandlers: Record<string, ToolHandler> = {
     }
     return output
   },
+
+  'kms_knowledge_card': async (args, kmsService) => {
+    const query = String(args.query || '').trim()
+    if (!query) {
+      return 'Please provide a query topic.'
+    }
+    const topK = Math.min(Math.max(Number(args.top_k) || 3, 1), 5)
+    const cards = await kmsService.searchKnowledgeCards(query, topK)
+
+    if (cards.length === 0) {
+      return `No knowledge cards found matching "${query}". Use kms_search for full-text search.`
+    }
+
+    let output = `${cards.length} knowledge card(s) found:\n\n`
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i] as any
+      output += `[${i + 1}] ${c.displayKeyword} (searched ${c.searchCount} times, ${c.status === 'stale' ? 'needs refresh' : 'active'})\n`
+      output += `${c.summary}\n`
+      if (c.keyPoints && c.keyPoints.length > 0) {
+        output += 'Key points:\n'
+        for (const kp of c.keyPoints) {
+          const citation = c.citations[kp.sourceIndex]
+          const source = citation ? ` (source: ${citation.fileName})` : ''
+          output += `- ${kp.point}${source}\n`
+        }
+      }
+      if (c.citations && c.citations.length > 0) {
+        output += 'Citations:\n'
+        for (let j = 0; j < c.citations.length; j++) {
+          const cite = c.citations[j]
+          output += `  [${j}] ${cite.fileName}`
+          if (cite.paragraphTitle) output += ` > ${cite.paragraphTitle}`
+          if (cite.startLine !== undefined && cite.endLine !== undefined) {
+            output += ` (lines ${cite.startLine}-${cite.endLine})`
+          }
+          output += `\n    ${cite.snippet}\n`
+        }
+      }
+      output += '\n'
+    }
+    return output
+  },
 }
 
 /** 执行指定工具 */

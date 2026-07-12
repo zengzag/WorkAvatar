@@ -5,7 +5,7 @@ import EmployeeMemoryService from './employee-memory.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, type CollectionIdsRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, type SearchScopeRef } from './agent/tools'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
@@ -58,7 +58,7 @@ interface EmployeeChatCallbacks {
 interface CachedAgentEntry {
   agent: EmployeeAgent
   conversationId: string | null
-  collectionIdsRef: CollectionIdsRef
+  collectionIdsRef: SearchScopeRef
 }
 
 class EmployeeAgentService {
@@ -204,7 +204,7 @@ class EmployeeAgentService {
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
 
-    const collectionIdsRef: CollectionIdsRef = { current: [] }
+    const collectionIdsRef: SearchScopeRef = { current: { collectionIds: [] } }
     const kmsTools = createKMSTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsTools)
     const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
@@ -306,7 +306,7 @@ class EmployeeAgentService {
       const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee)
       const agent = entry.agent
       agent.setMinimalMode(minimal_mode)
-      entry.collectionIdsRef.current = collection_ids || []
+      entry.collectionIdsRef.current.collectionIds = collection_ids || []
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
       const lastMsg = messages[messages.length - 1]

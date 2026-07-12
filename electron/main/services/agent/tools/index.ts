@@ -43,5 +43,5 @@ export const allBuiltinTools: ToolDefinition[] = [
 
 export { officeExecTool } from './office-exec.tool'
 export { createOfficeGuideTool } from './office-prompts'
-export { createKMSTools, type CollectionIdsRef } from './kms-search.tool'
+export { createKMSTools, type SearchScopeRef } from './kms-search.tool'
 export { createKMSCollectionTools } from './kms-collection-tools'

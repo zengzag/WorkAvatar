@@ -5,7 +5,7 @@ export const MESSAGES_CACHE_MAX_SIZE = 20
 export const MIN_LOADING_DISPLAY_MS = 120
 export const CONVERSATION_PAGE_SIZE = 20
 export const SCROLL_BOTTOM_THRESHOLD_PX = 10
-export const DEFAULT_TEMPERATURE = 0.3
+export const DEFAULT_TEMPERATURE = 0.7
 
 export interface ConversationStreamState {
   isStreaming: boolean

@@ -115,7 +115,7 @@ class DatabaseService {
         base_url TEXT,
         model TEXT NOT NULL,
         embedding_model TEXT DEFAULT 'text-embedding-3-small',
-        temperature REAL DEFAULT 0.3,
+        temperature REAL DEFAULT 0.7,
         max_tokens INTEGER DEFAULT 4096,
         timeout_ms INTEGER DEFAULT 60000,
         extra_headers_json TEXT,

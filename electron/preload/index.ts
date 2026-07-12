@@ -48,6 +48,9 @@ import type {
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
   KMSSearchFilesParams,
+  KMSGetKnowledgeCardsParams,
+  KMSUpdateKnowledgeCardParams,
+  KMSSearchKnowledgeCardsParams,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -269,6 +272,20 @@ const electronAPI = {
     rebuildFileIndex: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REBUILD_FILE_INDEX, fileId),
     getDatabaseStats: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_DATABASE_STATS),
     cleanupDatabase: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEANUP_DATABASE),
+    getKeywordStats: (params?: { limit?: number; minCount?: number; recentDays?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KEYWORD_STATS, params || {}),
+    getKnowledgeCards: (params: KMSGetKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARDS, params),
+    getKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARD, id),
+    generateKnowledgeCard: (keyword: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, keyword),
+    onKnowledgeCardProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
+      const handler = (_event: any, step: any) => callback(step)
+      ipcRenderer.on(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, handler)
+    },
+    refreshKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REFRESH_KNOWLEDGE_CARD, id),
+    updateKnowledgeCard: (params: KMSUpdateKnowledgeCardParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_KNOWLEDGE_CARD, params),
+    deleteKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_KNOWLEDGE_CARD, id),
+    pinKnowledgeCard: (id: string, pinned: boolean) => ipcRenderer.invoke(IPC_CHANNELS.KMS_PIN_KNOWLEDGE_CARD, { id, pinned }),
+    searchKnowledgeCards: (params: KMSSearchKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_KNOWLEDGE_CARDS, params),
   },
 
   kmsMcp: {

@@ -60,4 +60,7 @@ export type {
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
   KMSSearchFilesParams,
+  KMSGetKnowledgeCardsParams,
+  KMSUpdateKnowledgeCardParams,
+  KMSSearchKnowledgeCardsParams,
 } from './channels/kms'

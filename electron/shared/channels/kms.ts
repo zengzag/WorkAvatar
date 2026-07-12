@@ -71,6 +71,17 @@ export const KMS_CHANNELS = {
   // KMS 数据库清理（回收磁盘空间 + 清理残留索引数据）
   KMS_GET_DATABASE_STATS: 'kms:get-database-stats',
   KMS_CLEANUP_DATABASE: 'kms:cleanup-database',
+  // KMS 知识卡片
+  KMS_GET_KEYWORD_STATS: 'kms:get-keyword-stats',
+  KMS_GET_KNOWLEDGE_CARDS: 'kms:get-knowledge-cards',
+  KMS_GET_KNOWLEDGE_CARD: 'kms:get-knowledge-card',
+  KMS_GENERATE_KNOWLEDGE_CARD: 'kms:generate-knowledge-card',
+  KMS_REFRESH_KNOWLEDGE_CARD: 'kms:refresh-knowledge-card',
+  KMS_UPDATE_KNOWLEDGE_CARD: 'kms:update-knowledge-card',
+  KMS_DELETE_KNOWLEDGE_CARD: 'kms:delete-knowledge-card',
+  KMS_PIN_KNOWLEDGE_CARD: 'kms:pin-knowledge-card',
+  KMS_SEARCH_KNOWLEDGE_CARDS: 'kms:search-knowledge-cards',
+  KMS_KNOWLEDGE_CARD_PROGRESS: 'kms:knowledge-card-progress',
 } as const
 
 export interface KMSAddDirParams {
@@ -154,7 +165,15 @@ export interface KMSSetSettingsParams {
   model?: KMSModelConfig | null
   embeddingModel?: KMSModelConfig | null
   summaryModel?: KMSModelConfig | null
-  searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean }
+  searchParams?: {
+    maxRounds?: number
+    topK?: number
+    resultLimit?: number
+    autoReparseHotData?: boolean
+    enableKnowledgeCards?: boolean
+    knowledgeCardThreshold?: number
+    autoRefreshStaleCards?: boolean
+  }
   autoIndex?: KMSAutoIndexConfig
 }
 
@@ -209,4 +228,24 @@ export interface KMSSearchFilesParams {
   fileExtensions?: string[]
   timeRangeStart?: number
   timeRangeEnd?: number
+}
+
+export interface KMSGetKnowledgeCardsParams {
+  status?: 'active' | 'stale' | 'archived'
+  keyword?: string
+  pinnedOnly?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface KMSUpdateKnowledgeCardParams {
+  id: string
+  summary?: string
+  keyPoints?: Array<{ point: string; sourceIndex: number }>
+  pinned?: boolean
+}
+
+export interface KMSSearchKnowledgeCardsParams {
+  query: string
+  topK?: number
 }

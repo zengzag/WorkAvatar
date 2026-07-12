@@ -373,7 +373,7 @@ ${toolsSection}`
       },
       () => { streamDone = true },
       (error: Error) => { streamError = error },
-      { temperature: 0.2, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource },
+      { temperature: 0.7, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource },
       undefined,
       (thoughtChunk: string) => { onProgress?.({ stage: 'thinking', chunk: thoughtChunk }) }
     )

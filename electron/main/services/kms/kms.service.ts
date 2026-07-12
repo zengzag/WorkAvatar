@@ -10,6 +10,8 @@ import KMSAutoIndexService from './kms-auto-index.service'
 import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
+import KMSKeywordStatsService from './kms-keyword-stats.service'
+import KMSKnowledgeCardService from './kms-knowledge-card.service'
 import LLMClientService from '../llm-client.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
@@ -687,10 +689,17 @@ class KMSService {
       crawler.logFileAccessBatch(hitFileIds, 'search_hit')
     }
 
+    // 记录关键词搜索频次（用于热点词检测与知识卡片自动沉淀）
+    KMSKeywordStatsService.getInstance().incrementKeywordStat(query, hitFileIds)
+
     // 搜索后异步触发冷热数据评估（去抖，5分钟内不重复）
     // 高频命中的冷文件会自动晋升为热文件，并触发 file2md 重新解析 + LLM 摘要生成
+    // 同时评估知识卡片：热点词达到阈值时自动沉淀卡片，过期卡片自动刷新
     this.evaluateAndPromote(false).catch((err: any) => {
       logger.warn('Post-search evaluateAndPromote failed:', err?.message || err)
+    })
+    KMSKnowledgeCardService.getInstance().evaluateCards(false).catch((err: any) => {
+      logger.warn('Post-search evaluateCards failed:', err?.message || err)
     })
 
     logger.info(`search "${query}" total: ${results.length} results, ${Date.now() - startTime}ms`)
@@ -707,7 +716,13 @@ class KMSService {
    *              搜索触发的评估传 false，受 MIN_EVALUATION_INTERVAL_MS 去抖控制
    */
   async evaluateAndPromote(force: boolean = false): Promise<void> {
-    return KMSIndexManagerService.getInstance().evaluateAndPromote(force)
+    await KMSIndexManagerService.getInstance().evaluateAndPromote(force)
+    // 索引流程结束后（force=true）同步评估知识卡片：刷新过期卡片 + 归档旧卡片
+    if (force) {
+      KMSKnowledgeCardService.getInstance().evaluateCards(true).catch((err: any) => {
+        logger.warn('Post-index evaluateCards failed:', err?.message || err)
+      })
+    }
   }
 
   private getKmsEmbeddingConfig(): KmsEmbeddingConfig | null {
@@ -1027,6 +1042,50 @@ class KMSService {
    */
   deleteSearchHistory(id: string): void {
     KMSSearchHistoryService.getInstance().deleteSearchHistory(id)
+  }
+
+  // ==================== 知识卡片 ====================
+
+  getKeywordStats(params?: { limit?: number; minCount?: number; recentDays?: number }): any[] {
+    return KMSKeywordStatsService.getInstance().getKeywordStats(params)
+  }
+
+  getKnowledgeCards(params?: {
+    status?: 'active' | 'stale' | 'archived'
+    keyword?: string
+    pinnedOnly?: boolean
+    limit?: number
+    offset?: number
+  }): { cards: any[]; total: number } {
+    return KMSKnowledgeCardService.getInstance().listCards(params)
+  }
+
+  getKnowledgeCard(id: string): any | null {
+    return KMSKnowledgeCardService.getInstance().getCard(id)
+  }
+
+  async generateKnowledgeCard(keyword: string, displayKeyword?: string, options?: { onProgress?: (step: any) => void }): Promise<{ success: boolean; card?: any; error?: string }> {
+    return KMSKnowledgeCardService.getInstance().generateCard(keyword, displayKeyword, options)
+  }
+
+  async refreshKnowledgeCard(id: string, signal?: AbortSignal, options?: { onProgress?: (step: any) => void }): Promise<{ success: boolean; card?: any; error?: string }> {
+    return KMSKnowledgeCardService.getInstance().refreshCard(id, signal, options)
+  }
+
+  updateKnowledgeCard(params: { id: string; summary?: string; keyPoints?: any[]; pinned?: boolean }): { success: boolean; error?: string } {
+    return KMSKnowledgeCardService.getInstance().updateCard(params)
+  }
+
+  deleteKnowledgeCard(id: string): void {
+    KMSKnowledgeCardService.getInstance().deleteCard(id)
+  }
+
+  pinKnowledgeCard(id: string, pinned: boolean): void {
+    KMSKnowledgeCardService.getInstance().pinCard(id, pinned)
+  }
+
+  async searchKnowledgeCards(query: string, topK?: number): Promise<any[]> {
+    return KMSKnowledgeCardService.getInstance().searchCards(query, topK || 3)
   }
 
   onProgress(listener: (progress: IndexProgress) => void): () => void {

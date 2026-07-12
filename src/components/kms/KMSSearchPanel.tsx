@@ -5,6 +5,8 @@ import KMSSearchInput from './KMSSearchInput'
 import KMSFilterPanel from './KMSFilterPanel'
 import KMSSearchResultList from './KMSSearchResultList'
 import KMSAgentResult from './KMSAgentResult'
+import KnowledgeCardBanner from './KnowledgeCardBanner'
+import KnowledgeCardDetail from './KnowledgeCardDetail'
 import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
@@ -100,6 +102,8 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   const [filterExtensions, setFilterExtensions] = useState<string[]>([])
   const [filterTimeRange, setFilterTimeRange] = useState<[number, number] | null>(null)
   const [collectionOptions, setCollectionOptions] = useState<{ label: string; value: string }[]>([])
+  const [selectedCard, setSelectedCard] = useState<any>(null)
+  const [cardDetailOpen, setCardDetailOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -188,6 +192,18 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       />
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {/* 知识卡片横幅：搜索词匹配到已有卡片时显示 */}
+        {searchQuery.trim() && !isSearching && (
+          <div style={{ marginBottom: 8 }}>
+            <KnowledgeCardBanner
+              query={searchQuery.trim()}
+              onViewCard={(card) => {
+                setSelectedCard(card)
+                setCardDetailOpen(true)
+              }}
+            />
+          </div>
+        )}
         {isSearching ? (
           searchMode === 'ai' && liveSteps.length > 0 ? (
             <div style={{ padding: '12px 4px' }}>
@@ -249,6 +265,14 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
           />
         )}
       </div>
+
+      {/* 知识卡片详情抽屉 */}
+      <KnowledgeCardDetail
+        card={selectedCard}
+        open={cardDetailOpen}
+        onClose={() => setCardDetailOpen(false)}
+        onOpenFile={onOpenFile}
+      />
     </div>
   )
 }

@@ -242,7 +242,7 @@ const LLMSettings: React.FC = () => {
     modelForm.resetFields()
     modelForm.setFieldsValue({
       category: 'chat',
-      temperature: 0.3,
+      temperature: 0.7,
       max_tokens: 4096,
       max_retry: 100,
       is_default: false,
