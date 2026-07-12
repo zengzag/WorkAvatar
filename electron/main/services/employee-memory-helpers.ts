@@ -55,7 +55,9 @@ export function formatTurnForExtraction(turn: { user: string; assistant: string 
   return `用户: ${truncate(turn.user)}\n助手: ${truncate(turn.assistant)}`
 }
 
-/** 将记忆列表格式化为 prompt 文本，按重要性排序并限制总长度 */
+/** 将记忆列表格式化为 prompt 文本，按重要性排序并限制总长度
+ * 输出格式：`- content`（省去 [topic] 前缀以节省字符；topic 在调试视图可见）
+ */
 export function formatMemoriesForPrompt(memories: EmployeeMemory[], maxChars?: number): string {
   if (memories.length === 0) return ''
 
@@ -71,7 +73,7 @@ export function formatMemoriesForPrompt(memories: EmployeeMemory[], maxChars?: n
   const limit = maxChars || MEMORY_MAX_CHARS
 
   for (const m of sorted) {
-    const line = `- [${m.topic}] ${m.content}`
+    const line = `- ${m.content}`
     if (totalLen + line.length > limit && !m.is_pinned) break
     lines.push(line)
     totalLen += line.length + 1

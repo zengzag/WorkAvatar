@@ -22,6 +22,7 @@ export type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
+  EmployeeMemoryExtractConversationParams,
 } from './channels/employee'
 export type {
   LLMProviderCreateParams,

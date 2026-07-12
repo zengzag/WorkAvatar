@@ -31,6 +31,7 @@ import type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
+  EmployeeMemoryExtractConversationParams,
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
@@ -94,6 +95,7 @@ const electronAPI = {
     extractMemories: (params: EmployeeMemoryExtractParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, params),
     consolidateMemories: (params: EmployeeMemoryConsolidateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_CONSOLIDATE, params),
     getMemoryStats: (params: EmployeeMemoryStatsParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, params),
+    extractConversationMemories: (params: EmployeeMemoryExtractConversationParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT_CONVERSATION, params),
   },
 
   conversation: {

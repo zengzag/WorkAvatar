@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
+import { extractMessagePreview } from './common-utils'
 
 const logger = createLogger('DB')
 
@@ -211,6 +212,7 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
+    this.addColumnIfNotExists('conversations', 'memory_extracted_at', 'INTEGER')
 
     this.migrateConversationLastMessageAt()
 
@@ -237,6 +239,19 @@ class DatabaseService {
       );
     `)
     this.migrateEmployeeMemoriesFTS()
+
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+        title,
+        summary,
+        content_preview,
+        conversation_id UNINDEXED,
+        employee_id UNINDEXED,
+        tokenize='unicode61',
+        prefix='2,3'
+      );
+    `)
+    this.migrateConversationsFTS()
   }
 
   private migrateEmployeeMemoriesFTS(): void {
@@ -252,6 +267,24 @@ class DatabaseService {
     })
     tx(rows)
     logger.info(`Migrated ${rows.length} employee_memories rows to FTS5 table`)
+  }
+
+  private migrateConversationsFTS(): void {
+    const count = this.db.prepare('SELECT COUNT(*) AS n FROM conversations_fts').get() as { n: number }
+    if (count.n > 0) return
+    const rows = this.db.prepare('SELECT id, employee_id, title, summary, messages_json FROM conversations').all() as any[]
+    if (rows.length === 0) return
+    const insert = this.db.prepare(
+      'INSERT INTO conversations_fts (title, summary, content_preview, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+    )
+    const tx = this.db.transaction((items: any[]) => {
+      for (const r of items) {
+        const preview = extractMessagePreview(r.messages_json)
+        insert.run(r.title || '', r.summary || '', preview, r.id, r.employee_id)
+      }
+    })
+    tx(rows)
+    logger.info(`Migrated ${rows.length} conversations to FTS5 table`)
   }
 
   private migrateEmployeeAddWorkspacePath(): void {

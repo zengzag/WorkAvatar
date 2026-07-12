@@ -13,6 +13,7 @@ import SkillRegistryService from '../services/skill-registry.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import EmployeeExportService from '../services/employee-export.service'
 import EmployeeMemoryService from '../services/employee-memory.service'
+import MemoryRefinementService from '../services/memory-refinement.service'
 
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
@@ -33,4 +34,7 @@ export function registerIpcHandlers() {
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
+
+  // 启动定时记忆精炼服务（空闲对话的记忆提取）
+  MemoryRefinementService.getInstance().start()
 }

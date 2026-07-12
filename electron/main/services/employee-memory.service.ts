@@ -12,6 +12,7 @@ import {
   type MemoryStats,
   MEMORY_MAX_CHARS,
   MEMORY_MAX_COUNT,
+  MEMORY_CONTENT_MAX_CHARS,
   MEMORY_CONSOLIDATION_THRESHOLD,
   STALE_MEMORY_DAYS,
   CONSOLIDATION_COOLDOWN_SECONDS,
@@ -33,6 +34,18 @@ import {
 } from './employee-memory-helpers'
 
 const logger = createLogger('Memory')
+
+/** 截断单条 content，超长时按句号/逗号优先在最近的标点处断开，保持语义完整 */
+function clampContent(text: string, max: number = MEMORY_CONTENT_MAX_CHARS): string {
+  const t = (text || '').trim()
+  if (t.length <= max) return t
+  const cut = t.substring(0, max)
+  for (const sep of ['。', '，', '；', '.', ',', ';', ' ']) {
+    const idx = cut.lastIndexOf(sep)
+    if (idx > max / 2) return cut.substring(0, idx)
+  }
+  return cut
+}
 
 class EmployeeMemoryService {
   private db: DatabaseService
@@ -67,6 +80,7 @@ class EmployeeMemoryService {
   createMemory(params: EmployeeMemoryCreateParams): EmployeeMemory {
     const id = generateId()
     const now = Math.floor(Date.now() / 1000)
+    const content = clampContent(params.content)
     this.db.getDb().prepare(
       `INSERT INTO employee_memories (id, employee_id, key, topic, content, is_pinned, source, importance, created_at, updated_at, last_referenced_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -75,7 +89,7 @@ class EmployeeMemoryService {
       params.employee_id,
       params.key,
       params.topic,
-      params.content,
+      content,
       params.is_pinned ? 1 : 0,
       params.source || 'manual',
       params.importance || 'normal',
@@ -83,7 +97,7 @@ class EmployeeMemoryService {
       now,
       now
     )
-    this.syncMemoryFTS(id, params.employee_id, params.key, params.topic, params.content)
+    this.syncMemoryFTS(id, params.employee_id, params.key, params.topic, content)
     return this.getMemory(id)!
   }
 
@@ -96,7 +110,7 @@ class EmployeeMemoryService {
 
     if (params.key !== undefined) { sets.push('key = ?'); values.push(params.key) }
     if (params.topic !== undefined) { sets.push('topic = ?'); values.push(params.topic) }
-    if (params.content !== undefined) { sets.push('content = ?'); values.push(params.content) }
+    if (params.content !== undefined) { sets.push('content = ?'); values.push(clampContent(params.content)) }
     if (params.is_pinned !== undefined) { sets.push('is_pinned = ?'); values.push(params.is_pinned ? 1 : 0) }
     if (params.importance !== undefined) { sets.push('importance = ?'); values.push(params.importance) }
 
@@ -311,8 +325,8 @@ class EmployeeMemoryService {
           if (existing) {
             this.db.getDb().prepare(
               'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(memory.content, memory.topic, now, now, existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, memory.topic, memory.content)
+            ).run(clampContent(memory.content), memory.topic, now, now, existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, memory.topic, clampContent(memory.content))
           } else {
             this.createMemory({
               employee_id: employeeId,
@@ -346,10 +360,11 @@ class EmployeeMemoryService {
           const existing = updateExistingMap.get(update.key)
           if (existing) {
             const topic = update.topic || existing.topic
+            const content = clampContent(update.content)
             this.db.getDb().prepare(
               'UPDATE employee_memories SET content = ?, topic = ?, updated_at = ?, last_referenced_at = ? WHERE id = ?'
-            ).run(update.content, topic, now, now, existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, topic, update.content)
+            ).run(content, topic, now, now, existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, topic, content)
             logger.info(`Updated memory key=${update.key} for employee ${employeeId}`)
           }
         }
@@ -447,10 +462,11 @@ class EmployeeMemoryService {
           if (!update.key || !update.content) continue
           const existing = candidates.find(m => m.key === update.key)
           if (existing && existing.content !== update.content) {
+            const content = clampContent(update.content)
             this.db.getDb().prepare(
               'UPDATE employee_memories SET content = ?, updated_at = ? WHERE id = ?'
-            ).run(update.content, Math.floor(Date.now() / 1000), existing.id)
-            this.syncMemoryFTS(existing.id, employeeId, existing.key, existing.topic, update.content)
+            ).run(content, Math.floor(Date.now() / 1000), existing.id)
+            this.syncMemoryFTS(existing.id, employeeId, existing.key, existing.topic, content)
             simplified++
           }
         }

@@ -3,7 +3,7 @@ import path from 'path'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
-import { generateId } from './common-utils'
+import { generateId, extractMessagePreview } from './common-utils'
 import { createLogger } from './logger'
 
 const logger = createLogger('WorkspaceManager')
@@ -143,7 +143,17 @@ class WorkspaceManagerService {
       VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?)
     `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, now, now)
 
+    this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
+
     return this.getConversation(conversationId)!
+  }
+
+  private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
+    this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
+    const preview = extractMessagePreview(messagesJson)
+    this.db.getDb().prepare(
+      'INSERT INTO conversations_fts (title, summary, content_preview, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(title || '', summary || '', preview, id, employeeId)
   }
 
   updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }): Conversation | null {
@@ -179,15 +189,24 @@ class WorkspaceManagerService {
       `).run(...values)
     }
 
+    if (data.title !== undefined || data.messages_json !== undefined) {
+      const updated = this.getConversation(id)
+      if (updated) {
+        this.syncConversationFTS(id, updated.employee_id, updated.title, updated.summary || '', updated.messages_json)
+      }
+    }
+
     return this.getConversation(id)
   }
 
   deleteConversation(id: string): boolean {
+    this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
     return result.changes > 0
   }
 
   deleteAllConversations(employeeId: string): number {
+    this.db.getDb().prepare('DELETE FROM conversations_fts WHERE employee_id = ?').run(employeeId)
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
     return result.changes
   }

@@ -6,6 +6,7 @@ import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, type SearchScopeRef } from './agent/tools'
+import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
@@ -213,6 +214,11 @@ class EmployeeAgentService {
     const officeGuideTool = createOfficeGuideTool(emp.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
+    if (enabledToolIds.has('search_conversations')) {
+      const convSearchTools = createConversationSearchTool(employeeId)
+      agent.registerTools(convSearchTools)
+    }
+
     if (memoryPrompt) {
       agent.updateMemoryPrompt(memoryPrompt)
     }
@@ -245,6 +251,11 @@ class EmployeeAgentService {
       'office_guide',
     ]
     for (const id of officeToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
+    const agentToolIds = ['search_conversations']
+    for (const id of agentToolIds) {
       allBuiltinToolIds.add(id)
     }
 
@@ -315,7 +326,6 @@ class EmployeeAgentService {
 
       const systemPromptCached = await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode, query)
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
-      const memoryEnabled = employee?.memory_enabled === 1
 
       await agent.runStream(
         {
@@ -334,9 +344,6 @@ class EmployeeAgentService {
           onToolProgress: callbacks.onToolProgress,
           onDone: (metadata?: any) => {
             callbacks.onDone(metadata)
-            if (memoryEnabled) {
-              this.extractMemoriesAsync(employee_id, messages, provider_id, model_id, conversation_id, employeeName)
-            }
           },
           onError: callbacks.onError,
         },
@@ -476,36 +483,6 @@ class EmployeeAgentService {
       }
     }
     return result
-  }
-
-  private extractMemoriesAsync(
-    employeeId: string,
-    messages: Array<{ role: string; content: string }>,
-    providerId: string,
-    modelId?: string,
-    conversationId?: string,
-    employeeName?: string
-  ): void {
-    const logCtx = {
-      employeeId,
-      employeeName: employeeName || 'unknown',
-      conversationId,
-      source: 'memory',
-    }
-    LLMLoggerService.getInstance().runWithContext(logCtx, () => {
-      this.memoryService.extractMemoriesFromConversation(
-        employeeId,
-        messages,
-        providerId,
-        modelId,
-        conversationId
-      ).then(() => {
-        this.memoryService.removeStaleMemories(employeeId)
-        return this.memoryService.autoConsolidateIfNeeded(employeeId, providerId, modelId)
-      }).catch(err => {
-        logger.error(`Background memory extraction failed: ${err.message}`)
-      })
-    })
   }
 
 }

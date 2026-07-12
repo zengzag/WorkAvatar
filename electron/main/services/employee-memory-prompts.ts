@@ -23,19 +23,23 @@ export function buildExtractionPrompt(contextParts: string[]): string {
 ## 审查现有记忆
 - 如果新信息与已有记忆矛盾，将过时的 key 加入 delete_keys。
 - 如果新信息是对已有记忆的补充/更新，将更新后的内容加入 update_memories。
+- 偏好/规则/禁忌变更属于"补充更新"，不要新增为多条独立记忆。
 
 ## 重要原则
 - 宁缺毋滥：不确定是否值得长期保存的内容，不要提取。
 - 允许空结果：如果对话没有任何值得持久记录的内容，返回空的 memories 数组。
+- 严格精炼：记忆总量上限约 30 条 / 3000 字符，每条 content 必须 1 句话、≤30 字。禁止长句、禁止重复表述。
+  - 反例："用户习惯使用 Markdown 格式编写技术文档，并倾向于在文档头部添加目录（Table of Contents），以方便阅读"（50+字）
+  - 正例："技术文档用 Markdown，头部加目录"（15字）
 - key 需短小唯一，如 "writing_style"、"report_format"、"no_ppt_animation"、"excel_pitfall"。
-- content 需简洁具体，1-2句话即可。
-- summary 用简短中文概括本轮对话要点（不超过200字）。
+- 多个相似偏好合并为一条，不要拆成多条。
+- summary 用简短中文概括本轮对话要点（不超过100字）。
 
 上下文（摘要|对话|现有记忆 key|topic|content）：
 ${contextParts.join('\n---\n')}
 
 输出 JSON：
-{"memories":[{"key":"唯一标识","topic":"分类标签","content":"具体事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容","topic":"可选新topic"}],"summary":"对话摘要（中文，<200字）"}`
+{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤30字精炼事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤30字）","topic":"可选新topic"}],"summary":"对话摘要（中文，<100字）"}`
 }
 
 /** 构建记忆合并整理 prompt */
@@ -47,13 +51,14 @@ export function buildConsolidationPrompt(memoriesText: string): string {
 - manual source 的记忆谨慎删除，除非明确过时。
 - >${STALE_MEMORY_DAYS}天未引用且非 pinned 的记忆优先删除。
 - 合并内容重叠/高度相似的记忆为一条。
-- 简化冗余啰嗦的内容，保持简洁。
+- 简化冗余啰嗦的内容，每条 content 必须 1 句话、≤30 字。多个相似偏好合并为一条。
 - 重要性评估：critical=核心用户特征/硬性约束/关键踩坑；normal=常规偏好/计划；low=次要信息。
 - 优先保留关于用户自身特征、偏好、踩坑经验的记忆，清理纯临时业务细节的记忆。
+- 总量目标 ≤30 条 / 3000 字符，请主动删除低价值条目腾出空间。
 
 ${memoriesText}
 
-JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":""}}],"simplify_updates":[{"key":"","content":""}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
+JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤30字"}}],"simplify_updates":[{"key":"","content":"≤30字精炼版本"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
 }
 
 /** 构建对话摘要 prompt */

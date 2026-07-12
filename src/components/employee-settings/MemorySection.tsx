@@ -76,7 +76,7 @@ const TOPIC_COLORS: Record<string, string> = {
 }
 
 // 跨任务记忆总字符上限（与后端 memory 服务保持一致）
-const MEMORY_CAPACITY_LIMIT = 8000
+const MEMORY_CAPACITY_LIMIT = 3000
 
 const MemorySection: React.FC<MemorySectionProps> = ({
   employeeId,
