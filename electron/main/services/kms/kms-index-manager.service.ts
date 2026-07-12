@@ -960,9 +960,6 @@ class KMSIndexManagerService {
         }
 
         KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
-
-        // 晋升的文件被重新解析后，标记引用此文件的知识卡片为过期
-        this.markCardsStaleForFile(file.id)
       } catch (err: any) {
         if (signal.aborted) break
         logger.error(`Failed to process promoted file ${fileId}:`, err?.message || err)

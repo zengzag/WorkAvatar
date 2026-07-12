@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Spin, Tag, Button, Typography, theme } from 'antd'
+import { Tag, Button, Typography, theme } from 'antd'
 import { BookOutlined, RightOutlined } from '@ant-design/icons'
 import { formatRelativeTimeShort } from '../../utils/format'
 import type { KnowledgeCard } from './KnowledgeCardDetail'
@@ -21,7 +21,6 @@ const KnowledgeCardBanner: React.FC<KnowledgeCardBannerProps> = ({ query, onView
   const { t, i18n } = useTranslation()
   const { token } = theme.useToken()
   const [card, setCard] = useState<KnowledgeCard | null>(null)
-  const [loading, setLoading] = useState(false)
   const queryRef = useRef(query)
   const mountedRef = useRef(true)
 
@@ -35,10 +34,8 @@ const KnowledgeCardBanner: React.FC<KnowledgeCardBannerProps> = ({ query, onView
     queryRef.current = trimmed
     if (!trimmed) {
       setCard(null)
-      setLoading(false)
       return
     }
-    setLoading(true)
     const timer = setTimeout(async () => {
       try {
         const result = await window.electronAPI.kms.searchKnowledgeCards({ query: trimmed, topK: 1 })
@@ -49,23 +46,10 @@ const KnowledgeCardBanner: React.FC<KnowledgeCardBannerProps> = ({ query, onView
         setCard(cards.length > 0 ? cards[0] : null)
       } catch {
         if (mountedRef.current) setCard(null)
-      } finally {
-        if (mountedRef.current) setLoading(false)
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [query])
-
-  if (!loading && !card) return null
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px' }}>
-        <Spin size="small" />
-        <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.generating')}</Text>
-      </div>
-    )
-  }
 
   if (!card) return null
 
