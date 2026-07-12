@@ -46,3 +46,17 @@ export function getDefaultProviderId(db: { getDb(): any }): string | null {
   const row = db.getDb().prepare('SELECT id FROM llm_providers WHERE is_default = 1 LIMIT 1').get()
   return row ? row.id : null
 }
+
+export function extractMessagePreview(messagesJson: string): string {
+  try {
+    const messages = JSON.parse(messagesJson || '[]')
+    if (!Array.isArray(messages)) return ''
+    const userContents = messages
+      .filter((m: any) => m.role === 'user' && typeof m.content === 'string')
+      .map((m: any) => m.content)
+    const preview = userContents.join(' ')
+    return preview.length > 1000 ? preview.substring(0, 1000) : preview
+  } catch {
+    return ''
+  }
+}

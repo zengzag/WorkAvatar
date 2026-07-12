@@ -32,6 +32,7 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_MEMORY_EXTRACT: 'employee:memory-extract',
   EMPLOYEE_MEMORY_CONSOLIDATE: 'employee:memory-consolidate',
   EMPLOYEE_MEMORY_STATS: 'employee:memory-stats',
+  EMPLOYEE_MEMORY_EXTRACT_CONVERSATION: 'employee:memory-extract-conversation',
 } as const
 
 export interface EmployeeListParams {
@@ -157,4 +158,8 @@ export interface EmployeeMemoryConsolidateParams {
 
 export interface EmployeeMemoryStatsParams {
   employee_id: string
+}
+
+export interface EmployeeMemoryExtractConversationParams {
+  conversation_id: string
 }

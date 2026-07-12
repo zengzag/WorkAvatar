@@ -9,6 +9,7 @@ import {
   SelectOutlined,
   ThunderboltOutlined,
   ExportOutlined,
+  BulbOutlined,
 } from '@ant-design/icons'
 import { memo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -31,6 +32,7 @@ const ConversationItem = memo(({
   onDelete,
   onGenerateTitle,
   onExport,
+  onExtractMemory,
   isSelectMode,
   isSelected,
   onToggleSelect,
@@ -49,6 +51,7 @@ const ConversationItem = memo(({
   onDelete: (id: string, e?: React.MouseEvent) => void
   onGenerateTitle: (conv: Conversation) => void
   onExport: (convId: string) => void
+  onExtractMemory: (conv: Conversation) => void
   isSelectMode: boolean
   isSelected: boolean
   onToggleSelect: (id: string) => void
@@ -75,6 +78,13 @@ const ConversationItem = memo(({
       label: t('workbench.exportConversation'),
       icon: <ExportOutlined />,
       onClick: () => onExport(conv.id),
+    },
+    { type: 'divider' as const },
+    {
+      key: 'extractMemory',
+      label: t('common.extractMemory'),
+      icon: <BulbOutlined />,
+      onClick: () => onExtractMemory(conv),
     },
     {
       key: 'delete',
@@ -206,6 +216,7 @@ const ConversationSidebar: React.FC<{
   isConversationStreaming: (convId: string) => boolean
   onGenerateTitle: (conv: Conversation) => void
   onExport: (convId: string) => void
+  onExtractMemory: (conv: Conversation) => void
 }> = ({
   conversations,
   allConversations,
@@ -226,6 +237,7 @@ const ConversationSidebar: React.FC<{
   isConversationStreaming,
   onGenerateTitle,
   onExport,
+  onExtractMemory,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -352,6 +364,7 @@ const ConversationSidebar: React.FC<{
             onDelete={onDelete}
             onGenerateTitle={onGenerateTitle}
             onExport={onExport}
+            onExtractMemory={onExtractMemory}
             isSelectMode={selectMode}
             isSelected={selectedIds.has(conv.id)}
             onToggleSelect={toggleSelect}

@@ -676,6 +676,9 @@ class KMSIndexManagerService {
       KMSCrawlerService.getInstance().updateFileDataTier(file.id, 'hot')
       KMSCrawlerService.getInstance().updateFileStatus(file.id, 'completed')
     })
+
+    // 文件重新索引后，标记引用此文件的知识卡片为过期
+    this.markCardsStaleForFile(file.id)
   }
 
   /**
@@ -799,6 +802,18 @@ class KMSIndexManagerService {
   cancelCollectionDeepProcess(): void {
     this.abortController?.abort()
     this.abortController = null
+  }
+
+  /**
+   * 标记引用指定文件的知识卡片为过期
+   * 使用动态 import 避免循环依赖
+   */
+  private markCardsStaleForFile(fileId: string): void {
+    import('./kms-knowledge-card.service').then(({ default: KMSKnowledgeCardService }) => {
+      KMSKnowledgeCardService.getInstance().markCardsStaleForFile(fileId)
+    }).catch((err: any) => {
+      logger.debug('markCardsStaleForFile failed:', err?.message || err)
+    })
   }
 
   // ════════════════════════════════════════════════════════════════

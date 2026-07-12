@@ -30,7 +30,7 @@ import { ConversationSidebar, ChatInput, MultiChatPanel } from '../components/wo
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
-import type { Employee } from '../types'
+import type { Employee, Conversation } from '../types'
 
 const { Text, Paragraph } = Typography
 
@@ -372,6 +372,22 @@ const EmployeeWorkbench: React.FC = () => {
     } catch {}
   }, [generateConversationTitle])
 
+  const handleExtractMemory = useCallback(async (conv: Conversation) => {
+    const hide = message.loading(t('workbench.extractingMemory'), 0)
+    try {
+      const result = await window.electronAPI.employee.extractConversationMemories({ conversation_id: conv.id })
+      hide()
+      if (result?.success) {
+        message.success(t('workbench.extractMemorySuccess'))
+      } else {
+        message.error(t('workbench.extractMemoryFailed'))
+      }
+    } catch {
+      hide()
+      message.error(t('workbench.extractMemoryFailed'))
+    }
+  }, [message, t])
+
   const handleSendWithReset = useCallback((content: string, images: string[], models: ModelSelection[]) => {
     setAttachedImages([])
     setSelectedModels([])
@@ -500,6 +516,7 @@ const EmployeeWorkbench: React.FC = () => {
             isConversationStreaming={isConversationStreaming}
             onGenerateTitle={handleGenerateTitle}
             onExport={handleExportConversation}
+            onExtractMemory={handleExtractMemory}
           />
         )}
 

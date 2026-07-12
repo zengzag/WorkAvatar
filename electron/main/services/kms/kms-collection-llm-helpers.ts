@@ -85,7 +85,7 @@ ${fileSummaries.join('\n')}
         { role: 'user', content: prompt },
       ],
       { summary: '', keyTopics: [] },
-      { temperature: 0.3, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking },
+      { temperature: 0.7, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking },
     )
 
     if (signal?.aborted) return { error: 'ABORTED' }

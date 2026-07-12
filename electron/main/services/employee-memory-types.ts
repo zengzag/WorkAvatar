@@ -52,14 +52,20 @@ export interface MemoryStats {
   staleCount: number
 }
 
-export const MEMORY_MAX_CHARS = 8000
-export const MEMORY_MAX_COUNT = 50
-export const MEMORY_CONSOLIDATION_THRESHOLD = 0.8
+/** 跨任务记忆注入 prompt 的总字符上限（含分隔符与主题标签），与 Hermes MEMORY.md 上限对齐 */
+export const MEMORY_MAX_CHARS = 3000
+/** 记忆条数上限，假设单条精炼后约 60 字符，约 50 条可达上限 */
+export const MEMORY_MAX_COUNT = 30
+/** 单条 content 字符上限（LLM 偶尔会写长句，需在服务层兜底截断） */
+export const MEMORY_CONTENT_MAX_CHARS = 80
+/** 整理触发阈值：总字符达到上限的 60% 即触发，更早整理以保留缓冲 */
+export const MEMORY_CONSOLIDATION_THRESHOLD = 0.6
 export const STALE_MEMORY_DAYS = 90
 export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
-export const EXTRACTION_MAX_EXISTING_MEMORIES = 15
+/** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
+export const EXTRACTION_MAX_EXISTING_MEMORIES = 12
 export const EXTRACTION_USER_MIN_CHARS = 10
-export const CONSOLIDATION_CANDIDATE_MAX = 20
+export const CONSOLIDATION_CANDIDATE_MAX = 15
 
 export const TRIVIAL_PATTERNS = [
   /^(你好|hi|hello|hey|谢谢|感谢|好的|ok|嗯|是|否|对|不|行|可以|再见|拜)/i,

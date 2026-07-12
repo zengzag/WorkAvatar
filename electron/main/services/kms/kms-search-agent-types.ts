@@ -1,5 +1,3 @@
-import type { SearchResult } from './kms-search-engine.service'
-
 /** 查询类型：定位查找 / 概念解释 / 趋势梳理 / 综合分析 */
 export type QueryType = 'locate' | 'concept' | 'trend' | 'analysis'
 
@@ -61,49 +59,9 @@ export const QUERY_TYPE_LABELS: Record<QueryType, string> = {
   analysis: '综合分析',
 }
 
-/** 单次读取文件片段的最大字符数 */
-export const READ_CHUNK_SIZE = 2000
-
-/** 文件清单条目（用于 LLM 判断哪些文件可能相关） */
-export interface FileInventoryItem {
-  fileId: string
-  fileName: string
-  filePath: string
-  fileExt: string
-  lightSummary: string
-}
-
-/** 作用域摘要条目（目录摘要或合集摘要） */
-export interface ScopeSummaryItem {
-  dirPath: string
-  summary: string
-  fileCount: number
-}
-
-/** LLM 规划输出 */
-export interface SearchPlan {
-  queries: string[]
-  useSemanticForAll: boolean
-  candidateFileIds: string[]
-}
-
 /** 默认 LLM 配置 */
 export interface AgentLLMConfig {
   providerId: string
   modelId: string | undefined
   enableThinking: boolean
 }
-
-/** 待读取文件信息 */
-export interface FileToRead {
-  fileId: string
-  fileName: string
-}
-
-/** distillResults 输出 */
-export interface DistilledResult {
-  conclusion: string
-  sources: AgentSearchSource[]
-}
-
-export type { SearchResult }

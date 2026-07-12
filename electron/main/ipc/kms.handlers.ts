@@ -18,6 +18,9 @@ import type {
   KMSRemoveFileFromCollectionParams,
   KMSSetCollectionSummaryParams,
   KMSSearchFilesParams,
+  KMSGetKnowledgeCardsParams,
+  KMSUpdateKnowledgeCardParams,
+  KMSSearchKnowledgeCardsParams,
 } from '../../shared/ipc-channels'
 import KMSService from '../services/kms/kms.service'
 import KMSMCPService from '../services/kms/kms-mcp.service'
@@ -406,5 +409,66 @@ export function registerKMSHandlers(): void {
   safeHandle(IPC_CHANNELS.KMS_MCP_SET_CONFIG, async (params: KMSMCPSetConfigParams) => {
     kmsMcpService.updateConfig(params)
     return { success: true }
+  })
+
+  // ==================== 知识卡片 ====================
+  safeHandle(IPC_CHANNELS.KMS_GET_KEYWORD_STATS, async (params?: { limit?: number; minCount?: number; recentDays?: number }) => {
+    return kmsService.getKeywordStats(params || {})
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARDS, async (params: KMSGetKnowledgeCardsParams) => {
+    return kmsService.getKnowledgeCards(params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARD, async (id: string) => {
+    return kmsService.getKnowledgeCard(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, async (event, keyword: string) => {
+    try {
+      const sender = event.sender
+      const result = await kmsService.generateKnowledgeCard(keyword, undefined, {
+        onProgress: (step) => {
+          try { if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, step) } catch (e) { /* ignore */ }
+        },
+      })
+      try { return structuredClone(result) } catch { return JSON.parse(JSON.stringify(result)) }
+    } catch (err: any) {
+      logger.error(`IPC handler error [KMS_GENERATE_KNOWLEDGE_CARD]:`, err?.message || err)
+      return { error: String(err?.message || err) }
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.KMS_REFRESH_KNOWLEDGE_CARD, async (event, id: string) => {
+    try {
+      const sender = event.sender
+      const result = await kmsService.refreshKnowledgeCard(id, undefined, {
+        onProgress: (step) => {
+          try { if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, step) } catch (e) { /* ignore */ }
+        },
+      })
+      try { return structuredClone(result) } catch { return JSON.parse(JSON.stringify(result)) }
+    } catch (err: any) {
+      logger.error(`IPC handler error [KMS_REFRESH_KNOWLEDGE_CARD]:`, err?.message || err)
+      return { error: String(err?.message || err) }
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_UPDATE_KNOWLEDGE_CARD, async (params: KMSUpdateKnowledgeCardParams) => {
+    return kmsService.updateKnowledgeCard(params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_KNOWLEDGE_CARD, async (id: string) => {
+    kmsService.deleteKnowledgeCard(id)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_PIN_KNOWLEDGE_CARD, async (params: { id: string; pinned: boolean }) => {
+    kmsService.pinKnowledgeCard(params.id, params.pinned)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_SEARCH_KNOWLEDGE_CARDS, async (params: KMSSearchKnowledgeCardsParams) => {
+    return kmsService.searchKnowledgeCards(params.query, params.topK)
   })
 }

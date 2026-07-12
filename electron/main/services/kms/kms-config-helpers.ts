@@ -19,11 +19,27 @@ export interface KmsSettings {
   model: any
   embeddingModel: any
   summaryModel: any
-  searchParams: { maxRounds: number; topK: number; resultLimit: number; autoReparseHotData: boolean }
+  searchParams: {
+    maxRounds: number
+    topK: number
+    resultLimit: number
+    autoReparseHotData: boolean
+    enableKnowledgeCards?: boolean
+    knowledgeCardThreshold?: number
+    autoRefreshStaleCards?: boolean
+  }
   autoIndex: { enabled: boolean; intervalMinutes: number; stableThresholdSeconds: number }
 }
 
-const DEFAULT_SEARCH_PARAMS = { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true }
+const DEFAULT_SEARCH_PARAMS = {
+  maxRounds: 5,
+  topK: 10,
+  resultLimit: 100,
+  autoReparseHotData: true,
+  enableKnowledgeCards: true,
+  knowledgeCardThreshold: 5,
+  autoRefreshStaleCards: true,
+}
 const DEFAULT_AUTO_INDEX = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
 
 /** 读取主库 settings 表中的 JSON 配置 */

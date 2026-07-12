@@ -276,4 +276,25 @@ export const MCP_TOOLS: MCPTool[] = [
       required: ['file_id'],
     },
   },
+  {
+    name: 'kms_knowledge_card',
+    description: 'Look up knowledge cards in the local search engine. Knowledge cards are auto-generated topic summaries based on frequently searched keywords, containing structured key points and source citations. Quick way to get answers for common questions. Returns summary, key points, and citations. Recommended to check before kms_search.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Topic to look up, matched against card keywords (exact + semantic)',
+        },
+        top_k: {
+          type: 'number',
+          description: 'Number of cards to return (1-5, default 3)',
+          minimum: 1,
+          maximum: 5,
+          default: 3,
+        },
+      },
+      required: ['query'],
+    },
+  },
 ]

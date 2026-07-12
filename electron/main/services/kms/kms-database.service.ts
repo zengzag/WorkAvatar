@@ -302,6 +302,52 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_collection_summaries_collection ON kms_collection_summaries(collection_id);
+
+      -- ==================== 知识卡片相关表 ====================
+      -- 关键词搜索频次统计（纯记录搜索关键词的频次，不存储搜索结果内容）
+      -- 与 kms_search_history 分离：search_history 按查询去重仅刷新时间戳，
+      -- keyword_stats 累计搜索次数用于热点词判定
+      CREATE TABLE IF NOT EXISTS kms_keyword_stats (
+        id TEXT PRIMARY KEY,
+        keyword TEXT NOT NULL UNIQUE,
+        display_keyword TEXT NOT NULL,
+        search_count INTEGER NOT NULL DEFAULT 0,
+        last_searched_at INTEGER NOT NULL DEFAULT 0,
+        first_searched_at INTEGER NOT NULL DEFAULT 0,
+        result_file_ids_json TEXT DEFAULT '[]',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_keyword_stats_keyword ON kms_keyword_stats(keyword);
+      CREATE INDEX IF NOT EXISTS idx_kms_keyword_stats_count ON kms_keyword_stats(search_count DESC);
+      CREATE INDEX IF NOT EXISTS idx_kms_keyword_stats_last ON kms_keyword_stats(last_searched_at DESC);
+
+      -- 知识卡片：基于用户高频搜索自动沉淀的主题知识
+      -- embedding/dimension/embedding_model 存储摘要向量，用于语义匹配（与 kms_collection_summaries 同模式）
+      CREATE TABLE IF NOT EXISTS kms_knowledge_cards (
+        id TEXT PRIMARY KEY,
+        keyword TEXT NOT NULL UNIQUE,
+        display_keyword TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        key_points_json TEXT DEFAULT '[]',
+        citations_json TEXT DEFAULT '[]',
+        related_file_ids_json TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'active',
+        pinned INTEGER NOT NULL DEFAULT 0,
+        search_count INTEGER NOT NULL DEFAULT 0,
+        embedding BLOB,
+        dimension INTEGER DEFAULT 0,
+        embedding_model TEXT DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_refreshed_at INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_keyword ON kms_knowledge_cards(keyword);
+      CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_status ON kms_knowledge_cards(status);
+      CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_pinned ON kms_knowledge_cards(pinned, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_refreshed ON kms_knowledge_cards(last_refreshed_at);
     `)
 
     this.migrateSchema()

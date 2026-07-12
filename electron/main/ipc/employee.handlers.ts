@@ -20,12 +20,14 @@ import type {
   EmployeeMemoryExtractParams,
   EmployeeMemoryConsolidateParams,
   EmployeeMemoryStatsParams,
+  EmployeeMemoryExtractConversationParams,
 } from '../../shared/ipc-channels'
 import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
+import MemoryRefinementService from '../services/memory-refinement.service'
 import { safeHandle } from './_shared'
 
 export function registerEmployeeHandlers(
@@ -236,5 +238,14 @@ export function registerEmployeeHandlers(
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, (params: EmployeeMemoryStatsParams) => {
     return memoryService.getMemoryStats(params.employee_id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT_CONVERSATION, async (_, params: EmployeeMemoryExtractConversationParams) => {
+    try {
+      const result = await MemoryRefinementService.getInstance().extractManually(params.conversation_id)
+      return result
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    }
   })
 }

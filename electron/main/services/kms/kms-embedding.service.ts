@@ -98,12 +98,13 @@ class KMSEmbeddingService {
     let totalProcessed = 0
     let embeddingError: string | undefined
 
-    // 统计总数：主库 content != '' 的条目数 - 向量库已嵌入数（近似值，可能因数据不一致略有偏差）
-    const totalRow = this.db.prepare(
-      "SELECT COUNT(*) as cnt FROM kms_search_index WHERE content != ''"
+    // 统计唯一 (source_type, source_id) 数：content_paragraph 类型同一文件多段落共享同一 key，
+    // 而 kms_embeddings 按 (source_type, source_id) 唯一存储，因此必须统计唯一 key 数才能准确估算
+    const uniqueRow = this.db.prepare(
+      "SELECT COUNT(*) as cnt FROM (SELECT DISTINCT source_type, source_id FROM kms_search_index WHERE content != '')"
     ).get() as any
-    const totalCandidates = totalRow?.cnt ?? 0
-    const totalToProcess = Math.max(0, totalCandidates - existingKeys.size)
+    const uniqueCandidates = uniqueRow?.cnt ?? 0
+    const totalToProcess = Math.max(0, uniqueCandidates - existingKeys.size)
 
     logger.info(`Embedding generation: ${totalToProcess} entry(s) to process (forceRegenerate=${forceRegenerate}, provider=${providerId})`)
 
@@ -129,8 +130,17 @@ class KMSEmbeddingService {
 
       lastId = candidates[candidates.length - 1].id
 
-      // 应用层过滤：排除向量库中已存在的条目
-      const unembedded = candidates.filter(c => !existingKeys.has(`${c.source_type}:${c.source_id}`))
+      // 应用层过滤：排除向量库中已存在的条目 + 同页内 (source_type, source_id) 去重
+      // content_paragraph 类型同一文件多段落共享同一 key，只取第一条即可
+      const seenInPage = new Set<string>()
+      const unembedded: typeof candidates = []
+      for (const c of candidates) {
+        const key = `${c.source_type}:${c.source_id}`
+        if (!existingKeys.has(key) && !seenInPage.has(key)) {
+          seenInPage.add(key)
+          unembedded.push(c)
+        }
+      }
 
       if (unembedded.length === 0) {
         if (candidates.length < pageLimit) break
@@ -158,7 +168,6 @@ class KMSEmbeddingService {
           }
           if (batchEntries.length > 0) {
             searchEngine.storeEmbeddingsBatch(batchEntries)
-            // 写入后更新 Set，避免同一批次内重复处理
             for (const entry of batchEntries) {
               existingKeys.add(`${entry.sourceType}:${entry.sourceId}`)
             }
@@ -219,8 +228,16 @@ class KMSEmbeddingService {
         existingKeys.add(`${row.source_type}:${row.source_id}`)
       }
 
-      // 应用层过滤未嵌入条目
-      const unembedded = candidates.filter(c => !existingKeys.has(`${c.source_type}:${c.source_id}`))
+      // 应用层过滤未嵌入条目 + 同文件内 (source_type, source_id) 去重
+      const seen = new Set<string>()
+      const unembedded: typeof candidates = []
+      for (const c of candidates) {
+        const key = `${c.source_type}:${c.source_id}`
+        if (!existingKeys.has(key) && !seen.has(key)) {
+          seen.add(key)
+          unembedded.push(c)
+        }
+      }
       if (unembedded.length === 0) return {}
 
       const batchSize = 20

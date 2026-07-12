@@ -5,6 +5,8 @@ import KMSSearchInput from './KMSSearchInput'
 import KMSFilterPanel from './KMSFilterPanel'
 import KMSSearchResultList from './KMSSearchResultList'
 import KMSAgentResult from './KMSAgentResult'
+import KnowledgeCardBanner from './KnowledgeCardBanner'
+import KnowledgeCardDetail from './KnowledgeCardDetail'
 import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
@@ -100,6 +102,8 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   const [filterExtensions, setFilterExtensions] = useState<string[]>([])
   const [filterTimeRange, setFilterTimeRange] = useState<[number, number] | null>(null)
   const [collectionOptions, setCollectionOptions] = useState<{ label: string; value: string }[]>([])
+  const [selectedCard, setSelectedCard] = useState<any>(null)
+  const [cardDetailOpen, setCardDetailOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -132,12 +136,17 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
 
   const handlePickHistory = useCallback((item: SearchHistoryItem) => {
     onSearchQueryChange(item.query)
-    // 直接用选中的 query 触发搜索（避免 state 异步更新导致读到旧值）
-    if (item.search_mode) {
-      onSearchModeChange(item.search_mode as SearchMode)
+    // 历史记录只还原文本，以用户当前选择的模式触发搜索
+    onSearch(item.query.trim(), searchMode, buildFilters())
+  }, [onSearchQueryChange, onSearch, searchMode, buildFilters])
+
+  const handleSearchModeChange = useCallback((mode: SearchMode) => {
+    onSearchModeChange(mode)
+    // 切换模式后自动以新模式重新搜索
+    if (searchQuery.trim() && !isSearching) {
+      onSearch(searchQuery.trim(), mode, buildFilters())
     }
-    onSearch(item.query.trim(), (item.search_mode || searchMode) as SearchMode, buildFilters())
-  }, [onSearchQueryChange, onSearchModeChange, onSearch, searchMode, buildFilters])
+  }, [onSearchModeChange, searchQuery, isSearching, onSearch, buildFilters])
 
   const searchKeywords = useMemo(() => {
     if (!searchQuery.trim()) return []
@@ -163,7 +172,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
         searchQuery={searchQuery}
         onSearchQueryChange={onSearchQueryChange}
         searchMode={searchMode}
-        onSearchModeChange={onSearchModeChange}
+        onSearchModeChange={handleSearchModeChange}
         isSearching={isSearching}
         onSearch={handleSearch}
         searchHistory={searchHistory}
@@ -188,6 +197,18 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
       />
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {/* 知识卡片横幅：搜索词匹配到已有卡片时显示 */}
+        {searchQuery.trim() && !isSearching && (
+          <div style={{ marginBottom: 8 }}>
+            <KnowledgeCardBanner
+              query={searchQuery.trim()}
+              onViewCard={(card) => {
+                setSelectedCard(card)
+                setCardDetailOpen(true)
+              }}
+            />
+          </div>
+        )}
         {isSearching ? (
           searchMode === 'ai' && liveSteps.length > 0 ? (
             <div style={{ padding: '12px 4px' }}>
@@ -249,6 +270,14 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
           />
         )}
       </div>
+
+      {/* 知识卡片详情抽屉 */}
+      <KnowledgeCardDetail
+        card={selectedCard}
+        open={cardDetailOpen}
+        onClose={() => setCardDetailOpen(false)}
+        onOpenFile={onOpenFile}
+      />
     </div>
   )
 }

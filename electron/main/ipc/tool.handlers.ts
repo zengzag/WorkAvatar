@@ -31,7 +31,7 @@ function getUnifiedBuiltinToolCatalog() {
   }))
 
   // KMS 合集管理工具
-  const kmsCollectionTools = createKMSCollectionTools({ current: [] }).map(t => ({
+  const kmsCollectionTools = createKMSCollectionTools({ current: { collectionIds: [] } }).map(t => ({
     id: t.id,
     name: t.name,
     title: t.title,

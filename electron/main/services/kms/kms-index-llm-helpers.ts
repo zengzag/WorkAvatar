@@ -61,7 +61,7 @@ ${numberedContent}
       { role: 'user', content: userPrompt },
     ],
     { toc: [] },
-    { temperature: 0.1, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking },
+    { temperature: 0.7, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking },
   )
   return Array.isArray(parsed.toc) ? parsed.toc : []
 }
@@ -281,7 +281,7 @@ export async function generateFileSummary(
       { role: 'user', content: summaryPrompt },
     ],
     { summary: '', keywords: [], main_topics: [] },
-    { temperature: 0.1, maxTokens: 500, signal, enable_thinking: enableThinking },
+    { temperature: 0.7, maxTokens: 500, signal, enable_thinking: enableThinking },
   )
 
   if (signal?.aborted) return
@@ -358,7 +358,7 @@ ${fileList}
           { role: 'user', content: prompt },
         ],
         { summary: '', keywords: [] },
-        { temperature: 0.1, maxTokens: 400, signal, logSource, enable_thinking: enableThinking },
+        { temperature: 0.7, maxTokens: 400, signal, logSource, enable_thinking: enableThinking },
       )
       const summary = parsed.summary || ''
       if (summary) {
