@@ -4,6 +4,8 @@ copyright: Copyright © 2024 WorkAvatar
 
 npmRebuild: false
 
+afterPack: scripts/afterPack.cjs
+
 directories:
   output: release/${version}
 
@@ -11,8 +13,80 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - package.json
-  # 构建元信息（prebuild 由 scripts/generate-build-info.mjs 生成），主进程启动日志读取
   - build-info.json
+  # ── 排除 Vite 已打包的 renderer 依赖（它们已内联在 dist/ 中） ──
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/antd/**"
+  - "!node_modules/@ant-design/**"
+  - "!node_modules/@rc-component/**"
+  - "!node_modules/zustand/**"
+  - "!node_modules/react-markdown/**"
+  - "!node_modules/react-router-dom/**"
+  - "!node_modules/react-router/**"
+  - "!node_modules/@remix-run/**"
+  - "!node_modules/react-i18next/**"
+  - "!node_modules/i18next/**"
+  - "!node_modules/immer/**"
+  - "!node_modules/react-syntax-highlighter/**"
+  - "!node_modules/rehype-katex/**"
+  - "!node_modules/remark-gfm/**"
+  - "!node_modules/remark-math/**"
+  - "!node_modules/katex/**"
+  - "!node_modules/dayjs/**"
+  - "!node_modules/@file-viewer/**"
+  - "!node_modules/mermaid/**"
+  - "!node_modules/@mermaid-js/**"
+  - "!node_modules/three/**"
+  - "!node_modules/maplibre-gl/**"
+  - "!node_modules/@maplibre/**"
+  - "!node_modules/hls.js/**"
+  - "!node_modules/ag-psd/**"
+  - "!node_modules/@myriaddreamin/**"
+  - "!node_modules/@mlightcad/**"
+  - "!node_modules/@flyfish-dev/**"
+  - "!node_modules/docx/**"
+  - "!node_modules/pptxgenjs/**"
+  - "!node_modules/filesize/**"
+  - "!node_modules/js-yaml/**"
+  # ── 排除开发时依赖（不应出现在生产包） ──
+  - "!node_modules/.vite/**"
+  - "!node_modules/typescript/**"
+  - "!node_modules/@esbuild/**"
+  - "!node_modules/esbuild/**"
+  - "!node_modules/lightningcss*/**"
+  - "!node_modules/@rolldown/**"
+  - "!node_modules/app-builder-bin/**"
+  - "!node_modules/7zip-bin/**"
+  - "!node_modules/electron-winstaller/**"
+  - "!node_modules/electron-builder*/**"
+  - "!node_modules/@electron/rebuild/**"
+  - "!node_modules/.cache/**"
+  # ── 排除纯开发用途的 transitive 依赖 ──
+  - "!node_modules/sql.js/**"
+  - "!node_modules/diff2html/**"
+  - "!node_modules/billboard.js/**"
+  - "!node_modules/cytoscape/**"
+  - "!node_modules/cytoscape-fcose/**"
+  - "!node_modules/epubjs/**"
+  - "!node_modules/rtf.js/**"
+  # ── sharp 已移除（改用 Electron nativeImage），排除其残留 ──
+  - "!node_modules/sharp/**"
+  - "!node_modules/@img/**"
+  # ── onnxruntime-node：仅保留 win32/x64，排除其他平台二进制 ──
+  - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+  # ── 全局排除开发时文件模式 ──
+  - "!**/*.{d.ts,map}"
+  - "!**/{test,tests,__tests__,spec,fixtures,mocks}/**"
+  - "!**/README*"
+  - "!**/CHANGELOG*"
+  - "!**/LICENSE*"
+  - "!**/.github/**"
+  - "!**/.eslintrc*"
+  - "!**/.prettierrc*"
+  - "!**/tsconfig*"
 
 extraResources:
   - from: resources/

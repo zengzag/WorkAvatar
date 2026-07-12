@@ -25,7 +25,6 @@ const nativeExternals = [
   // OCR：PaddleOCR ONNX 推理
   'paddleocr',
   'onnxruntime-node',
-  'sharp',
 ]
 
 // 读取 build-info.json（在 predev/prebuild 中由 scripts/generate-build-info.mjs 生成）

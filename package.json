@@ -1,6 +1,6 @@
 {
   "name": "workavatar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "本地优先的办公数字员工",
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -51,7 +51,6 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "sharp": "^0.34.5",
     "sqlite-vec": "^0.1.9",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",
