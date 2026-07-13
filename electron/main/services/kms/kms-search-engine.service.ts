@@ -1454,7 +1454,8 @@ class KMSSearchEngineService {
 
     // 仅更新 __all__ 缓存（若已存在），追加新条目而非全量清空，避免批量写入时缓存命中率归零
     // 通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
-    this.embeddingCache.update('__all__', entries => {
+    // Worker 模式下 embeddingCache 为 null，跳过缓存更新（Worker 仅做写入，搜索读取在主线程）
+    this.embeddingCache?.update('__all__', entries => {
       entries.push({
         id: sourceId,
         sourceType,
@@ -1519,7 +1520,8 @@ class KMSSearchEngineService {
     tx()
 
     // 增量更新缓存：通过 LRU update 接口原地修改并重算字节，超限时自动淘汰
-    this.embeddingCache.update('__all__', allCache => {
+    // Worker 模式下 embeddingCache 为 null，跳过缓存更新（Worker 仅做写入，搜索读取在主线程）
+    this.embeddingCache?.update('__all__', allCache => {
       for (const e of entries) {
         const existingIdx = allCache.findIndex(c => c.sourceType === e.sourceType && c.sourceId === e.sourceId)
         const entry: EmbeddingEntry = {

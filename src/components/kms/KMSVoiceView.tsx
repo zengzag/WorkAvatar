@@ -170,7 +170,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const { message, modal } = App.useApp()
   const {
     tasks, settings, progress,
-    loadTasks, loadSettings, saveSettings,
+    loadTasks, loadSettings,
     createTask, updateTask, deleteTask,
     saveAudio, saveSecondaryAudio, mergeDualSourceTranscript,
     transcribe, cancelTranscribe,
@@ -183,6 +183,15 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const [isRecording, setIsRecording] = useState(false)
   const [isPaused, setIsPaused] = useState(false)
   const [recordSource, setRecordSource] = useState<RecordSource>('mic')
+  /** 每个任务的 STT 引擎模式（优先于全局设置） */
+  const [taskSttMode, setTaskSttMode] = useState<'local' | 'api'>(() => (settings?.sttMode as 'local' | 'api') || 'local')
+
+  // 全局设置变化时同步任务级别默认值
+  useEffect(() => {
+    if (settings?.sttMode) {
+      setTaskSttMode(settings.sttMode as 'local' | 'api')
+    }
+  }, [settings?.sttMode])
   const [recordDuration, setRecordDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
   // 每个来源的实时识别状态
@@ -827,7 +836,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       }, 200)
 
       // 启动实时识别（仅本地模式）
-      const isLocalMode = settings?.sttMode === 'local'
+      const isLocalMode = taskSttMode === 'local'
       if (isLocalMode) {
         if (isDual) {
           // Dual source mode: create two realtime sessions with suffixed taskIds
@@ -930,11 +939,11 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       return
     }
     try {
-      await transcribe(task.id, settings.sttMode === 'api' ? settings.apiConfig.language : settings.localConfig.language)
+      await transcribe(task.id, taskSttMode === 'api' ? settings.apiConfig.language : settings.localConfig.language)
     } catch (err: any) {
       message.error(t('voice.transcribeFailed') + ': ' + (err?.message || ''))
     }
-  }, [settings, transcribe, t, message, onOpenSettings])
+  }, [settings, transcribe, t, message, onOpenSettings, taskSttMode])
 
   const handleGenerateMinutes = useCallback(async (task: VoiceTask, minutesType: string, customPrompt?: string) => {
     if (!settings?.minutesModel?.provider_id) {
@@ -1070,7 +1079,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         const partialText = text.slice(completedText.length)
 
         if (!text && segments.length === 0) {
-          return settings?.sttMode === 'local' && !sourcePaused ? (
+          return taskSttMode === 'local' && !sourcePaused ? (
             <Text type="secondary" style={{ fontSize: 13 }}>
               <ThunderboltOutlined /> {t('voice.realtimeRecognizing')}
             </Text>
@@ -1266,7 +1275,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                 {!realtimeText && realtimeSegments.length === 0 ? (
                   <div style={{ textAlign: 'center', paddingTop: 60 }}>
                     <Text type="secondary" style={{ fontSize: 13 }}>
-                      {settings?.sttMode === 'local'
+                      {taskSttMode === 'local'
                         ? <><ThunderboltOutlined /> {t('voice.realtimeRecognizing')}</>
                         : t('voice.recordingNoRealtime')}
                     </Text>
@@ -1343,6 +1352,20 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           flexDirection: 'column',
           gap: 12,
         }}>
+          {/* STT 引擎选择 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text strong>{t('voice.sttEngine')}</Text>
+            <Select
+              size="small"
+              style={{ width: 140 }}
+              value={taskSttMode}
+              onChange={(val) => setTaskSttMode(val as 'local' | 'api')}
+              options={[
+                { label: <span><DesktopOutlined /> {t('voice.sttModeLocal')}</span>, value: 'local' },
+                { label: <span><CloudServerOutlined /> {t('voice.sttModeApi')}</span>, value: 'api' },
+              ]}
+            />
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Text strong>{t('voice.audioSource')}</Text>
             <Tooltip title={recordSource === 'system' || recordSource === 'both' ? t('voice.systemAudioHint') : t('voice.micHint')}>
@@ -1382,21 +1405,26 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       width: '100%',
       filter: isDarkMode ? 'invert(0.88) hue-rotate(180deg)' : 'none',
     }
+    const audioProps = {
+      controls: true,
+      controlsList: 'nodownload nofullscreen noremoteplayback' as const,
+      style: audioStyle,
+    }
     return (
       <div style={{ marginBottom: 16 }}>
         {secondaryUrl && (
           <div style={{ marginBottom: 8 }}>
             <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>🎤 {t('voice.micSource')}</Text>
-            <audio controls src={audioUrl} style={audioStyle} />
+            <audio src={audioUrl} {...audioProps} />
           </div>
         )}
         {secondaryUrl ? (
           <div>
             <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>🔊 {t('voice.systemSource')}</Text>
-            <audio controls src={secondaryUrl} style={audioStyle} />
+            <audio src={secondaryUrl} {...audioProps} />
           </div>
         ) : (
-          <audio controls src={audioUrl} style={audioStyle} />
+          <audio src={audioUrl} {...audioProps} />
         )}
       </div>
     )
@@ -1675,22 +1703,8 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
       {/* Right: Task Detail */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {/* Toolbar with STT engine dropdown + subtitle toggle + settings */}
+        {/* Toolbar with subtitle toggle + settings */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 8, gap: 8 }}>
-          <Select
-            size="small"
-            style={{ width: 140 }}
-            value={settings?.sttMode || 'local'}
-            onChange={(val) => {
-              if (settings) {
-                saveSettings({ ...settings, sttMode: val as 'local' | 'api' })
-              }
-            }}
-            options={[
-              { label: <span><DesktopOutlined /> {t('voice.sttModeLocal')}</span>, value: 'local' },
-              { label: <span><CloudServerOutlined /> {t('voice.sttModeApi')}</span>, value: 'api' },
-            ]}
-          />
           <Tooltip title={subtitleVisible ? t('voice.subtitleHide') : t('voice.subtitleShow')}>
             <Button
               size="small"

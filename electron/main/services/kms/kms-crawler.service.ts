@@ -152,6 +152,9 @@ class KMSCrawlerService {
       ...newCandidates,
       ...modifiedCandidates.map(c => c.diskFile),
     ]
+    if (hashItems.length > 0) {
+      logger.info(`Detect "${dirPath}": hashing ${hashItems.length} files...`)
+    }
     const hashMap = await this.parallelCalculateFileHash(hashItems, 16, signal)
 
     const newFiles = newCandidates
@@ -491,6 +494,7 @@ class KMSCrawlerService {
     const dirQueue: string[] = [dirPath]
     let dirsScanned = 0
     const BATCH_SIZE = 50
+    const LOG_INTERVAL = 100  // 每累计 100 个匹配文件输出一次日志
 
     while (dirQueue.length > 0) {
       if (signal?.aborted) break
@@ -527,6 +531,9 @@ class KMSCrawlerService {
               fileSize: stat.size,
               modifiedTime: Math.floor(stat.mtimeMs / 1000),
             })
+            if (results.length % LOG_INTERVAL === 0) {
+              logger.info(`Scan "${dirPath}": found ${results.length} files so far (last: ${entry.name})`)
+            }
           } catch {
             // skip
           }
@@ -536,6 +543,10 @@ class KMSCrawlerService {
       if (dirsScanned % BATCH_SIZE === 0) {
         await new Promise(resolve => setImmediate(resolve))
       }
+    }
+
+    if (results.length > 0) {
+      logger.info(`Scan "${dirPath}": total ${results.length} files in ${dirsScanned} dirs`)
     }
 
     return results
