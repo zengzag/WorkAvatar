@@ -515,6 +515,13 @@ class KMSDatabaseService {
     this.enforceUniqueFileHash()
 
     this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
+
+    // kms_voice_tasks: 添加 secondary_audio_path 列（双源录音时存储系统音频路径）
+    const voiceCols = this.db.prepare("PRAGMA table_info(kms_voice_tasks)").all() as any[]
+    const voiceColNames = voiceCols.map(c => c.name)
+    if (!voiceColNames.includes('secondary_audio_path')) {
+      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN secondary_audio_path TEXT")
+    }
   }
 
   private enforceUniqueFileHash(): void {

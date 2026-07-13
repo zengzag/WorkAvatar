@@ -1,5 +1,6 @@
 import DatabaseService from './database.service'
 import EmployeeMemoryService from './employee-memory.service'
+import LLMClientService from './llm-client.service'
 import { ScheduledTaskBase } from './scheduled-task-base'
 import { createLogger } from './logger'
 
@@ -141,14 +142,38 @@ class MemoryRefinementService extends ScheduledTaskBase {
   }
 
   private async resolveEmployeeLLM(): Promise<{ providerId: string; modelId?: string }> {
-    // 员工未存储默认 provider，使用默认 provider（回退到任意 provider）
-    const provider = this.db.getDb().prepare(
+    const db = this.db.getDb()
+    const llmClient = LLMClientService.getInstance()
+
+    // 优先级1：记忆提取专用模型 (default_model_memory)
+    const memorySetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_model_memory') as { value: string } | undefined
+    if (memorySetting?.value) {
+      try {
+        const config = JSON.parse(memorySetting.value) as { provider_id: string; model_id: string }
+        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
+          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+        }
+      } catch { /* ignore parse error */ }
+    }
+
+    // 优先级2：工作台默认模型 (default_model_workbench)
+    const workbenchSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('default_model_workbench') as { value: string } | undefined
+    if (workbenchSetting?.value) {
+      try {
+        const config = JSON.parse(workbenchSetting.value) as { provider_id: string; model_id: string }
+        if (config.provider_id && llmClient.getProvider(config.provider_id)) {
+          return { providerId: config.provider_id, modelId: config.model_id || undefined }
+        }
+      } catch { /* ignore parse error */ }
+    }
+
+    // 优先级3：回退到任意可用 provider
+    const provider = db.prepare(
       'SELECT id, model, models_json FROM llm_providers ORDER BY is_default DESC LIMIT 1'
     ).get() as { id: string; model: string; models_json: string } | undefined
 
     if (!provider?.id) return { providerId: '', modelId: undefined }
 
-    // 从 models_json 解析默认模型，回退到 provider.model
     let modelId: string | undefined
     try {
       const models = JSON.parse(provider.models_json || '[]') as Array<{ id?: string; model?: string; is_default?: boolean }>

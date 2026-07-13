@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Space, Typography, Input, Button, Radio, Divider, App, theme, Select, Tag,
+  Card, Space, Typography, Input, Button, Radio, Divider, App, theme, Tag,
+  InputNumber, ColorPicker, Select,
 } from 'antd'
 import {
-  CloudServerOutlined, DesktopOutlined, AudioOutlined, RobotOutlined, SaveOutlined,
-  FolderOpenOutlined, CheckCircleOutlined, ExclamationCircleOutlined,
+  CloudServerOutlined, DesktopOutlined, AudioOutlined, RobotOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined,
+  DesktopOutlined as SubtitleIcon,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import type { VoiceSettings, VoiceLocalModelStatus } from '../../hooks/useVoice'
@@ -16,24 +18,53 @@ interface KMSVoiceSettingsProps {
   settings: VoiceSettings | null
   onSaveSettings: (settings: VoiceSettings) => Promise<boolean>
   onCheckLocalModel?: () => Promise<VoiceLocalModelStatus>
-  onSelectDirectory?: () => Promise<string | null>
 }
 
 const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
-  settings, onSaveSettings, onCheckLocalModel, onSelectDirectory,
+  settings, onSaveSettings, onCheckLocalModel,
 }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
 
   const [localSettings, setLocalSettings] = useState<VoiceSettings | null>(settings)
-  const [saving, setSaving] = useState(false)
   const [modelStatus, setModelStatus] = useState<VoiceLocalModelStatus | null>(null)
   const [checking, setChecking] = useState(false)
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([])
+  const skipAutoSaveRef = useRef(true)
 
   useEffect(() => {
     setLocalSettings(settings)
+    skipAutoSaveRef.current = true
   }, [settings])
+
+  // 自动保存：localSettings 变化后延迟 500ms 保存（跳过 prop 同步引起的变化）
+  useEffect(() => {
+    if (skipAutoSaveRef.current) {
+      skipAutoSaveRef.current = false
+      return
+    }
+    if (!localSettings) return
+    const timer = setTimeout(() => {
+      onSaveSettings(localSettings)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [localSettings, onSaveSettings])
+
+  // 枚举可用麦克风设备
+  useEffect(() => {
+    const enumerate = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        setMicDevices(devices.filter(d => d.kind === 'audioinput'))
+      } catch (err) {
+        console.error('Failed to enumerate mic devices:', err)
+      }
+    }
+    enumerate()
+    navigator.mediaDevices.addEventListener('devicechange', enumerate)
+    return () => navigator.mediaDevices.removeEventListener('devicechange', enumerate)
+  }, [])
 
   const update = useCallback((partial: Partial<VoiceSettings>) => {
     setLocalSettings(prev => prev ? { ...prev, ...partial } : prev)
@@ -44,33 +75,17 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
     setLocalSettings(prev => prev ? { ...prev, apiConfig: { ...prev.apiConfig, ...partial } } : prev)
   }, [])
 
-  const updateLocalConfig = useCallback((partial: Partial<VoiceSettings['localConfig']>) => {
-    setLocalSettings(prev => prev ? { ...prev, localConfig: { ...prev.localConfig, ...partial } } : prev)
-    setModelStatus(null)
+  const updateSubtitleConfig = useCallback((partial: Partial<VoiceSettings['subtitleConfig']>) => {
+    setLocalSettings(prev => prev ? {
+      ...prev,
+      subtitleConfig: { ...prev.subtitleConfig, ...partial },
+    } : prev)
   }, [])
-
-  const handleSave = useCallback(async () => {
-    if (!localSettings) return
-    setSaving(true)
-    try {
-      const ok = await onSaveSettings(localSettings)
-      if (ok) {
-        message.success(t('common.saveSuccess'))
-      } else {
-        message.error(t('common.saveFailed'))
-      }
-    } catch {
-      message.error(t('common.saveFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }, [localSettings, onSaveSettings, t, message])
 
   const handleCheckModel = useCallback(async () => {
     if (!onCheckLocalModel) return
     setChecking(true)
     try {
-      // Save first to ensure latest config is checked
       if (localSettings) {
         await onSaveSettings(localSettings)
       }
@@ -88,18 +103,6 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
     }
   }, [onCheckLocalModel, localSettings, onSaveSettings, t, message])
 
-  const handleSelectDir = useCallback(async () => {
-    if (!onSelectDirectory) return
-    try {
-      const dir = await onSelectDirectory()
-      if (dir) {
-        updateLocalConfig({ modelDir: dir })
-      }
-    } catch (err: any) {
-      message.error(err?.message || 'Failed to select directory')
-    }
-  }, [onSelectDirectory, updateLocalConfig, message])
-
   if (!localSettings) {
     return <div style={{ padding: 20 }}><Text type="secondary">{t('voice.loadingSettings')}</Text></div>
   }
@@ -113,8 +116,8 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
           onChange={(e) => update({ sttMode: e.target.value })}
           style={{ marginBottom: 16 }}
         >
-          <Radio.Button value="api"><CloudServerOutlined /> {t('voice.sttModeApi')}</Radio.Button>
           <Radio.Button value="local"><DesktopOutlined /> {t('voice.sttModeLocal')}</Radio.Button>
+          <Radio.Button value="api"><CloudServerOutlined /> {t('voice.sttModeApi')}</Radio.Button>
         </Radio.Group>
 
         <div style={{ marginBottom: 8, padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
@@ -124,6 +127,44 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
               : t('voice.sttModeLocalHint')}
           </Text>
         </div>
+
+        {/* Local Config */}
+        {localSettings.sttMode === 'local' && (
+          <>
+            <Divider style={{ margin: '12px 0' }} />
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <div style={{ padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
+                <Text>
+                  <DesktopOutlined /> {t('voice.localModelBuiltin')}
+                </Text>
+                <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+                  {t('voice.localModelBuiltinHint')}
+                </Text>
+              </div>
+              {/* Model status check */}
+              <Space>
+                <Button
+                  icon={<CheckCircleOutlined />}
+                  loading={checking}
+                  onClick={handleCheckModel}
+                >
+                  {t('voice.checkModel')}
+                </Button>
+                {modelStatus && (
+                  modelStatus.available ? (
+                    <Tag icon={<CheckCircleOutlined />} color="success">
+                      {t('voice.modelAvailable')}
+                    </Tag>
+                  ) : (
+                    <Tag icon={<ExclamationCircleOutlined />} color="error">
+                      {modelStatus.error || t('voice.localModelNotConfigured')}
+                    </Tag>
+                  )
+                )}
+              </Space>
+            </Space>
+          </>
+        )}
 
         {/* API Config */}
         {localSettings.sttMode === 'api' && (
@@ -169,79 +210,33 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
             </Space>
           </>
         )}
+      </Card>
 
-        {/* Local Config */}
-        {localSettings.sttMode === 'local' && (
-          <>
-            <Divider style={{ margin: '12px 0' }} />
-            <Space direction="vertical" style={{ width: '100%' }} size={12}>
-              <div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.localModelType')}</Text>
-                <Select
-                  value={localSettings.localConfig.modelType}
-                  onChange={(val) => updateLocalConfig({ modelType: val })}
-                  style={{ width: 200 }}
-                  options={[
-                    { value: 'whisper', label: 'Whisper (多语言)' },
-                    { value: 'paraformer', label: 'Paraformer (中文)' },
-                    { value: 'zipformer', label: 'Zipformer (中英文)' },
-                  ]}
-                />
-              </div>
-              <div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.localModelPath')}</Text>
-                <Space.Compact style={{ width: '100%' }}>
-                  <Input
-                    value={localSettings.localConfig.modelDir}
-                    onChange={(e) => updateLocalConfig({ modelDir: e.target.value })}
-                    placeholder={t('voice.localModelPathHint')}
-                  />
-                  <Button
-                    icon={<FolderOpenOutlined />}
-                    onClick={handleSelectDir}
-                  >
-                    {t('voice.selectModelDir')}
-                  </Button>
-                </Space.Compact>
-              </div>
-              <div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.language')}</Text>
-                <Input
-                  value={localSettings.localConfig.language}
-                  onChange={(e) => updateLocalConfig({ language: e.target.value })}
-                  placeholder="zh"
-                  style={{ width: 100 }}
-                />
-              </div>
-              <div style={{ padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('voice.localModelPathHint')}
-                </Text>
-              </div>
-              {/* Model status check */}
-              <Space>
-                <Button
-                  icon={<CheckCircleOutlined />}
-                  loading={checking}
-                  onClick={handleCheckModel}
-                >
-                  {t('voice.checkModel')}
-                </Button>
-                {modelStatus && (
-                  modelStatus.available ? (
-                    <Tag icon={<CheckCircleOutlined />} color="success">
-                      {t('voice.modelAvailable')}
-                    </Tag>
-                  ) : (
-                    <Tag icon={<ExclamationCircleOutlined />} color="error">
-                      {modelStatus.error || t('voice.localModelNotConfigured')}
-                    </Tag>
-                  )
-                )}
-              </Space>
-            </Space>
-          </>
-        )}
+      {/* Microphone Device Selection */}
+      <Card size="small" title={<Space><AudioOutlined /> {t('voice.micDevice')}</Space>}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+          {t('voice.micDeviceHint')}
+        </Text>
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Select
+            style={{ width: '100%' }}
+            value={localSettings.micDeviceId || ''}
+            onChange={(val) => update({ micDeviceId: val })}
+            placeholder={t('voice.micDeviceDefault')}
+            options={[
+              { label: t('voice.micDeviceDefault'), value: '' },
+              ...micDevices.map(d => ({
+                label: d.label || `Device ${d.deviceId.slice(0, 8)}`,
+                value: d.deviceId,
+              })),
+            ]}
+          />
+          {micDevices.length === 0 && (
+            <Text type="warning" style={{ fontSize: 12 }}>
+              <ExclamationCircleOutlined /> {t('voice.micDevicePermissionHint')}
+            </Text>
+          )}
+        </Space>
       </Card>
 
       {/* Minutes LLM Model */}
@@ -258,17 +253,93 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
         />
       </Card>
 
-      {/* Save Button */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={saving}
-          onClick={handleSave}
-        >
-          {t('common.save')}
-        </Button>
-      </div>
+      {/* Floating Subtitle Settings */}
+      <Card size="small" title={<Space><SubtitleIcon /> {t('voice.subtitleSettings')}</Space>}>
+        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+          {t('voice.subtitleEnabledHint')}
+        </Text>
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleFontSize')}</Text>
+            <InputNumber
+              min={12}
+              max={72}
+              value={localSettings.subtitleConfig.fontSize}
+              onChange={(val) => updateSubtitleConfig({ fontSize: val || 28 })}
+              style={{ width: 120 }}
+            />
+            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>px</Text>
+          </div>
+          <Space size={24}>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleTextColor')}</Text>
+              <ColorPicker
+                value={localSettings.subtitleConfig.textColor}
+                onChange={(color) => updateSubtitleConfig({ textColor: color.toHexString() })}
+              >
+                <div style={{
+                  width: 40, height: 24, borderRadius: 4,
+                  background: localSettings.subtitleConfig.textColor,
+                  border: `1px solid ${token.colorBorder}`,
+                  cursor: 'pointer',
+                }} />
+              </ColorPicker>
+            </div>
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleBgColor')}</Text>
+              <ColorPicker
+                value={localSettings.subtitleConfig.backgroundColor}
+                onChange={(color) => updateSubtitleConfig({ backgroundColor: color.toHexString() })}
+              >
+                <div style={{
+                  width: 40, height: 24, borderRadius: 4,
+                  background: localSettings.subtitleConfig.backgroundColor,
+                  border: `1px solid ${token.colorBorder}`,
+                  cursor: 'pointer',
+                }} />
+              </ColorPicker>
+            </div>
+          </Space>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>
+              {t('voice.subtitleOpacity')}: {localSettings.subtitleConfig.backgroundOpacity}%
+            </Text>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={localSettings.subtitleConfig.backgroundOpacity}
+              onChange={(e) => updateSubtitleConfig({ backgroundOpacity: Number(e.target.value) })}
+              style={{ width: '100%', accentColor: token.colorPrimary }}
+            />
+          </div>
+          <div>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleWindowSize')}</Text>
+            <Space>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleWidth')}</Text>
+                <InputNumber
+                  min={300}
+                  max={1920}
+                  value={localSettings.subtitleConfig.windowWidth}
+                  onChange={(val) => updateSubtitleConfig({ windowWidth: val || 600 })}
+                  style={{ width: 100 }}
+                />
+              </div>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleHeight')}</Text>
+                <InputNumber
+                  min={60}
+                  max={400}
+                  value={localSettings.subtitleConfig.windowHeight}
+                  onChange={(val) => updateSubtitleConfig({ windowHeight: val || 120 })}
+                  style={{ width: 100 }}
+                />
+              </div>
+            </Space>
+          </div>
+        </Space>
+      </Card>
     </div>
   )
 }

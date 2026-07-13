@@ -30,6 +30,16 @@ export const VOICE_CHANNELS = {
   VOICE_REALTIME_STOP: 'voice:realtime-stop',
   VOICE_REALTIME_CANCEL: 'voice:realtime-cancel',
   VOICE_REALTIME_RESULT: 'voice:realtime-result',
+  // 双源录音：保存第二路音频 + 合并双源转录文本
+  VOICE_SAVE_SECONDARY_AUDIO: 'voice:save-secondary-audio',
+  VOICE_MERGE_DUAL_TRANSCRIPT: 'voice:merge-dual-transcript',
+  // 悬浮字幕窗口
+  VOICE_SUBTITLE_SHOW: 'voice:subtitle-show',
+  VOICE_SUBTITLE_HIDE: 'voice:subtitle-hide',
+  VOICE_SUBTITLE_TOGGLE: 'voice:subtitle-toggle',
+  VOICE_SUBTITLE_UPDATE_TEXT: 'voice:subtitle-update-text',
+  VOICE_SUBTITLE_UPDATE_SETTINGS: 'voice:subtitle-update-settings',
+  VOICE_SUBTITLE_GET_VISIBLE: 'voice:subtitle-get-visible',
 } as const
 
 export interface VoiceCreateTaskParams {
@@ -62,6 +72,20 @@ export interface VoiceSaveAudioParams {
   channels: number
 }
 
+/** 双源录音：保存第二路音频（系统音频） */
+export interface VoiceSaveSecondaryAudioParams {
+  taskId: string
+  audioData: string
+  format: string
+}
+
+/** 双源录音：合并 mic + system 转录文本到主任务 */
+export interface VoiceMergeDualTranscriptParams {
+  mainTaskId: string
+  micTaskId: string
+  systemTaskId: string
+}
+
 export interface VoiceTranscribeParams {
   taskId: string
   language?: string
@@ -79,6 +103,8 @@ export interface VoiceRealtimeFeedParams {
   /** 16kHz 单声道 PCM 采样数据（Float32Array 的 ArrayBuffer） */
   samples: ArrayBuffer
   sampleRate: number
+  /** 音频来源标识（'mic' | 'system'），用于区分双源识别 */
+  source?: string
 }
 
 /** 实时识别结果（推送到前端） */
@@ -86,6 +112,8 @@ export interface VoiceRealtimeResult {
   taskId: string
   /** 当前实时累积的文本 */
   text: string
+  /** 音频来源标识（'mic' | 'system'） */
+  source?: string
   /** 新完成的段落（endpoint 触发时） */
   segment?: { start: number; end: number; text: string }
   /** 是否为最终结果（停止时） */
@@ -119,16 +147,38 @@ export interface VoiceAudioConfig {
   channels: number
 }
 
+/** 悬浮字幕窗口外观配置 */
+export interface VoiceSubtitleConfig {
+  /** 是否启用悬浮字幕 */
+  enabled: boolean
+  /** 字体大小（px） */
+  fontSize: number
+  /** 文字颜色 */
+  textColor: string
+  /** 背景颜色 */
+  backgroundColor: string
+  /** 背景不透明度（0-100） */
+  backgroundOpacity: number
+  /** 窗口宽度 */
+  windowWidth: number
+  /** 窗口高度 */
+  windowHeight: number
+}
+
 export interface VoiceSettings {
   sttMode: 'api' | 'local'
   apiConfig: VoiceSTTApiConfig
   localConfig: VoiceSTTLocalConfig
   audioConfig: VoiceAudioConfig
+  /** 麦克风设备 ID（空字符串表示使用系统默认设备） */
+  micDeviceId: string
   /** 会议纪要生成所用的 LLM 模型配置 */
   minutesModel: {
     provider_id: string
     model_id: string
   } | null
+  /** 悬浮字幕窗口配置 */
+  subtitleConfig: VoiceSubtitleConfig
 }
 
 export interface VoiceLocalModelStatus {

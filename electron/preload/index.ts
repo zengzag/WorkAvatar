@@ -60,6 +60,7 @@ import type {
   VoiceTranscribeParams,
   VoiceGenerateMinutesParams,
   VoiceSettings,
+  VoiceSubtitleConfig,
 } from '../shared/ipc-channels'
 export type {
   VoiceCreateTaskParams,
@@ -68,6 +69,7 @@ export type {
   VoiceTranscribeParams,
   VoiceGenerateMinutesParams,
   VoiceSettings,
+  VoiceSubtitleConfig,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -321,6 +323,10 @@ const electronAPI = {
     updateTask: (params: VoiceUpdateTaskParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_UPDATE_TASK, params),
     deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_DELETE_TASK, id),
     saveAudio: (params: VoiceSaveAudioParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SAVE_AUDIO, params),
+    saveSecondaryAudio: (params: { taskId: string; audioData: string; format: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VOICE_SAVE_SECONDARY_AUDIO, params),
+    mergeDualSourceTranscript: (params: { mainTaskId: string; micTaskId: string; systemTaskId: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.VOICE_MERGE_DUAL_TRANSCRIPT, params),
     transcribe: (params: VoiceTranscribeParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, params),
     cancelTranscribe: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL_TRANSCRIBE, taskId),
     generateMinutes: (params: VoiceGenerateMinutesParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GENERATE_MINUTES, params),
@@ -332,10 +338,10 @@ const electronAPI = {
     selectDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SELECT_DIRECTORY),
     // 实时识别
     realtimeStart: (params: { taskId: string; language?: string }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_START, params),
-    realtimeFeed: (params: { taskId: string; samples: ArrayBuffer; sampleRate: number }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_FEED, params),
+    realtimeFeed: (params: { taskId: string; samples: ArrayBuffer; sampleRate: number; source?: string }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_FEED, params),
     realtimeStop: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_STOP, taskId),
     realtimeCancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_CANCEL, taskId),
-    onRealtimeResult: (callback: (data: { taskId: string; text: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
+    onRealtimeResult: (callback: (data: { taskId: string; text: string; source?: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
@@ -344,6 +350,21 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.VOICE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_PROGRESS, handler)
+    },
+    // 悬浮字幕窗口
+    subtitleShow: (config?: VoiceSubtitleConfig) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_SHOW, config),
+    subtitleHide: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_HIDE),
+    subtitleToggle: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_TOGGLE),
+    subtitleGetVisible: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_GET_VISIBLE),
+    onSubtitleText: (callback: (data: { text: string; source?: string }) => void) => {
+      const handler = (_event: any, data: { text: string; source?: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_TEXT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_TEXT, handler)
+    },
+    onSubtitleSettings: (callback: (config: VoiceSubtitleConfig) => void) => {
+      const handler = (_event: any, config: VoiceSubtitleConfig) => callback(config)
+      ipcRenderer.on(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_SETTINGS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_SETTINGS, handler)
     },
   },
 

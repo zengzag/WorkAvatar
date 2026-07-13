@@ -6,10 +6,11 @@ import LLMClientService from '../llm-client.service'
 import PathService from '../path.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
-import type { VoiceSettings, VoiceCreateTaskParams, VoiceUpdateTaskParams, VoiceLocalModelStatus } from '../../../shared/ipc-channels'
+import type { VoiceSettings, VoiceCreateTaskParams, VoiceUpdateTaskParams, VoiceLocalModelStatus, VoiceSaveSecondaryAudioParams, VoiceMergeDualTranscriptParams } from '../../../shared/ipc-channels'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
 import LocalSTTService from './local-stt.service'
+import SubtitleWindowService from './subtitle-window.service'
 
 const logger = createLogger('Voice')
 
@@ -35,6 +36,7 @@ export interface VoiceTask {
   created_at: number
   updated_at: number
   recorded_at: number | null
+  secondary_audio_path: string | null
 }
 
 export interface TranscriptSegment {
@@ -51,7 +53,7 @@ export interface VoiceProgress {
 }
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
-  sttMode: 'api',
+  sttMode: 'local',
   apiConfig: {
     endpoint: 'https://api.openai.com/v1/audio/transcriptions',
     apiKey: '',
@@ -59,15 +61,25 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
     language: 'zh',
   },
   localConfig: {
-    modelType: 'whisper' as const,
-    modelDir: '',
+    modelType: 'zipformer' as const,
+    modelDir: '(内置流式 Zipformer 模型)',
     language: 'zh',
   },
   audioConfig: {
     sampleRate: 16000,
     channels: 1,
   },
+  micDeviceId: '',
   minutesModel: null,
+  subtitleConfig: {
+    enabled: false,
+    fontSize: 28,
+    textColor: '#ffffff',
+    backgroundColor: '#000000',
+    backgroundOpacity: 60,
+    windowWidth: 600,
+    windowHeight: 120,
+  },
 }
 
 class VoiceService {
@@ -113,6 +125,7 @@ class VoiceService {
           apiConfig: { ...DEFAULT_VOICE_SETTINGS.apiConfig, ...(saved.apiConfig || {}) },
           localConfig: { ...DEFAULT_VOICE_SETTINGS.localConfig, ...(saved.localConfig || {}) },
           audioConfig: { ...DEFAULT_VOICE_SETTINGS.audioConfig, ...(saved.audioConfig || {}) },
+          subtitleConfig: { ...DEFAULT_VOICE_SETTINGS.subtitleConfig, ...(saved.subtitleConfig || {}) },
         }
       }
     } catch (err: any) {
@@ -127,13 +140,13 @@ class VoiceService {
     ).run('voice_settings', JSON.stringify(settings))
   }
 
-  /** 检查本地模型是否可用 */
+  /** 检查本地模型是否可用（使用内置流式 Zipformer 模型） */
   checkLocalModel(): VoiceLocalModelStatus {
     const settings = this.getSettings()
     if (settings.sttMode !== 'local') {
       return { available: false, error: 'STT mode is not set to local' }
     }
-    return LocalSTTService.getInstance().checkModel(settings.localConfig)
+    return LocalSTTService.getInstance().checkBuiltinModel()
   }
 
   // ==================== Task CRUD ====================
@@ -192,6 +205,9 @@ class VoiceService {
     if (task?.audio_path && fs.existsSync(task.audio_path)) {
       try { fs.unlinkSync(task.audio_path) } catch { /* ignore */ }
     }
+    if (task?.secondary_audio_path && fs.existsSync(task.secondary_audio_path)) {
+      try { fs.unlinkSync(task.secondary_audio_path) } catch { /* ignore */ }
+    }
     this.getDb().prepare('DELETE FROM kms_voice_tasks WHERE id = ?').run(id)
   }
 
@@ -214,6 +230,25 @@ class VoiceService {
     ).run(filePath, format, Math.round(duration), buffer.length, channels, sampleRate, now, now, taskId)
 
     return this.getTask(taskId)
+  }
+
+  /** 双源录音：保存第二路音频（系统音频）到 secondary_audio_path */
+  saveSecondaryAudio(params: VoiceSaveSecondaryAudioParams): VoiceTask | null {
+    const task = this.getTask(params.taskId)
+    if (!task) return null
+
+    const ext = params.format === 'wav' ? 'wav' : 'webm'
+    const fileName = `${params.taskId}_system.${ext}`
+    const filePath = path.join(this.getVoiceDir(), fileName)
+
+    const buffer = Buffer.from(params.audioData, 'base64')
+    fs.writeFileSync(filePath, buffer)
+
+    this.getDb().prepare(
+      `UPDATE kms_voice_tasks SET secondary_audio_path = ?, updated_at = ? WHERE id = ?`
+    ).run(filePath, Math.floor(Date.now() / 1000), params.taskId)
+
+    return this.getTask(params.taskId)
   }
 
   // ==================== Transcribe ====================
@@ -285,18 +320,15 @@ class VoiceService {
         }
         if (data.language) detectedLang = data.language
       } else {
-        // 本地模式：使用 sherpa-onnx 进程内识别
+        // 本地模式：使用内置流式 Zipformer 模型
         const localConfig = settings.localConfig
-        if (!localConfig.modelDir) {
-          throw new Error('Local model directory not configured')
-        }
 
         this.notifyProgress(taskId, 'transcribing', '正在加载本地语音识别模型...', 5)
 
         const localSTT = LocalSTTService.getInstance()
-        const status = localSTT.checkModel(localConfig)
+        const status = localSTT.checkBuiltinModel()
         if (!status.available) {
-          throw new Error(status.error || 'Local model not available')
+          throw new Error(status.error || '内置模型不可用')
         }
 
         const result = await localSTT.transcribe(
@@ -437,13 +469,17 @@ class VoiceService {
   }
 
   private buildMinutesPrompt(minutesType: string, customPrompt?: string): string {
+    const correctionNote = `重要：以下转录文本由语音识别引擎自动生成，可能存在同音字错误、标点缺失、专有名词识别偏差等问题。请在生成内容时先对转录文本进行理解和纠错，确保输出内容的准确性和可读性。`
+
     if (customPrompt) {
-      return `你是一位专业的会议纪要助手。请根据以下会议录音转录文本，按照用户要求生成内容。\n\n用户要求：${customPrompt}\n\n请使用 Markdown 格式输出。`
+      return `你是一位专业的会议纪要助手。请根据以下会议录音转录文本，按照用户要求生成内容。\n\n${correctionNote}\n\n用户要求：${customPrompt}\n\n请使用 Markdown 格式输出。`
     }
 
     switch (minutesType) {
       case 'meeting_minutes':
         return `你是一位专业的会议纪要助手。请根据以下会议录音转录文本，生成结构化的会议纪要。
+
+${correctionNote}
 
 输出格式（Markdown）：
 ## 会议纪要
@@ -470,6 +506,8 @@ class VoiceService {
       case 'summary':
         return `你是一位专业的会议内容总结助手。请根据以下会议录音转录文本，生成一份简洁的内容摘要。
 
+${correctionNote}
+
 要求：
 - 用 3-5 段话概括会议核心内容
 - 突出重点议题和关键结论
@@ -477,6 +515,8 @@ class VoiceService {
 - 使用中文输出`
       case 'action_items':
         return `你是一位专业的会议任务提取助手。请从以下会议录音转录文本中，提取所有待办事项和行动项。
+
+${correctionNote}
 
 输出格式（Markdown）：
 ## 待办事项清单
@@ -490,7 +530,7 @@ class VoiceService {
 - 如果负责人或时间未提及，标注"未明确"
 - 使用中文输出`
       default:
-        return `请根据以下会议录音转录文本，按照用户要求生成内容。使用 Markdown 格式输出，使用中文。`
+        return `请根据以下会议录音转录文本，按照用户要求生成内容。\n\n${correctionNote}\n\n使用 Markdown 格式输出，使用中文。`
     }
   }
 
@@ -536,6 +576,8 @@ class VoiceService {
   // ==================== 实时识别（边录音边识别） ====================
 
   private realtimeTaskIds: Set<string> = new Set()
+  /** 双源录音：临时存储各来源的转录结果（taskId → TranscriptResult） */
+  private dualSourceTranscripts: Map<string, { text: string; segments: TranscriptSegment[] }> = new Map()
 
   /** 开始实时识别 */
   startRealtime(taskId: string, language?: string): { ok: boolean; error?: string } {
@@ -545,14 +587,10 @@ class VoiceService {
     }
 
     const localConfig = settings.localConfig
-    if (!localConfig.modelDir) {
-      return { ok: false, error: '本地模型目录未配置' }
-    }
-
     const localSTT = LocalSTTService.getInstance()
-    const status = localSTT.checkModel(localConfig)
+    const status = localSTT.checkBuiltinModel()
     if (!status.available) {
-      return { ok: false, error: status.error || '本地模型不可用' }
+      return { ok: false, error: status.error || '内置模型不可用' }
     }
 
     const lang = language || localConfig.language || 'zh'
@@ -565,7 +603,7 @@ class VoiceService {
   }
 
   /** 喂入音频块，推送实时结果到前端 */
-  feedRealtimeAudio(taskId: string, samples: Float32Array, sampleRate: number): void {
+  feedRealtimeAudio(taskId: string, samples: Float32Array, sampleRate: number, source?: string): void {
     if (!this.realtimeTaskIds.has(taskId)) return
 
     const localSTT = LocalSTTService.getInstance()
@@ -575,6 +613,7 @@ class VoiceService {
     const realtimeResult = {
       taskId,
       text: result.text,
+      source,
       segment: result.segment,
       isFinal: false,
     }
@@ -585,6 +624,9 @@ class VoiceService {
         }
       } catch { /* ignore */ }
     }
+
+    // 推送到悬浮字幕窗口（仅当前正在识别的语句）
+    SubtitleWindowService.getInstance().updateText(result.partialText, source as 'mic' | 'system' | undefined)
   }
 
   /** 停止实时识别，保存结果到任务 */
@@ -598,6 +640,29 @@ class VoiceService {
     const settings = this.getSettings()
     const localSTT = LocalSTTService.getInstance()
     const transcript = localSTT.stopRealtimeRecognize(taskId)
+
+    // 双源录音：suffixed taskId（__mic / __system）没有对应任务记录，
+    // 将转录结果暂存到 dualSourceTranscripts，由 mergeDualSourceTranscript 合并写入主任务
+    const isDualSourceSuffix = taskId.endsWith('__mic') || taskId.endsWith('__system')
+    if (isDualSourceSuffix) {
+      this.dualSourceTranscripts.set(taskId, transcript)
+
+      // 推送最终结果
+      const realtimeResult = {
+        taskId,
+        text: transcript.text,
+        isFinal: true,
+      }
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          if (!win.isDestroyed()) {
+            win.webContents.send(IPC_CHANNELS.VOICE_REALTIME_RESULT, realtimeResult)
+          }
+        } catch { /* ignore */ }
+      }
+      // 不清空悬浮字幕（由 mergeDualSourceTranscript 统一处理）
+      return null
+    }
 
     const sttModel = `local-${settings.localConfig.modelType}`
     const updated = this.updateTask({
@@ -625,6 +690,73 @@ class VoiceService {
     }
 
     this.notifyProgress(taskId, 'done', '实时识别完成', 100)
+
+    // 清空悬浮字幕
+    SubtitleWindowService.getInstance().updateText('', 'mic')
+    SubtitleWindowService.getInstance().updateText('', 'system')
+
+    return updated
+  }
+
+  /** 双源录音：合并 mic + system 转录文本，按时间排序写入主任务 */
+  mergeDualSourceTranscript(params: VoiceMergeDualTranscriptParams): VoiceTask | null {
+    const micResult = this.dualSourceTranscripts.get(params.micTaskId)
+    const systemResult = this.dualSourceTranscripts.get(params.systemTaskId)
+
+    const settings = this.getSettings()
+    const sttModel = `local-${settings.localConfig.modelType}`
+
+    // 合并 segments 并按 start 时间排序，标注来源
+    const segments: TranscriptSegment[] = []
+    if (micResult) {
+      for (const seg of micResult.segments) {
+        segments.push({ start: seg.start, end: seg.end, text: `🎤 ${seg.text}` })
+      }
+    }
+    if (systemResult) {
+      for (const seg of systemResult.segments) {
+        segments.push({ start: seg.start, end: seg.end, text: `🔊 ${seg.text}` })
+      }
+    }
+    segments.sort((a, b) => a.start - b.start)
+
+    // 合并全文：按时间排序拼接
+    const mergedText = segments.map(s => s.text).join('\n')
+
+    const updated = this.updateTask({
+      id: params.mainTaskId,
+      status: 'transcribed',
+      transcript: mergedText,
+      transcriptSegmentsJson: JSON.stringify(segments),
+      transcriptLanguage: settings.localConfig.language || 'zh',
+      sttMode: 'local',
+      sttModel,
+    })
+
+    // 推送最终合并结果
+    const realtimeResult = {
+      taskId: params.mainTaskId,
+      text: mergedText,
+      isFinal: true,
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.VOICE_REALTIME_RESULT, realtimeResult)
+        }
+      } catch { /* ignore */ }
+    }
+
+    this.notifyProgress(params.mainTaskId, 'done', '实时识别完成', 100)
+
+    // 清理临时存储
+    this.dualSourceTranscripts.delete(params.micTaskId)
+    this.dualSourceTranscripts.delete(params.systemTaskId)
+
+    // 清空悬浮字幕
+    SubtitleWindowService.getInstance().updateText('', 'mic')
+    SubtitleWindowService.getInstance().updateText('', 'system')
+
     return updated
   }
 
@@ -633,7 +765,12 @@ class VoiceService {
     if (!this.realtimeTaskIds.has(taskId)) return
     this.realtimeTaskIds.delete(taskId)
     LocalSTTService.getInstance().cancelRealtimeRecognize(taskId)
+    this.dualSourceTranscripts.delete(taskId)
     logger.info(`Realtime recognition cancelled: taskId=${taskId}`)
+
+    // 清空悬浮字幕
+    SubtitleWindowService.getInstance().updateText('', 'mic')
+    SubtitleWindowService.getInstance().updateText('', 'system')
   }
 }
 

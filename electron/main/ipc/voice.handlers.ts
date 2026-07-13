@@ -4,13 +4,17 @@ import type {
   VoiceCreateTaskParams,
   VoiceUpdateTaskParams,
   VoiceSaveAudioParams,
+  VoiceSaveSecondaryAudioParams,
+  VoiceMergeDualTranscriptParams,
   VoiceTranscribeParams,
   VoiceGenerateMinutesParams,
   VoiceSettings,
   VoiceRealtimeStartParams,
   VoiceRealtimeFeedParams,
+  VoiceSubtitleConfig,
 } from '../../shared/ipc-channels'
 import VoiceService from '../services/voice/voice.service'
+import SubtitleWindowService from '../services/voice/subtitle-window.service'
 import { safeHandle } from './_shared'
 import { createLogger } from '../services/logger'
 
@@ -51,6 +55,16 @@ export function registerVoiceHandlers(): void {
       params.sampleRate,
       params.channels,
     )
+  })
+
+  // 双源录音：保存第二路音频（系统音频）
+  safeHandle(IPC_CHANNELS.VOICE_SAVE_SECONDARY_AUDIO, async (params: VoiceSaveSecondaryAudioParams) => {
+    return voiceService.saveSecondaryAudio(params)
+  })
+
+  // 双源录音：合并 mic + system 转录文本到主任务
+  safeHandle(IPC_CHANNELS.VOICE_MERGE_DUAL_TRANSCRIPT, async (params: VoiceMergeDualTranscriptParams) => {
+    return voiceService.mergeDualSourceTranscript(params)
   })
 
   // ==================== 语音识别 ====================
@@ -134,7 +148,7 @@ export function registerVoiceHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.VOICE_REALTIME_FEED, async (_event, params: VoiceRealtimeFeedParams) => {
     try {
       const samples = new Float32Array(params.samples)
-      voiceService.feedRealtimeAudio(params.taskId, samples, params.sampleRate)
+      voiceService.feedRealtimeAudio(params.taskId, samples, params.sampleRate, params.source)
       return { ok: true }
     } catch (err: any) {
       return { ok: false, error: String(err?.message || err) }
@@ -153,5 +167,25 @@ export function registerVoiceHandlers(): void {
   safeHandle(IPC_CHANNELS.VOICE_REALTIME_CANCEL, async (taskId: string) => {
     voiceService.cancelRealtime(taskId)
     return { success: true }
+  })
+
+  // ==================== 悬浮字幕窗口 ====================
+  safeHandle(IPC_CHANNELS.VOICE_SUBTITLE_SHOW, async (config?: VoiceSubtitleConfig) => {
+    SubtitleWindowService.getInstance().show(config)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.VOICE_SUBTITLE_HIDE, async () => {
+    SubtitleWindowService.getInstance().hide()
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.VOICE_SUBTITLE_TOGGLE, async () => {
+    const visible = SubtitleWindowService.getInstance().toggle()
+    return { visible }
+  })
+
+  safeHandle(IPC_CHANNELS.VOICE_SUBTITLE_GET_VISIBLE, async () => {
+    return { visible: SubtitleWindowService.getInstance().isVisible() }
   })
 }

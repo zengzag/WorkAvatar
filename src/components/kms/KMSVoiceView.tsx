@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Button, Space, Typography, Tag, Input, App, theme, Tooltip,
-  Dropdown, Progress, Empty as AntEmpty, Radio,
+  Dropdown, Progress, Empty as AntEmpty, Radio, Select,
 } from 'antd'
 import {
   AudioOutlined, PlusOutlined, DeleteOutlined,
@@ -10,7 +10,9 @@ import {
   FileTextOutlined, ProfileOutlined, CheckCircleOutlined, CloseCircleOutlined,
   LoadingOutlined, ClockCircleOutlined, EditOutlined, CopyOutlined, DownOutlined,
   StopOutlined, ExclamationCircleOutlined, ThunderboltOutlined,
-  PauseOutlined, PlayCircleOutlined,
+  PauseOutlined, PlayCircleOutlined, FontSizeOutlined,
+  MenuFoldOutlined, MenuUnfoldOutlined,
+  CloudServerOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -155,14 +157,26 @@ interface KMSVoiceViewProps {
 const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+
+  // 检测暗色主题（用于 audio 元素兼容）
+  const isDarkMode = useMemo(() => {
+    const hex = token.colorBgContainer.replace('#', '')
+    if (hex.length < 6) return false
+    const r = parseInt(hex.substring(0, 2), 16)
+    const g = parseInt(hex.substring(2, 4), 16)
+    const b = parseInt(hex.substring(4, 6), 16)
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5
+  }, [token.colorBgContainer])
   const { message, modal } = App.useApp()
   const {
-    tasks, settings, progress, audioSources,
-    loadTasks, loadSettings,
+    tasks, settings, progress,
+    loadTasks, loadSettings, saveSettings,
     createTask, updateTask, deleteTask,
-    saveAudio, transcribe, cancelTranscribe,
+    saveAudio, saveSecondaryAudio, mergeDualSourceTranscript,
+    transcribe, cancelTranscribe,
     generateMinutes, cancelMinutes, loadAudioSources,
     realtimeStart, realtimeFeed, realtimeStop, realtimeCancel, onRealtimeResult,
+    subtitleShow, subtitleHide,
   } = useVoice()
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -171,13 +185,23 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const [recordSource, setRecordSource] = useState<RecordSource>('mic')
   const [recordDuration, setRecordDuration] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
-  const [realtimeText, setRealtimeText] = useState('')
-  const [realtimeSegments, setRealtimeSegments] = useState<{ start: number; end: number; text: string }[]>([])
+  // 每个来源的实时识别状态
+  const [realtimeTextBySource, setRealtimeTextBySource] = useState<Record<string, string>>({})
+  const [realtimeSegmentsBySource, setRealtimeSegmentsBySource] = useState<Record<string, { start: number; end: number; text: string }[]>>({})
   const [realtimeError, setRealtimeError] = useState('')
+  // 每个来源的暂停状态
+  const [micPaused, setMicPaused] = useState(false)
+  const [systemPaused, setSystemPaused] = useState(false)
+  const [subtitleVisible, setSubtitleVisible] = useState(false)
+  const [taskListCollapsed, setTaskListCollapsed] = useState(false)
 
   // Recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaRecorderMicRef = useRef<MediaRecorder | null>(null)
+  const mediaRecorderSystemRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
+  const audioChunksMicRef = useRef<Blob[]>([])
+  const audioChunksSystemRef = useRef<Blob[]>([])
   const audioContextRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -188,15 +212,25 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const recordStartTimeRef = useRef<number>(0)
   const pausedDurationRef = useRef<number>(0)
   const pauseStartTimeRef = useRef<number>(0)
-  // 实时识别 refs
-  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null)
-  const realtimeSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  // 每个来源的实时识别 refs
+  const scriptProcessorMicRef = useRef<ScriptProcessorNode | null>(null)
+  const scriptProcessorSystemRef = useRef<ScriptProcessorNode | null>(null)
+  const realtimeSourceMicRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const realtimeSourceSystemRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const realtimeTaskIdRef = useRef<string | null>(null)
+  const realtimeTaskIdMicRef = useRef<string | null>(null)
+  const realtimeTaskIdSystemRef = useRef<string | null>(null)
   const realtimeUnsubscribeRef = useRef<(() => void) | null>(null)
-  const realtimeFeedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const realtimeBufferRef = useRef<Float32Array[]>([])
+  const realtimeFeedTimerMicRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const realtimeFeedTimerSystemRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const realtimeBufferMicRef = useRef<Float32Array[]>([])
+  const realtimeBufferSystemRef = useRef<Float32Array[]>([])
   const realtimeActiveRef = useRef<boolean>(false)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
+  const micPausedRef = useRef(false)
+  const systemPausedRef = useRef(false)
+  const recordingTaskIdRef = useRef<string | null>(null)
+  const dualRecorderStopCountRef = useRef<number>(0)
 
   useEffect(() => {
     loadTasks()
@@ -204,17 +238,22 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     loadAudioSources()
   }, [loadTasks, loadSettings, loadAudioSources])
 
-  // 监听实时识别结果
+  // 监听实时识别结果（按来源分组）
   useEffect(() => {
     realtimeUnsubscribeRef.current = onRealtimeResult((data) => {
-      if (data.taskId === realtimeTaskIdRef.current) {
-        if (data.isFinal) {
-          setRealtimeText(data.text)
-        } else {
-          setRealtimeText(data.text)
-          if (data.segment) {
-            setRealtimeSegments(prev => [...prev, data.segment!])
-          }
+      const source = data.source || 'mic'
+      const activeIds = [realtimeTaskIdMicRef.current, realtimeTaskIdSystemRef.current, realtimeTaskIdRef.current]
+      if (!activeIds.includes(data.taskId)) return
+
+      if (data.isFinal) {
+        setRealtimeTextBySource(prev => ({ ...prev, [source]: data.text }))
+      } else {
+        setRealtimeTextBySource(prev => ({ ...prev, [source]: data.text }))
+        if (data.segment) {
+          setRealtimeSegmentsBySource(prev => ({
+            ...prev,
+            [source]: [...(prev[source] || []), data.segment!],
+          }))
         }
       }
     })
@@ -230,12 +269,19 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     if (el) {
       el.scrollTop = el.scrollHeight
     }
-  }, [realtimeText, realtimeSegments])
+  }, [realtimeTextBySource, realtimeSegmentsBySource])
 
   // 组件卸载时清理实时识别
   useEffect(() => {
     return () => {
-      if (realtimeFeedTimerRef.current) clearInterval(realtimeFeedTimerRef.current)
+      if (realtimeFeedTimerMicRef.current) clearInterval(realtimeFeedTimerMicRef.current)
+      if (realtimeFeedTimerSystemRef.current) clearInterval(realtimeFeedTimerSystemRef.current)
+      if (realtimeTaskIdMicRef.current && realtimeActiveRef.current) {
+        realtimeCancel(realtimeTaskIdMicRef.current)
+      }
+      if (realtimeTaskIdSystemRef.current && realtimeActiveRef.current) {
+        realtimeCancel(realtimeTaskIdSystemRef.current)
+      }
       if (realtimeTaskIdRef.current && realtimeActiveRef.current) {
         realtimeCancel(realtimeTaskIdRef.current)
       }
@@ -249,23 +295,129 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
   // ==================== Recording Logic ====================
 
+  const createFeedTimer = useCallback((taskId: string, bufferRef: React.MutableRefObject<Float32Array[]>, source: string) => {
+    return setInterval(() => {
+      const buffers = bufferRef.current
+      if (buffers.length === 0) return
+      bufferRef.current = []
+      const totalLength = buffers.reduce((sum, b) => sum + b.length, 0)
+      const merged = new Float32Array(totalLength)
+      let offset = 0
+      for (const b of buffers) {
+        merged.set(b, offset)
+        offset += b.length
+      }
+      realtimeFeed(taskId, merged, 16000, source)
+    }, 300)
+  }, [realtimeFeed])
+
+  const createSourceProcessor = useCallback((audioCtx: AudioContext, stream: MediaStream, bufferRef: React.MutableRefObject<Float32Array[]>) => {
+    const inputSampleRate = audioCtx.sampleRate
+    const source = audioCtx.createMediaStreamSource(stream)
+    const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1)
+    scriptProcessor.onaudioprocess = (e) => {
+      const inputData = e.inputBuffer.getChannelData(0)
+      const downsampled = downsample(new Float32Array(inputData), inputSampleRate, 16000)
+      bufferRef.current.push(downsampled)
+    }
+    const silentGain = audioCtx.createGain()
+    silentGain.gain.value = 0
+    source.connect(scriptProcessor)
+    scriptProcessor.connect(silentGain)
+    silentGain.connect(audioCtx.destination)
+    return { source, scriptProcessor }
+  }, [])
+
+  const handleDualSourceStop = useCallback(async (taskId: string, mimeType: string) => {
+    const duration = (Date.now() - recordStartTimeRef.current) / 1000
+    const micWebmBlob = new Blob(audioChunksMicRef.current, { type: mimeType })
+    const systemWebmBlob = new Blob(audioChunksSystemRef.current, { type: mimeType })
+
+    try {
+      // 分别转换为 16kHz 单声道 WAV
+      const [micWav, systemWav] = await Promise.all([
+        webmToWavBlob(micWebmBlob, 16000),
+        webmToWavBlob(systemWebmBlob, 16000),
+      ])
+      // 保存 mic 音频为主音频，system 音频为副音频
+      await saveAudio(taskId, micWav.blob, 'wav', duration, micWav.sampleRate, 1)
+      await saveSecondaryAudio(taskId, systemWav.blob, 'wav')
+      message.success(t('voice.recordingSaved'))
+    } catch (err: any) {
+      message.error(t('voice.recordingSaveFailed') + ': ' + (err?.message || ''))
+    }
+
+    // 停止实时识别 - 分别停止 mic 和 system，然后合并转录
+    if (realtimeActiveRef.current) {
+      const micTaskId = realtimeTaskIdMicRef.current
+      const systemTaskId = realtimeTaskIdSystemRef.current
+
+      if (micTaskId) {
+        try { await realtimeStop(micTaskId) } catch (err: any) { console.error('Realtime stop (mic) failed:', err?.message) }
+        realtimeTaskIdMicRef.current = null
+      }
+      if (systemTaskId) {
+        try { await realtimeStop(systemTaskId) } catch (err: any) { console.error('Realtime stop (system) failed:', err?.message) }
+        realtimeTaskIdSystemRef.current = null
+      }
+      realtimeActiveRef.current = false
+
+      // 合并双源转录文本到主任务
+      if (micTaskId && systemTaskId) {
+        try {
+          await mergeDualSourceTranscript(taskId, micTaskId, systemTaskId)
+        } catch (err: any) {
+          console.error('Merge dual source transcript failed:', err?.message)
+        }
+      }
+    }
+
+    // 清理 recorder refs
+    mediaRecorderMicRef.current = null
+    mediaRecorderSystemRef.current = null
+
+    setRealtimeTextBySource({})
+    setRealtimeSegmentsBySource({})
+    setRecordDuration(0)
+    subtitleHide()
+  }, [saveAudio, saveSecondaryAudio, mergeDualSourceTranscript, realtimeStop, subtitleHide, t, message])
+
   const stopRecording = useCallback(async () => {
-    const recorder = mediaRecorderRef.current
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop()
+    // 停止所有 recorder（单源或双源）
+    const stopRecorder = (rec: MediaRecorder | null) => {
+      if (rec && rec.state !== 'inactive') {
+        rec.stop()
+      }
     }
-    // 停止实时识别音频采集
-    if (scriptProcessorRef.current) {
-      scriptProcessorRef.current.disconnect()
-      scriptProcessorRef.current = null
+    stopRecorder(mediaRecorderRef.current)
+    stopRecorder(mediaRecorderMicRef.current)
+    stopRecorder(mediaRecorderSystemRef.current)
+    // 停止实时识别音频采集 - mic source
+    if (scriptProcessorMicRef.current) {
+      scriptProcessorMicRef.current.disconnect()
+      scriptProcessorMicRef.current = null
     }
-    if (realtimeSourceRef.current) {
-      realtimeSourceRef.current.disconnect()
-      realtimeSourceRef.current = null
+    if (realtimeSourceMicRef.current) {
+      realtimeSourceMicRef.current.disconnect()
+      realtimeSourceMicRef.current = null
     }
-    if (realtimeFeedTimerRef.current) {
-      clearInterval(realtimeFeedTimerRef.current)
-      realtimeFeedTimerRef.current = null
+    // 停止实时识别音频采集 - system source
+    if (scriptProcessorSystemRef.current) {
+      scriptProcessorSystemRef.current.disconnect()
+      scriptProcessorSystemRef.current = null
+    }
+    if (realtimeSourceSystemRef.current) {
+      realtimeSourceSystemRef.current.disconnect()
+      realtimeSourceSystemRef.current = null
+    }
+    // 清除 feed timers
+    if (realtimeFeedTimerMicRef.current) {
+      clearInterval(realtimeFeedTimerMicRef.current)
+      realtimeFeedTimerMicRef.current = null
+    }
+    if (realtimeFeedTimerSystemRef.current) {
+      clearInterval(realtimeFeedTimerSystemRef.current)
+      realtimeFeedTimerSystemRef.current = null
     }
     // Cleanup streams
     micStreamRef.current?.getTracks().forEach(t => t.stop())
@@ -290,92 +442,167 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     setAudioLevel(0)
     setIsRecording(false)
     setIsPaused(false)
+    setMicPaused(false)
+    setSystemPaused(false)
+    micPausedRef.current = false
+    systemPausedRef.current = false
     pausedDurationRef.current = 0
     pauseStartTimeRef.current = 0
+    // 不在此处清空实时文本和隐藏字幕，由 onstop 回调处理（确保转录结果保存后再清理）
   }, [])
 
   const pauseRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current
-    if (recorder && recorder.state === 'recording') {
-      recorder.pause()
-      pauseStartTimeRef.current = Date.now()
-      if (timerRef.current) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
+    const pauseRec = (rec: MediaRecorder | null) => {
+      if (rec && rec.state === 'recording') {
+        rec.pause()
       }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current)
-        animationFrameRef.current = null
-      }
-      // 暂停实时识别音频采集
-      if (realtimeFeedTimerRef.current) {
-        clearInterval(realtimeFeedTimerRef.current)
-        realtimeFeedTimerRef.current = null
-      }
-      setIsPaused(true)
     }
+    pauseRec(mediaRecorderRef.current)
+    pauseRec(mediaRecorderMicRef.current)
+    pauseRec(mediaRecorderSystemRef.current)
+    pauseStartTimeRef.current = Date.now()
+    if (timerRef.current) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+    // 暂停实时识别音频采集 - both sources
+    if (realtimeFeedTimerMicRef.current) {
+      clearInterval(realtimeFeedTimerMicRef.current)
+      realtimeFeedTimerMicRef.current = null
+    }
+    if (realtimeFeedTimerSystemRef.current) {
+      clearInterval(realtimeFeedTimerSystemRef.current)
+      realtimeFeedTimerSystemRef.current = null
+    }
+    setIsPaused(true)
+    setMicPaused(true)
+    setSystemPaused(true)
+    micPausedRef.current = true
+    systemPausedRef.current = true
   }, [])
 
   const resumeRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current
-    if (recorder && recorder.state === 'paused') {
-      recorder.resume()
-      if (pauseStartTimeRef.current) {
-        pausedDurationRef.current += Date.now() - pauseStartTimeRef.current
-        pauseStartTimeRef.current = 0
+    const resumeRec = (rec: MediaRecorder | null) => {
+      if (rec && rec.state === 'paused') {
+        rec.resume()
       }
-      // 重启计时器
-      timerRef.current = setInterval(() => {
-        setRecordDuration((Date.now() - recordStartTimeRef.current - pausedDurationRef.current) / 1000)
-      }, 200)
-      // 重启音量可视化
-      const analyser = analyserRef.current
-      if (analyser) {
-        const dataArray = new Uint8Array(analyser.frequencyBinCount)
-        const updateLevel = () => {
-          if (analyserRef.current) {
-            analyserRef.current.getByteFrequencyData(dataArray)
-            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
-            setAudioLevel(Math.min(100, (avg / 128) * 100))
-            animationFrameRef.current = requestAnimationFrame(updateLevel)
-          }
-        }
-        updateLevel()
-      }
-      // 恢复实时识别音频采集
-      if (realtimeActiveRef.current && realtimeTaskIdRef.current && !realtimeFeedTimerRef.current) {
-        realtimeFeedTimerRef.current = setInterval(() => {
-          const buffers = realtimeBufferRef.current
-          if (buffers.length === 0) return
-          realtimeBufferRef.current = []
-          const totalLength = buffers.reduce((sum, b) => sum + b.length, 0)
-          const merged = new Float32Array(totalLength)
-          let offset = 0
-          for (const b of buffers) {
-            merged.set(b, offset)
-            offset += b.length
-          }
-          realtimeFeed(realtimeTaskIdRef.current!, merged, 16000)
-        }, 300)
-      }
-      setIsPaused(false)
     }
-  }, [realtimeFeed])
+    resumeRec(mediaRecorderRef.current)
+    resumeRec(mediaRecorderMicRef.current)
+    resumeRec(mediaRecorderSystemRef.current)
+    if (pauseStartTimeRef.current) {
+      pausedDurationRef.current += Date.now() - pauseStartTimeRef.current
+      pauseStartTimeRef.current = 0
+    }
+    // 重启计时器
+    timerRef.current = setInterval(() => {
+      setRecordDuration((Date.now() - recordStartTimeRef.current - pausedDurationRef.current) / 1000)
+    }, 200)
+    // 重启音量可视化
+    const analyser = analyserRef.current
+    if (analyser) {
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      const updateLevel = () => {
+        if (analyserRef.current) {
+          analyserRef.current.getByteFrequencyData(dataArray)
+          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+          setAudioLevel(Math.min(100, (avg / 128) * 100))
+          animationFrameRef.current = requestAnimationFrame(updateLevel)
+        }
+      }
+      updateLevel()
+    }
+    setIsPaused(false)
+    setMicPaused(false)
+    setSystemPaused(false)
+    micPausedRef.current = false
+    systemPausedRef.current = false
+    // 恢复实时识别音频采集 - mic feed timer
+    if (realtimeActiveRef.current && realtimeTaskIdMicRef.current && !realtimeFeedTimerMicRef.current) {
+      realtimeFeedTimerMicRef.current = createFeedTimer(realtimeTaskIdMicRef.current, realtimeBufferMicRef, 'mic')
+    }
+    // 恢复实时识别音频采集 - system feed timer
+    if (realtimeActiveRef.current && realtimeTaskIdSystemRef.current && !realtimeFeedTimerSystemRef.current) {
+      realtimeFeedTimerSystemRef.current = createFeedTimer(realtimeTaskIdSystemRef.current, realtimeBufferSystemRef, 'system')
+    }
+    // 恢复实时识别音频采集 - single source (non-both mode)
+    if (realtimeActiveRef.current && realtimeTaskIdRef.current && !realtimeFeedTimerMicRef.current && !realtimeFeedTimerSystemRef.current) {
+      const source = recordSource === 'system' ? 'system' : 'mic'
+      const bufferRef = source === 'system' ? realtimeBufferSystemRef : realtimeBufferMicRef
+      const timerRefForSource = source === 'system' ? realtimeFeedTimerSystemRef : realtimeFeedTimerMicRef
+      if (!timerRefForSource.current) {
+        timerRefForSource.current = createFeedTimer(realtimeTaskIdRef.current, bufferRef, source)
+      }
+    }
+  }, [createFeedTimer, recordSource])
+
+  const togglePauseSource = useCallback((source: 'mic' | 'system') => {
+    if (source === 'mic') {
+      const newPaused = !micPausedRef.current
+      setMicPaused(newPaused)
+      micPausedRef.current = newPaused
+      if (newPaused) {
+        // Pausing mic - clear feed timer and buffer
+        if (realtimeFeedTimerMicRef.current) {
+          clearInterval(realtimeFeedTimerMicRef.current)
+          realtimeFeedTimerMicRef.current = null
+        }
+        realtimeBufferMicRef.current = []
+      } else {
+        // Resuming mic - restart feed timer
+        const taskId = realtimeTaskIdMicRef.current || realtimeTaskIdRef.current
+        if (realtimeActiveRef.current && taskId && !realtimeFeedTimerMicRef.current) {
+          realtimeFeedTimerMicRef.current = createFeedTimer(taskId, realtimeBufferMicRef, 'mic')
+        }
+      }
+    } else {
+      const newPaused = !systemPausedRef.current
+      setSystemPaused(newPaused)
+      systemPausedRef.current = newPaused
+      if (newPaused) {
+        // Pausing system - clear feed timer and buffer
+        if (realtimeFeedTimerSystemRef.current) {
+          clearInterval(realtimeFeedTimerSystemRef.current)
+          realtimeFeedTimerSystemRef.current = null
+        }
+        realtimeBufferSystemRef.current = []
+      } else {
+        // Resuming system - restart feed timer
+        const taskId = realtimeTaskIdSystemRef.current || realtimeTaskIdRef.current
+        if (realtimeActiveRef.current && taskId && !realtimeFeedTimerSystemRef.current) {
+          realtimeFeedTimerSystemRef.current = createFeedTimer(taskId, realtimeBufferSystemRef, 'system')
+        }
+      }
+    }
+  }, [createFeedTimer])
 
   const startRecording = useCallback(async (taskId: string) => {
     try {
       audioChunksRef.current = []
+      audioChunksMicRef.current = []
+      audioChunksSystemRef.current = []
+      dualRecorderStopCountRef.current = 0
+      recordingTaskIdRef.current = taskId
       const streams: MediaStream[] = []
 
-      // Microphone
+      // Microphone - 使用配置的麦克风设备（Issue 3: 默认系统推荐设备）
       if (recordSource === 'mic' || recordSource === 'both') {
         try {
+          const micConstraints: MediaTrackConstraints = {
+            echoCancellation: true,
+            noiseSuppression: true,
+            channelCount: 1,
+          }
+          const micDeviceId = settings?.micDeviceId
+          if (micDeviceId) {
+            micConstraints.deviceId = { exact: micDeviceId }
+          }
           const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              channelCount: 1,
-            } as MediaTrackConstraints,
+            audio: micConstraints,
           })
           micStreamRef.current = micStream
           streams.push(micStream)
@@ -388,36 +615,40 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         }
       }
 
-      // System audio (Windows only, via desktopCapturer)
+      // System audio via getDisplayMedia (modern Electron approach)
       if (recordSource === 'system' || recordSource === 'both') {
-        if (audioSources.length === 0) {
-          await loadAudioSources()
-        }
-        if (audioSources.length === 0) {
-          message.warning(t('voice.noSystemAudioSource'))
-          if (recordSource === 'system') return
-        } else {
-          try {
-            const sourceId = audioSources[0].id
-            const systemStream = await navigator.mediaDevices.getUserMedia({
-              audio: {
-                mandatory: {
-                  chromeMediaSource: 'desktop',
-                  chromeMediaSourceId: sourceId,
-                } as any,
-              } as MediaTrackConstraints,
-            })
-            systemStreamRef.current = systemStream
-            streams.push(systemStream)
-          } catch (err: any) {
-            console.warn('System audio capture failed:', err?.message)
+        try {
+          const displayStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,   // Required by spec, stopped immediately after
+            audio: true,   // Request system audio (loopback)
+          })
+          // Stop video tracks immediately - we only want audio
+          displayStream.getVideoTracks().forEach(t => t.stop())
+          const audioTracks = displayStream.getAudioTracks()
+          if (audioTracks.length === 0) {
             if (recordSource === 'system') {
-              message.error(t('voice.systemAudioFailed'))
+              message.warning(t('voice.noSystemAudioTrack'))
               return
             }
-            // For 'both', continue with mic only
             message.warning(t('voice.systemAudioFallback'))
+          } else {
+            const systemStream = new MediaStream(audioTracks)
+            systemStreamRef.current = systemStream
+            streams.push(systemStream)
           }
+        } catch (err: any) {
+          console.warn('System audio capture failed:', err?.message)
+          if (err.name === 'NotAllowedError') {
+            if (recordSource === 'system') {
+              message.error(t('voice.systemAudioPermissionDenied'))
+              return
+            }
+          } else if (recordSource === 'system') {
+            message.error(t('voice.systemAudioFailed'))
+            return
+          }
+          // For 'both', continue with mic only
+          message.warning(t('voice.systemAudioFallback'))
         }
       }
 
@@ -426,112 +657,168 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         return
       }
 
-      // Combine streams if needed
-      let recordStream: MediaStream
-      if (streams.length === 1) {
-        recordStream = streams[0]
-      } else {
-        // Use Web Audio API to merge
-        const audioContext = new AudioContext()
-        audioContextRef.current = audioContext
-        const destination = audioContext.createMediaStreamDestination()
-        for (const stream of streams) {
-          const source = audioContext.createMediaStreamSource(stream)
-          source.connect(destination)
-        }
-        recordStream = destination.stream
-        combinedStreamRef.current = recordStream
-      }
+      // 音频上下文（用于可视化和实时采集）
+      const audioCtx = new AudioContext()
+      audioContextRef.current = audioCtx
 
-      // Setup audio level visualization
-      const audioCtx = audioContextRef.current || new AudioContext()
-      if (!audioContextRef.current) audioContextRef.current = audioCtx
-      const source = audioCtx.createMediaStreamSource(recordStream)
-      const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 256
-      source.connect(analyser)
-      analyserRef.current = analyser
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      const updateLevel = () => {
-        if (analyserRef.current) {
-          analyserRef.current.getByteFrequencyData(dataArray)
-          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
-          setAudioLevel(Math.min(100, (avg / 128) * 100))
-          animationFrameRef.current = requestAnimationFrame(updateLevel)
-        }
-      }
-      updateLevel()
-
-      // Setup ScriptProcessorNode for realtime PCM capture (边录音边识别)
-      const inputSampleRate = audioCtx.sampleRate
-      const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1)
-      scriptProcessor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0)
-        // 降采样到 16kHz
-        const downsampled = downsample(new Float32Array(inputData), inputSampleRate, 16000)
-        realtimeBufferRef.current.push(downsampled)
-      }
-      // 连接到静音 GainNode → destination（ScriptProcessor 需要连接 destination 才能触发回调）
-      const silentGain = audioCtx.createGain()
-      silentGain.gain.value = 0
-      source.connect(scriptProcessor)
-      scriptProcessor.connect(silentGain)
-      silentGain.connect(audioCtx.destination)
-      scriptProcessorRef.current = scriptProcessor
-      realtimeSourceRef.current = source
-
-      // Setup MediaRecorder
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm'
-      const recorder = new MediaRecorder(recordStream, { mimeType })
-      mediaRecorderRef.current = recorder
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data)
-        }
-      }
+      const isDual = recordSource === 'both' && micStreamRef.current && systemStreamRef.current
 
-      recorder.onstop = async () => {
-        const duration = (Date.now() - recordStartTimeRef.current) / 1000
-        const webmBlob = new Blob(audioChunksRef.current, { type: mimeType })
+      if (isDual) {
+        // ========== 双源模式：为 mic 和 system 分别创建 MediaRecorder ==========
+        const destination = audioCtx.createMediaStreamDestination()
+        audioCtx.createMediaStreamSource(micStreamRef.current!).connect(destination)
+        audioCtx.createMediaStreamSource(systemStreamRef.current!).connect(destination)
+        combinedStreamRef.current = destination.stream
 
-        try {
-          // 转换为 16kHz 单声道 WAV，兼容本地 sherpa-onnx 识别
-          const { blob: wavBlob, sampleRate } = await webmToWavBlob(webmBlob, 16000)
-          await saveAudio(taskId, wavBlob, 'wav', duration, sampleRate, 1)
-          message.success(t('voice.recordingSaved'))
-        } catch (err: any) {
-          message.error(t('voice.recordingSaveFailed') + ': ' + (err?.message || ''))
-        }
-
-        // 停止实时识别，获取最终结果
-        if (realtimeActiveRef.current && realtimeTaskIdRef.current === taskId) {
-          try {
-            await realtimeStop(taskId)
-          } catch (err: any) {
-            console.error('Realtime stop failed:', err?.message)
+        // 音量可视化基于合并流
+        const vizSource = audioCtx.createMediaStreamSource(destination.stream)
+        const analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 256
+        vizSource.connect(analyser)
+        analyserRef.current = analyser
+        const dataArray = new Uint8Array(analyser.frequencyBinCount)
+        const updateLevel = () => {
+          if (analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArray)
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+            setAudioLevel(Math.min(100, (avg / 128) * 100))
+            animationFrameRef.current = requestAnimationFrame(updateLevel)
           }
-          realtimeActiveRef.current = false
-          realtimeTaskIdRef.current = null
-          setRealtimeText('')
-          setRealtimeSegments([])
+        }
+        updateLevel()
+
+        // ScriptProcessorNodes for realtime PCM capture
+        const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, micStreamRef.current!, realtimeBufferMicRef)
+        scriptProcessorMicRef.current = micProcessor
+        realtimeSourceMicRef.current = micSource
+        const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, systemStreamRef.current!, realtimeBufferSystemRef)
+        scriptProcessorSystemRef.current = systemProcessor
+        realtimeSourceSystemRef.current = systemSource
+
+        // Mic recorder
+        const micRecorder = new MediaRecorder(micStreamRef.current!, { mimeType })
+        mediaRecorderMicRef.current = micRecorder
+        micRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksMicRef.current.push(e.data)
+        }
+        micRecorder.onstop = async () => {
+          dualRecorderStopCountRef.current++
+          if (dualRecorderStopCountRef.current >= 2) {
+            await handleDualSourceStop(taskId, mimeType)
+          }
         }
 
-        setRecordDuration(0)
+        // System recorder
+        const systemRecorder = new MediaRecorder(systemStreamRef.current!, { mimeType })
+        mediaRecorderSystemRef.current = systemRecorder
+        systemRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksSystemRef.current.push(e.data)
+        }
+        systemRecorder.onstop = async () => {
+          dualRecorderStopCountRef.current++
+          if (dualRecorderStopCountRef.current >= 2) {
+            await handleDualSourceStop(taskId, mimeType)
+          }
+        }
+
+        micRecorder.start(1000)
+        systemRecorder.start(1000)
+      } else {
+        // ========== 单源模式 ==========
+        const recordStream = streams[0]
+
+        // 音量可视化
+        const vizSource = audioCtx.createMediaStreamSource(recordStream)
+        const analyser = audioCtx.createAnalyser()
+        analyser.fftSize = 256
+        vizSource.connect(analyser)
+        analyserRef.current = analyser
+        const dataArray = new Uint8Array(analyser.frequencyBinCount)
+        const updateLevel = () => {
+          if (analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArray)
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+            setAudioLevel(Math.min(100, (avg / 128) * 100))
+            animationFrameRef.current = requestAnimationFrame(updateLevel)
+          }
+        }
+        updateLevel()
+
+        // ScriptProcessorNodes for realtime PCM capture
+        if (micStreamRef.current) {
+          const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, micStreamRef.current, realtimeBufferMicRef)
+          scriptProcessorMicRef.current = micProcessor
+          realtimeSourceMicRef.current = micSource
+        }
+        if (systemStreamRef.current) {
+          const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, systemStreamRef.current, realtimeBufferSystemRef)
+          scriptProcessorSystemRef.current = systemProcessor
+          realtimeSourceSystemRef.current = systemSource
+        }
+
+        const recorder = new MediaRecorder(recordStream, { mimeType })
+        mediaRecorderRef.current = recorder
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data)
+          }
+        }
+
+        recorder.onstop = async () => {
+          const duration = (Date.now() - recordStartTimeRef.current) / 1000
+          const webmBlob = new Blob(audioChunksRef.current, { type: mimeType })
+
+          try {
+            const { blob: wavBlob, sampleRate } = await webmToWavBlob(webmBlob, 16000)
+            await saveAudio(taskId, wavBlob, 'wav', duration, sampleRate, 1)
+            message.success(t('voice.recordingSaved'))
+          } catch (err: any) {
+            message.error(t('voice.recordingSaveFailed') + ': ' + (err?.message || ''))
+          }
+
+          // 停止实时识别
+          if (realtimeActiveRef.current) {
+            if (realtimeTaskIdMicRef.current) {
+              try { await realtimeStop(realtimeTaskIdMicRef.current) } catch (err: any) { console.error('Realtime stop (mic) failed:', err?.message) }
+              realtimeTaskIdMicRef.current = null
+            }
+            if (realtimeTaskIdSystemRef.current) {
+              try { await realtimeStop(realtimeTaskIdSystemRef.current) } catch (err: any) { console.error('Realtime stop (system) failed:', err?.message) }
+              realtimeTaskIdSystemRef.current = null
+            }
+            if (realtimeTaskIdRef.current) {
+              try { await realtimeStop(realtimeTaskIdRef.current) } catch (err: any) { console.error('Realtime stop failed:', err?.message) }
+              realtimeTaskIdRef.current = null
+            }
+            realtimeActiveRef.current = false
+          }
+
+          setRealtimeTextBySource({})
+          setRealtimeSegmentsBySource({})
+          setRecordDuration(0)
+          subtitleHide()
+        }
+
+        recorder.start(1000)
       }
 
-      recorder.start(1000) // Collect data every second
       recordStartTimeRef.current = Date.now()
       pausedDurationRef.current = 0
       pauseStartTimeRef.current = 0
       setIsRecording(true)
       setIsPaused(false)
+      setMicPaused(false)
+      setSystemPaused(false)
+      micPausedRef.current = false
+      systemPausedRef.current = false
       setRecordDuration(0)
-      setRealtimeText('')
-      setRealtimeSegments([])
+      setRealtimeTextBySource({})
+      setRealtimeSegmentsBySource({})
       setRealtimeError('')
 
       // Timer
@@ -542,26 +829,45 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       // 启动实时识别（仅本地模式）
       const isLocalMode = settings?.sttMode === 'local'
       if (isLocalMode) {
-        const startResult = await realtimeStart(taskId)
-        if (startResult.ok) {
-          realtimeActiveRef.current = true
-          realtimeTaskIdRef.current = taskId
-          // 定期发送累积的音频块到后端
-          realtimeFeedTimerRef.current = setInterval(() => {
-            const buffers = realtimeBufferRef.current
-            if (buffers.length === 0) return
-            realtimeBufferRef.current = []
-            const totalLength = buffers.reduce((sum, b) => sum + b.length, 0)
-            const merged = new Float32Array(totalLength)
-            let offset = 0
-            for (const b of buffers) {
-              merged.set(b, offset)
-              offset += b.length
+        if (isDual) {
+          // Dual source mode: create two realtime sessions with suffixed taskIds
+          const micTaskId = taskId + '__mic'
+          const systemTaskId = taskId + '__system'
+          const micStartResult = await realtimeStart(micTaskId)
+          const systemStartResult = await realtimeStart(systemTaskId)
+          if (micStartResult.ok || systemStartResult.ok) {
+            realtimeActiveRef.current = true
+            if (micStartResult.ok) {
+              realtimeTaskIdMicRef.current = micTaskId
+              realtimeFeedTimerMicRef.current = createFeedTimer(micTaskId, realtimeBufferMicRef, 'mic')
             }
-            realtimeFeed(taskId, merged, 16000)
-          }, 300)
+            if (systemStartResult.ok) {
+              realtimeTaskIdSystemRef.current = systemTaskId
+              realtimeFeedTimerSystemRef.current = createFeedTimer(systemTaskId, realtimeBufferSystemRef, 'system')
+            }
+            if (subtitleVisible && settings?.subtitleConfig) {
+              subtitleShow(settings.subtitleConfig)
+            }
+          } else {
+            setRealtimeError(micStartResult.error || systemStartResult.error || '')
+          }
         } else {
-          setRealtimeError(startResult.error || '')
+          // Single source mode
+          const startResult = await realtimeStart(taskId)
+          if (startResult.ok) {
+            realtimeActiveRef.current = true
+            realtimeTaskIdRef.current = taskId
+            const source = recordSource === 'system' ? 'system' : 'mic'
+            const bufferRef = source === 'system' ? realtimeBufferSystemRef : realtimeBufferMicRef
+            const timerRefForSource = source === 'system' ? realtimeFeedTimerSystemRef : realtimeFeedTimerMicRef
+            timerRefForSource.current = createFeedTimer(taskId, bufferRef, source)
+
+            if (subtitleVisible && settings?.subtitleConfig) {
+              subtitleShow(settings.subtitleConfig)
+            }
+          } else {
+            setRealtimeError(startResult.error || '')
+          }
         }
       }
 
@@ -571,7 +877,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       message.error(t('voice.recordingStartFailed') + ': ' + (err?.message || ''))
       setIsRecording(false)
     }
-  }, [recordSource, audioSources, loadAudioSources, message, t, saveAudio, updateTask, settings, realtimeStart, realtimeFeed, realtimeStop])
+  }, [recordSource, message, t, saveAudio, updateTask, settings, realtimeStart, realtimeStop, subtitleVisible, subtitleShow, subtitleHide, createSourceProcessor, createFeedTimer, handleDualSourceStop])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -684,6 +990,12 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }
   }, [selectedTask])
 
+  // Derive flat realtime text/segments from per-source state
+  const realtimeText = Object.values(realtimeTextBySource).join('')
+  const realtimeSegments = Object.values(realtimeSegmentsBySource).flat().sort((a, b) => a.start - b.start)
+
+  const isDualSource = recordSource === 'both'
+
   // ==================== Render ====================
 
   const renderTaskStatus = (status: string) => {
@@ -743,9 +1055,65 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
   const renderRecordingPanel = (task: VoiceTask) => {
     if (isRecording) {
-      // 计算当前正在识别的文本（排除已完成段落）
-      const completedText = realtimeSegments.map(s => s.text).join('')
-      const partialText = realtimeText.slice(completedText.length)
+      // 音频电平条可视化
+      const audioBars = Array.from({ length: 5 }, (_, i) => {
+        const phase = (audioLevel / 100) * (1 - i * 0.15)
+        const height = isPaused ? 3 : Math.max(3, Math.min(20, phase * 24 + Math.random() * 4))
+        return height
+      })
+
+      // 渲染单来源的实时识别内容
+      const renderSourceTranscript = (source: string, sourcePaused: boolean) => {
+        const text = realtimeTextBySource[source] || ''
+        const segments = realtimeSegmentsBySource[source] || []
+        const completedText = segments.map(s => s.text).join('')
+        const partialText = text.slice(completedText.length)
+
+        if (!text && segments.length === 0) {
+          return settings?.sttMode === 'local' && !sourcePaused ? (
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              <ThunderboltOutlined /> {t('voice.realtimeRecognizing')}
+            </Text>
+          ) : null
+        }
+
+        return (
+          <>
+            {segments.map((seg, idx) => (
+              <div key={idx} style={{
+                marginBottom: 8,
+                padding: '4px 0',
+                borderBottom: idx < segments.length - 1 || partialText
+                  ? `1px solid ${token.colorBorderSecondary}`
+                  : 'none',
+              }}>
+                <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace', marginRight: 6 }}>
+                  {formatTimestamp(seg.start)}
+                </Text>
+                <Text style={{ fontSize: 14, lineHeight: 1.7 }}>
+                  {seg.text}
+                </Text>
+              </div>
+            ))}
+            {partialText && (
+              <div style={{ marginBottom: 8, padding: '4px 0' }}>
+                <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace', marginRight: 6 }}>
+                  {formatTimestamp(recordDuration)}
+                </Text>
+                <Text style={{ fontSize: 14, lineHeight: 1.7, color: token.colorPrimary }}>
+                  {partialText}
+                  {!sourcePaused && <span style={{ opacity: 0.5, animation: 'blink 1s infinite' }}>▎</span>}
+                </Text>
+              </div>
+            )}
+            {!partialText && !sourcePaused && segments.length > 0 && (
+              <Text type="secondary" style={{ fontSize: 11, opacity: 0.5 }}>
+                <ThunderboltOutlined /> {t('voice.realtimeListening')}
+              </Text>
+            )}
+          </>
+        )
+      }
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -753,27 +1121,45 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             padding: '12px 16px',
-            background: token.colorFillQuaternary, borderRadius: 8,
+            background: `linear-gradient(135deg, ${token.colorFillQuaternary}, ${token.colorFillTertiary})`,
+            borderRadius: 10,
             marginBottom: 12,
+            border: `1px solid ${token.colorBorderSecondary}`,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {/* 小录音图标 */}
-              <div style={{
-                width: 36, height: 36, borderRadius: '50%',
-                background: isPaused
-                  ? token.colorWarning
-                  : token.colorError,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: isPaused ? 'none' : `0 0 ${8 + audioLevel * 0.1}px ${token.colorError}66`,
-                transition: 'box-shadow 0.1s',
-                flexShrink: 0,
-              }}>
-                {isPaused
-                  ? <PauseOutlined style={{ fontSize: 16, color: '#fff' }} />
-                  : <AudioOutlined style={{ fontSize: 16, color: '#fff' }} />}
+              {/* 录音图标 + 音频电平条 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: '50%',
+                  background: isPaused
+                    ? token.colorWarning
+                    : token.colorError,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: isPaused ? 'none' : `0 0 ${10 + audioLevel * 0.15}px ${token.colorError}55`,
+                  transition: 'box-shadow 0.1s',
+                }}>
+                  {isPaused
+                    ? <PauseOutlined style={{ fontSize: 18, color: '#fff' }} />
+                    : <AudioOutlined style={{ fontSize: 18, color: '#fff' }} />}
+                </div>
+                {/* 音频电平条 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 2, height: 24 }}>
+                  {audioBars.map((h, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        width: 3, height: h, borderRadius: 2,
+                        background: isPaused
+                          ? token.colorTextDisabled
+                          : `rgba(${parseInt(token.colorError.slice(1, 3), 16)}, ${parseInt(token.colorError.slice(3, 5), 16)}, ${parseInt(token.colorError.slice(5, 7), 16)}, ${0.4 + i * 0.15})`,
+                        transition: 'height 0.08s ease-out',
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
               <div>
-                <div style={{ fontFamily: 'monospace', fontSize: 18, fontWeight: 600, lineHeight: 1.2 }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
                   {formatDuration(recordDuration)}
                 </div>
                 <Text type="secondary" style={{ fontSize: 12 }}>
@@ -787,19 +1173,52 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                 </Text>
               </div>
             </div>
+            {/* 控制按钮区 */}
             <Space size="small">
-              {!isPaused ? (
-                <Button size="small" icon={<PauseOutlined />} onClick={pauseRecording}>
-                  {t('voice.pauseRecording')}
-                </Button>
+              {isDualSource ? (
+                /* 双源模式：分别暂停/恢复 + 共用停止 */
+                <>
+                  <Tooltip title={micPaused ? t('voice.resumeMic') : t('voice.pauseMic')}>
+                    <Button
+                      size="small"
+                      type={micPaused ? 'primary' : 'default'}
+                      icon={micPaused ? <PlayCircleOutlined /> : <PauseOutlined />}
+                      onClick={() => togglePauseSource('mic')}
+                    >
+                      🎤
+                    </Button>
+                  </Tooltip>
+                  <Tooltip title={systemPaused ? t('voice.resumeSystem') : t('voice.pauseSystem')}>
+                    <Button
+                      size="small"
+                      type={systemPaused ? 'primary' : 'default'}
+                      icon={systemPaused ? <PlayCircleOutlined /> : <PauseOutlined />}
+                      onClick={() => togglePauseSource('system')}
+                    >
+                      🔊
+                    </Button>
+                  </Tooltip>
+                  <Button size="small" type="primary" danger icon={<StopOutlined />} onClick={stopRecording}>
+                    {t('voice.stopRecording')}
+                  </Button>
+                </>
               ) : (
-                <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={resumeRecording}>
-                  {t('voice.resumeRecording')}
-                </Button>
+                /* 单源模式：暂停/恢复 + 停止 */
+                <>
+                  {!isPaused ? (
+                    <Button size="small" icon={<PauseOutlined />} onClick={pauseRecording}>
+                      {t('voice.pauseRecording')}
+                    </Button>
+                  ) : (
+                    <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={resumeRecording}>
+                      {t('voice.resumeRecording')}
+                    </Button>
+                  )}
+                  <Button size="small" type="primary" danger icon={<StopOutlined />} onClick={stopRecording}>
+                    {t('voice.stopRecording')}
+                  </Button>
+                </>
               )}
-              <Button size="small" type="primary" danger icon={<StopOutlined />} onClick={stopRecording}>
-                {t('voice.stopRecording')}
-              </Button>
             </Space>
           </div>
 
@@ -808,7 +1227,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
             ref={transcriptScrollRef}
             style={{
               height: 380, overflowY: 'auto', padding: '16px 20px',
-              background: token.colorBgContainer, borderRadius: 8,
+              background: token.colorBgContainer, borderRadius: 10,
               border: `1px solid ${token.colorBorderSecondary}`,
             }}
           >
@@ -816,44 +1235,76 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
               <Text type="warning" style={{ fontSize: 13 }}>
                 <ExclamationCircleOutlined /> {realtimeError}
               </Text>
-            ) : realtimeSegments.length === 0 && !partialText ? (
-              <div style={{ textAlign: 'center', paddingTop: 60 }}>
-                <Text type="secondary" style={{ fontSize: 13 }}>
-                  {settings?.sttMode === 'local'
-                    ? <><ThunderboltOutlined /> {t('voice.realtimeRecognizing')}</>
-                    : t('voice.recordingNoRealtime')}
-                </Text>
+            ) : isDualSource ? (
+              /* 双源模式：分栏显示 */
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
+                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                    color: micPaused ? token.colorTextDisabled : token.colorPrimary,
+                  }}>
+                    🎤 {t('voice.micSource')} {micPaused && `(${t('voice.recordingPaused')})`}
+                  </div>
+                  {renderSourceTranscript('mic', micPaused)}
+                </div>
+                <div style={{ width: 1, background: token.colorBorderSecondary, alignSelf: 'stretch' }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
+                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                    color: systemPaused ? token.colorTextDisabled : '#52c41a',
+                  }}>
+                    🔊 {t('voice.systemSource')} {systemPaused && `(${t('voice.recordingPaused')})`}
+                  </div>
+                  {renderSourceTranscript('system', systemPaused)}
+                </div>
               </div>
             ) : (
+              /* 单源模式 */
               <>
-                {/* 已完成段落（带时间戳） */}
-                {realtimeSegments.map((seg, idx) => (
-                  <div key={idx} style={{ marginBottom: 12 }}>
-                    <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
-                      {formatTimestamp(seg.start)}
-                    </Text>
-                    <Text style={{ fontSize: 15, lineHeight: 1.8 }}>
-                      {seg.text}
+                {!realtimeText && realtimeSegments.length === 0 ? (
+                  <div style={{ textAlign: 'center', paddingTop: 60 }}>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      {settings?.sttMode === 'local'
+                        ? <><ThunderboltOutlined /> {t('voice.realtimeRecognizing')}</>
+                        : t('voice.recordingNoRealtime')}
                     </Text>
                   </div>
-                ))}
-                {/* 当前正在识别的文本 */}
-                {partialText && (
-                  <div style={{ marginBottom: 12 }}>
-                    <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
-                      {formatTimestamp(recordDuration)}
-                    </Text>
-                    <Text style={{ fontSize: 15, lineHeight: 1.8, color: token.colorPrimary }}>
-                      {partialText}
-                      {!isPaused && <span style={{ opacity: 0.5 }}>▎</span>}
-                    </Text>
-                  </div>
-                )}
-                {/* 无当前文本时显示识别中提示 */}
-                {!partialText && !isPaused && realtimeSegments.length > 0 && (
-                  <Text type="secondary" style={{ fontSize: 12, opacity: 0.5 }}>
-                    <ThunderboltOutlined /> {t('voice.realtimeListening')}
-                  </Text>
+                ) : (
+                  <>
+                    {realtimeSegments.map((seg, idx) => (
+                      <div key={idx} style={{
+                        marginBottom: 12,
+                        padding: '6px 0',
+                        borderBottom: idx < realtimeSegments.length - 1 || realtimeText.slice(realtimeSegments.map(s => s.text).join('').length)
+                          ? `1px solid ${token.colorBorderSecondary}`
+                          : 'none',
+                      }}>
+                        <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
+                          {formatTimestamp(seg.start)}
+                        </Text>
+                        <Text style={{ fontSize: 15, lineHeight: 1.8 }}>
+                          {seg.text}
+                        </Text>
+                      </div>
+                    ))}
+                    {(() => {
+                      const completedText = realtimeSegments.map(s => s.text).join('')
+                      const partialText = realtimeText.slice(completedText.length)
+                      return partialText ? (
+                        <div style={{ marginBottom: 12, padding: '6px 0' }}>
+                          <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
+                            {formatTimestamp(recordDuration)}
+                          </Text>
+                          <Text style={{ fontSize: 15, lineHeight: 1.8, color: token.colorPrimary }}>
+                            {partialText}
+                            {!isPaused && <span style={{ opacity: 0.5, animation: 'blink 1s infinite' }}>▎</span>}
+                          </Text>
+                        </div>
+                      ) : null
+                    })()}
+                  </>
                 )}
               </>
             )}
@@ -881,53 +1332,72 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       )
     }
 
-    // Pre-recording panel
+    // Pre-recording panel - compact recording settings
     return (
-      <div style={{ padding: '20px 0' }}>
-        <Title level={5}>{t('voice.recordSettings')}</Title>
-        <div style={{ marginBottom: 16 }}>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>{t('voice.audioSource')}</Text>
+      <div style={{ padding: '16px 0' }}>
+        <div style={{
+          padding: 16,
+          background: token.colorFillQuaternary,
+          borderRadius: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Text strong>{t('voice.audioSource')}</Text>
+            <Tooltip title={recordSource === 'system' || recordSource === 'both' ? t('voice.systemAudioHint') : t('voice.micHint')}>
+              <ExclamationCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12, cursor: 'help' }} />
+            </Tooltip>
+          </div>
           <Radio.Group
             value={recordSource}
             onChange={(e) => setRecordSource(e.target.value)}
             optionType="button"
             buttonStyle="solid"
+            style={{ width: '100%' }}
           >
-            <Radio.Button value="mic"><AudioOutlined /> {t('voice.microphone')}</Radio.Button>
-            <Radio.Button value="system"><DesktopOutlined /> {t('voice.systemAudio')}</Radio.Button>
-            <Radio.Button value="both"><SoundOutlined /> {t('voice.both')}</Radio.Button>
+            <Radio.Button value="mic" style={{ flex: 1 }}><AudioOutlined /> {t('voice.microphone')}</Radio.Button>
+            <Radio.Button value="system" style={{ flex: 1 }}><DesktopOutlined /> {t('voice.systemAudio')}</Radio.Button>
+            <Radio.Button value="both" style={{ flex: 1 }}><SoundOutlined /> {t('voice.both')}</Radio.Button>
           </Radio.Group>
+          <Button
+            type="primary"
+            size="large"
+            icon={<AudioOutlined />}
+            onClick={() => startRecording(task.id)}
+            block
+          >
+            {t('voice.startRecording')}
+          </Button>
         </div>
-        <div style={{ marginBottom: 16, padding: 12, background: token.colorFillQuaternary, borderRadius: 8 }}>
-          <Space>
-            <ExclamationCircleOutlined style={{ color: token.colorWarning }} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {recordSource === 'system' || recordSource === 'both'
-                ? t('voice.systemAudioHint')
-                : t('voice.micHint')}
-            </Text>
-          </Space>
-        </div>
-        <Button
-          type="primary"
-          size="large"
-          icon={<AudioOutlined />}
-          onClick={() => startRecording(task.id)}
-          block
-        >
-          {t('voice.startRecording')}
-        </Button>
       </div>
     )
   }
 
   const renderAudioPlayer = (task: VoiceTask) => {
     if (!task.audio_path) return null
-    // Use app-file:// protocol for local file access
     const audioUrl = pathToAppFileUrl(task.audio_path)
+    const secondaryUrl = task.secondary_audio_path ? pathToAppFileUrl(task.secondary_audio_path) : null
+    const audioStyle: React.CSSProperties = {
+      width: '100%',
+      filter: isDarkMode ? 'invert(0.88) hue-rotate(180deg)' : 'none',
+    }
     return (
       <div style={{ marginBottom: 16 }}>
-        <audio controls src={audioUrl} style={{ width: '100%' }} />
+        {secondaryUrl && (
+          <div style={{ marginBottom: 8 }}>
+            <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>🎤 {t('voice.micSource')}</Text>
+            <audio controls src={audioUrl} style={audioStyle} />
+          </div>
+        )}
+        {secondaryUrl ? (
+          <div>
+            <Text type="secondary" style={{ fontSize: 12, marginRight: 8 }}>🔊 {t('voice.systemSource')}</Text>
+            <audio controls src={secondaryUrl} style={audioStyle} />
+          </div>
+        ) : (
+          <audio controls src={audioUrl} style={audioStyle} />
+        )}
       </div>
     )
   }
@@ -1163,35 +1633,89 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
   return (
     <div style={{ height: '100%', display: 'flex', gap: 12 }}>
-      {/* Left: Task List */}
-      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <Title level={5} style={{ margin: 0 }}>
-            <AudioOutlined /> {t('voice.title')}
-          </Title>
-          <Space>
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => { loadTasks(); loadAudioSources() }} />
-            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleCreateTask}>
-              {t('voice.newRecording')}
-            </Button>
-          </Space>
+      {/* Left: Task List (collapsible) */}
+      {taskListCollapsed ? (
+        <div style={{ width: 40, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, paddingTop: 8 }}>
+          <Tooltip title={t('voice.expandTaskList')}>
+            <Button size="small" icon={<MenuUnfoldOutlined />} onClick={() => setTaskListCollapsed(false)} />
+          </Tooltip>
+          <Tooltip title={t('voice.newRecording')}>
+            <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleCreateTask} />
+          </Tooltip>
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-          {tasks.length === 0 ? (
-            <AntEmpty
-              description={t('voice.noTasks')}
-              image={AntEmpty.PRESENTED_IMAGE_SIMPLE}
-              style={{ marginTop: 60 }}
-            />
-          ) : (
-            tasks.map(task => renderTaskCard(task))
-          )}
+      ) : (
+        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Title level={5} style={{ margin: 0 }}>
+              <AudioOutlined /> {t('voice.title')}
+            </Title>
+            <Space>
+              <Tooltip title={t('voice.collapseTaskList')}>
+                <Button size="small" icon={<MenuFoldOutlined />} onClick={() => setTaskListCollapsed(true)} />
+              </Tooltip>
+              <Button size="small" icon={<ReloadOutlined />} onClick={() => { loadTasks(); loadAudioSources() }} />
+              <Button size="small" type="primary" icon={<PlusOutlined />} onClick={handleCreateTask}>
+                {t('voice.newRecording')}
+              </Button>
+            </Space>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+            {tasks.length === 0 ? (
+              <AntEmpty
+                description={t('voice.noTasks')}
+                image={AntEmpty.PRESENTED_IMAGE_SIMPLE}
+                style={{ marginTop: 60 }}
+              />
+            ) : (
+              tasks.map(task => renderTaskCard(task))
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Right: Task Detail */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Card style={{ height: '100%', overflowY: 'auto' }} styles={{ body: { padding: 20 } }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* Toolbar with STT engine dropdown + subtitle toggle + settings */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+          <Select
+            size="small"
+            style={{ width: 140 }}
+            value={settings?.sttMode || 'local'}
+            onChange={(val) => {
+              if (settings) {
+                saveSettings({ ...settings, sttMode: val as 'local' | 'api' })
+              }
+            }}
+            options={[
+              { label: <span><DesktopOutlined /> {t('voice.sttModeLocal')}</span>, value: 'local' },
+              { label: <span><CloudServerOutlined /> {t('voice.sttModeApi')}</span>, value: 'api' },
+            ]}
+          />
+          <Tooltip title={subtitleVisible ? t('voice.subtitleHide') : t('voice.subtitleShow')}>
+            <Button
+              size="small"
+              type={subtitleVisible ? 'primary' : 'default'}
+              icon={<FontSizeOutlined />}
+              onClick={async () => {
+                if (subtitleVisible) {
+                  await subtitleHide()
+                  setSubtitleVisible(false)
+                } else {
+                  await subtitleShow(settings?.subtitleConfig)
+                  setSubtitleVisible(true)
+                }
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t('voice.settings')}>
+            <Button
+              size="small"
+              icon={<SettingOutlined />}
+              onClick={() => onOpenSettings?.()}
+            />
+          </Tooltip>
+        </div>
+        <Card style={{ flex: 1, overflowY: 'auto' }} styles={{ body: { padding: 20 } }}>
           {selectedTask ? renderTaskDetail(selectedTask) : (
             <AntEmpty
               description={t('voice.selectTask')}

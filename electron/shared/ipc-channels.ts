@@ -69,6 +69,8 @@ export type {
   VoiceCreateTaskParams,
   VoiceUpdateTaskParams,
   VoiceSaveAudioParams,
+  VoiceSaveSecondaryAudioParams,
+  VoiceMergeDualTranscriptParams,
   VoiceTranscribeParams,
   VoiceRealtimeStartParams,
   VoiceRealtimeFeedParams,
@@ -78,6 +80,7 @@ export type {
   VoiceSTTLocalConfig,
   VoiceLocalModelType,
   VoiceAudioConfig,
+  VoiceSubtitleConfig,
   VoiceSettings,
   VoiceLocalModelStatus,
 } from './channels/voice'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
+import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App, Select, Checkbox,
@@ -7,7 +7,7 @@ import {
   ThunderboltOutlined,
   SyncOutlined, BuildOutlined, StopOutlined,
   ClockCircleOutlined, RadarChartOutlined,
-  PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
+  PlayCircleOutlined, InfoCircleOutlined,
   CloudServerOutlined, ExclamationCircleOutlined,
   DatabaseOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons'
@@ -116,7 +116,7 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
-  const [savingAuto, setSavingAuto] = useState(false)
+  const skipAutoIndexSaveRef = useRef(true)
   const [withEmbedding, setWithEmbedding] = useState(true)
   const [dbStats, setDbStats] = useState<any>(null)
   const [loadingStats, setLoadingStats] = useState(false)
@@ -126,7 +126,24 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     setAutoEnabled(autoIndexConfig.enabled)
     setIntervalMin(autoIndexConfig.intervalMinutes)
     setStableThreshold(autoIndexConfig.stableThresholdSeconds)
+    skipAutoIndexSaveRef.current = true
   }, [autoIndexConfig])
+
+  // 自动保存：自动索引配置变化后延迟 500ms 保存
+  useEffect(() => {
+    if (skipAutoIndexSaveRef.current) {
+      skipAutoIndexSaveRef.current = false
+      return
+    }
+    const timer = setTimeout(() => {
+      onSaveAutoIndex({
+        enabled: autoEnabled,
+        intervalMinutes: intervalMin,
+        stableThresholdSeconds: stableThreshold,
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex])
 
   const loadDbStats = useCallback(async () => {
     setLoadingStats(true)
@@ -186,21 +203,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
       },
     })
   }, [modal, t, formatBytes, message, loadDbStats])
-
-  const handleSaveAutoIndex = useCallback(async () => {
-    setSavingAuto(true)
-    const ok = await onSaveAutoIndex({
-      enabled: autoEnabled,
-      intervalMinutes: intervalMin,
-      stableThresholdSeconds: stableThreshold,
-    })
-    setSavingAuto(false)
-    if (ok) {
-      message.success(t('kms.settingsPanel.autoIndexSaved'))
-    } else {
-      message.error(t('kms.settingsPanel.modelSaveFailed'))
-    }
-  }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex, message, t])
 
   const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
@@ -350,15 +352,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                 {t('kms.settingsPanel.autoIndexRunNow')}
               </Button>
             </Tooltip>
-            <Button
-              size="small"
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={savingAuto}
-              onClick={handleSaveAutoIndex}
-            >
-              {t('common.save')}
-            </Button>
           </div>
         </div>
       </Card>

@@ -22,6 +22,7 @@ export interface VoiceTask {
   created_at: number
   updated_at: number
   recorded_at: number | null
+  secondary_audio_path: string | null
 }
 
 export interface TranscriptSegment {
@@ -47,10 +48,20 @@ export interface VoiceSettings {
     sampleRate: number
     channels: number
   }
+  micDeviceId: string
   minutesModel: {
     provider_id: string
     model_id: string
   } | null
+  subtitleConfig: {
+    enabled: boolean
+    fontSize: number
+    textColor: string
+    backgroundColor: string
+    backgroundOpacity: number
+    windowWidth: number
+    windowHeight: number
+  }
 }
 
 export interface VoiceLocalModelStatus {
@@ -201,6 +212,42 @@ export function useVoice() {
     }
   }, [loadTasks])
 
+  const saveSecondaryAudio = useCallback(async (taskId: string, audioBlob: Blob, format: string) => {
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer()
+      const bytes = new Uint8Array(arrayBuffer)
+      let binary = ''
+      const chunkSize = 8192
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as unknown as number[])
+      }
+      const base64 = btoa(binary)
+      const result = await window.electronAPI.voice.saveSecondaryAudio({ taskId, audioData: base64, format })
+      if (result && (result as any).error) {
+        throw new Error((result as any).error)
+      }
+      await loadTasks()
+      return result as VoiceTask
+    } catch (err) {
+      console.error('Failed to save secondary audio:', err)
+      throw err
+    }
+  }, [loadTasks])
+
+  const mergeDualSourceTranscript = useCallback(async (mainTaskId: string, micTaskId: string, systemTaskId: string) => {
+    try {
+      const result = await window.electronAPI.voice.mergeDualSourceTranscript({ mainTaskId, micTaskId, systemTaskId })
+      if (result && (result as any).error) {
+        throw new Error((result as any).error)
+      }
+      await loadTasks()
+      return result as VoiceTask | null
+    } catch (err) {
+      console.error('Failed to merge dual source transcript:', err)
+      throw err
+    }
+  }, [loadTasks])
+
   const transcribe = useCallback(async (taskId: string, language?: string) => {
     try {
       const result = await window.electronAPI.voice.transcribe({ taskId, language })
@@ -264,16 +311,6 @@ export function useVoice() {
     }
   }, [])
 
-  const selectDirectory = useCallback(async () => {
-    try {
-      const result = await window.electronAPI.voice.selectDirectory()
-      return result as string | null
-    } catch (err) {
-      console.error('Failed to select directory:', err)
-      return null
-    }
-  }, [])
-
   // ==================== 实时识别（边录音边识别） ====================
 
   const realtimeStart = useCallback(async (taskId: string, language?: string) => {
@@ -286,11 +323,11 @@ export function useVoice() {
     }
   }, [])
 
-  const realtimeFeed = useCallback(async (taskId: string, samples: Float32Array, sampleRate: number) => {
+  const realtimeFeed = useCallback(async (taskId: string, samples: Float32Array, sampleRate: number, source?: string) => {
     try {
       // 传输 ArrayBuffer 的副本（避免 transfer 后原数据不可用）
       const buffer = samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength) as ArrayBuffer
-      await window.electronAPI.voice.realtimeFeed({ taskId, samples: buffer, sampleRate })
+      await window.electronAPI.voice.realtimeFeed({ taskId, samples: buffer, sampleRate, source })
     } catch (err) {
       console.error('Failed to feed realtime audio:', err)
     }
@@ -318,8 +355,46 @@ export function useVoice() {
     }
   }, [])
 
-  const onRealtimeResult = useCallback((callback: (data: { taskId: string; text: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
+  const onRealtimeResult = useCallback((callback: (data: { taskId: string; text: string; source?: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
     return window.electronAPI.voice.onRealtimeResult(callback)
+  }, [])
+
+  // ==================== 悬浮字幕 ====================
+
+  const subtitleShow = useCallback(async (config?: VoiceSettings['subtitleConfig']) => {
+    try {
+      await window.electronAPI.voice.subtitleShow(config)
+    } catch (err) {
+      console.error('Failed to show subtitle window:', err)
+    }
+  }, [])
+
+  const subtitleHide = useCallback(async () => {
+    try {
+      await window.electronAPI.voice.subtitleHide()
+    } catch (err) {
+      console.error('Failed to hide subtitle window:', err)
+    }
+  }, [])
+
+  const subtitleToggle = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.voice.subtitleToggle()
+      return result as { visible: boolean }
+    } catch (err) {
+      console.error('Failed to toggle subtitle window:', err)
+      return { visible: false }
+    }
+  }, [])
+
+  const subtitleGetVisible = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.voice.subtitleGetVisible()
+      return (result as { visible: boolean })?.visible ?? false
+    } catch (err) {
+      console.error('Failed to get subtitle visibility:', err)
+      return false
+    }
   }, [])
 
   return {
@@ -334,17 +409,22 @@ export function useVoice() {
     updateTask,
     deleteTask,
     saveAudio,
+    saveSecondaryAudio,
+    mergeDualSourceTranscript,
     transcribe,
     cancelTranscribe,
     generateMinutes,
     cancelMinutes,
     loadAudioSources,
     checkLocalModel,
-    selectDirectory,
     realtimeStart,
     realtimeFeed,
     realtimeStop,
     realtimeCancel,
     onRealtimeResult,
+    subtitleShow,
+    subtitleHide,
+    subtitleToggle,
+    subtitleGetVisible,
   }
 }

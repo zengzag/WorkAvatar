@@ -1,9 +1,22 @@
 import path from 'path'
 import fs from 'fs'
+import { app } from 'electron'
 import { createLogger } from '../logger'
 import type { VoiceSTTLocalConfig, VoiceLocalModelStatus, VoiceLocalModelType } from '../../../shared/ipc-channels'
 
 const logger = createLogger('LocalSTT')
+
+/** 内置流式 Zipformer 模型目录（相对于 resources/） */
+const BUILTIN_MODEL_SUBDIR = 'streaming-zipformer'
+
+/** 获取内置流式 Zipformer 模型目录绝对路径 */
+function getBuiltinModelDir(): string {
+  const isDev = !app.isPackaged
+  if (isDev) {
+    return path.join(process.cwd(), 'resources', BUILTIN_MODEL_SUBDIR)
+  }
+  return path.join(process.resourcesPath, 'resources', BUILTIN_MODEL_SUBDIR)
+}
 
 export interface TranscriptResult {
   text: string
@@ -163,14 +176,29 @@ class LocalSTTService {
     }
   }
 
+  /** 检查内置流式 Zipformer 模型是否可用 */
+  checkBuiltinModel(): VoiceLocalModelStatus {
+    const modelDir = getBuiltinModelDir()
+    if (!fs.existsSync(modelDir)) {
+      return { available: false, modelDir, error: `内置模型目录不存在: ${modelDir}` }
+    }
+    const resolved = resolveModelFiles('zipformer', modelDir)
+    if (!resolved.found) {
+      return { available: false, modelType: 'zipformer', modelDir, error: `缺少模型文件: ${resolved.missing[0]}` }
+    }
+    return { available: true, modelType: 'zipformer', modelDir }
+  }
+
   /**
    * 获取或创建识别器（单例，配置变化时重建）
+   * 固定使用内置流式 Zipformer 模型
    * 返回 { recognizer, isStreaming }
    */
   private getRecognizer(config: VoiceSTTLocalConfig): { recognizer: any; isStreaming: boolean } {
-    const resolved = resolveModelFiles(config.modelType, config.modelDir)
-    const isStreaming = resolved.isStreaming ?? false
-    const configKey = `${config.modelType}:${config.modelDir}:${config.language}:${isStreaming}`
+    const modelDir = getBuiltinModelDir()
+    const resolved = resolveModelFiles('zipformer', modelDir)
+    const isStreaming = resolved.isStreaming ?? true
+    const configKey = `zipformer:${modelDir}:${config.language}`
 
     if (recognizer && currentConfigKey === configKey) {
       return { recognizer, isStreaming: recognizerIsStreaming }
@@ -183,41 +211,22 @@ class LocalSTTService {
     }
 
     if (!resolved.found) {
-      throw new Error(`Model files not found: ${resolved.missing.join(', ')}`)
+      throw new Error(`内置模型文件缺失: ${resolved.missing.join(', ')}`)
     }
 
     const lib = this.loadSherpaOnnx()
 
-    // 构建模型配置
+    // 构建模型配置 - 固定使用 zipformer transducer
     const modelConfig: any = {
       tokens: resolved.files.tokens,
       numThreads: 1,
       provider: 'cpu',
       debug: 0,
-    }
-
-    switch (config.modelType) {
-      case 'whisper':
-        modelConfig.whisper = {
-          encoder: resolved.files.encoder,
-          decoder: resolved.files.decoder,
-          language: config.language || 'zh',
-          task: 'transcribe',
-        }
-        break
-      case 'paraformer':
-        modelConfig.paraformer = {
-          model: resolved.files.model,
-        }
-        break
-      case 'zipformer':
-        // zipformer 使用 transducer 配置（encoder + decoder + joiner）
-        modelConfig.transducer = {
-          encoder: resolved.files.encoder,
-          decoder: resolved.files.decoder,
-          joiner: resolved.files.joiner,
-        }
-        break
+      transducer: {
+        encoder: resolved.files.encoder,
+        decoder: resolved.files.decoder,
+        joiner: resolved.files.joiner,
+      },
     }
 
     // 构建识别器配置
@@ -238,10 +247,10 @@ class LocalSTTService {
       recognizerConfig.rule2MinTrailingSilence = 1.2
       recognizerConfig.rule3MinUtteranceLength = 20
       recognizer = lib.createOnlineRecognizer(recognizerConfig)
-      logger.info(`Online recognizer created: type=${config.modelType}, dir=${config.modelDir}`)
+      logger.info(`Online recognizer created (内置流式 Zipformer): ${modelDir}`)
     } else {
       recognizer = lib.createOfflineRecognizer(recognizerConfig)
-      logger.info(`Offline recognizer created: type=${config.modelType}, dir=${config.modelDir}`)
+      logger.info(`Offline recognizer created (内置 Zipformer): ${modelDir}`)
     }
 
     currentConfigKey = configKey
@@ -499,16 +508,19 @@ class LocalSTTService {
 
   /**
    * 喂入音频块并返回当前识别结果
-   * 返回 { text, segment, isEndpoint } — segment 在 endpoint 触发时非空
+   * 返回 { text, partialText, segment, isEndpoint }
+   * - text: 累积全文
+   * - partialText: 当前正在识别的语句（endpoint 后重置）
+   * - segment: 新完成的段落（endpoint 触发时非空）
    */
   feedAudioChunk(
     taskId: string,
     samples: Float32Array,
     sampleRate: number,
-  ): { text: string; segment?: { start: number; end: number; text: string }; isEndpoint: boolean } {
+  ): { text: string; partialText: string; segment?: { start: number; end: number; text: string }; isEndpoint: boolean } {
     const session = this.realtimeSessions.get(taskId)
     if (!session) {
-      return { text: '', isEndpoint: false }
+      return { text: '', partialText: '', isEndpoint: false }
     }
 
     const { recognizer: rec, stream } = session
@@ -542,6 +554,7 @@ class LocalSTTService {
 
     return {
       text: session.fullText + currentText,
+      partialText: currentText,
       segment,
       isEndpoint,
     }
