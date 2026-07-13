@@ -25,6 +25,7 @@ const nativeExternals = [
   // OCR：PaddleOCR ONNX 推理
   'paddleocr',
   'onnxruntime-node',
+  'sharp',
   // 语音识别：sherpa-onnx 包含 WASM + .node 原生模块，必须外部化
   'sherpa-onnx',
 ]
