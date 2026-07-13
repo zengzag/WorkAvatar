@@ -4,6 +4,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   SearchOutlined,
+  AudioOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
@@ -27,6 +28,7 @@ const App: React.FC = () => {
     if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/kms')) return 'kms'
+    if (path.startsWith('/voice')) return 'voice'
     return 'digital-employees'
   }, [location.pathname])
 
@@ -43,6 +45,12 @@ const App: React.FC = () => {
       icon: <SearchOutlined />,
       label: t('nav.kms'),
       onClick: () => navigate('/kms'),
+    },
+    {
+      key: 'voice',
+      icon: <AudioOutlined />,
+      label: t('nav.voice'),
+      onClick: () => navigate('/voice'),
     },
     {
       key: 'settings',

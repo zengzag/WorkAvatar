@@ -53,6 +53,22 @@ import type {
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
 } from '../shared/ipc-channels'
+import type {
+  VoiceCreateTaskParams,
+  VoiceUpdateTaskParams,
+  VoiceSaveAudioParams,
+  VoiceTranscribeParams,
+  VoiceGenerateMinutesParams,
+  VoiceSettings,
+} from '../shared/ipc-channels'
+export type {
+  VoiceCreateTaskParams,
+  VoiceUpdateTaskParams,
+  VoiceSaveAudioParams,
+  VoiceTranscribeParams,
+  VoiceGenerateMinutesParams,
+  VoiceSettings,
+} from '../shared/ipc-channels'
 
 const electronAPI = {
   workspace: {
@@ -296,6 +312,39 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
     setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
+  },
+
+  voice: {
+    listTasks: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_LIST_TASKS),
+    getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_TASK, id),
+    createTask: (params: VoiceCreateTaskParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CREATE_TASK, params),
+    updateTask: (params: VoiceUpdateTaskParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_UPDATE_TASK, params),
+    deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_DELETE_TASK, id),
+    saveAudio: (params: VoiceSaveAudioParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SAVE_AUDIO, params),
+    transcribe: (params: VoiceTranscribeParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, params),
+    cancelTranscribe: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL_TRANSCRIBE, taskId),
+    generateMinutes: (params: VoiceGenerateMinutesParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GENERATE_MINUTES, params),
+    cancelMinutes: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL_MINUTES, taskId),
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_SETTINGS),
+    setSettings: (settings: VoiceSettings) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SET_SETTINGS, settings),
+    getAudioSources: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_AUDIO_SOURCES),
+    checkLocalModel: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CHECK_LOCAL_MODEL),
+    selectDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SELECT_DIRECTORY),
+    // 实时识别
+    realtimeStart: (params: { taskId: string; language?: string }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_START, params),
+    realtimeFeed: (params: { taskId: string; samples: ArrayBuffer; sampleRate: number }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_FEED, params),
+    realtimeStop: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_STOP, taskId),
+    realtimeCancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_CANCEL, taskId),
+    onRealtimeResult: (callback: (data: { taskId: string; text: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
+    },
+    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.VOICE_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_PROGRESS, handler)
+    },
   },
 
   interaction: {

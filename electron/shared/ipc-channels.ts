@@ -65,3 +65,19 @@ export type {
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
 } from './channels/kms'
+export type {
+  VoiceCreateTaskParams,
+  VoiceUpdateTaskParams,
+  VoiceSaveAudioParams,
+  VoiceTranscribeParams,
+  VoiceRealtimeStartParams,
+  VoiceRealtimeFeedParams,
+  VoiceRealtimeResult,
+  VoiceGenerateMinutesParams,
+  VoiceSTTApiConfig,
+  VoiceSTTLocalConfig,
+  VoiceLocalModelType,
+  VoiceAudioConfig,
+  VoiceSettings,
+  VoiceLocalModelStatus,
+} from './channels/voice'

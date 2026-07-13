@@ -25,6 +25,8 @@ const nativeExternals = [
   // OCR：PaddleOCR ONNX 推理
   'paddleocr',
   'onnxruntime-node',
+  // 语音识别：sherpa-onnx 包含 WASM + .node 原生模块，必须外部化
+  'sherpa-onnx',
 ]
 
 // 读取 build-info.json（在 predev/prebuild 中由 scripts/generate-build-info.mjs 生成）

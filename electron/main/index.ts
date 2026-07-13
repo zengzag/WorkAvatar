@@ -78,6 +78,13 @@ const MIME_MAP: Record<string, string> = {
   ico: 'image/x-icon',
   tiff: 'image/tiff',
   tif: 'image/tiff',
+  webm: 'audio/webm',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
 }
 
 function getMimeType(filePath: string): string {
