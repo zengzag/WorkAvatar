@@ -115,8 +115,11 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
 
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
-  const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
+  const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdMinutes)
   const skipAutoIndexSaveRef = useRef(true)
+  // 用 ref 持有最新的 onSaveAutoIndex，避免回调引用变化触发自动保存 effect
+  const onSaveAutoIndexRef = useRef(onSaveAutoIndex)
+  onSaveAutoIndexRef.current = onSaveAutoIndex
   const [withEmbedding, setWithEmbedding] = useState(true)
   const [dbStats, setDbStats] = useState<any>(null)
   const [loadingStats, setLoadingStats] = useState(false)
@@ -125,25 +128,27 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
     setIntervalMin(autoIndexConfig.intervalMinutes)
-    setStableThreshold(autoIndexConfig.stableThresholdSeconds)
+    setStableThreshold(autoIndexConfig.stableThresholdMinutes)
     skipAutoIndexSaveRef.current = true
   }, [autoIndexConfig])
 
   // 自动保存：自动索引配置变化后延迟 500ms 保存
+  // 注意：依赖数组只含实际配置值，不含 onSaveAutoIndex（用 ref 调用），
+  // 否则父组件每次 re-render 传入新函数引用会反复触发保存
   useEffect(() => {
     if (skipAutoIndexSaveRef.current) {
       skipAutoIndexSaveRef.current = false
       return
     }
     const timer = setTimeout(() => {
-      onSaveAutoIndex({
+      onSaveAutoIndexRef.current({
         enabled: autoEnabled,
         intervalMinutes: intervalMin,
-        stableThresholdSeconds: stableThreshold,
+        stableThresholdMinutes: stableThreshold,
       })
     }, 500)
     return () => clearTimeout(timer)
-  }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex])
+  }, [autoEnabled, intervalMin, stableThreshold])
 
   const loadDbStats = useCallback(async () => {
     setLoadingStats(true)
@@ -300,10 +305,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                   value={stableThreshold}
                   onChange={v => setStableThreshold(v || 0)}
                   min={0}
-                  max={86400}
+                  max={1440}
                   size="small"
                   style={{ width: 100, marginTop: 2 }}
-                  addonAfter={t('kms.settingsPanel.secondsUnit')}
+                  addonAfter={t('kms.settingsPanel.minutesUnit')}
                   disabled={!autoEnabled}
                 />
               </div>

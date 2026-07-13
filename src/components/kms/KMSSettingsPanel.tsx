@@ -113,6 +113,10 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     skipParamsSaveRef.current = true
   }, [settings])
 
+  const handleSaveAutoIndex = useCallback(async (config: KMSAutoIndexConfig): Promise<boolean> => {
+    return onSaveSettings({ autoIndex: config })
+  }, [onSaveSettings])
+
   const loadEmbeddingMaxChars = useCallback(async () => {
     try {
       const result = await window.electronAPI.settings.get({ key: 'embedding_max_chars' })
@@ -608,7 +612,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         onCancelIndex={onCancelIndex}
         autoIndexConfig={settings.autoIndex}
         autoIndexStatus={autoIndexStatus}
-        onSaveAutoIndex={async (config) => onSaveSettings({ autoIndex: config })}
+        onSaveAutoIndex={handleSaveAutoIndex}
         onRunAutoIndexCheck={onRunAutoIndexCheck}
         dirs={dirs}
       />

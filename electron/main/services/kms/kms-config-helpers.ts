@@ -28,7 +28,7 @@ export interface KmsSettings {
     knowledgeCardThreshold?: number
     autoRefreshStaleCards?: boolean
   }
-  autoIndex: { enabled: boolean; intervalMinutes: number; stableThresholdSeconds: number }
+  autoIndex: { enabled: boolean; intervalMinutes: number; stableThresholdMinutes: number }
 }
 
 const DEFAULT_SEARCH_PARAMS = {
@@ -40,7 +40,7 @@ const DEFAULT_SEARCH_PARAMS = {
   knowledgeCardThreshold: 5,
   autoRefreshStaleCards: true,
 }
-const DEFAULT_AUTO_INDEX = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
+const DEFAULT_AUTO_INDEX = { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 }
 
 /** 读取主库 settings 表中的 JSON 配置 */
 function readSettingJson(key: string): any | null {

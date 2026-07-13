@@ -906,7 +906,7 @@ export default {
       autoIndexDesc: 'Periodically scans index directories and automatically detects file changes for incremental indexing (add/modify/delete). Modified files are only updated after stabilizing to avoid frequent indexing during editing.',
       autoIndexInterval: 'Check Interval',
       autoIndexStableThreshold: 'Stable Threshold',
-      autoIndexStableThresholdDesc: 'Files modified within this threshold are skipped to avoid frequent updates while the user is editing. Set to 0 for no delay.',
+      autoIndexStableThresholdDesc: 'Files modified within this threshold are skipped to avoid frequent updates while the user is editing. Set to 0 for no delay. Unit: minutes.',
       autoIndexRunNow: 'Check Now',
       autoIndexRunNowTooltip: 'Run a file change detection and incremental index immediately (does not affect the timer)',
       autoIndexSaved: 'Auto-index settings saved',
@@ -916,7 +916,6 @@ export default {
       autoIndexNextRun: 'Next run',
       autoIndexLastResult: 'Last result',
       minutesUnit: 'min',
-      secondsUnit: 'sec',
       // Database cleanup
       dbCleanupTitle: 'Database Cleanup',
       dbCleanupHint: 'After removing directories or deleting local files, residual index data (FTS5/vector DB) still remains. Cleanup reclaims this data and compacts database files to free disk space.',

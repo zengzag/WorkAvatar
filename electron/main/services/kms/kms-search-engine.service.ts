@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { isMainThread } from 'worker_threads'
 import KMSDatabaseService from './kms-database.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
@@ -55,11 +56,17 @@ class KMSSearchEngineService {
    *
    * 替代原无上限 Map，限制总字节 ≤ EMBEDDING_CACHE_MAX_BYTES（256MB）。
    * 大索引场景下超限的 __all__ 条目将不被缓存，向量检索回退到 DB 全量加载。
+   *
+   * Worker 模式下禁用缓存：Worker 仅做写入，每次写入都会触发 invalidateEmbeddingCacheForFile
+   * 全量 filter + set 重新计算所有 8 万条向量的字节数（O(N) × N 次写入 = 灾难性卡死）。
+   * 搜索读取在主线程进行，Worker 内的缓存是无效开销且会致命阻塞事件循环。
    */
-  private embeddingCache: LRUBoundedCache<EmbeddingEntry[]> = new LRUBoundedCache(
-    EMBEDDING_CACHE_MAX_BYTES,
-    computeEmbeddingEntriesBytes
-  )
+  private embeddingCache: LRUBoundedCache<EmbeddingEntry[]> = isMainThread
+    ? new LRUBoundedCache(
+        EMBEDDING_CACHE_MAX_BYTES,
+        computeEmbeddingEntriesBytes
+      )
+    : (null as any)  // Worker 模式下不分配缓存，调用 embeddingCache.* 时走短路逻辑
   private vecDimension: number | null = null
   private vecReady: boolean = false
 
@@ -496,23 +503,51 @@ class KMSSearchEngineService {
       'SELECT id FROM kms_search_index WHERE file_id = ?'
     ).all(fileId) as any[]
 
-    // 主库事务：删除 fts、search_index、paragraphs
+    if (rows.length > 0) {
+      const ids = rows.map(r => r.id)
+      const placeholders = ids.map(() => '?').join(',')
+      this.db.prepare(`DELETE FROM kms_fts WHERE index_id IN (${placeholders})`).run(...ids)
+    }
+
     const tx = this.db.transaction(() => {
-      if (rows.length > 0) {
-        const ids = rows.map(r => r.id)
-        const placeholders = ids.map(() => '?').join(',')
-        this.db.prepare(`DELETE FROM kms_fts WHERE index_id IN (${placeholders})`).run(...ids)
-      }
       this.db.prepare('DELETE FROM kms_search_index WHERE file_id = ?').run(fileId)
       this.db.prepare('DELETE FROM kms_paragraphs WHERE file_id = ?').run(fileId)
     })
     tx()
 
-    // 向量库独立事务：删除 kms_embeddings + vec_kms_embeddings（跨库不能同事务）
     this.deleteEmbeddingsByFile(fileId)
-
-    // 仅失效受影响 fileId 的缓存条目；__all__ 缓存通过过滤移除该文件向量，避免全量重载
     this.invalidateEmbeddingCacheForFile(fileId)
+    this.invalidateCache()
+  }
+
+  /**
+   * 批量化删除一组文件的所有索引：FTS5 操作只执行一次，避免逐文件 O(N) 扫描。
+   */
+  deleteIndexByFiles(fileIds: string[]): void {
+    if (fileIds.length === 0) return
+    const placeholders = fileIds.map(() => '?').join(',')
+    const indexIdRows = this.db.prepare(
+      `SELECT id FROM kms_search_index WHERE file_id IN (${placeholders})`
+    ).all(...fileIds) as any[]
+
+    if (indexIdRows.length > 0) {
+      const ids = indexIdRows.map(r => r.id)
+      const ftsPlaceholders = ids.map(() => '?').join(',')
+      this.db.prepare(`DELETE FROM kms_fts WHERE index_id IN (${ftsPlaceholders})`).run(...ids)
+    }
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM kms_search_index WHERE file_id IN (${placeholders})`).run(...fileIds)
+      this.db.prepare(`DELETE FROM kms_paragraphs WHERE file_id IN (${placeholders})`).run(...fileIds)
+    })
+    tx()
+
+    for (const fileId of fileIds) {
+      this.deleteEmbeddingsByFile(fileId)
+    }
+    for (const fileId of fileIds) {
+      this.invalidateEmbeddingCacheForFile(fileId)
+    }
     this.invalidateCache()
   }
 
@@ -1513,11 +1548,11 @@ class KMSSearchEngineService {
    * 注意：filter 会产生新数组引用，但 update 接口会将其重新 set 到缓存中。
    */
   private invalidateEmbeddingCacheForFile(fileId: string): void {
+    if (!this.embeddingCache) return
     const cached = this.embeddingCache.get('__all__')
     if (!cached) return
     const filtered = cached.filter(e => e.fileId !== fileId)
     if (filtered.length !== cached.length) {
-      // 重新 set 以触发字节重算与超限淘汰检查
       this.embeddingCache.set('__all__', filtered)
     }
   }
@@ -1680,8 +1715,11 @@ class KMSSearchEngineService {
 
   private loadAllEmbeddings(): EmbeddingEntry[] {
     const cacheKey = '__all__'
-    const cached = this.embeddingCache.get(cacheKey)
-    if (cached) return cached
+    // Worker 模式下无 embedding 缓存，每次都从 DB 加载（Worker 仅做写入，不读）
+    if (this.embeddingCache) {
+      const cached = this.embeddingCache.get(cacheKey)
+      if (cached) return cached
+    }
 
     const rows = this.vectorDb.prepare('SELECT id, source_type, source_id, file_id, embedding, model, dimension FROM kms_embeddings').all() as any[]
 
@@ -1699,7 +1737,9 @@ class KMSSearchEngineService {
 
     // LRU set：若 entries 总字节超过 EMBEDDING_CACHE_MAX_BYTES，
     // 将拒绝缓存（下次仍从 DB 加载），避免内存占用过高
-    this.embeddingCache.set(cacheKey, entries)
+    if (this.embeddingCache) {
+      this.embeddingCache.set(cacheKey, entries)
+    }
     return entries
   }
 

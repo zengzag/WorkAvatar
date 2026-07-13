@@ -912,7 +912,7 @@ export default {
       autoIndexDesc: '定期扫描索引目录，自动检测文件变更并增量更新索引（增删改均支持）。修改的文件在稳定后才会更新，避免用户正在编辑时频繁索引。',
       autoIndexInterval: '检查间隔',
       autoIndexStableThreshold: '文件稳定阈值',
-      autoIndexStableThresholdDesc: '文件最后修改时间距今不足该阈值时跳过索引，避免正在编辑的文件被频繁更新。设为 0 则不延迟。',
+      autoIndexStableThresholdDesc: '文件最后修改时间距今不足该阈值时跳过索引，避免正在编辑的文件被频繁更新。设为 0 则不延迟。单位：分钟。',
       autoIndexRunNow: '立即检查',
       autoIndexRunNowTooltip: '立即执行一次文件变更检测和增量索引（不影响定时器）',
       autoIndexSaved: '自动索引设置已保存',
@@ -922,7 +922,6 @@ export default {
       autoIndexNextRun: '下次运行',
       autoIndexLastResult: '上次结果',
       minutesUnit: '分',
-      secondsUnit: '秒',
       // 数据库清理
       dbCleanupTitle: '数据库清理',
       dbCleanupHint: '移除目录或删除本地文件后，残留的索引数据（FTS5/向量库）仍会保留在数据库中。清理可回收这些数据并压缩数据库文件，释放磁盘空间。',
