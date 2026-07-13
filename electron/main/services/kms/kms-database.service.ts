@@ -348,6 +348,34 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_status ON kms_knowledge_cards(status);
       CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_pinned ON kms_knowledge_cards(pinned, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_refreshed ON kms_knowledge_cards(last_refreshed_at);
+
+      -- 语音识别录音任务表
+      CREATE TABLE IF NOT EXISTS kms_voice_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'created',
+        audio_path TEXT,
+        audio_format TEXT DEFAULT 'webm',
+        duration INTEGER DEFAULT 0,
+        audio_size INTEGER DEFAULT 0,
+        audio_channels INTEGER DEFAULT 0,
+        sample_rate INTEGER DEFAULT 0,
+        transcript TEXT DEFAULT '',
+        transcript_segments_json TEXT DEFAULT '[]',
+        transcript_language TEXT DEFAULT '',
+        minutes TEXT DEFAULT '',
+        minutes_type TEXT DEFAULT '',
+        error_message TEXT,
+        stt_mode TEXT DEFAULT '',
+        stt_model TEXT DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        recorded_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_voice_tasks_status ON kms_voice_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_kms_voice_tasks_created ON kms_voice_tasks(created_at DESC);
     `)
 
     this.migrateSchema()
@@ -487,6 +515,13 @@ class KMSDatabaseService {
     this.enforceUniqueFileHash()
 
     this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
+
+    // kms_voice_tasks: 添加 secondary_audio_path 列（双源录音时存储系统音频路径）
+    const voiceCols = this.db.prepare("PRAGMA table_info(kms_voice_tasks)").all() as any[]
+    const voiceColNames = voiceCols.map(c => c.name)
+    if (!voiceColNames.includes('secondary_audio_path')) {
+      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN secondary_audio_path TEXT")
+    }
   }
 
   private enforceUniqueFileHash(): void {

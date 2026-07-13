@@ -11,7 +11,7 @@ const logger = createLogger('KMS-AutoIndex')
 class KMSAutoIndexService {
   private static instance: KMSAutoIndexService
   private autoIndexTimer: NodeJS.Timeout | null = null
-  private autoIndexConfig: AutoIndexConfig = { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
+  private autoIndexConfig: AutoIndexConfig = { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 }
   private autoIndexLastRunAt: number | null = null
   private autoIndexLastResult: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null = null
   private autoIndexRunning: boolean = false
@@ -45,11 +45,16 @@ class KMSAutoIndexService {
   }
 
   start(config: AutoIndexConfig): void {
-    this.stop()
+    // 仅管理定时器，不取消正在运行的检查（stop 会 cancelCurrentRun）。
+    // 保存设置时会反复调用 start()，如果每次都 cancel 会导致正在进行的爬虫/索引被中断。
+    if (this.autoIndexTimer) {
+      clearInterval(this.autoIndexTimer)
+      this.autoIndexTimer = null
+    }
     this.autoIndexConfig = config
     if (!config.enabled) return
     const intervalMs = Math.max(1, config.intervalMinutes) * 60 * 1000
-    logger.info(`Auto-index enabled: interval=${config.intervalMinutes}min, stableThreshold=${config.stableThresholdSeconds}s`)
+    logger.info(`Auto-index enabled: interval=${config.intervalMinutes}min, stableThreshold=${config.stableThresholdMinutes}min`)
     this.autoIndexTimer = setInterval(() => {
       this.runCheck().catch((err) => {
         logger.error('Auto-index check failed:', err)
@@ -131,12 +136,17 @@ class KMSAutoIndexService {
     this.autoIndexRunning = true
     try {
       // 通过 Worker 线程执行自动索引，避免爬虫同步 fs + 文件解析阻塞主线程 UI。
-      // Worker 不可用时降级为主线程直接执行（runCheckInternal 作为 fallback）。
+      // autoIndexCheck 是重 IO 任务（爬虫 + 解析 + LLM + embedding），绝不允许 fallback 到主线程，
+      // 否则会卡死 UI（Worker 超时 600s → 主线程降级 → 同步 better-sqlite3 + file2md 阻塞主循环）。
       const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
       const result = await KMSIndexWorkerClientService.getInstance().runTask(
         'autoIndexCheck',
         [this.autoIndexConfig],
-        async () => this.runCheckInternal(this.autoIndexConfig),
+        async () => {
+          logger.error('Auto-index check refused to run on main thread (would block UI), treating as Worker-unavailable error')
+          this.autoIndexProgressCallback?.({ phase: 'error', current: 0, total: 0, message: 'Worker 不可用，自动索引已跳过以避免阻塞 UI' })
+          return null
+        },
       )
       this.autoIndexLastRunAt = Math.floor(Date.now() / 1000)
       if (result) {
@@ -171,10 +181,17 @@ class KMSAutoIndexService {
     let crawlStats: { newFiles: number; modifiedFiles: number; deletedFiles: number; skippedUnstableFiles: number } | null = null
 
     try {
+      const t0 = Date.now()
       onProgress?.({ phase: 'crawling', current: 0, total: 0, message: '自动检测文件变更...' })
-      const crawlResult = await KMSCrawlerService.getInstance().crawlAllDirectories(signal, {
-        stableThresholdSeconds: this.autoIndexConfig.stableThresholdSeconds,
-      })
+      const crawlResult = await KMSCrawlerService.getInstance().crawlAllDirectories(
+        signal,
+        { stableThresholdMinutes: this.autoIndexConfig.stableThresholdMinutes },
+        (current, total, dirPath) => {
+          // 每个目录扫描开始时推送进度，避免大库场景下"自动检测文件变更"长时间无变化
+          onProgress?.({ phase: 'crawling', current, total, message: `正在扫描目录 (${current + 1}/${total}): ${dirPath}` })
+        },
+      )
+      logger.info(`Auto-index: crawl phase took ${(Date.now() - t0) / 1000}s`)
 
       const pendingFiles = KMSCrawlerService.getInstance().getPendingFiles()
       const total = pendingFiles.length
@@ -187,13 +204,13 @@ class KMSAutoIndexService {
       }
 
       if (total === 0 && crawlResult.deletedFiles === 0) {
-        logger.info(`Auto-index: no changes detected (skipped unstable: ${crawlResult.skippedUnstableFiles})`)
+        logger.info(`Auto-index: no changes detected (skipped unstable: ${crawlResult.skippedUnstableFiles}), total=${(Date.now() - t0) / 1000}s`)
         onProgress?.({ phase: 'done', current: 0, total: 0, message: '未检测到文件变更' })
         return crawlStats
       }
 
       if (total === 0) {
-        logger.info(`Auto-index: only deletions (deleted: ${crawlResult.deletedFiles})`)
+        logger.info(`Auto-index: only deletions (deleted: ${crawlResult.deletedFiles}), total=${(Date.now() - t0) / 1000}s`)
         onProgress?.({ phase: 'done', current: 0, total: 0, message: `已清理 ${crawlResult.deletedFiles} 个已删除文件的索引` })
         return crawlStats
       }
@@ -224,23 +241,19 @@ class KMSAutoIndexService {
       const indexManager = KMSIndexManagerService.getInstance()
 
       let processed = 0
+      const t1 = Date.now()
       for (const file of pendingFiles) {
         if (signal.aborted) break
         try {
-          // 解析前：状态置为 indexing + 删除旧索引，合并为单个事务
-          KMSDatabaseService.getInstance().runInTransaction(() => {
-            KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
-            searchEngine.deleteIndexByFile(file.id)
-          })
+          // 旧索引已在 crawl 的 applyChanges 阶段批量删除，此处只需更新状态
+          KMSCrawlerService.getInstance().updateFileStatus(file.id, 'indexing')
           const parseResult = await fileParser.parseFilePath(file.filePath, signal, file.dataTier as 'hot' | 'cold')
           if (signal.aborted) break
 
-          // 保存解析模式
           const parseMode = parseResult.metadata?.parser
 
           onProgress?.({ phase: 'indexing', current: processed + 1, total, message: `自动索引: ${file.fileName}` })
 
-          // 解析后：标题/段落/解析模式/轻量摘要合并为单个事务
           KMSDatabaseService.getInstance().runInTransaction(() => {
             if (parseMode) {
               indexManager.saveParseMode(file.id, parseMode)
@@ -268,17 +281,19 @@ class KMSAutoIndexService {
         }
         processed++
         onProgress?.({ phase: 'parsing', current: processed, total, message: `已处理 ${processed}/${total} 个文件` })
-
-        // 每处理完一个文件主动让出事件循环，及时响应取消并避免降级模式下独占主线程
         await new Promise((resolve) => setImmediate(resolve))
       }
+      logger.info(`Auto-index: index phase took ${(Date.now() - t1) / 1000}s (${processed}/${total})`)
 
       if (!signal.aborted) {
+        const t2 = Date.now()
         const KMSEmbeddingService = (await import('./kms-embedding.service')).default
         await KMSEmbeddingService.getInstance().generateEmbeddings(undefined, onProgress, signal)
+        logger.info(`Auto-index: embedding phase took ${(Date.now() - t2) / 1000}s`)
       }
 
       if (!signal.aborted) {
+        const t3 = Date.now()
         // 评估冷热数据层级，对晋升的冷文件执行热数据处理。
         // 此处直接调用 processPromotedFilesPublic，避免 evaluateAndPromote 在 Worker 内
         // 再次通过 workerClient 路由（会产生嵌套 Worker，浪费资源）。
@@ -288,6 +303,7 @@ class KMSAutoIndexService {
           logger.info(`Auto-index: processing ${promotedFileIds.length} promoted file(s)`)
           await indexManager.processPromotedFilesPublic(promotedFileIds, signal)
         }
+        logger.info(`Auto-index: data-tier promotion phase took ${(Date.now() - t3) / 1000}s`)
       }
 
       // 自动索引结束：主动触发 checkpoint，把累积的 WAL 内容合并回主库文件
@@ -300,9 +316,10 @@ class KMSAutoIndexService {
       }
 
       if (signal.aborted) {
-        logger.info(`Auto-index cancelled: processed=${processed}/${total}`)
+        logger.info(`Auto-index cancelled: processed=${processed}/${total}, total=${(Date.now() - t0) / 1000}s`)
         onProgress?.({ phase: 'done', current: processed, total, message: '已取消', cancelled: true })
       } else {
+        logger.info(`Auto-index complete: processed=${processed}/${total}, total=${(Date.now() - t0) / 1000}s`)
         onProgress?.({ phase: 'done', current: processed, total, message: `自动索引完成，共处理 ${processed} 个文件` })
       }
       return crawlStats

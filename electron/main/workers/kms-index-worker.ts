@@ -76,7 +76,6 @@ if (!data?.dataDir) {
  */
 let ready = false
 try {
-  // 预先初始化所有需要的单例
   KMSIndexManagerService.getInstance()
   ready = true
   parentPort?.postMessage({ type: 'ready' })
@@ -156,6 +155,8 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
 
     if (msg.type === 'start') {
       const { id, task, args } = msg
+      logger.info(`Worker: task "${task}" (id=${id}) starting`)
+      const taskT0 = Date.now()
       try {
         let result: any
         switch (task) {
@@ -208,10 +209,11 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
           default:
             throw new Error(`Unknown task: ${task}`)
         }
+        logger.info(`Worker: task "${task}" (id=${id}) done in ${(Date.now() - taskT0) / 1000}s`)
         // 任务完成：通知主线程，并触发主线程缓存失效
         parentPort?.postMessage({ type: 'done', id, result })
       } catch (err: any) {
-        logger.error(`Worker task ${task} failed:`, err?.message || err)
+        logger.error(`Worker task ${task} failed after ${(Date.now() - taskT0) / 1000}s:`, err?.message || err)
         parentPort?.postMessage({ type: 'done', id, error: err?.message || String(err) })
       }
       return

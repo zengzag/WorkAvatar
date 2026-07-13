@@ -111,7 +111,7 @@ export interface KMSModelConfig {
 export interface KMSAutoIndexConfig {
   enabled: boolean
   intervalMinutes: number
-  stableThresholdSeconds: number
+  stableThresholdMinutes: number
 }
 
 /** KMS 自动索引状态 */
@@ -197,7 +197,7 @@ export function useKMS() {
     embeddingModel: null,
     summaryModel: null,
     searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
-    autoIndex: { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 },
+    autoIndex: { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 },
   })
   const [autoIndexStatus, setAutoIndexStatus] = useState<KMSAutoIndexStatus | null>(null)
   const [fileSummaries, setFileSummaries] = useState<FileSummariesResult>({ items: [], total: 0 })
@@ -460,8 +460,8 @@ export function useKMS() {
           },
           autoIndex: {
             enabled: result.autoIndex?.enabled ?? false,
-            intervalMinutes: result.autoIndex?.intervalMinutes ?? 10,
-            stableThresholdSeconds: result.autoIndex?.stableThresholdSeconds ?? 300,
+            intervalMinutes: result.autoIndex?.intervalMinutes ?? 1,
+            stableThresholdMinutes: result.autoIndex?.stableThresholdMinutes ?? 5,
           },
         })
       }

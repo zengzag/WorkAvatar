@@ -152,7 +152,7 @@ export interface KMSGetFileSummariesParams {
 export interface KMSAutoIndexConfig {
   enabled: boolean
   intervalMinutes: number
-  stableThresholdSeconds: number
+  stableThresholdMinutes: number
 }
 
 export interface KMSModelConfig {

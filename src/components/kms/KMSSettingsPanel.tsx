@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Tabs, Card, Space, Typography, App, theme, InputNumber, Button, Divider, Tag, Switch, Tooltip,
+  Tabs, Card, Space, Typography, theme, InputNumber, Divider, Tag, Switch, Tooltip,
 } from 'antd'
 import {
-  RobotOutlined, CloudServerOutlined, SaveOutlined, FolderOpenOutlined,
+  RobotOutlined, CloudServerOutlined, FolderOpenOutlined,
   DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined, SearchOutlined,
   FireOutlined, BookOutlined,
 } from '@ant-design/icons'
@@ -73,7 +73,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onRunAutoIndexCheck,
 }) => {
   const { t } = useTranslation()
-  const { message } = App.useApp()
   const { token } = theme.useToken()
 
   const [providers, setProviders] = useState<LLMProvider[]>([])
@@ -87,10 +86,10 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const [enableKnowledgeCards, setEnableKnowledgeCards] = useState<boolean>(settings.searchParams?.enableKnowledgeCards ?? true)
   const [knowledgeCardThreshold, setKnowledgeCardThreshold] = useState<number>(settings.searchParams?.knowledgeCardThreshold ?? 5)
   const [autoRefreshStaleCards, setAutoRefreshStaleCards] = useState<boolean>(settings.searchParams?.autoRefreshStaleCards ?? true)
-  const [savingModel, setSavingModel] = useState(false)
-  const [savingParams, setSavingParams] = useState(false)
   const [embeddingMaxChars, setEmbeddingMaxChars] = useState<number>(2000)
-  const [savingEmbeddingMaxChars, setSavingEmbeddingMaxChars] = useState(false)
+  const skipModelSaveRef = useRef(true)
+  const skipParamsSaveRef = useRef(true)
+  const skipEmbeddingSaveRef = useRef(true)
 
   useEffect(() => {
     window.electronAPI.llm.getProviders().then((result: any) => {
@@ -110,7 +109,13 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     setEnableKnowledgeCards(settings.searchParams?.enableKnowledgeCards ?? true)
     setKnowledgeCardThreshold(settings.searchParams?.knowledgeCardThreshold ?? 5)
     setAutoRefreshStaleCards(settings.searchParams?.autoRefreshStaleCards ?? true)
+    skipModelSaveRef.current = true
+    skipParamsSaveRef.current = true
   }, [settings])
+
+  const handleSaveAutoIndex = useCallback(async (config: KMSAutoIndexConfig): Promise<boolean> => {
+    return onSaveSettings({ autoIndex: config })
+  }, [onSaveSettings])
 
   const loadEmbeddingMaxChars = useCallback(async () => {
     try {
@@ -121,45 +126,47 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     } catch {}
   }, [])
 
-  const handleSaveEmbeddingMaxChars = useCallback(async () => {
-    setSavingEmbeddingMaxChars(true)
-    try {
-      await window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
-      message.success(t('settings.embeddingMaxCharsSaved'))
-    } catch {
-      message.error(t('settings.defaultModelSaveFailed'))
-    } finally {
-      setSavingEmbeddingMaxChars(false)
+  // 自动保存：模型配置变化后延迟 500ms 保存
+  useEffect(() => {
+    if (skipModelSaveRef.current) {
+      skipModelSaveRef.current = false
+      return
     }
-  }, [embeddingMaxChars, message, t])
+    const timer = setTimeout(() => {
+      onSaveSettings({
+        model: modelConfig,
+        embeddingModel: embeddingModelConfig,
+        summaryModel: summaryModelConfig,
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [modelConfig, embeddingModelConfig, summaryModelConfig, onSaveSettings])
 
-  const handleSaveModel = useCallback(async () => {
-    setSavingModel(true)
-    const ok = await onSaveSettings({
-      model: modelConfig,
-      embeddingModel: embeddingModelConfig,
-      summaryModel: summaryModelConfig,
-    })
-    setSavingModel(false)
-    if (ok) {
-      message.success(t('kms.settingsPanel.modelSaved'))
-    } else {
-      message.error(t('kms.settingsPanel.modelSaveFailed'))
+  // 自动保存：检索参数变化后延迟 500ms 保存
+  useEffect(() => {
+    if (skipParamsSaveRef.current) {
+      skipParamsSaveRef.current = false
+      return
     }
-  }, [modelConfig, embeddingModelConfig, summaryModelConfig, onSaveSettings, message, t])
+    const timer = setTimeout(() => {
+      onSaveSettings({
+        searchParams: { maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards },
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards, onSaveSettings])
 
-  const handleSaveParams = useCallback(async () => {
-    setSavingParams(true)
-    const ok = await onSaveSettings({
-      searchParams: { maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards },
-    })
-    setSavingParams(false)
-    if (ok) {
-      message.success(t('kms.settingsPanel.paramsSaved'))
-    } else {
-      message.error(t('kms.settingsPanel.modelSaveFailed'))
+  // 自动保存：embedding 最大字符数变化后延迟 500ms 保存
+  useEffect(() => {
+    if (skipEmbeddingSaveRef.current) {
+      skipEmbeddingSaveRef.current = false
+      return
     }
-  }, [maxRounds, topK, resultLimit, autoReparseHotData, enableKnowledgeCards, knowledgeCardThreshold, autoRefreshStaleCards, onSaveSettings, message, t])
+    const timer = setTimeout(() => {
+      window.electronAPI.settings.set({ key: 'embedding_max_chars', value: String(embeddingMaxChars) })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [embeddingMaxChars])
 
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -383,29 +390,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
               step={100}
               style={{ width: 120 }}
             />
-            <Button
-              type="primary"
-              size="small"
-              icon={<SaveOutlined />}
-              loading={savingEmbeddingMaxChars}
-              onClick={handleSaveEmbeddingMaxChars}
-            >
-              {t('common.save')}
-            </Button>
           </Space>
         </div>
       </Card>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={savingModel}
-          onClick={handleSaveModel}
-        >
-          {t('common.save')}
-        </Button>
-      </div>
     </div>
   )
 
@@ -583,17 +570,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
           />
         </div>
       </Card>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          icon={<SaveOutlined />}
-          loading={savingParams}
-          onClick={handleSaveParams}
-        >
-          {t('common.save')}
-        </Button>
-      </div>
     </div>
   )
 
@@ -636,7 +612,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         onCancelIndex={onCancelIndex}
         autoIndexConfig={settings.autoIndex}
         autoIndexStatus={autoIndexStatus}
-        onSaveAutoIndex={async (config) => onSaveSettings({ autoIndex: config })}
+        onSaveAutoIndex={handleSaveAutoIndex}
         onRunAutoIndexCheck={onRunAutoIndexCheck}
         dirs={dirs}
       />

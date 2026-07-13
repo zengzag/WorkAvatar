@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol, session, desktopCapturer } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { Readable } from 'stream'
@@ -78,6 +78,13 @@ const MIME_MAP: Record<string, string> = {
   ico: 'image/x-icon',
   tiff: 'image/tiff',
   tif: 'image/tiff',
+  webm: 'audio/webm',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  ogg: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
 }
 
 function getMimeType(filePath: string): string {
@@ -281,6 +288,22 @@ app.whenReady().then(() => {
   logger.info('App ready, registering IPC handlers and creating window')
   registerAppFileProtocol()
   registerIpcHandlers()
+
+  // 配置 getDisplayMedia 请求处理器，用于系统音频录制（Windows loopback）
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'], fetchWindowIcons: false })
+      callback({
+        video: sources[0],  // 必须提供 video，否则 Electron 会报错
+        audio: 'loopback',  // 捕获系统音频（扬声器输出），仅 Windows 支持
+      })
+    } catch (err) {
+      logger.error('getDisplayMedia handler error:', err)
+      // 回退：仅提供 audio
+      callback({ audio: 'loopback' })
+    }
+  }, { useSystemPicker: false })
+
   createWindow()
   createTray()
 })
@@ -298,6 +321,12 @@ app.on('before-quit', () => {
     DatabaseService.getInstance().close()
   } catch (error) {
     logger.error('Failed to close database:', error)
+  }
+  // 关闭悬浮字幕窗口
+  try {
+    require('./services/voice/subtitle-window.service').default.getInstance().destroy()
+  } catch (error) {
+    logger.error('Failed to destroy subtitle window:', error)
   }
   // 关闭应用日志文件流
   try {

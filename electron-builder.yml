@@ -70,9 +70,6 @@ files:
   - "!node_modules/cytoscape-fcose/**"
   - "!node_modules/epubjs/**"
   - "!node_modules/rtf.js/**"
-  # ── sharp 已移除（改用 Electron nativeImage），排除其残留 ──
-  - "!node_modules/sharp/**"
-  - "!node_modules/@img/**"
   # ── onnxruntime-node：仅保留 win32/x64，排除其他平台二进制 ──
   - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"

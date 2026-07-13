@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Card, Space, Typography, App, theme, Alert } from 'antd'
-import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined } from '@ant-design/icons'
+import { Card, Space, Typography, App, theme, Tooltip } from 'antd'
+import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudServerOutlined, BulbOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
 import { getAllSceneDefaultModels, setSceneDefaultModel } from '../../utils/default-model'
 import type { SceneKey, SceneDefaultModel } from '../../utils/default-model'
 import type { LLMProvider } from '../../types'
 
-const { Title, Text, Paragraph } = Typography
+const { Text } = Typography
 
 interface SceneConfig {
   key: SceneKey
@@ -25,6 +25,7 @@ const DefaultModelSettings: React.FC = () => {
     knowledge: null,
     quick: null,
     embedding: null,
+    memory: null,
   })
   const [providers, setProviders] = useState<LLMProvider[]>([])
 
@@ -47,14 +48,14 @@ const DefaultModelSettings: React.FC = () => {
     loadConfigs()
   }, [loadProviders, loadConfigs])
 
-  // 场景图标使用语义色 token，自动适配明暗主题
   const scenes: SceneConfig[] = useMemo(() => [
     { key: 'creation', icon: <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} /> },
     { key: 'workbench', icon: <UserOutlined style={{ fontSize: 20, color: token.colorSuccess }} /> },
     { key: 'knowledge', icon: <ThunderboltOutlined style={{ fontSize: 20, color: token.colorError }} /> },
     { key: 'quick', icon: <BugOutlined style={{ fontSize: 20, color: token.colorWarning }} /> },
+    { key: 'memory', icon: <BulbOutlined style={{ fontSize: 20, color: token.colorTextSecondary }} /> },
     { key: 'embedding', icon: <CloudServerOutlined style={{ fontSize: 20, color: token.colorInfo }} /> },
-  ], [token.colorPrimary, token.colorSuccess, token.colorError, token.colorWarning, token.colorInfo])
+  ], [token.colorPrimary, token.colorSuccess, token.colorError, token.colorWarning, token.colorTextSecondary, token.colorInfo])
 
   const handleLlmChange = useCallback((scene: SceneKey) => async (providerId: string, modelId: string) => {
     const newConfig: SceneDefaultModel = {
@@ -84,20 +85,14 @@ const DefaultModelSettings: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <Title level={5} style={{ margin: 0 }}>{t('settings.defaultModelTitle')}</Title>
-        <Paragraph type="secondary" style={{ margin: '4px 0 0' }}>{t('settings.defaultModelDesc')}</Paragraph>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+        <Text strong>{t('settings.defaultModelTitle')}</Text>
+        <Tooltip title={t('settings.defaultModelHintDesc')}>
+          <InfoCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12, cursor: 'help' }} />
+        </Tooltip>
       </div>
 
-      <Alert
-        title={t('settings.defaultModelHint')}
-        description={t('settings.defaultModelHintDesc')}
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-
-      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
         {scenes.map(scene => {
           const config = configs[scene.key]
           return (
@@ -109,8 +104,8 @@ const DefaultModelSettings: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                   <div style={{
-                    width: 40,
-                    height: 40,
+                    width: 36,
+                    height: 36,
                     borderRadius: 8,
                     background: token.colorBgTextHover,
                     display: 'flex',
@@ -121,8 +116,7 @@ const DefaultModelSettings: React.FC = () => {
                     {scene.icon}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text strong style={{ display: 'block' }}>{t(`settings.defaultModelScene_${scene.key}`)}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{t(`settings.defaultModelScene_${scene.key}_desc`)}</Text>
+                    <Text strong>{t(`settings.defaultModelScene_${scene.key}`)}</Text>
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

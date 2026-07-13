@@ -4,6 +4,7 @@ import { LLM_CHANNELS } from './llm'
 import { TOOL_CHANNELS } from './tool'
 import { APP_CHANNELS } from './app'
 import { KMS_CHANNELS } from './kms'
+import { VOICE_CHANNELS } from './voice'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -12,6 +13,7 @@ export const IPC_CHANNELS = {
   ...TOOL_CHANNELS,
   ...APP_CHANNELS,
   ...KMS_CHANNELS,
+  ...VOICE_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -20,3 +22,4 @@ export * from './llm'
 export * from './tool'
 export * from './app'
 export * from './kms'
+export * from './voice'

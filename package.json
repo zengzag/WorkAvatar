@@ -51,6 +51,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "sharp": "^0.34.5",
+    "sherpa-onnx": "^1.13.4",
     "sqlite-vec": "^0.1.9",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",

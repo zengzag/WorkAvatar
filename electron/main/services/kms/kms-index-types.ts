@@ -30,7 +30,7 @@ export type ProgressCallback = (progress: IndexProgress) => void
 export interface AutoIndexConfig {
   enabled: boolean
   intervalMinutes: number
-  stableThresholdSeconds: number
+  stableThresholdMinutes: number
 }
 
 export interface AutoIndexStatus {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
+import React, { useState, useEffect, useCallback, useImperativeHandle, forwardRef, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Button, Card, Space, Progress, Typography, Spin, theme, Switch, InputNumber, Tooltip, Tag, App, Select, Checkbox,
@@ -7,7 +7,7 @@ import {
   ThunderboltOutlined,
   SyncOutlined, BuildOutlined, StopOutlined,
   ClockCircleOutlined, RadarChartOutlined,
-  PlayCircleOutlined, InfoCircleOutlined, SaveOutlined,
+  PlayCircleOutlined, InfoCircleOutlined,
   CloudServerOutlined, ExclamationCircleOutlined,
   DatabaseOutlined, DeleteOutlined, ReloadOutlined,
 } from '@ant-design/icons'
@@ -115,8 +115,11 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
 
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
-  const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdSeconds)
-  const [savingAuto, setSavingAuto] = useState(false)
+  const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdMinutes)
+  const skipAutoIndexSaveRef = useRef(true)
+  // 用 ref 持有最新的 onSaveAutoIndex，避免回调引用变化触发自动保存 effect
+  const onSaveAutoIndexRef = useRef(onSaveAutoIndex)
+  onSaveAutoIndexRef.current = onSaveAutoIndex
   const [withEmbedding, setWithEmbedding] = useState(true)
   const [dbStats, setDbStats] = useState<any>(null)
   const [loadingStats, setLoadingStats] = useState(false)
@@ -125,8 +128,27 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   useEffect(() => {
     setAutoEnabled(autoIndexConfig.enabled)
     setIntervalMin(autoIndexConfig.intervalMinutes)
-    setStableThreshold(autoIndexConfig.stableThresholdSeconds)
+    setStableThreshold(autoIndexConfig.stableThresholdMinutes)
+    skipAutoIndexSaveRef.current = true
   }, [autoIndexConfig])
+
+  // 自动保存：自动索引配置变化后延迟 500ms 保存
+  // 注意：依赖数组只含实际配置值，不含 onSaveAutoIndex（用 ref 调用），
+  // 否则父组件每次 re-render 传入新函数引用会反复触发保存
+  useEffect(() => {
+    if (skipAutoIndexSaveRef.current) {
+      skipAutoIndexSaveRef.current = false
+      return
+    }
+    const timer = setTimeout(() => {
+      onSaveAutoIndexRef.current({
+        enabled: autoEnabled,
+        intervalMinutes: intervalMin,
+        stableThresholdMinutes: stableThreshold,
+      })
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [autoEnabled, intervalMin, stableThreshold])
 
   const loadDbStats = useCallback(async () => {
     setLoadingStats(true)
@@ -186,21 +208,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
       },
     })
   }, [modal, t, formatBytes, message, loadDbStats])
-
-  const handleSaveAutoIndex = useCallback(async () => {
-    setSavingAuto(true)
-    const ok = await onSaveAutoIndex({
-      enabled: autoEnabled,
-      intervalMinutes: intervalMin,
-      stableThresholdSeconds: stableThreshold,
-    })
-    setSavingAuto(false)
-    if (ok) {
-      message.success(t('kms.settingsPanel.autoIndexSaved'))
-    } else {
-      message.error(t('kms.settingsPanel.modelSaveFailed'))
-    }
-  }, [autoEnabled, intervalMin, stableThreshold, onSaveAutoIndex, message, t])
 
   const formatProgressTime = (ts: number | null): string => ts ? formatTime(ts, 'time') : '-'
 
@@ -298,10 +305,10 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                   value={stableThreshold}
                   onChange={v => setStableThreshold(v || 0)}
                   min={0}
-                  max={86400}
+                  max={1440}
                   size="small"
                   style={{ width: 100, marginTop: 2 }}
-                  addonAfter={t('kms.settingsPanel.secondsUnit')}
+                  addonAfter={t('kms.settingsPanel.minutesUnit')}
                   disabled={!autoEnabled}
                 />
               </div>
@@ -350,15 +357,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                 {t('kms.settingsPanel.autoIndexRunNow')}
               </Button>
             </Tooltip>
-            <Button
-              size="small"
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={savingAuto}
-              onClick={handleSaveAutoIndex}
-            >
-              {t('common.save')}
-            </Button>
           </div>
         </div>
       </Card>

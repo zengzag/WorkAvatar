@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import { nativeImage } from 'electron'
 import { createWorker } from 'tesseract.js'
 import { createLogger } from './logger'
 import PathService from './path.service'
@@ -152,25 +151,22 @@ class OCRService {
     if (!this.paddleocr) {
       throw new Error('PaddleOCR not initialized')
     }
-    // 使用 Electron nativeImage 解码图片为 BGRA，再转 RGB（PaddleOcrService 期望的输入格式）
-    const image = nativeImage.createFromPath(imagePath)
-    if (image.isEmpty()) {
-      throw new Error(`Failed to decode image: ${imagePath}`)
-    }
-    const { width, height } = image.getSize()
-    const bgra = image.toBitmap()
-    // BGRA → RGB：每 4 字节取 BGR 前三字节并交换为 RGB
-    const rgb = new Uint8Array(width * height * 3)
-    for (let i = 0, j = 0; i < bgra.length; i += 4, j += 3) {
-      rgb[j] = bgra[i + 2]     // R
-      rgb[j + 1] = bgra[i + 1] // G
-      rgb[j + 2] = bgra[i]     // B
-    }
+    // 使用 sharp 把任意格式图片解码为 RGB 像素（PaddleOcrService 期望的输入格式）
+    const sharpMod = await import('sharp')
+    const sharp = (sharpMod as unknown as { default: (input: string | Buffer) => any }).default
+    const decoded = await sharp(imagePath)
+      .removeAlpha()
+      .raw({ resolveWithObject: true })
+      .toBuffer({ resolveWithObject: true }) as { data: Buffer; info: { width: number; height: number; channels: number } }
 
     const input = {
-      width,
-      height,
-      data: rgb,
+      width: decoded.info.width,
+      height: decoded.info.height,
+      data: new Uint8Array(
+        decoded.data.buffer,
+        decoded.data.byteOffset,
+        decoded.data.byteLength,
+      ),
     }
 
     const raw = await this.paddleocr.recognize(input)

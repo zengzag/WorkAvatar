@@ -104,6 +104,12 @@ class KMSIndexWorkerClientService {
    * 启动一个批量任务。如果 Worker 不可用，降级为主线程直接执行。
    * 增加任务级超时：Worker 任务挂起时（如原生模块在打包环境卡死），
    * 主动 reject 并降级，避免 pendingTasks 永久驻留、autoIndexRunning 永久为 true。
+   *
+   * 超时策略区分：
+   * - 任务超时（timed out）：仅拒绝当前 Promise，不标记 Worker 失败。
+   *   Worker 可能仍在运行（大库索引耗时超过预期），后续任务可继续使用 Worker。
+   * - Worker 初始化失败 / fatal 错误 / Worker 异常退出：标记 Worker 永久失败，
+   *   后续任务直接走主线程降级路径。
    */
   async runTask(
     task: WorkerTask,
@@ -118,13 +124,17 @@ class KMSIndexWorkerClientService {
     try {
       const worker = await this.ensureWorker()
       const id = this.nextTaskId()
-      // 任务级超时：索引大库可能很久，给 30 分钟；autoIndexCheck 通常很快，给 10 分钟
-      const timeoutMs = task === 'autoIndexCheck' ? 10 * 60 * 1000 : 30 * 60 * 1000
+      // autoIndexCheck 包含爬虫+解析+LLM+embedding，可能很慢，给 30 分钟
+      // 其他批量索引任务给 30 分钟
+      const timeoutMs = task === 'autoIndexCheck' ? 30 * 60 * 1000 : 30 * 60 * 1000
       logger.info(`Dispatching worker task "${task}" (id=${id}, timeout=${timeoutMs / 1000}s)`)
       const result = await new Promise<any>((resolve, reject) => {
         const timer = setTimeout(() => {
           if (this.pendingTasks.has(id)) {
             this.pendingTasks.delete(id)
+            // 超时仅 reject 当前任务，不标记 Worker 为失败
+            // Worker 可能仍在处理中（大库、网络慢等原因），后续任务可复用
+            logger.warn(`Worker task ${task} (id=${id}) timed out after ${timeoutMs / 1000}s — NOT marking worker as failed, task will be rejected`)
             reject(new Error(`Worker task ${task} timed out after ${timeoutMs / 1000}s`))
           }
         }, timeoutMs)
@@ -138,9 +148,15 @@ class KMSIndexWorkerClientService {
       })
       return result
     } catch (err: any) {
-      logger.warn(`Worker task ${task} failed, falling back to main thread:`, err?.message || err)
-      // 标记 Worker 不可用，后续任务直接走降级路径
-      this.markWorkerFailed()
+      const isTimeout = err?.message?.includes?.('timed out')
+      if (isTimeout) {
+        // 超时：仅 reject 当前任务，Worker 仍可能存活，不标记失败
+        logger.warn(`Worker task ${task} timed out, rejecting task without marking worker as failed:`, err?.message || err)
+      } else {
+        // Worker 初始化失败 / 其他错误：标记 Worker 不可用
+        logger.warn(`Worker task ${task} failed (non-timeout), marking worker as failed:`, err?.message || err)
+        this.markWorkerFailed()
+      }
       return fallback()
     }
   }

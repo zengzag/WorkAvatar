@@ -909,8 +909,8 @@ class KMSService {
     if (params.autoIndex !== undefined) {
       const config: AutoIndexConfig = {
         enabled: !!params.autoIndex.enabled,
-        intervalMinutes: Math.max(1, Math.min(1440, params.autoIndex.intervalMinutes ?? 10)),
-        stableThresholdSeconds: Math.max(0, Math.min(86400, params.autoIndex.stableThresholdSeconds ?? 300)),
+        intervalMinutes: Math.max(1, Math.min(1440, params.autoIndex.intervalMinutes ?? 1)),
+        stableThresholdMinutes: Math.max(0, Math.min(1440, params.autoIndex.stableThresholdMinutes ?? 5)),
       }
       KMSIndexManagerService.getInstance().startAutoIndex(config)
     }
@@ -918,7 +918,7 @@ class KMSService {
 
   initAutoIndex(): void {
     const settings = this.getKmsSettings()
-    const config: AutoIndexConfig = settings.autoIndex || { enabled: false, intervalMinutes: 10, stableThresholdSeconds: 300 }
+    const config: AutoIndexConfig = settings.autoIndex || { enabled: false, intervalMinutes: 1, stableThresholdMinutes: 5 }
     KMSIndexManagerService.getInstance().startAutoIndex(config)
   }
 
