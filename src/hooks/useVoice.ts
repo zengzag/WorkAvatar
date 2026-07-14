@@ -11,10 +11,10 @@ export interface VoiceTask {
   audio_size: number
   audio_channels: number
   sample_rate: number
-  transcript: string
-  transcript_segments_json: string
+  transcript?: string
+  transcript_segments_json?: string
   transcript_language: string
-  minutes: string
+  minutes?: string
   minutes_type: string
   error_message: string | null
   stt_mode: string

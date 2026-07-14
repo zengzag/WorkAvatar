@@ -190,7 +190,8 @@ export const toolHandlers: Record<string, ToolHandler> = {
       startOffset: args.start_offset,
       endOffset: args.end_offset,
       startLine: args.start_line,
-      maxChars: args.max_chars || 5000,
+      // 限制 maxChars 在 1-50000 之间，防止 LLM 请求超大内容导致内存/响应问题
+      maxChars: Math.min(Math.max(args.max_chars || 5000, 100), 50000),
     })
 
     const file = getFileById(fileId)
@@ -265,9 +266,14 @@ export const toolHandlers: Record<string, ToolHandler> = {
       return 'Collection is empty or not found.'
     }
 
-    let output = `${files.length} file(s) in collection:\n\n`
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
+    // 限制输出条目数，防止大合集产生超大响应
+    const MAX_LIST = 200
+    const displayFiles = files.length > MAX_LIST ? files.slice(0, MAX_LIST) : files
+    let output = `${files.length} file(s) in collection`
+    if (files.length > MAX_LIST) output += ` (showing first ${MAX_LIST})`
+    output += ':\n\n'
+    for (let i = 0; i < displayFiles.length; i++) {
+      const f = displayFiles[i]
       output += `[${i + 1}] ${f.file_name} [${f.id}]\n`
       output += `  ext: ${f.file_ext || 'N/A'}, size: ${f.file_size || 0}, status: ${f.index_status}\n`
       output += `  path: ${f.file_path}\n`
@@ -336,9 +342,14 @@ export const toolHandlers: Record<string, ToolHandler> = {
       return 'No paragraphs available. Paragraphs are generated when the file is indexed as hot data.'
     }
 
-    let output = `${paragraphs.length} paragraph(s):\n\n`
-    for (let i = 0; i < paragraphs.length; i++) {
-      const p = paragraphs[i]
+    // 限制输出条目数，防止大文档（如数百段）产生超大响应
+    const MAX_PARAGRAPHS = 200
+    const displayParagraphs = paragraphs.length > MAX_PARAGRAPHS ? paragraphs.slice(0, MAX_PARAGRAPHS) : paragraphs
+    let output = `${paragraphs.length} paragraph(s)`
+    if (paragraphs.length > MAX_PARAGRAPHS) output += ` (showing first ${MAX_PARAGRAPHS})`
+    output += ':\n\n'
+    for (let i = 0; i < displayParagraphs.length; i++) {
+      const p = displayParagraphs[i]
       const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
       output += `[${i + 1}] ${indent}${p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
       if (p.summary) {

@@ -25,10 +25,10 @@ export interface VoiceTask {
   audio_size: number
   audio_channels: number
   sample_rate: number
-  transcript: string
-  transcript_segments_json: string
+  transcript?: string
+  transcript_segments_json?: string
   transcript_language: string
-  minutes: string
+  minutes?: string
   minutes_type: string
   error_message: string | null
   stt_mode: string
@@ -154,10 +154,18 @@ class VoiceService {
 
   // ==================== Task CRUD ====================
 
+  /**
+   * 列出所有语音任务（仅元数据，不含 transcript/minutes 等大文本字段）。
+   * 大文本字段仅在 getTask(id) 时按需加载，避免列表页一次性加载全部大文本。
+   */
   listTasks(): VoiceTask[] {
-    return this.getDb().prepare(
-      'SELECT * FROM kms_voice_tasks ORDER BY created_at DESC'
-    ).all() as VoiceTask[]
+    return this.getDb().prepare(`
+      SELECT id, title, description, status, audio_path, audio_format, duration,
+             audio_size, audio_channels, sample_rate, transcript_language,
+             minutes_type, error_message, stt_mode, stt_model,
+             created_at, updated_at, recorded_at, secondary_audio_path, notes
+      FROM kms_voice_tasks ORDER BY created_at DESC
+    `).all() as VoiceTask[]
   }
 
   getTask(id: string): VoiceTask | null {

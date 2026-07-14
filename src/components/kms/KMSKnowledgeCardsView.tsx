@@ -147,10 +147,13 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
         message.info(t('kms.knowledgeCards.noCardsFiltered'))
         return
       }
-      for (const card of staleCards) {
-        try {
-          await window.electronAPI.kms.refreshKnowledgeCard(card.id)
-        } catch {}
+      // 并发刷新（限制并发数避免 LLM API 过载），替代原串行 await
+      const CONCURRENCY = 3
+      for (let i = 0; i < staleCards.length; i += CONCURRENCY) {
+        const batch = staleCards.slice(i, i + CONCURRENCY)
+        await Promise.allSettled(batch.map((card: any) =>
+          window.electronAPI.kms.refreshKnowledgeCard(card.id)
+        ))
       }
       message.success(t('kms.knowledgeCards.refreshSuccess'))
       loadCards()

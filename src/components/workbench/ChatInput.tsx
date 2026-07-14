@@ -1,7 +1,7 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
 import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useMemo, useRef, useCallback, useState } from 'react'
+import { useMemo, useRef, useCallback, useState, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 
 interface AttachedFile {
@@ -555,4 +555,4 @@ const ChatInput: React.FC<{
   )
 }
 
-export default ChatInput
+export default memo(ChatInput)

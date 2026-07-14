@@ -103,7 +103,7 @@ const ThinkingSegmentInner: React.FC<{
     if (!isStreaming) return
     const interval = setInterval(() => {
       setElapsed(((Date.now() - seg.timestamp!) / 1000))
-    }, 100)
+    }, 1000)
     return () => clearInterval(interval)
   }, [seg.timestamp, isStreaming])
 

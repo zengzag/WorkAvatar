@@ -22,6 +22,12 @@ class KMSMCPService {
   private sessionCleanupTimer: NodeJS.Timeout | null = null
   private static readonly SESSION_IDLE_TTL_MS = 60 * 60 * 1000
   private static readonly SESSION_CLEANUP_INTERVAL_MS = 30 * 60 * 1000
+  /** 请求 body 最大字节数（10MB），防止恶意大 body 导致 OOM */
+  private static readonly MAX_BODY_BYTES = 10 * 1024 * 1024
+  /** 请求 body 读取超时（30秒），防止慢客户端挂起服务器 */
+  private static readonly BODY_TIMEOUT_MS = 30 * 1000
+  /** server.close() 超时（5秒），超时后强制销毁所有连接 */
+  private static readonly CLOSE_TIMEOUT_MS = 5 * 1000
   private static instance: KMSMCPService
 
   private constructor() {}
@@ -73,6 +79,11 @@ class KMSMCPService {
 
       server.listen(this.config.port, () => {
         this.server = server
+        // 服务器级别超时：防止慢速攻击（慢头发送、慢 body 读取）
+        // requestTimeout：整个请求处理超时（含 body），Node 默认 300s → 收紧到 60s
+        server.requestTimeout = 60 * 1000
+        // headersTimeout： headers 接收超时，必须略大于 requestTimeout 的 keep-alive 超时
+        server.headersTimeout = 65 * 1000
         this.sessionCleanupTimer = setInterval(
           () => this.cleanupExpiredSessions(),
           KMSMCPService.SESSION_CLEANUP_INTERVAL_MS,
@@ -95,7 +106,24 @@ class KMSMCPService {
         this.sessionCleanupTimer = null
       }
 
+      // 超时兜底：如果 server.close() 在 CLOSE_TIMEOUT_MS 内未完成（有连接未关闭），
+      // 强制销毁所有连接并完成 stop，避免永久挂起
+      let resolved = false
+      const forceCloseTimer = setTimeout(() => {
+        if (resolved) return
+        resolved = true
+        this.server?.closeAllConnections?.()
+        // closeAllConnections 在 Node 18.2+ 可用；兜底再 close 一次
+        this.server = null
+        this.sessions.clear()
+        logger.warn('MCP server stop timed out, forced close all connections')
+        resolve({ success: true })
+      }, KMSMCPService.CLOSE_TIMEOUT_MS)
+
       this.server.close(() => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(forceCloseTimer)
         this.server = null
         this.sessions.clear()
         logger.info('MCP server stopped')
@@ -135,9 +163,43 @@ class KMSMCPService {
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined
 
+    // 读取请求 body，带超时和大小限制：
+    // - 超时：慢客户端在 BODY_TIMEOUT_MS 内未发送完 body 则中止，防止挂起
+    // - 大小限制：超过 MAX_BODY_BYTES 立即返回 413，防止 OOM
     let body = ''
-    for await (const chunk of req) {
-      body += chunk
+    let bodySize = 0
+    let bodyTooLarge = false
+    let bodyTimedOut = false
+    const bodyTimer = setTimeout(() => {
+      bodyTimedOut = true
+      // 超时后销毁 socket，中止 for-await 循环
+      req.destroy(new Error('Request body timeout'))
+    }, KMSMCPService.BODY_TIMEOUT_MS)
+
+    try {
+      for await (const chunk of req) {
+        bodySize += chunk.length
+        if (bodySize > KMSMCPService.MAX_BODY_BYTES) {
+          bodyTooLarge = true
+          break
+        }
+        body += chunk
+      }
+    } catch {
+      // 超时导致的 destroy 会抛异常，bodyTimedOut 标记已在下方处理
+    } finally {
+      clearTimeout(bodyTimer)
+    }
+
+    // 超时后 socket 已销毁，无法再写响应，直接返回
+    if (bodyTimedOut) {
+      logger.warn('MCP request body read timed out, connection destroyed')
+      return
+    }
+
+    if (bodyTooLarge) {
+      this.sendJsonRpcError(res, 413, -32603, 'Request body too large', null)
+      return
     }
 
     let message: JsonRpcRequest

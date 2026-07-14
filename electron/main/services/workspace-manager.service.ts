@@ -156,10 +156,7 @@ class WorkspaceManagerService {
     ).run(title || '', summary || '', preview, id, employeeId)
   }
 
-  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }): Conversation | null {
-    const conversation = this.getConversation(id)
-    if (!conversation) return null
-
+  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }): boolean {
     const ALLOWED_CONVERSATION_COLUMNS = [
       'title', 'messages_json', 'message_count',
       'status', 'minimal_mode', 'last_message_at'
@@ -180,23 +177,39 @@ class WorkspaceManagerService {
       }
     })
 
-    if (updates.length > 0) {
-      updates.push('updated_at = unixepoch()')
-      values.push(id)
+    if (updates.length === 0) return false
 
-      this.db.getDb().prepare(`
-        UPDATE conversations SET ${updates.join(', ')} WHERE id = ?
-      `).run(...values)
-    }
+    updates.push('updated_at = unixepoch()')
+    values.push(id)
 
+    const result = this.db.getDb().prepare(`
+      UPDATE conversations SET ${updates.join(', ')} WHERE id = ?
+    `).run(...values)
+
+    if (result.changes === 0) return false
+
+    // FTS 同步：只在 title 或 messages_json 变化时执行
+    // 优化：避免 SELECT * 加载完整 messages_json 大字段，只查必要的小字段
     if (data.title !== undefined || data.messages_json !== undefined) {
-      const updated = this.getConversation(id)
-      if (updated) {
-        this.syncConversationFTS(id, updated.employee_id, updated.title, updated.summary || '', updated.messages_json)
+      const needMessagesJson = data.messages_json === undefined
+      const cols = needMessagesJson
+        ? 'employee_id, title, summary, messages_json'
+        : 'employee_id, title, summary'
+      const row = this.db.getDb().prepare(
+        `SELECT ${cols} FROM conversations WHERE id = ?`
+      ).get(id) as any
+      if (row) {
+        this.syncConversationFTS(
+          id,
+          row.employee_id,
+          data.title !== undefined ? data.title : row.title,
+          row.summary || '',
+          data.messages_json !== undefined ? data.messages_json : (row.messages_json || '[]')
+        )
       }
     }
 
-    return this.getConversation(id)
+    return true
   }
 
   deleteConversation(id: string): boolean {

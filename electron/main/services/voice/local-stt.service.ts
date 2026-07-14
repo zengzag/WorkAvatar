@@ -398,6 +398,12 @@ class LocalSTTService {
     }
 
     // 回退到自定义 WAV 解析
+    // 文件大小保护：超过 500MB 的 WAV 文件拒绝处理，避免内存爆炸
+    // （1 小时 16kHz 16-bit mono ≈ 115MB，500MB ≈ 4.3 小时，足够覆盖正常场景）
+    const stat = fs.statSync(filePath)
+    if (stat.size > 500 * 1024 * 1024) {
+      throw new Error(`WAV file too large (${Math.round(stat.size / 1024 / 1024)}MB), max 500MB`)
+    }
     const buffer = fs.readFileSync(filePath)
 
     if (buffer.length < 44) {
@@ -670,8 +676,15 @@ class LocalSTTService {
     session.totalSamples += samples.length
 
     // 持续解码
+    // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
+    let decodeIterations = 0
+    const MAX_DECODE_ITERATIONS = 100000
     while (rec.isReady(stream)) {
       rec.decode(stream)
+      if (++decodeIterations > MAX_DECODE_ITERATIONS) {
+        logger.warn(`feedAudioChunk: decode loop exceeded ${MAX_DECODE_ITERATIONS} iterations, breaking`)
+        break
+      }
     }
 
     const result = rec.getResult(stream)
@@ -716,8 +729,16 @@ class LocalSTTService {
     try {
       // 通知流结束，获取最终结果
       stream.inputFinished()
+      // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
+      // 正常情况下 inputFinished() 后 isReady 会很快返回 false
+      let decodeIterations = 0
+      const MAX_DECODE_ITERATIONS = 100000
       while (rec.isReady(stream)) {
         rec.decode(stream)
+        if (++decodeIterations > MAX_DECODE_ITERATIONS) {
+          logger.warn(`stopRealtimeRecognize: decode loop exceeded ${MAX_DECODE_ITERATIONS} iterations, breaking`)
+          break
+        }
       }
       const result = rec.getResult(stream)
       const finalText = (result?.text || '').trim()

@@ -88,13 +88,11 @@ function highlightJson(
 
 function useElapsedTime(startTime: number | undefined, isComplete: boolean, completedAt?: number): string | null {
   const [elapsed, setElapsed] = useState<number | null>(null)
-  const rafRef = useRef<number | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fallbackRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     if (!startTime) return
-
-    let stopped = false
 
     if (isComplete) {
       if (!completedAt && !fallbackRef.current) {
@@ -106,18 +104,16 @@ function useElapsedTime(startTime: number | undefined, isComplete: boolean, comp
       return
     }
 
-    const tick = () => {
-      if (stopped) return
+    // 用 1 秒间隔的 setInterval 替代 60fps rAF，避免多个并行工具调用时的高频重渲染
+    setElapsed((Date.now() - startTime) / 1000)
+    intervalRef.current = setInterval(() => {
       setElapsed((Date.now() - startTime) / 1000)
-      rafRef.current = requestAnimationFrame(tick)
-    }
-    rafRef.current = requestAnimationFrame(tick)
+    }, 1000)
 
     return () => {
-      stopped = true
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
       }
     }
   }, [startTime, isComplete, completedAt])

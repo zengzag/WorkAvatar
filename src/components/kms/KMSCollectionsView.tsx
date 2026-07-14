@@ -76,7 +76,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
   const [processingMap, setProcessingMap] = useState<Record<string, ProcessingCollectionState>>({})
   const processingUnsubscribeRef = useRef<(() => void) | null>(null)
 
-  const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
+  // processingFileIds state 仅用于触发重渲染（列定义通过 ref 读取最新值，避免 useMemo 依赖重建）
+  const [, setProcessingFileIds] = useState<Set<string>>(new Set())
   const processingFileIdsRef = useRef<Set<string>>(new Set())
   const loadCollectionFilesRef = useRef<(collectionId: string) => Promise<void>>(async () => {})
 
@@ -632,8 +633,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
     onOpenFileDir: handleOpenFileDir,
     onRemoveFile: handleRemoveFile,
     onProcessFileDeep: handleProcessFileDeep,
-    processingFileIds,
-  }), [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile, handleProcessFileDeep, processingFileIds])
+    processingFileIdsRef,
+  }), [t, token, handleOpenFile, handlePreviewFile, handleOpenFileDir, handleRemoveFile, handleProcessFileDeep])
 
   const drawerKeyTopics = parseJsonArray(drawerSummary?.key_topics_json)
 
@@ -804,8 +805,8 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
           columns={fileColumns}
           dataSource={files}
           loading={filesLoading}
-          pagination={false}
-          scroll={{ y: 'calc(100vh - 320px)' }}
+          pagination={{ pageSize: 50, showSizeChanger: false, simple: true }}
+          scroll={{ y: 'calc(100vh - 360px)' }}
           locale={{ emptyText: t('kms.collections.noFiles') }}
           expandable={{
             expandedRowKeys: expandedFileKeys,

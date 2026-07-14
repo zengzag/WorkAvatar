@@ -433,30 +433,38 @@ class KMSCrawlerService {
 
   /**
    * 批量获取文件访问统计（单次聚合查询，避免 N+1）
+   * 大数组自动分批，避免 SQLite 参数上限（SQLITE_MAX_VARIABLE_NUMBER 默认 999）
    */
   getFileAccessStatsBatch(fileIds: string[], days: number = 30): Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }> {
     const result = new Map<string, { hitCount: number; readCount: number; lastAccessed: number | null }>()
     if (fileIds.length === 0) return result
     const since = Math.floor(Date.now() / 1000) - days * 86400
 
-    const placeholders = fileIds.map(() => '?').join(',')
-    const rows = this.db.prepare(`
-      SELECT file_id,
-             SUM(CASE WHEN access_type = 'search_hit' AND accessed_at >= ? THEN 1 ELSE 0 END) AS hit_count,
-             SUM(CASE WHEN access_type = 'read'        AND accessed_at >= ? THEN 1 ELSE 0 END) AS read_count,
-             MAX(accessed_at) AS last_accessed
-      FROM kms_access_log
-      WHERE file_id IN (${placeholders})
-      GROUP BY file_id
-    `).all(since, since, ...fileIds) as any[]
+    // 分批查询，每批最多 500 个 fileId（加上 2 个 since 参数 = 502，远低于 999 上限）
+    const BATCH = 500
+    for (let i = 0; i < fileIds.length; i += BATCH) {
+      const batch = fileIds.slice(i, i + BATCH)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = this.db.prepare(`
+        SELECT file_id,
+               SUM(CASE WHEN access_type = 'search_hit' AND accessed_at >= ? THEN 1 ELSE 0 END) AS hit_count,
+               SUM(CASE WHEN access_type = 'read'        AND accessed_at >= ? THEN 1 ELSE 0 END) AS read_count,
+               MAX(accessed_at) AS last_accessed
+        FROM kms_access_log
+        WHERE file_id IN (${placeholders})
+        GROUP BY file_id
+      `).all(since, since, ...batch) as any[]
 
-    for (const row of rows) {
-      result.set(row.file_id, {
-        hitCount: row.hit_count || 0,
-        readCount: row.read_count || 0,
-        lastAccessed: row.last_accessed || null,
-      })
+      for (const row of rows) {
+        result.set(row.file_id, {
+          hitCount: row.hit_count || 0,
+          readCount: row.read_count || 0,
+          lastAccessed: row.last_accessed || null,
+        })
+      }
     }
+
+    // 确保 所有请求的 fileId 都有条目（即使无访问记录）
     for (const id of fileIds) {
       if (!result.has(id)) {
         result.set(id, { hitCount: 0, readCount: 0, lastAccessed: null })

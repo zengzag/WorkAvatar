@@ -38,7 +38,11 @@ const App: React.FC = () => {
       key: 'digital-employees',
       icon: <RobotOutlined />,
       label: t('nav.digitalEmployees'),
-      onClick: () => navigate('/'),
+      // 直接导航到上次使用的员工页面，跳过 EmployeeRedirect 的串行 IPC 延迟
+      onClick: () => {
+        const lastId = localStorage.getItem('employeeWorkbench:lastEmployeeId')
+        navigate(lastId ? `/employee/${lastId}` : '/')
+      },
     },
     {
       key: 'kms',

@@ -1675,7 +1675,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
               {task.transcript && (
                 <Button
                   icon={<CopyOutlined />}
-                  onClick={() => handleCopyText(task.transcript)}
+                  onClick={() => handleCopyText(task.transcript || '')}
                 >
                   {t('voice.copyTranscript')}
                 </Button>
@@ -1683,7 +1683,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
               {task.minutes && (
                 <Button
                   icon={<CopyOutlined />}
-                  onClick={() => handleCopyText(task.minutes)}
+                  onClick={() => handleCopyText(task.minutes || '')}
                 >
                   {t('voice.copyMinutes')}
                 </Button>

@@ -16,7 +16,6 @@ import {
   SCROLL_BOTTOM_THRESHOLD_PX,
   DEFAULT_TEMPERATURE,
   buildEnrichedHistory,
-  yieldToBrowser,
   createPersistentMessagesCache,
 } from './chat-helpers'
 import { useStreamListeners, getPersistentListenersCleanup, setPersistentListenersCleanup, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
@@ -26,8 +25,31 @@ interface UseEmployeeChatParams {
   message: ReturnType<typeof import('antd').App.useApp>['message']
 }
 
-const _persistentMessages = createPersistentMessagesCache()
+// 按 employeeId 分组的消息缓存：切换员工时不再清空旧员工缓存，
+// 切回时可直接命中内存缓存，避免重新 IPC + JSON.parse。
+// Map<employeeId, LRUCache<convId, messages>>
+const _persistentMessagesByEmployee = new Map<string, LRUCache<string, MessageWithThought[]>>()
 const _persistentStreamStates = new Map<string, ConversationStreamState>()
+
+// 按 employeeId 缓存员工元数据和对话列表：切回时优先从缓存恢复 UI（秒开），
+// 后台 IPC 完成后再更新最新数据。这是"切回秒开"的关键。
+const _persistentEmployeeData = new Map<string, any>()
+const _persistentConvList = new Map<string, Conversation[]>()
+
+// 按 employeeId 缓存当前活动对话 ID：主 tab 切换（如 资料库→数字员工）后，
+// EmployeeWorkbench 完全卸载再重新挂载，activeConversationId 状态丢失。
+// 有了此缓存，initEmployee 可以直接恢复上次的对话，避免 selectConversation IPC。
+const _persistentActiveConvId = new Map<string, string>()
+
+// 获取或创建指定员工的消息缓存
+const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
+  let cache = _persistentMessagesByEmployee.get(employeeId)
+  if (!cache) {
+    cache = createPersistentMessagesCache()
+    _persistentMessagesByEmployee.set(employeeId, cache)
+  }
+  return cache
+}
 
 const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
@@ -113,7 +135,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const initializedRef = useRef(false)
 
   const streamStatesRef = useRef<Map<string, ConversationStreamState>>(_persistentStreamStates)
-  const conversationMessagesRef = useRef<LRUCache<string, MessageWithThought[]>>(_persistentMessages)
+  // 初始用临时空 cache，useEffect 中按当前员工 id 切换到对应 cache
+  const conversationMessagesRef = useRef<LRUCache<string, MessageWithThought[]>>(createPersistentMessagesCache())
   const activeConversationIdRef = useRef<string | null>(null)
   const isStreamingRef = useRef<boolean>(false)
   const initVersionRef = useRef(0)
@@ -153,38 +176,123 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
   useEffect(() => {
     if (id) {
+      // 切换 conversationMessagesRef 指向当前员工的消息缓存
+      // 旧员工的缓存保留在 _persistentMessagesByEmployee 中，切回时直接命中
+      conversationMessagesRef.current = getOrCreateEmployeeMessagesCache(id)
+
       if (getPersistentEmployeeId() && getPersistentEmployeeId() !== id) {
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
           setPersistentListenersCleanup(null)
         }
+        // 仅清空流式状态映射（流式任务已通过 cleanup 关闭）
+        // 不再清空 _persistentMessagesByEmployee，保留各员工的消息缓存
         _persistentStreamStates.clear()
-        _persistentMessages.clear()
       }
       setPersistentEmployeeId(id)
       initVersionRef.current++
       initEmployee()
     }
     return () => {
-      if (activeConversationIdRef.current && activeConvIdStorageKey) {
-        localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
+      // 保存当前活动对话 ID 到缓存，供下次 initEmployee 直接恢复
+      if (activeConversationIdRef.current) {
+        _persistentActiveConvId.set(id!, activeConversationIdRef.current)
+        if (activeConvIdStorageKey) {
+          localStorage.setItem(activeConvIdStorageKey, activeConversationIdRef.current)
+        }
       }
-      initializedRef.current = false
     }
   }, [id])
 
   const initEmployee = async () => {
     const version = initVersionRef.current
     try {
-      const result = await window.electronAPI.employee.get(id!)
-      if (version !== initVersionRef.current) return
+      // === 增量式加载策略 ===
+      // 核心原则：先让 UI 响应（显示框架），再填充数据（显示内容）
+      // 避免同步恢复大量缓存数据导致 React 渲染阻塞、UI 冻结
+
+      const cachedEmployee = _persistentEmployeeData.get(id!)
+      const cachedConvList = _persistentConvList.get(id!)
+      const cachedActiveConvId = _persistentActiveConvId.get(id!)
+
+      // 阶段 1：立即恢复轻量状态（侧边栏可见、员工信息可见）
+      if (cachedEmployee) setEmployee(cachedEmployee)
+      if (cachedConvList) setAllConversations(cachedConvList)
+
+      const hasFullCache = cachedEmployee && cachedConvList && cachedActiveConvId
+
+      if (hasFullCache && !initializedRef.current) {
+        // 缓存完整：先设 loading（显示转圈圈），再异步恢复消息
+        initializedRef.current = true
+        setActiveConversationId(cachedActiveConvId)
+        activeConversationIdRef.current = cachedActiveConvId
+        setLoadingConversationId(cachedActiveConvId)
+        setMessages([])
+        const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
+        if (convData) {
+          setMinimalMode(!!(convData as any).minimal_mode)
+        }
+        // 让 UI 先渲染（侧边栏 + 转圈圈），下一个微任务再填充消息
+        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        if (version !== initVersionRef.current) {
+          // 版本不匹配：新一次 initEmployee 已启动，清除本次 loading 避免永久转圈
+          setLoadingConversationId(prev => prev === cachedActiveConvId ? null : prev)
+          return
+        }
+
+        const msgsCache = conversationMessagesRef.current
+        const cachedMsgs = msgsCache.get(cachedActiveConvId)
+        if (cachedMsgs !== undefined) {
+          // 缓存命中：从内存恢复，无需 IPC
+          setMessages(cachedMsgs)
+          setLoadingConversationId(null)
+          const hasActiveStream = Array.from(streamStatesRef.current.values())
+            .some(s => s.conversationId === cachedActiveConvId && s.isStreaming)
+          setIsStreaming(hasActiveStream)
+          isStreamingRef.current = hasActiveStream
+        } else {
+          // 消息未缓存：走 selectConversation 加载（已有 loading 状态）
+          selectConversation(cachedActiveConvId)
+        }
+      }
+
+      // 阶段 2：后台静默刷新最新数据
+      const [result, convList] = await Promise.all([
+        window.electronAPI.employee.get(id!),
+        window.electronAPI.conversation.list({ employee_id: id! })
+      ])
+      if (version !== initVersionRef.current) {
+        setLoadingConversationId(prev => prev === cachedActiveConvId ? null : prev)
+        return
+      }
+
+      _persistentEmployeeData.set(id!, result)
+      _persistentConvList.set(id!, convList)
       setEmployee(result)
-      loadConversations()
+      setAllConversations(convList)
+
       loadProviders()
+
+      // 首次初始化（无缓存）：选择对话
+      if (!hasFullCache && !initializedRef.current) {
+        initializedRef.current = true
+        const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
+        if (convList.length > 0) {
+          const targetConv = savedConvId ? convList.find((c: Conversation) => c.id === savedConvId) : null
+          selectConversation(targetConv ? savedConvId! : convList[0].id)
+        } else {
+          await startNewConversation()
+        }
+      }
     } catch {
-      if (version !== initVersionRef.current) return
+      if (version !== initVersionRef.current) {
+        // 版本不匹配时也要清除 loading
+        setLoadingConversationId(null)
+        return
+      }
       setEmployee(null)
+      setLoadingConversationId(null)
     }
   }
 
@@ -248,29 +356,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }, [])
 
-  const loadConversations = async () => {
-    try {
-      const result = await window.electronAPI.conversation.list({ employee_id: id! })
-      setAllConversations(result)
-
-      if (!initializedRef.current) {
-        initializedRef.current = true
-        const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
-        if (result.length > 0) {
-          const targetConv = savedConvId ? result.find((c: Conversation) => c.id === savedConvId) : null
-          selectConversation(targetConv ? savedConvId! : result[0].id)
-        } else {
-          await startNewConversation()
-        }
-      }
-    } catch (e) {
-      console.error('[Frontend] 加载对话列表失败', e)
-    }
-  }
-
   const refreshConversationList = async () => {
     try {
       const result = await window.electronAPI.conversation.list({ employee_id: id! })
+      if (id) _persistentConvList.set(id, result)
       setAllConversations(result)
     } catch {
     }
@@ -342,31 +431,18 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
-      const cachedLoadingStart = Date.now()
+      // 缓存命中：先显示 loading（转圈圈），让 UI 先响应，
+      // 再在下一个微任务填充消息，避免同步渲染大量消息导致 UI 冻结
       setLoadingConversationId(convId)
       setMessages([])
-
-      await yieldToBrowser()
-      if (version !== selectConvVersionRef.current) {
-        setLoadingConversationId(prev => prev === convId ? null : prev)
-        return
-      }
-
-      const cachedElapsed = Date.now() - cachedLoadingStart
-      if (cachedElapsed < MIN_LOADING_DISPLAY_MS) {
-        await new Promise(resolve => setTimeout(resolve, MIN_LOADING_DISPLAY_MS - cachedElapsed))
-        if (version !== selectConvVersionRef.current) {
-          setLoadingConversationId(prev => prev === convId ? null : prev)
-          return
-        }
-      }
-
-      setMessages(cachedMsgs)
-      setLoadingConversationId(null)
       const convData = allConversations.find(c => c.id === convId)
       if (convData) {
         setMinimalMode(!!(convData as any).minimal_mode)
       }
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      if (version !== selectConvVersionRef.current) return
+      setMessages(cachedMsgs)
+      setLoadingConversationId(null)
       return
     }
 
@@ -400,14 +476,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       setMinimalMode(!!fullConv.minimal_mode)
     }
 
-    await yieldToBrowser()
-
-    if (version !== selectConvVersionRef.current) {
-      setLoadingConversationId(prev => prev === convId ? null : prev)
-      return
-    }
-
     // 解析 JSON（这一步对长对话是耗时大头）
+    // 注意：JSON.parse 是同步阻塞的，但通常 <50ms，无需 yieldToBrowser 让出
     let parsedMsgs: MessageWithThought[] = []
     try {
       parsedMsgs = (JSON.parse(fullConv?.messages_json || '[]') as MessageWithThought[])
@@ -415,14 +485,13 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       parsedMsgs = []
     }
 
-    await yieldToBrowser()
-
     if (version !== selectConvVersionRef.current) {
       setLoadingConversationId(prev => prev === convId ? null : prev)
       return
     }
 
-    const msgs = parsedMsgs.map(ensureSegments).map(patchMissingCompletedAt)
+    // 合并 ensureSegments + patchMissingCompletedAt 为单次遍历
+    const msgs = parsedMsgs.map(m => patchMissingCompletedAt(ensureSegments(m)))
 
     if (msgs.some((m, i) => m !== parsedMsgs[i])) {
       window.electronAPI.conversation.update({
@@ -1251,7 +1320,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     )
   }
 
-  const getComparisonMessages = (): MessageWithThought[] => {
+  const getComparisonMessages = useCallback((): MessageWithThought[] => {
     const convId = activeConversationIdRef.current
     if (!convId || comparisonMessageIds.length === 0) return []
     const currentMsgs = conversationMessagesRef.current.get(convId) || []
@@ -1265,7 +1334,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     return comparisonMessageIds
       .map(id => currentMsgs.find(m => m.id === id))
       .filter((m): m is MessageWithThought => !!m)
-  }
+  }, [comparisonMessageIds])
 
   const handleExportConversation = (convId?: string) => {
     const targetConvId = convId || activeConversationIdRef.current
@@ -1330,9 +1399,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
-  const getToolDisplayName = (name: string) => TOOL_DISPLAY_NAMES[name] || name
+  const getToolDisplayName = useCallback((name: string) => TOOL_DISPLAY_NAMES[name] || name, [TOOL_DISPLAY_NAMES])
 
-  const handleToggleSegment = (msgId: string, segId: string) => {
+  const handleToggleSegment = useCallback((msgId: string, segId: string) => {
     const convId = activeConversationIdRef.current
     if (!convId) return
 
@@ -1382,7 +1451,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       )
       return { ...m, segments: newSegs }
     }))
-  }
+  }, [])
 
   const isConversationStreaming = useCallback((convId: string) => {
     return Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)

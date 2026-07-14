@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 
+// 模块级缓存：providers 是全局数据，不随员工切换变化，避免重复 IPC
+// TTL 确保设置页修改 providers 后不会长时间使用过期缓存
+let _cachedProviders: any[] | null = null
+let _cachedProvidersTime = 0
+const PROVIDERS_CACHE_TTL = 60000
+
 export function useLlmSettings(employeeId: string | undefined) {
   const providerKey = employeeId ? `employeeWorkbench:selectedProviderId:${employeeId}` : 'employeeWorkbench:selectedProviderId'
   const modelKey = employeeId ? `employeeWorkbench:selectedModelId:${employeeId}` : 'employeeWorkbench:selectedModelId'
   const thinkingKey = employeeId ? `employeeWorkbench:enableThinking:${employeeId}` : 'employeeWorkbench:enableThinking'
 
-  const [providers, setProviders] = useState<any[]>([])
+  const [providers, setProviders] = useState<any[]>(_cachedProviders || [])
 
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string>(() => {
     const stored = localStorage.getItem(providerKey)
@@ -39,8 +45,14 @@ export function useLlmSettings(employeeId: string | undefined) {
   }, [enableThinking, thinkingKey])
 
   const loadProviders = async () => {
+    if (_cachedProviders && Date.now() - _cachedProvidersTime < PROVIDERS_CACHE_TTL) {
+      setProviders(_cachedProviders)
+      return
+    }
     try {
       const result = await window.electronAPI.llm.getProviders()
+      _cachedProviders = result as any[]
+      _cachedProvidersTime = Date.now()
       setProviders(result as any[])
     } catch (e) { console.error('Failed to load providers:', e) }
   }

@@ -102,7 +102,13 @@ export function registerKMSHandlers(): void {
           }
         },
       })
-      return JSON.parse(JSON.stringify(result))
+      // 用 structuredClone 替代 JSON.parse(JSON.stringify()) 做深拷贝，
+      // 性能更好且保留 Date/Map/Set 等类型
+      try {
+        return structuredClone(result)
+      } catch {
+        return JSON.parse(JSON.stringify(result))
+      }
     } catch (err: any) {
       logger.error(`IPC handler error [KMS_AGENT_SEARCH]:`, err?.message || err)
       return { error: err?.message || 'Unknown error' }

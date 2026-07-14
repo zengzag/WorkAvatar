@@ -236,7 +236,13 @@ class LLMClientService {
     const startTime = Date.now()
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
+    // 流式调用使用双重超时：
+    // 1. 总超时：config.timeout_ms（默认 60s），覆盖从请求开始到流结束的全过程
+    // 2. 空闲超时：30s 无数据则中止，防止服务端发完 header 后卡住流不结束
+    const totalTimeoutMs = config.timeout_ms || 60000
+    const STREAM_IDLE_TIMEOUT_MS = 30_000
+    let idleTimer: NodeJS.Timeout | null = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+    const totalTimer = setTimeout(() => controller.abort(), totalTimeoutMs)
     if (signal) {
       if (signal.aborted) {
         controller.abort()
@@ -260,7 +266,8 @@ class LLMClientService {
         body: JSON.stringify(body),
         signal: controller.signal,
       })
-      clearTimeout(timeout)
+      // header 已收到，清除空闲超时（流循环内会重新设置）
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -303,6 +310,10 @@ class LLMClientService {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+
+        // 每收到数据重置空闲超时，防止服务端中途卡住
+        if (idleTimer) clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
@@ -356,10 +367,14 @@ class LLMClientService {
         onChunk(finalResult.content)
       }
 
+      // 流正常结束，清除所有定时器
+      if (idleTimer) clearTimeout(idleTimer)
+      clearTimeout(totalTimer)
       logSuccess()
       onDone()
     } catch (err: any) {
-      clearTimeout(timeout)
+      if (idleTimer) clearTimeout(idleTimer)
+      clearTimeout(totalTimer)
       if (err.name === 'AbortError' && !signal?.aborted) {
         err.message = 'LLM API request timed out'
       }
