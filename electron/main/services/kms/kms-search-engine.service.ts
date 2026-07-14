@@ -51,13 +51,11 @@ class KMSSearchEngineService {
   private searchCache: Map<string, { results: SearchResult[]; timestamp: number }> = new Map()
   private static readonly CACHE_TTL = 60000
   private static readonly CACHE_MAX_SIZE = 100
-  /** kms_search_index.content 最大字符数：用于 snippet 显示和 embedding 生成，完整原文由 FTS5 索引 */
+  /** kms_search_index.content 最大字符数：仅用于 content_paragraph source type 的截断，
+   * 用于控制大文档段落（可达数万字）在 kms_search_index 中的存储体积。
+   * file_title/file_summary/paragraph 三个 source type 不截断，以保证 LIKE fallback 搜索准确性。
+   * 完整原文始终由 FTS5 索引（insertFtsRow 传入未截断的 content）。 */
   private static readonly SEARCH_INDEX_CONTENT_LIMIT = 500
-  /** FTS5 存储完整原文以保证搜索质量，不做截断。
-   * FTS5 是全文搜索的核心，截断会导致段落后半部分的关键词无法被搜索命中。
-   * 体积控制通过 kms_search_index.content 截断（500 字符，仅用于 snippet/embedding）实现。
-   */
-  // private static readonly FTS5_CONTENT_LIMIT = 2000
   /**
    * embedding 内存缓存（LRU + 字节上限）
    *
@@ -181,15 +179,11 @@ class KMSSearchEngineService {
       // 将文件路径纳入索引内容，使路径中的目录名也可被搜索命中
       // （如文件在"公文模板"目录下，搜索"公文"也能匹配到该文件）
       const indexContent = filePath ? `${fileName} ${filePath}` : fileName
-      // kms_search_index.content 限制 500 字符（snippet/embedding 用），FTS5 仍索引完整 indexContent
-      const truncatedContent = indexContent.length > KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT
-        ? indexContent.substring(0, KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT)
-        : indexContent
 
       if (existing) {
         this.db.prepare(
           'UPDATE kms_search_index SET title = ?, content = ?, updated_at = unixepoch() WHERE id = ?'
-        ).run(fileName, truncatedContent, existing.id)
+        ).run(fileName, indexContent, existing.id)
 
         this.deleteFtsRow(existing.id)
         this.insertFtsRow(existing.id, fileId, 'file_title', fileId, fileName, indexContent, '')
@@ -198,7 +192,7 @@ class KMSSearchEngineService {
         this.db.prepare(`
           INSERT INTO kms_search_index (id, file_id, source_type, source_id, title, content, created_at, updated_at)
           VALUES (?, ?, 'file_title', ?, ?, ?, unixepoch(), unixepoch())
-        `).run(id, fileId, fileId, fileName, truncatedContent)
+        `).run(id, fileId, fileId, fileName, indexContent)
 
         this.insertFtsRow(id, fileId, 'file_title', fileId, fileName, indexContent, '')
       }
@@ -213,15 +207,11 @@ class KMSSearchEngineService {
       ).get(fileId) as any
 
       const keywordsStr = keywords.join(', ')
-      // kms_search_index.content 限制 500 字符（snippet/embedding 用），FTS5 仍索引完整 summary
-      const truncatedSummary = summary.length > KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT
-        ? summary.substring(0, KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT)
-        : summary
 
       if (existing) {
         this.db.prepare(`
           UPDATE kms_search_index SET title = ?, content = ?, keywords_json = ?, metadata_json = ?, updated_at = unixepoch() WHERE id = ?
-        `).run('文件摘要', truncatedSummary, JSON.stringify(keywords), JSON.stringify({}), existing.id)
+        `).run('文件摘要', summary, JSON.stringify(keywords), JSON.stringify({}), existing.id)
 
         this.deleteFtsRow(existing.id)
         this.insertFtsRow(existing.id, fileId, 'file_summary', fileId, '文件摘要', summary, keywordsStr)
@@ -230,7 +220,7 @@ class KMSSearchEngineService {
         this.db.prepare(`
           INSERT INTO kms_search_index (id, file_id, source_type, source_id, title, content, keywords_json, metadata_json, created_at, updated_at)
           VALUES (?, ?, 'file_summary', ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(id, fileId, fileId, '文件摘要', truncatedSummary, JSON.stringify(keywords), JSON.stringify({}))
+        `).run(id, fileId, fileId, '文件摘要', summary, JSON.stringify(keywords), JSON.stringify({}))
 
         this.insertFtsRow(id, fileId, 'file_summary', fileId, '文件摘要', summary, keywordsStr)
       }
@@ -255,16 +245,12 @@ class KMSSearchEngineService {
 
       const keywordsStr = keywords.join(', ')
       const content = [title, summary].filter(Boolean).join(' ')
-      // kms_search_index.content 限制 500 字符（snippet/embedding 用），FTS5 仍索引完整 content
-      const truncatedContent = content.length > KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT
-        ? content.substring(0, KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT)
-        : content
 
       if (existing) {
         this.db.prepare(`
           UPDATE kms_search_index SET title = ?, content = ?, keywords_json = ?, metadata_json = ?,
             start_offset = ?, end_offset = ?, updated_at = unixepoch() WHERE id = ?
-        `).run(title, truncatedContent, JSON.stringify(keywords), JSON.stringify({ summary, title_path: titlePath }),
+        `).run(title, content, JSON.stringify(keywords), JSON.stringify({ summary, title_path: titlePath }),
           startOffset, endOffset, existing.id)
 
         this.deleteFtsRow(existing.id)
@@ -274,7 +260,7 @@ class KMSSearchEngineService {
         this.db.prepare(`
           INSERT INTO kms_search_index (id, file_id, source_type, source_id, title, content, keywords_json, metadata_json, start_offset, end_offset, created_at, updated_at)
           VALUES (?, ?, 'paragraph', ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
-        `).run(id, fileId, paragraphId, title, truncatedContent,
+        `).run(id, fileId, paragraphId, title, content,
           JSON.stringify(keywords), JSON.stringify({ summary, title_path: titlePath }),
           startOffset, endOffset)
 

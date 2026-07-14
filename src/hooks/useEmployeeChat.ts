@@ -228,7 +228,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setActiveConversationId(cachedActiveConvId)
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
-        setMessages([])
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
@@ -342,17 +341,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === savedConvId && s.isStreaming)
 
+    // 仅更新 ref 和恢复流式监听器，不调用 setMessages/setActiveConversationId
+    // initEmployee 是消息恢复的唯一入口，避免双轮渲染
     activeConversationIdRef.current = savedConvId
 
     if (hasActiveStream || getPersistentListenersCleanup()) {
       setupGlobalListenersRef.current()
     }
 
-    const msgs = conversationMessagesRef.current.get(savedConvId)
-    if (msgs && msgs.length > 0) {
-      setActiveConversationId(savedConvId)
-      setMessages(msgs)
-      setIsStreaming(hasActiveStream)
+    if (hasActiveStream) {
+      setIsStreaming(true)
     }
   }, [])
 
@@ -516,7 +514,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         return
       }
     }
-
     setMessages(msgs)
     setLoadingConversationId(null)
 

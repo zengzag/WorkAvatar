@@ -22,6 +22,8 @@ const nativeExternals = [
   '@node-rs/jieba/dict',
   'worker_threads',
   'adm-zip',
+  'docx',
+  'pptxgenjs',
   // OCR：PaddleOCR ONNX 推理
   'paddleocr',
   'onnxruntime-node',

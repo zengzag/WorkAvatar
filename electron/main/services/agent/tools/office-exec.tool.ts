@@ -3,25 +3,17 @@ import type { GeneratedFileInfo } from '../../../../shared/types'
 import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
-import * as docxTemplateHelper from './docx-template.helper'
-import * as pptxTemplateHelper from './pptx-template.helper'
 import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
 
 const OFFICE_MODULES: Record<string, any> = {}
 const MODULE_LOAD_ERRORS: Record<string, string> = {}
 
 function loadOfficeModules() {
-  const modules = ['docx', 'pptxgenjs', 'xlsx', 'adm-zip']
-  for (const name of modules) {
-    try {
-      OFFICE_MODULES[name] = require(name)
-    } catch (e: any) {
-      MODULE_LOAD_ERRORS[name] = e.message || String(e)
-    }
-  }
-  // 本地实现的模板/编辑能力模块，基于 adm-zip 操作 OOXML
-  OFFICE_MODULES['docx-template'] = docxTemplateHelper
-  OFFICE_MODULES['pptx-template'] = pptxTemplateHelper
+  // 必须用字符串字面量 require，Vite 才能正确外部化（变量 require 会被打包导致 ESM 模块加载失败）
+  try { OFFICE_MODULES['docx'] = require('docx') } catch (e: any) { MODULE_LOAD_ERRORS['docx'] = e.message || String(e) }
+  try { OFFICE_MODULES['pptxgenjs'] = require('pptxgenjs') } catch (e: any) { MODULE_LOAD_ERRORS['pptxgenjs'] = e.message || String(e) }
+  try { OFFICE_MODULES['xlsx'] = require('xlsx') } catch (e: any) { MODULE_LOAD_ERRORS['xlsx'] = e.message || String(e) }
+  try { OFFICE_MODULES['adm-zip'] = require('adm-zip') } catch (e: any) { MODULE_LOAD_ERRORS['adm-zip'] = e.message || String(e) }
 }
 
 loadOfficeModules()
@@ -51,30 +43,13 @@ function extractWritePathsFromCode(code: string): string[] {
     if (!m[2].includes('node_modules')) paths.push(m[2])
   }
 
-  // 2. docx-template / pptx-template 写函数：outputPath 为最后一个字符串参数
-  const tplFuncs = ['createFromTemplate', 'renderTemplate', 'replaceText', 'setParagraphText', 'spliceParagraphs']
-  for (const fn of tplFuncs) {
-    const re = new RegExp(`\\.${fn}\\s*\\(([^)]*)\\)`, 'g')
-    let match: RegExpExecArray | null
-    while ((match = re.exec(code)) !== null) {
-      const args = match[1]
-      const pathRe = /["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
-      let lastPath: string | null = null
-      let pm: RegExpExecArray | null
-      while ((pm = pathRe.exec(args)) !== null) {
-        if (!pm[1].includes('node_modules')) lastPath = pm[1]
-      }
-      if (lastPath) paths.push(lastPath)
-    }
-  }
-
-  // 3. xlsx.writeFile / xlsx.writeFileSync：第二个参数为 outputPath
+  // 2. xlsx.writeFile / xlsx.writeFileSync：第二个参数为 outputPath
   const xlsxWriteRe = /(?:XLSX|xlsx)\.(?:writeFile|writeFileSync)\s*\(\s*[^,]+,\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
   while ((m = xlsxWriteRe.exec(code)) !== null) {
     if (!m[1].includes('node_modules')) paths.push(m[1])
   }
 
-  // 4. pptxgenjs writeFile({ fileName: "..." })
+  // 3. pptxgenjs writeFile({ fileName: "..." })
   const pptxWriteRe = /\.writeFile\s*\(\s*\{[^}]*fileName\s*:\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
   while ((m = pptxWriteRe.exec(code)) !== null) {
     if (!m[1].includes('node_modules')) paths.push(m[1])
@@ -182,64 +157,10 @@ function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>
 }
 
 /**
- * 包装 docx-template / pptx-template 模块：写函数改为异步，内部先 await confirmOutsideWorkspace。
- * 原始写函数用 zip.writeZip(outputPath) 同步写，包装后返回 Promise。
+ * 包装 xlsx / pptxgenjs 模块：写函数改为异步，内部先 await confirmOutsideWorkspace。
  */
-function createSandboxedTemplateModule(
-  moduleName: string,
-  rawModule: any,
-  workspacePath: string,
-  authorizedPaths: Set<string>,
-  writtenFiles: Set<string>,
-): any {
-  const workspaceRoot = path.resolve(workspacePath)
-  const writeFunctions = new Set([
-    'createFromTemplate', 'renderTemplate', 'replaceText',
-    'setParagraphText', 'spliceParagraphs',
-  ])
-
-  const checkOutputPath = async (p: string): Promise<void> => {
-    if (typeof p !== 'string') return
-    let resolved: string
-    try { resolved = path.resolve(p) } catch { return }
-    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
-    if (authorizedPaths.has(resolved.toLowerCase())) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
-    const result = await confirmOutsideWorkspace(`${moduleName} 输出`, resolved)
-    if (!result.ok) {
-      throw new Error(result.error || `用户取消了${moduleName} 输出工作区外文件的操作`)
-    }
-    authorizedPaths.add(resolved.toLowerCase())
-  }
-
-  const wrapper: any = {}
-  for (const key of Object.keys(rawModule)) {
-    const original = rawModule[key]
-    if (typeof original === 'function' && writeFunctions.has(key)) {
-      wrapper[key] = async (...args: any[]) => {
-        const outputPath = args[args.length - 1]
-        if (typeof outputPath === 'string') {
-          await checkOutputPath(outputPath)
-        }
-        return original.apply(rawModule, args)
-      }
-    } else {
-      wrapper[key] = original
-    }
-  }
-  return wrapper
-}
-
 function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>, writtenFiles: Set<string>, sandboxFile: any) {
   let cachedFs: any = null
-  let cachedDocxTemplate: any = null
-  let cachedPptxTemplate: any = null
   let cachedXlsx: any = null
   let cachedPptxgenjs: any = null
 
@@ -266,22 +187,6 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
   }
 
   return (moduleName: string) => {
-    if (moduleName === 'docx-template') {
-      if (!cachedDocxTemplate) {
-        cachedDocxTemplate = createSandboxedTemplateModule(
-          'docx-template', OFFICE_MODULES['docx-template'], workspacePath, authorizedPaths, writtenFiles,
-        )
-      }
-      return cachedDocxTemplate
-    }
-    if (moduleName === 'pptx-template') {
-      if (!cachedPptxTemplate) {
-        cachedPptxTemplate = createSandboxedTemplateModule(
-          'pptx-template', OFFICE_MODULES['pptx-template'], workspacePath, authorizedPaths, writtenFiles,
-        )
-      }
-      return cachedPptxTemplate
-    }
     // xlsx：writeFile 是同步方法，包装为异步
     if (moduleName === 'xlsx' && OFFICE_MODULES['xlsx']) {
       if (!cachedXlsx) {
@@ -313,7 +218,7 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
       return cachedPptxgenjs
     }
     // 其他 OFFICE_MODULES 直接返回（不涉及文件写入）
-    if (OFFICE_MODULES[moduleName] && moduleName !== 'docx-template' && moduleName !== 'pptx-template' && moduleName !== 'xlsx' && moduleName !== 'pptxgenjs') {
+    if (OFFICE_MODULES[moduleName] && moduleName !== 'xlsx' && moduleName !== 'pptxgenjs') {
       return OFFICE_MODULES[moduleName]
     }
     if (moduleName === 'fs') {
@@ -369,7 +274,7 @@ export const officeExecTool: ToolDefinition = {
   id: 'office_exec',
   name: 'office_exec',
   title: 'Office文档生成',
-  description: '在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。使用前请先调用 office_guide 获取详细使用说明和代码模板。',
+  description: '在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。** 使用前先调 office_guide 获取代码模板和陷阱清单。',
   parameters: {
     type: 'object',
     properties: {
@@ -590,7 +495,7 @@ export const officeExecTool: ToolDefinition = {
 
 export function getOfficeModuleStatus(): Record<string, { loaded: boolean; error?: string }> {
   const status: Record<string, { loaded: boolean; error?: string }> = {}
-  for (const name of ['docx', 'pptxgenjs', 'xlsx', 'adm-zip', 'docx-template', 'pptx-template']) {
+  for (const name of ['docx', 'pptxgenjs', 'xlsx', 'adm-zip']) {
     status[name] = {
       loaded: !!OFFICE_MODULES[name],
       error: MODULE_LOAD_ERRORS[name],

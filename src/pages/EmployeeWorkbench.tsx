@@ -335,6 +335,10 @@ const EmployeeWorkbench: React.FC = () => {
       max-width: 100%;
       border-radius: 6px;
     }
+    .open-workspace-btn:hover {
+      background: ${token.colorFillSecondary} !important;
+      color: ${token.colorPrimary} !important;
+    }
   `, [token])
 
   const handleEmployeeSelect = useCallback((newEmployeeId: string) => {
@@ -393,6 +397,29 @@ const EmployeeWorkbench: React.FC = () => {
     setSelectedModels([])
     handleSend(content, images, models)
   }, [handleSend])
+
+  const handleOpenWorkspace = useCallback(async () => {
+    const workspacePath = employee?.workspace_path
+    if (!workspacePath) {
+      message.warning(t('workbench.workspaceNotSet'))
+      return
+    }
+    try {
+      const result = await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+      if (result && result.success === false) {
+        message.error(t('workbench.openWorkspaceFailed', { error: result.error || '' }))
+      }
+    } catch {
+      message.error(t('workbench.openWorkspaceFailed', { error: '' }))
+    }
+  }, [employee?.workspace_path, message, t])
+
+  const workspaceDirName = useMemo(() => {
+    const p = employee?.workspace_path
+    if (!p) return ''
+    const parts = p.split(/[\\/]/).filter(Boolean)
+    return parts[parts.length - 1] || p
+  }, [employee?.workspace_path])
 
   if (!employeeListLoaded) {
     return (
@@ -473,6 +500,41 @@ const EmployeeWorkbench: React.FC = () => {
           </Popover>
         </Space>
         <Space size={4}>
+          {employee?.workspace_path && (
+            <Tooltip
+              title={
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span>{t('workbench.openWorkspace')}</span>
+                  <span style={{ fontSize: 11, opacity: 0.75, fontFamily: 'monospace' }}>
+                    {employee.workspace_path}
+                  </span>
+                </div>
+              }
+              placement="bottom"
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={handleOpenWorkspace}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '0 10px',
+                  height: 28,
+                  borderRadius: 6,
+                  color: token.colorTextSecondary,
+                  background: token.colorFillTertiary,
+                }}
+                className="open-workspace-btn"
+              >
+                <span style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {workspaceDirName}
+                </span>
+              </Button>
+            </Tooltip>
+          )}
           <LLMSelector
             providerId={selectedLlmProviderId}
             modelId={selectedLlmModelId}
