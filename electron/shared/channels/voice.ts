@@ -140,6 +140,8 @@ export interface VoiceSTTLocalConfig {
   modelType: VoiceLocalModelType
   modelDir: string
   language: string
+  /** 是否启用 GPU 加速（Windows 使用 DirectML，需要支持 DX12 的 GPU） */
+  useGPU?: boolean
 }
 
 export interface VoiceAudioConfig {

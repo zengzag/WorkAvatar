@@ -74,6 +74,12 @@ files:
   - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+  # ── sherpa-onnx：仅保留 win-x64，排除其他平台原生包 ──
+  - "!node_modules/sherpa-onnx-darwin-arm64/**"
+  - "!node_modules/sherpa-onnx-darwin-x64/**"
+  - "!node_modules/sherpa-onnx-linux-x64/**"
+  - "!node_modules/sherpa-onnx-linux-arm64/**"
+  - "!node_modules/sherpa-onnx-win-ia32/**"
   # ── 全局排除开发时文件模式 ──
   - "!**/*.{d.ts,map}"
   - "!**/{test,tests,__tests__,spec,fixtures,mocks}/**"
@@ -90,6 +96,7 @@ extraResources:
     to: resources/
     filter:
       - '**/*'
+      - '!native/**'  # DirectML DLLs already in node_modules/sherpa-onnx-win-x64/
 
 asarUnpack:
   - '**/*.node'

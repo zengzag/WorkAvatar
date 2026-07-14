@@ -28,6 +28,7 @@ const nativeExternals = [
   'sharp',
   // 语音识别：sherpa-onnx 包含 WASM + .node 原生模块，必须外部化
   'sherpa-onnx',
+  'sherpa-onnx-node',
 ]
 
 // 读取 build-info.json（在 predev/prebuild 中由 scripts/generate-build-info.mjs 生成）

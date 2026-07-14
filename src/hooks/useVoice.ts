@@ -43,6 +43,7 @@ export interface VoiceSettings {
     modelType: 'whisper' | 'paraformer' | 'zipformer'
     modelDir: string
     language: string
+    useGPU?: boolean
   }
   audioConfig: {
     sampleRate: number

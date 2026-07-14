@@ -34,11 +34,13 @@ interface RealtimeSession {
   segmentStartSample: number
 }
 
-// sherpa-onnx is loaded dynamically to avoid blocking startup when not used
+// sherpa-onnx-node is loaded dynamically to avoid blocking startup when not used
 let sherpaOnnx: any = null
 let recognizer: any = null
 let recognizerIsStreaming: boolean = false
 let currentConfigKey: string = ''
+/** 当前识别器实际使用的 provider（GPU 不可用时回退到 cpu） */
+let activeProvider: string = 'cpu'
 
 /** 在模型目录中查找匹配的文件（支持多候选文件名） */
 function findModelFile(modelDir: string, candidates: string[]): string | null {
@@ -139,12 +141,12 @@ class LocalSTTService {
   private loadSherpaOnnx(): any {
     if (sherpaOnnx) return sherpaOnnx
     try {
-      sherpaOnnx = require('sherpa-onnx')
-      logger.info('sherpa-onnx loaded successfully, version:', sherpaOnnx.version)
+      sherpaOnnx = require('sherpa-onnx-node')
+      logger.info('sherpa-onnx-node loaded successfully, version:', sherpaOnnx.version)
       return sherpaOnnx
     } catch (err: any) {
-      logger.error('Failed to load sherpa-onnx:', err?.message || err)
-      throw new Error(`Failed to load sherpa-onnx: ${err?.message || err}`)
+      logger.error('Failed to load sherpa-onnx-node:', err?.message || err)
+      throw new Error(`Failed to load sherpa-onnx-node: ${err?.message || err}`)
     }
   }
 
@@ -198,17 +200,15 @@ class LocalSTTService {
     const modelDir = getBuiltinModelDir()
     const resolved = resolveModelFiles('zipformer', modelDir)
     const isStreaming = resolved.isStreaming ?? true
-    const configKey = `zipformer:${modelDir}:${config.language}`
+    const useGPU = config.useGPU === true
+    const configKey = `zipformer:${modelDir}:${config.language}:${useGPU ? 'gpu' : 'cpu'}`
 
     if (recognizer && currentConfigKey === configKey) {
       return { recognizer, isStreaming: recognizerIsStreaming }
     }
 
-    // 释放旧的识别器
-    if (recognizer) {
-      try { recognizer.free() } catch { /* ignore */ }
-      recognizer = null
-    }
+    // 释放旧的识别器（native addon 依赖 GC，置 null 即可）
+    recognizer = null
 
     if (!resolved.found) {
       throw new Error(`内置模型文件缺失: ${resolved.missing.join(', ')}`)
@@ -216,11 +216,16 @@ class LocalSTTService {
 
     const lib = this.loadSherpaOnnx()
 
+    // 决定 provider：Windows 上 useGPU → directml，否则 cpu
+    // 注意：需要 sherpa-onnx 编译时启用 SHERPA_ONNX_ENABLE_DIRECTML=ON
+    // 否则会静默回退到 cpu（见 session.cc 中 #if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1）
+    const requestedProvider = useGPU ? 'directml' : 'cpu'
+
     // 构建模型配置 - 固定使用 zipformer transducer
     const modelConfig: any = {
       tokens: resolved.files.tokens,
-      numThreads: 1,
-      provider: 'cpu',
+      numThreads: useGPU ? 1 : 2,  // GPU 模式单线程即可；CPU 模式利用多线程
+      provider: requestedProvider,
       debug: 0,
       transducer: {
         encoder: resolved.files.encoder,
@@ -246,11 +251,40 @@ class LocalSTTService {
       recognizerConfig.rule1MinTrailingSilence = 2.4
       recognizerConfig.rule2MinTrailingSilence = 1.2
       recognizerConfig.rule3MinUtteranceLength = 20
-      recognizer = lib.createOnlineRecognizer(recognizerConfig)
-      logger.info(`Online recognizer created (内置流式 Zipformer): ${modelDir}`)
+      try {
+        recognizer = new lib.OnlineRecognizer(recognizerConfig)
+        activeProvider = useGPU ? 'directml' : 'cpu'
+        logger.info(`Online recognizer created (内置流式 Zipformer, provider=${activeProvider}): ${modelDir}`)
+      } catch (err: any) {
+        // GPU 初始化失败时回退到 CPU
+        if (useGPU) {
+          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
+          modelConfig.provider = 'cpu'
+          modelConfig.numThreads = 2
+          recognizer = new lib.OnlineRecognizer(recognizerConfig)
+          activeProvider = 'cpu'
+          logger.info(`Online recognizer created (fallback to CPU): ${modelDir}`)
+        } else {
+          throw err
+        }
+      }
     } else {
-      recognizer = lib.createOfflineRecognizer(recognizerConfig)
-      logger.info(`Offline recognizer created (内置 Zipformer): ${modelDir}`)
+      try {
+        recognizer = new lib.OfflineRecognizer(recognizerConfig)
+        activeProvider = useGPU ? 'directml' : 'cpu'
+        logger.info(`Offline recognizer created (内置 Zipformer, provider=${activeProvider}): ${modelDir}`)
+      } catch (err: any) {
+        if (useGPU) {
+          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
+          modelConfig.provider = 'cpu'
+          modelConfig.numThreads = 2
+          recognizer = new lib.OfflineRecognizer(recognizerConfig)
+          activeProvider = 'cpu'
+          logger.info(`Offline recognizer created (fallback to CPU): ${modelDir}`)
+        } else {
+          throw err
+        }
+      }
     }
 
     currentConfigKey = configKey
@@ -363,7 +397,7 @@ class LocalSTTService {
       const segmentSamples = samples.subarray(start, end)
 
       const stream = rec.createStream()
-      stream.acceptWaveform(sampleRate, segmentSamples)
+      stream.acceptWaveform({ samples: segmentSamples, sampleRate })
       rec.decode(stream)
       const result = rec.getResult(stream)
       const text = (result?.text || '').trim()
@@ -374,8 +408,6 @@ class LocalSTTService {
         segments.push({ start: startTime, end: endTime, text })
         fullText += text
       }
-
-      try { stream.free() } catch { /* ignore */ }
 
       processedSegments++
       const progress = 20 + Math.floor((processedSegments / totalSegments) * 70)
@@ -408,13 +440,12 @@ class LocalSTTService {
       const chunkSamplesData = samples.subarray(start, end)
 
       const stream = rec.createStream()
-      stream.acceptWaveform(sampleRate, chunkSamplesData)
+      stream.acceptWaveform({ samples: chunkSamplesData, sampleRate })
       stream.inputFinished()
 
       // 持续解码直到识别器不再需要处理
       while (rec.isReady(stream)) {
         if (signal?.aborted) {
-          try { stream.free() } catch { /* ignore */ }
           throw new Error('Aborted')
         }
         rec.decode(stream)
@@ -429,8 +460,6 @@ class LocalSTTService {
         segments.push({ start: startTime, end: endTime, text })
         fullText += text
       }
-
-      try { stream.free() } catch { /* ignore */ }
 
       processedChunks++
       const progress = 20 + Math.floor((processedChunks / totalChunks) * 70)
@@ -524,7 +553,7 @@ class LocalSTTService {
     }
 
     const { recognizer: rec, stream } = session
-    stream.acceptWaveform(sampleRate, samples)
+    stream.acceptWaveform({ samples, sampleRate })
     session.totalSamples += samples.length
 
     // 持续解码
@@ -595,8 +624,7 @@ class LocalSTTService {
       segments: session.segments,
     }
 
-    // 清理会话
-    try { stream.free() } catch { /* ignore */ }
+    // 清理会话（native addon 依赖 GC，无需手动 free）
     this.realtimeSessions.delete(taskId)
     logger.info(`Realtime recognition stopped: taskId=${taskId}, text length=${transcript.text.length}`)
 
@@ -609,7 +637,7 @@ class LocalSTTService {
   cancelRealtimeRecognize(taskId: string): void {
     const session = this.realtimeSessions.get(taskId)
     if (session) {
-      try { session.stream.free() } catch { /* ignore */ }
+      // native addon 依赖 GC，无需手动 free
       this.realtimeSessions.delete(taskId)
       logger.info(`Realtime recognition cancelled: taskId=${taskId}`)
     }
@@ -624,7 +652,7 @@ class LocalSTTService {
       this.cancelRealtimeRecognize(taskId)
     }
     if (recognizer) {
-      try { recognizer.free() } catch { /* ignore */ }
+      // native addon 依赖 GC，无需手动 free
       recognizer = null
       currentConfigKey = ''
     }
