@@ -97,6 +97,26 @@ export default defineConfig({
         }
       },
       {
+        // OCR Worker：将 PaddleOCR / onnxruntime-native 运行在独立 Worker 线程中，
+        // onnxruntime 原生崩溃不会杀死主进程，自动回退 Tesseract.js
+        entry: 'electron/main/workers/ocr-worker.ts',
+        onstart() {
+          // Worker 不需要 startup，主进程运行时按需 spawn
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron/main',
+            rollupOptions: {
+              external: nativeExternals,
+              output: {
+                entryFileNames: 'ocr-worker.js',
+                codeSplitting: false,
+              }
+            }
+          }
+        }
+      },
+      {
         entry: 'electron/preload/index.ts',
         vite: {
           build: {
