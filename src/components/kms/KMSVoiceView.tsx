@@ -39,6 +39,11 @@ function formatTimestamp(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/** 格式化时间戳范围（start - end） */
+function formatTimestampRange(start: number, end: number): string {
+  return `${formatTimestamp(start)} - ${formatTimestamp(end)}`
+}
+
 /** 格式化文件大小 */
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -203,6 +208,9 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const [systemPaused, setSystemPaused] = useState(false)
   const [subtitleVisible, setSubtitleVisible] = useState(false)
   const [taskListCollapsed, setTaskListCollapsed] = useState(false)
+  const [isPreparing, setIsPreparing] = useState(false)
+  const [notesText, setNotesText] = useState('')
+  const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -301,6 +309,25 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     () => tasks.find(t => t.id === selectedTaskId) || null,
     [tasks, selectedTaskId]
   )
+
+  // 切换任务时同步 notes 文本
+  useEffect(() => {
+    setNotesText(selectedTask?.notes || '')
+  }, [selectedTaskId])
+
+  // 防抖保存 notes
+  const handleNotesChange = useCallback((value: string) => {
+    setNotesText(value)
+    if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+    if (!selectedTaskId) return
+    notesSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await updateTask(selectedTaskId, { notes: value })
+      } catch (err) {
+        // 静默失败，不打断用户输入
+      }
+    }, 1000)
+  }, [selectedTaskId, updateTask])
 
   // ==================== Recording Logic ====================
 
@@ -596,6 +623,9 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       audioChunksSystemRef.current = []
       dualRecorderStopCountRef.current = 0
       recordingTaskIdRef.current = taskId
+      const isLocalMode = taskSttMode === 'local'
+      // 本地模式需要加载识别模型，显示准备状态
+      if (isLocalMode) setIsPreparing(true)
       const streams: MediaStream[] = []
 
       // Microphone - 使用配置的麦克风设备（Issue 3: 默认系统推荐设备）
@@ -836,7 +866,6 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       }, 200)
 
       // 启动实时识别（仅本地模式）
-      const isLocalMode = taskSttMode === 'local'
       if (isLocalMode) {
         if (isDual) {
           // Dual source mode: create two realtime sessions with suffixed taskIds
@@ -878,6 +907,8 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
             setRealtimeError(startResult.error || '')
           }
         }
+        // 模型加载完成，关闭准备状态
+        setIsPreparing(false)
       }
 
       // Update task status
@@ -885,6 +916,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     } catch (err: any) {
       message.error(t('voice.recordingStartFailed') + ': ' + (err?.message || ''))
       setIsRecording(false)
+      setIsPreparing(false)
     }
   }, [recordSource, message, t, saveAudio, updateTask, settings, realtimeStart, realtimeStop, subtitleVisible, subtitleShow, subtitleHide, createSourceProcessor, createFeedTimer, handleDualSourceStop])
 
@@ -1097,7 +1129,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                   : 'none',
               }}>
                 <Text type="secondary" style={{ fontSize: 11, fontFamily: 'monospace', marginRight: 6 }}>
-                  {formatTimestamp(seg.start)}
+                  {formatTimestampRange(seg.start, seg.end)}
                 </Text>
                 <Text style={{ fontSize: 14, lineHeight: 1.7 }}>
                   {seg.text}
@@ -1231,92 +1263,128 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
             </Space>
           </div>
 
-          {/* 字幕主体区 */}
-          <div
-            ref={transcriptScrollRef}
-            style={{
-              height: 380, overflowY: 'auto', padding: '16px 20px',
-              background: token.colorBgContainer, borderRadius: 10,
-              border: `1px solid ${token.colorBorderSecondary}`,
-            }}
-          >
-            {realtimeError ? (
-              <Text type="warning" style={{ fontSize: 13 }}>
-                <ExclamationCircleOutlined /> {realtimeError}
-              </Text>
-            ) : isDualSource ? (
-              /* 双源模式：分栏显示 */
-              <div style={{ display: 'flex', gap: 16 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
-                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                    color: micPaused ? token.colorTextDisabled : token.colorPrimary,
-                  }}>
-                    🎤 {t('voice.micSource')} {micPaused && `(${t('voice.recordingPaused')})`}
-                  </div>
-                  {renderSourceTranscript('mic', micPaused)}
+          {/* 主体区：字幕 + 手动纪要，左右分栏 */}
+          <div style={{ display: 'flex', gap: 12, height: 380 }}>
+            {/* 字幕区 */}
+            <div
+              ref={transcriptScrollRef}
+              style={{
+                flex: 1, minWidth: 0, overflowY: 'auto', padding: '16px 20px',
+                background: token.colorBgContainer, borderRadius: 10,
+                border: `1px solid ${token.colorBorderSecondary}`,
+              }}
+            >
+              {isPreparing ? (
+                /* 识别模型加载中 */
+                <div style={{ textAlign: 'center', paddingTop: 60 }}>
+                  <LoadingOutlined style={{ fontSize: 24, marginBottom: 12, color: token.colorPrimary }} />
+                  <Text type="secondary" style={{ display: 'block', fontSize: 13 }}>
+                    {t('voice.preparingModel')}
+                  </Text>
                 </div>
-                <div style={{ width: 1, background: token.colorBorderSecondary, alignSelf: 'stretch' }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
-                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                    color: systemPaused ? token.colorTextDisabled : '#52c41a',
-                  }}>
-                    🔊 {t('voice.systemSource')} {systemPaused && `(${t('voice.recordingPaused')})`}
+              ) : realtimeError ? (
+                <Text type="warning" style={{ fontSize: 13 }}>
+                  <ExclamationCircleOutlined /> {realtimeError}
+                </Text>
+              ) : isDualSource ? (
+                /* 双源模式：分栏显示 */
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                      color: micPaused ? token.colorTextDisabled : token.colorPrimary,
+                    }}>
+                      🎤 {t('voice.micSource')} {micPaused && `(${t('voice.recordingPaused')})`}
+                    </div>
+                    {renderSourceTranscript('mic', micPaused)}
                   </div>
-                  {renderSourceTranscript('system', systemPaused)}
+                  <div style={{ width: 1, background: token.colorBorderSecondary, alignSelf: 'stretch' }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 12, fontWeight: 600, marginBottom: 8, paddingBottom: 4,
+                      borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                      color: systemPaused ? token.colorTextDisabled : '#52c41a',
+                    }}>
+                      🔊 {t('voice.systemSource')} {systemPaused && `(${t('voice.recordingPaused')})`}
+                    </div>
+                    {renderSourceTranscript('system', systemPaused)}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              /* 单源模式 */
-              <>
-                {!realtimeText && realtimeSegments.length === 0 ? (
-                  <div style={{ textAlign: 'center', paddingTop: 60 }}>
-                    <Text type="secondary" style={{ fontSize: 13 }}>
-                      {taskSttMode === 'local'
-                        ? <><ThunderboltOutlined /> {t('voice.realtimeRecognizing')}</>
-                        : t('voice.recordingNoRealtime')}
-                    </Text>
-                  </div>
-                ) : (
-                  <>
-                    {realtimeSegments.map((seg, idx) => (
-                      <div key={idx} style={{
-                        marginBottom: 12,
-                        padding: '6px 0',
-                        borderBottom: idx < realtimeSegments.length - 1 || realtimeText.slice(realtimeSegments.map(s => s.text).join('').length)
-                          ? `1px solid ${token.colorBorderSecondary}`
-                          : 'none',
-                      }}>
-                        <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
-                          {formatTimestamp(seg.start)}
-                        </Text>
-                        <Text style={{ fontSize: 15, lineHeight: 1.8 }}>
-                          {seg.text}
-                        </Text>
-                      </div>
-                    ))}
-                    {(() => {
-                      const completedText = realtimeSegments.map(s => s.text).join('')
-                      const partialText = realtimeText.slice(completedText.length)
-                      return partialText ? (
-                        <div style={{ marginBottom: 12, padding: '6px 0' }}>
+              ) : (
+                /* 单源模式 */
+                <>
+                  {!realtimeText && realtimeSegments.length === 0 ? (
+                    <div style={{ textAlign: 'center', paddingTop: 60 }}>
+                      <Text type="secondary" style={{ fontSize: 13 }}>
+                        {taskSttMode === 'local'
+                          ? <><ThunderboltOutlined /> {t('voice.realtimeRecognizing')}</>
+                          : t('voice.recordingNoRealtime')}
+                      </Text>
+                    </div>
+                  ) : (
+                    <>
+                      {realtimeSegments.map((seg, idx) => (
+                        <div key={idx} style={{
+                          marginBottom: 12,
+                          padding: '6px 0',
+                          borderBottom: idx < realtimeSegments.length - 1 || realtimeText.slice(realtimeSegments.map(s => s.text).join('').length)
+                            ? `1px solid ${token.colorBorderSecondary}`
+                            : 'none',
+                        }}>
                           <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
-                            {formatTimestamp(recordDuration)}
+                            {formatTimestampRange(seg.start, seg.end)}
                           </Text>
-                          <Text style={{ fontSize: 15, lineHeight: 1.8, color: token.colorPrimary }}>
-                            {partialText}
-                            {!isPaused && <span style={{ opacity: 0.5, animation: 'blink 1s infinite' }}>▎</span>}
+                          <Text style={{ fontSize: 15, lineHeight: 1.8 }}>
+                            {seg.text}
                           </Text>
                         </div>
-                      ) : null
-                    })()}
-                  </>
-                )}
-              </>
-            )}
+                      ))}
+                      {(() => {
+                        const completedText = realtimeSegments.map(s => s.text).join('')
+                        const partialText = realtimeText.slice(completedText.length)
+                        return partialText ? (
+                          <div style={{ marginBottom: 12, padding: '6px 0' }}>
+                            <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', marginRight: 8 }}>
+                              {formatTimestamp(recordDuration)}
+                            </Text>
+                            <Text style={{ fontSize: 15, lineHeight: 1.8, color: token.colorPrimary }}>
+                              {partialText}
+                              {!isPaused && <span style={{ opacity: 0.5, animation: 'blink 1s infinite' }}>▎</span>}
+                            </Text>
+                          </div>
+                        ) : null
+                      })()}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+            {/* 手动纪要区 */}
+            <div style={{
+              width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column',
+              background: token.colorBgContainer, borderRadius: 10,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                padding: '8px 12px', borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6,
+                color: token.colorTextSecondary,
+              }}>
+                <EditOutlined /> {t('voice.manualNotes')}
+              </div>
+              <Input.TextArea
+                value={notesText}
+                onChange={(e) => handleNotesChange(e.target.value)}
+                placeholder={t('voice.notesPlaceholder')}
+                variant="borderless"
+                style={{
+                  flex: 1, resize: 'none', padding: '12px 16px',
+                  borderRadius: '0 0 10px 10px', fontSize: 14, lineHeight: 1.6,
+                }}
+              />
+            </div>
           </div>
         </div>
       )
@@ -1453,8 +1521,8 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                 borderBottom: `1px solid ${token.colorBorderSecondary}`,
               }}
             >
-              <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', flexShrink: 0, minWidth: 50 }}>
-                {formatTimestamp(seg.start)}
+              <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace', flexShrink: 0, minWidth: 110 }}>
+                {formatTimestampRange(seg.start, seg.end)}
               </Text>
               <Text style={{ flex: 1 }}>{seg.text}</Text>
             </div>
@@ -1653,6 +1721,25 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                 {renderMinutes(task)}
               </Card>
             )}
+
+            {/* 手动纪要 */}
+            <Card
+              size="small"
+              title={
+                <Space>
+                  <EditOutlined />
+                  <span>{t('voice.manualNotes')}</span>
+                </Space>
+              }
+            >
+              <Input.TextArea
+                value={notesText}
+                onChange={(e) => handleNotesChange(e.target.value)}
+                placeholder={t('voice.notesPlaceholder')}
+                autoSize={{ minRows: 4, maxRows: 12 }}
+                style={{ fontSize: 14, lineHeight: 1.6 }}
+              />
+            </Card>
           </>
         )}
       </div>

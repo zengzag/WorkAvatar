@@ -37,6 +37,7 @@ export interface VoiceTask {
   updated_at: number
   recorded_at: number | null
   secondary_audio_path: string | null
+  notes: string
 }
 
 export interface TranscriptSegment {
@@ -65,6 +66,7 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
     modelDir: '(内置流式 Zipformer 模型)',
     language: 'zh',
     useGPU: false,
+    sensitivity: 1.0,
   },
   audioConfig: {
     sampleRate: 16000,
@@ -193,6 +195,7 @@ class VoiceService {
     set('error_message', params.errorMessage)
     set('stt_mode', params.sttMode)
     set('stt_model', params.sttModel)
+    set('notes', params.notes)
     if (fields.length === 0) return task
     fields.push('updated_at = ?')
     values.push(Math.floor(Date.now() / 1000))

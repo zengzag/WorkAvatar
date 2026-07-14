@@ -107,8 +107,45 @@ function registerAppFileProtocol() {
     if (!stat.isFile()) {
       return new Response('Not a file', { status: 400 })
     }
+
+    const contentType = getMimeType(resolvedPath)
+    const fileSize = stat.size
+
+    // 支持 Range 请求（音频/视频播放需要 seek 和准确的总时长）
+    const rangeHeader = request.headers.get('range')
+    if (rangeHeader) {
+      const match = /bytes=(\d*)-(\d*)/.exec(rangeHeader)
+      if (match) {
+        const start = match[1] ? parseInt(match[1], 10) : 0
+        const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
+        const clampedEnd = Math.min(end, fileSize - 1)
+        if (start > fileSize - 1 || start > clampedEnd) {
+          return new Response('Range Not Satisfiable', {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${fileSize}` },
+          })
+        }
+        const chunkSize = clampedEnd - start + 1
+        const fileStream = fs.createReadStream(resolvedPath, { start, end: clampedEnd })
+        return new Response(Readable.toWeb(fileStream) as ReadableStream, {
+          status: 206,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(chunkSize),
+            'Content-Range': `bytes ${start}-${clampedEnd}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+          },
+        })
+      }
+    }
+
+    // 无 Range 请求时返回完整文件（带 Content-Length，确保音频总时长准确）
     const fileStream = fs.createReadStream(resolvedPath)
-    const headers = { 'Content-Type': getMimeType(resolvedPath) }
+    const headers = {
+      'Content-Type': contentType,
+      'Content-Length': String(fileSize),
+      'Accept-Ranges': 'bytes',
+    }
     return new Response(Readable.toWeb(fileStream) as ReadableStream, { headers })
   })
 }

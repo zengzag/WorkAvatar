@@ -1277,10 +1277,15 @@ export default {
     gpuAcceleration: 'GPU 加速',
     gpuAccelerationHint: '使用 GPU (DirectML) 加速识别，需要支持 DX12 的显卡。不可用时自动回退到 CPU',
     gpuAccelerationExperimental: '实验性功能',
+    sensitivity: '识别灵敏度',
+    sensitivityHint: '调高可改善低音量识别效果，但可能增加环境噪声误识别。默认 1.0x',
     // 麦克风设备选择
     micDevice: '麦克风设备',
     micDeviceHint: '选择录音使用的麦克风设备，默认使用系统推荐设备',
     micDeviceDefault: '系统默认设备',
     micDevicePermissionHint: '未检测到设备，请先授权麦克风权限后刷新设备列表',
+    preparingModel: '正在准备识别模型...',
+    manualNotes: '手动纪要',
+    notesPlaceholder: '在此记录会议要点和笔记...',
   },
 }

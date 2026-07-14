@@ -32,6 +32,8 @@ interface RealtimeSession {
   totalSamples: number
   sampleRate: number
   segmentStartSample: number
+  /** 音频增益倍数，默认 1.0 */
+  gain: number
 }
 
 // sherpa-onnx-node is loaded dynamically to avoid blocking startup when not used
@@ -140,10 +142,95 @@ class LocalSTTService {
 
   private loadSherpaOnnx(): any {
     if (sherpaOnnx) return sherpaOnnx
+
+    // 方式 1：直接 require（dev 模式下可用）
     try {
       sherpaOnnx = require('sherpa-onnx-node')
-      logger.info('sherpa-onnx-node loaded successfully, version:', sherpaOnnx.version)
-      return sherpaOnnx
+      if (sherpaOnnx && sherpaOnnx.version) {
+        logger.info('sherpa-onnx-node loaded via require, version:', sherpaOnnx.version)
+        return sherpaOnnx
+      }
+    } catch (err: any) {
+      logger.warn('require("sherpa-onnx-node") failed, trying manual path resolution:', err?.message || err)
+    }
+
+    // 方式 2：打包模式下 asar 内的 addon.js 无法正确解析 .node 路径，
+    // 手动定位 app.asar.unpacked 中的原生模块
+    try {
+      const os = require('os')
+      const platform = os.platform() === 'win32' ? 'win' : os.platform()
+      const arch = os.arch()
+      const platformArch = `${platform}-${arch}`
+
+      // 候选路径列表（覆盖 dev 和打包场景）
+      const appPath = app.getAppPath()
+      const candidates: string[] = []
+
+      if (app.isPackaged) {
+        // 打包模式：.node 文件被 asarUnpack 解包到 app.asar.unpacked
+        // appPath 形如 ".../resources/app.asar"，替换为 app.asar.unpacked
+        const unpackedRoot = appPath.replace('app.asar', 'app.asar.unpacked')
+        candidates.push(
+          path.join(unpackedRoot, 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+          path.join(unpackedRoot, 'node_modules', 'sherpa-onnx-node', 'sherpa-onnx.node'),
+        )
+        // process.resourcesPath 下的 node_modules（某些打包配置）
+        candidates.push(
+          path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+        )
+      }
+
+      // 通用候选路径
+      candidates.push(
+        path.join(appPath, 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+        path.join(appPath, 'node_modules', 'sherpa-onnx-node', 'sherpa-onnx.node'),
+      )
+
+      let loadedAddon: any = null
+      let usedPath = ''
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          try {
+            loadedAddon = require(p)
+            usedPath = p
+            break
+          } catch (err: any) {
+            logger.warn(`require("${p}") failed:`, err?.message || err)
+          }
+        }
+      }
+
+      if (loadedAddon) {
+        // 加载 sherpa-onnx-node 的 JS 包装层（它需要 ./addon.js 导出的对象）
+        // 直接构造一个精简的 sherpaOnnx 对象，包含识别所需的类
+        const sherpaOnnxNodeDir = path.join(appPath, 'node_modules', 'sherpa-onnx-node')
+        if (fs.existsSync(sherpaOnnxNodeDir)) {
+          // 临时修改 require 缓存，让 addon.js 模块返回我们加载的 addon
+          const addonPath = path.join(sherpaOnnxNodeDir, 'addon.js')
+          if (require.cache[addonPath]) {
+            delete require.cache[addonPath]
+          }
+          // 注入 addon 模块缓存
+          require.cache[addonPath] = {
+            id: addonPath,
+            filename: addonPath,
+            loaded: true,
+            exports: loadedAddon,
+          } as any
+          // 现在 require('sherpa-onnx-node') 应该能正确加载
+          sherpaOnnx = require('sherpa-onnx-node')
+          if (sherpaOnnx && sherpaOnnx.version) {
+            logger.info(`sherpa-onnx-node loaded via manual path: ${usedPath}, version: ${sherpaOnnx.version}`)
+            return sherpaOnnx
+          }
+        }
+        // 如果 JS 包装层不可用，直接使用原生 addon
+        sherpaOnnx = loadedAddon
+        logger.info(`sherpa-onnx native addon loaded directly from: ${usedPath}, version: ${sherpaOnnx.version}`)
+        return sherpaOnnx
+      }
+
+      throw new Error(`sherpa-onnx native module not found in any candidate paths. Tried:\n${candidates.join('\n')}`)
     } catch (err: any) {
       logger.error('Failed to load sherpa-onnx-node:', err?.message || err)
       throw new Error(`Failed to load sherpa-onnx-node: ${err?.message || err}`)
@@ -486,9 +573,20 @@ class LocalSTTService {
 
     if (signal?.aborted) throw new Error('Aborted')
 
+    // 应用增益（如果配置了灵敏度）
+    const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
+    let processedSamples = samples
+    if (gain !== 1.0) {
+      processedSamples = new Float32Array(samples.length)
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i] * gain
+        processedSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
+      }
+    }
+
     const result = isStreaming
-      ? this.transcribeOnline(rec, samples, sampleRate, onProgress, signal)
-      : this.transcribeOffline(rec, samples, sampleRate, onProgress, signal)
+      ? this.transcribeOnline(rec, processedSamples, sampleRate, onProgress, signal)
+      : this.transcribeOffline(rec, processedSamples, sampleRate, onProgress, signal)
 
     onProgress?.(95, 'Finalizing transcript...')
 
@@ -516,6 +614,8 @@ class LocalSTTService {
         return { ok: false, error: '实时识别仅支持流式模型（streaming zipformer），请切换模型或使用录音后识别' }
       }
 
+      const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
+
       const stream = rec.createStream()
       const session: RealtimeSession = {
         recognizer: rec,
@@ -525,6 +625,7 @@ class LocalSTTService {
         totalSamples: 0,
         sampleRate: 16000,
         segmentStartSample: 0,
+        gain,
       }
       this.realtimeSessions.set(taskId, session)
       logger.info(`Realtime recognition started: taskId=${taskId}`)
@@ -552,8 +653,20 @@ class LocalSTTService {
       return { text: '', partialText: '', isEndpoint: false }
     }
 
-    const { recognizer: rec, stream } = session
-    stream.acceptWaveform({ samples, sampleRate })
+    const { recognizer: rec, stream, gain } = session
+
+    // 应用增益（amplify / attenuate），默认 1.0 不改变
+    let audioSamples = samples
+    if (gain !== 1.0) {
+      audioSamples = new Float32Array(samples.length)
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i] * gain
+        // 削波保护（clamp 到 [-1, 1]），防止过载失真
+        audioSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
+      }
+    }
+
+    stream.acceptWaveform({ samples: audioSamples, sampleRate })
     session.totalSamples += samples.length
 
     // 持续解码

@@ -522,6 +522,10 @@ class KMSDatabaseService {
     if (!voiceColNames.includes('secondary_audio_path')) {
       this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN secondary_audio_path TEXT")
     }
+    // kms_voice_tasks: 添加 notes 列（用户手动记录的会议纪要）
+    if (!voiceColNames.includes('notes')) {
+      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN notes TEXT DEFAULT ''")
+    }
   }
 
   private enforceUniqueFileHash(): void {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Space, Typography, Input, Button, Radio, Divider, App, theme, Tag,
-  InputNumber, ColorPicker, Select, Switch,
+  InputNumber, ColorPicker, Select, Switch, Slider,
 } from 'antd'
 import {
   CloudServerOutlined, DesktopOutlined, AudioOutlined, RobotOutlined,
@@ -183,6 +183,35 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                 <Switch
                   checked={!!localSettings.localConfig.useGPU}
                   onChange={(checked) => updateLocalConfig({ useGPU: checked })}
+                />
+              </div>
+              {/* 识别灵敏度 */}
+              <div style={{
+                padding: '10px 12px', background: token.colorFillQuaternary, borderRadius: 6,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text strong>{t('voice.sensitivity')}</Text>
+                  <Text type="secondary" style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                    {(localSettings.localConfig.sensitivity ?? 1.0).toFixed(1)}x
+                  </Text>
+                </div>
+                <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
+                  {t('voice.sensitivityHint')}
+                </Text>
+                <Slider
+                  min={0.5}
+                  max={5.0}
+                  step={0.1}
+                  value={localSettings.localConfig.sensitivity ?? 1.0}
+                  onChange={(value) => updateLocalConfig({ sensitivity: value })}
+                  tooltip={{ formatter: (v) => `${v?.toFixed(1)}x` }}
+                  marks={{
+                    0.5: '0.5x',
+                    1.0: '1.0x',
+                    2.0: '2.0x',
+                    3.0: '3.0x',
+                    5.0: '5.0x',
+                  }}
                 />
               </div>
             </Space>

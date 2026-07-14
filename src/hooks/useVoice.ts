@@ -23,6 +23,7 @@ export interface VoiceTask {
   updated_at: number
   recorded_at: number | null
   secondary_audio_path: string | null
+  notes: string
 }
 
 export interface TranscriptSegment {
@@ -44,6 +45,7 @@ export interface VoiceSettings {
     modelDir: string
     language: string
     useGPU?: boolean
+    sensitivity?: number
   }
   audioConfig: {
     sampleRate: number
@@ -164,6 +166,7 @@ export function useVoice() {
         minutes: updates.minutes,
         minutesType: updates.minutes_type,
         errorMessage: updates.error_message ?? undefined,
+        notes: updates.notes,
       })
       await loadTasks()
       return result as VoiceTask

@@ -1272,10 +1272,15 @@ export default {
     gpuAcceleration: 'GPU Acceleration',
     gpuAccelerationHint: 'Use GPU (DirectML) to accelerate recognition. Requires a DX12-capable GPU. Falls back to CPU if unavailable.',
     gpuAccelerationExperimental: 'Experimental',
+    sensitivity: 'Recognition Sensitivity',
+    sensitivityHint: 'Increase to improve low-volume recognition, but may also pick up more ambient noise. Default: 1.0x',
     // Microphone device selection
     micDevice: 'Microphone Device',
     micDeviceHint: 'Select the microphone device for recording. Defaults to the system recommended device.',
     micDeviceDefault: 'System Default Device',
     micDevicePermissionHint: 'No devices detected. Please grant microphone permission first and refresh the device list.',
+    preparingModel: 'Preparing recognition model...',
+    manualNotes: 'Manual Notes',
+    notesPlaceholder: 'Take meeting notes and key points here...',
   },
 }
