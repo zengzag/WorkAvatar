@@ -170,7 +170,7 @@ class OCRService {
     this.ocrWorker = new Worker(workerPath, {
       workerData: {
         dataDir: pathService.getDataDir(),
-        isDev: !require('electron').app.isPackaged,
+        isDev: pathService.getIsDev(),
         resourcesDir: pathService.getResourcesDir(),
       },
     })

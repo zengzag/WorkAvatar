@@ -572,7 +572,7 @@ class KMSIndexManagerService {
         )
       } catch (err: any) {
         if (signal.aborted) {
-          reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+          reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true, fileId: file.id, fileName: file.file_name })
           return { success: false, error: 'ABORTED' }
         }
         logger.error(`Single file deep process failed for "${file.file_name}":`, err)
@@ -581,7 +581,7 @@ class KMSIndexManagerService {
       }
 
       if (signal.aborted) {
-        reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+        reportProgress({ phase: 'done', current: 0, total: 1, message: `已取消: ${file.file_name}`, cancelled: true, fileId: file.id, fileName: file.file_name })
         return { success: false, error: 'ABORTED' }
       }
 
@@ -601,7 +601,7 @@ class KMSIndexManagerService {
       }
 
       if (signal.aborted) {
-        reportProgress({ phase: 'done', current: 1, total: 1, message: `已取消: ${file.file_name}`, cancelled: true })
+        reportProgress({ phase: 'done', current: 1, total: 1, message: `已取消: ${file.file_name}`, cancelled: true, fileId: file.id, fileName: file.file_name })
         return { success: false, error: 'ABORTED' }
       }
 
@@ -610,6 +610,8 @@ class KMSIndexManagerService {
         current: 1,
         total: 1,
         message: `深度处理完成: ${file.file_name}`,
+        fileId: file.id,
+        fileName: file.file_name,
       })
 
       // checkpoint 合并 WAL
@@ -624,7 +626,7 @@ class KMSIndexManagerService {
     } catch (err: any) {
       logger.error(`Single file deep process failed (fileId=${fileId}):`, err?.message || err)
       const extras = collectionId ? { collectionId } : {}
-      onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', ...extras })
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: err?.message || 'Unknown error', fileId, ...extras })
       return { success: false, error: err?.message || 'Unknown error' }
     } finally {
       this.abortController = null
