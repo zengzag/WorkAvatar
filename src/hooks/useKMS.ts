@@ -259,11 +259,13 @@ export function useKMS() {
 
   const deleteDir = useCallback(async (id: string) => {
     try {
-      await window.electronAPI.kms.deleteDir(id)
+      const result = await window.electronAPI.kms.deleteDir(id) as { migrated?: number; removed?: number } | undefined
       await loadDirs()
       await loadStats()
+      return result
     } catch (err) {
       console.error('Failed to delete KMS dir:', err)
+      return undefined
     }
   }, [loadDirs, loadStats])
 

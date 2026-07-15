@@ -143,6 +143,18 @@ class KMSKeywordStatsService {
   deleteKeywordStat(keyword: string): void {
     this.db.prepare('DELETE FROM kms_keyword_stats WHERE keyword = ?').run(keyword)
   }
+
+  /**
+   * 清理低频关键词：删除 90 天未搜索且 search_count < 3 的记录。
+   * 在 autoCleanup 中调用，防止 kms_keyword_stats 表无限增长。
+   */
+  cleanupStaleKeywordStats(): number {
+    const cutoff = Math.floor(Date.now() / 1000) - 90 * 86400
+    const result = this.db.prepare(
+      'DELETE FROM kms_keyword_stats WHERE last_searched_at < ? AND search_count < 3'
+    ).run(cutoff)
+    return result.changes
+  }
 }
 
 export default KMSKeywordStatsService

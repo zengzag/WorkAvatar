@@ -26,6 +26,70 @@ class DatabaseService {
     this.db.pragma('foreign_keys = ON')
 
     this.initializeSchema()
+    this.cleanupOldConversations()
+  }
+
+  /**
+   * 启动时清理过期对话，防止 conversations.messages_json 无限增长。
+   * - 30 天前的空对话（message_count = 0）：直接删除（用户创建但未发送任何消息的废弃对话）
+   * - 180 天前且 messages_json > 2MB 的对话：保留最近 50 条消息，裁剪更早的历史
+   */
+  private cleanupOldConversations(): void {
+    const now = Math.floor(Date.now() / 1000)
+
+    // 1. 删除 30 天前的空对话（同步清理 FTS5 记录）
+    try {
+      const cutoff = now - 30 * 86400
+      const emptyConvos = this.db.prepare(
+        `SELECT id FROM conversations
+         WHERE message_count = 0 AND messages_json = '[]' AND created_at < ?`
+      ).all(cutoff) as any[]
+      if (emptyConvos.length > 0) {
+        const delTx = this.db.transaction(() => {
+          for (const c of emptyConvos) {
+            this.db.prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(c.id)
+            this.db.prepare('DELETE FROM conversations WHERE id = ?').run(c.id)
+          }
+        })
+        delTx()
+        logger.info(`启动清理：删除 ${emptyConvos.length} 条 30 天前空对话`)
+      }
+    } catch (err: any) {
+      logger.warn('启动清理空对话失败:', err?.message || err)
+    }
+
+    // 2. 裁剪 180 天前的大对话（messages_json > 2MB），保留最近 50 条消息
+    try {
+      const cutoff = now - 180 * 86400
+      const sizeThreshold = 2 * 1024 * 1024
+      const oldConvos = this.db.prepare(
+        `SELECT id, messages_json FROM conversations
+         WHERE updated_at < ? AND length(messages_json) > ?`
+      ).all(cutoff, sizeThreshold) as any[]
+
+      let trimmed = 0
+      const updateStmt = this.db.prepare(
+        'UPDATE conversations SET messages_json = ?, message_count = ? WHERE id = ?'
+      )
+      const trimTx = this.db.transaction(() => {
+        for (const c of oldConvos) {
+          try {
+            const messages = JSON.parse(c.messages_json)
+            if (Array.isArray(messages) && messages.length > 50) {
+              const trimmedMessages = messages.slice(-50)
+              updateStmt.run(JSON.stringify(trimmedMessages), trimmedMessages.length, c.id)
+              trimmed++
+            }
+          } catch { /* skip invalid JSON */ }
+        }
+      })
+      trimTx()
+      if (trimmed > 0) {
+        logger.info(`启动清理：裁剪 ${trimmed} 条 180 天前大对话（保留最近 50 条消息）`)
+      }
+    } catch (err: any) {
+      logger.warn('启动清理大对话失败:', err?.message || err)
+    }
   }
 
   static getInstance(): DatabaseService {

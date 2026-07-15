@@ -86,6 +86,10 @@ class PathService {
     return this.dataDir
   }
 
+  getIsDev(): boolean {
+    return this.isDev
+  }
+
   getDbPath(): string {
     return path.join(this.dataDir, 'workavatar.db')
   }

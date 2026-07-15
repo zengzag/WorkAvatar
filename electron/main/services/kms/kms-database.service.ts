@@ -44,6 +44,99 @@ class KMSDatabaseService {
     this.initializeSchema()
     this.initializeVectorSchema()
     this.migrateEmbeddingsToVectorDb()
+    this.autoCleanup()
+  }
+
+  /**
+   * 启动时自动清理过期数据，防止数据库日益庞大。
+   * - kms_access_log：删除 30 天前记录（访问日志仅用于近 30 天冷热数据判定）
+   * - kms_search_history.result_data：清空废弃字段（项目规范要求只保存元数据）
+   * - kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
+   * - kms_voice_tasks：渐进式清理——30 天前已完成/失败任务清空大文本字段，180 天前的整条删除
+   *
+   * 注意：此方法在构造函数中调用，此时 KMSDatabaseService.instance 尚未赋值，
+   * 因此不能通过 KMSKeywordStatsService.getInstance() 调用（会触发循环依赖），
+   * 需直接使用内联 SQL。
+   */
+  private autoCleanup(): void {
+    const now = Math.floor(Date.now() / 1000)
+
+    // 1. kms_access_log：删除 30 天前记录
+    try {
+      const cutoff = now - 30 * 86400
+      const result = this.db.prepare('DELETE FROM kms_access_log WHERE accessed_at < ?').run(cutoff)
+      if (result.changes > 0) {
+        logger.info(`启动自动清理：删除 ${result.changes} 条 30 天前访问日志`)
+      }
+    } catch (err: any) {
+      logger.warn('启动自动清理访问日志失败:', err?.message || err)
+    }
+
+    // 2. kms_search_history.result_data：清空废弃字段
+    try {
+      const result = this.db.prepare("UPDATE kms_search_history SET result_data = NULL WHERE result_data IS NOT NULL").run()
+      if (result.changes > 0) {
+        logger.info(`启动自动清理：清空 ${result.changes} 条废弃的 search_history.result_data`)
+      }
+    } catch (err: any) {
+      logger.warn('启动自动清理 result_data 失败:', err?.message || err)
+    }
+
+    // 3. kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
+    try {
+      const cutoff = now - 90 * 86400
+      const result = this.db.prepare(
+        'DELETE FROM kms_keyword_stats WHERE last_searched_at < ? AND search_count < 3'
+      ).run(cutoff)
+      if (result.changes > 0) {
+        logger.info(`启动自动清理：删除 ${result.changes} 条低频关键词统计`)
+      }
+    } catch (err: any) {
+      logger.warn('启动自动清理 keyword_stats 失败:', err?.message || err)
+    }
+
+    // 4. kms_voice_tasks：渐进式清理
+    //    4a. 30 天前已完成/失败任务：清空 transcript/minutes 等大文本字段（释放空间，保留元数据）
+    try {
+      const cutoff30 = now - 30 * 86400
+      const result = this.db.prepare(`
+        UPDATE kms_voice_tasks
+        SET transcript = '', transcript_segments_json = '[]', minutes = ''
+        WHERE status IN ('completed', 'error') AND updated_at < ?
+          AND (transcript != '' OR minutes != '')
+      `).run(cutoff30)
+      if (result.changes > 0) {
+        logger.info(`启动自动清理：清空 ${result.changes} 条旧语音任务的大文本字段`)
+      }
+    } catch (err: any) {
+      logger.warn('启动自动清理 voice_tasks 大文本失败:', err?.message || err)
+    }
+
+    //    4b. 180 天前的已完成/失败任务：整条删除（含关联音频文件）
+    try {
+      const cutoff180 = now - 180 * 86400
+      const oldTasks = this.db.prepare(
+        `SELECT id, audio_path, secondary_audio_path FROM kms_voice_tasks
+         WHERE status IN ('completed', 'error') AND updated_at < ?`
+      ).all(cutoff180) as any[]
+      if (oldTasks.length > 0) {
+        // 删除关联音频文件
+        for (const t of oldTasks) {
+          if (t.audio_path) { try { fs.unlinkSync(t.audio_path) } catch { /* ignore */ } }
+          if (t.secondary_audio_path) { try { fs.unlinkSync(t.secondary_audio_path) } catch { /* ignore */ } }
+        }
+        // 批量删除记录
+        const ids = oldTasks.map(t => t.id)
+        for (let i = 0; i < ids.length; i += 500) {
+          const batch = ids.slice(i, i + 500)
+          const placeholders = batch.map(() => '?').join(',')
+          this.db.prepare(`DELETE FROM kms_voice_tasks WHERE id IN (${placeholders})`).run(...batch)
+        }
+        logger.info(`启动自动清理：删除 ${oldTasks.length} 条 180 天前语音任务`)
+      }
+    } catch (err: any) {
+      logger.warn('启动自动清理 voice_tasks 失败:', err?.message || err)
+    }
   }
 
   /**
@@ -522,6 +615,10 @@ class KMSDatabaseService {
     if (!voiceColNames.includes('secondary_audio_path')) {
       this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN secondary_audio_path TEXT")
     }
+    // kms_voice_tasks: 添加 notes 列（用户手动记录的会议纪要）
+    if (!voiceColNames.includes('notes')) {
+      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN notes TEXT DEFAULT ''")
+    }
   }
 
   private enforceUniqueFileHash(): void {
@@ -674,9 +771,9 @@ class KMSDatabaseService {
       const idSet = new Set(fileIds.map(r => r.id))
       const totalEmbeddings = this.vectorDb.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
       if (totalEmbeddings?.cnt > 0 && idSet.size > 0) {
-        // 分批查询残留数（避免 IN 子句过长）
-        const allEmbeddings = this.vectorDb.prepare('SELECT file_id FROM kms_embeddings').all() as any[]
-        orphanedEmbeddingCount = allEmbeddings.filter(e => !idSet.has(e.file_id)).length
+        // 仅加载 DISTINCT file_id（远小于全量 BLOB 行），在 JS 层统计残留
+        const distinctFileIds = this.vectorDb.prepare('SELECT DISTINCT file_id FROM kms_embeddings').all() as any[]
+        orphanedEmbeddingCount = distinctFileIds.filter(e => !idSet.has(e.file_id)).length
       } else if (totalEmbeddings?.cnt > 0 && idSet.size === 0) {
         orphanedEmbeddingCount = totalEmbeddings.cnt
       }
@@ -741,6 +838,8 @@ class KMSDatabaseService {
     cleanedFts: number
     cleanedEmbeddings: number
     cleanedFiles: number
+    cleanedAccessLog: number
+    cleanedResultData: number
   } {
     const before = this.getDatabaseStats()
     let cleanedFts = 0
@@ -762,26 +861,46 @@ class KMSDatabaseService {
     try {
       const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
       const idSet = new Set(fileIds.map(r => r.id))
-      const allEmbeddings = this.vectorDb.prepare('SELECT id, file_id, rowid FROM kms_embeddings').all() as any[]
-      const orphanRows = allEmbeddings.filter(e => !idSet.has(e.file_id))
-      if (orphanRows.length > 0) {
-        const orphanIds = orphanRows.map(r => r.id)
-        const orphanRowids = orphanRows.map(r => r.rowid)
+      // 仅加载 DISTINCT file_id 而非全量 BLOB 行，避免大库 OOM
+      const distinctFileIds = this.vectorDb.prepare('SELECT DISTINCT file_id FROM kms_embeddings').all() as any[]
+      const orphanFileIds = distinctFileIds.filter(e => !idSet.has(e.file_id)).map(r => r.file_id)
+
+      if (orphanFileIds.length > 0) {
+        // 按 file_id 分批删除，避免 IN 子句参数超限
         const delTx = this.vectorDb.transaction(() => {
-          const placeholders = orphanIds.map(() => '?').join(',')
-          this.vectorDb.prepare(`DELETE FROM kms_embeddings WHERE id IN (${placeholders})`).run(...orphanIds)
-          if (orphanRowids.length > 0) {
+          for (let i = 0; i < orphanFileIds.length; i += 500) {
+            const batch = orphanFileIds.slice(i, i + 500)
+            const placeholders = batch.map(() => '?').join(',')
+
+            // 先收集要删除的 rowid
+            let rowids: number[] = []
             try {
-              const rowidPlaceholders = orphanRowids.map(() => '?').join(',')
-              // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 在加载了原生扩展时的类型校验回归
-              this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...orphanRowids.map(r => BigInt(r)))
-            } catch (e: any) {
-              logger.warn('清理 vec_kms_embeddings 残留行失败:', e?.message || e)
+              const rows = this.vectorDb.prepare(`SELECT rowid FROM kms_embeddings WHERE file_id IN (${placeholders})`).all(...batch) as any[]
+              rowids = rows.map(r => r.rowid)
+            } catch (err: any) {
+              logger.warn('收集残留 embedding rowid 失败:', err?.message || err)
+            }
+
+            // 统计本批删除条数
+            const countResult = this.vectorDb.prepare(`SELECT COUNT(*) as cnt FROM kms_embeddings WHERE file_id IN (${placeholders})`).get(...batch) as any
+            cleanedEmbeddings += countResult?.cnt || 0
+
+            this.vectorDb.prepare(`DELETE FROM kms_embeddings WHERE file_id IN (${placeholders})`).run(...batch)
+
+            if (rowids.length > 0) {
+              for (let j = 0; j < rowids.length; j += 500) {
+                const rowidBatch = rowids.slice(j, j + 500)
+                const rowidPlaceholders = rowidBatch.map(() => '?').join(',')
+                try {
+                  this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`).run(...rowidBatch.map(r => BigInt(r)))
+                } catch (e: any) {
+                  logger.warn('清理 vec_kms_embeddings 残留行失败:', e?.message || e)
+                }
+              }
             }
           }
         })
         delTx()
-        cleanedEmbeddings = orphanRows.length
         logger.info(`清理残留 embedding 条目: ${cleanedEmbeddings}`)
       }
     } catch (err: any) {
@@ -809,7 +928,34 @@ class KMSDatabaseService {
       logger.warn('清理游离文件失败:', err?.message || err)
     }
 
-    // 3.5 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
+    // 3.5 清理 kms_access_log 旧记录：访问日志只用于近 30 天冷热数据判定，
+    // 90 天前的记录无业务价值且会持续膨胀主库体积
+    let cleanedAccessLog = 0
+    try {
+      const cutoff = Math.floor(Date.now() / 1000) - 90 * 86400
+      const result = this.db.prepare('DELETE FROM kms_access_log WHERE accessed_at < ?').run(cutoff)
+      cleanedAccessLog = result.changes
+      if (cleanedAccessLog > 0) {
+        logger.info(`清理 90 天前访问日志: ${cleanedAccessLog} 条`)
+      }
+    } catch (err: any) {
+      logger.warn('清理访问日志失败:', err?.message || err)
+    }
+
+    // 3.6 清空 kms_search_history.result_data：该字段已废弃（项目规范要求只保存元数据不存储搜索结果），
+    // 旧数据可能仍占用空间，清空后不再写入
+    let cleanedResultData = 0
+    try {
+      const result = this.db.prepare("UPDATE kms_search_history SET result_data = NULL WHERE result_data IS NOT NULL").run()
+      cleanedResultData = result.changes
+      if (cleanedResultData > 0) {
+        logger.info(`清空废弃的 search_history.result_data: ${cleanedResultData} 条`)
+      }
+    } catch (err: any) {
+      logger.warn('清空 result_data 失败:', err?.message || err)
+    }
+
+    // 3.7 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
     // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 中累积已删除文档残留，VACUUM 对 FTS5 无效
     this.optimizeFts5Index('rebuild')
 
@@ -854,6 +1000,8 @@ class KMSDatabaseService {
       cleanedFts,
       cleanedEmbeddings,
       cleanedFiles,
+      cleanedAccessLog,
+      cleanedResultData,
     }
   }
 

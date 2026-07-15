@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Space, Tooltip, Tag, Button, Popconfirm, Typography, theme } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import type { RefObject } from 'react'
 import {
   FileOutlined, FolderOutlined, EyeOutlined, DeleteOutlined, ExclamationCircleOutlined,
   ThunderboltOutlined, LoadingOutlined, CheckCircleFilled,
@@ -17,7 +18,8 @@ export interface CollectionFileColumnsHandlers {
   onOpenFileDir: (filePath: string) => void
   onRemoveFile: (file: CollectionFile) => void
   onProcessFileDeep: (file: CollectionFile) => void
-  processingFileIds: Set<string>
+  /** 使用 ref 镜像读取 processingFileIds，避免 Set 引用进入 useMemo 依赖导致每次变更都重算列定义 */
+  processingFileIdsRef: RefObject<Set<string>>
 }
 
 export const buildFileColumns = (
@@ -69,7 +71,7 @@ export const buildFileColumns = (
     key: 'deep_processed',
     width: 100,
     render: (_: any, record: CollectionFile) => {
-      const isProcessing = handlers.processingFileIds.has(record.id)
+      const isProcessing = handlers.processingFileIdsRef.current?.has(record.id) ?? false
       if (isProcessing) {
         return (
           <Tag color="processing" style={{ fontSize: 11 }}>
@@ -117,7 +119,7 @@ export const buildFileColumns = (
     key: 'actions',
     width: 170,
     render: (_: any, record: CollectionFile) => {
-      const isProcessing = handlers.processingFileIds.has(record.id)
+      const isProcessing = handlers.processingFileIdsRef.current?.has(record.id) ?? false
       return (
         <Space size={4}>
           <Tooltip title={isProcessing ? t('kms.collections.deepProcessing') : t('kms.collections.deepProcessFile')}>

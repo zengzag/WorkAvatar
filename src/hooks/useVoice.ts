@@ -11,10 +11,10 @@ export interface VoiceTask {
   audio_size: number
   audio_channels: number
   sample_rate: number
-  transcript: string
-  transcript_segments_json: string
+  transcript?: string
+  transcript_segments_json?: string
   transcript_language: string
-  minutes: string
+  minutes?: string
   minutes_type: string
   error_message: string | null
   stt_mode: string
@@ -23,6 +23,7 @@ export interface VoiceTask {
   updated_at: number
   recorded_at: number | null
   secondary_audio_path: string | null
+  notes: string
 }
 
 export interface TranscriptSegment {
@@ -43,6 +44,8 @@ export interface VoiceSettings {
     modelType: 'whisper' | 'paraformer' | 'zipformer'
     modelDir: string
     language: string
+    useGPU?: boolean
+    sensitivity?: number
   }
   audioConfig: {
     sampleRate: number
@@ -163,6 +166,7 @@ export function useVoice() {
         minutes: updates.minutes,
         minutesType: updates.minutes_type,
         errorMessage: updates.error_message ?? undefined,
+        notes: updates.notes,
       })
       await loadTasks()
       return result as VoiceTask

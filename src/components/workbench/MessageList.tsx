@@ -50,19 +50,32 @@ const MessageList: React.FC<MessageListProps> = ({
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_COUNT)
   const prevScrollHeightRef = useRef(0)
   const lastConvIdRef = useRef<string | null>(null)
+  const needScrollOnLoadRef = useRef(false)
 
   useLayoutEffect(() => {
     if (activeConversationId !== lastConvIdRef.current) {
       lastConvIdRef.current = activeConversationId
       setVisibleCount(INITIAL_VISIBLE_COUNT)
       prevScrollHeightRef.current = 0
-      requestAnimationFrame(() => {
-        if (chatContainerRef.current) {
-          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
-        }
-      })
+      needScrollOnLoadRef.current = true
     }
   }, [activeConversationId])
+
+  // 消息加载完成后（loading 结束、messages 有内容）再滚动到底部
+  // 修复：原来在 activeConversationId 变化时立即滚动，但此时 loading 状态 scrollHeight 不对
+  useEffect(() => {
+    if (needScrollOnLoadRef.current && messages.length > 0) {
+      needScrollOnLoadRef.current = false
+      // 双 rAF 确保浏览器完成布局后再滚动
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
+          }
+        })
+      })
+    }
+  }, [messages])
 
   useEffect(() => {
     if (prevScrollHeightRef.current > 0 && chatContainerRef.current) {

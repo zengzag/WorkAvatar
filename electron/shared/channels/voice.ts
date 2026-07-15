@@ -60,6 +60,7 @@ export interface VoiceUpdateTaskParams {
   errorMessage?: string
   sttMode?: string
   sttModel?: string
+  notes?: string
 }
 
 export interface VoiceSaveAudioParams {
@@ -140,6 +141,10 @@ export interface VoiceSTTLocalConfig {
   modelType: VoiceLocalModelType
   modelDir: string
   language: string
+  /** 是否启用 GPU 加速（Windows 使用 DirectML，需要支持 DX12 的 GPU） */
+  useGPU?: boolean
+  /** 识别灵敏度/增益倍数，默认 1.0，范围 0.5-5.0。值越大对低音量越敏感，但可能增加噪声误识别 */
+  sensitivity?: number
 }
 
 export interface VoiceAudioConfig {

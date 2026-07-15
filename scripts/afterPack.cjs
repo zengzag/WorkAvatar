@@ -6,7 +6,8 @@
 // 1. onnxruntime-node：移除非当前平台的原生二进制文件
 // 2. @napi-rs：移除非当前平台的预编译二进制
 // 3. better-sqlite3：移除非当前平台预编译
-// 4. 全局：移除测试文件、文档等开发时文件
+// 4. sherpa-onnx：移除非当前平台原生包
+// 5. 全局：移除测试文件、文档等开发时文件
 //
 "use strict"
 
@@ -137,7 +138,30 @@ module.exports = async function afterPack(context) {
     }
   }
 
-  // ── 4. 全局清理：移除开发时文件 ──
+  // ── 4. sherpa-onnx：移除非当前平台原生包 ──
+  const sherpaKeepPrefix = platform === "win32"
+    ? "sherpa-onnx-win-x64"
+    : platform === "darwin"
+      ? "sherpa-onnx-darwin"
+      : "sherpa-onnx-linux"
+  const nmRoot = path.join(appDir, "node_modules")
+  if (fs.existsSync(nmRoot)) {
+    for (const entry of fs.readdirSync(nmRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      if (!entry.name.startsWith("sherpa-onnx-")) continue
+      // 保留当前平台包，移除其他平台包
+      if (entry.name === sherpaKeepPrefix) continue
+      // 不移除主包 sherpa-onnx-node
+      if (entry.name === "sherpa-onnx-node") continue
+      const saved = removeDir(path.join(nmRoot, entry.name))
+      if (saved > 0) {
+        totalSaved += saved
+        console.log(`[afterPack] 移除 ${entry.name}/ (${mb(saved)} MB)`)
+      }
+    }
+  }
+
+  // ── 5. 全局清理：移除开发时文件 ──
   const nmDir = path.join(appDir, "node_modules")
   const devFileResult = removeMatching(nmDir, (fp) => {
     const lower = fp.toLowerCase()

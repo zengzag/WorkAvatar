@@ -32,13 +32,17 @@ interface RealtimeSession {
   totalSamples: number
   sampleRate: number
   segmentStartSample: number
+  /** 音频增益倍数，默认 1.0 */
+  gain: number
 }
 
-// sherpa-onnx is loaded dynamically to avoid blocking startup when not used
+// sherpa-onnx-node is loaded dynamically to avoid blocking startup when not used
 let sherpaOnnx: any = null
 let recognizer: any = null
 let recognizerIsStreaming: boolean = false
 let currentConfigKey: string = ''
+/** 当前识别器实际使用的 provider（GPU 不可用时回退到 cpu） */
+let activeProvider: string = 'cpu'
 
 /** 在模型目录中查找匹配的文件（支持多候选文件名） */
 function findModelFile(modelDir: string, candidates: string[]): string | null {
@@ -138,13 +142,98 @@ class LocalSTTService {
 
   private loadSherpaOnnx(): any {
     if (sherpaOnnx) return sherpaOnnx
+
+    // 方式 1：直接 require（dev 模式下可用）
     try {
-      sherpaOnnx = require('sherpa-onnx')
-      logger.info('sherpa-onnx loaded successfully, version:', sherpaOnnx.version)
-      return sherpaOnnx
+      sherpaOnnx = require('sherpa-onnx-node')
+      if (sherpaOnnx && sherpaOnnx.version) {
+        logger.info('sherpa-onnx-node loaded via require, version:', sherpaOnnx.version)
+        return sherpaOnnx
+      }
     } catch (err: any) {
-      logger.error('Failed to load sherpa-onnx:', err?.message || err)
-      throw new Error(`Failed to load sherpa-onnx: ${err?.message || err}`)
+      logger.warn('require("sherpa-onnx-node") failed, trying manual path resolution:', err?.message || err)
+    }
+
+    // 方式 2：打包模式下 asar 内的 addon.js 无法正确解析 .node 路径，
+    // 手动定位 app.asar.unpacked 中的原生模块
+    try {
+      const os = require('os')
+      const platform = os.platform() === 'win32' ? 'win' : os.platform()
+      const arch = os.arch()
+      const platformArch = `${platform}-${arch}`
+
+      // 候选路径列表（覆盖 dev 和打包场景）
+      const appPath = app.getAppPath()
+      const candidates: string[] = []
+
+      if (app.isPackaged) {
+        // 打包模式：.node 文件被 asarUnpack 解包到 app.asar.unpacked
+        // appPath 形如 ".../resources/app.asar"，替换为 app.asar.unpacked
+        const unpackedRoot = appPath.replace('app.asar', 'app.asar.unpacked')
+        candidates.push(
+          path.join(unpackedRoot, 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+          path.join(unpackedRoot, 'node_modules', 'sherpa-onnx-node', 'sherpa-onnx.node'),
+        )
+        // process.resourcesPath 下的 node_modules（某些打包配置）
+        candidates.push(
+          path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+        )
+      }
+
+      // 通用候选路径
+      candidates.push(
+        path.join(appPath, 'node_modules', `sherpa-onnx-${platformArch}`, 'sherpa-onnx.node'),
+        path.join(appPath, 'node_modules', 'sherpa-onnx-node', 'sherpa-onnx.node'),
+      )
+
+      let loadedAddon: any = null
+      let usedPath = ''
+      for (const p of candidates) {
+        if (fs.existsSync(p)) {
+          try {
+            loadedAddon = require(p)
+            usedPath = p
+            break
+          } catch (err: any) {
+            logger.warn(`require("${p}") failed:`, err?.message || err)
+          }
+        }
+      }
+
+      if (loadedAddon) {
+        // 加载 sherpa-onnx-node 的 JS 包装层（它需要 ./addon.js 导出的对象）
+        // 直接构造一个精简的 sherpaOnnx 对象，包含识别所需的类
+        const sherpaOnnxNodeDir = path.join(appPath, 'node_modules', 'sherpa-onnx-node')
+        if (fs.existsSync(sherpaOnnxNodeDir)) {
+          // 临时修改 require 缓存，让 addon.js 模块返回我们加载的 addon
+          const addonPath = path.join(sherpaOnnxNodeDir, 'addon.js')
+          if (require.cache[addonPath]) {
+            delete require.cache[addonPath]
+          }
+          // 注入 addon 模块缓存
+          require.cache[addonPath] = {
+            id: addonPath,
+            filename: addonPath,
+            loaded: true,
+            exports: loadedAddon,
+          } as any
+          // 现在 require('sherpa-onnx-node') 应该能正确加载
+          sherpaOnnx = require('sherpa-onnx-node')
+          if (sherpaOnnx && sherpaOnnx.version) {
+            logger.info(`sherpa-onnx-node loaded via manual path: ${usedPath}, version: ${sherpaOnnx.version}`)
+            return sherpaOnnx
+          }
+        }
+        // 如果 JS 包装层不可用，直接使用原生 addon
+        sherpaOnnx = loadedAddon
+        logger.info(`sherpa-onnx native addon loaded directly from: ${usedPath}, version: ${sherpaOnnx.version}`)
+        return sherpaOnnx
+      }
+
+      throw new Error(`sherpa-onnx native module not found in any candidate paths. Tried:\n${candidates.join('\n')}`)
+    } catch (err: any) {
+      logger.error('Failed to load sherpa-onnx-node:', err?.message || err)
+      throw new Error(`Failed to load sherpa-onnx-node: ${err?.message || err}`)
     }
   }
 
@@ -198,17 +287,15 @@ class LocalSTTService {
     const modelDir = getBuiltinModelDir()
     const resolved = resolveModelFiles('zipformer', modelDir)
     const isStreaming = resolved.isStreaming ?? true
-    const configKey = `zipformer:${modelDir}:${config.language}`
+    const useGPU = config.useGPU === true
+    const configKey = `zipformer:${modelDir}:${config.language}:${useGPU ? 'gpu' : 'cpu'}`
 
     if (recognizer && currentConfigKey === configKey) {
       return { recognizer, isStreaming: recognizerIsStreaming }
     }
 
-    // 释放旧的识别器
-    if (recognizer) {
-      try { recognizer.free() } catch { /* ignore */ }
-      recognizer = null
-    }
+    // 释放旧的识别器（native addon 依赖 GC，置 null 即可）
+    recognizer = null
 
     if (!resolved.found) {
       throw new Error(`内置模型文件缺失: ${resolved.missing.join(', ')}`)
@@ -216,11 +303,16 @@ class LocalSTTService {
 
     const lib = this.loadSherpaOnnx()
 
+    // 决定 provider：Windows 上 useGPU → directml，否则 cpu
+    // 注意：需要 sherpa-onnx 编译时启用 SHERPA_ONNX_ENABLE_DIRECTML=ON
+    // 否则会静默回退到 cpu（见 session.cc 中 #if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1）
+    const requestedProvider = useGPU ? 'directml' : 'cpu'
+
     // 构建模型配置 - 固定使用 zipformer transducer
     const modelConfig: any = {
       tokens: resolved.files.tokens,
-      numThreads: 1,
-      provider: 'cpu',
+      numThreads: useGPU ? 1 : 2,  // GPU 模式单线程即可；CPU 模式利用多线程
+      provider: requestedProvider,
       debug: 0,
       transducer: {
         encoder: resolved.files.encoder,
@@ -246,11 +338,40 @@ class LocalSTTService {
       recognizerConfig.rule1MinTrailingSilence = 2.4
       recognizerConfig.rule2MinTrailingSilence = 1.2
       recognizerConfig.rule3MinUtteranceLength = 20
-      recognizer = lib.createOnlineRecognizer(recognizerConfig)
-      logger.info(`Online recognizer created (内置流式 Zipformer): ${modelDir}`)
+      try {
+        recognizer = new lib.OnlineRecognizer(recognizerConfig)
+        activeProvider = useGPU ? 'directml' : 'cpu'
+        logger.info(`Online recognizer created (内置流式 Zipformer, provider=${activeProvider}): ${modelDir}`)
+      } catch (err: any) {
+        // GPU 初始化失败时回退到 CPU
+        if (useGPU) {
+          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
+          modelConfig.provider = 'cpu'
+          modelConfig.numThreads = 2
+          recognizer = new lib.OnlineRecognizer(recognizerConfig)
+          activeProvider = 'cpu'
+          logger.info(`Online recognizer created (fallback to CPU): ${modelDir}`)
+        } else {
+          throw err
+        }
+      }
     } else {
-      recognizer = lib.createOfflineRecognizer(recognizerConfig)
-      logger.info(`Offline recognizer created (内置 Zipformer): ${modelDir}`)
+      try {
+        recognizer = new lib.OfflineRecognizer(recognizerConfig)
+        activeProvider = useGPU ? 'directml' : 'cpu'
+        logger.info(`Offline recognizer created (内置 Zipformer, provider=${activeProvider}): ${modelDir}`)
+      } catch (err: any) {
+        if (useGPU) {
+          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
+          modelConfig.provider = 'cpu'
+          modelConfig.numThreads = 2
+          recognizer = new lib.OfflineRecognizer(recognizerConfig)
+          activeProvider = 'cpu'
+          logger.info(`Offline recognizer created (fallback to CPU): ${modelDir}`)
+        } else {
+          throw err
+        }
+      }
     }
 
     currentConfigKey = configKey
@@ -277,6 +398,12 @@ class LocalSTTService {
     }
 
     // 回退到自定义 WAV 解析
+    // 文件大小保护：超过 500MB 的 WAV 文件拒绝处理，避免内存爆炸
+    // （1 小时 16kHz 16-bit mono ≈ 115MB，500MB ≈ 4.3 小时，足够覆盖正常场景）
+    const stat = fs.statSync(filePath)
+    if (stat.size > 500 * 1024 * 1024) {
+      throw new Error(`WAV file too large (${Math.round(stat.size / 1024 / 1024)}MB), max 500MB`)
+    }
     const buffer = fs.readFileSync(filePath)
 
     if (buffer.length < 44) {
@@ -363,7 +490,7 @@ class LocalSTTService {
       const segmentSamples = samples.subarray(start, end)
 
       const stream = rec.createStream()
-      stream.acceptWaveform(sampleRate, segmentSamples)
+      stream.acceptWaveform({ samples: segmentSamples, sampleRate })
       rec.decode(stream)
       const result = rec.getResult(stream)
       const text = (result?.text || '').trim()
@@ -374,8 +501,6 @@ class LocalSTTService {
         segments.push({ start: startTime, end: endTime, text })
         fullText += text
       }
-
-      try { stream.free() } catch { /* ignore */ }
 
       processedSegments++
       const progress = 20 + Math.floor((processedSegments / totalSegments) * 70)
@@ -408,13 +533,12 @@ class LocalSTTService {
       const chunkSamplesData = samples.subarray(start, end)
 
       const stream = rec.createStream()
-      stream.acceptWaveform(sampleRate, chunkSamplesData)
+      stream.acceptWaveform({ samples: chunkSamplesData, sampleRate })
       stream.inputFinished()
 
       // 持续解码直到识别器不再需要处理
       while (rec.isReady(stream)) {
         if (signal?.aborted) {
-          try { stream.free() } catch { /* ignore */ }
           throw new Error('Aborted')
         }
         rec.decode(stream)
@@ -429,8 +553,6 @@ class LocalSTTService {
         segments.push({ start: startTime, end: endTime, text })
         fullText += text
       }
-
-      try { stream.free() } catch { /* ignore */ }
 
       processedChunks++
       const progress = 20 + Math.floor((processedChunks / totalChunks) * 70)
@@ -457,9 +579,20 @@ class LocalSTTService {
 
     if (signal?.aborted) throw new Error('Aborted')
 
+    // 应用增益（如果配置了灵敏度）
+    const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
+    let processedSamples = samples
+    if (gain !== 1.0) {
+      processedSamples = new Float32Array(samples.length)
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i] * gain
+        processedSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
+      }
+    }
+
     const result = isStreaming
-      ? this.transcribeOnline(rec, samples, sampleRate, onProgress, signal)
-      : this.transcribeOffline(rec, samples, sampleRate, onProgress, signal)
+      ? this.transcribeOnline(rec, processedSamples, sampleRate, onProgress, signal)
+      : this.transcribeOffline(rec, processedSamples, sampleRate, onProgress, signal)
 
     onProgress?.(95, 'Finalizing transcript...')
 
@@ -487,6 +620,8 @@ class LocalSTTService {
         return { ok: false, error: '实时识别仅支持流式模型（streaming zipformer），请切换模型或使用录音后识别' }
       }
 
+      const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
+
       const stream = rec.createStream()
       const session: RealtimeSession = {
         recognizer: rec,
@@ -496,6 +631,7 @@ class LocalSTTService {
         totalSamples: 0,
         sampleRate: 16000,
         segmentStartSample: 0,
+        gain,
       }
       this.realtimeSessions.set(taskId, session)
       logger.info(`Realtime recognition started: taskId=${taskId}`)
@@ -523,13 +659,32 @@ class LocalSTTService {
       return { text: '', partialText: '', isEndpoint: false }
     }
 
-    const { recognizer: rec, stream } = session
-    stream.acceptWaveform(sampleRate, samples)
+    const { recognizer: rec, stream, gain } = session
+
+    // 应用增益（amplify / attenuate），默认 1.0 不改变
+    let audioSamples = samples
+    if (gain !== 1.0) {
+      audioSamples = new Float32Array(samples.length)
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i] * gain
+        // 削波保护（clamp 到 [-1, 1]），防止过载失真
+        audioSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
+      }
+    }
+
+    stream.acceptWaveform({ samples: audioSamples, sampleRate })
     session.totalSamples += samples.length
 
     // 持续解码
+    // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
+    let decodeIterations = 0
+    const MAX_DECODE_ITERATIONS = 100000
     while (rec.isReady(stream)) {
       rec.decode(stream)
+      if (++decodeIterations > MAX_DECODE_ITERATIONS) {
+        logger.warn(`feedAudioChunk: decode loop exceeded ${MAX_DECODE_ITERATIONS} iterations, breaking`)
+        break
+      }
     }
 
     const result = rec.getResult(stream)
@@ -574,8 +729,16 @@ class LocalSTTService {
     try {
       // 通知流结束，获取最终结果
       stream.inputFinished()
+      // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
+      // 正常情况下 inputFinished() 后 isReady 会很快返回 false
+      let decodeIterations = 0
+      const MAX_DECODE_ITERATIONS = 100000
       while (rec.isReady(stream)) {
         rec.decode(stream)
+        if (++decodeIterations > MAX_DECODE_ITERATIONS) {
+          logger.warn(`stopRealtimeRecognize: decode loop exceeded ${MAX_DECODE_ITERATIONS} iterations, breaking`)
+          break
+        }
       }
       const result = rec.getResult(stream)
       const finalText = (result?.text || '').trim()
@@ -595,8 +758,7 @@ class LocalSTTService {
       segments: session.segments,
     }
 
-    // 清理会话
-    try { stream.free() } catch { /* ignore */ }
+    // 清理会话（native addon 依赖 GC，无需手动 free）
     this.realtimeSessions.delete(taskId)
     logger.info(`Realtime recognition stopped: taskId=${taskId}, text length=${transcript.text.length}`)
 
@@ -609,7 +771,7 @@ class LocalSTTService {
   cancelRealtimeRecognize(taskId: string): void {
     const session = this.realtimeSessions.get(taskId)
     if (session) {
-      try { session.stream.free() } catch { /* ignore */ }
+      // native addon 依赖 GC，无需手动 free
       this.realtimeSessions.delete(taskId)
       logger.info(`Realtime recognition cancelled: taskId=${taskId}`)
     }
@@ -624,7 +786,7 @@ class LocalSTTService {
       this.cancelRealtimeRecognize(taskId)
     }
     if (recognizer) {
-      try { recognizer.free() } catch { /* ignore */ }
+      // native addon 依赖 GC，无需手动 free
       recognizer = null
       currentConfigKey = ''
     }

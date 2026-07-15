@@ -2,7 +2,9 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 
 export function generateId(): string {
-  return crypto.randomBytes(4).toString('hex')
+  // 12 字节(96bit)：birthday bound ≈ 2^48 ≈ 281 万亿，杜绝大规模段落索引碰撞
+  // 原 4 字节(32bit) 在 65k 条记录时碰撞概率达 50%，大库必崩
+  return crypto.randomBytes(12).toString('hex')
 }
 
 export async function calculateFileHash(filePath: string): Promise<string> {

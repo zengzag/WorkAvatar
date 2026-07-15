@@ -1,4 +1,4 @@
-import { useState, useCallback, memo } from 'react'
+import { useState, useCallback, memo, useEffect } from 'react'
 import { theme } from 'antd'
 import { CopyOutlined, CheckOutlined } from '@ant-design/icons'
 import { PrismAsync } from 'react-syntax-highlighter'
@@ -14,6 +14,18 @@ interface CodeBlockProps {
 const CodeBlockInner: React.FC<CodeBlockProps> = ({ language, code }) => {
   const { token } = theme.useToken()
   const [copied, setCopied] = useState(false)
+  // 延迟语法高亮：首次渲染先用纯文本 <pre> 让浏览器尽快 paint，
+  // 下一帧再用 startTransition 低优先级切换到 PrismAsync 高亮
+  const [highlightReady, setHighlightReady] = useState(false)
+
+  // 延迟语法高亮：首次渲染用纯文本 <pre>（快），下一帧再切换到 PrismAsync（慢）
+  useEffect(() => {
+    setHighlightReady(false)
+    const id = requestAnimationFrame(() => {
+      setHighlightReady(true)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [language, code])
 
   const isDark = isColorDark(token.colorBgContainer)
   const syntaxStyle = isDark ? oneDark : oneLight
@@ -79,20 +91,33 @@ const CodeBlockInner: React.FC<CodeBlockProps> = ({ language, code }) => {
           {copied ? <CheckOutlined style={{ fontSize: 12 }} /> : <CopyOutlined style={{ fontSize: 12 }} />}
         </button>
       </div>
-      <PrismAsync
-        language={lang}
-        style={syntaxStyle}
-        customStyle={{
+      {highlightReady ? (
+        <PrismAsync
+          language={lang}
+          style={syntaxStyle}
+          customStyle={{
+            margin: 0,
+            borderRadius: 0,
+            fontSize: 13,
+            lineHeight: 1.6,
+            padding: '12px 16px',
+            background: isDark ? '#282c34' : '#fafafa',
+          }}
+        >
+          {code}
+        </PrismAsync>
+      ) : (
+        <pre style={{
           margin: 0,
-          borderRadius: 0,
-          fontSize: 13,
-          lineHeight: 1.6,
           padding: '12px 16px',
           background: isDark ? '#282c34' : '#fafafa',
-        }}
-      >
-        {code}
-      </PrismAsync>
+          fontSize: 13,
+          lineHeight: 1.6,
+          overflow: 'auto',
+        }}>
+          <code style={{ fontFamily: 'monospace' }}>{code}</code>
+        </pre>
+      )}
     </div>
   )
 }

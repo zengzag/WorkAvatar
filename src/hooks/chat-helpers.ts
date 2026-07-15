@@ -1,7 +1,7 @@
 import type { MessageWithThought } from '../components/workbench'
 import { LRUCache } from '../utils/lru-cache'
 
-export const MESSAGES_CACHE_MAX_SIZE = 20
+export const MESSAGES_CACHE_MAX_SIZE = 60
 export const MIN_LOADING_DISPLAY_MS = 120
 export const CONVERSATION_PAGE_SIZE = 20
 export const SCROLL_BOTTOM_THRESHOLD_PX = 10
@@ -14,8 +14,6 @@ export interface ConversationStreamState {
   segCounter: number
   toolCallCounter: number
 }
-
-export const yieldToBrowser = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
 
 export const getActiveBranchData = (m: MessageWithThought): {
   content: string

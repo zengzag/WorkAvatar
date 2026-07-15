@@ -22,12 +22,15 @@ const nativeExternals = [
   '@node-rs/jieba/dict',
   'worker_threads',
   'adm-zip',
+  'docx',
+  'pptxgenjs',
   // OCR：PaddleOCR ONNX 推理
   'paddleocr',
   'onnxruntime-node',
   'sharp',
   // 语音识别：sherpa-onnx 包含 WASM + .node 原生模块，必须外部化
   'sherpa-onnx',
+  'sherpa-onnx-node',
 ]
 
 // 读取 build-info.json（在 predev/prebuild 中由 scripts/generate-build-info.mjs 生成）
@@ -89,6 +92,26 @@ export default defineConfig({
                 entryFileNames: 'kms-index-worker.js',
                 // Worker 是单文件入口，禁用代码分割避免产出多个 chunk
                 // （new Worker(filename) 只能加载单文件）
+                codeSplitting: false,
+              }
+            }
+          }
+        }
+      },
+      {
+        // OCR Worker：将 PaddleOCR / onnxruntime-native 运行在独立 Worker 线程中，
+        // onnxruntime 原生崩溃不会杀死主进程，自动回退 Tesseract.js
+        entry: 'electron/main/workers/ocr-worker.ts',
+        onstart() {
+          // Worker 不需要 startup，主进程运行时按需 spawn
+        },
+        vite: {
+          build: {
+            outDir: 'dist-electron/main',
+            rollupOptions: {
+              external: nativeExternals,
+              output: {
+                entryFileNames: 'ocr-worker.js',
                 codeSplitting: false,
               }
             }

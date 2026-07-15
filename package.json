@@ -11,7 +11,7 @@
     "build": "tsc && vite build && electron-builder",
     "build:win": "electron-builder --win",
     "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs"
+    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs && node scripts/install-sherpa-directml.cjs"
   },
   "keywords": [
     "数字员工",
@@ -52,7 +52,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "sharp": "^0.34.5",
-    "sherpa-onnx": "^1.13.4",
+    "sherpa-onnx-node": "^1.13.4",
     "sqlite-vec": "^0.1.9",
     "tesseract.js": "^7.0.0",
     "unpdf": "^1.6.2",

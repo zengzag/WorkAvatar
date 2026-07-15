@@ -1,5 +1,6 @@
 import { Typography, theme } from 'antd'
 import { useTranslation } from 'react-i18next'
+import { memo } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
@@ -68,7 +69,8 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }>
  * 消息分段列表（thinking / tool_call / answer）渲染。
  * 从 MessageBubble / MultiChatPanel 抽取的共享逻辑。
  */
-export const SegmentList: React.FC<{
+// React.memo 避免父组件 providers 变化时重渲染代码块（语法高亮是性能大头）
+const SegmentListInner: React.FC<{
   segments: MessageSegment[]
   msgId: string
   isError: boolean
@@ -112,3 +114,5 @@ export const SegmentList: React.FC<{
     </div>
   )
 }
+
+export const SegmentList = memo(SegmentListInner)

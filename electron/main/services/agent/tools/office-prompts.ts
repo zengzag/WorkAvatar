@@ -11,410 +11,406 @@ function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
     return '当前环境未加载任何Office文档模块，无法创建或编辑Office文档。'
   }
 
-  // 解析 formats 参数：null 表示概览模式（不指定具体格式），返回所有格式的简要说明
-  const validFormats = ['docx', 'pptx', 'xlsx', 'docx-template', 'pptx-template']
+  const validFormats = ['docx', 'pptx', 'xlsx']
   const requestedFormats = Array.isArray(formats) && formats.length > 0
     ? formats.map(f => String(f).toLowerCase()).filter(f => validFormats.includes(f))
     : null
 
+  const hasDocx = moduleStatus['docx']?.loaded
+  const hasPptx = moduleStatus['pptxgenjs']?.loaded
+  const hasXlsx = moduleStatus['xlsx']?.loaded
+  const hasAdmZip = moduleStatus['adm-zip']?.loaded
+
   const parts: string[] = []
 
-  parts.push('## Office文档能力')
-  parts.push('你可以使用 `office_exec` 工具在Node.js沙箱中执行JavaScript代码，创建和编辑Office文档。')
+  // ===== 头部 =====
+  parts.push('## Office 文档操作指南')
+  parts.push('')
+  parts.push('**必须用 `office_exec`，不要用 `shell_exec` 调外部脚本。** 沙箱内置 docx/pptxgenjs/xlsx/adm-zip，文件通过 `file.save` 异步写入工作区。')
+  parts.push('')
+  parts.push('**工作流**：`office_guide({ formats: [...] })` 获取模板 → `office_exec({ code: "..." })` 执行。')
 
+  // ===== 模块速览 =====
   parts.push('\n### 可用模块')
   const moduleDescriptions: Record<string, string> = {
-    'docx': '创建Word文档（.docx，从零构建）',
-    'pptxgenjs': '创建PowerPoint演示文稿（.pptx，从零构建）',
-    'xlsx': '创建/编辑Excel电子表格（.xlsx，支持读写已有文件）',
-    'adm-zip': 'ZIP压缩/解压（Office文件本质是ZIP）',
-    'docx-template': '基于模板生成/原地编辑docx，保留模板排版（字体字号/页眉页脚等）',
-    'pptx-template': '原地编辑pptx，跨幻灯片文本查找替换，保留排版',
+    'docx': '从零创建 Word',
+    'pptxgenjs': '从零创建 PowerPoint',
+    'xlsx': '创建/读取/修改 Excel',
+    'adm-zip': '修改已有 docx/pptx（操作内部 XML）',
   }
   for (const name of availableModules) {
     parts.push(`- \`require("${name}")\` — ${moduleDescriptions[name] || name}`)
   }
-  parts.push('- `require("fs")` — 文件系统**只读**（readFileSync/readdirSync/statSync 等，不支持写方法）')
-  parts.push('- `require("path")` — 路径处理')
-  parts.push('- 全局对象 `file` — **异步文件写入 API**（save/append/copy/move/delete/createFolder），写入文件必须用此对象')
+  parts.push('- `require("fs")` — 只读（**写方法已禁用**）；`require("path")` — 路径')
+  parts.push('- 全局 `file` — 异步写入（save/append/copy/move/delete/createFolder/exists）')
+  parts.push('- 全局 `__workspaceDir` — 工作目录绝对路径；`Buffer`/`console` 可直接用')
 
-  parts.push('\n### 文件保存规则')
-  parts.push('**写入文件必须使用全局 `file` 对象**（异步），不能用 `fs.writeFileSync`（沙箱已禁用 fs 写方法）：')
-  parts.push('```javascript')
-  parts.push('const path = require("path");')
-  parts.push('const outputPath = path.join(__workspaceDir, "output.docx");')
-  parts.push('await file.save(outputPath, buffer);  // buffer 可以是 string 或 Buffer')
-  parts.push('console.log("文件已保存:", outputPath);')
+  // ===== 文件写入 =====
+  parts.push('\n### 文件写入')
+  parts.push('`fs.writeFileSync` 等**已禁用**，必须用 `file` 对象：')
+  parts.push('```js')
+  parts.push('await file.save(path.join(__workspaceDir, "output.docx"), buffer);')
+  parts.push('const exists = file.exists(path.join(__workspaceDir, "template.docx"));')
+  parts.push('await file.copy(sourcePath, path.join(__workspaceDir, "copy.docx"));  // 复制模板到工作区')
   parts.push('```')
-  parts.push('`file` 对象方法（全部异步，需 await）：')
-  parts.push('- `await file.save(path, content)` — 写文件（content: string|Buffer）')
-  parts.push('- `await file.append(path, content)` — 追加内容')
-  parts.push('- `await file.copy(src, dest)` — 复制文件')
-  parts.push('- `await file.move(src, dest)` — 移动/重命名文件')
-  parts.push('- `await file.delete(path)` — 删除文件')
-  parts.push('- `await file.createFolder(path)` — 创建文件夹（recursive）')
-  parts.push('- `file.exists(path)` — 检查文件是否存在（同步，返回 boolean）')
   if (workspacePath) {
-    parts.push(`当前工作区路径: ${workspacePath}`)
+    parts.push(`当前工作区: \`${workspacePath}\``)
   }
 
-  // 概览模式：返回各格式简要说明，提示用 formats 参数获取详细指南
+  // ===== 概览模式 =====
   if (!requestedFormats) {
-    parts.push('\n### 格式概览')
-    parts.push('以下格式可用，调用 `office_guide` 并指定 `formats` 参数获取对应格式的详细指南（代码模板+关键陷阱）：')
-    if (moduleStatus['docx']?.loaded) {
-      parts.push('- **docx** — 从零创建 Word 文档（.docx）。适合无模板的新文档生成。`formats: ["docx"]`')
+    parts.push('\n### 格式选择')
+    parts.push('传 `formats` 获取完整代码模板与陷阱清单：')
+    if (hasDocx) {
+      parts.push('- **docx** — 从零创建用 `docx` 模块；修改已有用 `adm-zip`')
     }
-    if (moduleStatus['docx-template']?.loaded) {
-      parts.push('- **docx-template** — 基于模板生成/原地编辑 docx，保留排版（字体字号/页眉页脚/直接格式）。适合按模板格式生成或只改内容不改排版。`formats: ["docx-template"]`')
+    if (hasPptx) {
+      parts.push('- **pptx** — 从零创建用 `pptxgenjs`；修改已有用 `adm-zip`')
     }
-    if (moduleStatus['pptx-template']?.loaded) {
-      parts.push('- **pptx-template** — 原地编辑 pptx，跨幻灯片文本查找替换，保留排版。适合只改 PPT 文字内容不改排版的场景。`formats: ["pptx-template"]`')
-    }
-    if (moduleStatus['pptxgenjs']?.loaded) {
-      parts.push('- **pptx** — 从零创建 PowerPoint 演示文稿（.pptx）。`formats: ["pptx"]`')
-    }
-    if (moduleStatus['xlsx']?.loaded) {
-      parts.push('- **xlsx** — 创建/编辑 Excel 电子表格（.xlsx）。`formats: ["xlsx"]`')
+    if (hasXlsx) {
+      parts.push('- **xlsx** — 创建/修改均用 `xlsx`')
     }
     parts.push('')
-    parts.push('可多选：如 `formats: ["docx", "docx-template"]` 同时获取 Word 从零创建和基于模板的详细指南。')
-    parts.push('')
-    parts.push(buildCommonRules(moduleStatus))
+    parts.push(buildQuoteRules())
     return parts.join('\n')
   }
 
-  // 详细模式：只返回指定格式的详细指南
+  // ===== 详细模式 =====
   const fmt = (name: string) => requestedFormats.includes(name)
 
-  if (fmt('docx') && moduleStatus['docx']?.loaded) {
-    parts.push('\n### Word文档 (docx) 关键规则')
-    parts.push('```javascript')
-    parts.push('const { Document, Packer, Paragraph, TextRun, HeadingLevel,')
-    parts.push('        LevelFormat, AlignmentType, Table, TableRow, TableCell,')
-    parts.push('        WidthType, ShadingType, BorderStyle, ImageRun,')
-    parts.push('        Header, Footer, PageNumber, PageBreak } = require("docx");')
-    parts.push('')
-    parts.push('const doc = new Document({')
-    parts.push('  styles: { default: { document: { run: { font: "Arial", size: 24 } } } },')
-    parts.push('  numbering: { config: [{')
-    parts.push('    reference: "bullets",')
-    parts.push('    levels: [{ level: 0, format: LevelFormat.BULLET, text: "\\u2022",')
-    parts.push('      alignment: AlignmentType.LEFT,')
-    parts.push('      style: { paragraph: { indent: { left: 720, hanging: 360 } } } }]')
-    parts.push('  }] },')
-    parts.push('  sections: [{')
-    parts.push('    properties: {')
-    parts.push('      page: { size: { width: 12240, height: 15840 },')
-    parts.push('             margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } }')
-    parts.push('    },')
-    parts.push('    children: [')
-    parts.push('      new Paragraph({ heading: HeadingLevel.HEADING_1,')
-    parts.push('        children: [new TextRun("标题")] }),')
-    parts.push('      new Paragraph({ numbering: { reference: "bullets", level: 0 },')
-    parts.push('        children: [new TextRun("列表项")] }),')
-    parts.push('    ]')
-    parts.push('  }]')
-    parts.push('});')
-    parts.push('')
-    parts.push('const buffer = await Packer.toBuffer(doc);')
-    parts.push('await file.save(path.join(__workspaceDir, "output.docx"), buffer);')
-    parts.push('```')
-    parts.push('**致命陷阱**: ①不用unicode bullet（用LevelFormat.BULLET）②不用\\n换行（用新Paragraph）③PageBreak必须在Paragraph内④ImageRun必须指定type⑤表格用WidthType.DXA不用PERCENTAGE⑥ShadingType.CLEAR不用SOLID⑦务必设置page size（默认A4）⑧**中文文本中含引号时用单引号做定界符或转义，禁止在双引号字符串内出现未转义英文双引号**（会触发 SyntaxError）')
+  if (fmt('docx') && hasDocx) {
+    parts.push(buildDocxGuide(hasAdmZip))
+  }
+  if (fmt('pptx') && hasPptx) {
+    parts.push(buildPptxGuide(hasAdmZip))
+  }
+  if (fmt('xlsx') && hasXlsx) {
+    parts.push(buildXlsxGuide(hasAdmZip))
   }
 
-  if (fmt('docx-template') && moduleStatus['docx-template']?.loaded) {
-    parts.push('\n### 基于模板生成 / 原地编辑 docx（docx-template）')
-    parts.push('`require("docx")` 只能从零创建文档，无法复用已有 docx 的排版。当需求是「按模板排版生成」或「只改内容不改排版」时，**必须优先**使用 `require("docx-template")`，它直接操作 OOXML，保留模板的样式定义/页面设置/页眉页脚/直接格式。')
-    parts.push('')
-    parts.push('**⚠️ 关键：判断模板类型（决定使用 style 还是 cloneFrom）**')
-    parts.push('用户提供的"模板"通常是普通 docx，可能用两种方式设置排版：')
-    parts.push('- **命名样式驱动**：段落通过 `<w:pStyle>` 引用 styles.xml 中定义的样式（如 Heading1/Normal）→ 用 `style` 字段引用')
-    parts.push('- **直接格式设置**：段落字体字号直接写在 run 的 `<w:rPr>` 上（如仿宋_GB2312三号、黑体三号），未通过样式名映射 → **必须用 `cloneFrom` 克隆模板段落的完整排版**')
-    parts.push('')
-    parts.push('**判断方法**：调用 `inspect(templatePath)`，查看返回的 `paragraphs[].formatting`：')
-    parts.push('- 若 `formatting.font` / `formatting.fontSize` 有值 → 模板使用**直接格式设置**，createFromTemplate 的 `style` 字段无效，必须用 `cloneFrom`')
-    parts.push('- 若 `formatting` 为空对象且 `styleId` 有值 → 模板使用**命名样式驱动**，可用 `style` 字段引用 styleId')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const tplPath = path.join(__workspaceDir, "template.docx");')
-    parts.push('const info = tpl.inspect(tplPath);')
-    parts.push('// 查看每段的样式与直接格式')
-    parts.push('info.paragraphs.forEach(p => {')
-    parts.push('  const fmt = p.formatting;')
-    parts.push('  const direct = fmt.font || fmt.fontSize ? "直接格式" : "命名样式";')
-    parts.push('  console.log(`#${p.index} [${direct}] styleId=${p.styleId||"无"} ` +')
-    parts.push('    `font=${fmt.font||"-"} size=${fmt.fontSize||"-"} bold=${fmt.bold||"-"} ` +')
-    parts.push('    `text="${p.text.slice(0,30)}"`);')
-    parts.push('});')
-    parts.push('```')
-    parts.push('')
-    parts.push('**场景一：模板填值（结构固定，仅替换内容）** — 模板中用 `{key}` 占位符，调用 renderTemplate 填充。**适合两种模板类型**（占位符替换不依赖样式机制）：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('// 模板里已写好：标题：{title} / 作者：{author} / 日期：{date}')
-    parts.push('await tpl.renderTemplate(')
-    parts.push('  path.join(__workspaceDir, "template.docx"),')
-    parts.push('  { title: "2026年度报告", author: "张三", date: "2026-07-08" },')
-    parts.push('  path.join(__workspaceDir, "report.docx")  // ⚠️ 必须与模板路径不同')
-    parts.push(');')
-    parts.push('console.log("已基于模板生成:", path.join(__workspaceDir, "report.docx"));')
-    parts.push('```')
-    parts.push('提示：在 Word 中编辑模板时，每个 `{key}` 占位符要一次性连续输入完成，不要中途切换格式，否则 Word 可能把占位符拆分到多个 run（虽能处理但建议避免）。')
-    parts.push('')
-    parts.push('**场景二A：命名样式模板生成新文档** — 模板用命名样式驱动（inspect 返回 formatting 为空），用 `style` 引用 listStyles 的 styleId：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const tplPath = path.join(__workspaceDir, "template.docx");')
-    parts.push('const styles = tpl.listStyles(tplPath);')
-    parts.push('console.log("可用样式:", styles.map(s => s.styleId + "(" + s.name + ")").join(", "));')
-    parts.push('await tpl.createFromTemplate(tplPath, [')
-    parts.push('  { text: "项目周报", style: "Title", alignment: "center" },')
-    parts.push('  { text: "一、本周进展", style: "Heading1" },')
-    parts.push('  { text: "完成了 docx 模板生成功能。", style: "Normal" },')
-    parts.push('  { text: "", style: "Normal" }, // 空段落做间距')
-    parts.push('  { text: "二、下周计划", style: "Heading1", pageBreakBefore: true },')
-    parts.push('  { text: "推进 Excel 模板能力。", style: "Normal", bold: true },')
-    parts.push('], path.join(__workspaceDir, "weekly.docx"));  // ⚠️ 必须与模板路径不同')
-    parts.push('```')
-    parts.push('')
-    parts.push('**场景二B：直接格式模板生成新文档（推荐，适用于普通 docx 模板）** — 模板用直接格式设置（inspect 返回 formatting.font/fontSize 有值），用 `cloneFrom` 克隆模板段落的完整 `<w:pPr>` + `<w:rPr>`：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const tplPath = path.join(__workspaceDir, "template.docx");')
-    parts.push('const info = tpl.inspect(tplPath);')
-    parts.push('// 假设 inspect 显示：#0 是封面标题（方正小标宋二号），#1 是正文（仿宋_GB2312三号）')
-    parts.push('// 找到各种排版对应的模板段落索引')
-    parts.push('const coverIdx = 0;    // 封面标题段落索引')
-    parts.push('const bodyIdx = 1;     // 正文段落索引')
-    parts.push('const headingIdx = 2;  // 一级标题段落索引')
-    parts.push('')
-    parts.push('await tpl.createFromTemplate(tplPath, [')
-    parts.push('  // cloneFrom 完整克隆模板段落的字体字号对齐等，text 替换为新内容')
-    parts.push('  { text: "关于AI智能体对办公影响的报告", cloneFrom: coverIdx, alignment: "center" },')
-    parts.push('  { text: "", cloneFrom: bodyIdx },  // 空段落做间距，沿用正文排版')
-    parts.push('  { text: "一、概述", cloneFrom: headingIdx },')
-    parts.push('  { text: "AI智能体是具备感知、规划、记忆与工具调用能力的智能系统。", cloneFrom: bodyIdx },')
-    parts.push('  { text: "", cloneFrom: bodyIdx },')
-    parts.push('  { text: "二、技术架构", cloneFrom: headingIdx, pageBreakBefore: true },')
-    parts.push('  { text: "智能体技术由LLM、感知模块、规划模块、记忆模块与工具链组成。", cloneFrom: bodyIdx },')
-    parts.push('], path.join(__workspaceDir, "report.docx"));  // ⚠️ 必须与模板路径不同')
-    parts.push('console.log("已生成:", path.join(__workspaceDir, "report.docx"));')
-    parts.push('```')
-    parts.push('cloneFrom 的优先级高于 style；设置 cloneFrom 后：①完整克隆模板段落的 `<w:pPr>`（样式/对齐/缩进/行距）②克隆首 run 的 `<w:rPr>`（字体字号加粗）③若 block 同时提供 font/fontSize/bold/italic/color 任一字段，则丢弃克隆的 rPr 改用字段重建 run 级排版④alignment/pageBreakBefore 作为 pPr 覆盖叠加。')
-    parts.push('')
-    parts.push('**场景三：原地修改已有 docx（保留排版）** — 先 inspect 定位段落，再修改。**始终输出到新文件**，避免破坏原文档。按修改类型选择 API：')
-    parts.push('- **文本级替换**（不改段落数）：用 `replaceText`（任意文本查找替换）')
-    parts.push('- **单段文本替换**（不改段落数）：用 `setParagraphText`（按段落 index 替换整段文本）')
-    parts.push('- **段落级编辑**（插入/删除/替换多段）：用 `spliceParagraphs`（**推荐，一步完成，不要回退到 adm-zip 手动操作 XML**）')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const docPath = path.join(__workspaceDir, "contract.docx");')
-    parts.push('const outPath = path.join(__workspaceDir, "contract_revised.docx");')
-    parts.push('')
-    parts.push('// 方式A：文本查找替换（任意文本，保留排版，不改段落数）')
-    parts.push('await tpl.replaceText(docPath, {')
-    parts.push('  "甲方：原公司": "甲方：新公司",')
-    parts.push('  "2026-01-01": "2026-07-08",')
-    parts.push('}, outPath);')
-    parts.push('')
-    parts.push('// 方式B：按段落索引替换整段文本（保留段落样式与首 run 字体字号，不改段落数）')
-    parts.push('const info = tpl.inspect(docPath);')
-    parts.push('console.log("段落列表:", info.paragraphs.map(p => p.index + ":[" + (p.styleId||"") + "]" + p.text.slice(0,30)).join("\\n"));')
-    parts.push('await tpl.setParagraphText(docPath, 0, "新的合同标题", outPath);')
-    parts.push('```')
-    parts.push('')
-    parts.push('**场景四：段落级编辑（插入/删除/替换多段，保留排版）** — 用 `spliceParagraphs`，类似 Array.splice。**当需要把一段拆成多段、在中间插入新段落、删除若干段落时，必须用此 API，不要用 adm-zip 手动操作 XML**：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("docx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const docPath = path.join(__workspaceDir, "report.docx");')
-    parts.push('const outPath = path.join(__workspaceDir, "report_revised.docx");')
-    parts.push('const info = tpl.inspect(docPath);')
-    parts.push('// 假设 inspect 显示：#109 是"阶段四"标题，#110 是原描述段落，#111 是"阶段五"')
-    parts.push('// 需求：把 #110 原描述段落替换为 4 个子步骤（每个子步骤=标题段+正文段，共8段）')
-    parts.push('// 先找到一个子步骤标题段和正文段作为 cloneFrom 模板（如 #50 是"3.1 状态表示"标题，#51 是其正文）')
-    parts.push('const subHeadingIdx = 50;  // 子步骤标题段落索引（克隆其排版）')
-    parts.push('const subBodyIdx = 51;     // 子步骤正文段落索引（克隆其排版）')
-    parts.push('')
-    parts.push('const result = await tpl.spliceParagraphs(docPath, 110, 1, [  // 从 #110 开始删 1 段，插入 8 段')
-    parts.push('  { text: "4.1 状态表示", cloneFrom: subHeadingIdx },')
-    parts.push('  { text: "用 R_best 表示最优状态。", cloneFrom: subBodyIdx },')
-    parts.push('  { text: "4.2 动作选择", cloneFrom: subHeadingIdx },')
-    parts.push('  { text: "根据 ε-greedy 策略选择动作。", cloneFrom: subBodyIdx },')
-    parts.push('  { text: "4.3 奖励函数", cloneFrom: subHeadingIdx },')
-    parts.push('  { text: "奖励 r = α·准确率 + β·效率。", cloneFrom: subBodyIdx },')
-    parts.push('  { text: "4.4 状态转移", cloneFrom: subHeadingIdx },')
-    parts.push('  { text: "状态根据动作更新为新状态。", cloneFrom: subBodyIdx },')
-    parts.push('], outPath);')
-    parts.push('console.log(`原 ${result.originalCount} 段 → 删 ${result.deleted} 段 + 插 ${result.inserted} 段 → 新 ${result.newCount} 段`);')
-    parts.push('')
-    parts.push('// 纯插入：在 #109 后插入 2 段（startIndex=110, deleteCount=0）')
-    parts.push('// tpl.spliceParagraphs(docPath, 110, 0, [{text:"新段落",cloneFrom:51}], outPath);')
-    parts.push('')
-    parts.push('// 纯删除：删除 #110-#112 共 3 段（startIndex=110, deleteCount=3, insertBlocks=[]）')
-    parts.push('// tpl.spliceParagraphs(docPath, 110, 3, [], outPath);')
-    parts.push('```')
-    parts.push('spliceParagraphs 一步完成删除+插入，保留未修改段落的完整排版；插入的新段落通过 cloneFrom 克隆原文档段落排版。返回 `{originalCount, deleted, inserted, newCount}` 便于验证。')
-    parts.push('')
-    parts.push('**docx-template API 速查**：')
-    parts.push('- `listStyles(docxPath)` → `[{styleId, name, type}]`，列出模板/文档中定义的命名样式')
-    parts.push('- `inspect(docxPath)` → `{paragraphs:[{index, styleId, text, formatting}]}`，列出段落结构（index 含表格内段落）；`formatting` 含 `{font, fontSize, bold, italic, color, alignment}`，用于判断模板是否使用直接格式')
-    parts.push('- `renderTemplate(templatePath, {key:value}, outputPath)` → `{key}` 占位符替换，保留全部排版；适合两种模板类型')
-    parts.push('- `createFromTemplate(templatePath, blocks, outputPath)` → 保留模板样式/页面/页眉页脚，用 blocks 重建正文')
-    parts.push('  - block 字段：`{text, style?, cloneFrom?, font?, fontSize?, bold?, italic?, color?, alignment?("left"|"center"|"right"|"both"), pageBreakBefore?}`')
-    parts.push('  - `cloneFrom`：从模板指定 index 段落克隆完整 `<w:pPr>`+`<w:rPr>`，**直接格式模板必须用此字段**')
-    parts.push('  - `style`：引用命名样式 ID（直接格式模板无效）')
-    parts.push('  - `font/fontSize/bold/italic/color`：直接指定 run 级格式（fontSize 单位磅 pt）')
-    parts.push('- `replaceText(docxPath, {old:new}, outputPath)` → 任意文本查找替换，保留排版（文本级，不改段落数）')
-    parts.push('- `setParagraphText(docxPath, paragraphIndex, newText, outputPath)` → 替换指定段落文本，保留段落样式与首 run 排版（单段文本级，不改段落数）')
-    parts.push('- `spliceParagraphs(docxPath, startIndex, deleteCount, insertBlocks, outputPath)` → **段落级批量编辑**（插入/删除/替换多段），保留未修改段落排版，插入段落支持 cloneFrom；返回 `{originalCount, deleted, inserted, newCount}`')
-    parts.push('**关键原则**: ①所有路径用绝对路径（path.join(__workspaceDir, ...)）②**outputPath 不能与模板/输入路径相同**（基于模板生成必须创建新文件，禁止覆盖原始模板）③renderTemplate/replaceText 同时处理正文与页眉页脚④createFromTemplate 不会保留模板正文原有内容，仅保留样式/页面/页眉页脚⑤文本含首尾空格时自动补 xml:space="preserve"⑥**遇到普通 docx 模板先用 inspect 判断是否直接格式，是则用 cloneFrom 而非 style**⑦**需要插入/删除/替换多段时用 spliceParagraphs，不要用 adm-zip 手动操作 XML**⑧**操作顺序**：先 inspect 定位段落 → 选 API（文本级用 replaceText/setParagraphText，段落级用 spliceParagraphs）→ 输出到新文件 → inspect 验证')
-  }
-
-  if (fmt('pptx-template') && moduleStatus['pptx-template']?.loaded) {
-    parts.push('\n### 原地编辑 pptx（pptx-template）')
-    parts.push('`require("pptxgenjs")` 只能从零创建演示文稿，无法读取/修改已有 pptx。当需求是「只改 PPT 文字内容不改排版」时，使用 `require("pptx-template")`，它直接操作 OOXML，跨幻灯片查找替换文本，保留字体/字号/颜色/动画等全部排版。')
-    parts.push('')
-    parts.push('**API 速查**：')
-    parts.push('- `inspect(pptxPath)` → `{slides:[{slideNumber, texts:[...]}]}`，列出各幻灯片的文本内容')
-    parts.push('- `replaceText(pptxPath, {old:new}, outputPath)` → 跨幻灯片文本查找替换，保留排版；同时处理幻灯片与演讲者备注；返回 `{slidesProcessed, replacementsMade}`')
-    parts.push('')
-    parts.push('**场景一：查看 PPT 文本结构** — 先 inspect 了解各幻灯片的文本内容，定位需要替换的文字：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("pptx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const pptxPath = path.join(__workspaceDir, "presentation.pptx");')
-    parts.push('const info = tpl.inspect(pptxPath);')
-    parts.push('info.slides.forEach(s => {')
-    parts.push('  console.log(`--- 第 ${s.slideNumber} 页 ---`);')
-    parts.push('  s.texts.forEach((t, i) => console.log(`  [${i}] ${t}`));')
-    parts.push('});')
-    parts.push('```')
-    parts.push('')
-    parts.push('**场景二：批量文本替换（保留排版）** — 替换 PPT 中的文字内容，不改变任何排版。**始终输出到新文件**：')
-    parts.push('```javascript')
-    parts.push('const tpl = require("pptx-template");')
-    parts.push('const path = require("path");')
-    parts.push('const result = await tpl.replaceText(')
-    parts.push('  path.join(__workspaceDir, "template.pptx"),')
-    parts.push('  {')
-    parts.push('    "公司名称": "科技有限公司",')
-    parts.push('    "2026年度": "2027年度",')
-    parts.push('    "张三": "李四",')
-    parts.push('  },')
-    parts.push('  path.join(__workspaceDir, "presentation_updated.pptx")  // ⚠️ 必须与输入路径不同')
-    parts.push(');')
-    parts.push('console.log(`处理 ${result.slidesProcessed} 页，替换 ${result.replacementsMade} 处`);')
-    parts.push('```')
-    parts.push('**关键原则**: ①所有路径用绝对路径 ②**outputPath 不能与输入路径相同**（禁止覆盖原始文件）③replaceText 在 `<a:t>` 元素内替换文本，保留 run 级排版 ④同一段文本被拆分到多个 run 时，只替换完整匹配的单个 `<a:t>` 内容 ⑤同时处理幻灯片与演讲者备注（notesSlides）')
-  }
-
-  if (fmt('pptx') && moduleStatus['pptxgenjs']?.loaded) {
-    parts.push('\n### PowerPoint (pptxgenjs) 关键规则')
-    parts.push('```javascript')
-    parts.push('const pptxgen = require("pptxgenjs");')
-    parts.push('const pres = new pptxgen();')
-    parts.push('pres.layout = "LAYOUT_16x9";')
-    parts.push('')
-    parts.push('const slide = pres.addSlide();')
-    parts.push('slide.background = { color: "FFFFFF" };')
-    parts.push('slide.addText("标题", { x: 0.5, y: 0.3, w: 9, h: 0.8,')
-    parts.push('  fontSize: 36, bold: true, color: "333333" });')
-    parts.push('')
-    parts.push('const outPath = path.join(__workspaceDir, "output.pptx");')
-    parts.push('await pres.writeFile({ fileName: outPath });')
-    parts.push('```')
-    parts.push('**致命陷阱**: ①颜色不加#前缀（"FF0000"而非"#FF0000"）②不用8位hex编码透明度（用opacity属性）③不用unicode bullet（用bullet:true）④多行文本数组项用breakLine:true⑤不要复用option对象（PptxGenJS会修改对象）⑥每张幻灯片需要视觉元素，避免纯文字')
-  }
-
-  if (fmt('xlsx') && moduleStatus['xlsx']?.loaded) {
-    parts.push('\n### Excel (xlsx) 关键规则')
-    parts.push('xlsx 库支持从零创建和读取/修改已有文件。')
-    parts.push('')
-    parts.push('**场景一：从零创建新 Excel**：')
-    parts.push('```javascript')
-    parts.push('const XLSX = require("xlsx");')
-    parts.push('const wb = XLSX.utils.book_new();')
-    parts.push('const data = [["姓名","年龄"],["张三",25]];')
-    parts.push('const ws = XLSX.utils.aoa_to_sheet(data);')
-    parts.push('XLSX.utils.book_append_sheet(wb, ws, "Sheet1");')
-    parts.push('const outPath = path.join(__workspaceDir, "output.xlsx");')
-    parts.push('await XLSX.writeFile(wb, outPath);')
-    parts.push('```')
-    parts.push('')
-    parts.push('**场景二：读取/修改已有 Excel（保留其他数据）** — 读取已有文件 → 修改单元格 → 保存：')
-    parts.push('```javascript')
-    parts.push('const XLSX = require("xlsx");')
-    parts.push('const path = require("path");')
-    parts.push('const filePath = path.join(__workspaceDir, "existing.xlsx");')
-    parts.push('')
-    parts.push('// 读取已有文件')
-    parts.push('const wb = XLSX.readFile(filePath);')
-    parts.push('const ws = wb.Sheets[wb.SheetNames[0]];  // 取第一个工作表')
-    parts.push('')
-    parts.push('// 修改单元格（保留其他单元格不变）')
-    parts.push('ws["A1"] = { t: "s", v: "新标题" };  // t:"s" 字符串, t:"n" 数字')
-    parts.push('ws["B2"] = { t: "n", v: 42 };')
-    parts.push('')
-    parts.push('// 追加新行：找到最后一行，在其后追加')
-    parts.push('const range = XLSX.utils.decode_range(ws["!ref"]);')
-    parts.push('const newRow = range.e.r + 1;  // 新行号')
-    parts.push('ws[XLSX.utils.encode_cell({ r: newRow, c: 0 })] = { t: "s", v: "王五" };')
-    parts.push('ws[XLSX.utils.encode_cell({ r: newRow, c: 1 })] = { t: "n", v: 30 };')
-    parts.push('ws["!ref"] = XLSX.utils.encode_range({ s: range.s, e: { r: newRow, c: range.e.c } });')
-    parts.push('')
-    parts.push('const outPath = path.join(__workspaceDir, "modified.xlsx");')
-    parts.push('await XLSX.writeFile(wb, outPath);')
-    parts.push('console.log("已修改并保存:", outPath);')
-    parts.push('```')
-    parts.push('**关键陷阱**: ①修改单元格时需指定类型 `t`（"s" 字符串 / "n" 数字 / "b" 布尔）②追加行后需更新 `!ref` 范围③`XLSX.readFile` 会丢失部分格式（如公式、图表、样式），仅保留值和基本格式④如需完整保留格式，用 adm-zip 直接操作 xl/worksheets/sheet*.xml（类似 docx-template 的方式）')
-  }
-
-  parts.push(buildCommonRules(moduleStatus))
+  parts.push(buildQuoteRules())
 
   return parts.join('\n')
 }
 
-/** 通用规则（概览模式和详细模式都包含） */
-function buildCommonRules(
-  moduleStatus: Record<string, { loaded: boolean; error?: string }>,
-): string {
+// ==================== Word (docx) ====================
+function buildDocxGuide(hasAdmZip: boolean): string {
   const parts: string[] = []
-  parts.push('\n### 通用规则')
-  parts.push('- 可用模块: docx(Word从零创建), docx-template(基于模板生成/原地编辑docx保留排版), pptx-template(原地编辑pptx保留排版), pptxgenjs(PPT从零创建), xlsx(Excel创建/修改), adm-zip(ZIP), fs(只读), path, os, file(异步文件写入)')
-  parts.push('- **这些模块只在 `office_exec` 沙箱中可用，`shell_exec` 的 Node 环境未安装这些模块**。操作 Office 文件必须用 `office_exec`，不要用 `shell_exec` 调用 node + require("docx-template")（会报 Cannot find module）')
-  parts.push('- 全局变量 __workspaceDir 为工作区路径，保存文件必须使用绝对路径')
-  parts.push('- **写入文件必须用全局 `file` 对象（`await file.save(path, content)`），不能用 `fs.writeFileSync`（沙箱已禁用 fs 写方法）**')
-  parts.push('- 代码支持 async/await')
-  parts.push('- 保存文件后用 console.log 输出文件路径，方便确认')
-  parts.push('- 代码在沙箱中执行，只能使用上述白名单模块')
-  parts.push('- 如遇模块加载错误，检查错误信息中的可用模块列表')
-  parts.push('- 执行超时默认60秒，复杂文档可设置更长时间（最大300秒）')
-  parts.push('- **操作顺序**：先 `office_guide`（不传 formats 获取概览，或传 formats 获取详细指南）→ 再选工具')
-  parts.push('- 选择模块：从零创建新文档用 docx/pptxgenjs/xlsx；基于已有 docx 模板生成或只改内容不改排版用 docx-template；只改 PPT 文字内容用 pptx-template；读取/修改已有 Excel 用 xlsx.readFile')
+  parts.push('\n---\n')
+  parts.push('## Word (docx)')
+
+  // ---------- 从零创建 ----------
+  parts.push('\n### 从零创建（docx 库）')
+  parts.push('**API 速查**：')
+  parts.push('| API | 用途 |')
+  parts.push('|-----|------|')
+  parts.push('| `new Document({ sections, numbering })` | 文档入口 |')
+  parts.push('| `new Paragraph({ heading, children, alignment, numbering })` | 段落 |')
+  parts.push('| `new TextRun({ text, bold, italics, size, color, font })` | 文本片段，`size` 单位半磅（28=14pt） |')
+  parts.push('| `HeadingLevel.HEADING_1`~`6` | 标题级别 |')
+  parts.push('| `new Table({ rows, width })` / `TableRow` / `TableCell` | 表格 |')
+  parts.push('| `new ImageRun({ data, transformation, type })` | 图片，**必须指定 type** |')
+  parts.push('| `new PageBreak()` | 分页符，**必须放在 Paragraph 内** |')
+  parts.push('| `Packer.toBuffer(doc)` | 序列化为 Buffer |')
+
+  parts.push('\n**示例 1：标题 + 段落 + 列表**')
+  parts.push('```js')
+  parts.push('const { Document, Packer, Paragraph, TextRun, HeadingLevel,')
+  parts.push('  LevelFormat, AlignmentType } = require("docx");')
   parts.push('')
-  parts.push('**⚠️ 字符串引号规则（SyntaxError 最常见原因）**')
-  parts.push('中文文本中常含引号，若与 JavaScript 字符串定界符冲突会导致 `SyntaxError: Unexpected identifier`：')
-  parts.push('- 定界符只能用英文单引号 `\'...\'` 或英文双引号 `"..."`')
-  parts.push('- **文本内容中需要引号时，使用中文引号 `" "` `「」` `『』`，或 Unicode 转义 `\\u201C` `\\u201D`**')
-  parts.push('- **优先用单引号做定界符**（中文文本极少含英文单引号），如 `\'这是"引号"文本\'`')
-  parts.push('- 也可用转义：`"这是\\"引号\\"文本"`')
-  parts.push('- ❌ 错误：`"这是"引号"文本"` → 第二个 `"` 被解析为字符串结束，`引号` 变成未定义标识符')
-  if (moduleStatus['docx-template']?.loaded) {
-    parts.push('- **基于模板生成时，outputPath 必须与模板路径不同（创建新文件，禁止覆盖原始模板）**')
-    parts.push('- **使用 docx-template 前，先用 inspect 判断模板类型**：formatting.font/fontSize 有值→直接格式模板→用 cloneFrom；formatting 为空→命名样式模板→用 style')
-    parts.push('- **修改文档时按修改类型选 API**：文本级替换用 replaceText/setParagraphText；段落级编辑（插入/删除/替换多段）用 spliceParagraphs。**不要用 adm-zip 手动操作 XML**（易损坏 docx）')
-  }
-  if (moduleStatus['pptx-template']?.loaded) {
-    parts.push('- **pptx-template 只支持文本替换（replaceText），不支持插入/删除幻灯片**。如需从零创建用 pptxgenjs')
+  parts.push('const doc = new Document({')
+  parts.push('  numbering: { config: [{')
+  parts.push('    reference: "bullets",')
+  parts.push('    levels: [{ level: 0, format: LevelFormat.BULLET, text: "\\u2022",')
+  parts.push('      alignment: AlignmentType.LEFT,')
+  parts.push('      style: { paragraph: { indent: { left: 720, hanging: 360 } } } }]')
+  parts.push('  }] },')
+  parts.push('  sections: [{ properties: {')
+  parts.push('    page: { size: { width: 12240, height: 15840 },')
+  parts.push('           margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } }')
+  parts.push('  }, children: [')
+  parts.push('    new Paragraph({ heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER,')
+  parts.push('      children: [new TextRun("项目周报")] }),')
+  parts.push('    new Paragraph({ children: [new TextRun("本周完成：")] }),')
+  parts.push('    new Paragraph({ numbering: { reference: "bullets", level: 0 }, children: [new TextRun("需求分析")] }),')
+  parts.push('    new Paragraph({ numbering: { reference: "bullets", level: 0 }, children: [new TextRun("架构设计")] }),')
+  parts.push('  ] }]')
+  parts.push('});')
+  parts.push('const buf = await Packer.toBuffer(doc);')
+  parts.push('await file.save(path.join(__workspaceDir, "output.docx"), buf);')
+  parts.push('```')
+
+  parts.push('\n**示例 2：表格**')
+  parts.push('```js')
+  parts.push('const { Table, TableRow, TableCell, WidthType } = require("docx");')
+  parts.push('')
+  parts.push('// 在 section children 中添加：')
+  parts.push('new Table({')
+  parts.push('  width: { size: 9000, type: WidthType.DXA },')
+  parts.push('  rows: [')
+  parts.push('    new TableRow({ tableHeader: true, children: [')
+  parts.push('      new TableCell({ children: [new Paragraph({ children: [')
+  parts.push('        new TextRun({ text: "任务", bold: true, color: "FFFFFF" })]) }] }),')
+  parts.push('      new TableCell({ children: [new Paragraph({ children: [')
+  parts.push('        new TextRun({ text: "状态", bold: true, color: "FFFFFF" })]) }] }),')
+  parts.push('    ] }),')
+  parts.push('    new TableRow({ children: [')
+  parts.push('      new TableCell({ children: [new Paragraph({ children: [new TextRun("需求分析")] })] }),')
+  parts.push('      new TableCell({ children: [new Paragraph({ children: [new TextRun("已完成")] })] }),')
+  parts.push('    ] }),')
+  parts.push('  ]')
+  parts.push('})')
+  parts.push('```')
+
+  parts.push('\n**示例 3：分页 + 多 run 富文本**')
+  parts.push('```js')
+  parts.push('// 分页：放在 Paragraph 的 children 内')
+  parts.push('new Paragraph({ children: [new PageBreak()] }),')
+  parts.push('')
+  parts.push('// 多 run 富文本（同段落不同样式）')
+  parts.push('new Paragraph({ children: [')
+  parts.push('  new TextRun({ text: "红色加粗 ", bold: true, color: "FF0000", size: 28 }),')
+  parts.push('  new TextRun({ text: "斜体灰色", italics: true, color: "888888", size: 24 }),')
+  parts.push('] }),')
+  parts.push('```')
+
+  parts.push('\n**陷阱**：')
+  parts.push('- bullet 用 `LevelFormat.BULLET`，**不要用 unicode**（如 `"•"`）')
+  parts.push('- 换行用新 `Paragraph`，**不要用 `\\n`**')
+  parts.push('- `PageBreak` 必须放在 `Paragraph.children`，**不能直接放在 section children**')
+  parts.push('- `ImageRun` 必须指定 `type`（如 `type: "png"`）')
+  parts.push('- 表格宽度用 `WidthType.DXA`（twips），**不要用 PERCENTAGE**')
+  parts.push('- 底纹用 `ShadingType.CLEAR` + `fill`，**不要用 SOLID**')
+  parts.push('- `size` 单位半磅（28=14pt），`color` 不带 `#` 前缀')
+  parts.push('- Document 必须设 `page.size`（默认 A4 尺寸可能不符合预期）')
+  parts.push('- 页边距单位 twips：1 英寸 = 1440')
+
+  // ---------- 修改已有 ----------
+  if (hasAdmZip) {
+    parts.push('\n### 修改已有 docx（adm-zip）')
+    parts.push('docx = ZIP 包。正文 `word/document.xml`，页眉 `word/header*.xml`，页脚 `word/footer*.xml`。')
+    parts.push('')
+    parts.push('**文本替换**（保留所有排版，只改 `<w:t>` 内文本）：')
+    parts.push('```js')
+    parts.push('const AdmZip = require("adm-zip");')
+    parts.push('const zip = new AdmZip(inputPath);')
+    parts.push('')
+    parts.push('let docXml = zip.readAsText("word/document.xml");')
+    parts.push('// 调试：查看 <w:t> 拆分情况 → console.log(docXml.match(/<w:t[^>]*>[^<]*<\\/w:t>/g)?.slice(0, 30));')
+    parts.push('')
+    parts.push('const replacements = { "原公司": "新公司", "2026-01-01": "2026-07-14" };')
+    parts.push('let count = 0;')
+    parts.push('for (const [old, neo] of Object.entries(replacements)) {')
+    parts.push('  if (docXml.includes(old)) { docXml = docXml.split(old).join(neo); count++; }')
+    parts.push('}')
+    parts.push('')
+    parts.push('// 同步替换页眉页脚')
+    parts.push('for (const entry of zip.getEntries()) {')
+    parts.push('  if (/word\\/(header|footer)\\d+\\.xml/.test(entry.name)) {')
+    parts.push('    let xml = zip.readAsText(entry.name);')
+    parts.push('    for (const [old, neo] of Object.entries(replacements)) xml = xml.split(old).join(neo);')
+    parts.push('    zip.updateFile(entry.name, Buffer.from(xml, "utf-8"));')
+    parts.push('  }')
+    parts.push('}')
+    parts.push('zip.updateFile("word/document.xml", Buffer.from(docXml, "utf-8"));')
+    parts.push('await file.save(path.join(__workspaceDir, "modified.docx"), zip.toBuffer());')
+    parts.push('console.log("替换完成:", count, "处");')
+    parts.push('```')
+    parts.push('')
+    parts.push('**陷阱**：')
+    parts.push('- **文本拆分**：Word 会把同一段拆到多个 `<w:t>`（如"科技有限公司"→3 个 run），导致 `replace` 失败。**先打印 `<w:t>` 列表确认**：文本必须在同一 run 内，否则需改模板')
+    parts.push('- 只能改 `<w:t>` 文本，**不要动 XML 标签/属性**（会损坏文档）')
+    parts.push('- 始终输出到新文件，**禁止覆盖原文件**')
   }
   return parts.join('\n')
+}
+
+// ==================== PowerPoint (pptx) ====================
+function buildPptxGuide(hasAdmZip: boolean): string {
+  const parts: string[] = []
+  parts.push('\n---\n')
+  parts.push('## PowerPoint (pptx)')
+
+  // ---------- 从零创建 ----------
+  parts.push('\n### 从零创建（pptxgenjs 库）')
+  parts.push('**API 速查**：')
+  parts.push('| API | 用途 |')
+  parts.push('|-----|------|')
+  parts.push('| `new pptxgen()` / `pres.layout = "LAYOUT_16x9"` | 创建演示文稿，16:9 宽屏 |')
+  parts.push('| `pres.addSlide()` | 添加幻灯片，返回 slide |')
+  parts.push('| `slide.addText(text, options)` | 添加文本，text 可为字符串或 `[{text, options}]` 数组 |')
+  parts.push('| `slide.addTable(rows, options)` | 添加表格 |')
+  parts.push('| `slide.addImage({ data, x, y, w, h })` | 添加图片，data 为 base64 |')
+  parts.push('| `slide.addShape(pres.ShapeType.rect, opts)` | 添加形状 |')
+  parts.push('| `slide.background = { color }` | 设置背景色 |')
+  parts.push('| `slide.addNotes("备注")` | 添加演讲者备注 |')
+  parts.push('')
+  parts.push('**options 常用字段**：`x, y, w, h`（英寸）、`fontSize`、`bold`/`italic`、`color`（**不带 #**）、`align`、`fontFace`、`bullet`、`breakLine`、`fill`')
+
+  parts.push('\n**示例 1：标题页 + 内容页（带列表）**')
+  parts.push('```js')
+  parts.push('const pptxgen = require("pptxgenjs");')
+  parts.push('const pres = new pptxgen();')
+  parts.push('pres.layout = "LAYOUT_16x9";')
+  parts.push('')
+  parts.push('// 标题页')
+  parts.push('const s1 = pres.addSlide();')
+  parts.push('s1.background = { color: "1A1A2E" };')
+  parts.push('s1.addText("项目汇报", { x: 0.5, y: 2, w: 9, h: 1.2,')
+  parts.push('  fontSize: 44, bold: true, color: "FFFFFF", align: "center", fontFace: "微软雅黑" });')
+  parts.push('s1.addText("2026 年度", { x: 0.5, y: 3.3, w: 9, h: 0.6,')
+  parts.push('  fontSize: 20, color: "AAAAAA", align: "center" });')
+  parts.push('')
+  parts.push('// 内容页（多行带 bullet）')
+  parts.push('const s2 = pres.addSlide();')
+  parts.push('s2.addText("本周进展", { x: 0.5, y: 0.3, w: 9, h: 0.8, fontSize: 32, bold: true, color: "333333" });')
+  parts.push('s2.addText([')
+  parts.push('  { text: "完成需求分析", options: { bullet: true, breakLine: true } },')
+  parts.push('  { text: "完成架构设计", options: { bullet: true, breakLine: true } },')
+  parts.push('  { text: "完成核心代码开发", options: { bullet: true, breakLine: true } },')
+  parts.push('  { text: "完成单元测试", options: { bullet: true } },')
+  parts.push('], { x: 0.8, y: 1.5, w: 8, h: 3, fontSize: 18, color: "555555" });')
+  parts.push('```')
+
+  parts.push('\n**示例 2：表格页**')
+  parts.push('```js')
+  parts.push('const s3 = pres.addSlide();')
+  parts.push('s3.addText("任务统计", { x: 0.5, y: 0.3, w: 9, h: 0.7, fontSize: 28, bold: true, color: "333333" });')
+  parts.push('s3.addTable([')
+  parts.push('  [{ text: "任务", options: { bold: true, fill: { color: "4472C4" }, color: "FFFFFF" } },')
+  parts.push('   { text: "状态", options: { bold: true, fill: { color: "4472C4" }, color: "FFFFFF" } }],')
+  parts.push('  [{ text: "需求分析" }, { text: "已完成" }],')
+  parts.push('  [{ text: "架构设计" }, { text: "进行中" }],')
+  parts.push('], { x: 0.5, y: 1.5, w: 6, colW: [3, 3], fontSize: 14, border: { type: "solid", color: "CCCCCC" } });')
+  parts.push('')
+  parts.push('await pres.writeFile({ fileName: path.join(__workspaceDir, "output.pptx") });')
+  parts.push('```')
+
+  parts.push('\n**陷阱**：')
+  parts.push('- 颜色**不带 `#` 前缀**：`"FF0000"` 而非 `"#FF0000"`')
+  parts.push('- 透明度用 `opacity` 属性，**不要用 8 位 hex**')
+  parts.push('- 项目符号用 `bullet: true`，**不要用 unicode**')
+  parts.push('- 多行用数组 + `breakLine: true`，**不要用 `\\n`**')
+  parts.push('- **不要复用 options 对象**（PptxGenJS 会修改它），每次 `addText` 用新对象')
+  parts.push('- 坐标单位是英寸（16:9 幻灯片尺寸 10 × 5.625）')
+
+  // ---------- 修改已有 ----------
+  if (hasAdmZip) {
+    parts.push('\n### 修改已有 pptx（adm-zip）')
+    parts.push('pptx = ZIP 包。幻灯片 `ppt/slides/slide*.xml`，备注 `ppt/notesSlides/*.xml`。')
+    parts.push('')
+    parts.push('**文本替换**（保留所有排版，只改 `<a:t>` 内文本）：')
+    parts.push('```js')
+    parts.push('const AdmZip = require("adm-zip");')
+    parts.push('const zip = new AdmZip(inputPath);')
+    parts.push('')
+    parts.push('const replacements = { "公司名称": "科技有限公司", "2026年度": "2027年度" };')
+    parts.push('let total = 0;')
+    parts.push('')
+    parts.push('for (const entry of zip.getEntries()) {')
+    parts.push('  if (/ppt\\/slides\\/slide\\d+\\.xml/.test(entry.name)) {')
+    parts.push('    let xml = zip.readAsText(entry.name);')
+    parts.push('    // 调试：console.log(entry.name, xml.match(/<a:t>[^<]*<\\/a:t>/g)?.slice(0, 20));')
+    parts.push('    for (const [old, neo] of Object.entries(replacements)) {')
+    parts.push('      if (xml.includes(old)) { xml = xml.split(old).join(neo); total++; }')
+    parts.push('    }')
+    parts.push('    zip.updateFile(entry.name, Buffer.from(xml, "utf-8"));')
+    parts.push('  }')
+    parts.push('}')
+    parts.push('await file.save(path.join(__workspaceDir, "modified.pptx"), zip.toBuffer());')
+    parts.push('console.log("替换完成:", total, "处");')
+  parts.push('```')
+  parts.push('')
+  parts.push('**陷阱**：')
+  parts.push('- **文本拆分**：同一段可能被拆到多个 `<a:t>`，先打印 `<a:t>` 列表确认文本在同一 run 内')
+  parts.push('- 只能改 `<a:t>` 文本，**不要动 XML 结构**')
+  parts.push('- 始终输出到新文件')
+  }
+  return parts.join('\n')
+}
+
+// ==================== Excel (xlsx) ====================
+function buildXlsxGuide(hasAdmZip: boolean): string {
+  const parts: string[] = []
+  parts.push('\n---\n')
+  parts.push('## Excel (xlsx)')
+
+  parts.push('\n### 从零创建')
+  parts.push('```js')
+  parts.push('const XLSX = require("xlsx");')
+  parts.push('')
+  parts.push('const data = [')
+  parts.push('  ["姓名", "年龄", "部门"],')
+  parts.push('  ["张三", 28, "技术部"],')
+  parts.push('  ["李四", 32, "产品部"],')
+  parts.push('];')
+  parts.push('const ws = XLSX.utils.aoa_to_sheet(data);')
+  parts.push('ws["!cols"] = [{ wch: 10 }, { wch: 8 }, { wch: 12 }];  // 列宽')
+  parts.push('')
+  parts.push('const wb = XLSX.utils.book_new();')
+  parts.push('XLSX.utils.book_append_sheet(wb, ws, "员工信息");')
+  parts.push('await XLSX.writeFile(wb, path.join(__workspaceDir, "output.xlsx"));')
+  parts.push('```')
+
+  parts.push('\n### 读取/修改已有文件')
+  parts.push('```js')
+  parts.push('const XLSX = require("xlsx");')
+  parts.push('const wb = XLSX.readFile(inputPath);')
+  parts.push('const ws = wb.Sheets[wb.SheetNames[0]];')
+  parts.push('')
+  parts.push('// 读取单元格（{ t: "s", v: "姓名" }）')
+  parts.push('console.log("A1:", ws["A1"]?.v);')
+  parts.push('')
+  parts.push('// 修改单元格（必须指定类型 t）')
+  parts.push('ws["A1"] = { t: "s", v: "员工姓名" };  // t: "s"字符串/"n"数字/"b"布尔')
+  parts.push('ws["B2"] = { t: "n", v: 29 };')
+  parts.push('')
+  parts.push('// 追加行（必须更新 !ref 范围）')
+  parts.push('const range = XLSX.utils.decode_range(ws["!ref"]);')
+  parts.push('const newRow = range.e.r + 1;')
+  parts.push('ws[XLSX.utils.encode_cell({ r: newRow, c: 0 })] = { t: "s", v: "赵六" };')
+  parts.push('ws[XLSX.utils.encode_cell({ r: newRow, c: 1 })] = { t: "n", v: 27 };')
+  parts.push('ws["!ref"] = XLSX.utils.encode_range({')
+  parts.push('  s: range.s, e: { r: newRow, c: range.e.c }')
+  parts.push('});')
+  parts.push('await XLSX.writeFile(wb, path.join(__workspaceDir, "modified.xlsx"));')
+  parts.push('```')
+
+  parts.push('\n**API 速查**：')
+  parts.push('| API | 用途 |')
+  parts.push('|-----|------|')
+  parts.push('| `XLSX.utils.aoa_to_sheet([[...], [...]])` | 二维数组转工作表 |')
+  parts.push('| `XLSX.utils.json_to_sheet([{name, age}])` | JSON 数组转工作表 |')
+  parts.push('| `XLSX.utils.book_new()` / `book_append_sheet(wb, ws, "名")` | 工作簿 |')
+  parts.push('| `XLSX.readFile` / `XLSX.writeFile` | 读写文件 |')
+  parts.push('| `XLSX.utils.encode_cell({r, c})` / `decode_range(str)` | 单元格地址与范围 |')
+
+  parts.push('\n**陷阱**：')
+  parts.push('- 修改/创建单元格**必须指定 `t` 类型**')
+  parts.push('- 追加行后**必须更新 `!ref`**，否则新数据不可见')
+  parts.push('- `XLSX.readFile` 会**丢失公式/图表/样式**，仅保留值和基本格式')
+  if (hasAdmZip) {
+    parts.push('- 需完整保留格式时，用 `adm-zip` 直接操作 `xl/worksheets/sheet*.xml`（同 docx/pptx 的 XML 操作方式）')
+  }
+  return parts.join('\n')
+}
+
+// ==================== 字符串引号 ====================
+function buildQuoteRules(): string {
+  return [
+    '\n---\n',
+    '## 字符串引号（SyntaxError 头号原因）',
+    '',
+    '中文文本含双引号时**必须用单引号定界**，否则 JS 解析错误：',
+    '```js',
+    "// ✅ 正确：外层用单引号",
+    'const text = \'这是"引号"文本\';',
+    '// ✅ 正确：用中文引号',
+    'const text = "这是"引号"文本";',
+    '// ❌ 错误：双引号内含双引号 → SyntaxError',
+    'const text = "这是"引号"文本";',
+    '```',
+  ].join('\n')
 }
 
 export function createOfficeGuideTool(workspacePath?: string): ToolDefinition {
@@ -422,14 +418,14 @@ export function createOfficeGuideTool(workspacePath?: string): ToolDefinition {
     id: 'office_guide',
     name: 'office_guide',
     title: 'Office文档使用指南',
-    description: '获取Office文档（Word/PowerPoint/Excel）创建和编辑的详细使用说明、代码模板和关键陷阱。支持按格式获取详细指南。不传 formats 参数返回概览（含各格式简要说明）；传 formats 参数返回指定格式的详细指南（代码模板+关键陷阱）。建议先不传 formats 获取概览，再按需传 formats 获取详细指南。',
+    description: '获取Office文档(Word/PowerPoint/Excel)创建和编辑的完整指南。**创建或修改Office文档前必须先调用此工具获取指南**，然后用 office_exec 执行代码。包含代码模板、API速查、关键陷阱。',
     parameters: {
       type: 'object',
       properties: {
         formats: {
           type: 'array',
-          items: { type: 'string', enum: ['docx', 'pptx', 'xlsx', 'docx-template', 'pptx-template'] },
-          description: '指定要获取详细指南的格式（可多选）。不传则返回所有格式的概览。可选值：docx(Word从零创建)、docx-template(基于模板/原地编辑docx保留排版)、pptx-template(原地编辑pptx保留排版)、pptx(PowerPoint从零创建)、xlsx(Excel创建/修改)。如需同时获取多种格式：["docx","docx-template"]',
+          items: { type: 'string', enum: ['docx', 'pptx', 'xlsx'] },
+          description: '指定格式（可多选）。docx=Word文档，pptx=PowerPoint演示文稿，xlsx=Excel电子表格。不传返回概览。',
         },
       },
     },

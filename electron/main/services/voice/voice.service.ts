@@ -25,10 +25,10 @@ export interface VoiceTask {
   audio_size: number
   audio_channels: number
   sample_rate: number
-  transcript: string
-  transcript_segments_json: string
+  transcript?: string
+  transcript_segments_json?: string
   transcript_language: string
-  minutes: string
+  minutes?: string
   minutes_type: string
   error_message: string | null
   stt_mode: string
@@ -37,6 +37,7 @@ export interface VoiceTask {
   updated_at: number
   recorded_at: number | null
   secondary_audio_path: string | null
+  notes: string
 }
 
 export interface TranscriptSegment {
@@ -64,6 +65,8 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
     modelType: 'zipformer' as const,
     modelDir: '(内置流式 Zipformer 模型)',
     language: 'zh',
+    useGPU: false,
+    sensitivity: 1.0,
   },
   audioConfig: {
     sampleRate: 16000,
@@ -151,10 +154,18 @@ class VoiceService {
 
   // ==================== Task CRUD ====================
 
+  /**
+   * 列出所有语音任务（仅元数据，不含 transcript/minutes 等大文本字段）。
+   * 大文本字段仅在 getTask(id) 时按需加载，避免列表页一次性加载全部大文本。
+   */
   listTasks(): VoiceTask[] {
-    return this.getDb().prepare(
-      'SELECT * FROM kms_voice_tasks ORDER BY created_at DESC'
-    ).all() as VoiceTask[]
+    return this.getDb().prepare(`
+      SELECT id, title, description, status, audio_path, audio_format, duration,
+             audio_size, audio_channels, sample_rate, transcript_language,
+             minutes_type, error_message, stt_mode, stt_model,
+             created_at, updated_at, recorded_at, secondary_audio_path, notes
+      FROM kms_voice_tasks ORDER BY created_at DESC
+    `).all() as VoiceTask[]
   }
 
   getTask(id: string): VoiceTask | null {
@@ -192,6 +203,7 @@ class VoiceService {
     set('error_message', params.errorMessage)
     set('stt_mode', params.sttMode)
     set('stt_model', params.sttModel)
+    set('notes', params.notes)
     if (fields.length === 0) return task
     fields.push('updated_at = ?')
     values.push(Math.floor(Date.now() / 1000))

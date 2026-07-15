@@ -132,9 +132,10 @@ class KMSIndexWorkerClientService {
         const timer = setTimeout(() => {
           if (this.pendingTasks.has(id)) {
             this.pendingTasks.delete(id)
-            // 超时仅 reject 当前任务，不标记 Worker 为失败
-            // Worker 可能仍在处理中（大库、网络慢等原因），后续任务可复用
-            logger.warn(`Worker task ${task} (id=${id}) timed out after ${timeoutMs / 1000}s — NOT marking worker as failed, task will be rejected`)
+            // 超时后向 Worker 发送 cancel 消息，避免 Worker 被超时任务永久阻塞
+            // 否则 Worker 事件循环被占用，后续任务 postMessage 也无法被处理
+            this.sendCancelForTask(task)
+            logger.warn(`Worker task ${task} (id=${id}) timed out after ${timeoutMs / 1000}s — cancel sent to worker, task rejected`)
             reject(new Error(`Worker task ${task} timed out after ${timeoutMs / 1000}s`))
           }
         }, timeoutMs)
@@ -194,6 +195,34 @@ class KMSIndexWorkerClientService {
   cancelAutoIndex(): void {
     if (this.worker && this.workerReady) {
       this.worker.postMessage({ type: 'cancelAutoIndex' })
+    }
+  }
+
+  /**
+   * 根据任务类型发送对应的 cancel 消息到 Worker（超时时调用）
+   */
+  private sendCancelForTask(task: WorkerTask): void {
+    if (!this.worker || !this.workerReady) return
+    try {
+      switch (task) {
+        case 'buildFull':
+        case 'incremental':
+        case 'rebuildDir':
+          this.worker.postMessage({ type: 'cancel' })
+          break
+        case 'processCollectionDeep':
+        case 'processSingleFileDeep':
+          this.worker.postMessage({ type: 'cancelCollectionDeep' })
+          break
+        case 'processPromotedFiles':
+          this.worker.postMessage({ type: 'cancelPromotion' })
+          break
+        case 'autoIndexCheck':
+          this.worker.postMessage({ type: 'cancelAutoIndex' })
+          break
+      }
+    } catch (err: any) {
+      logger.warn(`sendCancelForTask(${task}) failed:`, err?.message || err)
     }
   }
 
