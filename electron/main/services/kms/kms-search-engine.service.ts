@@ -581,6 +581,9 @@ class KMSSearchEngineService {
   /**
    * 批量化删除一组文件的所有索引：FTS5 操作只执行一次，避免逐文件 O(N) 扫描。
    * 大数组分批处理，避免 SQLite 参数上限（SQLITE_MAX_VARIABLE_NUMBER）。
+   *
+   * 性能关键路径：1000+ 文件的目录删除必须走此批量方法，
+   * 避免逐文件事务导致主线程卡死。
    */
   deleteIndexByFiles(fileIds: string[]): void {
     if (fileIds.length === 0) return
@@ -612,11 +615,19 @@ class KMSSearchEngineService {
     })
     tx()
 
-    for (const fileId of fileIds) {
-      this.deleteEmbeddingsByFile(fileId)
-    }
-    for (const fileId of fileIds) {
-      this.invalidateEmbeddingCacheForFile(fileId)
+    // 批量删除 embedding：使用单一向量库事务，避免 1000 文件 = 1000 事务
+    this.deleteEmbeddingsByFiles(fileIds)
+
+    // 批量失效 embedding 缓存
+    if (this.embeddingCache) {
+      const cached = this.embeddingCache.get('__all__')
+      if (cached) {
+        const idSet = new Set(fileIds)
+        const filtered = cached.filter(e => !idSet.has(e.fileId))
+        if (filtered.length !== cached.length) {
+          this.embeddingCache.set('__all__', filtered)
+        }
+      }
     }
     this.invalidateCache()
   }
@@ -628,28 +639,52 @@ class KMSSearchEngineService {
    * 需要在向量库独立事务中执行删除。
    */
   private deleteEmbeddingsByFile(fileId: string): void {
+    this.deleteEmbeddingsByFiles([fileId])
+  }
+
+  /**
+   * 批量删除多个文件的 embedding 记录和对应的 vec0 虚表行。
+   *
+   * 单一向量库事务处理所有文件，避免逐文件事务开销。
+   * 大数组分批以避开 SQLite 参数上限（SQLITE_MAX_VARIABLE_NUMBER=999）。
+   */
+  private deleteEmbeddingsByFiles(fileIds: string[]): void {
+    if (fileIds.length === 0) return
+
     const vecTx = this.vectorDb.transaction(() => {
-      // 先收集要删除的 rowid（vec_kms_embeddings 通过 rowid 关联 kms_embeddings）
-      let rowids: number[] = []
-      try {
-        const rows = this.vectorDb.prepare(
-          'SELECT rowid FROM kms_embeddings WHERE file_id = ?'
-        ).all(fileId) as any[]
-        rowids = rows.map(r => r.rowid)
-      } catch (err: any) {
-        logger.warn(`查询 file_id=${fileId} 的 embedding rowid 失败:`, err?.message || err)
-      }
+      for (let i = 0; i < fileIds.length; i += 500) {
+        const batch = fileIds.slice(i, i + 500)
+        const placeholders = batch.map(() => '?').join(',')
 
-      this.vectorDb.prepare('DELETE FROM kms_embeddings WHERE file_id = ?').run(fileId)
-
-      // 删除 vec_kms_embeddings 虚表中的对应行（不会自动级联）
-      if (rowids.length > 0 && this.vecReady) {
-        const placeholders = rowids.map(() => '?').join(',')
+        // 先收集要删除的 rowid（vec_kms_embeddings 通过 rowid 关联 kms_embeddings）
+        let rowids: number[] = []
         try {
-          // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 在加载了原生扩展时的类型校验回归
-          this.vectorDb.prepare(`DELETE FROM vec_kms_embeddings WHERE rowid IN (${placeholders})`).run(...rowids.map(r => BigInt(r)))
+          const rows = this.vectorDb.prepare(
+            `SELECT rowid FROM kms_embeddings WHERE file_id IN (${placeholders})`
+          ).all(...batch) as any[]
+          rowids = rows.map(r => r.rowid)
         } catch (err: any) {
-          logger.warn(`清理 vec_kms_embeddings 失败 (file_id=${fileId}):`, err?.message || err)
+          logger.warn(`批量查询 embedding rowid 失败 (batch size=${batch.length}):`, err?.message || err)
+        }
+
+        this.vectorDb.prepare(
+          `DELETE FROM kms_embeddings WHERE file_id IN (${placeholders})`
+        ).run(...batch)
+
+        // 删除 vec_kms_embeddings 虚表中的对应行（不会自动级联）
+        if (rowids.length > 0 && this.vecReady) {
+          // rowid 绑定必须用 BigInt 以避开 sqlite-vec 0.1.x 类型校验回归
+          for (let j = 0; j < rowids.length; j += 500) {
+            const rowidBatch = rowids.slice(j, j + 500)
+            const rowidPlaceholders = rowidBatch.map(() => '?').join(',')
+            try {
+              this.vectorDb.prepare(
+                `DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`
+              ).run(...rowidBatch.map(r => BigInt(r)))
+            } catch (err: any) {
+              logger.warn(`批量清理 vec_kms_embeddings 失败 (batch size=${rowidBatch.length}):`, err?.message || err)
+            }
+          }
         }
       }
     })

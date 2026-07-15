@@ -48,8 +48,7 @@ export function registerKMSHandlers(): void {
   })
 
   safeHandle(IPC_CHANNELS.KMS_DELETE_DIR, async (id: string) => {
-    kmsService.deleteIndexDir(id)
-    return { success: true }
+    return kmsService.deleteIndexDir(id)
   })
 
   // 搜索

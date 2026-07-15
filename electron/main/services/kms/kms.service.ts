@@ -172,32 +172,78 @@ class KMSService {
     return this.getIndexDir(id)
   }
 
-  deleteIndexDir(id: string): void {
-    // 收集该目录下所有文件 ID
-    const files = this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(id) as any[]
+  /**
+   * 删除索引目录（轻量操作，不阻塞 UI）。
+   *
+   * 分类处理该目录下的文件：
+   * - 仍属于至少一个合集的文件：迁移到虚拟手动目录（保留索引与文件记录）
+   * - 不属于任何合集的文件：仅删除 kms_files 记录，不清理 FTS5 / 向量库
+   *
+   * 搜索已 JOIN kms_files，删除文件记录后搜索结果自动排除。
+   * 残留的 FTS5 / embedding 孤儿记录可通过「设置 > 数据库清理」回收空间。
+   *
+   * 旧实现逐文件清理 FTS5 + 向量库导致 1000+ 文件目录卡死主线程。
+   */
+  deleteIndexDir(id: string): { migrated: number; removed: number } {
     const searchEngine = KMSSearchEngineService.getInstance()
 
-    // 分类处理：属于合集的文件迁移到虚拟手动目录，不属于合集的文件彻底清理
-    const fileIdsInCollection = new Set(
-      (this.db.prepare(
-        'SELECT DISTINCT file_id FROM kms_file_collections'
-      ).all() as any[]).map(r => r.file_id)
-    )
+    // 1. 收集该目录下所有文件 ID
+    const files = this.db.prepare('SELECT id FROM kms_files WHERE dir_id = ?').all(id) as any[]
+    if (files.length === 0) {
+      this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
+      searchEngine.invalidateCache()
+      return { migrated: 0, removed: 0 }
+    }
+    const allFileIds = files.map(f => f.id)
 
-    for (const f of files) {
-      if (fileIdsInCollection.has(f.id)) {
-        // 文件仍属于合集，迁移到虚拟手动目录保留
-        this.db.prepare('UPDATE kms_files SET dir_id = ? WHERE id = ?')
-          .run(this.manualSourceDirId, f.id)
-        logger.info(`文件 ${f.id} 迁移到虚拟手动目录（属于合集）`)
-      } else {
-        // 不属于任何合集，彻底清理 FTS5、向量库和文件记录
-        searchEngine.deleteIndexByFile(f.id)
-      }
+    // 2. 仅查询本目录内属于合集的文件（避免全表扫描）
+    const inCollectionSet = new Set<string>()
+    for (let i = 0; i < allFileIds.length; i += 500) {
+      const batch = allFileIds.slice(i, i + 500)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = this.db.prepare(
+        `SELECT DISTINCT file_id FROM kms_file_collections WHERE file_id IN (${placeholders})`
+      ).all(...batch) as any[]
+      for (const r of rows) inCollectionSet.add(r.file_id)
     }
 
-    this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
+    const toMigrate = allFileIds.filter(fid => inCollectionSet.has(fid))
+    const toRemove = allFileIds.filter(fid => !inCollectionSet.has(fid))
+
+    // 3. 全部操作在单一事务中完成（轻量 UPDATE / DELETE，不碰 FTS5 / 向量库）
+    const tx = this.db.transaction(() => {
+      // 迁移合集文件到虚拟手动目录
+      if (toMigrate.length > 0 && this.manualSourceDirId) {
+        for (let i = 0; i < toMigrate.length; i += 500) {
+          const batch = toMigrate.slice(i, i + 500)
+          const placeholders = batch.map(() => '?').join(',')
+          this.db.prepare(
+            `UPDATE kms_files SET dir_id = ? WHERE id IN (${placeholders})`
+          ).run(this.manualSourceDirId, ...batch)
+        }
+      }
+
+      // 删除非合集文件记录（FTS5 / embedding 孤儿留给数据库清理）
+      for (let i = 0; i < toRemove.length; i += 500) {
+        const batch = toRemove.slice(i, i + 500)
+        const placeholders = batch.map(() => '?').join(',')
+        this.db.prepare(`DELETE FROM kms_search_index WHERE file_id IN (${placeholders})`).run(...batch)
+        this.db.prepare(`DELETE FROM kms_paragraphs WHERE file_id IN (${placeholders})`).run(...batch)
+        this.db.prepare(`DELETE FROM kms_files WHERE id IN (${placeholders})`).run(...batch)
+      }
+
+      // 删除目录记录
+      this.db.prepare('DELETE FROM kms_index_dirs WHERE id = ?').run(id)
+    })
+    tx()
+
     searchEngine.invalidateCache()
+
+    logger.info(
+      `删除索引目录 ${id}：迁移 ${toMigrate.length} 个文件到手动目录，移除 ${toRemove.length} 个文件记录（FTS5/向量库孤儿待清理）`
+    )
+
+    return { migrated: toMigrate.length, removed: toRemove.length }
   }
 
   getIndexDir(id: string): any {

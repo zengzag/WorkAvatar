@@ -163,10 +163,6 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
     }
   }, [])
 
-  useEffect(() => {
-    loadDbStats()
-  }, [loadDbStats])
-
   const formatBytes = useCallback((bytes: number): string => {
     if (!bytes || bytes <= 0) return '0 B'
     const units = ['B', 'KB', 'MB', 'GB']

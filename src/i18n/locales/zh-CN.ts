@@ -754,6 +754,7 @@ export default {
     noDirs: '暂无索引目录，请添加需要搜索的本地文件夹',
     removeDir: '移除目录',
     removeDirConfirm: '确定移除该索引目录？关联的文件索引将被一并删除。',
+    removeDirCleanupHint: '已移除 {{count}} 个文件记录，如需释放存储空间请前往「设置 > 数据库清理」',
     selectDir: '选择目录',
     editDir: '编辑目录',
     dirDisplayNamePlaceholder: '可选，默认使用目录名',

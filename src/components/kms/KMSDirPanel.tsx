@@ -26,7 +26,7 @@ interface IndexDir {
 interface KMSDirPanelProps {
   dirs: IndexDir[]
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
-  onDeleteDir: (id: string) => void
+  onDeleteDir: (id: string) => Promise<{ migrated?: number; removed?: number } | undefined>
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
 }
 
@@ -330,7 +330,12 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                     />
                     <Popconfirm
                       title={t('kms.removeDirConfirm')}
-                      onConfirm={() => onDeleteDir(dir.id)}
+                      onConfirm={async () => {
+                        const result = await onDeleteDir(dir.id)
+                        if (result && (result.removed ?? 0) > 0) {
+                          message.info(t('kms.removeDirCleanupHint', { count: result.removed }))
+                        }
+                      }}
                       okText={t('common.confirm')}
                       cancelText={t('common.cancel')}
                     >

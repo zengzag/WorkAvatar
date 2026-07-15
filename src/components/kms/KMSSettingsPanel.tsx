@@ -47,7 +47,7 @@ interface KMSSettingsPanelProps {
   dirs: IndexDir[]
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
-  onDeleteDir: (id: string) => void
+  onDeleteDir: (id: string) => Promise<{ migrated?: number; removed?: number } | undefined>
   isIndexing: boolean
   indexProgress: IndexProgress | null
   onUpdateIndex: (withEmbedding?: boolean) => void

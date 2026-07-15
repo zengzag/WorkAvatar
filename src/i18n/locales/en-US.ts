@@ -753,6 +753,7 @@ export default {
     noDirs: 'No index directories yet. Add local folders to search.',
     removeDir: 'Remove Directory',
     removeDirConfirm: 'Remove this index directory? Associated file indexes will be deleted.',
+    removeDirCleanupHint: '{{count}} file records removed. To reclaim disk space, go to Settings > Database Cleanup.',
     selectDir: 'Select Directory',
     editDir: 'Edit Directory',
     dirDisplayNamePlaceholder: 'Optional, defaults to directory name',
