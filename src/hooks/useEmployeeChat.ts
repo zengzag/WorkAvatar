@@ -649,7 +649,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             content: userContent,
           },
         ],
-        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 50 },
+        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 1000 },
       })
 
       if (result.success && result.content) {

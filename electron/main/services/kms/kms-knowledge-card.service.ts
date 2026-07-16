@@ -336,7 +336,12 @@ class KMSKnowledgeCardService {
   }
 
   deleteCard(id: string): void {
+    // 先获取卡片关键词，删除后重置对应搜索次数，避免删除后立即重新生成
+    const row = this.db.prepare('SELECT keyword FROM kms_knowledge_cards WHERE id = ?').get(id) as any
     this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(id)
+    if (row?.keyword) {
+      this.db.prepare('UPDATE kms_keyword_stats SET search_count = 0, updated_at = unixepoch() WHERE keyword = ?').run(row.keyword)
+    }
   }
 
   pinCard(id: string, pinned: boolean): void {

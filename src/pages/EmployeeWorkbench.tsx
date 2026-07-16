@@ -414,13 +414,6 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }, [employee?.workspace_path, message, t])
 
-  const workspaceDirName = useMemo(() => {
-    const p = employee?.workspace_path
-    if (!p) return ''
-    const parts = p.split(/[\\/]/).filter(Boolean)
-    return parts[parts.length - 1] || p
-  }, [employee?.workspace_path])
-
   if (!employeeListLoaded) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -499,7 +492,7 @@ const EmployeeWorkbench: React.FC = () => {
             </Button>
           </Popover>
         </Space>
-        <Space size={4}>
+        <Space size={8}>
           {employee?.workspace_path && (
             <Tooltip
               title={
@@ -513,25 +506,24 @@ const EmployeeWorkbench: React.FC = () => {
               placement="bottom"
             >
               <Button
-                type="text"
+                type="default"
                 size="small"
                 icon={<FolderOpenOutlined />}
                 onClick={handleOpenWorkspace}
                 style={{
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
-                  padding: '0 10px',
+                  padding: '0 12px',
                   height: 28,
                   borderRadius: 6,
-                  color: token.colorTextSecondary,
-                  background: token.colorFillTertiary,
+                  fontSize: 12,
+                  color: token.colorText,
+                  borderColor: token.colorBorder,
                 }}
                 className="open-workspace-btn"
               >
-                <span style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {workspaceDirName}
-                </span>
+                {t('workbench.workspace')}
               </Button>
             </Tooltip>
           )}

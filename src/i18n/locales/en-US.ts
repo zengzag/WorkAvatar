@@ -130,6 +130,7 @@ export default {
     backToDashboard: 'Back to Digital Employees',
     employeeConfig: 'Employee Config',
     openWorkspace: 'Open Workspace Folder',
+    workspace: 'Workspace',
     workspaceNotSet: 'No workspace folder is set for this employee',
     openWorkspaceFailed: 'Failed to open workspace: {{error}}',
     closePanel: 'Close Panel',

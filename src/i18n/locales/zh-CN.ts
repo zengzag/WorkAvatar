@@ -130,6 +130,7 @@ export default {
     backToDashboard: '返回数字员工',
     employeeConfig: '员工配置',
     openWorkspace: '打开工作区目录',
+    workspace: '工作区',
     workspaceNotSet: '该员工未设置工作区目录',
     openWorkspaceFailed: '打开工作区失败：{{error}}',
     closePanel: '关闭面板',

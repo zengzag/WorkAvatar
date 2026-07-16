@@ -443,7 +443,7 @@ export abstract class BaseAgent {
           onToolCall: callbacks.onToolCall,
           onToolResult: callbacks.onToolResult,
           onToolProgress: callbacks.onToolProgress,
-        })
+        }, signal)
       } catch (error: any) {
         this.eventEmitter.emit('iteration:end', { iteration, error: error.message })
         callbacks.onIterationEnd?.(iteration)
@@ -477,9 +477,12 @@ export abstract class BaseAgent {
       onToolCall?: AgentRunStreamCallbacks['onToolCall']
       onToolResult?: AgentRunStreamCallbacks['onToolResult']
       onToolProgress?: AgentRunStreamCallbacks['onToolProgress']
-    }
+    },
+    signal?: AbortSignal
   ): Promise<void> {
     for (const toolCall of toolCalls) {
+      if (signal?.aborted) return
+
       const toolName = toolCall.function.name
       let args: any
       try {
@@ -500,6 +503,9 @@ export abstract class BaseAgent {
         : undefined
 
       const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
+
+      if (signal?.aborted) return
+
       usedToolCalls.push({
         name: toolName,
         args,

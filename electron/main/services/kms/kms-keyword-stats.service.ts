@@ -105,7 +105,7 @@ class KMSKeywordStatsService {
    * @param recentDays 近 N 天内有搜索活动
    * @param recentBoostThreshold 近7天内搜索次数达到此值也可触发
    */
-  findHotKeywordsWithoutCards(threshold: number, recentDays: number = 30, recentBoostThreshold: number = 3): Array<{
+  findHotKeywordsWithoutCards(threshold: number, recentDays: number = 30, recentBoostThreshold: number = 6): Array<{
     keyword: string
     displayKeyword: string
     searchCount: number
