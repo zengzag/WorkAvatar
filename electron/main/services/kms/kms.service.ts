@@ -12,6 +12,7 @@ import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
 import KMSKnowledgeCardService from './kms-knowledge-card.service'
+import KMSStopWordsService from './kms-stop-words.service'
 import LLMClientService from '../llm-client.service'
 import { generateId, calculateFileHash } from '../common-utils'
 import { createLogger } from '../logger'
@@ -1106,7 +1107,7 @@ class KMSService {
   }
 
   getKnowledgeCards(params?: {
-    status?: 'active' | 'stale' | 'archived'
+    status?: 'active' | 'stale' | 'archived' | 'disabled'
     keyword?: string
     pinnedOnly?: boolean
     limit?: number
@@ -1135,12 +1136,38 @@ class KMSService {
     KMSKnowledgeCardService.getInstance().deleteCard(id)
   }
 
+  disableKnowledgeCard(id: string): void {
+    KMSKnowledgeCardService.getInstance().disableCard(id)
+  }
+
+  enableKnowledgeCard(id: string): void {
+    KMSKnowledgeCardService.getInstance().enableCard(id)
+  }
+
   pinKnowledgeCard(id: string, pinned: boolean): void {
     KMSKnowledgeCardService.getInstance().pinCard(id, pinned)
   }
 
   async searchKnowledgeCards(query: string, topK?: number): Promise<any[]> {
     return KMSKnowledgeCardService.getInstance().searchCards(query, topK || 3)
+  }
+
+  // ==================== 停用词管理 ====================
+
+  getStopWords(params?: { source?: 'manual' | 'auto_idf'; limit?: number; offset?: number }): { words: any[]; total: number } {
+    return KMSStopWordsService.getInstance().listStopWords(params)
+  }
+
+  addStopWord(word: string): { success: boolean; error?: string } {
+    return KMSStopWordsService.getInstance().addStopWord(word, 'manual')
+  }
+
+  deleteStopWord(id: string): void {
+    KMSStopWordsService.getInstance().deleteStopWord(id)
+  }
+
+  clearAutoStopWords(): number {
+    return KMSStopWordsService.getInstance().clearAutoStopWords()
   }
 
   onProgress(listener: (progress: IndexProgress) => void): () => void {

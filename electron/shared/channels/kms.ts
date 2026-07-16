@@ -79,9 +79,16 @@ export const KMS_CHANNELS = {
   KMS_REFRESH_KNOWLEDGE_CARD: 'kms:refresh-knowledge-card',
   KMS_UPDATE_KNOWLEDGE_CARD: 'kms:update-knowledge-card',
   KMS_DELETE_KNOWLEDGE_CARD: 'kms:delete-knowledge-card',
+  KMS_DISABLE_KNOWLEDGE_CARD: 'kms:disable-knowledge-card',
+  KMS_ENABLE_KNOWLEDGE_CARD: 'kms:enable-knowledge-card',
   KMS_PIN_KNOWLEDGE_CARD: 'kms:pin-knowledge-card',
   KMS_SEARCH_KNOWLEDGE_CARDS: 'kms:search-knowledge-cards',
   KMS_KNOWLEDGE_CARD_PROGRESS: 'kms:knowledge-card-progress',
+  // KMS 停用词管理
+  KMS_GET_STOP_WORDS: 'kms:get-stop-words',
+  KMS_ADD_STOP_WORD: 'kms:add-stop-word',
+  KMS_DELETE_STOP_WORD: 'kms:delete-stop-word',
+  KMS_CLEAR_AUTO_STOP_WORDS: 'kms:clear-auto-stop-words',
 } as const
 
 export interface KMSAddDirParams {
@@ -231,7 +238,7 @@ export interface KMSSearchFilesParams {
 }
 
 export interface KMSGetKnowledgeCardsParams {
-  status?: 'active' | 'stale' | 'archived'
+  status?: 'active' | 'stale' | 'archived' | 'disabled'
   keyword?: string
   pinnedOnly?: boolean
   limit?: number

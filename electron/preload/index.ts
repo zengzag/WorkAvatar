@@ -304,8 +304,14 @@ const electronAPI = {
     refreshKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REFRESH_KNOWLEDGE_CARD, id),
     updateKnowledgeCard: (params: KMSUpdateKnowledgeCardParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_KNOWLEDGE_CARD, params),
     deleteKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_KNOWLEDGE_CARD, id),
+    disableKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DISABLE_KNOWLEDGE_CARD, id),
+    enableKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ENABLE_KNOWLEDGE_CARD, id),
     pinKnowledgeCard: (id: string, pinned: boolean) => ipcRenderer.invoke(IPC_CHANNELS.KMS_PIN_KNOWLEDGE_CARD, { id, pinned }),
     searchKnowledgeCards: (params: KMSSearchKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_KNOWLEDGE_CARDS, params),
+    getStopWords: (params?: { source?: 'manual' | 'auto_idf'; limit?: number; offset?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STOP_WORDS, params || {}),
+    addStopWord: (word: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_STOP_WORD, word),
+    deleteStopWord: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_STOP_WORD, id),
+    clearAutoStopWords: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_AUTO_STOP_WORDS),
   },
 
   kmsMcp: {
