@@ -845,6 +845,12 @@ export default {
     prevMatch: 'Previous Match',
     nextMatch: 'Next Match',
     lastModified: 'Last Modified',
+    // Sort
+    sortBy: 'Sort',
+    sortRelevance: 'Relevance',
+    sortModifiedDesc: 'Modified (Newest)',
+    sortModifiedAsc: 'Modified (Oldest)',
+    sortNameAsc: 'File Name A-Z',
     advancedFilters: 'Advanced Filters',
     filterDirectory: 'Directory',
     filterCollection: 'Collection',

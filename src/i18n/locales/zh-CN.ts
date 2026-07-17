@@ -850,6 +850,12 @@ export default {
     prevMatch: '上一个匹配',
     nextMatch: '下一个匹配',
     lastModified: '最后修改时间',
+    // 排序
+    sortBy: '排序',
+    sortRelevance: '相关度',
+    sortModifiedDesc: '修改时间（最新优先）',
+    sortModifiedAsc: '修改时间（最早优先）',
+    sortNameAsc: '文件名 A-Z',
     // 高级筛选与设置
     advancedFilters: '高级筛选',
     filterDirectory: '限定目录',

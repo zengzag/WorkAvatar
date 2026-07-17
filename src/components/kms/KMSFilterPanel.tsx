@@ -1,13 +1,10 @@
 import { useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Select, DatePicker, Collapse, Tag, Typography, Space } from 'antd'
-import { FilterOutlined } from '@ant-design/icons'
-
+import { Select, DatePicker, Typography } from 'antd'
+import dayjs from 'dayjs'
 
 const { Text } = Typography
 const { RangePicker } = DatePicker
-
-type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai' | 'file'
 
 const FILE_FORMAT_OPTIONS = [
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
@@ -27,7 +24,6 @@ interface IndexDir {
 }
 
 interface KMSFilterPanelProps {
-  searchMode: SearchMode
   filterDirIds: string[]
   onFilterDirIdsChange: (ids: string[]) => void
   filterCollectionIds: string[]
@@ -41,7 +37,6 @@ interface KMSFilterPanelProps {
 }
 
 const KMSFilterPanel: React.FC<KMSFilterPanelProps> = ({
-  searchMode: _searchMode,
   filterDirIds,
   onFilterDirIdsChange,
   filterCollectionIds,
@@ -77,87 +72,69 @@ const KMSFilterPanel: React.FC<KMSFilterPanelProps> = ({
     }
   }, [onFilterTimeRangeChange])
 
-  const activeFilterCount = filterDirIds.length + filterCollectionIds.length + filterExtensions.length +
-    (filterTimeRange ? 1 : 0)
+  const timeRangeValue = useMemo(() => {
+    if (!filterTimeRange) return undefined
+    return [dayjs(filterTimeRange[0]), dayjs(filterTimeRange[1])] as [dayjs.Dayjs, dayjs.Dayjs]
+  }, [filterTimeRange])
 
   return (
-    <div style={{ marginBottom: 12 }}>
-      <Collapse
-        size="small"
-        items={[{
-          key: 'filters',
-          label: (
-            <Space size={4}>
-              <FilterOutlined />
-              <span>{t('kms.advancedFilters')}</span>
-              {activeFilterCount > 0 && (
-                <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '16px' }}>
-                  {activeFilterCount}
-                </Tag>
-              )}
-            </Space>
-          ),
-          children: (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                  {t('kms.filterDirectory')}
-                </Text>
-                <Select
-                  mode="multiple"
-                  allowClear
-                  style={{ width: '100%' }}
-                  placeholder={t('kms.allDirs')}
-                  value={filterDirIds}
-                  onChange={onFilterDirIdsChange}
-                  options={dirOptions}
-                  maxTagCount="responsive"
-                />
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                  {t('kms.filterCollection')}
-                </Text>
-                <Select
-                  mode="multiple"
-                  allowClear
-                  style={{ width: '100%' }}
-                  placeholder={t('kms.collections.noCollections')}
-                  value={filterCollectionIds}
-                  onChange={onFilterCollectionIdsChange}
-                  options={collectionOptions}
-                  maxTagCount="responsive"
-                  notFoundContent={t('kms.collections.noCollections')}
-                />
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                  {t('kms.filterFileFormat')}
-                </Text>
-                <Select
-                  mode="multiple"
-                  allowClear
-                  style={{ width: '100%' }}
-                  placeholder={t('kms.allFormats')}
-                  value={filterExtensions}
-                  onChange={onFilterExtensionsChange}
-                  options={formatOptions}
-                  maxTagCount="responsive"
-                />
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-                  {t('kms.filterTimeRange')}
-                </Text>
-                <RangePicker
-                  style={{ width: '100%' }}
-                  onChange={handleTimeRangeChange}
-                />
-              </div>
-            </div>
-          ),
-        }]}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          {t('kms.filterDirectory')}
+        </Text>
+        <Select
+          mode="multiple"
+          allowClear
+          style={{ width: '100%' }}
+          placeholder={t('kms.allDirs')}
+          value={filterDirIds}
+          onChange={onFilterDirIdsChange}
+          options={dirOptions}
+          maxTagCount="responsive"
+        />
+      </div>
+      <div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          {t('kms.filterCollection')}
+        </Text>
+        <Select
+          mode="multiple"
+          allowClear
+          style={{ width: '100%' }}
+          placeholder={t('kms.collections.noCollections')}
+          value={filterCollectionIds}
+          onChange={onFilterCollectionIdsChange}
+          options={collectionOptions}
+          maxTagCount="responsive"
+          notFoundContent={t('kms.collections.noCollections')}
+        />
+      </div>
+      <div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          {t('kms.filterFileFormat')}
+        </Text>
+        <Select
+          mode="multiple"
+          allowClear
+          style={{ width: '100%' }}
+          placeholder={t('kms.allFormats')}
+          value={filterExtensions}
+          onChange={onFilterExtensionsChange}
+          options={formatOptions}
+          maxTagCount="responsive"
+        />
+      </div>
+      <div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+          {t('kms.filterTimeRange')}
+        </Text>
+        <RangePicker
+          style={{ width: '100%' }}
+          value={timeRangeValue}
+          onChange={handleTimeRangeChange}
+        />
+      </div>
     </div>
   )
 }

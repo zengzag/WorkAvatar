@@ -2,7 +2,6 @@ import React, { useCallback, useMemo, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Empty, Spin, Typography, theme } from 'antd'
 import KMSSearchInput from './KMSSearchInput'
-import KMSFilterPanel from './KMSFilterPanel'
 import KMSSearchResultList from './KMSSearchResultList'
 import KMSAgentResult from './KMSAgentResult'
 import KnowledgeCardBanner from './KnowledgeCardBanner'
@@ -180,10 +179,6 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
         onDeleteSearchHistory={onDeleteSearchHistory}
         onClearSearchHistory={onClearSearchHistory}
         onPickHistory={handlePickHistory}
-      />
-
-      <KMSFilterPanel
-        searchMode={searchMode}
         filterDirIds={filterDirIds}
         onFilterDirIdsChange={setFilterDirIds}
         filterCollectionIds={filterCollectionIds}
