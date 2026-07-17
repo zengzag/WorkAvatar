@@ -1306,11 +1306,6 @@ export default {
     resumeSystem: 'Resume System Audio Recognition',
     localModelBuiltin: 'Built-in Streaming Zipformer Model',
     localModelBuiltinHint: 'The streaming Zipformer model (Chinese & English) is built into the app. No setup required.',
-    gpuAcceleration: 'GPU Acceleration',
-    gpuAccelerationHint: 'Use GPU (DirectML) to accelerate recognition. Requires a DX12-capable GPU. Falls back to CPU if unavailable.',
-    gpuAccelerationExperimental: 'Experimental',
-    sensitivity: 'Recognition Sensitivity',
-    sensitivityHint: 'Increase to improve low-volume recognition, but may also pick up more ambient noise. Default: 1.0x',
     // Microphone device selection
     micDevice: 'Microphone Device',
     micDeviceHint: 'Select the microphone device for recording. Defaults to the system recommended device.',

@@ -1311,11 +1311,6 @@ export default {
     resumeSystem: '恢复系统音频识别',
     localModelBuiltin: '内置流式 Zipformer 模型',
     localModelBuiltinHint: '应用已内置中英文流式语音识别模型，无需配置，开箱即用',
-    gpuAcceleration: 'GPU 加速',
-    gpuAccelerationHint: '使用 GPU (DirectML) 加速识别，需要支持 DX12 的显卡。不可用时自动回退到 CPU',
-    gpuAccelerationExperimental: '实验性功能',
-    sensitivity: '识别灵敏度',
-    sensitivityHint: '调高可改善低音量识别效果，但可能增加环境噪声误识别。默认 1.0x',
     // 麦克风设备选择
     micDevice: '麦克风设备',
     micDeviceHint: '选择录音使用的麦克风设备，默认使用系统推荐设备',

@@ -65,8 +65,6 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
     modelType: 'zipformer' as const,
     modelDir: '(内置流式 Zipformer 模型)',
     language: 'zh',
-    useGPU: false,
-    sensitivity: 1.0,
   },
   audioConfig: {
     sampleRate: 16000,

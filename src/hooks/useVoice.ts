@@ -44,8 +44,6 @@ export interface VoiceSettings {
     modelType: 'whisper' | 'paraformer' | 'zipformer'
     modelDir: string
     language: string
-    useGPU?: boolean
-    sensitivity?: number
   }
   audioConfig: {
     sampleRate: number
@@ -401,6 +399,18 @@ export function useVoice() {
     }
   }, [])
 
+  // 加载单个任务的完整详情（含 transcript / transcript_segments_json / minutes 等大文本字段）。
+  // listTasks 出于性能仅返回元数据，详情视图需要大文本字段时按需调用。
+  const getTask = useCallback(async (id: string): Promise<VoiceTask | null> => {
+    try {
+      const result = await window.electronAPI.voice.getTask(id)
+      return (result as VoiceTask | null) || null
+    } catch (err) {
+      console.error('Failed to get voice task:', err)
+      return null
+    }
+  }, [])
+
   return {
     tasks,
     settings,
@@ -412,6 +422,7 @@ export function useVoice() {
     createTask,
     updateTask,
     deleteTask,
+    getTask,
     saveAudio,
     saveSecondaryAudio,
     mergeDualSourceTranscript,

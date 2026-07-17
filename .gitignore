@@ -31,9 +31,6 @@ build-info.json
 *.AppImage
 electron-builder-*.json
 
-# Exceptions: DirectML DLLs tracked via Git LFS (see .gitattributes)
-!resources/native/sherpa-directml-win-x64/*.dll
-
 # =====================================
 # IDE and Editors
 # =====================================

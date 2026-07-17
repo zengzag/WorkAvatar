@@ -181,7 +181,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     transcribe, cancelTranscribe,
     generateMinutes, cancelMinutes, loadAudioSources,
     realtimeStart, realtimeFeed, realtimeStop, realtimeCancel, onRealtimeResult,
-    subtitleShow, subtitleHide,
+    subtitleShow, subtitleHide, getTask,
   } = useVoice()
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -309,6 +309,40 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     () => tasks.find(t => t.id === selectedTaskId) || null,
     [tasks, selectedTaskId]
   )
+
+  // 完整任务详情：listTasks 出于性能仅返回元数据，不含 transcript / minutes 等大文本字段。
+  // 详情视图需要这些字段，因此选中任务时按需通过 getTask 加载完整数据。
+  const [taskDetail, setTaskDetail] = useState<VoiceTask | null>(null)
+  const prevSelectedTaskIdRef = useRef<string | null>(null)
+
+  // 依赖 selectedTask?.updated_at：转写/纪要/实时识别完成都会触发 loadTasks → updated_at 变化，
+  // 从而在此自动重新拉取完整详情，让转录文本和摘要卡片随之刷新。
+  useEffect(() => {
+    if (prevSelectedTaskIdRef.current !== selectedTaskId) {
+      prevSelectedTaskIdRef.current = selectedTaskId
+      // 切换任务时清除旧详情，避免上一个任务的大文本字段串台到新任务
+      setTaskDetail(null)
+    }
+    if (!selectedTaskId) return
+    let cancelled = false
+    getTask(selectedTaskId).then(task => {
+      if (!cancelled) setTaskDetail(task)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [selectedTaskId, selectedTask?.updated_at, getTask])
+
+  // 渲染用任务：以列表元数据（状态/时长等实时刷新）为基底，叠加完整详情的大文本字段。
+  // taskDetail 未就绪或属于其它任务时回退到纯元数据，卡片条件会自然推迟到数据就绪后再渲染。
+  const activeTask = useMemo<VoiceTask | null>(() => {
+    if (!selectedTask) return null
+    if (!taskDetail || taskDetail.id !== selectedTask.id) return selectedTask
+    return {
+      ...selectedTask,
+      transcript: taskDetail.transcript,
+      transcript_segments_json: taskDetail.transcript_segments_json,
+      minutes: taskDetail.minutes,
+    }
+  }, [selectedTask, taskDetail])
 
   // 切换任务时同步 notes 文本
   useEffect(() => {
@@ -1023,13 +1057,13 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   // ==================== Transcript Segments ====================
 
   const transcriptSegments = useMemo<TranscriptSegment[]>(() => {
-    if (!selectedTask?.transcript_segments_json) return []
+    if (!activeTask?.transcript_segments_json) return []
     try {
-      return JSON.parse(selectedTask.transcript_segments_json)
+      return JSON.parse(activeTask.transcript_segments_json)
     } catch {
       return []
     }
-  }, [selectedTask])
+  }, [activeTask])
 
   // Derive flat realtime text/segments from per-source state
   const realtimeText = Object.values(realtimeTextBySource).join('')
@@ -1817,7 +1851,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           </Tooltip>
         </div>
         <Card style={{ flex: 1, overflowY: 'auto' }} styles={{ body: { padding: 20 } }}>
-          {selectedTask ? renderTaskDetail(selectedTask) : (
+          {activeTask ? renderTaskDetail(activeTask) : (
             <AntEmpty
               description={t('voice.selectTask')}
               image={AntEmpty.PRESENTED_IMAGE_SIMPLE}
