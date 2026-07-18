@@ -348,14 +348,14 @@ const EmployeeSettings: React.FC = () => {
 
   if (!employee) {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 16 }}>
         <Card loading />
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '16px 24px 24px' }}>
+    <div style={{ padding: '12px 16px 16px' }}>
       <PageHeader
         title={employee.name}
         subTitle={t('employeeSettings.subtitle')}

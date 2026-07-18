@@ -1,4 +1,4 @@
-import { Card, Tabs } from 'antd'
+import { Tabs } from 'antd'
 import {
   ApiOutlined,
   SaveOutlined,
@@ -25,6 +25,13 @@ const Settings: React.FC = () => {
   const [searchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
 
+  // 内容区容器：统一顶部留白 + 滚动
+  const contentWrap = (node: React.ReactNode) => (
+    <div style={{ padding: '24px 24px 20px', height: '100%', overflow: 'auto' }}>
+      {node}
+    </div>
+  )
+
   const tabItems: TabsProps['items'] = [
     {
       key: 'llm',
@@ -33,7 +40,7 @@ const Settings: React.FC = () => {
           <ApiOutlined /> {t('settings.tabLlm')}
         </span>
       ),
-      children: <LLMSettings />,
+      children: contentWrap(<LLMSettings />),
     },
     {
       key: 'defaultModel',
@@ -42,7 +49,7 @@ const Settings: React.FC = () => {
           <RobotOutlined /> {t('settings.tabDefaultModel')}
         </span>
       ),
-      children: <DefaultModelSettings />,
+      children: contentWrap(<DefaultModelSettings />),
     },
     {
       key: 'kmsMcp',
@@ -51,7 +58,7 @@ const Settings: React.FC = () => {
           <SearchOutlined /> {t('settings.tabKmsMcp')}
         </span>
       ),
-      children: <KMSMCPSettings />,
+      children: contentWrap(<KMSMCPSettings />),
     },
     {
       key: 'storage',
@@ -60,7 +67,7 @@ const Settings: React.FC = () => {
           <SaveOutlined /> {t('settings.tabStorage')}
         </span>
       ),
-      children: <StorageSettings />,
+      children: contentWrap(<StorageSettings />),
     },
     {
       key: 'appearance',
@@ -69,7 +76,7 @@ const Settings: React.FC = () => {
           <SettingOutlined /> {t('settings.tabAppearance')}
         </span>
       ),
-      children: <AppearanceSettings />,
+      children: contentWrap(<AppearanceSettings />),
     },
     {
       key: 'internetSearch',
@@ -78,12 +85,12 @@ const Settings: React.FC = () => {
           <GlobalOutlined /> {t('settings.tabInternetSearch')}
         </span>
       ),
-      children: <InternetSearchSettings />,
+      children: contentWrap(<InternetSearchSettings />),
     },
     {
       key: 'about',
       label: t('settings.tabAbout'),
-      children: <AboutSection />,
+      children: contentWrap(<AboutSection />),
     },
   ]
 
@@ -91,10 +98,49 @@ const Settings: React.FC = () => {
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
-      <Card>
-        <Tabs defaultActiveKey={defaultActiveKey} items={tabItems} style={{ minHeight: 400 }} />
-      </Card>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Tabs
+        defaultActiveKey={defaultActiveKey}
+        items={tabItems}
+        tabPlacement="start"
+        style={{ flex: 1, minHeight: 0, height: '100%' }}
+        tabBarStyle={{
+          width: 150,
+          minWidth: 150,
+          margin: 0,
+          paddingTop: 8,
+        }}
+        className="settings-tabs"
+      />
+      <style>{`
+        .settings-tabs.ant-tabs {
+          height: 100%;
+        }
+        .settings-tabs .ant-tabs-nav-list {
+          padding: 0 8px;
+        }
+        .settings-tabs .ant-tabs-tab {
+          margin: 2px 0 !important;
+          padding: 6px 10px !important;
+          border-radius: 4px;
+        }
+        .settings-tabs .ant-tabs-body-holder {
+          border-left: 1px solid var(--border-color, #f0f0f0);
+          flex: auto;
+          min-width: 0;
+          min-height: 0;
+          overflow: hidden;
+        }
+        .settings-tabs .ant-tabs-body {
+          height: 100%;
+        }
+        .settings-tabs .ant-tabs-content {
+          height: 100%;
+        }
+        .settings-tabs .ant-tabs-tabpane {
+          height: 100%;
+        }
+      `}</style>
     </div>
   )
 }

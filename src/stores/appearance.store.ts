@@ -9,26 +9,26 @@ export type FontSizeLevel = 'small' | 'medium' | 'large'
 
 export const FONT_SIZE_MAP: Record<FontSizeLevel, number> = {
   small: 12,
-  medium: 14,
-  large: 16,
+  medium: 13,
+  large: 15,
 }
 
 export const FONT_SIZE_SM_MAP: Record<FontSizeLevel, number> = {
-  small: 10,
+  small: 11,
   medium: 12,
-  large: 14,
+  large: 13,
 }
 
 export const FONT_SIZE_LG_MAP: Record<FontSizeLevel, number> = {
   small: 14,
-  medium: 16,
-  large: 18,
+  medium: 15,
+  large: 17,
 }
 
 export const FONT_SIZE_XL_MAP: Record<FontSizeLevel, number> = {
   small: 16,
-  medium: 20,
-  large: 24,
+  medium: 18,
+  large: 22,
 }
 
 interface AppearanceState {

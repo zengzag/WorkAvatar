@@ -197,6 +197,20 @@ const electronAPI = {
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
   },
 
+  window: {
+    minimize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE),
+    toggleMaximize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE),
+    isMaximized: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_IS_MAXIMIZED),
+    onMaximizedChange: (callback: (isMaximized: boolean) => void) => {
+      // 先订阅主进程事件
+      ipcRenderer.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE)
+      const handler = (_event: any, isMaximized: boolean) => callback(isMaximized)
+      ipcRenderer.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
+    },
+  },
+
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),

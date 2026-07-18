@@ -263,31 +263,31 @@ const EmployeeWorkbench: React.FC = () => {
     }
     .markdown-content h1, .markdown-content h2, .markdown-content h3,
     .markdown-content h4, .markdown-content h5, .markdown-content h6 {
-      margin-top: 16px;
-      margin-bottom: 8px;
+      margin-top: 14px;
+      margin-bottom: 6px;
       font-weight: 600;
       line-height: 1.4;
     }
-    .markdown-content h1 { font-size: 1.4em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 6px; }
-    .markdown-content h2 { font-size: 1.25em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 5px; }
-    .markdown-content h3 { font-size: 1.1em; }
-    .markdown-content p { margin: 0 0 8px; }
+    .markdown-content h1 { font-size: 1.35em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 4px; }
+    .markdown-content h2 { font-size: 1.2em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 3px; }
+    .markdown-content h3 { font-size: 1.08em; }
+    .markdown-content p { margin: 0 0 6px; }
     .markdown-content p:last-child { margin-bottom: 0; }
-    .markdown-content ul, .markdown-content ol { padding-left: 24px; margin: 0 0 8px; }
-    .markdown-content li { margin-bottom: 4px; }
+    .markdown-content ul, .markdown-content ol { padding-left: 22px; margin: 0 0 6px; }
+    .markdown-content li { margin-bottom: 3px; }
     .markdown-content code {
       background: ${token.colorBgTextHover};
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.9em;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.88em;
       font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
     }
     .markdown-content pre {
       background: ${token.colorBgTextHover};
-      padding: 12px 16px;
-      border-radius: 8px;
+      padding: 10px 14px;
+      border-radius: 6px;
       overflow-x: auto;
-      margin: 8px 0;
+      margin: 6px 0;
       border: 1px solid ${token.colorBorderSecondary};
     }
     .markdown-content pre code {
@@ -299,20 +299,20 @@ const EmployeeWorkbench: React.FC = () => {
     }
     .markdown-content blockquote {
       border-left: 3px solid ${token.colorPrimary};
-      margin: 8px 0;
-      padding: 4px 12px;
+      margin: 6px 0;
+      padding: 3px 10px;
       color: ${token.colorTextSecondary};
       background: ${token.colorPrimaryBg};
-      border-radius: 0 6px 6px 0;
+      border-radius: 0 4px 4px 0;
     }
     .markdown-content table {
       border-collapse: collapse;
       width: 100%;
-      margin: 8px 0;
+      margin: 6px 0;
     }
     .markdown-content th, .markdown-content td {
       border: 1px solid ${token.colorBorderSecondary};
-      padding: 6px 12px;
+      padding: 5px 10px;
       text-align: left;
     }
     .markdown-content th {
@@ -329,11 +329,11 @@ const EmployeeWorkbench: React.FC = () => {
     .markdown-content hr {
       border: none;
       border-top: 1px solid ${token.colorBorderSecondary};
-      margin: 16px 0;
+      margin: 12px 0;
     }
     .markdown-content img {
       max-width: 100%;
-      border-radius: 6px;
+      border-radius: 4px;
     }
     .open-workspace-btn:hover {
       background: ${token.colorFillSecondary} !important;
@@ -416,7 +416,7 @@ const EmployeeWorkbench: React.FC = () => {
 
   if (!employeeListLoaded) {
     return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Spin size="large" />
       </div>
     )
@@ -424,7 +424,7 @@ const EmployeeWorkbench: React.FC = () => {
 
   if (employees.length === 0) {
     return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
         <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />
         <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.noEmployeeHint')}</Paragraph>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/wizard')}>
@@ -436,27 +436,27 @@ const EmployeeWorkbench: React.FC = () => {
 
   if (!employee) {
     return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Spin size="large" />
       </div>
     )
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: token.colorBgContainer }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
       <div style={{
-        height: 48,
+        height: 40,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 20px',
+        padding: '0 12px',
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         background: token.colorBgContainer,
         flexShrink: 0,
       }}>
-        <Space size={12}>
+        <Space size={8}>
           <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
-            <Button type="text"
+            <Button type="text" size="small"
               icon={showSidePanel ? <MenuFoldOutlined /> : <MenuUnfoldOutlined />}
               onClick={() => setShowSidePanel(!showSidePanel)}
             />
@@ -480,19 +480,19 @@ const EmployeeWorkbench: React.FC = () => {
             arrow={false}
             styles={{ container: { padding: 8 } }}
           >
-            <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', height: 'auto' }}>
+            <Button type="text" size="small" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 6px', height: 'auto' }}>
               <div style={{
-                width: 26, height: 26, borderRadius: 6,
+                width: 22, height: 22, borderRadius: 5,
                 background: `${token.colorPrimary}15`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
+                <RobotOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
               </div>
-              <Text strong style={{ fontSize: 14 }}>{employee.name}</Text>
+              <Text strong style={{ fontSize: 13 }}>{employee.name}</Text>
             </Button>
           </Popover>
         </Space>
-        <Space size={8}>
+        <Space size={6}>
           {employee?.workspace_path && (
             <Tooltip
               title={
@@ -513,10 +513,10 @@ const EmployeeWorkbench: React.FC = () => {
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 6,
-                  padding: '0 12px',
-                  height: 28,
-                  borderRadius: 6,
+                  gap: 5,
+                  padding: '0 10px',
+                  height: 26,
+                  borderRadius: 4,
                   fontSize: 12,
                   color: token.colorText,
                   borderColor: token.colorBorder,
@@ -535,14 +535,14 @@ const EmployeeWorkbench: React.FC = () => {
           <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
             <Button
               type={enableThinking ? 'primary' : 'text'}
-              icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
               size="small"
+              icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
               onClick={() => setEnableThinking(!enableThinking)}
               style={enableThinking ? {} : { color: token.colorTextSecondary }}
             />
           </Tooltip>
           <Tooltip title={t('workbench.employeeConfig')}>
-            <Button type="text" icon={<SettingOutlined />}
+            <Button type="text" size="small" icon={<SettingOutlined />}
               onClick={() => navigate(`/employee/${id}/settings`)} />
           </Tooltip>
         </Space>
@@ -589,10 +589,10 @@ const EmployeeWorkbench: React.FC = () => {
               style={{
                 flex: 1,
                 overflow: 'auto',
-                padding: '24px 4%',
+                padding: '16px 6%',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 20,
+                gap: 16,
               }}
             >
               <MessageList

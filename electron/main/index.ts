@@ -225,7 +225,7 @@ function getAppIconPath(): string {
 async function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'WorkAvatar 数字员工',
-    width: 1280,
+    width: 1160,
     height: 720,
     minWidth: 1024,
     minHeight: 640,
@@ -237,7 +237,7 @@ async function createWindow() {
       webSecurity: true
     },
     autoHideMenuBar: true,
-    frame: true,
+    frame: false,
     show: false
   })
 

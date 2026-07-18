@@ -13,6 +13,13 @@ export const APP_CHANNELS = {
   APP_CLEAR_ALL_DATA: 'app:clear-all-data',
   // 渲染进程日志转发（fire-and-forget）：渲染进程 console 输出转发到主进程写入日志文件
   APP_RENDERER_LOG: 'app:renderer-log',
+
+  // 窗口控制（自定义标题栏）
+  WINDOW_MINIMIZE: 'window:minimize',
+  WINDOW_TOGGLE_MAXIMIZE: 'window:toggle-maximize',
+  WINDOW_CLOSE: 'window:close',
+  WINDOW_IS_MAXIMIZED: 'window:is-maximized',
+  WINDOW_ON_MAXIMIZED_CHANGE: 'window:on-maximized-change',
 } as const
 
 export interface SettingsGetParams {

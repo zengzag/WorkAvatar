@@ -133,4 +133,45 @@ export function registerAppHandlers(
     return { success: true }
   })
 
+  // === 窗口控制（自定义标题栏）===
+  // safeHandle 会拦截 ipcMain.handle 的 _event，仅透传用户参数，
+  // 因此这里通过 BrowserWindow.getFocusedWindow() 获取当前窗口。
+
+  safeHandle(IPC_CHANNELS.WINDOW_MINIMIZE, () => {
+    BrowserWindow.getFocusedWindow()?.minimize()
+  })
+
+  safeHandle(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE, () => {
+    const win = BrowserWindow.getFocusedWindow()
+    if (!win) return false
+    if (win.isMaximized()) {
+      win.unmaximize()
+      return false
+    }
+    win.maximize()
+    return true
+  })
+
+  safeHandle(IPC_CHANNELS.WINDOW_CLOSE, () => {
+    BrowserWindow.getFocusedWindow()?.close()
+  })
+
+  safeHandle(IPC_CHANNELS.WINDOW_IS_MAXIMIZED, () => {
+    const win = BrowserWindow.getFocusedWindow()
+    return win ? win.isMaximized() : false
+  })
+
+  // 推送最大化状态变化事件给渲染进程
+  ipcMain.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return
+    const sendState = () => {
+      if (!win.isDestroyed()) {
+        event.sender.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+      }
+    }
+    win.on('maximize', sendState)
+    win.on('unmaximize', sendState)
+  })
+
 }

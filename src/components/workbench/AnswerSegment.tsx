@@ -34,14 +34,14 @@ const AnswerSegmentInner: React.FC<{
   return (
     <div style={{ marginBottom: 0 }}>
       <div style={{
-        padding: '10px 16px',
-        borderRadius: 12,
-        background: token.colorBgLayout,
-        lineHeight: 1.7,
+        padding: '8px 12px',
+        borderRadius: 8,
+        background: token.colorBgContainer,
+        lineHeight: 1.6,
         wordBreak: 'break-word',
         border: isError ? `1px solid ${token.colorError}` : 'none',
       }}>
-        <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
+        <div className="markdown-content" style={{ fontSize: 13, color: token.colorText }}>
           {markdownNode}
         </div>
         {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>}

@@ -116,13 +116,13 @@ const KMSPage: React.FC = () => {
   }, [previewFile, searchQuery])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 16 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 12 }}>
       {/* 顶部工具栏：视图切换 + 设置 */}
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 8,
         flexShrink: 0,
       }}>
         <Segmented

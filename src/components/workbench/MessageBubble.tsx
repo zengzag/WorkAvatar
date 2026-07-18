@@ -194,15 +194,15 @@ const MessageBubble: React.FC<{
       ref={bubbleRef}
       style={{
         display: 'flex',
-        gap: 12,
+        gap: 10,
         flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
         alignItems: 'flex-start',
       }}
     >
       <div style={{
-        width: 36,
-        height: 36,
-        borderRadius: 8,
+        width: 30,
+        height: 30,
+        borderRadius: 6,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -210,8 +210,8 @@ const MessageBubble: React.FC<{
         background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
       }}>
         {msg.role === 'assistant'
-          ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />
-          : <UserOutlined style={{ color: token.colorPrimary, fontSize: 18 }} />}
+          ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
+          : <UserOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />}
       </div>
 
       <div style={{ maxWidth: '80%', minWidth: 0, width: isEditing ? '90%' : undefined }}>
@@ -224,9 +224,9 @@ const MessageBubble: React.FC<{
                   onChange={(e) => setEditValue(e.target.value)}
                   autoSize={{ minRows: 3, maxRows: 15 }}
                   style={{
-                    fontSize: 14,
-                    lineHeight: 1.7,
-                    borderRadius: 12,
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                    borderRadius: 8,
                     width: '100%',
                   }}
                   onPressEnter={(e) => {
@@ -243,15 +243,15 @@ const MessageBubble: React.FC<{
               </div>
             ) : (
               <div style={{
-                padding: '10px 16px',
-                borderRadius: 12,
+                padding: '8px 12px',
+                borderRadius: 8,
                 background: token.colorInfoBg,
                 color: token.colorText,
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
-                lineHeight: 1.7,
+                lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
+                <Text style={{ color: token.colorText, fontSize: 13 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     {msg.images.map((img, i) => (
@@ -260,9 +260,9 @@ const MessageBubble: React.FC<{
                         src={img}
                         alt={`upload-${i}`}
                         style={{
-                          maxWidth: 200,
-                          maxHeight: 150,
-                          borderRadius: 6,
+                          maxWidth: 180,
+                          maxHeight: 140,
+                          borderRadius: 4,
                           objectFit: 'cover',
                           border: `1px solid ${token.colorBorderSecondary}`,
                         }}
@@ -290,15 +290,15 @@ const MessageBubble: React.FC<{
         )}
 
         {msg.role === 'assistant' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
               <div style={{
-                padding: '10px 16px',
-                borderRadius: 12,
-                background: token.colorBgLayout,
-                lineHeight: 1.7,
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: token.colorBgContainer,
+                lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>{t('workbench.thinking')}</Text>
+                <Text style={{ color: token.colorTextQuaternary, fontSize: 13 }}>{t('workbench.thinking')}</Text>
               </div>
             )}
 
@@ -314,14 +314,14 @@ const MessageBubble: React.FC<{
 
             {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
               <div style={{
-                padding: '10px 16px',
-                borderRadius: 12,
-                background: token.colorBgLayout,
-                lineHeight: 1.7,
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: token.colorBgContainer,
+                lineHeight: 1.6,
                 wordBreak: 'break-word',
                 border: displayIsError ? `1px solid ${token.colorError}` : 'none',
               }}>
-                <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
+                <div className="markdown-content" style={{ fontSize: 13, color: token.colorText }}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}

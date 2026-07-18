@@ -1,9 +1,9 @@
 import React from 'react'
-import { Typography, Radio, Divider } from 'antd'
+import { Typography, Radio } from 'antd'
 import { useAppearanceStore, type ThemeMode, type FontSizeLevel, type AppLocale } from '../../stores/appearance.store'
 import { useTranslation } from 'react-i18next'
 
-const { Text, Title } = Typography
+const { Text } = Typography
 
 const AppearanceSettings: React.FC = () => {
   const { t } = useTranslation()
@@ -16,14 +16,14 @@ const AppearanceSettings: React.FC = () => {
 
   return (
     <div>
-      <Title level={5}>{t('settings.appearanceTitle')}</Title>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>{t('settings.themeMode')}</Text>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid var(--border-color, #f0f0f0)` }}>
+          <Text strong style={{ fontSize: 13 }}>{t('settings.themeMode')}</Text>
           <Radio.Group
             value={themeMode}
             optionType="button"
             buttonStyle="solid"
+            size="small"
             onChange={(e) => setThemeMode(e.target.value as ThemeMode)}
           >
             <Radio.Button value="light">{t('settings.light')}</Radio.Button>
@@ -31,13 +31,13 @@ const AppearanceSettings: React.FC = () => {
             <Radio.Button value="system">{t('settings.system')}</Radio.Button>
           </Radio.Group>
         </div>
-        <Divider />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>{t('settings.fontSize')}</Text>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid var(--border-color, #f0f0f0)` }}>
+          <Text strong style={{ fontSize: 13 }}>{t('settings.fontSize')}</Text>
           <Radio.Group
             value={fontSizeLevel}
             optionType="button"
             buttonStyle="solid"
+            size="small"
             onChange={(e) => setFontSizeLevel(e.target.value as FontSizeLevel)}
           >
             <Radio.Button value="small">{t('settings.small')}</Radio.Button>
@@ -45,10 +45,9 @@ const AppearanceSettings: React.FC = () => {
             <Radio.Button value="large">{t('settings.large')}</Radio.Button>
           </Radio.Group>
         </div>
-        <Divider />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text strong>{t('settings.language')}</Text>
-          <Radio.Group value={locale} optionType="button" buttonStyle="solid" onChange={(e) => setLocale(e.target.value as AppLocale)}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
+          <Text strong style={{ fontSize: 13 }}>{t('settings.language')}</Text>
+          <Radio.Group value={locale} optionType="button" buttonStyle="solid" size="small" onChange={(e) => setLocale(e.target.value as AppLocale)}>
             <Radio.Button value="zh-CN">中文</Radio.Button>
             <Radio.Button value="en-US">English</Radio.Button>
           </Radio.Group>
