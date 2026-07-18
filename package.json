@@ -20,7 +20,7 @@
     "零代码"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
     "@file-viewer/react-full": "^2.1.26",
