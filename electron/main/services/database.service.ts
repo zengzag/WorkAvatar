@@ -277,6 +277,7 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'memory_extracted_at', 'INTEGER')
+    this.addColumnIfNotExists('conversations', 'memory_extracted_message_count', 'INTEGER NOT NULL DEFAULT 0')
 
     this.migrateConversationLastMessageAt()
 

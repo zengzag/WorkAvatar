@@ -64,13 +64,4 @@ export const STALE_MEMORY_DAYS = 90
 export const CONSOLIDATION_COOLDOWN_SECONDS = 3600
 /** 现有记忆减少，提示 LLM 更聚焦精炼而非穷举 */
 export const EXTRACTION_MAX_EXISTING_MEMORIES = 12
-export const EXTRACTION_USER_MIN_CHARS = 10
 export const CONSOLIDATION_CANDIDATE_MAX = 15
-
-export const TRIVIAL_PATTERNS = [
-  /^(你好|hi|hello|hey|谢谢|感谢|好的|ok|嗯|是|否|对|不|行|可以|再见|拜)/i,
-  /^(请继续|继续|还有吗|then\?|and\?|next|go on)/i,
-  /^(这段代码|这个|这是什么|什么意思|怎么用|帮我看看|解释一下|帮我改)/i,
-  /^(运行|执行|测试|编译|构建|部署|安装|启动|停止|重启)(一下|这个)?$/i,
-  /^(报错|出错|error|错误|失败)了?/i,
-]

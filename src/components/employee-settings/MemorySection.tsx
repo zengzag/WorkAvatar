@@ -28,6 +28,7 @@ import {
   CompressOutlined,
 } from '@ant-design/icons'
 import type { LLMProvider } from '../../types'
+import { getSceneDefaultModel } from '../../utils/default-model'
 
 const { Text, Paragraph } = Typography
 
@@ -208,13 +209,22 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     let providerId: string | undefined
     let modelId: string | undefined
     try {
-      const providers = await window.electronAPI.llm.getProviders()
-      const defaultProvider = (providers && providers.length > 0)
-        ? (providers.find((p: LLMProvider) => p.is_default) || providers[0])
-        : null
-      if (defaultProvider) {
-        providerId = defaultProvider.id
-        modelId = defaultProvider.model
+      // 优先使用「记忆提取」场景模型，回退到「工作台」场景模型
+      const sceneModel = await getSceneDefaultModel('memory')
+        || await getSceneDefaultModel('workbench')
+      if (sceneModel?.provider_id) {
+        providerId = sceneModel.provider_id
+        modelId = sceneModel.model_id
+      } else {
+        // 最终回退：第一个默认 provider
+        const providers = await window.electronAPI.llm.getProviders()
+        const defaultProvider = (providers && providers.length > 0)
+          ? (providers.find((p: LLMProvider) => p.is_default) || providers[0])
+          : null
+        if (defaultProvider) {
+          providerId = defaultProvider.id
+          modelId = defaultProvider.model
+        }
       }
     } catch {}
 
