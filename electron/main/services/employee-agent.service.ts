@@ -2,6 +2,7 @@ import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
+import McpRegistryService from './mcp-registry.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -61,6 +62,8 @@ interface CachedAgentEntry {
   agent: EmployeeAgent
   conversationId: string | null
   collectionIdsRef: SearchScopeRef
+  /** 该 agent 持有的 MCP client 引用释放函数，agent 缓存被清除时调用 */
+  mcpRelease?: () => Promise<void>
 }
 
 class EmployeeAgentService {
@@ -68,6 +71,7 @@ class EmployeeAgentService {
   private llmClient: LLMClientService
   private skillRegistry: SkillRegistryService
   private memoryService: EmployeeMemoryService
+  private mcpRegistry: McpRegistryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
   private static instance: EmployeeAgentService
 
@@ -76,6 +80,7 @@ class EmployeeAgentService {
     this.llmClient = LLMClientService.getInstance()
     this.skillRegistry = SkillRegistryService.getInstance()
     this.memoryService = EmployeeMemoryService.getInstance()
+    this.mcpRegistry = McpRegistryService.getInstance()
   }
 
   static getInstance(): EmployeeAgentService {
@@ -98,6 +103,10 @@ class EmployeeAgentService {
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
       if (conversationId && existing.conversationId !== conversationId) {
+        // 切换对话时清除旧缓存：先释放 MCP client 引用，再删除条目
+        if (existing.mcpRelease) {
+          existing.mcpRelease().catch(() => { /* ignore */ })
+        }
         this.agentEntries.delete(cacheKey)
       } else {
         return existing
@@ -220,6 +229,20 @@ class EmployeeAgentService {
       agent.registerTools(convSearchTools)
     }
 
+    // 注入员工已启用的外部 MCP server 工具
+    // 失败容忍：单个 server 失败不影响 agent 创建，仅记录日志
+    let mcpRelease: (() => Promise<void>) | undefined
+    try {
+      const mcpResult = await this.mcpRegistry.buildAgentTools(employeeId)
+      if (mcpResult.tools.length > 0) {
+        agent.registerTools(mcpResult.tools)
+        mcpRelease = mcpResult.release
+        logger.info(`Injected ${mcpResult.tools.length} MCP tools for employee ${employeeId}`)
+      }
+    } catch (err: any) {
+      logger.warn(`Failed to inject MCP tools for employee ${employeeId}: ${err?.message || err}`)
+    }
+
     if (memoryPrompt) {
       agent.updateMemoryPrompt(memoryPrompt)
     }
@@ -228,6 +251,7 @@ class EmployeeAgentService {
       agent,
       conversationId: conversationId || null,
       collectionIdsRef,
+      mcpRelease,
     })
     return { agent, conversationId: conversationId || null, collectionIdsRef }
   }
@@ -430,12 +454,22 @@ class EmployeeAgentService {
 
   clearAgentCache(employeeId?: string): void {
     if (employeeId) {
-      for (const key of this.agentEntries.keys()) {
+      for (const [key, entry] of this.agentEntries.entries()) {
         if (key.startsWith(`${employeeId}:`)) {
+          // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
+          if (entry.mcpRelease) {
+            entry.mcpRelease().catch(() => { /* ignore */ })
+          }
           this.agentEntries.delete(key)
         }
       }
     } else {
+      // 清空所有缓存：先释放全部 MCP 引用
+      for (const entry of this.agentEntries.values()) {
+        if (entry.mcpRelease) {
+          entry.mcpRelease().catch(() => { /* ignore */ })
+        }
+      }
       this.agentEntries.clear()
     }
   }

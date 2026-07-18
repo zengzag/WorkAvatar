@@ -18,7 +18,6 @@ import {
   FolderOpenOutlined,
   FileZipOutlined,
 } from '@ant-design/icons'
-import SkillEnvSection from './SkillEnvSection'
 
 const { Text } = Typography
 
@@ -85,8 +84,6 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
-      <SkillEnvSection />
-
       <Card
         title={
           <Space>

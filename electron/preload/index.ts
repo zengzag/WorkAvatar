@@ -54,6 +54,8 @@ import type {
   KMSSearchKnowledgeCardsParams,
   SkillEnvInstallParams,
   SkillEnvInstallProgress,
+  McpSaveParams,
+  McpTestParams,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -246,6 +248,23 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
     },
+  },
+
+  mcp: {
+    // 列出指定员工的所有 MCP server（含状态与缓存工具列表）
+    list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.MCP_LIST, { employee_id: employeeId }),
+    // 新增 MCP server
+    add: (params: McpSaveParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_ADD, params),
+    // 更新 MCP server 配置
+    update: (params: McpSaveParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_UPDATE, params),
+    // 删除 MCP server
+    delete: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_DELETE, params),
+    // 启用 / 禁用 MCP server
+    toggle: (params: { id: string; enabled: boolean; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TOGGLE, params),
+    // 测试连接（不依赖已缓存的 client，每次新建临时 client）
+    test: (params: McpTestParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TEST, params),
+    // 刷新指定 server 的工具缓存（主动重新连接并 listTools）
+    refreshTools: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_REFRESH_TOOLS, params),
   },
 
   kms: {

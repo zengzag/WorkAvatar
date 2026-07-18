@@ -90,3 +90,12 @@ export type {
   SkillEnvInstallParams,
   SkillEnvInstallProgress,
 } from './channels/skill-env'
+export type {
+  McpTransportType,
+  McpServerConfig,
+  McpToolInfo,
+  McpServerInfo,
+  McpSaveParams,
+  McpTestParams,
+  McpTestResult,
+} from './channels/mcp'

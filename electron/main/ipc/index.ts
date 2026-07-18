@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import { registerWorkspaceHandlers } from './workspace.handlers'
 import { registerEmployeeHandlers } from './employee.handlers'
 import { registerLLMHandlers } from './llm.handlers'
@@ -6,6 +7,7 @@ import { registerToolHandlers } from './tool.handlers'
 import { registerKMSHandlers } from './kms.handlers'
 import { registerVoiceHandlers } from './voice.handlers'
 import { registerSkillEnvHandlers } from './skill-env.handlers'
+import { registerMcpHandlers } from './mcp.handlers'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
@@ -16,6 +18,7 @@ import EmployeeAgentService from '../services/employee-agent.service'
 import EmployeeExportService from '../services/employee-export.service'
 import EmployeeMemoryService from '../services/employee-memory.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
+import McpRegistryService from '../services/mcp-registry.service'
 
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
@@ -35,10 +38,16 @@ export function registerIpcHandlers() {
   registerKMSHandlers()
   registerVoiceHandlers()
   registerSkillEnvHandlers()
+  registerMcpHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
 
   // 启动定时记忆精炼服务（空闲对话的记忆提取）
   MemoryRefinementService.getInstance().start()
+
+  // 应用退出前清理所有活跃 MCP client
+  app.on('before-quit', () => {
+    McpRegistryService.getInstance().shutdownAll().catch(() => { /* ignore */ })
+  })
 }
