@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
@@ -26,8 +26,12 @@ export interface ModelSelection {
   modelId: string
 }
 
+export interface SendOptions {
+  highPermission?: boolean
+}
+
 const ChatInput: React.FC<{
-  onSend: (content: string, images: string[], models: ModelSelection[]) => void
+  onSend: (content: string, images: string[], models: ModelSelection[], options?: SendOptions) => void
   onStop: () => void
   onCommand: (command: string) => void
   isStreaming: boolean
@@ -51,6 +55,7 @@ const ChatInput: React.FC<{
   const [localValue, setLocalValue] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [highPermission, setHighPermission] = useState(false)
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -89,10 +94,12 @@ const ChatInput: React.FC<{
         content = content ? `${content}\n${filePaths}` : filePaths
       }
     }
-    onSend(content, imageUrls, selectedModels)
+    const sendHighPermission = highPermission
+    onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
     setLocalValue('')
     setAttachedFiles([])
-  }, [localValue, attachedImages, attachedFiles, selectedModels, onSend])
+    setHighPermission(false)
+  }, [localValue, attachedImages, attachedFiles, selectedModels, highPermission, onSend])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -494,6 +501,15 @@ const ChatInput: React.FC<{
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
+                <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => setHighPermission(!highPermission)}
+                  style={{
+                    color: highPermission ? token.colorWarning : token.colorTextQuaternary,
+                    padding: '0 2px', height: 20, minWidth: 20,
+                    background: highPermission ? token.colorWarningBg : 'transparent',
+                  }} />
+              </Tooltip>
               <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
                 onClick={() => fileInputRef.current?.click()}
                 style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}

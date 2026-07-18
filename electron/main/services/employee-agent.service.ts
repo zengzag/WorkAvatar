@@ -43,6 +43,7 @@ interface EmployeeChatStreamParams {
   enable_thinking?: boolean
   conversation_id?: string
   minimal_mode?: boolean
+  high_permission?: boolean
 }
 
 interface EmployeeChatCallbacks {
@@ -299,12 +300,12 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false, high_permission = false } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
     const employeeName = employee?.name || 'unknown'
 
-    logger.info(`Chat stream started: employee="${employeeName}"(${employee_id}), conversation=${conversation_id || 'none'}, msgs=${messages.length}, skills=${use_skills}, thinking=${enable_thinking ?? 'auto'}, minimal=${minimal_mode}`)
+    logger.info(`Chat stream started: employee="${employeeName}"(${employee_id}), conversation=${conversation_id || 'none'}, msgs=${messages.length}, skills=${use_skills}, thinking=${enable_thinking ?? 'auto'}, minimal=${minimal_mode}, highPerm=${high_permission}`)
 
     const logCtx = {
       employeeId: employee_id,

@@ -33,12 +33,14 @@ export function isPathInWorkspace(filePath: string): boolean {
   return resolved.startsWith(workspaceRoot + path.sep) || resolved === workspaceRoot
 }
 
-/** 工作区外写/删除操作需用户确认 */
+/** 工作区外写/删除操作需用户确认，高权限模式下跳过 */
 export async function confirmOutsideWorkspace(operation: string, targetPath: string): Promise<{ ok: boolean; error?: string }> {
   if (isPathInWorkspace(targetPath)) return { ok: true }
 
   const ctx = interactionContext.getStore()
   if (!ctx) return { ok: true }
+
+  if (ctx.highPermission) return { ok: true }
 
   try {
     const interactionService = UnifiedInteractionService.getInstance()
@@ -59,10 +61,12 @@ export async function confirmOutsideWorkspace(operation: string, targetPath: str
   }
 }
 
-/** 删除操作（含工作区内）需用户确认 */
+/** 删除操作（含工作区内）需用户确认，高权限模式下跳过 */
 async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<{ ok: boolean; error?: string }> {
   const ctx = interactionContext.getStore()
   if (!ctx) return { ok: true }
+
+  if (ctx.highPermission) return { ok: true }
 
   const typeLabel = isDirectory ? '文件夹' : '文件'
   const inWorkspace = isPathInWorkspace(targetPath)

@@ -223,6 +223,8 @@ export default {
     noResponse: 'Waiting for response...',
     branch: 'Branch',
     attachImage: 'Attach Image',
+    highPermissionOff: 'High Permission Mode (Off): Confirmation required for files outside workspace',
+    highPermissionOn: 'High Permission Mode (On): This reply can operate on any files without confirmation',
     addModelReply: 'Reply with other model',
     sendCompare: 'Send & Compare',
     searchModel: 'Search models...',

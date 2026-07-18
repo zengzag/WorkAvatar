@@ -223,6 +223,8 @@ export default {
     noResponse: '等待响应...',
     branch: '分支',
     attachImage: '上传图片',
+    highPermissionOff: '高权限模式（关闭）：操作工作区外文件需确认',
+    highPermissionOn: '高权限模式（开启）：本次回复可直接操作任意文件，无需确认',
     addModelReply: '用其他模型回复',
     sendCompare: '发送对比',
     searchModel: '搜索模型...',

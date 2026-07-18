@@ -392,10 +392,10 @@ const EmployeeWorkbench: React.FC = () => {
     }
   }, [message, t])
 
-  const handleSendWithReset = useCallback((content: string, images: string[], models: ModelSelection[]) => {
+  const handleSendWithReset = useCallback((content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
     setAttachedImages([])
     setSelectedModels([])
-    handleSend(content, images, models)
+    handleSend(content, images, models, options)
   }, [handleSend])
 
   const handleOpenWorkspace = useCallback(async () => {

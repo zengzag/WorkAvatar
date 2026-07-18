@@ -4,6 +4,7 @@ import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
 import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
+import { interactionContext } from '../../unified-interaction.service'
 
 const OFFICE_MODULES: Record<string, any> = {}
 const MODULE_LOAD_ERRORS: Record<string, string> = {}
@@ -295,14 +296,24 @@ export const officeExecTool: ToolDefinition = {
 
     const consoleOutput: string[] = []
 
+    const ctx = interactionContext.getStore()
+    const highPermission = !!ctx?.highPermission
+
     // 执行前预扫描：提取代码中**写/删上下文**的绝对路径，对非工作区路径弹窗确认
     // 注意：只提取写入/删除路径，不提取读取路径（如 inspect/readFileSync 的参数）
+    // 高权限模式下跳过预扫描确认
     const authorizedPaths = new Set<string>()
     const writePaths = extractWritePathsFromCode(code)
-    for (const p of writePaths) {
-      if (!isPathInWorkspace(p)) {
-        const result = await confirmOutsideWorkspace('修改', p)
-        if (!result.ok) return { success: false, error: result.error }
+    if (!highPermission) {
+      for (const p of writePaths) {
+        if (!isPathInWorkspace(p)) {
+          const result = await confirmOutsideWorkspace('修改', p)
+          if (!result.ok) return { success: false, error: result.error }
+          try { authorizedPaths.add(path.resolve(p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
+        }
+      }
+    } else {
+      for (const p of writePaths) {
         try { authorizedPaths.add(path.resolve(p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
       }
     }
