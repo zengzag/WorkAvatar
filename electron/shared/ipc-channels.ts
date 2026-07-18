@@ -84,3 +84,9 @@ export type {
   VoiceSettings,
   VoiceLocalModelStatus,
 } from './channels/voice'
+export type {
+  SkillEnvToolId,
+  SkillEnvTool,
+  SkillEnvInstallParams,
+  SkillEnvInstallProgress,
+} from './channels/skill-env'

@@ -9,7 +9,6 @@ import {
   Tag,
   Empty,
   Typography,
-  Alert,
   Popconfirm,
   theme,
 } from 'antd'
@@ -19,6 +18,7 @@ import {
   FolderOpenOutlined,
   FileZipOutlined,
 } from '@ant-design/icons'
+import SkillEnvSection from './SkillEnvSection'
 
 const { Text } = Typography
 
@@ -85,12 +85,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
-      <Alert
-        title={t('employeeSettings.skillsAlertTitle')}
-        description={t('employeeSettings.skillsAlertDesc')}
-        type="info"
-        showIcon
-      />
+      <SkillEnvSection />
 
       <Card
         title={

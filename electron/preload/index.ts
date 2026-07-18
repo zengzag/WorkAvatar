@@ -52,6 +52,8 @@ import type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
+  SkillEnvInstallParams,
+  SkillEnvInstallProgress,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -215,6 +217,21 @@ const electronAPI = {
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
+  },
+
+  skillEnv: {
+    // 检测所有受支持运行时的安装状态
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_LIST),
+    // 一键安装指定运行时（uv / python / node / pip）
+    install: (params: SkillEnvInstallParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_INSTALL, params),
+    // 取消正在进行的安装
+    cancelInstall: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_CANCEL_INSTALL),
+    // 订阅安装进度事件（主进程 → 渲染进程），返回取消订阅函数
+    onProgress: (callback: (progress: SkillEnvInstallProgress) => void) => {
+      const handler = (_event: any, progress: SkillEnvInstallProgress) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
+    },
   },
 
   kms: {

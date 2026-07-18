@@ -5,6 +5,7 @@ import { TOOL_CHANNELS } from './tool'
 import { APP_CHANNELS } from './app'
 import { KMS_CHANNELS } from './kms'
 import { VOICE_CHANNELS } from './voice'
+import { SKILL_ENV_CHANNELS } from './skill-env'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -14,6 +15,7 @@ export const IPC_CHANNELS = {
   ...APP_CHANNELS,
   ...KMS_CHANNELS,
   ...VOICE_CHANNELS,
+  ...SKILL_ENV_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -23,3 +25,4 @@ export * from './tool'
 export * from './app'
 export * from './kms'
 export * from './voice'
+export * from './skill-env'
