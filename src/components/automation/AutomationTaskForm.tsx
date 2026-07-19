@@ -176,8 +176,8 @@ const AutomationTaskForm: React.FC<AutomationTaskFormProps> = ({
       onOk={handleOk}
       okText={isEdit ? t('common.save') : t('common.create')}
       cancelText={t('common.cancel')}
-      destroyOnClose
-      maskClosable={false}
+      destroyOnHidden
+      mask={{ closable: false }}
     >
       <Form form={form} layout="vertical" initialValues={initialValues}>
         <Form.Item

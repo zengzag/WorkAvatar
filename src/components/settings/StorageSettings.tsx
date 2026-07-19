@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Button, Divider, Input, Typography, App } from 'antd'
+import { Button, Divider, Input, Space, Typography, App } from 'antd'
 import { FolderOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 
@@ -94,14 +94,17 @@ const StorageSettings: React.FC = () => {
             <Text strong>{t('settings.dataDir')}</Text>
             <br />
             <Text type="secondary">{t('settings.dataDirDesc')}</Text>
-            <Input
-              value={dataDir}
-              readOnly
-              style={{ marginTop: 8 }}
-              addonAfter={
-                <ReloadOutlined onClick={loadDataDir} style={{ cursor: 'pointer' }} />
-              }
-            />
+            <Space.Compact style={{ marginTop: 8, width: '100%' }}>
+              <Input
+                value={dataDir}
+                readOnly
+              />
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={loadDataDir}
+                loading={loading}
+              />
+            </Space.Compact>
           </div>
           <Button
             icon={<FolderOutlined />}

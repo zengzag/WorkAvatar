@@ -132,7 +132,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
         {localSettings.sttMode === 'local' && (
           <>
             <Divider style={{ margin: '12px 0' }} />
-            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            <Space orientation="vertical" style={{ width: '100%' }} size={12}>
               <div style={{ padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
                 <Text>
                   <DesktopOutlined /> {t('voice.localModelBuiltin')}
@@ -170,7 +170,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
         {localSettings.sttMode === 'api' && (
           <>
             <Divider style={{ margin: '12px 0' }} />
-            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+            <Space orientation="vertical" style={{ width: '100%' }} size={12}>
               <div>
                 <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.apiEndpoint')}</Text>
                 <Input
@@ -217,7 +217,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
         <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
           {t('voice.micDeviceHint')}
         </Text>
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
           <Select
             style={{ width: '100%' }}
             value={localSettings.micDeviceId || ''}
@@ -258,7 +258,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
         <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
           {t('voice.subtitleEnabledHint')}
         </Text>
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
           <div>
             <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleFontSize')}</Text>
             <InputNumber

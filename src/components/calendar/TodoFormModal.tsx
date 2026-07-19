@@ -132,7 +132,7 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       cancelText={t('common.cancel')}
       onCancel={onClose}
       onOk={() => form.submit()}
-      destroyOnClose
+      destroyOnHidden
       width={480}
     >
       <Form

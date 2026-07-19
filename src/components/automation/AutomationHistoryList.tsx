@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import {
-  List, Tag, Button, Space, Tooltip, Popconfirm, Empty, Spin, Typography, theme,
+  Tag, Button, Space, Tooltip, Popconfirm, Empty, Spin, Typography, theme,
 } from 'antd'
 import {
   DeleteOutlined, ArrowRightOutlined, ClockCircleOutlined, WarningOutlined,
@@ -99,11 +99,12 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
           </Button>
         </Popconfirm>
       </div>
-      <List
-        dataSource={runs}
-        renderItem={(run) => (
-          <List.Item
+      <div>
+        {runs.map((run) => (
+          <div
+            key={run.id}
             style={{
+              display: 'flex',
               padding: '14px 20px',
               borderBottom: `1px solid ${token.colorBorderSecondary}`,
               flexDirection: 'column',
@@ -190,9 +191,9 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
                 </Typography.Text>
               </div>
             )}
-          </List.Item>
-        )}
-      />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

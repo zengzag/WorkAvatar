@@ -176,7 +176,7 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
       cancelText={t('common.cancel')}
       onCancel={onClose}
       onOk={() => form.submit()}
-      destroyOnClose
+      destroyOnHidden
       width={520}
       footer={(_, { OkBtn, CancelBtn }) => (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

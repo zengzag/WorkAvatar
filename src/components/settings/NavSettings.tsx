@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react'
-import { List, Switch, Button, Space, Typography, Tooltip, theme, Tag } from 'antd'
+import { Switch, Button, Space, Typography, Tooltip, theme, Tag } from 'antd'
 import {
   ArrowUpOutlined, ArrowDownOutlined, UndoOutlined, LockOutlined,
   RobotOutlined, SearchOutlined, AudioOutlined, CalendarOutlined, FieldTimeOutlined, SettingOutlined,
@@ -51,21 +51,29 @@ const NavSettings: React.FC = () => {
           {t('settings.navReset')}
         </Button>
       </div>
-      <List
-        bordered
-        dataSource={sortedConfig}
-        renderItem={(item, idx) => {
+      <div
+        style={{
+          borderTop: `1px solid ${token.colorBorder}`,
+          borderInline: `1px solid ${token.colorBorder}`,
+          borderBottom: 'none',
+          borderRadius: 8,
+          overflow: 'hidden',
+        }}
+      >
+        {sortedConfig.map((item, idx) => {
           const isLocked = LOCKED_KEYS.includes(item.key)
           const isFirst = idx === 0
           const isLast = idx === sortedConfig.length - 1
           return (
-            <List.Item
+            <div
+              key={item.key}
               style={{
                 padding: '10px 14px',
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 background: !item.visible ? token.colorFillQuaternary : 'transparent',
+                borderBottom: isLast ? 'none' : `1px solid ${token.colorBorderSecondary}`,
               }}
             >
               <Space size={10}>
@@ -112,10 +120,10 @@ const NavSettings: React.FC = () => {
                   onChange={() => toggleVisible(item.key)}
                 />
               </Space>
-            </List.Item>
+            </div>
           )
-        }}
-      />
+        })}
+      </div>
     </div>
   )
 }

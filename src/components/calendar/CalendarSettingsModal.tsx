@@ -72,7 +72,7 @@ const CalendarSettingsModal: React.FC<CalendarSettingsModalProps> = ({
       onCancel={onClose}
       confirmLoading={saving}
       onOk={() => form.submit()}
-      destroyOnClose
+      destroyOnHidden
       width={480}
     >
       <Form

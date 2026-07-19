@@ -113,6 +113,17 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
   const { token } = theme.useToken()
   const { message, modal } = App.useApp()
 
+  const addonStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '0 8px',
+    background: token.colorFillSecondary,
+    border: `1px solid ${token.colorBorder}`,
+    borderLeftWidth: 0,
+    fontSize: 12,
+    color: token.colorTextSecondary,
+  }
+
   const [autoEnabled, setAutoEnabled] = useState(autoIndexConfig.enabled)
   const [intervalMin, setIntervalMin] = useState(autoIndexConfig.intervalMinutes)
   const [stableThreshold, setStableThreshold] = useState(autoIndexConfig.stableThresholdMinutes)
@@ -278,16 +289,18 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
               <ClockCircleOutlined style={{ color: token.colorTextTertiary }} />
               <div>
                 <Text style={{ display: 'block', fontSize: 12 }}>{t('kms.settingsPanel.autoIndexInterval')}</Text>
-                <InputNumber
-                  value={intervalMin}
-                  onChange={v => setIntervalMin(v || 10)}
-                  min={1}
-                  max={1440}
-                  size="small"
-                  style={{ width: 100, marginTop: 2 }}
-                  addonAfter={t('kms.settingsPanel.minutesUnit')}
-                  disabled={!autoEnabled}
-                />
+                <Space.Compact style={{ width: 130, marginTop: 2 }}>
+                  <InputNumber
+                    value={intervalMin}
+                    onChange={v => setIntervalMin(v || 10)}
+                    min={1}
+                    max={1440}
+                    size="small"
+                    style={{ width: '70%' }}
+                    disabled={!autoEnabled}
+                  />
+                  <span style={addonStyle}>{t('kms.settingsPanel.minutesUnit')}</span>
+                </Space.Compact>
               </div>
             </div>
 
@@ -297,16 +310,18 @@ const KMSIndexPanel: React.FC<KMSIndexPanelProps> = ({
                 <Text style={{ display: 'block', fontSize: 12 }}>
                   {t('kms.settingsPanel.autoIndexStableThreshold')}
                 </Text>
-                <InputNumber
-                  value={stableThreshold}
-                  onChange={v => setStableThreshold(v || 0)}
-                  min={0}
-                  max={1440}
-                  size="small"
-                  style={{ width: 100, marginTop: 2 }}
-                  addonAfter={t('kms.settingsPanel.minutesUnit')}
-                  disabled={!autoEnabled}
-                />
+                <Space.Compact style={{ width: 130, marginTop: 2 }}>
+                  <InputNumber
+                    value={stableThreshold}
+                    onChange={v => setStableThreshold(v || 0)}
+                    min={0}
+                    max={1440}
+                    size="small"
+                    style={{ width: '70%' }}
+                    disabled={!autoEnabled}
+                  />
+                  <span style={addonStyle}>{t('kms.settingsPanel.minutesUnit')}</span>
+                </Space.Compact>
               </div>
             </div>
           </div>

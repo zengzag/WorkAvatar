@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import {
-  List, Tag, Button, Space, Tooltip, Popconfirm, Switch, Empty, Spin, Typography, theme, Popover,
+  Tag, Button, Space, Tooltip, Popconfirm, Switch, Empty, Spin, Typography, theme, Popover,
 } from 'antd'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, ClockCircleOutlined,
@@ -78,12 +78,12 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <List
-        loading={false}
-        dataSource={tasks}
-        renderItem={(task) => (
-          <List.Item
+      <div>
+        {tasks.map((task) => (
+          <div
+            key={task.id}
             style={{
+              display: 'flex',
               padding: '14px 20px',
               borderBottom: `1px solid ${token.colorBorderSecondary}`,
               flexDirection: 'column',
@@ -239,9 +239,9 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
                 </Typography.Text>
               </div>
             )}
-          </List.Item>
-        )}
-      />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

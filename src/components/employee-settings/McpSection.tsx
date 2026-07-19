@@ -441,7 +441,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
         {servers.length === 0 ? (
           <Empty
             description={
-              <Space direction="vertical" size={4}>
+              <Space orientation="vertical" size={4}>
                 <Text type="secondary">{t('employeeSettings.mcpEmpty')}</Text>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {t('employeeSettings.mcpEmptyHint')}

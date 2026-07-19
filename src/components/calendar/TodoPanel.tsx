@@ -148,22 +148,22 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
         {stats && (
           <Row gutter={[8, 8]}>
             <Col span={8}>
-              <Statistic title={t('calendar.statsTotal')} value={stats.total} valueStyle={{ fontSize: 16 }} />
+              <Statistic title={t('calendar.statsTotal')} value={stats.total} styles={{ content: { fontSize: 16 } }} />
             </Col>
             <Col span={8}>
-              <Statistic title={t('calendar.statsPending')} value={stats.pending} valueStyle={{ fontSize: 16, color: token.colorTextSecondary }} />
+              <Statistic title={t('calendar.statsPending')} value={stats.pending} styles={{ content: { fontSize: 16, color: token.colorTextSecondary } }} />
             </Col>
             <Col span={8}>
-              <Statistic title={t('calendar.statsCompleted')} value={stats.completed} valueStyle={{ fontSize: 16, color: token.colorSuccess }} />
+              <Statistic title={t('calendar.statsCompleted')} value={stats.completed} styles={{ content: { fontSize: 16, color: token.colorSuccess } }} />
             </Col>
             <Col span={8}>
-              <Statistic title={t('calendar.statsOverdue')} value={stats.overdue} valueStyle={{ fontSize: 16, color: stats.overdue > 0 ? token.colorError : token.colorTextSecondary }} />
+              <Statistic title={t('calendar.statsOverdue')} value={stats.overdue} styles={{ content: { fontSize: 16, color: stats.overdue > 0 ? token.colorError : token.colorTextSecondary } }} />
             </Col>
             <Col span={8}>
-              <Statistic title={t('calendar.statsDueToday')} value={stats.due_today} valueStyle={{ fontSize: 16, color: stats.due_today > 0 ? token.colorWarning : token.colorTextSecondary }} />
+              <Statistic title={t('calendar.statsDueToday')} value={stats.due_today} styles={{ content: { fontSize: 16, color: stats.due_today > 0 ? token.colorWarning : token.colorTextSecondary } }} />
             </Col>
             <Col span={8}>
-              <Statistic title={t('calendar.statsCompletionRate')} value={stats.completion_rate} suffix="%" valueStyle={{ fontSize: 16 }} />
+              <Statistic title={t('calendar.statsCompletionRate')} value={stats.completion_rate} suffix="%" styles={{ content: { fontSize: 16 } }} />
             </Col>
           </Row>
         )}
