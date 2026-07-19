@@ -5,6 +5,7 @@ import {
   PushpinOutlined, PushpinFilled, ReloadOutlined, DeleteOutlined,
   EditOutlined, SaveOutlined, CloseOutlined, FileTextOutlined,
   ClockCircleOutlined, EyeOutlined, BookOutlined,
+  StopOutlined, CheckCircleOutlined,
 } from '@ant-design/icons'
 import { formatRelativeTimeShort } from '../../utils/format'
 
@@ -35,7 +36,7 @@ export interface KnowledgeCard {
   keyPoints: KnowledgeCardKeyPoint[]
   citations: KnowledgeCardCitation[]
   relatedFileIds: string[]
-  status: 'active' | 'stale' | 'archived' | 'generating'
+  status: 'active' | 'stale' | 'archived' | 'disabled' | 'generating'
   pinned: boolean
   searchCount: number
   createdAt: number
@@ -151,6 +152,42 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
     })
   }, [localCard, t, message, modal, onDeleted, onClose])
 
+  const [disabling, setDisabling] = useState(false)
+
+  const handleDisable = useCallback(() => {
+    if (!localCard) return
+    modal.confirm({
+      title: t('kms.knowledgeCards.disableConfirm'),
+      okText: t('kms.knowledgeCards.disable'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setDisabling(true)
+        try {
+          await window.electronAPI.kms.disableKnowledgeCard(localCard.id)
+          message.success(t('kms.knowledgeCards.disableSuccess'))
+          setLocalCard({ ...localCard, status: 'disabled' })
+          onDeleted?.()
+        } catch (err: any) {
+          message.error(err?.message || 'Failed')
+        } finally {
+          setDisabling(false)
+        }
+      },
+    })
+  }, [localCard, t, message, modal, onDeleted])
+
+  const handleEnable = useCallback(async () => {
+    if (!localCard) return
+    try {
+      await window.electronAPI.kms.enableKnowledgeCard(localCard.id)
+      message.success(t('kms.knowledgeCards.enableSuccess'))
+      setLocalCard({ ...localCard, status: 'active' })
+    } catch (err: any) {
+      message.error(err?.message || 'Failed')
+    }
+  }, [localCard, t, message])
+
   const handleTogglePin = useCallback(async () => {
     if (!localCard) return
     setPinning(true)
@@ -179,6 +216,7 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
     if (status === 'active') return <Tag color="green">{t('kms.knowledgeCards.statusActive')}</Tag>
     if (status === 'stale') return <Tag color="orange">{t('kms.knowledgeCards.statusStale')}</Tag>
     if (status === 'archived') return <Tag>{t('kms.knowledgeCards.statusArchived')}</Tag>
+    if (status === 'disabled') return <Tag color="red">{t('kms.knowledgeCards.statusDisabled')}</Tag>
     return null
   }
 
@@ -373,10 +411,20 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
                 icon={localCard.pinned ? <PushpinFilled style={{ color: token.colorPrimary }} /> : <PushpinOutlined />}
                 onClick={handleTogglePin}
                 loading={pinning}
+                disabled={localCard.status === 'disabled'}
               >
                 {localCard.pinned ? t('kms.knowledgeCards.unpin') : t('kms.knowledgeCards.pin')}
               </Button>
               <Space>
+                {localCard.status === 'disabled' ? (
+                  <Button icon={<CheckCircleOutlined />} onClick={handleEnable}>
+                    {t('kms.knowledgeCards.enable')}
+                  </Button>
+                ) : (
+                  <Button icon={<StopOutlined />} onClick={handleDisable} loading={disabling}>
+                    {t('kms.knowledgeCards.disable')}
+                  </Button>
+                )}
                 <Button icon={<ReloadOutlined />} onClick={() => onRefresh?.()} loading={processing}>
                   {t('common.refresh')}
                 </Button>

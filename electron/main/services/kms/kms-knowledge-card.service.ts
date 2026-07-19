@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import KMSDatabaseService from './kms-database.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
+import KMSStopWordsService from './kms-stop-words.service'
 import LLMClientService from '../llm-client.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
@@ -41,7 +42,7 @@ export interface KnowledgeCard {
   keyPoints: KnowledgeCardKeyPoint[]
   citations: KnowledgeCardCitation[]
   relatedFileIds: string[]
-  status: 'active' | 'stale' | 'archived'
+  status: 'active' | 'stale' | 'archived' | 'disabled'
   pinned: boolean
   searchCount: number
   createdAt: number
@@ -85,7 +86,7 @@ class KMSKnowledgeCardService {
   }
 
   listCards(params?: {
-    status?: 'active' | 'stale' | 'archived'
+    status?: 'active' | 'stale' | 'archived' | 'disabled'
     keyword?: string
     pinnedOnly?: boolean
     limit?: number
@@ -128,7 +129,7 @@ class KMSKnowledgeCardService {
   getCardByKeyword(keyword: string): KnowledgeCard | null {
     const normalized = KMSKeywordStatsService.getInstance().normalizeKeyword(keyword)
     const row = this.db.prepare(
-      "SELECT * FROM kms_knowledge_cards WHERE keyword = ? AND status != 'archived'"
+      "SELECT * FROM kms_knowledge_cards WHERE keyword = ? AND status NOT IN ('archived', 'disabled')"
     ).get(normalized) as any
     return row ? this.rowToCard(row) : null
   }
@@ -136,29 +137,49 @@ class KMSKnowledgeCardService {
   async searchCards(query: string, topK: number = 3): Promise<KnowledgeCard[]> {
     const normalized = KMSKeywordStatsService.getInstance().normalizeKeyword(query)
 
-    const exact = this.getCardByKeyword(query)
-    if (exact) return [exact]
+    // 多关键词搜索：按空格拆分，对每个子词分别查找卡片，合并去重
+    const segments = normalized.split(/\s+/).filter(s => s.length > 0)
+    const searchTerms = segments.length > 1 ? segments : [normalized]
+    const foundCards = new Map<string, KnowledgeCard>()
 
-    const likeRows = this.db.prepare(
-      "SELECT * FROM kms_knowledge_cards WHERE status != 'archived' AND (keyword LIKE ? OR display_keyword LIKE ?) ORDER BY search_count DESC LIMIT ?"
-    ).all(`%${normalized}%`, `%${normalized}%`, topK) as any[]
+    for (const term of searchTerms) {
+      // 精确匹配
+      const exact = this.db.prepare(
+        "SELECT * FROM kms_knowledge_cards WHERE keyword = ? AND status NOT IN ('archived', 'disabled')"
+      ).get(term) as any
+      if (exact) {
+        const card = this.rowToCard(exact)
+        if (!foundCards.has(card.id)) foundCards.set(card.id, card)
+        continue
+      }
 
-    if (likeRows.length > 0) {
-      return likeRows.map(r => this.rowToCard(r))
+      // LIKE 匹配
+      const likeRows = this.db.prepare(
+        "SELECT * FROM kms_knowledge_cards WHERE status NOT IN ('archived', 'disabled') AND (keyword LIKE ? OR display_keyword LIKE ?) ORDER BY search_count DESC LIMIT ?"
+      ).all(`%${term}%`, `%${term}%`, topK) as any[]
+      for (const row of likeRows) {
+        const card = this.rowToCard(row)
+        if (!foundCards.has(card.id)) foundCards.set(card.id, card)
+      }
     }
 
+    if (foundCards.size >= topK) {
+      return Array.from(foundCards.values()).slice(0, topK)
+    }
+
+    // 语义匹配作为兜底
     try {
       const embConfig = getKmsEmbeddingConfig()
-      if (!embConfig) return []
+      if (!embConfig) return Array.from(foundCards.values()).slice(0, topK)
 
       const llmClient = LLMClientService.getInstance()
       const queryEmbedding = await llmClient.createEmbedding(embConfig.providerId, query, embConfig.modelName)
 
       const cardRows = this.db.prepare(
-        "SELECT * FROM kms_knowledge_cards WHERE status != 'archived' AND embedding IS NOT NULL AND dimension > 0"
+        "SELECT * FROM kms_knowledge_cards WHERE status NOT IN ('archived', 'disabled') AND embedding IS NOT NULL AND dimension > 0"
       ).all() as any[]
 
-      if (cardRows.length === 0) return []
+      if (cardRows.length === 0) return Array.from(foundCards.values()).slice(0, topK)
 
       const scored = cardRows.map(row => {
         try {
@@ -171,14 +192,14 @@ class KMSKnowledgeCardService {
         }
       })
 
-      return scored
-        .filter(s => s.score > 0.75)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK)
-        .map(s => s.card)
+      for (const s of scored.filter(s => s.score > 0.75).sort((a, b) => b.score - a.score)) {
+        if (!foundCards.has(s.card.id)) foundCards.set(s.card.id, s.card)
+      }
+
+      return Array.from(foundCards.values()).slice(0, topK)
     } catch (err: any) {
       logger.warn('Semantic card search failed:', err?.message || err)
-      return []
+      return Array.from(foundCards.values()).slice(0, topK)
     }
   }
 
@@ -197,11 +218,16 @@ class KMSKnowledgeCardService {
     const normalized = keywordStats.normalizeKeyword(keyword)
     if (!normalized) return { success: false, error: 'INVALID_KEYWORD' }
 
+    // 停用词检查：已被禁用的关键词不允许生成卡片
+    if (KMSStopWordsService.getInstance().isStopWord(normalized)) {
+      return { success: false, error: 'KEYWORD_DISABLED' }
+    }
+
     // 并发保护：同一关键词只允许一个生成流程
     if (this.generatingKeywords.has(normalized)) return { success: false, error: 'CARD_ALREADY_EXISTS' }
 
     const existing = this.db.prepare(
-      "SELECT id FROM kms_knowledge_cards WHERE keyword = ? AND status != 'archived'"
+      "SELECT id FROM kms_knowledge_cards WHERE keyword = ? AND status NOT IN ('archived', 'disabled')"
     ).get(normalized) as any
     if (existing) return { success: false, error: 'CARD_ALREADY_EXISTS' }
 
@@ -336,7 +362,35 @@ class KMSKnowledgeCardService {
   }
 
   deleteCard(id: string): void {
+    // 先获取卡片关键词，删除后重置对应搜索次数，避免删除后立即重新生成
+    const row = this.db.prepare('SELECT keyword FROM kms_knowledge_cards WHERE id = ?').get(id) as any
     this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(id)
+    if (row?.keyword) {
+      this.db.prepare('UPDATE kms_keyword_stats SET search_count = 0, updated_at = unixepoch() WHERE keyword = ?').run(row.keyword)
+    }
+  }
+
+  /**
+   * 禁用知识卡片：将卡片状态设为 disabled，同时把关键词加入停用词表。
+   * 禁用后该关键词不会再被自动生成卡片，也不会出现在搜索结果中。
+   */
+  disableCard(id: string): void {
+    const row = this.db.prepare('SELECT keyword FROM kms_knowledge_cards WHERE id = ?').get(id) as any
+    if (!row?.keyword) return
+    this.db.prepare("UPDATE kms_knowledge_cards SET status = 'disabled', updated_at = unixepoch() WHERE id = ?").run(id)
+    // 将关键词加入停用词表（用户手动操作 → source='manual'）
+    KMSStopWordsService.getInstance().addStopWord(row.keyword, 'manual')
+    logger.info(`Knowledge card "${row.keyword}" disabled and added to stop words`)
+  }
+
+  /** 启用知识卡片：恢复为 active 状态，并从停用词表中移除 */
+  enableCard(id: string): void {
+    const row = this.db.prepare('SELECT keyword FROM kms_knowledge_cards WHERE id = ?').get(id) as any
+    if (!row?.keyword) return
+    this.db.prepare("UPDATE kms_knowledge_cards SET status = 'active', updated_at = unixepoch() WHERE id = ?").run(id)
+    // 从停用词表中移除
+    KMSStopWordsService.getInstance().deleteStopWordByWord(row.keyword)
+    logger.info(`Knowledge card "${row.keyword}" enabled and removed from stop words`)
   }
 
   pinCard(id: string, pinned: boolean): void {

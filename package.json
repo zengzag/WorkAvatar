@@ -11,7 +11,7 @@
     "build": "tsc && vite build && electron-builder",
     "build:win": "electron-builder --win",
     "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs && node scripts/install-sherpa-directml.cjs"
+    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs"
   },
   "keywords": [
     "数字员工",
@@ -20,10 +20,11 @@
     "零代码"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
     "@file-viewer/react-full": "^2.1.26",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@node-rs/jieba": "^2.0.1",
     "@types/react-syntax-highlighter": "^15.5.13",
     "adm-zip": "^0.5.17",
@@ -35,8 +36,8 @@
     "filesize": "^11.0.17",
     "i18next": "^26.1.0",
     "immer": "^11.1.7",
-    "js-yaml": "^4.1.1",
-    "katex": "^0.16.47",
+    "js-yaml": "^5.2.1",
+    "katex": "^0.18.0",
     "mammoth": "^1.12.0",
     "onnxruntime-node": "^1.27.0",
     "paddleocr": "^1.2.0",
@@ -76,7 +77,7 @@
     "eslint": "^10.4.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
-    "vite-plugin-electron": "^0.29.1",
-    "vite-plugin-electron-renderer": "^0.14.7"
+    "vite-plugin-electron": "^1.1.0",
+    "vite-plugin-electron-renderer": "^1.0.0"
   }
 }

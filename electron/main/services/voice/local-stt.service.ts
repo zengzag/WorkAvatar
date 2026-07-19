@@ -32,8 +32,6 @@ interface RealtimeSession {
   totalSamples: number
   sampleRate: number
   segmentStartSample: number
-  /** 音频增益倍数，默认 1.0 */
-  gain: number
 }
 
 // sherpa-onnx-node is loaded dynamically to avoid blocking startup when not used
@@ -41,8 +39,6 @@ let sherpaOnnx: any = null
 let recognizer: any = null
 let recognizerIsStreaming: boolean = false
 let currentConfigKey: string = ''
-/** 当前识别器实际使用的 provider（GPU 不可用时回退到 cpu） */
-let activeProvider: string = 'cpu'
 
 /** 在模型目录中查找匹配的文件（支持多候选文件名） */
 function findModelFile(modelDir: string, candidates: string[]): string | null {
@@ -287,8 +283,7 @@ class LocalSTTService {
     const modelDir = getBuiltinModelDir()
     const resolved = resolveModelFiles('zipformer', modelDir)
     const isStreaming = resolved.isStreaming ?? true
-    const useGPU = config.useGPU === true
-    const configKey = `zipformer:${modelDir}:${config.language}:${useGPU ? 'gpu' : 'cpu'}`
+    const configKey = `zipformer:${modelDir}:${config.language}`
 
     if (recognizer && currentConfigKey === configKey) {
       return { recognizer, isStreaming: recognizerIsStreaming }
@@ -303,16 +298,11 @@ class LocalSTTService {
 
     const lib = this.loadSherpaOnnx()
 
-    // 决定 provider：Windows 上 useGPU → directml，否则 cpu
-    // 注意：需要 sherpa-onnx 编译时启用 SHERPA_ONNX_ENABLE_DIRECTML=ON
-    // 否则会静默回退到 cpu（见 session.cc 中 #if defined(_WIN32) && SHERPA_ONNX_ENABLE_DIRECTML == 1）
-    const requestedProvider = useGPU ? 'directml' : 'cpu'
-
-    // 构建模型配置 - 固定使用 zipformer transducer
+    // 构建模型配置 - 固定使用 zipformer transducer，CPU 推理
     const modelConfig: any = {
       tokens: resolved.files.tokens,
-      numThreads: useGPU ? 1 : 2,  // GPU 模式单线程即可；CPU 模式利用多线程
-      provider: requestedProvider,
+      numThreads: 2,
+      provider: 'cpu',
       debug: 0,
       transducer: {
         encoder: resolved.files.encoder,
@@ -338,40 +328,11 @@ class LocalSTTService {
       recognizerConfig.rule1MinTrailingSilence = 2.4
       recognizerConfig.rule2MinTrailingSilence = 1.2
       recognizerConfig.rule3MinUtteranceLength = 20
-      try {
-        recognizer = new lib.OnlineRecognizer(recognizerConfig)
-        activeProvider = useGPU ? 'directml' : 'cpu'
-        logger.info(`Online recognizer created (内置流式 Zipformer, provider=${activeProvider}): ${modelDir}`)
-      } catch (err: any) {
-        // GPU 初始化失败时回退到 CPU
-        if (useGPU) {
-          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
-          modelConfig.provider = 'cpu'
-          modelConfig.numThreads = 2
-          recognizer = new lib.OnlineRecognizer(recognizerConfig)
-          activeProvider = 'cpu'
-          logger.info(`Online recognizer created (fallback to CPU): ${modelDir}`)
-        } else {
-          throw err
-        }
-      }
+      recognizer = new lib.OnlineRecognizer(recognizerConfig)
+      logger.info(`Online recognizer created (内置流式 Zipformer, provider=cpu): ${modelDir}`)
     } else {
-      try {
-        recognizer = new lib.OfflineRecognizer(recognizerConfig)
-        activeProvider = useGPU ? 'directml' : 'cpu'
-        logger.info(`Offline recognizer created (内置 Zipformer, provider=${activeProvider}): ${modelDir}`)
-      } catch (err: any) {
-        if (useGPU) {
-          logger.warn(`DirectML init failed, falling back to CPU: ${err?.message || err}`)
-          modelConfig.provider = 'cpu'
-          modelConfig.numThreads = 2
-          recognizer = new lib.OfflineRecognizer(recognizerConfig)
-          activeProvider = 'cpu'
-          logger.info(`Offline recognizer created (fallback to CPU): ${modelDir}`)
-        } else {
-          throw err
-        }
-      }
+      recognizer = new lib.OfflineRecognizer(recognizerConfig)
+      logger.info(`Offline recognizer created (内置 Zipformer, provider=cpu): ${modelDir}`)
     }
 
     currentConfigKey = configKey
@@ -579,20 +540,9 @@ class LocalSTTService {
 
     if (signal?.aborted) throw new Error('Aborted')
 
-    // 应用增益（如果配置了灵敏度）
-    const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
-    let processedSamples = samples
-    if (gain !== 1.0) {
-      processedSamples = new Float32Array(samples.length)
-      for (let i = 0; i < samples.length; i++) {
-        const v = samples[i] * gain
-        processedSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
-      }
-    }
-
     const result = isStreaming
-      ? this.transcribeOnline(rec, processedSamples, sampleRate, onProgress, signal)
-      : this.transcribeOffline(rec, processedSamples, sampleRate, onProgress, signal)
+      ? this.transcribeOnline(rec, samples, sampleRate, onProgress, signal)
+      : this.transcribeOffline(rec, samples, sampleRate, onProgress, signal)
 
     onProgress?.(95, 'Finalizing transcript...')
 
@@ -620,8 +570,6 @@ class LocalSTTService {
         return { ok: false, error: '实时识别仅支持流式模型（streaming zipformer），请切换模型或使用录音后识别' }
       }
 
-      const gain = config.sensitivity ? Math.max(0.5, Math.min(5.0, config.sensitivity)) : 1.0
-
       const stream = rec.createStream()
       const session: RealtimeSession = {
         recognizer: rec,
@@ -631,7 +579,6 @@ class LocalSTTService {
         totalSamples: 0,
         sampleRate: 16000,
         segmentStartSample: 0,
-        gain,
       }
       this.realtimeSessions.set(taskId, session)
       logger.info(`Realtime recognition started: taskId=${taskId}`)
@@ -659,20 +606,9 @@ class LocalSTTService {
       return { text: '', partialText: '', isEndpoint: false }
     }
 
-    const { recognizer: rec, stream, gain } = session
+    const { recognizer: rec, stream } = session
 
-    // 应用增益（amplify / attenuate），默认 1.0 不改变
-    let audioSamples = samples
-    if (gain !== 1.0) {
-      audioSamples = new Float32Array(samples.length)
-      for (let i = 0; i < samples.length; i++) {
-        const v = samples[i] * gain
-        // 削波保护（clamp 到 [-1, 1]），防止过载失真
-        audioSamples[i] = v > 1.0 ? 1.0 : v < -1.0 ? -1.0 : v
-      }
-    }
-
-    stream.acceptWaveform({ samples: audioSamples, sampleRate })
+    stream.acceptWaveform({ samples, sampleRate })
     session.totalSamples += samples.length
 
     // 持续解码

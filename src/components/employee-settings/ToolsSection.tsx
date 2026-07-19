@@ -8,7 +8,6 @@ import {
   Tag,
   Empty,
   Typography,
-  Alert,
   theme,
 } from 'antd'
 import { ToolOutlined, ClockCircleOutlined, CalculatorOutlined } from '@ant-design/icons'
@@ -46,13 +45,6 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({ employeeTools, onToggleTool
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
-      <Alert
-        title={t('employeeSettings.toolsAlertTitle')}
-        description={t('employeeSettings.toolsAlertDesc')}
-        type="info"
-        showIcon
-      />
-
       <Card
         title={
           <Space>

@@ -24,6 +24,7 @@ import {
   SkillsSection,
   ExportImportSection,
   MemorySection,
+  McpSection,
 } from '../components/employee-settings'
 import type { Employee } from '../types'
 
@@ -348,39 +349,49 @@ const EmployeeSettings: React.FC = () => {
 
   if (!employee) {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 16 }}>
         <Card loading />
       </div>
     )
   }
 
+  // 内容区容器：统一顶部留白 + 滚动
+  const contentWrap = (node: React.ReactNode) => (
+    <div style={{ padding: '16px 16px 20px', height: '100%', overflow: 'auto' }}>
+      {node}
+    </div>
+  )
+
   return (
-    <div style={{ padding: '16px 24px 24px' }}>
-      <PageHeader
-        title={employee.name}
-        subTitle={t('employeeSettings.subtitle')}
-        onBack={() => navigate(`/employee/${id}`)}
-        breadcrumb={[
-          { title: t('employeeSettings.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
-          { title: employee.name },
-          { title: t('employeeSettings.breadcrumbConfig') },
-        ]}
-        extra={
-          <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
-            {t('common.save')}
-          </Button>
-        }
-      />
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
+        <PageHeader
+          title={employee.name}
+          subTitle={t('employeeSettings.subtitle')}
+          onBack={() => navigate(`/employee/${id}`)}
+          breadcrumb={[
+            { title: t('employeeSettings.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
+            { title: employee.name },
+            { title: t('employeeSettings.breadcrumbConfig') },
+          ]}
+          extra={
+            <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
+              {t('common.save')}
+            </Button>
+          }
+        />
+      </div>
 
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
-        style={{ marginTop: 16 }}
+        className="employee-settings-tabs"
+        style={{ flex: 1, minHeight: 0, height: '100%', paddingLeft: 16, paddingRight: 16 }}
         items={[
           {
             key: 'basic',
             label: t('employeeSettings.tabBasic'),
-            children: (
+            children: contentWrap(
               <BasicInfoSection
                 form={form}
                 loading={loading}
@@ -394,7 +405,7 @@ const EmployeeSettings: React.FC = () => {
           {
             key: 'tools',
             label: t('employeeSettings.tabTools'),
-            children: (
+            children: contentWrap(
               <ToolsSection
                 employeeTools={employeeTools}
                 onToggleTool={handleToggleTool}
@@ -402,9 +413,14 @@ const EmployeeSettings: React.FC = () => {
             )
           },
           {
+            key: 'mcp',
+            label: t('employeeSettings.tabMcp'),
+            children: contentWrap(<McpSection employeeId={id!} />)
+          },
+          {
             key: 'skills-market',
             label: t('employeeSettings.tabSkills'),
-            children: (
+            children: contentWrap(
               <SkillsSection
                 installedSkills={installedSkills}
                 employeeSkills={employeeSkills}
@@ -419,7 +435,7 @@ const EmployeeSettings: React.FC = () => {
           {
             key: 'memory',
             label: t('employeeSettings.tabMemory'),
-            children: (
+            children: contentWrap(
               <MemorySection
                 employeeId={id!}
                 memoryEnabled={employee.memory_enabled}
@@ -430,7 +446,7 @@ const EmployeeSettings: React.FC = () => {
           {
             key: 'stats',
             label: t('employeeSettings.tabMonitor'),
-            children: (
+            children: contentWrap(
               <ProfileSection
                 employee={employee}
               />
@@ -439,7 +455,7 @@ const EmployeeSettings: React.FC = () => {
           {
             key: 'export-import',
             label: t('employeeSettings.tabExportImport'),
-            children: (
+            children: contentWrap(
               <ExportImportSection
                 employeeId={id!}
                 employeeName={employee.name}
@@ -448,6 +464,26 @@ const EmployeeSettings: React.FC = () => {
           }
         ]}
       />
+      <style>{`
+        .employee-settings-tabs.ant-tabs {
+          height: 100%;
+        }
+        .employee-settings-tabs .ant-tabs-body-holder {
+          flex: auto;
+          min-width: 0;
+          min-height: 0;
+          overflow: hidden;
+        }
+        .employee-settings-tabs .ant-tabs-body {
+          height: 100%;
+        }
+        .employee-settings-tabs .ant-tabs-content {
+          height: 100%;
+        }
+        .employee-settings-tabs .ant-tabs-tabpane {
+          height: 100%;
+        }
+      `}</style>
     </div>
   )
 }

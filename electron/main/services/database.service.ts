@@ -263,6 +263,34 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_key ON employee_memories(employee_id, key);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_updated ON employee_memories(updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_emp_pin_updated ON employee_memories(employee_id, is_pinned, updated_at DESC);
+
+      -- 数字员工 MCP server 配置表
+      -- 每条记录是一个员工接入的外部 MCP server，agent 初始化时按 employee_id 拉取启用的 server 并注入其工具
+      CREATE TABLE IF NOT EXISTS employee_mcp_servers (
+        id TEXT PRIMARY KEY,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        -- 传输类型：stdio（启动子进程） / streamableHttp（HTTP+SSE） / sse（旧版 SSE）
+        transport_type TEXT NOT NULL DEFAULT 'stdio',
+        -- stdio 模式字段
+        command TEXT,
+        args_json TEXT DEFAULT '[]',
+        env_json TEXT DEFAULT '{}',
+        -- HTTP/SSE 模式字段
+        url TEXT,
+        headers_json TEXT DEFAULT '{}',
+        -- 状态与缓存
+        is_enabled BOOLEAN NOT NULL DEFAULT 1,
+        status TEXT DEFAULT 'unknown',
+        last_error TEXT,
+        -- 缓存最近一次拉取的工具清单（JSON 数组），避免每次 agent 创建都连接 server
+        tools_json TEXT DEFAULT '[]',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_employee ON employee_mcp_servers(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_enabled ON employee_mcp_servers(employee_id, is_enabled);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')
@@ -277,6 +305,7 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'last_message_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'memory_extracted_at', 'INTEGER')
+    this.addColumnIfNotExists('conversations', 'memory_extracted_message_count', 'INTEGER NOT NULL DEFAULT 0')
 
     this.migrateConversationLastMessageAt()
 

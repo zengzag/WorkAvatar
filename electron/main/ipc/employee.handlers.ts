@@ -204,11 +204,22 @@ export function registerEmployeeHandlers(
   // 业务语义错误返回 { success: false, error }，与 safeHandle 的 { error } 不同，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT, async (_, params: EmployeeMemoryExtractParams) => {
     try {
+      // 前端可能未传 model_id，统一用 resolveEmployeeLLM 解析
+      let providerId = params.provider_id
+      let modelId = params.model_id
+      if (!providerId || !modelId?.trim()) {
+        const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
+        if (!resolved) {
+          return { success: false, error: 'NO_LLM_PROVIDER' }
+        }
+        providerId = resolved.providerId
+        modelId = resolved.modelId
+      }
       const result = await memoryService.extractMemoriesFromConversation(
         params.employee_id,
         params.messages,
-        params.provider_id,
-        params.model_id,
+        providerId,
+        modelId,
         params.conversation_id
       )
       return { success: true, memories: result }
@@ -222,10 +233,21 @@ export function registerEmployeeHandlers(
 
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_CONSOLIDATE, async (_, params: EmployeeMemoryConsolidateParams) => {
     try {
+      // 前端可能未传 model_id（旧版调用方或 provider.model 为空），统一用 resolveEmployeeLLM 解析
+      let providerId = params.provider_id
+      let modelId = params.model_id
+      if (!providerId || !modelId?.trim()) {
+        const resolved = await MemoryRefinementService.getInstance().resolveEmployeeLLM()
+        if (!resolved) {
+          return { success: false, error: 'NO_LLM_PROVIDER' }
+        }
+        providerId = resolved.providerId
+        modelId = resolved.modelId
+      }
       const result = await memoryService.consolidateMemories(
         params.employee_id,
-        params.provider_id,
-        params.model_id
+        providerId,
+        modelId
       )
       return { success: true, ...result }
     } catch (error) {

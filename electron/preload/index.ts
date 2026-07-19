@@ -52,6 +52,10 @@ import type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
+  SkillEnvInstallParams,
+  SkillEnvInstallProgress,
+  McpSaveParams,
+  McpTestParams,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -195,6 +199,20 @@ const electronAPI = {
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
   },
 
+  window: {
+    minimize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_MINIMIZE),
+    toggleMaximize: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE),
+    close: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_CLOSE),
+    isMaximized: () => ipcRenderer.invoke(IPC_CHANNELS.WINDOW_IS_MAXIMIZED),
+    onMaximizedChange: (callback: (isMaximized: boolean) => void) => {
+      // 先订阅主进程事件
+      ipcRenderer.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE)
+      const handler = (_event: any, isMaximized: boolean) => callback(isMaximized)
+      ipcRenderer.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
+    },
+  },
+
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
@@ -215,6 +233,38 @@ const electronAPI = {
     assignToEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, params),
     removeFromEmployee: (params: { employee_id: string; skill_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, params),
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
+  },
+
+  skillEnv: {
+    // 检测所有受支持运行时的安装状态
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_LIST),
+    // 一键安装指定运行时（uv / python / node / pip）
+    install: (params: SkillEnvInstallParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_INSTALL, params),
+    // 取消正在进行的安装
+    cancelInstall: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_CANCEL_INSTALL),
+    // 订阅安装进度事件（主进程 → 渲染进程），返回取消订阅函数
+    onProgress: (callback: (progress: SkillEnvInstallProgress) => void) => {
+      const handler = (_event: any, progress: SkillEnvInstallProgress) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
+    },
+  },
+
+  mcp: {
+    // 列出指定员工的所有 MCP server（含状态与缓存工具列表）
+    list: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.MCP_LIST, { employee_id: employeeId }),
+    // 新增 MCP server
+    add: (params: McpSaveParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_ADD, params),
+    // 更新 MCP server 配置
+    update: (params: McpSaveParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_UPDATE, params),
+    // 删除 MCP server
+    delete: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_DELETE, params),
+    // 启用 / 禁用 MCP server
+    toggle: (params: { id: string; enabled: boolean; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TOGGLE, params),
+    // 测试连接（不依赖已缓存的 client，每次新建临时 client）
+    test: (params: McpTestParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TEST, params),
+    // 刷新指定 server 的工具缓存（主动重新连接并 listTools）
+    refreshTools: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_REFRESH_TOOLS, params),
   },
 
   kms: {
@@ -304,8 +354,14 @@ const electronAPI = {
     refreshKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REFRESH_KNOWLEDGE_CARD, id),
     updateKnowledgeCard: (params: KMSUpdateKnowledgeCardParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_KNOWLEDGE_CARD, params),
     deleteKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_KNOWLEDGE_CARD, id),
+    disableKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DISABLE_KNOWLEDGE_CARD, id),
+    enableKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ENABLE_KNOWLEDGE_CARD, id),
     pinKnowledgeCard: (id: string, pinned: boolean) => ipcRenderer.invoke(IPC_CHANNELS.KMS_PIN_KNOWLEDGE_CARD, { id, pinned }),
     searchKnowledgeCards: (params: KMSSearchKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_KNOWLEDGE_CARDS, params),
+    getStopWords: (params?: { source?: 'manual' | 'auto_idf'; limit?: number; offset?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_STOP_WORDS, params || {}),
+    addStopWord: (word: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_STOP_WORD, word),
+    deleteStopWord: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_STOP_WORD, id),
+    clearAutoStopWords: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_CLEAR_AUTO_STOP_WORDS),
   },
 
   kmsMcp: {

@@ -280,14 +280,14 @@ const ConversationSidebar: React.FC<{
 
   return (
     <div style={{
-      width: 280,
+      width: 256,
       flexShrink: 0,
       borderRight: `1px solid ${token.colorBorderSecondary}`,
       display: 'flex',
       flexDirection: 'column',
-      background: token.colorBgLayout,
+      background: token.colorBgContainer,
     }}>
-      <div style={{ padding: '10px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+      <div style={{ padding: '8px', display: 'flex', gap: '6px', alignItems: 'center' }}>
         {selectMode ? (
           <>
             <Button

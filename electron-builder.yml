@@ -94,7 +94,6 @@ extraResources:
     to: resources/
     filter:
       - '**/*'
-      - '!native/**'  # DirectML DLLs already in node_modules/sherpa-onnx-win-x64/
 
 asarUnpack:
   - '**/*.node'

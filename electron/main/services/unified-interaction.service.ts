@@ -50,6 +50,7 @@ export interface SessionContext {
   sessionId: string
   employeeId: string
   conversationId?: string
+  highPermission?: boolean
 }
 
 export const interactionContext = new AsyncLocalStorage<SessionContext>()

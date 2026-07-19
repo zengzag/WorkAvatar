@@ -1,11 +1,13 @@
 import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Tag, Typography, Space, Tooltip, Button, theme, Pagination } from 'antd'
+import { Card, Tag, Typography, Space, Tooltip, Button, Select, theme, Pagination } from 'antd'
 import { FileTextOutlined, FilePdfOutlined, FileExcelOutlined, FileWordOutlined, FileMarkdownOutlined, FileOutlined, CodeOutlined, FolderOpenOutlined, EyeOutlined, ClockCircleOutlined } from '@ant-design/icons'
 import HighlightText from './HighlightText'
 import { formatTime } from './kms-columns'
 
 const { Text } = Typography
+
+type SortBy = 'relevance' | 'modifiedDesc' | 'modifiedAsc' | 'nameAsc'
 
 /**
  * 根据容器宽度动态计算文件名最大显示字符数。
@@ -108,6 +110,77 @@ const getFileIcon = (fileName: string, token: any) => {
     case 'txt': case 'log': return <FileTextOutlined style={{ color: token.colorTextTertiary }} />
     default: return <FileOutlined style={{ color: token.colorTextTertiary }} />
   }
+}
+
+/** 前端排序：按指定字段对搜索结果排序 */
+function sortResults(results: SearchResult[], sortBy: SortBy): SearchResult[] {
+  if (sortBy === 'relevance') return results
+
+  const sorted = [...results]
+  switch (sortBy) {
+    case 'modifiedDesc':
+      sorted.sort((a, b) => {
+        // modified_time 缺失排末尾
+        const aTime = a.modified_time ?? 0
+        const bTime = b.modified_time ?? 0
+        if (aTime === 0 && bTime === 0) return a.file_name.localeCompare(b.file_name)
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        const diff = bTime - aTime
+        return diff !== 0 ? diff : a.file_name.localeCompare(b.file_name)
+      })
+      break
+    case 'modifiedAsc':
+      sorted.sort((a, b) => {
+        const aTime = a.modified_time ?? 0
+        const bTime = b.modified_time ?? 0
+        if (aTime === 0 && bTime === 0) return a.file_name.localeCompare(b.file_name)
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        const diff = aTime - bTime
+        return diff !== 0 ? diff : a.file_name.localeCompare(b.file_name)
+      })
+      break
+    case 'nameAsc':
+      sorted.sort((a, b) => a.file_name.localeCompare(b.file_name))
+      break
+  }
+  return sorted
+}
+
+/** 前端排序：按指定字段对分组结果排序 */
+function sortGroupedResults(groupedResults: [string, SearchResult[]][], sortBy: SortBy): [string, SearchResult[]][] {
+  if (sortBy === 'relevance') return groupedResults
+
+  const sorted = [...groupedResults]
+  switch (sortBy) {
+    case 'modifiedDesc':
+      sorted.sort((a, b) => {
+        const aTime = a[1][0]?.modified_time ?? 0
+        const bTime = b[1][0]?.modified_time ?? 0
+        if (aTime === 0 && bTime === 0) return (a[1][0]?.file_name ?? '').localeCompare(b[1][0]?.file_name ?? '')
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        const diff = bTime - aTime
+        return diff !== 0 ? diff : (a[1][0]?.file_name ?? '').localeCompare(b[1][0]?.file_name ?? '')
+      })
+      break
+    case 'modifiedAsc':
+      sorted.sort((a, b) => {
+        const aTime = a[1][0]?.modified_time ?? 0
+        const bTime = b[1][0]?.modified_time ?? 0
+        if (aTime === 0 && bTime === 0) return (a[1][0]?.file_name ?? '').localeCompare(b[1][0]?.file_name ?? '')
+        if (aTime === 0) return 1
+        if (bTime === 0) return -1
+        const diff = aTime - bTime
+        return diff !== 0 ? diff : (a[1][0]?.file_name ?? '').localeCompare(b[1][0]?.file_name ?? '')
+      })
+      break
+    case 'nameAsc':
+      sorted.sort((a, b) => (a[1][0]?.file_name ?? '').localeCompare(b[1][0]?.file_name ?? ''))
+      break
+  }
+  return sorted
 }
 
 interface KMSSearchResultListProps {
@@ -307,7 +380,14 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
   const { token } = theme.useToken()
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [sortBy, setSortBy] = useState<SortBy>('relevance')
   const topSentinelRef = useRef<HTMLDivElement>(null)
+
+  // 搜索结果变化时重置到第一页，排序重置为相关度
+  useEffect(() => {
+    setCurrentPage(1)
+    setSortBy('relevance')
+  }, [results])
 
   // 按 file_id 分组合并结果
   const groupedResults = useMemo(() => {
@@ -321,14 +401,14 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
     return Array.from(groups.entries())
   }, [results])
 
+  // 排序后的分组结果
+  const sortedGroupedResults = useMemo(() => {
+    return sortGroupedResults(groupedResults, sortBy)
+  }, [groupedResults, sortBy])
+
   const searchKeywords = useMemo(() => {
     return searchQuery.trim().split(/\s+/).filter(kw => kw.length > 0)
   }, [searchQuery])
-
-  // 搜索结果变化时重置到第一页
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [results])
 
   // 翻页时滚动到顶部
   const handlePageChange = useCallback((page: number, size: number) => {
@@ -342,15 +422,35 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
     }, 0)
   }, [])
 
-  const totalItems = searchMode === 'file' ? results.length : groupedResults.length
-  // 文件搜索模式需要按 file_id 去重后才能得到正确的 total，避免与分页逻辑不一致
-  const totalItemsForFileMode = useMemo(() => {
-    if (searchMode !== 'file') return 0
-    return new Set(results.map(r => r.file_id)).size
-  }, [searchMode, results])
+  const handleSortChange = useCallback((value: SortBy) => {
+    setSortBy(value)
+    setCurrentPage(1)
+  }, [])
 
-  const renderPagination = () => {
-    const total = searchMode === 'file' ? totalItemsForFileMode : totalItems
+  const sortOptions = useMemo(() => [
+    { label: t('kms.sortRelevance'), value: 'relevance' as SortBy },
+    { label: t('kms.sortModifiedDesc'), value: 'modifiedDesc' as SortBy },
+    { label: t('kms.sortModifiedAsc'), value: 'modifiedAsc' as SortBy },
+    { label: t('kms.sortNameAsc'), value: 'nameAsc' as SortBy },
+  ], [t])
+
+  const renderResultBar = (count: number) => (
+    <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {t('kms.resultCount', { count })}
+      </Text>
+      <Select
+        size="small"
+        value={sortBy}
+        onChange={handleSortChange}
+        options={sortOptions}
+        style={{ width: 180 }}
+        popupMatchSelectWidth={false}
+      />
+    </div>
+  )
+
+  const renderPagination = (total: number) => {
     if (total <= pageSize) return null
     return (
       <div style={{ textAlign: 'center', marginTop: 12 }}>
@@ -377,17 +477,14 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
       seenFileIds.add(item.file_id)
       dedupedResults.push(item)
     }
+    const sortedResults = sortResults(dedupedResults, sortBy)
     const startIdx = (currentPage - 1) * pageSize
-    const pagedResults = dedupedResults.slice(startIdx, startIdx + pageSize)
+    const pagedResults = sortedResults.slice(startIdx, startIdx + pageSize)
 
     return (
       <div>
         <div ref={topSentinelRef} />
-        <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('kms.resultCount', { count: dedupedResults.length })}
-          </Text>
-        </div>
+        {renderResultBar(dedupedResults.length)}
         {pagedResults.map((item) => (
           <FileNameResultCard
             key={item.file_id}
@@ -400,23 +497,19 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
             onOpenFileDir={onOpenFileDir}
           />
         ))}
-        {renderPagination()}
+        {renderPagination(dedupedResults.length)}
       </div>
     )
   }
 
   // 非文件搜索模式：按文件合并展示
   const startIdx = (currentPage - 1) * pageSize
-  const pagedGroupedResults = groupedResults.slice(startIdx, startIdx + pageSize)
+  const pagedGroupedResults = sortedGroupedResults.slice(startIdx, startIdx + pageSize)
 
   return (
     <div>
       <div ref={topSentinelRef} />
-      <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {t('kms.resultCount', { count: groupedResults.length })}
-        </Text>
-      </div>
+      {renderResultBar(groupedResults.length)}
       {pagedGroupedResults.map(([fileId, fileResults]) => (
         <FileResultCard
           key={fileId}
@@ -429,7 +522,7 @@ const KMSSearchResultList: React.FC<KMSSearchResultListProps> = ({
           onOpenFileDir={onOpenFileDir}
         />
       ))}
-      {renderPagination()}
+      {renderPagination(groupedResults.length)}
     </div>
   )
 }

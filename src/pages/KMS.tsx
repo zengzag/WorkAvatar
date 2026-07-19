@@ -1,11 +1,11 @@
 import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Drawer, Button, Segmented } from 'antd'
-import { SettingOutlined, SearchOutlined, DatabaseOutlined, FolderOutlined } from '@ant-design/icons'
-import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSCollectionsView } from '../components/kms'
+import { SettingOutlined, SearchOutlined, DatabaseOutlined, FolderOutlined, BookOutlined } from '@ant-design/icons'
+import { KMSSearchPanel, KMSFilePreview, KMSSettingsPanel, KMSKnowledgeView, KMSCollectionsView, KMSKnowledgeCardsView } from '../components/kms'
 import { useKMS } from '../hooks/useKMS'
 
-type ViewMode = 'search' | 'knowledge' | 'collections'
+type ViewMode = 'search' | 'knowledge' | 'collections' | 'cards'
 
 interface HighlightRange { start: number; end: number }
 
@@ -116,13 +116,13 @@ const KMSPage: React.FC = () => {
   }, [previewFile, searchQuery])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 16 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 12 }}>
       {/* 顶部工具栏：视图切换 + 设置 */}
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
+        marginBottom: 8,
         flexShrink: 0,
       }}>
         <Segmented
@@ -146,6 +146,15 @@ const KMSPage: React.FC = () => {
                 </span>
               ),
               value: 'collections',
+            },
+            {
+              label: (
+                <span>
+                  <BookOutlined style={{ marginRight: 4 }} />
+                  {t('kms.knowledgeCardsView')}
+                </span>
+              ),
+              value: 'cards',
             },
             {
               label: (
@@ -207,6 +216,8 @@ const KMSPage: React.FC = () => {
             stats={stats}
             onLoadStats={loadStats}
           />
+        ) : viewMode === 'cards' ? (
+          <KMSKnowledgeCardsView onOpenFile={openFile} />
         ) : (
           <KMSCollectionsView
             onSearchInCollection={handleSearchInCollection}

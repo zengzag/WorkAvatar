@@ -94,14 +94,16 @@ export const shellExecTool: ToolDefinition = {
       const isWrite = isFileWriteCommand(command)
       const isModify = isDeletion || isWrite
 
-      if (isModify) {
+      const ctx = interactionContext.getStore()
+      const highPermission = !!ctx?.highPermission
+
+      if (isModify && !highPermission) {
         // 提取命令中的绝对路径，对非工作区路径弹窗确认
         const paths = extractPathsFromCommand(command)
         const nonWorkspacePaths = paths.filter(p => !isPathInWorkspace(p))
 
         if (nonWorkspacePaths.length > 0) {
           // 涉及工作区外文件：逐个确认（覆盖删除/写入/新建/移动/复制）
-          const ctx = interactionContext.getStore()
           if (!ctx) {
             const op = isDeletion ? '删除' : '修改'
             return { success: false, error: `文件${op}操作涉及工作区外路径，但当前无交互上下文（可能是后台任务），已拒绝执行` }
@@ -113,7 +115,6 @@ export const shellExecTool: ToolDefinition = {
           }
         } else if (isDeletion) {
           // 工作区内删除：保留原有命令级确认逻辑
-          const ctx = interactionContext.getStore()
           if (!ctx) {
             return { success: false, error: '删除类命令需要用户确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
           }

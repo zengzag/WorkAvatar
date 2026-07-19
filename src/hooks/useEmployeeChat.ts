@@ -81,6 +81,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [isCreatingConversation, setIsCreatingConversation] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null)
+  const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [showSidePanel, setShowSidePanel] = useState(true)
@@ -396,16 +397,19 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
 
       if (pendingMessage) {
         const msgContent = pendingMessage
+        const msgHighPermission = pendingHighPermission
         setPendingMessage(null)
+        setPendingHighPermission(false)
         pendingSendTimeoutRef.current = setTimeout(() => {
           pendingSendTimeoutRef.current = null
-          sendMessage(convId, msgContent)
+          sendMessage(convId, msgContent, undefined, undefined, { highPermission: msgHighPermission })
         }, 0)
       }
 
       return convId
     } catch {
       setPendingMessage(null)
+      setPendingHighPermission(false)
       return null
     } finally {
       setIsCreatingConversation(false)
@@ -649,7 +653,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             content: userContent,
           },
         ],
-        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 50 },
+        options: { temperature: DEFAULT_TEMPERATURE, max_tokens: 1000 },
       })
 
       if (result.success && result.content) {
@@ -667,13 +671,14 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
-  const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
+  const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
     if (!content.trim() && (!images || images.length === 0)) return
 
     const currentConvId = activeConversationId
     if (!currentConvId) {
       if (isCreatingConversation) return
       setPendingMessage(content.trim())
+      setPendingHighPermission(!!options?.highPermission)
       await startNewConversation()
       return
     }
@@ -681,14 +686,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === currentConvId && s.isStreaming)
     if (hasActiveStream) return
 
-    sendMessage(currentConvId, content.trim(), images, models)
+    sendMessage(currentConvId, content.trim(), images, models, { highPermission: !!options?.highPermission })
   }
 
-  const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>) => {
+  const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
     const targetConvId = convId || activeConversationIdRef.current
     if (!targetConvId) return
 
     if (!content.trim() && (!images || images.length === 0)) return
+
+    const highPermission = !!options?.highPermission
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === targetConvId && s.isStreaming)
     if (hasActiveStream) return
@@ -767,6 +774,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
             enable_thinking: enableThinking,
             conversation_id: targetConvId,
             minimal_mode: minimalMode,
+            high_permission: highPermission,
           })
 
           if (result?.sessionId) {
@@ -831,6 +839,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           enable_thinking: enableThinking,
           conversation_id: targetConvId,
           minimal_mode: minimalMode,
+          high_permission: highPermission,
         })
 
         if (result?.sessionId) {

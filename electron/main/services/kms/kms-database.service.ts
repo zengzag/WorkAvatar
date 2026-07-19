@@ -442,6 +442,17 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_pinned ON kms_knowledge_cards(pinned, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_kms_knowledge_cards_refreshed ON kms_knowledge_cards(last_refreshed_at);
 
+      -- 知识卡片停用词表：用户手动维护 + IDF 自动加入
+      -- source: 'manual'（用户手动添加/卡片禁用）| 'auto_idf'（IDF 过低自动加入）
+      CREATE TABLE IF NOT EXISTS kms_stop_words (
+        id TEXT PRIMARY KEY,
+        word TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_stop_words_word ON kms_stop_words(word);
+
       -- 语音识别录音任务表
       CREATE TABLE IF NOT EXISTS kms_voice_tasks (
         id TEXT PRIMARY KEY,

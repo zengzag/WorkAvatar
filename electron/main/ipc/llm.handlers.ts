@@ -124,6 +124,7 @@ export function registerLLMHandlers(
         sessionId,
         employeeId: params.employee_id,
         conversationId: params.conversation_id,
+        highPermission: params.high_permission === true,
       },
       async () => {
         // 标记 onError 是否已处理过错误，避免 catch 块重复发送 LLM_CHAT_ERROR
@@ -140,6 +141,7 @@ export function registerLLMHandlers(
               enable_thinking: params.enable_thinking,
               conversation_id: params.conversation_id,
               minimal_mode: params.minimal_mode,
+              high_permission: params.high_permission === true,
             },
             {
               onChunk: (chunk: string) => {

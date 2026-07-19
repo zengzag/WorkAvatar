@@ -87,4 +87,5 @@ export interface EmployeeChatStreamParams {
   enable_thinking?: boolean
   conversation_id?: string
   minimal_mode?: boolean
+  high_permission?: boolean
 }

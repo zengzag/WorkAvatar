@@ -1,7 +1,8 @@
 import React, { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Input, Button, Space, Tooltip, Popover, Typography, Tag, Select, theme } from 'antd'
-import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined, CloseCircleFilled } from '@ant-design/icons'
+import { Input, Button, Space, Tooltip, Popover, Typography, Tag, Select, Badge, theme } from 'antd'
+import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined, CloseCircleFilled, FilterOutlined } from '@ant-design/icons'
+import KMSFilterPanel from './KMSFilterPanel'
 import type { SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 const { Text } = Typography
@@ -22,6 +23,17 @@ const formatHistoryTime = (timestamp: number, t: (key: string, options?: any) =>
   return date.toLocaleDateString()
 }
 
+interface IndexDir {
+  id: string
+  dir_path: string
+  display_name: string
+  enabled: number
+  recursive: number
+  file_extensions: string
+  created_at: number
+  updated_at: number
+}
+
 interface KMSSearchInputProps {
   searchQuery: string
   onSearchQueryChange: (query: string) => void
@@ -34,6 +46,17 @@ interface KMSSearchInputProps {
   onDeleteSearchHistory?: (id: string) => void
   onClearSearchHistory?: () => void
   onPickHistory: (item: SearchHistoryItem) => void
+  // Filter props
+  filterDirIds: string[]
+  onFilterDirIdsChange: (ids: string[]) => void
+  filterCollectionIds: string[]
+  onFilterCollectionIdsChange: (ids: string[]) => void
+  filterExtensions: string[]
+  onFilterExtensionsChange: (exts: string[]) => void
+  filterTimeRange: [number, number] | null
+  onFilterTimeRangeChange: (value: [number, number] | null) => void
+  dirs: IndexDir[]
+  collectionOptions: { label: string; value: string }[]
 }
 
 const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
@@ -48,10 +71,21 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   onDeleteSearchHistory,
   onClearSearchHistory,
   onPickHistory,
+  filterDirIds,
+  onFilterDirIdsChange,
+  filterCollectionIds,
+  onFilterCollectionIdsChange,
+  filterExtensions,
+  onFilterExtensionsChange,
+  filterTimeRange,
+  onFilterTimeRangeChange,
+  dirs,
+  collectionOptions,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const [historyOpen, setHistoryOpen] = React.useState(false)
+  const [filterOpen, setFilterOpen] = React.useState(false)
   const historyBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasOpenedHistoryRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -116,6 +150,9 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
     hasOpenedHistoryRef.current = false
     inputRef.current?.focus()
   }, [onSearchQueryChange])
+
+  const activeFilterCount = filterDirIds.length + filterCollectionIds.length + filterExtensions.length +
+    (filterTimeRange ? 1 : 0)
 
   const renderHistoryContent = () => {
     if (!searchHistory || searchHistory.length === 0) {
@@ -244,6 +281,39 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
               </Space>
             }
           />
+        </Popover>
+        <Popover
+          content={
+            <div style={{ width: 320 }}>
+              <KMSFilterPanel
+                filterDirIds={filterDirIds}
+                onFilterDirIdsChange={onFilterDirIdsChange}
+                filterCollectionIds={filterCollectionIds}
+                onFilterCollectionIdsChange={onFilterCollectionIdsChange}
+                filterExtensions={filterExtensions}
+                onFilterExtensionsChange={onFilterExtensionsChange}
+                filterTimeRange={filterTimeRange}
+                onFilterTimeRangeChange={onFilterTimeRangeChange}
+                dirs={dirs}
+                collectionOptions={collectionOptions}
+              />
+            </div>
+          }
+          trigger="click"
+          open={filterOpen}
+          onOpenChange={setFilterOpen}
+          placement="bottomRight"
+          styles={{ container: { padding: '12px 16px' } }}
+        >
+          <Tooltip title={t('kms.advancedFilters')}>
+            <Badge count={activeFilterCount} size="small" offset={[-4, 4]}>
+              <Button
+                size="large"
+                icon={<FilterOutlined />}
+                style={{ flexShrink: 0 }}
+              />
+            </Badge>
+          </Tooltip>
         </Popover>
       </div>
     </div>

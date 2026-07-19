@@ -5,18 +5,18 @@
 }
 
 :root {
-  --font-size-base: 14px;
+  --font-size-base: 13px;
   --font-size-sm: 12px;
-  --font-size-lg: 16px;
-  --font-size-xl: 20px;
-  --bg-primary: #f5f5f5;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --bg-primary: #f7f7f8;
   --bg-secondary: #ffffff;
   --bg-tertiary: #fafafa;
-  --border-color: #f0f0f0;
+  --border-color: #ececec;
   --text-primary: rgba(0, 0, 0, 0.88);
   --text-secondary: rgba(0, 0, 0, 0.65);
   --text-tertiary: rgba(0, 0, 0, 0.45);
-  --shadow-color: rgba(0, 0, 0, 0.06);
+  --shadow-color: rgba(0, 0, 0, 0.04);
   --xy-node-background-color-default: transparent;
   --xy-node-border-default: none;
   --xy-controls-button-background-color-default: #ffffff;
@@ -31,9 +31,9 @@
 
 html.dark {
   --bg-primary: #141414;
-  --bg-secondary: #1f1f1f;
-  --bg-tertiary: #262626;
-  --border-color: #303030;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #1f1f1f;
+  --border-color: #2a2a2a;
   --text-primary: rgba(255, 255, 255, 0.88);
   --text-secondary: rgba(255, 255, 255, 0.65);
   --text-tertiary: rgba(255, 255, 255, 0.45);
@@ -53,7 +53,7 @@ html.dark {
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: var(--font-size-base);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -62,8 +62,8 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -71,20 +71,28 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.2);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .ant-table-wrapper .ant-table {

@@ -129,7 +129,11 @@ class LLMClientService {
 
     const baseURL = this.getBaseURL(config)
     const headers = buildHeaders(config)
-    const modelName = resolveModelName(config, options?.model || config.model)
+    const modelIdentifier = options?.model || config.model
+    if (!modelIdentifier?.trim()) {
+      throw new Error(`Model name is empty for provider "${config.name}" (${config.id}). Please configure a default model.`)
+    }
+    const modelName = resolveModelName(config, modelIdentifier)
     const body = buildRequestBody(config, modelName, messages, false, options)
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()
@@ -230,7 +234,12 @@ class LLMClientService {
 
     const baseURL = this.getBaseURL(config)
     const headers = buildHeaders(config)
-    const modelName = resolveModelName(config, options?.model || config.model)
+    const modelIdentifier = options?.model || config.model
+    if (!modelIdentifier?.trim()) {
+      onError(new Error(`Model name is empty for provider "${config.name}" (${config.id}). Please configure a default model.`))
+      return
+    }
+    const modelName = resolveModelName(config, modelIdentifier)
     const body = buildRequestBody(config, modelName, messages, true, options)
     const logSource = options?.logSource || 'unknown'
     const startTime = Date.now()

@@ -25,7 +25,7 @@ const VoicePage: React.FC = () => {
   }, [checkLocalModel])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 16 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 12 }}>
       {/* Main Content */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <KMSVoiceView onOpenSettings={() => setSettingsOpen(true)} />

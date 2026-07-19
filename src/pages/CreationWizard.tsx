@@ -513,18 +513,18 @@ const CreationWizard: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: 24, height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
       <PageHeader
         title={t('creationWizard.title')}
         onBack={() => navigate('/')}
         breadcrumb={breadcrumbItems}
       />
 
-      <Card style={{ marginBottom: 24 }}>
+      <Card style={{ marginBottom: 16 }}>
         <Steps current={currentStep} items={steps} />
       </Card>
 
-      <Card style={{ marginBottom: 16, minHeight: 400 }}>
+      <Card style={{ marginBottom: 12, minHeight: 400 }}>
         {currentStep === 0 && renderStep1()}
         {currentStep === 1 && renderStep2()}
       </Card>

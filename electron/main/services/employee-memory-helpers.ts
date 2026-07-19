@@ -1,7 +1,5 @@
 import {
   type EmployeeMemory,
-  TRIVIAL_PATTERNS,
-  EXTRACTION_USER_MIN_CHARS,
   EXTRACTION_MAX_EXISTING_MEMORIES,
   CONSOLIDATION_CANDIDATE_MAX,
   MEMORY_MAX_CHARS,
@@ -16,43 +14,18 @@ export function buildFtsQuery(query: string): string {
   return `"${clean}"`
 }
 
-/** 判断是否为无意义的闲聊消息 */
-export function isTrivialMessage(text: string): boolean {
-  const trimmed = text.trim()
-  if (trimmed.length < EXTRACTION_USER_MIN_CHARS) return true
-  for (const pattern of TRIVIAL_PATTERNS) {
-    if (pattern.test(trimmed)) return true
-  }
-  return false
-}
-
-/** 从消息列表中提取最后一轮 user/assistant 对话 */
-export function extractLastTurn(
+/** 过滤消息为仅 content 部分（跳过 tool 消息、reasoning_content、toolCalls），
+ *  按时间顺序格式化为对话文本，不截断——保留完整踩坑细节（工具名、报错信息、阈值）。
+ *  用于增量记忆提取：每次只处理自上次提取以来的新消息，配合 conversations.summary
+ *  作为运行式摘要压缩已提取的历史对话。
+ */
+export function formatContentOnlyMessages(
   messages: Array<{ role: string; content: string }>
-): { user: string; assistant: string } | null {
-  let lastAssistant = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant') { lastAssistant = i; break }
-  }
-  if (lastAssistant < 0) return null
-
-  let lastUser = -1
-  for (let i = lastAssistant - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') { lastUser = i; break }
-  }
-  if (lastUser < 0) return null
-
-  return {
-    user: messages[lastUser].content,
-    assistant: messages[lastAssistant].content,
-  }
-}
-
-/** 格式化单轮对话用于提取，超长截断 */
-export function formatTurnForExtraction(turn: { user: string; assistant: string }): string {
-  const maxLen = 600
-  const truncate = (s: string) => s.length > maxLen ? s.substring(0, maxLen) + '...' : s
-  return `用户: ${truncate(turn.user)}\n助手: ${truncate(turn.assistant)}`
+): string {
+  return messages
+    .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content && m.content.trim().length > 0)
+    .map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`)
+    .join('\n')
 }
 
 /** 将记忆列表格式化为 prompt 文本，按重要性排序并限制总长度

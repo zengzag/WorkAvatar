@@ -24,9 +24,7 @@ import {
 } from './employee-memory-prompts'
 import {
   buildFtsQuery,
-  isTrivialMessage,
-  extractLastTurn,
-  formatTurnForExtraction,
+  formatContentOnlyMessages,
   formatMemoriesForPrompt,
   getExtractionRelevantMemories,
   getConsolidationCandidates,
@@ -256,20 +254,20 @@ class EmployeeMemoryService {
     messages: Array<{ role: string; content: string }>,
     providerId: string,
     modelId?: string,
-    conversationId?: string
+    conversationId?: string,
+    extractedMessageCount?: number,
+    fullExtract?: boolean
   ): Promise<ExtractedMemory[]> {
-    const lastPair = extractLastTurn(messages)
-    if (!lastPair) return []
+    // 增量提取：只处理自上次提取以来的新消息；全量提取：处理全部消息
+    const newMessages = messages.slice(fullExtract ? 0 : (extractedMessageCount || 0))
+    if (newMessages.length === 0) return []
 
-    if (isTrivialMessage(lastPair.user)) {
-      logger.info(`Skipped trivial message for employee ${employeeId}`)
-      return []
-    }
-
-    const conversationText = formatTurnForExtraction(lastPair)
+    // 仅取 content 部分（跳过 tool 消息、reasoning_content、toolCalls），不截断
+    const conversationText = formatContentOnlyMessages(newMessages)
     if (conversationText.length < 30) return []
 
-    const summary = conversationId ? this.getConversationSummary(conversationId) : ''
+    // 全量手动提取时不使用摘要——用户主动触发说明觉得有遗漏，给完整上下文更充分
+    const summary = (!fullExtract && conversationId) ? this.getConversationSummary(conversationId) : ''
     const relevantMemories = getExtractionRelevantMemories(this.listMemories(employeeId), conversationText)
     const existingMemoriesText = relevantMemories.length > 0
       ? relevantMemories.map(m => `${m.key}|${m.topic}|${m.content}`).join('\n')
@@ -277,11 +275,14 @@ class EmployeeMemoryService {
 
     const contextParts: string[] = []
     if (summary) {
-      contextParts.push(summary)
+      contextParts.push(`【历史摘要】（已提取对话的运行式压缩，提供上下文背景，勿从中提取记忆）\n${summary}`)
     }
-    contextParts.push(conversationText)
+    const dialogLabel = fullExtract
+      ? '【完整对话】（用户手动触发的全量提取，需从中提取记忆）'
+      : '【本轮新对话】（自上次提取以来的新消息，仅含 content，需从中提取记忆）'
+    contextParts.push(`${dialogLabel}\n${conversationText}`)
     if (existingMemoriesText) {
-      contextParts.push(existingMemoriesText)
+      contextParts.push(`【现有记忆】（key|topic|content，用于去重与更新判断）\n${existingMemoriesText}`)
     }
 
     const prompt = buildExtractionPrompt(contextParts)

@@ -468,6 +468,16 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
+  safeHandle(IPC_CHANNELS.KMS_DISABLE_KNOWLEDGE_CARD, async (id: string) => {
+    kmsService.disableKnowledgeCard(id)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ENABLE_KNOWLEDGE_CARD, async (id: string) => {
+    kmsService.enableKnowledgeCard(id)
+    return { success: true }
+  })
+
   safeHandle(IPC_CHANNELS.KMS_PIN_KNOWLEDGE_CARD, async (params: { id: string; pinned: boolean }) => {
     kmsService.pinKnowledgeCard(params.id, params.pinned)
     return { success: true }
@@ -475,5 +485,25 @@ export function registerKMSHandlers(): void {
 
   safeHandle(IPC_CHANNELS.KMS_SEARCH_KNOWLEDGE_CARDS, async (params: KMSSearchKnowledgeCardsParams) => {
     return kmsService.searchKnowledgeCards(params.query, params.topK)
+  })
+
+  // ==================== 停用词管理 ====================
+
+  safeHandle(IPC_CHANNELS.KMS_GET_STOP_WORDS, async (params?: { source?: 'manual' | 'auto_idf'; limit?: number; offset?: number }) => {
+    return kmsService.getStopWords(params || {})
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_STOP_WORD, async (word: string) => {
+    return kmsService.addStopWord(word)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_STOP_WORD, async (id: string) => {
+    kmsService.deleteStopWord(id)
+    return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_CLEAR_AUTO_STOP_WORDS, async () => {
+    const cleared = kmsService.clearAutoStopWords()
+    return { success: true, cleared }
   })
 }

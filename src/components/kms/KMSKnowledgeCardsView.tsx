@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Card, Button, Empty, Spin, Space, Tag, Input, Select, App, Typography, theme,
+  Card, Button, Empty, Spin, Space, Tag, Input, Select, App, Typography, theme, Tabs,
 } from 'antd'
 import {
-  ThunderboltOutlined, ReloadOutlined, PushpinFilled, BookOutlined,
+  ThunderboltOutlined, ReloadOutlined, PushpinFilled, BookOutlined, StopOutlined,
 } from '@ant-design/icons'
 import KnowledgeCardDetail from './KnowledgeCardDetail'
+import KMSStopWordsPanel from './KMSStopWordsPanel'
 import type { KnowledgeCard, SearchTraceStep } from './KnowledgeCardDetail'
 import { formatRelativeTimeShort } from '../../utils/format'
 
@@ -23,7 +24,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
 
   const [cards, setCards] = useState<KnowledgeCard[]>([])
   const [loading, setLoading] = useState(false)
-  const [filterStatus, setFilterStatus] = useState<'active' | 'stale' | 'archived' | undefined>(undefined)
+  const [filterStatus, setFilterStatus] = useState<'active' | 'stale' | 'archived' | 'disabled' | undefined>(undefined)
   const [generatingKeyword, setGeneratingKeyword] = useState('')
   const [generating, setGenerating] = useState(false)
   const [refreshingStale, setRefreshingStale] = useState(false)
@@ -122,6 +123,8 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
           message.warning(t('kms.knowledgeCards.noSearchResults'))
         } else if (err === 'CARD_ALREADY_EXISTS') {
           message.warning(t('kms.knowledgeCards.cardAlreadyExists'))
+        } else if (err === 'KEYWORD_DISABLED') {
+          message.warning(t('kms.knowledgeCards.keywordDisabled'))
         } else {
           message.error(t('kms.knowledgeCards.generateFailed', { error: err || '' }))
         }
@@ -220,6 +223,9 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
     if (status === 'archived') {
       return <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>{t('kms.knowledgeCards.statusArchived')}</Tag>
     }
+    if (status === 'disabled') {
+      return <Tag color="red" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>{t('kms.knowledgeCards.statusDisabled')}</Tag>
+    }
     return null
   }
 
@@ -228,6 +234,123 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
     { label: t('kms.knowledgeCards.filterActive'), value: 'active' },
     { label: t('kms.knowledgeCards.filterStale'), value: 'stale' },
     { label: t('kms.knowledgeCards.filterArchived'), value: 'archived' },
+    { label: t('kms.knowledgeCards.filterDisabled'), value: 'disabled' },
+  ]
+
+  const tabItems = [
+    {
+      key: 'cards',
+      label: (
+        <span>
+          <BookOutlined style={{ marginRight: 4 }} />
+          {t('kms.knowledgeCards.cardsTab')}
+        </span>
+      ),
+      children: (
+        <>
+          {/* 操作栏 */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', flexShrink: 0, alignItems: 'center' }}>
+            <Input.Search
+              placeholder={t('kms.knowledgeCards.generatePlaceholder')}
+              value={generatingKeyword}
+              onChange={e => setGeneratingKeyword(e.target.value)}
+              onSearch={handleGenerate}
+              enterButton={t('kms.knowledgeCards.generateNew')}
+              loading={generating}
+              style={{ width: 280 }}
+            />
+            <Button
+              icon={<ThunderboltOutlined />}
+              onClick={handleRefreshStale}
+              loading={refreshingStale}
+            >
+              {t('kms.knowledgeCards.refreshAll')}
+            </Button>
+            <Select
+              value={filterStatus || ''}
+              onChange={v => setFilterStatus((v || undefined) as 'active' | 'stale' | 'archived' | 'disabled' | undefined)}
+              options={statusOptions}
+              style={{ width: 130 }}
+              popupMatchSelectWidth={false}
+            />
+            <div style={{ flex: 1 }} />
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={loadCards}
+              loading={loading}
+            >
+              {t('common.refresh')}
+            </Button>
+          </div>
+
+          {/* 卡片网格 */}
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+            {loading ? (
+              <div style={{ textAlign: 'center', padding: 48 }}>
+                <Spin />
+              </div>
+            ) : cards.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={filterStatus ? t('kms.knowledgeCards.noCardsFiltered') : t('kms.knowledgeCards.noCards')}
+                style={{ marginTop: 80 }}
+              />
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+                {cards.map(card => (
+                  <Card
+                    key={card.id}
+                    size="small"
+                    hoverable
+                    onClick={() => openDetail(card)}
+                    style={{ cursor: 'pointer', borderColor: card.pinned ? token.colorPrimary : undefined }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <Space size={4} style={{ minWidth: 0 }}>
+                        <BookOutlined style={{ color: token.colorPrimary, fontSize: 14, flexShrink: 0 }} />
+                        <Text strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {card.displayKeyword}
+                        </Text>
+                      </Space>
+                      {card.pinned && (
+                        <PushpinFilled style={{ color: token.colorPrimary, fontSize: 12, flexShrink: 0 }} />
+                      )}
+                    </div>
+                    <Paragraph
+                      style={{ fontSize: 12, marginBottom: 8, color: token.colorTextSecondary, lineHeight: 1.5 }}
+                      ellipsis={{ rows: 3 }}
+                    >
+                      {card.summary || '-'}
+                    </Paragraph>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {renderStatusTag(card.status)}
+                      <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
+                        {t('kms.knowledgeCards.searchCount', { count: card.searchCount })}
+                      </Tag>
+                      {card.lastRefreshedAt > 0 && (
+                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
+                          {t('kms.knowledgeCards.refreshedAgo', { time: formatRelativeTimeShort(card.lastRefreshedAt, i18n.language) })}
+                        </Text>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      ),
+    },
+    {
+      key: 'stopWords',
+      label: (
+        <span>
+          <StopOutlined style={{ marginRight: 4 }} />
+          {t('kms.stopWords.title')}
+        </span>
+      ),
+      children: <KMSStopWordsPanel />,
+    },
   ]
 
   return (
@@ -240,96 +363,14 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
         </div>
       </div>
 
-      {/* 操作栏 */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', flexShrink: 0, alignItems: 'center' }}>
-        <Input.Search
-          placeholder={t('kms.knowledgeCards.generatePlaceholder')}
-          value={generatingKeyword}
-          onChange={e => setGeneratingKeyword(e.target.value)}
-          onSearch={handleGenerate}
-          enterButton={t('kms.knowledgeCards.generateNew')}
-          loading={generating}
-          style={{ width: 280 }}
-        />
-        <Button
-          icon={<ThunderboltOutlined />}
-          onClick={handleRefreshStale}
-          loading={refreshingStale}
-        >
-          {t('kms.knowledgeCards.refreshAll')}
-        </Button>
-        <Select
-          value={filterStatus || ''}
-          onChange={v => setFilterStatus((v || undefined) as 'active' | 'stale' | 'archived' | undefined)}
-          options={statusOptions}
-          style={{ width: 130 }}
-          popupMatchSelectWidth={false}
-        />
-        <div style={{ flex: 1 }} />
-        <Button
-          icon={<ReloadOutlined />}
-          onClick={loadCards}
-          loading={loading}
-        >
-          {t('common.refresh')}
-        </Button>
-      </div>
-
-      {/* 卡片网格 */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 48 }}>
-            <Spin />
-          </div>
-        ) : cards.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={filterStatus ? t('kms.knowledgeCards.noCardsFiltered') : t('kms.knowledgeCards.noCards')}
-            style={{ marginTop: 80 }}
-          />
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
-            {cards.map(card => (
-              <Card
-                key={card.id}
-                size="small"
-                hoverable
-                onClick={() => openDetail(card)}
-                style={{ cursor: 'pointer', borderColor: card.pinned ? token.colorPrimary : undefined }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                  <Space size={4} style={{ minWidth: 0 }}>
-                    <BookOutlined style={{ color: token.colorPrimary, fontSize: 14, flexShrink: 0 }} />
-                    <Text strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {card.displayKeyword}
-                    </Text>
-                  </Space>
-                  {card.pinned && (
-                    <PushpinFilled style={{ color: token.colorPrimary, fontSize: 12, flexShrink: 0 }} />
-                  )}
-                </div>
-                <Paragraph
-                  style={{ fontSize: 12, marginBottom: 8, color: token.colorTextSecondary, lineHeight: 1.5 }}
-                  ellipsis={{ rows: 3 }}
-                >
-                  {card.summary || '-'}
-                </Paragraph>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {renderStatusTag(card.status)}
-                  <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
-                    {t('kms.knowledgeCards.searchCount', { count: card.searchCount })}
-                  </Tag>
-                  {card.lastRefreshedAt > 0 && (
-                    <Text type="secondary" style={{ fontSize: 11, marginLeft: 'auto' }}>
-                      {t('kms.knowledgeCards.refreshedAgo', { time: formatRelativeTimeShort(card.lastRefreshedAt, i18n.language) })}
-                    </Text>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Tab：知识卡片 + 停用词 */}
+      <Tabs
+        defaultActiveKey="cards"
+        items={tabItems}
+        size="small"
+        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+        tabBarStyle={{ marginBottom: 12, flexShrink: 0 }}
+      />
 
       {/* 卡片详情抽屉（含生成进度） */}
       <KnowledgeCardDetail

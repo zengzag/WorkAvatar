@@ -84,3 +84,18 @@ export type {
   VoiceSettings,
   VoiceLocalModelStatus,
 } from './channels/voice'
+export type {
+  SkillEnvToolId,
+  SkillEnvTool,
+  SkillEnvInstallParams,
+  SkillEnvInstallProgress,
+} from './channels/skill-env'
+export type {
+  McpTransportType,
+  McpServerConfig,
+  McpToolInfo,
+  McpServerInfo,
+  McpSaveParams,
+  McpTestParams,
+  McpTestResult,
+} from './channels/mcp'

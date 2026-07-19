@@ -5,15 +5,12 @@ import {
   Statistic, Row, App,
 } from 'antd'
 import {
-  FolderOpenOutlined, FileTextOutlined, FireOutlined, InboxOutlined,
+  FolderOpenOutlined, FileTextOutlined, FireOutlined,
   SearchOutlined, ReloadOutlined,
-  ThunderboltOutlined,
   DatabaseOutlined, BarChartOutlined,
-  BookOutlined,
 } from '@ant-design/icons'
 import type { FileSummariesResult } from '../../hooks/useKMS'
 import { useFileSummaryColumns } from './kms-columns'
-import KMSKnowledgeCardsView from './KMSKnowledgeCardsView'
 
 const { Text, Title } = Typography
 
@@ -73,7 +70,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   const [filterKeyword, setFilterKeyword] = useState('')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
-  const [activeTab, setActiveTab] = useState<'files' | 'cards' | 'stats'>('files')
+  const [activeTab, setActiveTab] = useState<'files' | 'stats'>('files')
   const [processingFileIds, setProcessingFileIds] = useState<Set<string>>(new Set())
   // ref 镜像：供 columns 的 render 闭包读取最新值，避免将 Set 引用放入 useMemo 依赖导致每次变更都重算列定义
   const processingFileIdsRef = useRef<Set<string>>(new Set())
@@ -87,7 +84,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   }, [onLoadFileSummaries, onLoadStats])
 
   const handleTabChange = useCallback((key: string) => {
-    setActiveTab(key as 'files' | 'cards' | 'stats')
+    setActiveTab(key as 'files' | 'stats')
     if (key === 'stats') {
       onLoadStats()
     }
@@ -204,31 +201,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
     onRebuildFileIndex,
   })
 
-  const statCards = useMemo(() => {
-    const totalFiles = stats?.files?.total ?? 0
-    const indexedFiles = stats?.files?.byStatus?.completed ?? 0
-    const pendingFiles = stats?.files?.byStatus?.pending ?? 0
-    const failedFiles = stats?.files?.byStatus?.failed ?? 0
-    const hotFiles = stats?.files?.byTier?.hot ?? 0
-    const coldFiles = stats?.files?.byTier?.cold ?? 0
-    const indexEntries = stats?.index?.totalEntries ?? 0
-    const embeddingCount = stats?.index?.embeddingCount ?? 0
-    const ftsEntryCount = stats?.index?.ftsEntryCount ?? 0
-    const enabledDirs = stats?.dirs?.enabled ?? 0
-    const totalDirs = stats?.dirs?.total ?? 0
-    return [
-      { label: t('kms.totalDirs'), value: totalDirs, sub: `${enabledDirs} ${t('kms.knowledge.enabled')}`, icon: <FolderOpenOutlined style={{ color: token.colorPrimary }} /> },
-      { label: t('kms.totalFiles'), value: totalFiles, icon: <FileTextOutlined style={{ color: token.colorPrimary }} /> },
-      { label: t('kms.indexedFiles'), value: indexedFiles, icon: <DatabaseOutlined style={{ color: token.colorSuccess }} /> },
-      { label: t('kms.pendingFiles'), value: pendingFiles, icon: <ThunderboltOutlined style={{ color: token.colorWarning }} /> },
-      { label: t('kms.failedFiles'), value: failedFiles, icon: <FileTextOutlined style={{ color: token.colorError }} /> },
-      { label: t('kms.hotFiles'), value: hotFiles, icon: <FireOutlined style={{ color: token.colorError }} /> },
-      { label: t('kms.coldFiles'), value: coldFiles, icon: <InboxOutlined style={{ color: token.colorTextQuaternary }} /> },
-      { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS`, icon: <DatabaseOutlined style={{ color: token.colorInfo }} /> },
-      { label: t('kms.embeddingCount'), value: embeddingCount, icon: <ThunderboltOutlined style={{ color: token.colorInfo }} /> },
-    ]
-  }, [t, token, stats])
-
   const renderStatsBar = () => (
     <Row
       gutter={16}
@@ -341,48 +313,85 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
   )
 
   const renderStatsTab = () => {
+    // 紧凑的统计项列表：左对齐 label + 右对齐数值，单行展示
+    const totalFiles = stats?.files?.total ?? 0
+    const indexedFiles = stats?.files?.byStatus?.completed ?? 0
+    const pendingFiles = stats?.files?.byStatus?.pending ?? 0
+    const failedFiles = stats?.files?.byStatus?.failed ?? 0
+    const hotFiles = stats?.files?.byTier?.hot ?? 0
+    const coldFiles = stats?.files?.byTier?.cold ?? 0
+    const indexEntries = stats?.index?.totalEntries ?? 0
+    const embeddingCount = stats?.index?.embeddingCount ?? 0
+    const ftsEntryCount = stats?.index?.ftsEntryCount ?? 0
+    const enabledDirs = stats?.dirs?.enabled ?? 0
+    const totalDirs = stats?.dirs?.total ?? 0
+
+    const rows: Array<{ label: string; value: string | number; sub?: string; color?: string }> = [
+      { label: t('kms.totalDirs'), value: totalDirs, sub: `${enabledDirs} ${t('kms.knowledge.enabled')}` },
+      { label: t('kms.totalFiles'), value: totalFiles },
+      { label: t('kms.indexedFiles'), value: indexedFiles, color: token.colorSuccess },
+      { label: t('kms.pendingFiles'), value: pendingFiles, color: token.colorWarning },
+      { label: t('kms.failedFiles'), value: failedFiles, color: token.colorError },
+      { label: t('kms.hotFiles'), value: hotFiles, color: token.colorError },
+      { label: t('kms.coldFiles'), value: coldFiles },
+      { label: t('kms.indexEntries'), value: indexEntries, sub: `${ftsEntryCount} FTS` },
+      { label: t('kms.embeddingCount'), value: embeddingCount },
+    ]
+
+    const labelStyle: React.CSSProperties = { color: token.colorTextSecondary, fontSize: 12 }
+    const valueStyle: React.CSSProperties = { fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }
+
     return (
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 4 }}>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-          gap: 12,
-        }}>
-          {statCards.map((card) => (
-            <Card
-              key={card.label}
-              size="small"
-              style={{ textAlign: 'center' }}
-            >
-              <div style={{ marginBottom: 4, fontSize: 20 }}>{card.icon}</div>
-              <Title level={4} style={{ margin: 0, fontSize: 22 }}>{card.value}</Title>
-              <Text type="secondary" style={{ fontSize: 12 }}>{card.label}</Text>
-              {card.sub && (
-                <div style={{ marginTop: 4 }}>
-                  <Tag style={{ fontSize: 10, margin: 0, lineHeight: '18px', padding: '0 6px' }}>{card.sub}</Tag>
-                </div>
-              )}
-            </Card>
-          ))}
-        </div>
+        {/* 统计概览：两列紧凑表格 */}
+        <Card size="small" variant="borderless" style={{ background: token.colorFillQuaternary }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: '6px 24px',
+          }}>
+            {rows.map((row) => (
+              <div
+                key={row.label}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '3px 0',
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                }}
+              >
+                <span style={labelStyle}>{row.label}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ ...valueStyle, color: row.color || token.colorText }}>{row.value}</span>
+                  {row.sub && (
+                    <Tag style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 4px' }}>{row.sub}</Tag>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
 
         {/* 按扩展名分布 */}
         {stats?.files?.byExt && Object.keys(stats.files.byExt).length > 0 && (
           <Card
             size="small"
-            style={{ marginTop: 12 }}
+            style={{ marginTop: 8 }}
             title={
               <Space size={6}>
                 <BarChartOutlined style={{ color: token.colorPrimary }} />
-                <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.byExt')}</Text>
+                <Text strong style={{ fontSize: 12 }}>{t('kms.knowledge.byExt')}</Text>
               </Space>
             }
+            headStyle={undefined}
+            styles={{ header: { minHeight: 32, padding: '0 12px' }, body: { padding: 8 } }}
           >
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {Object.entries(stats.files.byExt)
                 .sort((a, b) => b[1] - a[1])
                 .map(([ext, count]) => (
-                  <Tag key={ext} style={{ fontSize: 12, margin: 0, padding: '2px 8px' }}>
+                  <Tag key={ext} style={{ fontSize: 11, margin: 0, padding: '1px 6px' }}>
                     .{ext}: {count}
                   </Tag>
                 ))}
@@ -394,19 +403,20 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
         {stats?.index?.byType && Object.keys(stats.index.byType).length > 0 && (
           <Card
             size="small"
-            style={{ marginTop: 12 }}
+            style={{ marginTop: 8 }}
             title={
               <Space size={6}>
                 <DatabaseOutlined style={{ color: token.colorPrimary }} />
-                <Text strong style={{ fontSize: 13 }}>{t('kms.knowledge.byType')}</Text>
+                <Text strong style={{ fontSize: 12 }}>{t('kms.knowledge.byType')}</Text>
               </Space>
             }
+            styles={{ header: { minHeight: 32, padding: '0 12px' }, body: { padding: 8 } }}
           >
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {Object.entries(stats.index.byType)
                 .sort((a, b) => b[1] - a[1])
                 .map(([type, count]) => (
-                  <Tag key={type} style={{ fontSize: 12, margin: 0, padding: '2px 8px' }}>
+                  <Tag key={type} style={{ fontSize: 11, margin: 0, padding: '1px 6px' }}>
                     {type}: {count}
                   </Tag>
                 ))}
@@ -452,16 +462,6 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
                 </span>
               ),
               children: renderFilesTab(),
-            },
-            {
-              key: 'cards',
-              label: (
-                <span>
-                  <BookOutlined style={{ marginRight: 4 }} />
-                  {t('kms.knowledgeCards.cardsTab')}
-                </span>
-              ),
-              children: <KMSKnowledgeCardsView onOpenFile={onOpenFile} />,
             },
             {
               key: 'stats',

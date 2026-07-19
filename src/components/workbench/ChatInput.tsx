@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
@@ -26,8 +26,12 @@ export interface ModelSelection {
   modelId: string
 }
 
+export interface SendOptions {
+  highPermission?: boolean
+}
+
 const ChatInput: React.FC<{
-  onSend: (content: string, images: string[], models: ModelSelection[]) => void
+  onSend: (content: string, images: string[], models: ModelSelection[], options?: SendOptions) => void
   onStop: () => void
   onCommand: (command: string) => void
   isStreaming: boolean
@@ -51,6 +55,7 @@ const ChatInput: React.FC<{
   const [localValue, setLocalValue] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [highPermission, setHighPermission] = useState(false)
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -89,10 +94,12 @@ const ChatInput: React.FC<{
         content = content ? `${content}\n${filePaths}` : filePaths
       }
     }
-    onSend(content, imageUrls, selectedModels)
+    const sendHighPermission = highPermission
+    onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
     setLocalValue('')
     setAttachedFiles([])
-  }, [localValue, attachedImages, attachedFiles, selectedModels, onSend])
+    setHighPermission(false)
+  }, [localValue, attachedImages, attachedFiles, selectedModels, highPermission, onSend])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -384,15 +391,15 @@ const ChatInput: React.FC<{
   ), [t, token, selectedCollectionIds, allCollections, onSelectedCollectionIdsChange])
 
   return (
-    <div style={{ padding: '12px 4% 20px 4%', flexShrink: 0 }}>
+    <div style={{ padding: '8px 6% 12px 6%', flexShrink: 0 }}>
       {attachedImages.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, padding: '4px 0 8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, padding: '4px 0 6px', flexWrap: 'wrap' }}>
           {attachedImages.map(img => (
-            <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: `1px solid ${token.colorBorderSecondary}` }}>
-              <img src={img.dataUrl} alt={img.name} style={{ width: 80, height: 80, objectFit: 'cover', display: 'block' }} />
+            <div key={img.id} style={{ position: 'relative', borderRadius: 6, overflow: 'hidden', border: `1px solid ${token.colorBorderSecondary}` }}>
+              <img src={img.dataUrl} alt={img.name} style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
               <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 10 }} />}
                 onClick={() => removeImage(img.id)}
-                style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.5)', color: '#fff', borderRadius: 4, padding: 0, width: 18, height: 18, minWidth: 18, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
+                style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(0,0,0,0.5)', color: '#fff', borderRadius: 3, padding: 0, width: 16, height: 16, minWidth: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
             </div>
           ))}
         </div>
@@ -458,7 +465,7 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 16, padding: '6px 6px 6px 16px', border: `2px solid ${isDragOver ? token.colorPrimary : 'transparent'}`, transition: 'border-color 0.3s' }}
+      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 8, padding: '4px 4px 4px 12px', border: `2px solid ${isDragOver ? token.colorPrimary : 'transparent'}`, transition: 'border-color 0.3s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -468,16 +475,16 @@ const ChatInput: React.FC<{
         {isDragOver && (
           <div style={{
             position: 'absolute', inset: 0,
-            borderRadius: 16,
+            borderRadius: 8,
             background: token.colorPrimaryBg,
             border: `2px dashed ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             pointerEvents: 'none',
             zIndex: 10,
           }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <FileTextOutlined style={{ fontSize: 32, color: token.colorPrimary }} />
-              <Text style={{ color: token.colorPrimary, fontWeight: 500 }}>{t('workbench.dropFileHint')}</Text>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <FileTextOutlined style={{ fontSize: 28, color: token.colorPrimary }} />
+              <Text style={{ color: token.colorPrimary, fontWeight: 500, fontSize: 13 }}>{t('workbench.dropFileHint')}</Text>
             </div>
           </div>
         )}
@@ -489,11 +496,20 @@ const ChatInput: React.FC<{
             onPaste={handlePaste}
             placeholder={placeholder}
             autoSize={{ minRows: 1, maxRows: 5 }}
-            style={{ background: 'transparent', border: 'none', resize: 'none', fontSize: 14, lineHeight: 1.6, padding: '4px 0', boxShadow: 'none' }}
+            style={{ background: 'transparent', border: 'none', resize: 'none', fontSize: 13, lineHeight: 1.6, padding: '4px 0', boxShadow: 'none' }}
             className="workbench-input"
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
+                <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => setHighPermission(!highPermission)}
+                  style={{
+                    color: highPermission ? token.colorWarning : token.colorTextQuaternary,
+                    padding: '0 2px', height: 20, minWidth: 20,
+                    background: highPermission ? token.colorWarningBg : 'transparent',
+                  }} />
+              </Tooltip>
               <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
                 onClick={() => fileInputRef.current?.click()}
                 style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
