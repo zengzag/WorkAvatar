@@ -1,15 +1,16 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { Calendar, Spin, Tooltip, theme } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { CalendarEventInstance, CalendarTodo, EventColor } from '../../types/calendar'
+import { useDragInteraction, secToY, RESIZE_HANDLE_HEIGHT } from '../../hooks/useDragInteraction'
+import type { DragState } from '../../hooks/useDragInteraction'
 
 const MS = 1000
 const HOUR_HEIGHT = 56
 const HOURS_PER_DAY = 24
 
-// 事件颜色映射：bg 用 14% 透明度（明暗主题均可读），border 用纯色保证对比度
 const EVENT_COLOR_MAP: Record<EventColor, { bg: string; border: string }> = {
   default: { bg: 'rgba(22,119,255,0.14)', border: '#1677ff' },
   blue: { bg: 'rgba(22,119,255,0.14)', border: '#1677ff' },
@@ -32,8 +33,10 @@ interface CalendarPanelProps {
   events: CalendarEventInstance[]
   todos: CalendarTodo[]
   loading: boolean
-  onCreateEvent: (startAt?: number) => void
+  onCreateEvent: (startAt: number, endAt?: number) => void
   onEditEvent: (event: CalendarEventInstance) => void
+  onMoveEvent: (input: { id: string; start_at: number; end_at: number }) => void
+  onResizeEvent: (input: { id: string; start_at: number; end_at: number }) => void
   onEditTodo?: (todo: CalendarTodo) => void
 }
 
@@ -63,11 +66,92 @@ const formatEventTime = (sec: number): string => {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
+/** 渲染拖拽创建的预览块 */
+const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creating' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+  if (dragState.dayStartMs !== dayStartMs) return null
+  const top = secToY(dragState.startSec, dayStartMs)
+  const bottom = secToY(dragState.endSec, dayStartMs)
+  return (
+    <div style={{
+      position: 'absolute',
+      left: 2,
+      right: 2,
+      top,
+      height: bottom - top,
+      background: 'rgba(22,119,255,0.08)',
+      border: '1px dashed #1677ff',
+      borderRadius: 4,
+      pointerEvents: 'none',
+      zIndex: 6,
+    }}>
+      <div style={{ fontSize: 10, color: token.colorPrimary, padding: '2px 4px' }}>
+        {formatEventTime(dragState.startSec)} - {formatEventTime(dragState.endSec)}
+      </div>
+    </div>
+  )
+}
+
+/** 渲染拖拽移动/调整大小中的事件块 */
+const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+  const isTarget = dragState.targetDayStartMs === dayStartMs
+  const isOriginal = dragState.originalDayStartMs === dayStartMs
+  if (!isTarget && !isOriginal) return null
+
+  const ev = { instance_start_at: dragState.newStartSec, instance_end_at: dragState.newEndSec }
+
+  if (isOriginal && !isTarget) {
+    // 原位置半透明占位
+    const top = secToY(dragState.originalStart, dayStartMs)
+    const bottom = secToY(dragState.originalEnd, dayStartMs)
+    return (
+      <div style={{
+        position: 'absolute', left: 2, right: 2, top, height: bottom - top,
+        background: 'rgba(22,119,255,0.06)', borderLeft: '3px solid rgba(22,119,255,0.3)',
+        borderRadius: 4, pointerEvents: 'none', opacity: 0.5, zIndex: 6,
+      }} />
+    )
+  }
+
+  // 目标位置
+  const top = secToY(ev.instance_start_at, dayStartMs)
+  const bottom = secToY(ev.instance_end_at, dayStartMs)
+  return (
+    <div style={{
+      position: 'absolute', left: 2, right: 2, top, height: bottom - top,
+      background: 'rgba(22,119,255,0.14)', borderLeft: '3px solid #1677ff',
+      borderRadius: 4, padding: '2px 6px', fontSize: 11, overflow: 'hidden',
+      color: token.colorText, pointerEvents: 'none', zIndex: 6,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+    }}>
+      <div style={{ fontWeight: 500 }}>{formatEventTime(ev.instance_start_at)} - {formatEventTime(ev.instance_end_at)}</div>
+    </div>
+  )
+}
+
+const DragResizingBlock: React.FC<{ dragState: Extract<DragState, { type: 'resizing' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+  if (dragState.dayStartMs !== dayStartMs) return null
+  const top = secToY(dragState.newStartSec, dayStartMs)
+  const bottom = secToY(dragState.newEndSec, dayStartMs)
+  return (
+    <div style={{
+      position: 'absolute', left: 2, right: 2, top, height: bottom - top,
+      background: 'rgba(22,119,255,0.14)', borderLeft: '3px solid #1677ff',
+      borderRadius: 4, padding: '2px 6px', fontSize: 11, overflow: 'hidden',
+      color: token.colorText, pointerEvents: 'none', zIndex: 6,
+      outline: '2px solid #1677ff',
+    }}>
+      <div style={{ fontSize: 10 }}>{formatEventTime(dragState.newStartSec)} - {formatEventTime(dragState.newEndSec)}</div>
+    </div>
+  )
+}
+
 const CalendarPanel: React.FC<CalendarPanelProps> = ({
-  view, currentDate, events, todos, loading, onCreateEvent, onEditEvent, onEditTodo,
+  view, currentDate, events, todos, loading,
+  onCreateEvent, onEditEvent, onMoveEvent, onResizeEvent, onEditTodo,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   const hours = useMemo(
     () => Array.from({ length: HOURS_PER_DAY }, (_, i) => i),
@@ -89,6 +173,19 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
     t('calendar.viewWednesday'), t('calendar.viewThursday'), t('calendar.viewFriday'),
     t('calendar.viewSaturday'),
   ]
+
+  const { dragState, handleGridMouseDown, handleEventMouseDown } = useDragInteraction({
+    dayColumns,
+    scrollContainerRef,
+    onCreateEvent,
+    onMoveEvent,
+    onResizeEvent,
+    onEditEvent,
+  })
+
+  // 判断事件是否正在被拖拽（原位置需隐藏或半透明）
+  const draggingEventId = dragState.type === 'moving' ? dragState.eventId
+    : dragState.type === 'resizing' ? dragState.eventId : null
 
   if (view === 'month') {
     return (
@@ -228,13 +325,13 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
         </div>
 
         {/* 时间网格 */}
-        <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
-          <div style={{
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+          <div data-day-cols style={{
             position: 'relative',
             height: hours.length * HOUR_HEIGHT,
             marginLeft: 56,
           }}>
-            {/* 横向网格线（仅覆盖日列区域，不含时间标签列） */}
+            {/* 横向网格线 */}
             {hours.map((h) => (
               <div
                 key={`line-${h}`}
@@ -250,7 +347,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
               />
             ))}
 
-            {/* 时间标签（覆盖在横线上方） */}
+            {/* 时间标签 */}
             {hours.map((h) => (
               h === 0 ? null : (
                 <div
@@ -279,6 +376,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
               return (
                 <div
                   key={dms}
+                  data-col-idx={colIdx}
                   style={{
                     position: 'absolute',
                     left: `${(colIdx / dayColumns.length) * 100}%`,
@@ -286,14 +384,9 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     top: 0,
                     bottom: 0,
                     borderLeft: `1px solid ${token.colorBorderSecondary}`,
+                    cursor: dragState.type !== 'idle' ? 'default' : undefined,
                   }}
-                  onClick={(e) => {
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                    const y = e.clientY - rect.top
-                    const hour = Math.max(0, Math.min(23, Math.floor(y / HOUR_HEIGHT)))
-                    const ts = dms + hour * 3600 * MS
-                    onCreateEvent(Math.floor(ts / MS))
-                  }}
+                  onMouseDown={(e) => handleGridMouseDown(e, dms, colIdx)}
                 >
                   {/* 当前时间指示线 */}
                   {startOfDayMs(Date.now()) === dms && (() => {
@@ -322,8 +415,12 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                       </div>
                     )
                   })()}
+
                   {/* 事件块 */}
                   {dayEvents.map((ev) => {
+                    // 被拖拽的事件在原列隐藏（移动/调整大小时渲染拖拽块代替）
+                    if (ev.id === draggingEventId) return null
+
                     const startMs = Math.max(ev.instance_start_at * MS, dms)
                     const endMs = Math.min(ev.instance_end_at * MS, dms + 86400 * MS - 1)
                     const startMins = (startMs - dms) / MS / 60
@@ -331,16 +428,14 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     const top = (startMins / 60) * HOUR_HEIGHT
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
                     const c = EVENT_COLOR_MAP[ev.color] || EVENT_COLOR_MAP.default
+                    const isAllDay = ev.all_day
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
                         title={`${ev.title}\n${formatEventTime(ev.instance_start_at)} - ${formatEventTime(ev.instance_end_at)}${ev.location ? '\n' + ev.location : ''}`}
                       >
                         <div
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onEditEvent(ev)
-                          }}
+                          onMouseDown={(e) => handleEventMouseDown(e, ev, dms)}
                           style={{
                             position: 'absolute',
                             left: 2,
@@ -353,62 +448,102 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             padding: '2px 6px',
                             fontSize: 11,
                             overflow: 'hidden',
-                            cursor: 'pointer',
+                            cursor: isAllDay ? 'pointer' : 'grab',
                             color: token.colorText,
+                            userSelect: 'none',
                           }}
                         >
+                          {/* 顶部 resize 手柄 */}
+                          {!isAllDay && (
+                            <div style={{
+                              position: 'absolute', left: 0, right: 0, top: 0,
+                              height: RESIZE_HANDLE_HEIGHT,
+                              cursor: 'ns-resize', zIndex: 2,
+                            }} />
+                          )}
                           <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {ev.all_day ? '🕐 ' : ''}{ev.title}
+                            {isAllDay ? '🕐 ' : ''}{ev.title}
                           </div>
-                          {!ev.all_day && height > 32 && (
+                          {!isAllDay && height > 32 && (
                             <div style={{ fontSize: 10, color: token.colorTextSecondary }}>
                               {formatEventTime(ev.instance_start_at)} - {formatEventTime(ev.instance_end_at)}
                             </div>
+                          )}
+                          {/* 底部 resize 手柄 */}
+                          {!isAllDay && (
+                            <div style={{
+                              position: 'absolute', left: 0, right: 0, bottom: 0,
+                              height: RESIZE_HANDLE_HEIGHT,
+                              cursor: 'ns-resize', zIndex: 2,
+                            }} />
                           )}
                         </div>
                       </Tooltip>
                     )
                   })}
-                  {/* TODO 到期点（按时间分组，同时间段内纵向排列避免重叠） */}
+
+                  {/* TODO 到期点（同时间段横向排列） */}
                   {(() => {
-                    const todoSlots: { todo: CalendarTodo; top: number }[] = []
+                    const SNAP_H = 14
+                    const groups: { baseTop: number; todos: CalendarTodo[] }[] = []
                     dayTodos.forEach((td) => {
                       if (!td.due_at) return
                       const mins = (td.due_at * MS - dms) / MS / 60
                       if (mins < 0 || mins >= 1440) return
                       const baseTop = (mins / 60) * HOUR_HEIGHT
-                      const overlap = todoSlots.filter(s => Math.abs(s.top - baseTop) < 10)
-                      const top = overlap.length > 0 ? Math.max(...overlap.map(s => s.top)) + 10 : baseTop
-                      todoSlots.push({ todo: td, top })
+                      const existing = groups.find(g => Math.abs(g.baseTop - baseTop) < SNAP_H)
+                      if (existing) {
+                        existing.todos.push(td)
+                      } else {
+                        groups.push({ baseTop, todos: [td] })
+                      }
                     })
-                    return todoSlots.map(({ todo: td, top }) => {
-                      const color = TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none
-                      return (
-                        <Tooltip
-                          key={td.id}
-                          title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.due_at!)}`}
-                        >
-                          <div
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onEditTodo?.(td)
-                            }}
-                            style={{
-                              position: 'absolute',
-                              right: 3,
-                              top: Math.max(0, top - 3),
-                              width: 7,
-                              height: 7,
-                              borderRadius: '50%',
-                              background: color,
-                              cursor: 'pointer',
-                              zIndex: 4,
-                            }}
-                          />
-                        </Tooltip>
-                      )
-                    })
+                    return groups.map((group) => (
+                      <div
+                        key={`tg-${group.baseTop}`}
+                        style={{
+                          position: 'absolute',
+                          right: 3,
+                          top: Math.max(0, group.baseTop - 3),
+                          display: 'flex',
+                          gap: 3,
+                          zIndex: 4,
+                        }}
+                      >
+                        {group.todos.map((td) => (
+                          <Tooltip
+                            key={td.id}
+                            title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.due_at!)}`}
+                          >
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                onEditTodo?.(td)
+                              }}
+                              style={{
+                                width: 7,
+                                height: 7,
+                                borderRadius: '50%',
+                                background: TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none,
+                                cursor: 'pointer',
+                              }}
+                            />
+                          </Tooltip>
+                        ))}
+                      </div>
+                    ))
                   })()}
+
+                  {/* 拖拽预览块 */}
+                  {dragState.type === 'creating' && (
+                    <DragPreviewBlock dragState={dragState} dayStartMs={dms} token={token} />
+                  )}
+                  {dragState.type === 'moving' && (
+                    <DragMovingBlock dragState={dragState} dayStartMs={dms} token={token} />
+                  )}
+                  {dragState.type === 'resizing' && (
+                    <DragResizingBlock dragState={dragState} dayStartMs={dms} token={token} />
+                  )}
                 </div>
               )
             })}

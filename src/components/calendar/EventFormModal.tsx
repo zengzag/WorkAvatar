@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react'
 import {
-  Modal, Form, Input, Switch, DatePicker, TimePicker, Select, InputNumber, Row, Col, message,
+  Modal, Form, Input, Switch, DatePicker, TimePicker, Select, InputNumber, Row, Col, Button, Popconfirm, message,
 } from 'antd'
+import { DeleteOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -18,9 +19,11 @@ interface EventFormModalProps {
   mode: EventFormMode
   event?: CalendarEventInstance | null
   defaultStartAt?: number
+  defaultEndAt?: number
   settings?: CalendarSettings | null
   onClose: () => void
   onSubmit: (input: CreateEventInput | UpdateEventInput) => Promise<any>
+  onDelete?: (id: string) => Promise<any>
 }
 
 const COLOR_OPTIONS: EventColor[] = ['default', 'blue', 'green', 'orange', 'red', 'purple']
@@ -35,7 +38,7 @@ const toStore = (v: number) => -v
 const compactItem: React.CSSProperties = { marginBottom: 12 }
 
 const EventFormModal: React.FC<EventFormModalProps> = ({
-  open, mode, event, defaultStartAt, settings, onClose, onSubmit,
+  open, mode, event, defaultStartAt, defaultEndAt, settings, onClose, onSubmit, onDelete,
 }) => {
   const { t } = useTranslation()
   const [form] = Form.useForm()
@@ -63,7 +66,7 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
       }
     }
     const startMs = defaultStartAt ? defaultStartAt * MS : Date.now()
-    const endMs = startMs + 60 * 60 * MS
+    const endMs = defaultEndAt ? defaultEndAt * MS : startMs + 60 * 60 * MS
     return {
       title: '',
       allDay: false,
@@ -80,7 +83,7 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
       recurrenceUntil: undefined,
       reminders: (settings?.default_event_reminders || []).map(toDisplay),
     }
-  }, [isEdit, event, defaultStartAt, settings])
+  }, [isEdit, event, defaultStartAt, defaultEndAt, settings])
 
   useEffect(() => {
     if (open) form.resetFields()
@@ -150,6 +153,21 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
     return `${Math.floor(m / 1440)} ${t('calendar.daysBefore')}`
   }
 
+  const handleDelete = async () => {
+    if (!event || !onDelete) return
+    try {
+      const result = await onDelete(event.id)
+      if (result && !result.error) {
+        message.success(t('calendar.deleteEvent'))
+        onClose()
+      } else if (result?.error) {
+        message.error(result.error)
+      }
+    } catch (err: any) {
+      message.error(err?.message || 'Failed to delete event')
+    }
+  }
+
   return (
     <Modal
       open={open}
@@ -160,6 +178,27 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
       onOk={() => form.submit()}
       destroyOnClose
       width={520}
+      footer={(_, { OkBtn, CancelBtn }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {isEdit && onDelete && (
+              <Popconfirm
+                title={t('calendar.deleteEventConfirm')}
+                onConfirm={handleDelete}
+                okText={t('common.confirm')}
+                cancelText={t('common.cancel')}
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
+              </Popconfirm>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <CancelBtn />
+            <OkBtn />
+          </div>
+        </div>
+      )}
     >
       <Form
         form={form}

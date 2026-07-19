@@ -18,6 +18,7 @@ import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
 import { envVarsTool } from './env-vars.tool'
 import { askUserTool } from './ask-user.tool'
+import { calendarTools } from './calendar.tool'
 import type { ToolDefinition } from './types'
 
 export const allBuiltinTools: ToolDefinition[] = [
@@ -39,6 +40,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   webFetchTool,
   envVarsTool,
   askUserTool,
+  ...calendarTools,
 ]
 
 export { officeExecTool } from './office-exec.tool'

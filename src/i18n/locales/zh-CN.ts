@@ -1397,6 +1397,8 @@ export default {
     todos: '待办',
     newEvent: '新建日程',
     editEvent: '编辑日程',
+    deleteEvent: '已删除日程',
+    deleteEventConfirm: '确定删除该日程吗？',
     newTodo: '新建待办',
     editTodo: '编辑待办',
     // 事件字段

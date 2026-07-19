@@ -16,6 +16,8 @@ import TodoFormModal, { type TodoFormMode } from '../components/calendar/TodoFor
 import CalendarSettingsModal from '../components/calendar/CalendarSettingsModal'
 import type { CalendarEventInstance, CalendarTodo, CreateEventInput, UpdateEventInput, CreateTodoInput, UpdateTodoInput } from '../types/calendar'
 
+const DEFAULT_CLICK_DURATION_SEC = 30 * 60
+
 const CalendarPage: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -24,6 +26,7 @@ const CalendarPage: React.FC = () => {
   const [eventModalMode, setEventModalMode] = useState<EventFormMode>('create')
   const [editingEvent, setEditingEvent] = useState<CalendarEventInstance | null>(null)
   const [defaultStartAt, setDefaultStartAt] = useState<number | undefined>(undefined)
+  const [defaultEndAt, setDefaultEndAt] = useState<number | undefined>(undefined)
 
   const [todoModalOpen, setTodoModalOpen] = useState(false)
   const [todoModalMode, setTodoModalMode] = useState<TodoFormMode>('create')
@@ -39,9 +42,11 @@ const CalendarPage: React.FC = () => {
     return Array.from(tagSet).sort()
   }, [cal.todos])
 
-  const openCreateEvent = useCallback((startAt?: number) => {
+  const openCreateEvent = useCallback((startAt?: number, endAt?: number) => {
     setEditingEvent(null)
     setDefaultStartAt(startAt)
+    // 点击创建默认30分钟
+    setDefaultEndAt(endAt ?? (startAt != null ? startAt + DEFAULT_CLICK_DURATION_SEC : undefined))
     setEventModalMode('create')
     setEventModalOpen(true)
   }, [])
@@ -49,6 +54,7 @@ const CalendarPage: React.FC = () => {
   const openEditEvent = useCallback((event: CalendarEventInstance) => {
     setEditingEvent(event)
     setDefaultStartAt(undefined)
+    setDefaultEndAt(undefined)
     setEventModalMode('edit')
     setEventModalOpen(true)
   }, [])
@@ -59,6 +65,18 @@ const CalendarPage: React.FC = () => {
     }
     return await cal.updateEvent(input as UpdateEventInput)
   }, [cal, eventModalMode])
+
+  const handleMoveEvent = useCallback(async (input: { id: string; start_at: number; end_at: number }) => {
+    return await cal.updateEvent(input as UpdateEventInput)
+  }, [cal])
+
+  const handleResizeEvent = useCallback(async (input: { id: string; start_at: number; end_at: number }) => {
+    return await cal.updateEvent(input as UpdateEventInput)
+  }, [cal])
+
+  const handleDeleteEvent = useCallback(async (id: string) => {
+    return await cal.deleteEvent(id)
+  }, [cal])
 
   const openCreateTodo = useCallback(() => {
     setEditingTodo(null)
@@ -138,6 +156,8 @@ const CalendarPage: React.FC = () => {
             loading={cal.loadingEvents}
             onCreateEvent={openCreateEvent}
             onEditEvent={openEditEvent}
+            onMoveEvent={handleMoveEvent}
+            onResizeEvent={handleResizeEvent}
             onEditTodo={openEditTodo}
           />
         </div>
@@ -167,9 +187,11 @@ const CalendarPage: React.FC = () => {
         mode={eventModalMode}
         event={editingEvent}
         defaultStartAt={defaultStartAt}
+        defaultEndAt={defaultEndAt}
         settings={cal.settings}
         onClose={() => setEventModalOpen(false)}
         onSubmit={handleEventSubmit}
+        onDelete={handleDeleteEvent}
       />
       <TodoFormModal
         open={todoModalOpen}

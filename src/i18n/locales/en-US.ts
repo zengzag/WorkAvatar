@@ -1390,6 +1390,8 @@ export default {
     todos: 'Tasks',
     newEvent: 'New Event',
     editEvent: 'Edit Event',
+    deleteEvent: 'Event deleted',
+    deleteEventConfirm: 'Are you sure you want to delete this event?',
     newTodo: 'New Task',
     editTodo: 'Edit Task',
     eventTitle: 'Title',
