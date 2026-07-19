@@ -160,6 +160,8 @@ export default {
     executing: '执行中',
     generatingArgs: '生成参数中',
     completed: '完成',
+    toolCancelled: '已取消',
+    toolFailed: '失败',
     inputParams: '输入参数',
     outputResult: '返回结果',
     toolProgress: '执行进度',

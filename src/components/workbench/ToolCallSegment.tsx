@@ -5,6 +5,7 @@ import {
   CodeOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
+  CloseCircleOutlined,
   CopyOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons'
@@ -134,8 +135,33 @@ const ToolCallSegmentInner: React.FC<{
   const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
   const contentRef = useRef<HTMLDivElement>(null)
   const isArgsStreaming = !!seg.isToolArgsStreaming
-  const isToolPending = !seg.isToolComplete
+  // toolError 优先级最高：用户停止生成 / LLM 中断 / 工具异常时展示已取消或失败态
+  const isToolError = !!seg.toolError
+  const isToolPending = !seg.isToolComplete && !isToolError
   const isExpanded = !seg.collapsed
+
+  // 统一计算边框/背景/图标色，避免多层三元嵌套（cancelled > argsStreaming > pending > success）
+  const accentColor = isToolError
+    ? token.colorError
+    : isArgsStreaming
+      ? token.colorInfo
+      : isToolPending
+        ? token.colorPrimary
+        : token.colorSuccess
+  const accentBorder = isToolError
+    ? token.colorErrorBorder
+    : isArgsStreaming
+      ? token.colorInfoBorder
+      : isToolPending
+        ? token.colorPrimaryBorder
+        : token.colorSuccessBorder
+  const headerBg = isToolError
+    ? token.colorErrorBg
+    : isArgsStreaming
+      ? token.colorInfoBg
+      : isToolPending
+        ? token.colorPrimaryBg
+        : token.colorSuccessBg
 
   const duration = useElapsedTime(seg.timestamp, !!seg.isToolComplete, seg.completedAt)
 
@@ -146,7 +172,8 @@ const ToolCallSegmentInner: React.FC<{
     ? (seg.toolArgsRaw || '')
     : (seg.toolArgs !== undefined
         ? (typeof seg.toolArgs === 'string' ? seg.toolArgs : JSON.stringify(seg.toolArgs, null, 2))
-        : '')
+        // 取消/失败时 toolArgs 可能为空（JSON 不完整无法解析），回退到 raw 展示已生成部分
+        : (seg.toolArgsRaw || ''))
 
   const isResultLong = resultStr.length > TRUNCATE_THRESHOLD
   const displayResult = isResultLong && !resultExpanded
@@ -213,8 +240,8 @@ const ToolCallSegmentInner: React.FC<{
       <div
         style={{
           borderRadius: 8,
-          border: `1px solid ${isArgsStreaming ? token.colorInfoBorder : (isToolPending ? token.colorPrimaryBorder : token.colorSuccessBorder)}`,
-          borderLeft: `3px solid ${isArgsStreaming ? token.colorInfo : (isToolPending ? token.colorPrimary : token.colorSuccess)}`,
+          border: `1px solid ${accentBorder}`,
+          borderLeft: `3px solid ${accentColor}`,
           background: token.colorBgLayout,
           overflow: 'hidden',
         }}
@@ -228,11 +255,7 @@ const ToolCallSegmentInner: React.FC<{
             gap: 8,
             cursor: 'pointer',
             userSelect: 'none',
-            background: isArgsStreaming
-              ? `linear-gradient(90deg, ${token.colorInfoBg} 0%, transparent 100%)`
-              : (isToolPending
-                  ? `linear-gradient(90deg, ${token.colorPrimaryBg} 0%, transparent 100%)`
-                  : `linear-gradient(90deg, ${token.colorSuccessBg} 0%, transparent 100%)`),
+            background: `linear-gradient(90deg, ${headerBg} 0%, transparent 100%)`,
           }}
         >
           {isExpanded ? (
@@ -240,7 +263,7 @@ const ToolCallSegmentInner: React.FC<{
           ) : (
             <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
           )}
-          <CodeOutlined style={{ fontSize: 13, color: isArgsStreaming ? token.colorInfo : (isToolPending ? token.colorPrimary : token.colorSuccess) }} />
+          <CodeOutlined style={{ fontSize: 13, color: accentColor }} />
           <Text strong style={{ fontSize: 13, color: token.colorText }}>
             {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
           </Text>
@@ -251,7 +274,11 @@ const ToolCallSegmentInner: React.FC<{
               {t('workbench.executionTime', { time: duration })}
             </Text>
           )}
-          {isArgsStreaming ? (
+          {isToolError ? (
+            <Tag color="error" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+              <CloseCircleOutlined /> {seg.toolError}
+            </Tag>
+          ) : isArgsStreaming ? (
             <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
               <LoadingOutlined spin /> {t('workbench.generatingArgs')}
             </Tag>

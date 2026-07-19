@@ -160,6 +160,8 @@ export default {
     executing: 'Executing',
     generatingArgs: 'Generating Args',
     completed: 'Completed',
+    toolCancelled: 'Cancelled',
+    toolFailed: 'Failed',
     inputParams: 'Input Parameters',
     outputResult: 'Result',
     toolProgress: 'Progress',

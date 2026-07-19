@@ -1390,7 +1390,30 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           ? {
               ...m,
               isStreaming: false,
-              segments: (m.segments || []).map(s => ({ ...s, isStreaming: false })),
+              segments: (m.segments || []).map(s => {
+                if (s.type === 'tool_call' && !s.isToolComplete) {
+                  // 用户停止生成时，工具调用可能处于两种中间态：
+                  // 1) isToolArgsStreaming=true：LLM 仍在生成参数 JSON
+                  // 2) isToolArgsStreaming=false, isToolComplete=false：工具正在执行
+                  // 两种情况都需要标记为已取消，避免 UI 永远停留在"生成参数中"/"执行中"
+                  // （handleStop 已删除 streamState，后端 done 事件无法触发 doneCleanup 兜底）
+                  let parsedArgs = s.toolArgs
+                  if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
+                    try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整，保留 raw */ }
+                  }
+                  return {
+                    ...s,
+                    isStreaming: false,
+                    isToolArgsStreaming: false,
+                    isToolComplete: true,
+                    toolArgs: parsedArgs,
+                    toolError: t('workbench.toolCancelled'),
+                    completedAt: s.completedAt || Date.now(),
+                    collapsed: true,
+                  }
+                }
+                return { ...s, isStreaming: false }
+              }),
             }
           : m
       )
