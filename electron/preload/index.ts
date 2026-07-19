@@ -56,6 +56,19 @@ import type {
   SkillEnvInstallProgress,
   McpSaveParams,
   McpTestParams,
+  ListEventsParams,
+  ListTodosParams,
+  CreateEventInput,
+  UpdateEventInput,
+  CreateTodoInput,
+  UpdateTodoInput,
+  CalendarSettings,
+  NotifyPayload,
+  ListAutomationTasksParams,
+  ListAutomationRunsParams,
+  CreateAutomationTaskInput,
+  UpdateAutomationTaskInput,
+  PreviewRunsParams,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -74,6 +87,37 @@ export type {
   VoiceGenerateMinutesParams,
   VoiceSettings,
   VoiceSubtitleConfig,
+} from '../shared/ipc-channels'
+export type {
+  EventColor,
+  TodoPriority,
+  TodoStatus,
+  RecurrenceRule,
+  CalendarEvent,
+  CalendarEventInstance,
+  CalendarTodo,
+  CalendarTodoStats,
+  CalendarSettings as CalendarSettingsType,
+  ListEventsParams as ListEventsParamsType,
+  ListTodosParams as ListTodosParamsType,
+  CreateEventInput as CreateEventInputType,
+  UpdateEventInput as UpdateEventInputType,
+  CreateTodoInput as CreateTodoInputType,
+  UpdateTodoInput as UpdateTodoInputType,
+  NotifyPayload as NotifyPayloadType,
+} from '../shared/ipc-channels'
+export type {
+  AutomationTask,
+  AutomationRun,
+  AutomationTaskStatus,
+  AutomationRunStatus,
+  AutomationTriggeredBy,
+  AutomationRecurrenceRule,
+  CreateAutomationTaskInput as CreateAutomationTaskInputType,
+  UpdateAutomationTaskInput as UpdateAutomationTaskInputType,
+  ListAutomationTasksParams as ListAutomationTasksParamsType,
+  ListAutomationRunsParams as ListAutomationRunsParamsType,
+  PreviewRunsParams as PreviewRunsParamsType,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -265,6 +309,65 @@ const electronAPI = {
     test: (params: McpTestParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TEST, params),
     // 刷新指定 server 的工具缓存（主动重新连接并 listTools）
     refreshTools: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_REFRESH_TOOLS, params),
+  },
+
+  calendar: {
+    // 事件
+    listEvents: (params: ListEventsParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_EVENTS, params),
+    createEvent: (input: CreateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_EVENT, input),
+    updateEvent: (input: UpdateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_EVENT, input),
+    deleteEvent: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_EVENT, { id }),
+    // TODO
+    listTodos: (params?: ListTodosParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_TODOS, params || {}),
+    createTodo: (input: CreateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_TODO, input),
+    updateTodo: (input: UpdateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_TODO, input),
+    deleteTodo: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_TODO, { id }),
+    completeTodo: (id: string, completed: boolean) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, { id, completed }),
+    todoStats: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_TODO_STATS),
+    // 设置
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_GET_SETTINGS),
+    setSettings: (params: Partial<CalendarSettings>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_SET_SETTINGS, params),
+    // 通知事件订阅
+    onNotify: (callback: (payload: NotifyPayload) => void) => {
+      const handler = (_event: any, payload: NotifyPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
+    },
+    onNotifyClick: (callback: (payload: { target?: string; id?: string }) => void) => {
+      const handler = (_event: any, payload: { target?: string; id?: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
+    },
+    onDataChanged: (callback: (payload: { scope: 'event' | 'todo' | 'settings'; ts: number }) => void) => {
+      const handler = (_event: any, payload: { scope: 'event' | 'todo' | 'settings'; ts: number }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.CALENDAR_DATA_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_DATA_CHANGED, handler)
+    },
+    // 渲染进程主动请求系统通知
+    sendNotification: (payload: NotifyPayload) => ipcRenderer.invoke(IPC_CHANNELS.NOTIFY_SEND, payload),
+  },
+
+  automation: {
+    // 任务 CRUD
+    listTasks: (params?: ListAutomationTasksParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_TASKS, params),
+    getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_GET_TASK, id),
+    createTask: (input: CreateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CREATE_TASK, input),
+    updateTask: (input: UpdateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_UPDATE_TASK, input),
+    deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_TASK, { id }),
+    toggleTask: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_TOGGLE_TASK, { id, enabled }),
+    // 执行
+    runNow: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_RUN_NOW, { id }),
+    previewRuns: (params: PreviewRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_PREVIEW_RUNS, params),
+    // 执行历史 CRUD
+    listRuns: (params?: ListAutomationRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_RUNS, params),
+    deleteRun: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_RUN, { id }),
+    clearRuns: (params?: { task_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CLEAR_RUNS, params),
+    // 数据变更事件订阅
+    onDataChanged: (callback: (payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => void) => {
+      const handler = (_event: any, payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
+    },
   },
 
   kms: {

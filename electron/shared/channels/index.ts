@@ -7,6 +7,8 @@ import { KMS_CHANNELS } from './kms'
 import { VOICE_CHANNELS } from './voice'
 import { SKILL_ENV_CHANNELS } from './skill-env'
 import { MCP_CHANNELS } from './mcp'
+import { CALENDAR_CHANNELS } from './calendar'
+import { AUTOMATION_CHANNELS } from './automation'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -18,6 +20,8 @@ export const IPC_CHANNELS = {
   ...VOICE_CHANNELS,
   ...SKILL_ENV_CHANNELS,
   ...MCP_CHANNELS,
+  ...CALENDAR_CHANNELS,
+  ...AUTOMATION_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -29,3 +33,5 @@ export * from './kms'
 export * from './voice'
 export * from './skill-env'
 export * from './mcp'
+export * from './calendar'
+export * from './automation'

@@ -25,6 +25,9 @@ export interface MessageSegment {
   isToolArgsStreaming?: boolean
   /** 流式生成中的原始参数文本（JSON 字符串，可能不完整） */
   toolArgsRaw?: string
+  /** 工具调用被中断/取消/失败时的状态描述（用户停止生成、LLM 中断等场景）。
+   *  设置后 UI 以错误色展示，优先级高于 isToolArgsStreaming / isToolComplete */
+  toolError?: string
   /** 工具执行中间进度步骤（仅UI展示，不进入LLM上下文） */
   toolProgress?: any[]
   /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */

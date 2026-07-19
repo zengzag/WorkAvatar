@@ -118,6 +118,10 @@ class UnifiedInteractionService {
     const fullRequest: InteractionRequest = { ...request, id }
     const timeout = request.timeout || 300000
 
+    // 主窗口未激活时，通过系统通知告知用户有数字员工询问
+    // 避免用户错过权限请求；点击通知会聚焦主窗口显示交互弹窗
+    this.maybeNotifyInactiveWindow(request)
+
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id)
@@ -134,6 +138,26 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true })
       }
     })
+  }
+
+  /**
+   * 主窗口未激活时，发送系统通知告知用户有数字员工询问。
+   * 复用 NotificationService 的主窗口失焦检测与通知点击聚焦逻辑。
+   * 通知 body 截断到 200 字符，避免过长。
+   */
+  private maybeNotifyInactiveWindow(request: Omit<InteractionRequest, 'id'>): void {
+    try {
+      const notificationService = require('./notification.service').default.getInstance()
+      if (!notificationService.isMainWindowInactive()) return
+      const title = request.title || '数字员工需要您的确认'
+      const body = (request.message || '').slice(0, 200)
+      notificationService.notify({
+        title,
+        body,
+        clickTarget: 'ask_user',
+        source: 'ask_user',
+      })
+    } catch { /* 通知失败不影响主流程 */ }
   }
 
   /**

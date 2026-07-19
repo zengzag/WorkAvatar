@@ -15,6 +15,7 @@ import {
   FONT_SIZE_LG_MAP,
   listenSystemThemeChange,
 } from './stores/appearance.store'
+import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
@@ -30,12 +31,14 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   const fontSizeLevel = useAppearanceStore((s) => s.fontSizeLevel)
   const locale = useAppearanceStore((s) => s.locale)
   const initialize = useAppearanceStore((s) => s.initialize)
+  const initializeNav = useNavConfigStore((s) => s.initialize)
 
   useEffect(() => {
     initialize()
+    initializeNav()
     const cleanup = listenSystemThemeChange()
     return cleanup
-  }, [initialize])
+  }, [initialize, initializeNav])
 
   const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
 

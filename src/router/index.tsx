@@ -9,6 +9,8 @@ const EmployeeSettings = lazy(() => import('../pages/EmployeeSettings'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
 const VoicePage = lazy(() => import('../pages/Voice'))
+const CalendarPage = lazy(() => import('../pages/Calendar'))
+const AutomationPage = lazy(() => import('../pages/Automation'))
 
 const lazyElement = (node: ReactNode) => (
   <Suspense fallback={<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }} />}>
@@ -48,6 +50,14 @@ const router = createHashRouter([
       {
         path: 'voice',
         element: lazyElement(<VoicePage />),
+      },
+      {
+        path: 'calendar',
+        element: lazyElement(<CalendarPage />),
+      },
+      {
+        path: 'automation',
+        element: lazyElement(<AutomationPage />),
       },
     ],
   },

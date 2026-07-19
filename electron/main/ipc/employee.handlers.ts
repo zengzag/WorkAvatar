@@ -28,6 +28,7 @@ import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
+import AutomationService from '../services/automation/automation.service'
 import { safeHandle } from './_shared'
 
 export function registerEmployeeHandlers(
@@ -79,6 +80,8 @@ export function registerEmployeeHandlers(
     if (ok) {
       // 清理该会话的 allowAlways 授权缓存，避免授权残留
       UnifiedInteractionService.getInstance().clearAllowedSources(id)
+      // 同步删除自动化执行历史中关联的记录（双向同步：员工对话删除 → 自动化历史删除）
+      try { AutomationService.getInstance().deleteRunByConversation(id) } catch { /* ignore */ }
     }
     return ok
   })

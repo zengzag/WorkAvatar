@@ -266,7 +266,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       </div>
 
       <div style={{ flex: 1, overflow: 'auto' }}>
-        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+        <Space orientation="vertical" style={{ width: '100%' }} size={8}>
           {dirs.map((dir) => {
             const extInfo = formatDirExts(dir)
             return (

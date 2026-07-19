@@ -248,6 +248,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             ...segs[actualIndex],
             toolResult: result,
             isToolComplete: true,
+            // 清除可能残留的 toolError（如 doneCleanup 标记的中断态），优先展示真实结果
+            toolError: undefined,
             collapsed: true,
             completedAt: Date.now(),
             generatedFiles: generatedFiles && generatedFiles.length > 0 ? generatedFiles : undefined,
@@ -311,7 +313,9 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               ...s,
               isStreaming: false,
               isToolArgsStreaming: false,
+              isToolComplete: true,
               toolArgs: parsedArgs,
+              toolError: tt('workbench.toolCancelled'),
               completedAt,
               collapsed: true,
             }
@@ -374,7 +378,32 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       updateConvMessages(streamState.conversationId, (prev) =>
         prev.map((m) =>
           m.id === streamState.assistantMessageId
-            ? { ...m, content: tt('workbench.errorMsg', { error }), isStreaming: false, isError: true, segments: (m.segments || []).map(s => ({ ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() })) }
+            ? {
+                ...m,
+                content: tt('workbench.errorMsg', { error }),
+                isStreaming: false,
+                isError: true,
+                segments: (m.segments || []).map(s => {
+                  // 工具调用未完成时标记为失败，避免 UI 永远停留在"生成参数中"/"执行中"
+                  if (s.type === 'tool_call' && !s.isToolComplete) {
+                    let parsedArgs = s.toolArgs
+                    if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
+                      try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整 */ }
+                    }
+                    return {
+                      ...s,
+                      isStreaming: false,
+                      isToolArgsStreaming: false,
+                      isToolComplete: true,
+                      toolArgs: parsedArgs,
+                      toolError: tt('workbench.toolFailed'),
+                      completedAt: s.completedAt || Date.now(),
+                      collapsed: true,
+                    }
+                  }
+                  return { ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() }
+                }),
+              }
             : m
         )
       )

@@ -92,7 +92,7 @@ const DefaultModelSettings: React.FC = () => {
         </Tooltip>
       </div>
 
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         {scenes.map(scene => {
           const config = configs[scene.key]
           return (
