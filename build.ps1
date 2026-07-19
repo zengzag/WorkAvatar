@@ -88,35 +88,50 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "  Vite build completed"
 Write-Host ""
 
-# Step 6: Electron Builder packaging (portable only)
-Write-Step "6/6" "Electron Builder packaging (portable)..."
-Write-Host "  Generating portable build..."
+# Step 6: Electron Builder packaging (NSIS installer)
+Write-Step "6/6" "Electron Builder packaging (NSIS installer)..."
+Write-Host "  Generating NSIS installer..."
 
-npx electron-builder --win --dir
+# 清理上次失败残留的 .tmp 目录和旧 win-unpacked，避免 EPERM rename 冲突
+$releaseDir = "release\$version"
+if (Test-Path $releaseDir) {
+    Get-ChildItem $releaseDir -Directory -Filter "*.tmp" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path "$releaseDir\win-unpacked") {
+        Remove-Item -Recurse -Force "$releaseDir\win-unpacked" -ErrorAction SilentlyContinue
+    }
+}
 
-$srcDir = "release\$version\win-unpacked"
+# --publish never：禁用 CI 环境下的隐式自动发布
+# 不带 --dir：按 electron-builder.yml 中 win.target=nsis 生成真正的安装包
+# （包含安装目录选择、桌面/开始菜单快捷方式、卸载器）
+$buildExitCode = 0
+& npx electron-builder --win --publish never
+$buildExitCode = $LASTEXITCODE
 
-if (Test-Path "$srcDir\WorkAvatar.exe") {
-    Write-Host ""
-    Write-Host "  Creating portable ZIP..."
+if ($buildExitCode -ne 0) {
+    Write-Error-Msg "electron-builder packaging failed (exit code: $buildExitCode)"
+    exit 1
+}
 
-    $zipPath = "release\$version\WorkAvatar-portable-$version.zip"
-    Compress-Archive -Path "$srcDir\*" -DestinationPath $zipPath -Force
-    $size = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
+$installerPath = "release\$version\WorkAvatar-Setup-$version.exe"
+$unpackedDir = "release\$version\win-unpacked"
+
+if (Test-Path $installerPath) {
+    $size = [math]::Round((Get-Item $installerPath).Length / 1MB, 1)
 
     Write-Host ""
     Write-Success "========================================"
     Write-Success "  Build completed!"
     Write-Success "========================================"
     Write-Host ""
-    Write-Host "  Portable: $srcDir\WorkAvatar.exe"
-    Write-Host "  ZIP:      $zipPath (${size}MB)"
+    Write-Host "  Installer: $installerPath (${size}MB)"
+    Write-Host "  Unpacked:  $unpackedDir (用于调试)"
     Write-Host ""
-    Write-Host "  Run win-unpacked\WorkAvatar.exe directly,"
-    Write-Host "  or extract the ZIP to any folder and run."
+    Write-Host "  Distribute the Setup.exe to end users."
     Write-Success "========================================"
 } else {
-    Write-Error-Msg "Build output not found: $srcDir\WorkAvatar.exe"
+    Write-Error-Msg "Installer not found: $installerPath"
+    Write-Error-Msg "Check electron-builder output above for errors."
     exit 1
 }
 
