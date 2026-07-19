@@ -8,6 +8,7 @@ import { registerKMSHandlers } from './kms.handlers'
 import { registerVoiceHandlers } from './voice.handlers'
 import { registerSkillEnvHandlers } from './skill-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
+import { registerCalendarHandlers } from './calendar.handlers'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
@@ -39,6 +40,7 @@ export function registerIpcHandlers() {
   registerVoiceHandlers()
   registerSkillEnvHandlers()
   registerMcpHandlers()
+  registerCalendarHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()

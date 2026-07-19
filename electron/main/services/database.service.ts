@@ -291,6 +291,78 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_employee ON employee_mcp_servers(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_enabled ON employee_mcp_servers(employee_id, is_enabled);
+
+      -- 日历日程表：用户与智能体创建的日程事件
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        location TEXT DEFAULT '',
+        -- unix 秒
+        start_at INTEGER NOT NULL,
+        end_at INTEGER NOT NULL,
+        all_day INTEGER NOT NULL DEFAULT 0,
+        -- 颜色标签：blue/green/orange/red/purple/default
+        color TEXT NOT NULL DEFAULT 'default',
+        -- 重复规则 JSON，空串表示不重复
+        recurrence_rule TEXT DEFAULT '',
+        -- 多个提醒偏移（分钟）JSON 数组，如 [0, -10, -60]
+        reminders_json TEXT DEFAULT '[]',
+        -- 创建者 employee_id（用户手动创建则为空）
+        employee_id TEXT,
+        -- 来源：user / agent
+        source TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
+      CREATE INDEX IF NOT EXISTS idx_calendar_events_end ON calendar_events(end_at);
+      CREATE INDEX IF NOT EXISTS idx_calendar_events_emp ON calendar_events(employee_id);
+
+      -- 日历 TODO 任务表
+      CREATE TABLE IF NOT EXISTS calendar_todos (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        -- 截止时间 unix 秒，可空表示无截止
+        due_at INTEGER,
+        -- 优先级：none / low / medium / high
+        priority TEXT NOT NULL DEFAULT 'none',
+        -- 状态：pending / in_progress / completed
+        status TEXT NOT NULL DEFAULT 'pending',
+        tags_json TEXT DEFAULT '[]',
+        recurrence_rule TEXT DEFAULT '',
+        reminders_json TEXT DEFAULT '[]',
+        completed_at INTEGER,
+        employee_id TEXT,
+        source TEXT NOT NULL DEFAULT 'user',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_calendar_todos_due ON calendar_todos(due_at);
+      CREATE INDEX IF NOT EXISTS idx_calendar_todos_status ON calendar_todos(status);
+      CREATE INDEX IF NOT EXISTS idx_calendar_todos_priority ON calendar_todos(priority);
+      CREATE INDEX IF NOT EXISTS idx_calendar_todos_emp ON calendar_todos(employee_id);
+
+      -- 日历提醒队列表：scheduler 扫描此表触发通知
+      CREATE TABLE IF NOT EXISTS calendar_reminders (
+        id TEXT PRIMARY KEY,
+        -- event / todo
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        -- 触发时间 unix 秒
+        trigger_at INTEGER NOT NULL,
+        -- 已触发时间 unix 秒，NULL 表示未触发
+        fired_at INTEGER,
+        -- 通知负载 JSON：title / body / clickTarget / clickId
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_calendar_reminders_trigger ON calendar_reminders(trigger_at, fired_at);
+      CREATE INDEX IF NOT EXISTS idx_calendar_reminders_target ON calendar_reminders(target_type, target_id);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')

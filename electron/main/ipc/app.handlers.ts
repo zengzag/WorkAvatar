@@ -18,10 +18,14 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'kms_auto_index',
   'web_search_engine',
   'web_search_result_count',
+  'calendar_settings',
 ])
 
 // 需要清空的用户数据表（按依赖顺序，受外键约束）
 const USER_DATA_TABLES = [
+  'calendar_reminders',
+  'calendar_todos',
+  'calendar_events',
   'employee_memories',
   'employee_skills',
   'employee_tools',

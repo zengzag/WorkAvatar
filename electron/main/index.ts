@@ -5,6 +5,8 @@ import { Readable } from 'stream'
 import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
+import NotificationService from './services/notification.service'
+import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
 import { registerIpcHandlers } from './ipc'
 import { createLogger, LoggerBackend } from './services/logger'
 
@@ -276,6 +278,9 @@ async function createWindow() {
     return { action: 'deny' }
   })
 
+  // 注入主窗口引用给通知服务，调度器启动后弹系统通知
+  NotificationService.getInstance().setMainWindow(mainWindow)
+
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
   } else {
@@ -343,11 +348,24 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
+
+  // 启动日历提醒调度器（每 30 秒扫描到期提醒并推送通知）
+  try {
+    CalendarSchedulerService.getInstance().start()
+  } catch (err: any) {
+    logger.warn('Calendar scheduler start failed:', err?.message || err)
+  }
 })
 
 app.on('before-quit', () => {
   isQuitting = true
   logger.info('Application quitting, cleaning up resources')
+  // 停止日历提醒调度器
+  try {
+    CalendarSchedulerService.getInstance().stop()
+  } catch (error) {
+    logger.error('Failed to stop CalendarSchedulerService:', error)
+  }
   // 清理资源：关闭 LLM 日志定时器与数据库连接
   try {
     LLMLoggerService.getInstance().destroy()
@@ -375,6 +393,7 @@ app.on('before-quit', () => {
 
 app.on('window-all-closed', () => {
   mainWindow = null
+  NotificationService.getInstance().setMainWindow(null)
 })
 
 app.on('activate', () => {

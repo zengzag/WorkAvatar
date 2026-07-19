@@ -99,3 +99,21 @@ export type {
   McpTestParams,
   McpTestResult,
 } from './channels/mcp'
+export type {
+  EventColor,
+  TodoPriority,
+  TodoStatus,
+  RecurrenceRule,
+  CalendarEvent,
+  CalendarEventInstance,
+  CalendarTodo,
+  CalendarTodoStats,
+  CalendarSettings,
+  ListEventsParams,
+  ListTodosParams,
+  CreateEventInput,
+  UpdateEventInput,
+  CreateTodoInput,
+  UpdateTodoInput,
+  NotifyPayload,
+} from './channels/calendar'

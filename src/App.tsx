@@ -5,12 +5,14 @@ import {
   SettingOutlined,
   SearchOutlined,
   AudioOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
 import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
+import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
 
 const { Sider, Content } = Layout
 
@@ -28,8 +30,18 @@ const App: React.FC = () => {
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/kms')) return 'kms'
     if (path.startsWith('/voice')) return 'voice'
+    if (path.startsWith('/calendar')) return 'calendar'
     return 'digital-employees'
   }, [location.pathname])
+
+  // 全局监听日历/ask_user 通知：主窗口激活时由主进程推送，antd notification 显示
+  useCalendarNotify(() => {
+    navigate('/calendar')
+  })
+  // 系统通知点击后由主进程推送 → 跳转日历页
+  useCalendarNotifyClick(() => {
+    navigate('/calendar')
+  })
 
   // memoize menuItems：避免每次路由变化都生成新数组触发 Menu 重渲染
   const menuItems = useMemo(() => [
@@ -54,6 +66,12 @@ const App: React.FC = () => {
       icon: <AudioOutlined />,
       label: t('nav.voice'),
       onClick: () => navigate('/voice'),
+    },
+    {
+      key: 'calendar',
+      icon: <CalendarOutlined />,
+      label: t('nav.calendar'),
+      onClick: () => navigate('/calendar'),
     },
     {
       key: 'settings',

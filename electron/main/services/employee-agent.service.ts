@@ -6,7 +6,7 @@ import McpRegistryService from './mcp-registry.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, calendarTools, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
@@ -224,6 +224,11 @@ class EmployeeAgentService {
     const officeGuideTool = createOfficeGuideTool(emp.workspace_path || '')
     agent.registerTools([officeGuideTool, officeExecTool])
 
+    // 注入日历工具：所有员工默认可用（日程 + TODO 的 CRUD 与统计）
+    if (enabledToolIds.has('calendar_event') || enabledToolIds.has('calendar_todo')) {
+      agent.registerTools(calendarTools.filter(t => enabledToolIds.has(t.id)))
+    }
+
     if (enabledToolIds.has('search_conversations')) {
       const convSearchTools = createConversationSearchTool(employeeId)
       agent.registerTools(convSearchTools)
@@ -281,6 +286,11 @@ class EmployeeAgentService {
 
     const agentToolIds = ['search_conversations']
     for (const id of agentToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
+    const calendarToolIds = ['calendar_event', 'calendar_todo']
+    for (const id of calendarToolIds) {
       allBuiltinToolIds.add(id)
     }
 
