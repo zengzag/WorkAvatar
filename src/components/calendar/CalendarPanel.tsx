@@ -6,19 +6,20 @@ import { useTranslation } from 'react-i18next'
 import type { CalendarEventInstance, CalendarTodo, EventColor } from '../../types/calendar'
 import { useDragInteraction, secToY, RESIZE_HANDLE_HEIGHT } from '../../hooks/useDragInteraction'
 import type { DragState } from '../../hooks/useDragInteraction'
+import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 
 const MS = 1000
 const HOUR_HEIGHT = 56
 const HOURS_PER_DAY = 24
 
-const EVENT_COLOR_MAP: Record<EventColor, { bg: string; border: string }> = {
-  default: { bg: 'rgba(22,119,255,0.14)', border: '#1677ff' },
-  blue: { bg: 'rgba(22,119,255,0.14)', border: '#1677ff' },
-  green: { bg: 'rgba(82,196,26,0.14)', border: '#52c41a' },
-  orange: { bg: 'rgba(250,140,22,0.14)', border: '#fa8c16' },
-  red: { bg: 'rgba(245,34,45,0.14)', border: '#f5222d' },
-  purple: { bg: 'rgba(114,46,209,0.14)', border: '#722ed1' },
-}
+const getEventColorMap = (isDark: boolean): Record<EventColor, { bg: string; border: string }> => ({
+  default: { bg: `rgba(22,119,255,${isDark ? 0.14 : 0.22})`, border: '#1677ff' },
+  blue: { bg: `rgba(22,119,255,${isDark ? 0.14 : 0.22})`, border: '#1677ff' },
+  green: { bg: `rgba(82,196,26,${isDark ? 0.14 : 0.22})`, border: '#52c41a' },
+  orange: { bg: `rgba(250,140,22,${isDark ? 0.14 : 0.22})`, border: '#fa8c16' },
+  red: { bg: `rgba(245,34,45,${isDark ? 0.14 : 0.22})`, border: '#f5222d' },
+  purple: { bg: `rgba(114,46,209,${isDark ? 0.14 : 0.22})`, border: '#722ed1' },
+})
 
 const TODO_PRIORITY_COLOR: Record<string, string> = {
   high: '#f5222d',
@@ -67,7 +68,7 @@ const formatEventTime = (sec: number): string => {
 }
 
 /** 渲染拖拽创建的预览块 */
-const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creating' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creating' }>; dayStartMs: number; token: any; isDark: boolean }> = ({ dragState, dayStartMs, token, isDark }) => {
   if (dragState.dayStartMs !== dayStartMs) return null
   const top = secToY(dragState.startSec, dayStartMs)
   const bottom = secToY(dragState.endSec, dayStartMs)
@@ -78,7 +79,7 @@ const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creati
       right: 2,
       top,
       height: bottom - top,
-      background: 'rgba(22,119,255,0.08)',
+      background: `rgba(22,119,255,${isDark ? 0.08 : 0.12})`,
       border: '1px dashed #1677ff',
       borderRadius: 4,
       pointerEvents: 'none',
@@ -92,7 +93,7 @@ const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creati
 }
 
 /** 渲染拖拽移动/调整大小中的事件块 */
-const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving' }>; dayStartMs: number; token: any; isDark: boolean }> = ({ dragState, dayStartMs, token, isDark }) => {
   const isTarget = dragState.targetDayStartMs === dayStartMs
   const isOriginal = dragState.originalDayStartMs === dayStartMs
   if (!isTarget && !isOriginal) return null
@@ -106,7 +107,7 @@ const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving'
     return (
       <div style={{
         position: 'absolute', left: 2, right: 2, top, height: bottom - top,
-        background: 'rgba(22,119,255,0.06)', borderLeft: '3px solid rgba(22,119,255,0.3)',
+        background: `rgba(22,119,255,${isDark ? 0.06 : 0.10})`, borderLeft: `3px solid rgba(22,119,255,${isDark ? 0.3 : 0.4})`,
         borderRadius: 4, pointerEvents: 'none', opacity: 0.5, zIndex: 6,
       }} />
     )
@@ -118,7 +119,7 @@ const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving'
   return (
     <div style={{
       position: 'absolute', left: 2, right: 2, top, height: bottom - top,
-      background: 'rgba(22,119,255,0.14)', borderLeft: '3px solid #1677ff',
+      background: `rgba(22,119,255,${isDark ? 0.14 : 0.20})`, borderLeft: '3px solid #1677ff',
       borderRadius: 4, padding: '2px 6px', fontSize: 11, overflow: 'hidden',
       color: token.colorText, pointerEvents: 'none', zIndex: 6,
       boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
@@ -128,14 +129,14 @@ const DragMovingBlock: React.FC<{ dragState: Extract<DragState, { type: 'moving'
   )
 }
 
-const DragResizingBlock: React.FC<{ dragState: Extract<DragState, { type: 'resizing' }>; dayStartMs: number; token: any }> = ({ dragState, dayStartMs, token }) => {
+const DragResizingBlock: React.FC<{ dragState: Extract<DragState, { type: 'resizing' }>; dayStartMs: number; token: any; isDark: boolean }> = ({ dragState, dayStartMs, token, isDark }) => {
   if (dragState.dayStartMs !== dayStartMs) return null
   const top = secToY(dragState.newStartSec, dayStartMs)
   const bottom = secToY(dragState.newEndSec, dayStartMs)
   return (
     <div style={{
       position: 'absolute', left: 2, right: 2, top, height: bottom - top,
-      background: 'rgba(22,119,255,0.14)', borderLeft: '3px solid #1677ff',
+      background: `rgba(22,119,255,${isDark ? 0.14 : 0.20})`, borderLeft: '3px solid #1677ff',
       borderRadius: 4, padding: '2px 6px', fontSize: 11, overflow: 'hidden',
       color: token.colorText, pointerEvents: 'none', zIndex: 6,
       outline: '2px solid #1677ff',
@@ -151,6 +152,10 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const themeMode = useAppearanceStore((s) => s.themeMode)
+  const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
+  const isDark = effectiveTheme === 'dark'
+  const eventColorMap = useMemo(() => getEventColorMap(isDark), [isDark])
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   const hours = useMemo(
@@ -207,7 +212,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                 }}
               >
                 {dayEvents.slice(0, 3).map((ev) => {
-                  const c = EVENT_COLOR_MAP[ev.color] || EVENT_COLOR_MAP.default
+                  const c = eventColorMap[ev.color] || eventColorMap.default
                   return (
                     <Tooltip
                       key={`${ev.id}-${ev.instance_start_at}`}
@@ -284,7 +289,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
         <div style={{
           display: 'grid',
           gridTemplateColumns: `56px repeat(${dayColumns.length}, 1fr)`,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+          borderBottom: `1px solid ${token.colorBorder}`,
           flexShrink: 0,
           position: 'sticky',
           top: 0,
@@ -301,10 +306,10 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                 style={{
                   textAlign: 'center',
                   padding: '8px 4px',
-                  borderLeft: `1px solid ${token.colorBorderSecondary}`,
+                  borderLeft: `1px solid ${token.colorBorder}`,
                 }}
               >
-                <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
                   {view === 'week' ? weekdayLabels[d.getDay()] : t('calendar.today')}
                 </div>
                 <div style={{
@@ -325,7 +330,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
         </div>
 
         {/* 时间网格 */}
-        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative', background: token.colorBgContainer }}>
           <div data-day-cols style={{
             position: 'relative',
             height: hours.length * HOUR_HEIGHT,
@@ -341,7 +346,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                   left: 0,
                   right: 0,
                   height: 0,
-                  borderTop: `1px dashed ${token.colorBorderSecondary}`,
+                  borderTop: `1px dashed ${token.colorBorder}`,
                   pointerEvents: 'none',
                 }}
               />
@@ -358,7 +363,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     left: -52,
                     width: 48,
                     fontSize: 10,
-                    color: token.colorTextTertiary,
+                    color: token.colorTextSecondary,
                     textAlign: 'right',
                     transform: 'translateY(-7px)',
                     pointerEvents: 'none',
@@ -383,7 +388,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     width: `${100 / dayColumns.length}%`,
                     top: 0,
                     bottom: 0,
-                    borderLeft: `1px solid ${token.colorBorderSecondary}`,
+                    borderLeft: `1px solid ${token.colorBorder}`,
                     cursor: dragState.type !== 'idle' ? 'default' : undefined,
                   }}
                   onMouseDown={(e) => handleGridMouseDown(e, dms, colIdx)}
@@ -427,7 +432,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     const durationMins = Math.max(15, (endMs - startMs) / MS / 60)
                     const top = (startMins / 60) * HOUR_HEIGHT
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
-                    const c = EVENT_COLOR_MAP[ev.color] || EVENT_COLOR_MAP.default
+                    const c = eventColorMap[ev.color] || eventColorMap.default
                     const isAllDay = ev.all_day
                     return (
                       <Tooltip
@@ -536,13 +541,13 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
 
                   {/* 拖拽预览块 */}
                   {dragState.type === 'creating' && (
-                    <DragPreviewBlock dragState={dragState} dayStartMs={dms} token={token} />
+                    <DragPreviewBlock dragState={dragState} dayStartMs={dms} token={token} isDark={isDark} />
                   )}
                   {dragState.type === 'moving' && (
-                    <DragMovingBlock dragState={dragState} dayStartMs={dms} token={token} />
+                    <DragMovingBlock dragState={dragState} dayStartMs={dms} token={token} isDark={isDark} />
                   )}
                   {dragState.type === 'resizing' && (
-                    <DragResizingBlock dragState={dragState} dayStartMs={dms} token={token} />
+                    <DragResizingBlock dragState={dragState} dayStartMs={dms} token={token} isDark={isDark} />
                   )}
                 </div>
               )
