@@ -2,26 +2,23 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { Worker } from 'worker_threads'
-import { createWorker } from 'tesseract.js'
+import { dialog } from 'electron'
 import { createLogger } from './logger'
 import PathService from './path.service'
 
 const logger = createLogger('OCR')
 
 /**
- * OCR 引擎选择。
+ * OCR 服务：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，运行在独立 Worker 线程中。
  *
- * 优先级：paddleocr (Worker) > tesseract (主线程)
- *
- * - paddleocr：基于 PaddleOCR v5 mobile + onnxruntime-node 本地推理，中文识别精度显著优于 Tesseract
- *   运行在独立 Worker 线程中，onnxruntime-native 崩溃不会杀死主进程
- * - tesseract：纯 JS (WebAssembly) 兜底，通用性强但中文/复杂排版识别能力弱
+ * Worker 线程用于隔离 onnxruntime-native 原生崩溃，避免拖垮主进程。
+ * 任何失败（Worker 启动失败、初始化失败、识别失败、Worker 崩溃）都会：
+ *   1. 写入错误日志
+ *   2. 弹窗提示用户
+ *   3. 抛出错误由调用方处理
  */
-type OCREngineName = 'paddleocr' | 'tesseract' | 'auto'
-
 interface OCROptions {
   language?: string
-  engine?: OCREngineName
 }
 
 interface OCRBlock {
@@ -99,14 +96,10 @@ type WorkerInMessage = WorkerResultMessage | WorkerErrorMessage | WorkerReadyMes
 
 class OCRService {
   private static instance: OCRService
-  private tesseractWorker: Tesseract.Worker | null = null
-  private paddleocrAvailable = false
   private initPromise: Promise<void> | null = null
 
-  // Worker 相关状态
   private ocrWorker: Worker | null = null
   private workerReady = false
-  private workerDead = false // Worker 崩溃后标记为死亡，不再重试
   private pendingRequests = new Map<string, {
     resolve: (value: any) => void
     reject: (reason: any) => void
@@ -123,8 +116,8 @@ class OCRService {
   }
 
   /**
-   * 初始化 PaddleOCR 引擎（在 Worker 线程中）。
-   * 多次调用只会初始化一次。Worker 崩溃后不会重试。
+   * 初始化 PaddleOCR 引擎（在 Worker 线程中）。多次调用只初始化一次。
+   * 失败时记录日志、弹窗报错并抛出。
    */
   async initialize(): Promise<void> {
     if (this.initPromise) return this.initPromise
@@ -133,26 +126,26 @@ class OCRService {
   }
 
   private async doInitialize(): Promise<void> {
-    // 检查模型文件是否存在
     const modelDir = this.getPaddleOcrModelDir()
     const detPath = path.join(modelDir, 'PP-OCRv5_mobile_det_infer.onnx')
     const recPath = path.join(modelDir, 'PP-OCRv5_mobile_rec_infer.onnx')
     const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
 
     if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
-      logger.warn('PaddleOCR model files missing, falling back to Tesseract.js:', {
-        detPath, recPath, dictPath,
-      })
-      return
+      const msg = 'PaddleOCR 模型文件缺失，OCR 功能不可用'
+      logger.error(msg, { detPath, recPath, dictPath })
+      this.showError('OCR 初始化失败', `${msg}\n路径: ${modelDir}`)
+      throw new Error(msg)
     }
 
     try {
       await this.spawnAndInitWorker()
-      this.paddleocrAvailable = true
       logger.info('PaddleOCR v5 mobile engine initialized (Worker)')
     } catch (err) {
-      logger.warn('PaddleOCR Worker initialization failed, falling back to Tesseract.js:', err)
-      this.paddleocrAvailable = false
+      const msg = 'PaddleOCR Worker 初始化失败'
+      logger.error(msg, err)
+      this.showError('OCR 初始化失败', `${msg}\n${err instanceof Error ? err.message : String(err)}`)
+      throw err instanceof Error ? err : new Error(String(err))
     }
   }
 
@@ -179,9 +172,9 @@ class OCRService {
       this.handleWorkerMessage(msg)
     })
 
-    this.ocrWorker.on('error', (err) => {
+    this.ocrWorker.on('error', (err: Error) => {
       logger.error('OCR Worker error:', err)
-      this.onWorkerExit()
+      this.onWorkerExit(err)
     })
 
     this.ocrWorker.on('exit', (code) => {
@@ -238,15 +231,13 @@ class OCRService {
     // 'pong' 忽略
   }
 
-  private onWorkerExit(): void {
-    if (this.workerDead && !this.ocrWorker) return // 防止重复触发
+  private onWorkerExit(err?: Error): void {
+    if (!this.ocrWorker) return // 防止重复触发
     this.workerReady = false
-    this.paddleocrAvailable = false
-    this.workerDead = true
 
     // 拒绝所有等待中的请求
     for (const [, pending] of this.pendingRequests) {
-      pending.reject(new Error('OCR Worker crashed'))
+      pending.reject(new Error(`OCR Worker crashed: ${err?.message || 'unknown error'}`))
     }
     this.pendingRequests.clear()
 
@@ -256,7 +247,12 @@ class OCRService {
       this.ocrWorker = null
     }
 
-    logger.warn('OCR Worker crashed/exited — PaddleOCR disabled, will use Tesseract.js fallback')
+    // 重置 initPromise 允许下次调用重新初始化
+    this.initPromise = null
+
+    const msg = 'OCR Worker 崩溃退出，图片识别不可用'
+    logger.error(msg, err)
+    this.showError('OCR 运行异常', `${msg}\n${err?.message || ''}`)
   }
 
   private nextId(): string {
@@ -309,28 +305,7 @@ class OCRService {
     return response.result as OCRResult
   }
 
-  private async runTesseract(imagePath: string, language: string = 'chi_sim+eng'): Promise<OCRResult> {
-    if (!this.tesseractWorker) {
-      this.tesseractWorker = await createWorker(language)
-    }
-
-    const { data } = await this.tesseractWorker.recognize(imagePath)
-
-    const blocks: OCRBlock[] = data.blocks?.map((block: any) => ({
-      text: block.text || '',
-      confidence: block.confidence || 0,
-      bbox: block.bbox || { x0: 0, y0: 0, x1: 0, y1: 0 },
-    })) || []
-
-    return {
-      text: data.text || '',
-      confidence: data.confidence ? data.confidence / 100 : 0.8,
-      engine: 'tesseract.js',
-      blocks,
-    }
-  }
-
-  async recognize(imagePath: string, options?: OCROptions): Promise<OCRResult> {
+  async recognize(imagePath: string, _options?: OCROptions): Promise<OCRResult> {
     if (!fs.existsSync(imagePath)) {
       throw new Error(`Image file not found: ${imagePath}`)
     }
@@ -338,22 +313,14 @@ class OCRService {
     // 确保 PaddleOCR 已尝试初始化（首次调用是异步加载的）
     await this.initialize()
 
-    const requested = options?.engine || 'auto'
-    const usePaddle = requested === 'paddleocr' || (requested === 'auto' && this.paddleocrAvailable)
-
-    if (usePaddle && this.workerReady && !this.workerDead) {
-      try {
-        return await this.runPaddleOcrViaWorker(imagePath)
-      } catch (err) {
-        if (requested === 'paddleocr') {
-          throw err
-        }
-        logger.warn('PaddleOCR Worker failed, falling back to Tesseract.js:', err)
-      }
+    try {
+      return await this.runPaddleOcrViaWorker(imagePath)
+    } catch (err) {
+      const msg = 'PaddleOCR 识别失败'
+      logger.error(msg, { imagePath, error: err })
+      this.showError('OCR 识别失败', `${msg}\n图片: ${path.basename(imagePath)}\n${err instanceof Error ? err.message : String(err)}`)
+      throw err instanceof Error ? err : new Error(String(err))
     }
-
-    const language = options?.language || 'chi_sim+eng'
-    return await this.runTesseract(imagePath, language)
   }
 
   async recognizeBuffer(imageBuffer: Buffer, options?: OCROptions): Promise<OCRResult> {
@@ -371,15 +338,6 @@ class OCRService {
   }
 
   async terminate(): Promise<void> {
-    if (this.tesseractWorker) {
-      try {
-        await this.tesseractWorker.terminate()
-      } catch (err) {
-        logger.debug('Tesseract terminate error:', err)
-      }
-      this.tesseractWorker = null
-    }
-
     if (this.ocrWorker) {
       try {
         const msg: WorkerTerminateMessage = { type: 'terminate', id: this.nextId() }
@@ -390,12 +348,23 @@ class OCRService {
       }
       this.ocrWorker = null
       this.workerReady = false
-      this.paddleocrAvailable = false
+      this.initPromise = null
     }
   }
 
   isPaddleOcrAvailable(): boolean {
-    return this.paddleocrAvailable && this.workerReady && !this.workerDead
+    return this.workerReady
+  }
+
+  // ── 错误提示 ────────────────────────────────────────────────
+
+  private showError(title: string, content: string): void {
+    // 同步非阻塞弹窗，不会卡住主进程
+    try {
+      dialog.showErrorBox(title, content)
+    } catch (err) {
+      logger.error('Failed to show OCR error dialog:', err)
+    }
   }
 }
 

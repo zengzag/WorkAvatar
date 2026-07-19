@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-0.1.1-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![Electron](https://img.shields.io/badge/Electron-35-green)
 ![React](https://img.shields.io/badge/React-19-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)
@@ -210,7 +210,7 @@ WorkAvatar 的资料库检索能力可以通过 MCP（Model Context Protocol）�
 | 状态管理 | Zustand |
 | UI 组件库 | Ant Design 6 |
 | 数据库 | better-sqlite3（含 FTS5 全文索引 + sqlite-vec 向量检索） |
-| 文件解析 | file2md, unpdf, mammoth, SheetJS, Tesseract.js, PaddleOCR |
+| 文件解析 | file2md, unpdf, mammoth, SheetJS, PaddleOCR |
 | 语音识别 | sherpa-onnx |
 | 图片处理 | sharp |
 | 国际化 | i18next |

@@ -4,6 +4,15 @@ copyright: Copyright © 2024 WorkAvatar
 
 npmRebuild: false
 
+# 顶层压缩：最大化 asar 内文件压缩率
+compression: maximum
+
+# 仅保留应用实际使用的 Electron 语言包（zh-CN/zh-TW/en-US），其余 ~50 个 .pak 移除
+electronLanguages:
+  - zh-CN
+  - zh-TW
+  - en-US
+
 afterPack: scripts/afterPack.cjs
 
 directories:
@@ -68,6 +77,9 @@ files:
   - "!node_modules/cytoscape-fcose/**"
   - "!node_modules/epubjs/**"
   - "!node_modules/rtf.js/**"
+  # ── tesseract.js：已移除兜底逻辑，整个依赖树（含 tesseract.js-core ~43MB WASM）排除 ──
+  - "!node_modules/tesseract.js/**"
+  - "!node_modules/tesseract.js-core/**"
   # ── onnxruntime-node：仅保留 win32/x64，排除其他平台二进制 ──
   - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
@@ -78,6 +90,11 @@ files:
   - "!node_modules/sherpa-onnx-linux-x64/**"
   - "!node_modules/sherpa-onnx-linux-arm64/**"
   - "!node_modules/sherpa-onnx-win-ia32/**"
+  # ── @napi-rs/canvas：未被任何源码 import，纯 transitive 依赖，整目录排除 ──
+  - "!node_modules/@napi-rs/canvas*/**"
+  # ── better-sqlite3：运行时使用预编译 .node，源码（sqlite3.c ~9MB）无需打包 ──
+  - "!node_modules/better-sqlite3/deps/**"
+  - "!node_modules/better-sqlite3/src/**"
   # ── 全局排除开发时文件模式 ──
   - "!**/*.{d.ts,map}"
   - "!**/{test,tests,__tests__,spec,fixtures,mocks}/**"
@@ -102,7 +119,9 @@ asarUnpack:
 
 win:
   target:
-    - portable
+    - target: nsis
+      arch:
+        - x64
   icon: resources/icons/icon.ico
   signAndEditExecutable: true
   artifactName: '${productName}-Setup-${version}.${ext}'

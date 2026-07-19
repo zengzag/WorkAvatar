@@ -3,7 +3,7 @@
  *
  * 目的：onnxruntime-native 在初始化或推理时可能触发原生崩溃（segfault），
  * 在主线程中这会直接杀死整个 Electron 进程。Worker 线程崩溃不会影响主进程，
- * 主线程可检测到 Worker 退出后自动回退到 Tesseract.js。
+ * 主线程检测到 Worker 退出后记录日志并弹窗提示用户。
  *
  * 消息协议：
  *   主线程 → Worker:
