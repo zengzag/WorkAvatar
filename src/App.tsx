@@ -6,12 +6,14 @@ import {
   SearchOutlined,
   AudioOutlined,
   CalendarOutlined,
+  FieldTimeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
 import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
+import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
 
 const { Sider, Content } = Layout
@@ -31,55 +33,86 @@ const App: React.FC = () => {
     if (path.startsWith('/kms')) return 'kms'
     if (path.startsWith('/voice')) return 'voice'
     if (path.startsWith('/calendar')) return 'calendar'
+    if (path.startsWith('/automation')) return 'automation'
     return 'digital-employees'
   }, [location.pathname])
 
-  // 全局监听日历/ask_user 通知：主窗口激活时由主进程推送，antd notification 显示
-  useCalendarNotify(() => {
+  // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
+  useCalendarNotify((payload) => {
+    if (payload.clickTarget === 'automation' && payload.clickId) {
+      try {
+        const { conversationId, employeeId } = JSON.parse(payload.clickId)
+        if (employeeId && conversationId) {
+          localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
+          navigate(`/employee/${employeeId}`)
+          return
+        }
+      } catch { /* ignore parse error */ }
+    }
     navigate('/calendar')
   })
-  // 系统通知点击后由主进程推送 → 跳转日历页
-  useCalendarNotifyClick(() => {
+  // 系统通知点击后由主进程推送 → 按目标跳转
+  useCalendarNotifyClick((payload) => {
+    if (payload.target === 'automation' && payload.id) {
+      try {
+        const { conversationId, employeeId } = JSON.parse(payload.id)
+        if (employeeId && conversationId) {
+          localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
+          navigate(`/employee/${employeeId}`)
+          return
+        }
+      } catch { /* ignore parse error */ }
+    }
     navigate('/calendar')
   })
 
-  // memoize menuItems：避免每次路由变化都生成新数组触发 Menu 重渲染
-  const menuItems = useMemo(() => [
-    {
-      key: 'digital-employees',
+  // 导航菜单配置（从 nav.store 读取显隐与排序）
+  const navConfig = useNavConfigStore((s) => s.config)
+
+  // 所有导航项的定义（icon + label + onClick）
+  const navItemDefs = useMemo(() => ({
+    'digital-employees': {
       icon: <RobotOutlined />,
       label: t('nav.digitalEmployees'),
-      // 直接导航到上次使用的员工页面，跳过 EmployeeRedirect 的串行 IPC 延迟
       onClick: () => {
         const lastId = localStorage.getItem('employeeWorkbench:lastEmployeeId')
         navigate(lastId ? `/employee/${lastId}` : '/')
       },
     },
-    {
-      key: 'kms',
+    'kms': {
       icon: <SearchOutlined />,
       label: t('nav.kms'),
       onClick: () => navigate('/kms'),
     },
-    {
-      key: 'voice',
+    'voice': {
       icon: <AudioOutlined />,
       label: t('nav.voice'),
       onClick: () => navigate('/voice'),
     },
-    {
-      key: 'calendar',
+    'calendar': {
       icon: <CalendarOutlined />,
       label: t('nav.calendar'),
       onClick: () => navigate('/calendar'),
     },
-    {
-      key: 'settings',
+    'automation': {
+      icon: <FieldTimeOutlined />,
+      label: t('nav.automation'),
+      onClick: () => navigate('/automation'),
+    },
+    'settings': {
       icon: <SettingOutlined />,
       label: t('nav.settings'),
       onClick: () => navigate('/settings'),
     },
-  ], [t, navigate])
+  }), [t, navigate])
+
+  // 按配置过滤+排序后的菜单项
+  const menuItems = useMemo(() => {
+    return getVisibleNavItems(navConfig).map((item) => ({
+      key: item.key,
+      ...navItemDefs[item.key as NavItemKey],
+    }))
+  }, [navConfig, navItemDefs])
 
   const siderBg = effectiveTheme === 'dark' ? '#1a1a1a' : '#ffffff'
 

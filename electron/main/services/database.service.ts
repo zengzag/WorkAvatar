@@ -363,6 +363,56 @@ class DatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_calendar_reminders_trigger ON calendar_reminders(trigger_at, fired_at);
       CREATE INDEX IF NOT EXISTS idx_calendar_reminders_target ON calendar_reminders(target_type, target_id);
+
+      -- 自动化任务表：定时调度数字员工执行提示词任务
+      CREATE TABLE IF NOT EXISTS automation_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        prompt TEXT NOT NULL,
+        employee_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        provider_id TEXT NOT NULL,
+        model_id TEXT,
+        high_permission INTEGER NOT NULL DEFAULT 0,
+        start_at INTEGER NOT NULL,
+        recurrence_rule TEXT DEFAULT '',
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        notify_on_complete INTEGER NOT NULL DEFAULT 0,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        tags_json TEXT DEFAULT '[]',
+        last_run_at INTEGER,
+        next_run_at INTEGER,
+        last_status TEXT NOT NULL DEFAULT 'idle',
+        last_error TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_automation_tasks_enabled ON automation_tasks(is_enabled, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_automation_tasks_employee ON automation_tasks(employee_id);
+      CREATE INDEX IF NOT EXISTS idx_automation_tasks_status ON automation_tasks(last_status);
+
+      -- 自动化执行历史表：每次任务执行的记录
+      CREATE TABLE IF NOT EXISTS automation_runs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES automation_tasks(id) ON DELETE CASCADE,
+        conversation_id TEXT,
+        employee_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        model_id TEXT,
+        status TEXT NOT NULL DEFAULT 'running',
+        triggered_by TEXT NOT NULL DEFAULT 'scheduler',
+        started_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        duration_ms INTEGER,
+        error_message TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_automation_runs_task ON automation_runs(task_id);
+      CREATE INDEX IF NOT EXISTS idx_automation_runs_conv ON automation_runs(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status);
+      CREATE INDEX IF NOT EXISTS idx_automation_runs_started ON automation_runs(started_at DESC);
     `)
 
     this.addColumnIfNotExists('llm_providers', 'embedding_model', 'TEXT DEFAULT \'text-embedding-3-small\'')

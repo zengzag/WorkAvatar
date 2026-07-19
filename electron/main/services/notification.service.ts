@@ -8,9 +8,9 @@ export interface NotifyPayload {
   title: string
   body: string
   /** 点击通知后前端跳转目标 */
-  clickTarget?: 'event' | 'todo' | 'calendar' | 'ask_user'
+  clickTarget?: 'event' | 'todo' | 'calendar' | 'ask_user' | 'automation'
   clickId?: string
-  /** 静默：不弹出 antd notification，仅写日志（如批量提醒去重时） */
+  /** 静默：不弹 antd notification，仅写日志（如批量提醒去重时） */
   silent?: boolean
   /** 来源标记 */
   source?: string

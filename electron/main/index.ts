@@ -7,6 +7,7 @@ import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
 import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
+import AutomationSchedulerService from './services/automation/automation-scheduler.service'
 import { registerIpcHandlers } from './ipc'
 import { createLogger, LoggerBackend } from './services/logger'
 
@@ -355,6 +356,13 @@ app.whenReady().then(() => {
   } catch (err: any) {
     logger.warn('Calendar scheduler start failed:', err?.message || err)
   }
+
+  // 启动自动化任务调度器（每 30 秒扫描到期任务并触发执行）
+  try {
+    AutomationSchedulerService.getInstance().start()
+  } catch (err: any) {
+    logger.warn('Automation scheduler start failed:', err?.message || err)
+  }
 })
 
 app.on('before-quit', () => {
@@ -365,6 +373,12 @@ app.on('before-quit', () => {
     CalendarSchedulerService.getInstance().stop()
   } catch (error) {
     logger.error('Failed to stop CalendarSchedulerService:', error)
+  }
+  // 停止自动化任务调度器
+  try {
+    AutomationSchedulerService.getInstance().stop()
+  } catch (error) {
+    logger.error('Failed to stop AutomationSchedulerService:', error)
   }
   // 清理资源：关闭 LLM 日志定时器与数据库连接
   try {

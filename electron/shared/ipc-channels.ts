@@ -117,3 +117,17 @@ export type {
   UpdateTodoInput,
   NotifyPayload,
 } from './channels/calendar'
+export type {
+  AutomationTask,
+  AutomationRun,
+  AutomationTaskStatus,
+  AutomationRunStatus,
+  AutomationTriggeredBy,
+  AutomationRecurrenceRule,
+  CreateAutomationTaskInput,
+  UpdateAutomationTaskInput,
+  ListAutomationTasksParams,
+  ListAutomationRunsParams,
+  PreviewRunsParams,
+  AutomationDataChangedPayload,
+} from './channels/automation'

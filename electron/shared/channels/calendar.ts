@@ -174,7 +174,14 @@ export interface UpdateTodoInput {
 export interface NotifyPayload {
   title: string
   body: string
-  clickTarget?: 'event' | 'todo' | 'calendar'
+  clickTarget?: 'event' | 'todo' | 'calendar' | 'ask_user' | 'automation'
+  clickId?: string
+  /** 静默：不弹 antd notification，仅写日志 */
+  silent?: boolean
+  /** 来源标记 */
+  source?: string
+  /** @deprecated 旧字段，保留兼容 */
   targetId?: string
+  /** @deprecated 旧字段，保留兼容 */
   scheduledAt?: number
 }
