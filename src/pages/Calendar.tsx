@@ -67,7 +67,7 @@ const CalendarPage: React.FC = () => {
       const tryScroll = () => {
         const target = calendarWrapRef.current
         if (target && target.scrollHeight > target.clientHeight) {
-          target.scrollTop = (target.scrollHeight - target.clientHeight) / 2
+          target.scrollTop = (target.scrollHeight - target.clientHeight) * 0.6
         }
       }
       tryScroll()
@@ -217,16 +217,18 @@ const CalendarPage: React.FC = () => {
           width: 360,
           flexShrink: 0,
           borderLeft: `1px solid ${token.colorBorderSecondary}`,
-          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}>
           <TodoPanel
             todos={cal.todos}
-            stats={cal.stats}
             loading={cal.loadingTodos}
             filters={cal.filters}
             onFiltersChange={cal.setFilters}
-            onCreateTodo={openCreateTodo}
+            onQuickAddTodo={cal.createTodo}
             onEditTodo={openEditTodo}
+            onUpdateTodo={cal.updateTodo}
             onCompleteTodo={cal.completeTodo}
             onDeleteTodo={cal.deleteTodo}
           />

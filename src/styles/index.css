@@ -208,6 +208,30 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* 快速创建输入框：抹掉 antd TextArea 自带聚焦样式 */
+.quick-add-input::placeholder {
+  color: var(--text-tertiary, rgba(0, 0, 0, 0.45));
+}
+
+.quick-add-input,
+.quick-add-input:hover,
+.quick-add-input:focus {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.quick-add-input:focus {
+  outline: none;
+}
+
+.ant-input-textarea-focused.quick-add-input {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
 html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }

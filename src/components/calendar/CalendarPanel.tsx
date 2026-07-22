@@ -166,7 +166,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
     const tryScroll = () => {
       const el = scrollContainerRef.current
       if (el && el.scrollHeight > el.clientHeight) {
-        el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
+        el.scrollTop = (el.scrollHeight - el.clientHeight) * 0.6
         hasScrolledRef.current = true
       }
     }

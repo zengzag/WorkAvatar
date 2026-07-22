@@ -1,36 +1,24 @@
-import { useMemo } from 'react'
-import {
-  Spin, Statistic, Row, Col, Select, Button, Tag, Checkbox, Tooltip, Empty, Popconfirm, theme,
-} from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { useMemo, useState } from 'react'
+import { Spin, Select, Empty, Tooltip, Badge, Button, theme } from 'antd'
+import { FilterOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type {
-  CalendarTodo, CalendarTodoStats, TodoPriority, TodoStatus, TodoFilters,
+  CalendarTodo, TodoFilters,
+  CreateTodoInput, UpdateTodoInput,
 } from '../../types/calendar'
+import QuickAddBar from './QuickAddBar'
+import TodoItem from './TodoItem'
 
 const MS = 1000
 
-const PRIORITY_COLOR: Record<TodoPriority, string> = {
-  none: 'default',
-  low: 'blue',
-  medium: 'orange',
-  high: 'red',
-}
-
-const STATUS_COLOR: Record<TodoStatus, string> = {
-  pending: 'default',
-  in_progress: 'processing',
-  completed: 'success',
-}
-
 interface TodoPanelProps {
   todos: CalendarTodo[]
-  stats: CalendarTodoStats | null
   loading: boolean
   filters: TodoFilters
   onFiltersChange: (filters: Partial<TodoFilters>) => void
-  onCreateTodo: () => void
+  onQuickAddTodo: (input: CreateTodoInput) => Promise<any>
   onEditTodo: (todo: CalendarTodo) => void
+  onUpdateTodo: (input: UpdateTodoInput) => Promise<any>
   onCompleteTodo: (id: string, completed: boolean) => void
   onDeleteTodo: (id: string) => void
 }
@@ -49,17 +37,6 @@ const startOfWeekMs = (ms: number): number => {
   return startOfDayMs(new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff).getTime())
 }
 
-const formatDueTime = (sec: number): string => {
-  const d = new Date(sec * MS)
-  const now = new Date()
-  const sameDay = d.toDateString() === now.toDateString()
-  const hm = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-  if (sameDay) return hm
-  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-  if (d.toDateString() === tomorrow.toDateString()) return `${hm} +1d`
-  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
-}
-
 interface TodoGroup {
   key: string
   label: string
@@ -76,11 +53,18 @@ const groupTodos = (todos: CalendarTodo[], t: (k: string) => string): TodoGroup[
   const weekEnd = weekStart + 7 * 86400 * MS - 1
 
   const groups: Record<string, CalendarTodo[]> = {
-    overdue: [], today: [], tomorrow: [], thisWeek: [], later: [], noDue: [], completed: [],
+    today: [], tomorrow: [], thisWeek: [], later: [], noDue: [], overdue: [], completed: [],
   }
 
   for (const td of todos) {
     if (td.status === 'completed') {
+      if (td.due_at != null) {
+        const dueMs = td.due_at * MS
+        if (dueMs >= todayStart && dueMs <= todayEnd) {
+          groups.today.push(td)
+          continue
+        }
+      }
       groups.completed.push(td)
       continue
     }
@@ -97,21 +81,23 @@ const groupTodos = (todos: CalendarTodo[], t: (k: string) => string): TodoGroup[
   }
 
   return [
-    { key: 'overdue', label: t('calendar.groupOverdue'), todos: groups.overdue },
     { key: 'today', label: t('calendar.groupToday'), todos: groups.today },
     { key: 'tomorrow', label: t('calendar.groupTomorrow'), todos: groups.tomorrow },
     { key: 'thisWeek', label: t('calendar.groupThisWeek'), todos: groups.thisWeek },
     { key: 'later', label: t('calendar.groupLater'), todos: groups.later },
     { key: 'noDue', label: t('calendar.groupNoDue'), todos: groups.noDue },
+    { key: 'overdue', label: t('calendar.groupOverdue'), todos: groups.overdue },
     { key: 'completed', label: t('calendar.groupCompleted'), todos: groups.completed },
   ].filter(g => g.todos.length > 0)
 }
 
 const TodoPanel: React.FC<TodoPanelProps> = ({
-  todos, stats, loading, filters, onFiltersChange, onCreateTodo, onEditTodo, onCompleteTodo, onDeleteTodo,
+  todos, loading, filters, onFiltersChange,
+  onQuickAddTodo, onEditTodo, onUpdateTodo, onCompleteTodo, onDeleteTodo,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const [filterOpen, setFilterOpen] = useState(false)
 
   const allTags = useMemo(() => {
     const s = new Set<string>()
@@ -136,181 +122,167 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
 
   const groups = useMemo(() => groupTodos(filtered, t), [filtered, t])
 
+  const todaySummary = useMemo(() => {
+    const now = Date.now()
+    const todayStart = startOfDayMs(now)
+    const todayEnd = endOfDayMs(now)
+    const todayTodos = todos.filter(td => {
+      if (td.due_at == null) return false
+      const dueMs = td.due_at * MS
+      return dueMs >= todayStart && dueMs <= todayEnd
+    })
+    const done = todayTodos.filter(td => td.status === 'completed').length
+    const pending = todayTodos.length - done
+    return { total: todayTodos.length, done, pending }
+  }, [todos])
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (filters.status) n++
+    if (filters.priority) n++
+    if (filters.tag) n++
+    return n
+  }, [filters])
+
   return (
-    <Spin spinning={loading}>
-      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {/* 顶部新建按钮 */}
-        <Button type="primary" icon={<PlusOutlined />} block onClick={onCreateTodo}>
-          {t('calendar.newTodo')}
-        </Button>
-
-        {/* 统计卡片 */}
-        {stats && (
-          <Row gutter={[8, 8]}>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsTotal')} value={stats.total} styles={{ content: { fontSize: 16 } }} />
-            </Col>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsPending')} value={stats.pending} styles={{ content: { fontSize: 16, color: token.colorTextSecondary } }} />
-            </Col>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsCompleted')} value={stats.completed} styles={{ content: { fontSize: 16, color: token.colorSuccess } }} />
-            </Col>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsOverdue')} value={stats.overdue} styles={{ content: { fontSize: 16, color: stats.overdue > 0 ? token.colorError : token.colorTextSecondary } }} />
-            </Col>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsDueToday')} value={stats.due_today} styles={{ content: { fontSize: 16, color: stats.due_today > 0 ? token.colorWarning : token.colorTextSecondary } }} />
-            </Col>
-            <Col span={8}>
-              <Statistic title={t('calendar.statsCompletionRate')} value={stats.completion_rate} suffix="%" styles={{ content: { fontSize: 16 } }} />
-            </Col>
-          </Row>
-        )}
-
-        {/* 筛选 */}
-        <Row gutter={4}>
-          <Col span={8}>
-            <Select
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* 顶部标题栏：今日摘要 + 筛选图标 */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '10px 12px 6px',
+        flexShrink: 0,
+      }}>
+        <div style={{
+          fontSize: 12,
+          color: token.colorTextSecondary,
+          fontWeight: 500,
+        }}>
+          {t('calendar.todaySummary', { total: todaySummary.total, done: todaySummary.done, pending: todaySummary.pending })}
+        </div>
+        <Badge count={activeFilterCount} size="small" offset={[-2, 2]} color={token.colorPrimary}>
+          <Tooltip title={t('calendar.filter')}>
+            <Button
               size="small"
-              placeholder={t('calendar.filterStatus')}
-              value={filters.status}
-              onChange={(v) => onFiltersChange({ status: v })}
-              allowClear
-              style={{ width: '100%' }}
-              options={[
-                { value: 'pending', label: t('calendar.statusPending') },
-                { value: 'in_progress', label: t('calendar.statusInProgress') },
-                { value: 'completed', label: t('calendar.statusCompleted') },
-              ]}
+              type="text"
+              icon={<FilterOutlined style={{ fontSize: 14, color: activeFilterCount > 0 ? token.colorPrimary : token.colorTextTertiary }} />}
+              onClick={() => setFilterOpen(v => !v)}
             />
-          </Col>
-          <Col span={8}>
-            <Select
-              size="small"
-              placeholder={t('calendar.filterPriority')}
-              value={filters.priority}
-              onChange={(v) => onFiltersChange({ priority: v })}
-              allowClear
-              style={{ width: '100%' }}
-              options={[
-                { value: 'none', label: t('calendar.priorityNone') },
-                { value: 'low', label: t('calendar.priorityLow') },
-                { value: 'medium', label: t('calendar.priorityMedium') },
-                { value: 'high', label: t('calendar.priorityHigh') },
-              ]}
-            />
-          </Col>
-          <Col span={8}>
-            <Select
-              size="small"
-              placeholder={t('calendar.filterTag')}
-              value={filters.tag}
-              onChange={(v) => onFiltersChange({ tag: v })}
-              allowClear
-              style={{ width: '100%' }}
-              options={allTags.map(tg => ({ value: tg, label: tg }))}
-            />
-          </Col>
-        </Row>
+          </Tooltip>
+        </Badge>
+      </div>
 
-        {/* 列表 */}
+      {/* 筛选面板：可折叠 */}
+      {filterOpen && (
+        <div style={{
+          padding: '0 12px 8px',
+          flexShrink: 0,
+          display: 'flex',
+          gap: 6,
+        }}>
+          <Select
+            size="small"
+            placeholder={t('calendar.filterStatus')}
+            value={filters.status}
+            onChange={(v) => onFiltersChange({ status: v })}
+            allowClear
+            style={{ flex: 1 }}
+            options={[
+              { value: 'pending', label: t('calendar.statusPending') },
+              { value: 'in_progress', label: t('calendar.statusInProgress') },
+              { value: 'completed', label: t('calendar.statusCompleted') },
+            ]}
+          />
+          <Select
+            size="small"
+            placeholder={t('calendar.filterPriority')}
+            value={filters.priority}
+            onChange={(v) => onFiltersChange({ priority: v })}
+            allowClear
+            style={{ flex: 1 }}
+            options={[
+              { value: 'none', label: t('calendar.priorityNone') },
+              { value: 'low', label: t('calendar.priorityLow') },
+              { value: 'medium', label: t('calendar.priorityMedium') },
+              { value: 'high', label: t('calendar.priorityHigh') },
+            ]}
+          />
+          <Select
+            size="small"
+            placeholder={t('calendar.filterTag')}
+            value={filters.tag}
+            onChange={(v) => onFiltersChange({ tag: v })}
+            allowClear
+            style={{ flex: 1 }}
+            options={allTags.map(tg => ({ value: tg, label: tg }))}
+          />
+        </div>
+      )}
+
+      {/* 中间列表：可滚动 */}
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: 'auto',
+        padding: '0 12px',
+        position: 'relative',
+      }}>
+        <Spin spinning={loading} size="small" style={{ position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 2 }} />
         {groups.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('calendar.noTodos')} />
+          <div style={{ padding: '40px 0' }}>
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('calendar.noTodos')} />
+          </div>
         ) : (
           groups.map(g => (
-            <div key={g.key}>
+            <div key={g.key} style={{ marginBottom: 4 }}>
               <div style={{
                 fontSize: 11,
-                color: token.colorTextTertiary,
-                fontWeight: 500,
-                padding: '6px 0',
-                borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                marginBottom: 4,
+                color: g.key === 'overdue' ? token.colorError : token.colorTextTertiary,
+                fontWeight: 600,
+                padding: '8px 4px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                letterSpacing: 0.3,
+                textTransform: 'uppercase',
               }}>
-                {g.label} ({g.todos.length})
+                {g.key === 'overdue' && <span style={{ color: token.colorError, fontSize: 8 }}>●</span>}
+                {g.label}
+                <span style={{ color: token.colorTextQuaternary, fontWeight: 400 }}>
+                  {g.todos.length}
+                </span>
               </div>
-              {g.todos.map(td => {
-                const isCompleted = td.status === 'completed'
-                const isOverdue = !isCompleted && td.due_at != null && td.due_at * MS < Date.now()
-                return (
-                  <div
+              <div style={{
+                borderRadius: 6,
+                padding: '2px 0',
+              }}>
+                {g.todos.map(td => (
+                  <TodoItem
                     key={td.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 8,
-                      padding: '6px 4px',
-                      borderRadius: 4,
-                      cursor: 'pointer',
-                      opacity: isCompleted ? 0.6 : 1,
-                    }}
-                    onClick={() => onEditTodo(td)}
-                  >
-                    <Checkbox
-                      checked={isCompleted}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => onCompleteTodo(td.id, e.target.checked)}
-                      style={{ marginTop: 2 }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 13,
-                        textDecoration: isCompleted ? 'line-through' : 'none',
-                        color: token.colorText,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}>
-                        {td.title}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
-                        {td.priority !== 'none' && (
-                          <Tag color={PRIORITY_COLOR[td.priority]} style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                            {t(`calendar.priority${td.priority.charAt(0).toUpperCase() + td.priority.slice(1)}`)}
-                          </Tag>
-                        )}
-                        {td.status !== 'pending' && (
-                          <Tag color={STATUS_COLOR[td.status]} style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                            {t(`calendar.status${td.status === 'in_progress' ? 'InProgress' : td.status === 'completed' ? 'Completed' : 'Pending'}`)}
-                          </Tag>
-                        )}
-                        {td.due_at != null && (
-                          <span style={{ fontSize: 11, color: isOverdue ? token.colorError : token.colorTextTertiary }}>
-                            {formatDueTime(td.due_at)}
-                          </span>
-                        )}
-                        {(td.tags || []).slice(0, 2).map(tg => (
-                          <Tag key={tg} style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>{tg}</Tag>
-                        ))}
-                        {(td.tags || []).length > 2 && (
-                          <span style={{ fontSize: 10, color: token.colorTextTertiary }}>+{td.tags.length - 2}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 2, opacity: 0.6 }} onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title={t('common.edit')}>
-                        <Button size="small" type="text" icon={<EditOutlined />} onClick={() => onEditTodo(td)} />
-                      </Tooltip>
-                      <Popconfirm
-                        title={t('calendar.confirmDeleteTodo')}
-                        onConfirm={() => onDeleteTodo(td.id)}
-                        okText={t('common.confirm')}
-                        cancelText={t('common.cancel')}
-                      >
-                        <Tooltip title={t('common.delete')}>
-                          <Button size="small" type="text" danger icon={<DeleteOutlined />} />
-                        </Tooltip>
-                      </Popconfirm>
-                    </div>
-                  </div>
-                )
-              })}
+                    todo={td}
+                    onEdit={onEditTodo}
+                    onComplete={onCompleteTodo}
+                    onDelete={onDeleteTodo}
+                    onUpdate={onUpdateTodo}
+                  />
+                ))}
+              </div>
             </div>
           ))
         )}
       </div>
-    </Spin>
+
+      {/* 底部固定快速创建栏 */}
+      <div style={{
+        flexShrink: 0,
+        padding: '8px 12px 12px',
+        borderTop: `1px solid ${token.colorBorderSecondary}`,
+        background: token.colorBgLayout,
+      }}>
+        <QuickAddBar onSubmit={onQuickAddTodo} />
+      </div>
+    </div>
   )
 }
 

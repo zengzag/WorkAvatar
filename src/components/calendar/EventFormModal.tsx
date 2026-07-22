@@ -1,8 +1,8 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  Modal, Form, Input, Switch, DatePicker, TimePicker, Select, InputNumber, Row, Col, Button, Popconfirm, message,
+  Modal, Form, Input, Switch, DatePicker, TimePicker, Select, InputNumber, Row, Col, Button, Popconfirm, message, theme,
 } from 'antd'
-import { DeleteOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -41,8 +41,15 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
   open, mode, event, defaultStartAt, defaultEndAt, settings, onClose, onSubmit, onDelete,
 }) => {
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const [form] = Form.useForm()
   const isEdit = mode === 'edit'
+  // 创建模式默认折叠非主题/描述字段；编辑模式默认展开
+  const [expanded, setExpanded] = useState(isEdit)
+
+  useEffect(() => {
+    if (open) setExpanded(isEdit)
+  }, [open, isEdit])
 
   const initialValues = useMemo(() => {
     if (isEdit && event) {
@@ -177,6 +184,7 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
       onCancel={onClose}
       onOk={() => form.submit()}
       destroyOnHidden
+      centered
       width={520}
       footer={(_, { OkBtn, CancelBtn }) => (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -211,108 +219,134 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
           <Input placeholder={t('calendar.eventTitlePlaceholder')} autoFocus />
         </Form.Item>
 
-        <Row gutter={8}>
-          <Col span={12}>
-            <Form.Item name="startDate" label={t('calendar.startDate')} style={compactItem}>
-              <DatePicker style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="endDate" label={t('calendar.endDate')} style={compactItem}>
-              <DatePicker style={{ width: '100%' }} />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        {!allDay && (
-          <Row gutter={8}>
-            <Col span={12}>
-              <Form.Item name="startTime" label={t('calendar.startTime')} style={compactItem}>
-                <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="endTime" label={t('calendar.endTime')} style={compactItem}>
-                <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+        {!expanded && (
+          <Button
+            type="link"
+            size="small"
+            onClick={() => setExpanded(true)}
+            icon={<RightOutlined style={{ fontSize: 10 }} />}
+            style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
+          >
+            {t('calendar.moreOptions')}
+          </Button>
         )}
 
-        <Row gutter={8}>
-          <Col span={8}>
-            <Form.Item name="allDay" label={t('calendar.allDay')} valuePropName="checked" style={compactItem}>
-              <Switch />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="color" label={t('calendar.color')} style={compactItem}>
-              <Select
-                optionLabelProp="label"
-                options={COLOR_OPTIONS.map((c) => ({
-                  value: c,
-                  label: (
-                    <span>
-                      <span style={colorStyle(c)} />
-                      {t(`calendar.color${c.charAt(0).toUpperCase() + c.slice(1)}`)}
-                    </span>
-                  ),
-                }))}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="recurrenceFreq" label={t('calendar.repeat')} style={compactItem}>
-              <Select
-                options={[
-                  { value: 'none', label: t('calendar.repeatNone') },
-                  { value: 'daily', label: t('calendar.repeatDaily') },
-                  { value: 'weekdays', label: t('calendar.repeatWeekdays') },
-                  { value: 'weekly', label: t('calendar.repeatWeekly') },
-                  { value: 'monthly', label: t('calendar.repeatMonthly') },
-                  { value: 'yearly', label: t('calendar.repeatYearly') },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        </Row>
+        {expanded && (
+          <>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => setExpanded(false)}
+              icon={<DownOutlined style={{ fontSize: 10 }} />}
+              style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
+            >
+              {t('calendar.lessOptions')}
+            </Button>
 
-        {recurrenceFreq && recurrenceFreq !== 'none' && (
-          <Row gutter={8}>
-            <Col span={8}>
-              <Form.Item name="recurrenceInterval" label={t('calendar.repeatInterval')} style={compactItem}>
-                <InputNumber min={1} max={99} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="recurrenceCount" label={t('calendar.repeatCount')} style={compactItem}>
-                <InputNumber min={1} max={365} placeholder="∞" style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="recurrenceUntil" label={t('calendar.repeatUntil')} style={compactItem}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+            <Row gutter={8}>
+              <Col span={12}>
+                <Form.Item name="startDate" label={t('calendar.startDate')} style={compactItem}>
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="endDate" label={t('calendar.endDate')} style={compactItem}>
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {!allDay && (
+              <Row gutter={8}>
+                <Col span={12}>
+                  <Form.Item name="startTime" label={t('calendar.startTime')} style={compactItem}>
+                    <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="endTime" label={t('calendar.endTime')} style={compactItem}>
+                    <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            )}
+
+            <Row gutter={8}>
+              <Col span={8}>
+                <Form.Item name="allDay" label={t('calendar.allDay')} valuePropName="checked" style={compactItem}>
+                  <Switch />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="color" label={t('calendar.color')} style={compactItem}>
+                  <Select
+                    optionLabelProp="label"
+                    options={COLOR_OPTIONS.map((c) => ({
+                      value: c,
+                      label: (
+                        <span>
+                          <span style={colorStyle(c)} />
+                          {t(`calendar.color${c.charAt(0).toUpperCase() + c.slice(1)}`)}
+                        </span>
+                      ),
+                    }))}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="recurrenceFreq" label={t('calendar.repeat')} style={compactItem}>
+                  <Select
+                    options={[
+                      { value: 'none', label: t('calendar.repeatNone') },
+                      { value: 'daily', label: t('calendar.repeatDaily') },
+                      { value: 'weekdays', label: t('calendar.repeatWeekdays') },
+                      { value: 'weekly', label: t('calendar.repeatWeekly') },
+                      { value: 'monthly', label: t('calendar.repeatMonthly') },
+                      { value: 'yearly', label: t('calendar.repeatYearly') },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {recurrenceFreq && recurrenceFreq !== 'none' && (
+              <Row gutter={8}>
+                <Col span={8}>
+                  <Form.Item name="recurrenceInterval" label={t('calendar.repeatInterval')} style={compactItem}>
+                    <InputNumber min={1} max={99} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="recurrenceCount" label={t('calendar.repeatCount')} style={compactItem}>
+                    <InputNumber min={1} max={365} placeholder="∞" style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="recurrenceUntil" label={t('calendar.repeatUntil')} style={compactItem}>
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            )}
+
+            <Row gutter={8}>
+              <Col span={12}>
+                <Form.Item name="reminders" label={t('calendar.reminders')} style={compactItem}>
+                  <Select
+                    mode="multiple"
+                    placeholder={t('calendar.addReminder')}
+                    options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="location" label={t('calendar.location')} style={compactItem}>
+                  <Input placeholder={t('calendar.locationPlaceholder')} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </>
         )}
-
-        <Row gutter={8}>
-          <Col span={12}>
-            <Form.Item name="reminders" label={t('calendar.reminders')} style={compactItem}>
-              <Select
-                mode="multiple"
-                placeholder={t('calendar.addReminder')}
-                options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="location" label={t('calendar.location')} style={compactItem}>
-              <Input placeholder={t('calendar.locationPlaceholder')} />
-            </Form.Item>
-          </Col>
-        </Row>
 
         <Form.Item name="description" label={t('calendar.description')} style={{ marginBottom: 0 }}>
           <Input.TextArea rows={2} placeholder={t('calendar.descriptionPlaceholder')} />
