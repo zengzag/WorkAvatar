@@ -95,9 +95,11 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
             {/* 第一行：标题 + 状态徽标 + 操作按钮 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
-                  {task.title}
-                </Typography.Text>
+                <Tooltip title={task.title} mouseEnterDelay={0.4}>
+                  <Typography.Text strong style={{ fontSize: 14, maxWidth: 360 }} ellipsis>
+                    {task.title}
+                  </Typography.Text>
+                </Tooltip>
                 <Tag color={STATUS_COLOR[task.last_status]} style={{ marginInlineEnd: 0 }}>
                   {t(`automation.status.${task.last_status}`)}
                 </Tag>

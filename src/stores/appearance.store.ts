@@ -5,30 +5,34 @@ import i18n, { type AppLocale, saveLocale } from '../i18n'
 export type { AppLocale }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
-export type FontSizeLevel = 'small' | 'medium' | 'large'
+export type FontSizeLevel = 'small' | 'medium' | 'large' | 'xlarge'
 
 export const FONT_SIZE_MAP: Record<FontSizeLevel, number> = {
   small: 12,
   medium: 13,
   large: 15,
+  xlarge: 17,
 }
 
 export const FONT_SIZE_SM_MAP: Record<FontSizeLevel, number> = {
   small: 11,
   medium: 12,
   large: 13,
+  xlarge: 14,
 }
 
 export const FONT_SIZE_LG_MAP: Record<FontSizeLevel, number> = {
   small: 14,
   medium: 15,
   large: 17,
+  xlarge: 19,
 }
 
 export const FONT_SIZE_XL_MAP: Record<FontSizeLevel, number> = {
   small: 16,
   medium: 18,
   large: 22,
+  xlarge: 26,
 }
 
 interface AppearanceState {

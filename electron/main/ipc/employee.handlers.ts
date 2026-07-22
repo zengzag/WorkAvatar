@@ -265,6 +265,22 @@ export function registerEmployeeHandlers(
     return memoryService.getMemoryStats(params.employee_id)
   })
 
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST_TRASH, (params: EmployeeMemoryListParams) => {
+    return memoryService.listTrashedMemories(params.employee_id)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_RESTORE, (id: string) => {
+    return memoryService.restoreMemory(id)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_PURGE, (id: string) => {
+    return memoryService.purgeMemory(id)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_MEMORY_EMPTY_TRASH, (params: EmployeeMemoryListParams) => {
+    return memoryService.emptyTrash(params.employee_id)
+  })
+
   ipcMain.handle(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT_CONVERSATION, async (_, params: EmployeeMemoryExtractConversationParams) => {
     try {
       const result = await MemoryRefinementService.getInstance().extractManually(params.conversation_id)

@@ -20,6 +20,7 @@ export interface EmployeeMemory {
   created_at: number
   updated_at: number
   last_referenced_at: number | null
+  deleted_at: number | null
 }
 
 export interface ExtractedMemory {
@@ -57,7 +58,7 @@ export const MEMORY_MAX_CHARS = 3000
 /** 记忆条数上限，假设单条精炼后约 60 字符，约 50 条可达上限 */
 export const MEMORY_MAX_COUNT = 30
 /** 单条 content 字符上限（LLM 偶尔会写长句，需在服务层兜底截断） */
-export const MEMORY_CONTENT_MAX_CHARS = 80
+export const MEMORY_CONTENT_MAX_CHARS = 160
 /** 整理触发阈值：总字符达到上限的 60% 即触发，更早整理以保留缓冲 */
 export const MEMORY_CONSOLIDATION_THRESHOLD = 0.6
 export const STALE_MEMORY_DAYS = 90

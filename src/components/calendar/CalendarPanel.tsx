@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Calendar, Spin, Tooltip, theme } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -157,6 +157,24 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
   const isDark = effectiveTheme === 'dark'
   const eventColorMap = useMemo(() => getEventColorMap(isDark), [isDark])
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // 周/日视图进入时滚动到一半位置
+  const hasScrolledRef = useRef(false)
+  useEffect(() => {
+    if (view === 'month') { hasScrolledRef.current = false; return }
+    hasScrolledRef.current = false
+    const tryScroll = () => {
+      const el = scrollContainerRef.current
+      if (el && el.scrollHeight > el.clientHeight) {
+        el.scrollTop = (el.scrollHeight - el.clientHeight) / 2
+        hasScrolledRef.current = true
+      }
+    }
+    tryScroll()
+    const t1 = setTimeout(tryScroll, 100)
+    const t2 = setTimeout(tryScroll, 400)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [view])
 
   const hours = useMemo(
     () => Array.from({ length: HOURS_PER_DAY }, (_, i) => i),

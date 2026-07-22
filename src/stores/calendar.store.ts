@@ -40,7 +40,7 @@ const initialState: CalendarState = {
   todos: [],
   stats: null,
   settings: null,
-  view: 'month',
+  view: 'week',
   currentDate: Date.now(),
   filters: {},
   loadingEvents: false,

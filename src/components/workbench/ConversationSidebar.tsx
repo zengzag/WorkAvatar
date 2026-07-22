@@ -1,4 +1,4 @@
-import { Typography, Button, Input, theme, Dropdown, Checkbox, Popconfirm, App } from 'antd'
+import { Typography, Button, Input, theme, Dropdown, Checkbox, Popconfirm, App, Tooltip } from 'antd'
 import {
   PlusOutlined,
   CheckOutlined,
@@ -156,9 +156,11 @@ const ConversationItem = memo(({
               }
             />
           ) : (
-            <Text style={{ fontSize: 14, fontWeight: isActive ? 500 : 400, color: isActive ? token.colorText : token.colorTextSecondary }} ellipsis>
-              {conv.title || t('workbench.untitledConv')}
-            </Text>
+            <Tooltip title={conv.title || t('workbench.untitledConv')} mouseEnterDelay={0.4} placement="right">
+              <Text style={{ fontSize: 14, fontWeight: isActive ? 500 : 400, color: isActive ? token.colorText : token.colorTextSecondary }} ellipsis>
+                {conv.title || t('workbench.untitledConv')}
+              </Text>
+            </Tooltip>
           )}
         </div>
         {!isEditing && !isSelectMode && (

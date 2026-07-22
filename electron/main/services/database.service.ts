@@ -433,11 +433,13 @@ class DatabaseService {
 
     this.addColumnIfNotExists('employee_memories', 'last_referenced_at', 'INTEGER')
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
+    this.addColumnIfNotExists('employee_memories', 'deleted_at', 'INTEGER')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_importance ON employee_memories(importance);
+      CREATE INDEX IF NOT EXISTS idx_employee_memories_deleted ON employee_memories(employee_id, deleted_at);
     `)
 
     this.migrateEmployeeAddWorkspacePath()

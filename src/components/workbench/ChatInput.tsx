@@ -465,13 +465,13 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgLayout, borderRadius: 8, padding: '4px 4px 4px 12px', border: `2px solid ${isDragOver ? token.colorPrimary : 'transparent'}`, transition: 'border-color 0.3s' }}
+      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 8, padding: '4px 4px 4px 12px', border: `2px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.3s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onFocusCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorPrimary }}
-        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = 'transparent' }}>
+        onBlurCapture={(e) => { if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = token.colorBorderSecondary }}>
         {isDragOver && (
           <div style={{
             position: 'absolute', inset: 0,

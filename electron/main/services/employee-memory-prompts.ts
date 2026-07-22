@@ -42,7 +42,7 @@ export function buildExtractionPrompt(contextParts: string[]): string {
 - 用户偏好用声明式："用户偏好简洁回复" ✓，而非 "总是简洁回复" ✗
   声明式描述事实；命令式会在后续会话被当指令，可能覆盖用户当前需求。
 - 硬性约束/踩坑经验可用命令式："不要用 X 替代 Y"——这类规则就是要覆盖用户请求。
-- 每条 content 1 句话、≤60 字，保留关键细节（工具名、阈值、对象），不为短而丢信息。
+- 每条 content 1-2 句话、≤150 字，保留关键细节（工具名、阈值、对象），不为短而丢信息。
   反例："报告用 PDF 发"（丢失原因"领导 iPad 批注"）
   正例："周报用 PDF 发送，领导习惯用 iPad 批注"
 - **完整保留背景前提**：规则如果带有限定场景（如"对外""周会""合同审核时"），该前提不可省略，否则规则会从特定场景扩大到所有场景。
@@ -73,7 +73,7 @@ summary 是**运行式摘要**：若上下文含【历史摘要】，需整合�
 ${contextParts.join('\n---\n')}
 
 输出 JSON：
-{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤60字精炼事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤60字）","topic":"可选新topic"}],"summary":"运行式摘要（中文，<150字，覆盖历史摘要+本轮新对话）"}`
+{"memories":[{"key":"唯一标识","topic":"分类标签","content":"≤150字精炼事实"}],"delete_keys":["待删key"],"update_memories":[{"key":"key","content":"更新后内容（≤150字）","topic":"可选新topic"}],"summary":"运行式摘要（中文，<150字，覆盖历史摘要+本轮新对话）"}`
 }
 
 /** 构建记忆合并整理 prompt
@@ -93,7 +93,7 @@ export function buildConsolidationPrompt(memoriesText: string): string {
 - manual source 的记忆谨慎删除，除非明确过时。
 - >${STALE_MEMORY_DAYS}天未引用且非 pinned 的记忆优先删除。
 - 合并内容重叠/高度相似的记忆为一条。
-- 简化冗余内容，每条 content 1 句话、≤60 字——但简化时必须保留关键细节（工具名、阈值、对象），不得丢弃背景前提或并列约束。
+- 简化冗余内容，每条 content 1-2 句话、≤150 字——但简化时必须保留关键细节（工具名、阈值、对象），不得丢弃背景前提或并列约束。
   反例：把"对外邮件必须抄送主管"简化为"邮件抄送主管"（丢失"对外"前提，规则被扩大到所有邮件）
   正例：简化为"对外邮件须抄送主管"
   反例：把"周报用 PDF 发送，领导习惯用 iPad 批注"简化为"报告用 PDF"（丢失关键原因）
@@ -105,7 +105,7 @@ export function buildConsolidationPrompt(memoriesText: string): string {
 
 ${memoriesText}
 
-JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤60字"}}],"simplify_updates":[{"key":"","content":"≤60字精炼版本"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
+JSON: {"delete_keys":[],"merge_groups":[{"keys":[],"merged":{"key":"","topic":"","content":"≤150字"}}],"simplify_updates":[{"key":"","content":"≤150字精炼版本"}],"importance_updates":[{"key":"","importance":"critical|normal|low"}]}`
 }
 
 /** 构建对话摘要 prompt */
