@@ -59,15 +59,13 @@ export interface NotesSettings {
   last_opened: string | null
   sidebar_collapsed: boolean
   outline_collapsed: boolean
-  show_line_numbers: boolean
 }
 
 export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
-  editor_mode: 'split',
+  editor_mode: 'edit',
   last_opened: null,
   sidebar_collapsed: false,
   outline_collapsed: false,
-  show_line_numbers: false,
 }
 
 export interface NoteWriteParams {

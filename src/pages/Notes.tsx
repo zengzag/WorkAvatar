@@ -8,7 +8,6 @@ import {
   EyeOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  OrderedListOutlined,
   SearchOutlined,
   FolderOpenOutlined,
   CheckOutlined,
@@ -17,7 +16,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useNotes } from '../hooks/useNotes'
 import NotesTree from '../components/notes/NotesTree'
-import MarkdownEditor from '../components/notes/MarkdownEditor'
+import VditorEditor from '../components/notes/VditorEditor'
 import NoteOutline from '../components/notes/NoteOutline'
 import NotesSearchPanel from '../components/notes/NotesSearchPanel'
 import type { NoteEditorMode } from '../types/notes'
@@ -45,7 +44,6 @@ const NotesPage: React.FC = () => {
 
   const handleOpenVault = useCallback(async () => {
     try {
-      // 复用 workspace.openInExplorer：dataDir/notes
       const dataDir = await window.electronAPI.app.getDataDir?.()
       if (dataDir) {
         await window.electronAPI.workspace.openInExplorer({ path: `${dataDir}/notes` })
@@ -65,12 +63,8 @@ const NotesPage: React.FC = () => {
     notes.updateSettings({ outline_collapsed: !notes.settings.outline_collapsed })
   }, [notes.settings.outline_collapsed, notes])
 
-  const handleToggleLineNumbers = useCallback(() => {
-    notes.updateSettings({ show_line_numbers: !notes.settings.show_line_numbers })
-  }, [notes.settings.show_line_numbers, notes])
-
-  const handleJumpToLine = useCallback((line: number) => {
-    notes.setLocateLine(line)
+  const handleJumpToText = useCallback((text: string) => {
+    notes.setLocateText(text)
   }, [notes])
 
   const sidebarCollapsed = notes.settings.sidebar_collapsed
@@ -84,7 +78,6 @@ const NotesPage: React.FC = () => {
 
   const wordCount = useMemo(() => {
     if (!notes.currentContent) return 0
-    // 简单字数：英文按单词数 + 中文按字符数
     const cjk = (notes.currentContent.match(/[\u4e00-\u9fa5\u3040-\u30ff]/g) || []).length
     const en = (notes.currentContent.replace(/[\u4e00-\u9fa5\u3040-\u30ff]/g, ' ').match(/\b\w+\b/g) || []).length
     return cjk + en
@@ -149,21 +142,11 @@ const NotesPage: React.FC = () => {
           value={editorMode}
           onChange={(v) => handleModeChange(v as NoteEditorMode)}
           options={[
-            { value: 'edit', icon: <EditOutlined />, label: t('notes.modeEdit') },
+            { value: 'edit', icon: <EditOutlined />, label: t('notes.modeLive') },
             { value: 'split', icon: <ColumnHeightOutlined />, label: t('notes.modeSplit') },
-            { value: 'preview', icon: <EyeOutlined />, label: t('notes.modePreview') },
+            { value: 'preview', icon: <EyeOutlined />, label: t('notes.modeRead') },
           ]}
         />
-
-        <Tooltip title={t('notes.toggleLineNumbers')}>
-          <Button
-            type="text"
-            size="small"
-            icon={<OrderedListOutlined />}
-            onClick={handleToggleLineNumbers}
-            style={{ color: notes.settings.show_line_numbers ? token.colorPrimary : token.colorTextTertiary }}
-          />
-        </Tooltip>
 
         <Tooltip title={t('notes.openVault')}>
           <Button type="text" size="small" icon={<FolderOpenOutlined />} onClick={handleOpenVault} />
@@ -188,7 +171,7 @@ const NotesPage: React.FC = () => {
       </div>
 
       {/* 主体三栏 */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         {/* 左：侧栏（树 / 搜索 切换） */}
         {!sidebarCollapsed && (
           <div
@@ -256,15 +239,14 @@ const NotesPage: React.FC = () => {
         {/* 中：编辑器 */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           {notes.currentRelPath ? (
-            <MarkdownEditor
+            <VditorEditor
               content={notes.currentContent}
               mode={editorMode}
-              showLineNumbers={notes.settings.show_line_numbers}
               saveStatus={notes.saveStatus}
-              locateLine={notes.locateLine}
+              locateText={notes.locateText}
               onContentChange={notes.setContent}
               onSave={notes.saveCurrent}
-              onLocateHandled={() => notes.setLocateLine(null)}
+              onLocateHandled={() => notes.setLocateText(null)}
             />
           ) : (
             <div
@@ -297,7 +279,7 @@ const NotesPage: React.FC = () => {
         </div>
 
         {/* 右：大纲 */}
-        {!outlineCollapsed && notes.currentRelPath && editorMode !== 'preview' && (
+        {!outlineCollapsed && notes.currentRelPath && (
           <div
             style={{
               width: 240,
@@ -327,13 +309,13 @@ const NotesPage: React.FC = () => {
               </Tooltip>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
-              <NoteOutline content={notes.currentContent} onJump={handleJumpToLine} />
+              <NoteOutline content={notes.currentContent} onJump={handleJumpToText} />
             </div>
           </div>
         )}
 
         {/* 大纲收起时显示展开按钮 */}
-        {(outlineCollapsed || !notes.currentRelPath || editorMode === 'preview') && notes.currentRelPath && (
+        {outlineCollapsed && notes.currentRelPath && (
           <Tooltip title={t('notes.showOutline')} placement="left">
             <Button
               type="text"
@@ -343,8 +325,8 @@ const NotesPage: React.FC = () => {
               style={{
                 position: 'absolute',
                 right: 8,
-                top: 56,
-                color: outlineCollapsed ? token.colorTextTertiary : token.colorTextQuaternary,
+                top: 8,
+                color: token.colorTextTertiary,
               }}
             />
           </Tooltip>

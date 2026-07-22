@@ -5,7 +5,7 @@ import type { NoteOutlineItem } from '../../types/notes'
 
 interface Props {
   content: string
-  onJump: (line: number) => void
+  onJump: (text: string) => void
 }
 
 /** 从 Markdown 文本提取标题大纲 */
@@ -46,7 +46,7 @@ const NoteOutlineInner: React.FC<Props> = ({ content, onJump }) => {
       {items.map((item, idx) => (
         <div
           key={`${item.line}-${idx}`}
-          onClick={() => onJump(item.line)}
+          onClick={() => onJump(item.text)}
           style={{
             padding: '4px 12px',
             paddingLeft: 12 + (item.level - 1) * 12,

@@ -1543,10 +1543,9 @@ export default {
     moveFailed: 'Failed to move',
     deleteFailed: 'Failed to delete',
     // Toolbar
-    modeEdit: 'Edit',
+    modeLive: 'Live',
     modeSplit: 'Split',
-    modePreview: 'Preview',
-    toggleLineNumbers: 'Toggle line numbers',
+    modeRead: 'Read',
     openVault: 'Open notes vault in file explorer',
     showSidebar: 'Show sidebar',
     hideSidebar: 'Hide sidebar',
@@ -1570,6 +1569,7 @@ export default {
     emptyVaultDesc: 'No notes yet. Create your first note',
     emptyEditorDesc: 'Select a note from the sidebar to start editing',
     createFirstNote: 'Create first note',
+    placeholder: 'Start writing...',
   },
   automation: {
     // Tab

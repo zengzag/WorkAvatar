@@ -1559,11 +1559,10 @@ export default {
     renameFailed: '重命名失败',
     moveFailed: '移动失败',
     deleteFailed: '删除失败',
-    // 工具栏
-    modeEdit: '编辑',
+    // Toolbar
+    modeLive: '实时',
     modeSplit: '分屏',
-    modePreview: '预览',
-    toggleLineNumbers: '切换行号',
+    modeRead: '阅读',
     openVault: '在文件管理器中打开笔记仓库',
     showSidebar: '显示侧栏',
     hideSidebar: '隐藏侧栏',
@@ -1587,6 +1586,7 @@ export default {
     emptyVaultDesc: '还没有笔记，创建你的第一篇笔记',
     emptyEditorDesc: '从左侧选择一篇笔记开始编辑',
     createFirstNote: '创建第一篇笔记',
+    placeholder: '开始记录...',
   },
   automation: {
     // Tab

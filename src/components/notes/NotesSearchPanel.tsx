@@ -9,7 +9,7 @@ interface Props {
   results: NoteSearchHit[]
   searching: boolean
   onQueryChange: (q: string) => void
-  onOpenHit: (relPath: string, line?: number) => void
+  onOpenHit: (relPath: string, text?: string) => void
 }
 
 /** 全文搜索面板：输入关键字（防抖）→ 列出命中文件与片段 → 点击打开并定位行 */
@@ -123,7 +123,7 @@ const NotesSearchPanelInner: React.FC<Props> = ({
               {hit.snippets.map((s, idx) => (
                 <div
                   key={`${s.line}-${idx}`}
-                  onClick={() => onOpenHit(hit.relPath, s.line)}
+                  onClick={() => onOpenHit(hit.relPath, s.text)}
                   style={{
                     fontSize: 11,
                     color: token.colorTextSecondary,

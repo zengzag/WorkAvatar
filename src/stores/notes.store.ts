@@ -23,8 +23,8 @@ interface NotesState {
   searching: boolean
   settings: NotesSettings
   settingsLoading: boolean
-  /** 搜索结果定位锚点：打开文件后滚动到的行号 */
-  locateLine: number | null
+  /** 定位锚点：打开文件后滚动到的文本片段（标题或搜索命中行） */
+  locateText: string | null
 
   setTree: (tree: NoteNode[]) => void
   setTreeLoading: (loading: boolean) => void
@@ -36,7 +36,7 @@ interface NotesState {
   setSearching: (searching: boolean) => void
   setSettings: (settings: NotesSettings) => void
   setSettingsLoading: (loading: boolean) => void
-  setLocateLine: (line: number | null) => void
+  setLocateText: (text: string | null) => void
   reset: () => void
 }
 
@@ -54,7 +54,7 @@ export const useNotesStore = create<NotesState>()(
     searching: false,
     settings: DEFAULT_NOTES_SETTINGS,
     settingsLoading: false,
-    locateLine: null,
+    locateText: null,
 
     setTree: (tree) => set((s) => { s.tree = tree }),
     setTreeLoading: (loading) => set((s) => { s.treeLoading = loading }),
@@ -77,7 +77,7 @@ export const useNotesStore = create<NotesState>()(
     setSearching: (searching) => set((s) => { s.searching = searching }),
     setSettings: (settings) => set((s) => { s.settings = settings }),
     setSettingsLoading: (loading) => set((s) => { s.settingsLoading = loading }),
-    setLocateLine: (line) => set((s) => { s.locateLine = line }),
+    setLocateText: (text) => set((s) => { s.locateText = text }),
     reset: () =>
       set((s) => {
         s.currentRelPath = null
@@ -85,7 +85,7 @@ export const useNotesStore = create<NotesState>()(
         s.savedContent = ''
         s.currentMtime = 0
         s.saveStatus = 'saved'
-        s.locateLine = null
+        s.locateText = null
       }),
   }))
 )

@@ -12,9 +12,9 @@ export function useNotes() {
   const { t } = useTranslation()
   const {
     tree, treeLoading, currentRelPath, currentContent, savedContent, currentMtime, saveStatus,
-    searchQuery, searchResults, searching, settings, settingsLoading, locateLine,
+    searchQuery, searchResults, searching, settings, settingsLoading, locateText,
     setTree, setTreeLoading, setCurrent, setContent, setSaveStatus,
-    setSearchQuery, setSearchResults, setSearching, setSettings, setSettingsLoading, setLocateLine, reset,
+    setSearchQuery, setSearchResults, setSearching, setSettings, setSettingsLoading, setLocateText, reset,
   } = useNotesStore()
 
   // 防止重复初始化
@@ -50,14 +50,14 @@ export function useNotes() {
         return
       }
       setCurrent(relPath, (note as any).content, (note as any).mtime)
-      setLocateLine(null)
+      setLocateText(null)
       if (recordLast) {
         await window.electronAPI.notes.setSettings({ last_opened: relPath })
       }
     } catch (err: any) {
       message.error(err?.message || t('notes.openFailed'))
     }
-  }, [setCurrent, setLocateLine, t])
+  }, [setCurrent, setLocateText, t])
 
   const init = useCallback(async () => {
     if (initedRef.current) return
@@ -208,11 +208,11 @@ export function useNotes() {
     }
   }, [setSearchQuery, setSearchResults, setSearching])
 
-  /** 打开搜索结果中的笔记并定位到行 */
-  const openSearchHit = useCallback(async (relPath: string, line?: number) => {
+  /** 打开搜索结果中的笔记并定位到文本片段 */
+  const openSearchHit = useCallback(async (relPath: string, text?: string) => {
     await openNote(relPath)
-    if (typeof line === 'number') setLocateLine(line)
-  }, [openNote, setLocateLine])
+    if (text) setLocateText(text)
+  }, [openNote, setLocateText])
 
   const updateSettings = useCallback(async (patch: Partial<NotesSettings>) => {
     try {
@@ -247,10 +247,10 @@ export function useNotes() {
   return {
     // state
     tree, treeLoading, currentRelPath, currentContent, currentMtime, saveStatus,
-    searchQuery, searchResults, searching, settings, settingsLoading, locateLine,
+    searchQuery, searchResults, searching, settings, settingsLoading, locateText,
     // actions
     init, refreshTree, openNote, saveCurrent, createNote, createFolder,
     renameItem, moveItem, deleteItem, runSearch, openSearchHit, updateSettings,
-    setContent, setLocateLine, reset,
+    setContent, setLocateText, reset,
   }
 }

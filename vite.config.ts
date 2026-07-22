@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
@@ -51,6 +51,54 @@ function readBuildInfo() {
 
 const buildInfo = readBuildInfo()
 
+// Vditor 在运行时会从 cdn 动态加载 lute/katex/highlight.js 等子资源（请求 {cdn}/dist/js/...），
+// Electron 环境无法访问公网 CDN，因此把 node_modules/vditor 暴露到 /vditor 路径。
+// dev：用中间件静态服务 node_modules/vditor；build：把 dist/ 复制到 outDir/vditor/dist/。
+function serveVditorAssets(): Plugin {
+  const vditorRoot = path.resolve(__dirname, 'node_modules/vditor')
+  const mimeMap: Record<string, string> = {
+    '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+    '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+    '.svg': 'image/svg+xml', '.png': 'image/png', '.gif': 'image/gif',
+    '.jpg': 'image/jpeg', '.webp': 'image/webp',
+  }
+  const sendFile = (res: any, filePath: string) => {
+    const ext = path.extname(filePath).toLowerCase()
+    res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream')
+    res.setHeader('Cache-Control', 'public, max-age=86400')
+    fs.createReadStream(filePath).pipe(res)
+  }
+  const handle = (req: any, res: any, next: () => void) => {
+    const urlPath = decodeURIComponent((req.url || '').split('?')[0].replace(/^\//, ''))
+    if (!urlPath) { next(); return }
+    const filePath = path.join(vditorRoot, urlPath)
+    if (filePath.startsWith(vditorRoot) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      sendFile(res, filePath)
+      return
+    }
+    next()
+  }
+  const copyDir = (src: string, dest: string) => {
+    if (!fs.existsSync(src)) return
+    fs.mkdirSync(dest, { recursive: true })
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      const s = path.join(src, entry.name)
+      const d = path.join(dest, entry.name)
+      if (entry.isDirectory()) copyDir(s, d)
+      else fs.copyFileSync(s, d)
+    }
+  }
+  return {
+    name: 'serve-vditor-assets',
+    configureServer(server) { server.middlewares.use('/vditor', handle) },
+    configurePreviewServer(server) { server.middlewares.use('/vditor', handle) },
+    writeBundle() {
+      // Vditor 请求 {cdn}/dist/...，因此产物路径须为 dist/vditor/dist/...
+      copyDir(path.join(vditorRoot, 'dist'), path.resolve(__dirname, 'dist/vditor/dist'))
+    },
+  }
+}
+
 export default defineConfig({
   define: {
     // 注入渲染进程可用的全局常量（由 build-info.json 生成，predev/prebuild 自动触发）
@@ -60,6 +108,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    serveVditorAssets(),
     electron([
       {
         entry: 'electron/main/index.ts',
@@ -153,6 +202,9 @@ export default defineConfig({
           }
           if (/[\\/]node_modules[\\/]@file-viewer[\\/]/.test(id)) {
             return 'file-viewer'
+          }
+          if (/[\\/]node_modules[\\/]vditor[\\/]/.test(id)) {
+            return 'vditor'
           }
         }
       }
