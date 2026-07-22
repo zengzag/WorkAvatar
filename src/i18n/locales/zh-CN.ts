@@ -71,6 +71,7 @@ export default {
     kms: '资料库',
     voice: '语音识别',
     calendar: '日历',
+    notes: '笔记',
     automation: '自动化',
   },
   digitalEmployees: {
@@ -1536,6 +1537,56 @@ export default {
     hoursBefore: '小时前',
     atStart: '开始时',
     reminderCustom: '自定义',
+  },
+  notes: {
+    // 通用
+    vaultRoot: '笔记仓库',
+    newNote: '新建笔记',
+    newFolder: '新建文件夹',
+    untitledNote: '无标题笔记',
+    noteNamePlaceholder: '输入笔记名称',
+    folderNamePlaceholder: '输入文件夹名称',
+    confirmDelete: '确定删除？',
+    moveTo: '移动到...',
+    moveSuccess: '移动成功',
+    noteCreated: '已创建笔记',
+    searchPlaceholder: '搜索笔记...',
+    // 操作失败提示
+    loadTreeFailed: '加载笔记列表失败',
+    openFailed: '打开笔记失败',
+    saveFailed: '保存失败',
+    createFailed: '创建失败',
+    renameFailed: '重命名失败',
+    moveFailed: '移动失败',
+    deleteFailed: '删除失败',
+    // 工具栏
+    modeEdit: '编辑',
+    modeSplit: '分屏',
+    modePreview: '预览',
+    toggleLineNumbers: '切换行号',
+    openVault: '在文件管理器中打开笔记仓库',
+    showSidebar: '显示侧栏',
+    hideSidebar: '隐藏侧栏',
+    showOutline: '显示大纲',
+    hideOutline: '隐藏大纲',
+    // 状态
+    saving: '保存中...',
+    unsaved: '未保存',
+    saved: '已保存',
+    wordCount: '{{count}} 字',
+    // 侧栏
+    tabTree: '文件',
+    tabSearch: '搜索',
+    // 大纲
+    outline: '大纲',
+    noOutline: '暂无大纲',
+    // 搜索
+    searchStats: '{{files}} 个文件，{{hits}} 处命中',
+    noSearchResults: '无匹配结果',
+    // 空状态
+    emptyVaultDesc: '还没有笔记，创建你的第一篇笔记',
+    emptyEditorDesc: '从左侧选择一篇笔记开始编辑',
+    createFirstNote: '创建第一篇笔记',
   },
   automation: {
     // Tab

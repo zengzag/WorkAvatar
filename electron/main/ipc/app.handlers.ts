@@ -19,6 +19,7 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'web_search_engine',
   'web_search_result_count',
   'calendar_settings',
+  'notes_settings',
 ])
 
 // 需要清空的用户数据表（按依赖顺序，受外键约束）

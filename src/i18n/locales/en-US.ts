@@ -71,6 +71,7 @@ export default {
     kms: 'Library',
     voice: 'Voice Recognition',
     calendar: 'Calendar',
+    notes: 'Notes',
     automation: 'Automation',
   },
   digitalEmployees: {
@@ -1519,6 +1520,56 @@ export default {
     hoursBefore: 'h before',
     atStart: 'At start',
     reminderCustom: 'Custom',
+  },
+  notes: {
+    // Common
+    vaultRoot: 'Notes Vault',
+    newNote: 'New Note',
+    newFolder: 'New Folder',
+    untitledNote: 'Untitled',
+    noteNamePlaceholder: 'Enter note name',
+    folderNamePlaceholder: 'Enter folder name',
+    confirmDelete: 'Delete?',
+    moveTo: 'Move to...',
+    moveSuccess: 'Moved',
+    noteCreated: 'Note created',
+    searchPlaceholder: 'Search notes...',
+    // Failure prompts
+    loadTreeFailed: 'Failed to load notes',
+    openFailed: 'Failed to open note',
+    saveFailed: 'Failed to save',
+    createFailed: 'Failed to create',
+    renameFailed: 'Failed to rename',
+    moveFailed: 'Failed to move',
+    deleteFailed: 'Failed to delete',
+    // Toolbar
+    modeEdit: 'Edit',
+    modeSplit: 'Split',
+    modePreview: 'Preview',
+    toggleLineNumbers: 'Toggle line numbers',
+    openVault: 'Open notes vault in file explorer',
+    showSidebar: 'Show sidebar',
+    hideSidebar: 'Hide sidebar',
+    showOutline: 'Show outline',
+    hideOutline: 'Hide outline',
+    // Status
+    saving: 'Saving...',
+    unsaved: 'Unsaved',
+    saved: 'Saved',
+    wordCount: '{{count}} words',
+    // Sidebar tabs
+    tabTree: 'Files',
+    tabSearch: 'Search',
+    // Outline
+    outline: 'Outline',
+    noOutline: 'No outline',
+    // Search
+    searchStats: '{{files}} files, {{hits}} hits',
+    noSearchResults: 'No matches',
+    // Empty states
+    emptyVaultDesc: 'No notes yet. Create your first note',
+    emptyEditorDesc: 'Select a note from the sidebar to start editing',
+    createFirstNote: 'Create first note',
   },
   automation: {
     // Tab

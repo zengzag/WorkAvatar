@@ -6,6 +6,7 @@ import {
   SearchOutlined,
   AudioOutlined,
   CalendarOutlined,
+  BookOutlined,
   FieldTimeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +34,7 @@ const App: React.FC = () => {
     if (path.startsWith('/kms')) return 'kms'
     if (path.startsWith('/voice')) return 'voice'
     if (path.startsWith('/calendar')) return 'calendar'
+    if (path.startsWith('/notes')) return 'notes'
     if (path.startsWith('/automation')) return 'automation'
     return 'digital-employees'
   }, [location.pathname])
@@ -93,6 +95,11 @@ const App: React.FC = () => {
       icon: <CalendarOutlined />,
       label: t('nav.calendar'),
       onClick: () => navigate('/calendar'),
+    },
+    'notes': {
+      icon: <BookOutlined />,
+      label: t('nav.notes'),
+      onClick: () => navigate('/notes'),
     },
     'automation': {
       icon: <FieldTimeOutlined />,

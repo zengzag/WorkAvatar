@@ -23,10 +23,13 @@
   "license": "MIT",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language-data": "^6.5.2",
     "@file-viewer/react-full": "^2.1.26",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@node-rs/jieba": "^2.0.1",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@uiw/react-codemirror": "^4.25.11",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",
