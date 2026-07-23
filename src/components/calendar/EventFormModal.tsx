@@ -44,12 +44,12 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
   const { token } = theme.useToken()
   const [form] = Form.useForm()
   const isEdit = mode === 'edit'
-  // 创建模式默认折叠非主题/描述字段；编辑模式默认展开
-  const [expanded, setExpanded] = useState(isEdit)
+  // 创建与编辑均默认折叠非主题/描述字段，展开内容置于底部
+  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    if (open) setExpanded(isEdit)
-  }, [open, isEdit])
+    if (open) setExpanded(false)
+  }, [open])
 
   const initialValues = useMemo(() => {
     if (isEdit && event) {
@@ -216,7 +216,11 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
         size="small"
       >
         <Form.Item name="title" label={t('calendar.eventTitle')} rules={[{ required: true, message: t('calendar.eventTitlePlaceholder') }]} style={compactItem}>
-          <Input placeholder={t('calendar.eventTitlePlaceholder')} autoFocus />
+          <Input placeholder={t('calendar.eventTitlePlaceholder')} autoFocus size="middle" />
+        </Form.Item>
+
+        <Form.Item name="description" label={t('calendar.description')} style={compactItem}>
+          <Input.TextArea rows={3} size="middle" placeholder={t('calendar.descriptionPlaceholder')} />
         </Form.Item>
 
         {!expanded && (
@@ -347,10 +351,6 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
             </Row>
           </>
         )}
-
-        <Form.Item name="description" label={t('calendar.description')} style={{ marginBottom: 0 }}>
-          <Input.TextArea rows={2} placeholder={t('calendar.descriptionPlaceholder')} />
-        </Form.Item>
       </Form>
     </Modal>
   )

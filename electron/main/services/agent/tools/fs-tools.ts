@@ -7,9 +7,11 @@ import { interactionContext } from '../../unified-interaction.service'
 import DatabaseService from '../../database.service'
 
 /**
- * 文件操作工具（合并为单个 file 工具）
- * operation 字段沿用类 Unix 命令名，复用 LLM 已有知识，减少说明成本：
- *   ls / cat / write / mkdir / rm / mv / cp / rename / stat / find
+ * 文件操作工具（拆分为 4 个独立工具，降低参数互斥混淆）：
+ *   file_read   读取文件内容
+ *   file_write  写入文件 / 创建文件夹
+ *   file_manage 删除 / 移动 / 复制 / 重命名 / 查看信息
+ *   file_list   列出目录 / 按名称搜索文件
  */
 
 const ignoreDirs = new Set([
@@ -104,45 +106,92 @@ const PARSABLE_EXTENSIONS = new Set([
 const DEFAULT_MAX_LENGTH = 5000
 const MAX_LENGTH_LIMIT = 50000
 
-const FILE_TOOL_DESCRIPTION = `本地文件/目录操作，operation 为类 Unix 命令名（语义与终端一致）：
-- ls <path>：列出目录，recursive 递归，max_entries 上限（默认200）
-- cat <path>：读取文件，offset/max_length 分段（默认${DEFAULT_MAX_LENGTH}字符），parse=true 解析 PDF/DOCX/XLSX/PPTX/图片，show_line_numbers=false 关闭行号
-- write <path> <content>：写文件（自动建父目录），append=true 追加；工作区外需确认
-- mkdir <path>：创建文件夹（-p 语义，自动建父目录）；工作区外需确认
-- rm <path>：删除文件/文件夹（-rf 语义），需确认
-- mv <source> <destination>：移动/重命名（目标含文件名），工作区外需确认
-- cp <source> <destination>：复制（-r 语义，目标含文件名），工作区外需确认
-- rename <path> <new_name>：仅改文件名（new_name 不含路径分隔符）
-- stat <path>：查看文件/目录信息（大小/类型/修改时间/权限）
-- find <path> <pattern>：按名称通配符搜索（支持 * 与 ?，如 *.txt）`
+// ====== file_read：读取文件内容 ======
 
-export const fileTool: ToolDefinition = {
-  id: 'file',
-  name: 'file',
-  title: '文件操作',
-  description: FILE_TOOL_DESCRIPTION,
+export const fileReadTool: ToolDefinition = {
+  id: 'file_read',
+  name: 'file_read',
+  title: '读取文件',
+  description: `读取本地文件内容。支持文本文件直接读取，parse=true 可解析 PDF/DOCX/XLSX/PPTX/图片 OCR。offset/max_length 分段读取（默认${DEFAULT_MAX_LENGTH}字符），默认显示行号。`,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标文件绝对路径' },
+      offset: { type: 'number', description: '起始字符偏移量（默认0）', minimum: 0 },
+      max_length: { type: 'number', description: `最大返回字符数（默认${DEFAULT_MAX_LENGTH}，上限${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
+      parse: { type: 'boolean', description: '是否解析二进制文档（PDF/DOCX/XLSX/PPTX/图片OCR），默认false' },
+      show_line_numbers: { type: 'boolean', description: '是否显示行号（默认true）' },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      return await readFile(args)
+    } catch (error: any) {
+      return { success: false, error: `文件读取失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+}
+
+// ====== file_write：写入文件 / 创建文件夹 ======
+
+export const fileWriteTool: ToolDefinition = {
+  id: 'file_write',
+  name: 'file_write',
+  title: '写入文件',
+  description: '写入文件或创建文件夹。write 写入文件（自动建父目录，append=true 追加，默认覆盖）；mkdir 创建文件夹（-p 语义，自动建父目录）。工作区外操作需确认。',
   parameters: {
     type: 'object',
     properties: {
       operation: {
         type: 'string',
-        enum: ['ls', 'cat', 'write', 'mkdir', 'rm', 'mv', 'cp', 'rename', 'stat', 'find'],
-        description: '操作类型（类 Unix 命令名）',
+        enum: ['write', 'mkdir'],
+        description: '操作类型：write 写文件 / mkdir 创建文件夹',
       },
-      path: { type: 'string', description: '目标路径绝对路径（ls/cat/write/mkdir/rm/rename/stat/find 使用）' },
+      path: { type: 'string', description: '目标路径绝对路径' },
+      content: { type: 'string', description: '写入内容（write 使用）' },
+      append: { type: 'boolean', description: 'write 是否追加模式（默认false，覆盖）' },
+    },
+    required: ['operation', 'path'],
+  },
+  handler: async (args: any) => {
+    try {
+      const op = String(args.operation || '')
+      switch (op) {
+        case 'write':
+          return writeFile(args)
+        case 'mkdir':
+          return createFolder(args)
+        default:
+          return { success: false, error: `不支持的 operation: ${op}（可用 write/mkdir）` }
+      }
+    } catch (error: any) {
+      return { success: false, error: `文件写入失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+}
+
+// ====== file_manage：删除 / 移动 / 复制 / 重命名 / 查看信息 ======
+
+export const fileManageTool: ToolDefinition = {
+  id: 'file_manage',
+  name: 'file_manage',
+  title: '文件管理',
+  description: '文件/目录管理操作：rm 删除（-rf 语义，需确认）、mv 移动（目标含文件名）、cp 复制（-r 语义）、rename 仅改文件名（new_name 不含路径分隔符）、stat 查看信息（大小/类型/修改时间/权限）。工作区外操作需确认。',
+  parameters: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['rm', 'mv', 'cp', 'rename', 'stat'],
+        description: '操作类型',
+      },
+      path: { type: 'string', description: '目标路径绝对路径（rm/rename/stat 使用）' },
       source: { type: 'string', description: '源路径绝对路径（mv/cp 使用）' },
       destination: { type: 'string', description: '目标绝对路径含文件名（mv/cp 使用）' },
       new_name: { type: 'string', description: '新名称，仅文件名不含路径（rename 使用）' },
-      content: { type: 'string', description: '写入内容（write 使用）' },
-      append: { type: 'boolean', description: 'write 是否追加模式（默认false，覆盖）' },
-      recursive: { type: 'boolean', description: 'ls 是否递归列出子目录（默认false）' },
-      max_entries: { type: 'number', description: 'ls 最大返回条目数（默认200，上限1000）', minimum: 1, maximum: 1000 },
-      parse: { type: 'boolean', description: 'cat 是否解析二进制文档（PDF/DOCX/XLSX/PPTX/图片OCR），默认false' },
-      offset: { type: 'number', description: 'cat 起始字符偏移量（默认0）', minimum: 0 },
-      max_length: { type: 'number', description: `cat 最大返回字符数（默认${DEFAULT_MAX_LENGTH}，上限${MAX_LENGTH_LIMIT}）`, minimum: 1, maximum: MAX_LENGTH_LIMIT },
-      show_line_numbers: { type: 'boolean', description: 'cat 是否显示行号（默认true）' },
-      pattern: { type: 'string', description: 'find 文件名匹配模式，支持通配符 * 与 ?（如 *.txt）' },
-      max_results: { type: 'number', description: 'find 最大返回结果数（默认50，上限200）', minimum: 1, maximum: 200 },
     },
     required: ['operation'],
   },
@@ -150,14 +199,6 @@ export const fileTool: ToolDefinition = {
     try {
       const op = String(args.operation || '')
       switch (op) {
-        case 'ls':
-          return listDir(args)
-        case 'cat':
-          return readFile(args)
-        case 'write':
-          return writeFile(args)
-        case 'mkdir':
-          return createFolder(args)
         case 'rm':
           return deleteItem(args)
         case 'mv':
@@ -168,17 +209,48 @@ export const fileTool: ToolDefinition = {
           return renameItem(args)
         case 'stat':
           return getFileInfo(args)
-        case 'find':
-          return searchFiles(args)
         default:
-          return { success: false, error: `不支持的 operation: ${op}（可用 ls/cat/write/mkdir/rm/mv/cp/rename/stat/find）` }
+          return { success: false, error: `不支持的 operation: ${op}（可用 rm/mv/cp/rename/stat）` }
       }
     } catch (error: any) {
-      return { success: false, error: `文件操作失败: ${error.message || error}` }
+      return { success: false, error: `文件管理失败: ${error.message || error}` }
     }
   },
   source: 'builtin',
 }
+
+// ====== file_list：列出目录 / 按名称搜索文件 ======
+
+export const fileListTool: ToolDefinition = {
+  id: 'file_list',
+  name: 'file_list',
+  title: '列出与搜索',
+  description: '列出目录内容或按名称搜索文件。不传 pattern 时列出目录（recursive 递归，max_entries 上限默认200）；传 pattern 时按通配符搜索文件名（支持 * 与 ?，如 *.txt）。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标目录绝对路径' },
+      recursive: { type: 'boolean', description: '列出时是否递归子目录（默认false）' },
+      max_entries: { type: 'number', description: '最大返回条目数（默认200，上限1000）', minimum: 1, maximum: 1000 },
+      pattern: { type: 'string', description: '文件名匹配模式，支持通配符 * 与 ?（如 *.txt）。传入时执行搜索而非列出目录' },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      const pattern = String(args.pattern || '').trim()
+      if (pattern) {
+        return searchFiles({ ...args, max_results: args.max_entries })
+      }
+      return listDir(args)
+    } catch (error: any) {
+      return { success: false, error: `文件列表失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+}
+
+export const fileTools: ToolDefinition[] = [fileReadTool, fileWriteTool, fileManageTool, fileListTool]
 
 // ====== 各操作实现 ======
 

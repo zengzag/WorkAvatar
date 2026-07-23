@@ -27,6 +27,8 @@ const CalendarPage: React.FC = () => {
   const [editingEvent, setEditingEvent] = useState<CalendarEventInstance | null>(null)
   const [defaultStartAt, setDefaultStartAt] = useState<number | undefined>(undefined)
   const [defaultEndAt, setDefaultEndAt] = useState<number | undefined>(undefined)
+  // 每次打开日程弹窗递增，强制 EventFormModal 重建以获得全新的 form 实例，避免残留上次数据
+  const [eventModalKey, setEventModalKey] = useState(0)
 
   const [todoModalOpen, setTodoModalOpen] = useState(false)
   const [todoModalMode, setTodoModalMode] = useState<TodoFormMode>('create')
@@ -100,6 +102,7 @@ const CalendarPage: React.FC = () => {
     // 点击创建默认30分钟
     setDefaultEndAt(endAt ?? (startAt != null ? startAt + DEFAULT_CLICK_DURATION_SEC : undefined))
     setEventModalMode('create')
+    setEventModalKey(k => k + 1)
     setEventModalOpen(true)
   }, [])
 
@@ -108,6 +111,7 @@ const CalendarPage: React.FC = () => {
     setDefaultStartAt(undefined)
     setDefaultEndAt(undefined)
     setEventModalMode('edit')
+    setEventModalKey(k => k + 1)
     setEventModalOpen(true)
   }, [])
 
@@ -237,6 +241,7 @@ const CalendarPage: React.FC = () => {
 
       {/* 弹窗 */}
       <EventFormModal
+        key={eventModalKey}
         open={eventModalOpen}
         mode={eventModalMode}
         event={editingEvent}

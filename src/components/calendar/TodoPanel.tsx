@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Spin, Select, Empty, Tooltip, Badge, Button, theme } from 'antd'
+import { Spin, Select, Empty, Tooltip, Badge, Button, DatePicker, theme } from 'antd'
 import { FilterOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import dayjs from 'dayjs'
 import type {
   CalendarTodo, TodoFilters,
   CreateTodoInput, UpdateTodoInput,
@@ -116,6 +117,12 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
         if (!prios.includes(td.priority)) return false
       }
       if (filters.tag && !(td.tags || []).includes(filters.tag)) return false
+      if (filters.dueFrom != null || filters.dueTo != null) {
+        if (td.due_at == null) return false
+        const dueMs = td.due_at * MS
+        if (filters.dueFrom != null && dueMs < filters.dueFrom) return false
+        if (filters.dueTo != null && dueMs > filters.dueTo) return false
+      }
       return true
     })
   }, [todos, filters])
@@ -141,8 +148,25 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
     if (filters.status) n++
     if (filters.priority) n++
     if (filters.tag) n++
+    if (filters.dueFrom != null || filters.dueTo != null) n++
     return n
   }, [filters])
+
+  const dueRangeValue = useMemo<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(() => {
+    if (filters.dueFrom == null && filters.dueTo == null) return null
+    return [
+      filters.dueFrom != null ? dayjs(filters.dueFrom) : null,
+      filters.dueTo != null ? dayjs(filters.dueTo) : null,
+    ]
+  }, [filters.dueFrom, filters.dueTo])
+
+  const handleDueRangeChange = (vals: [dayjs.Dayjs | null, dayjs.Dayjs | null] | null) => {
+    const [from, to] = vals || [null, null]
+    onFiltersChange({
+      dueFrom: from ? from.startOf('day').valueOf() : undefined,
+      dueTo: to ? to.endOf('day').valueOf() : undefined,
+    })
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -179,43 +203,53 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
           padding: '0 12px 8px',
           flexShrink: 0,
           display: 'flex',
+          flexDirection: 'column',
           gap: 6,
         }}>
-          <Select
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Select
+              size="small"
+              placeholder={t('calendar.filterStatus')}
+              value={filters.status}
+              onChange={(v) => onFiltersChange({ status: v })}
+              allowClear
+              style={{ flex: 1 }}
+              options={[
+                { value: 'pending', label: t('calendar.statusPending') },
+                { value: 'in_progress', label: t('calendar.statusInProgress') },
+                { value: 'completed', label: t('calendar.statusCompleted') },
+              ]}
+            />
+            <Select
+              size="small"
+              placeholder={t('calendar.filterPriority')}
+              value={filters.priority}
+              onChange={(v) => onFiltersChange({ priority: v })}
+              allowClear
+              style={{ flex: 1 }}
+              options={[
+                { value: 'none', label: t('calendar.priorityNone') },
+                { value: 'low', label: t('calendar.priorityLow') },
+                { value: 'medium', label: t('calendar.priorityMedium') },
+                { value: 'high', label: t('calendar.priorityHigh') },
+              ]}
+            />
+            <Select
+              size="small"
+              placeholder={t('calendar.filterTag')}
+              value={filters.tag}
+              onChange={(v) => onFiltersChange({ tag: v })}
+              allowClear
+              style={{ flex: 1 }}
+              options={allTags.map(tg => ({ value: tg, label: tg }))}
+            />
+          </div>
+          <DatePicker.RangePicker
             size="small"
-            placeholder={t('calendar.filterStatus')}
-            value={filters.status}
-            onChange={(v) => onFiltersChange({ status: v })}
-            allowClear
-            style={{ flex: 1 }}
-            options={[
-              { value: 'pending', label: t('calendar.statusPending') },
-              { value: 'in_progress', label: t('calendar.statusInProgress') },
-              { value: 'completed', label: t('calendar.statusCompleted') },
-            ]}
-          />
-          <Select
-            size="small"
-            placeholder={t('calendar.filterPriority')}
-            value={filters.priority}
-            onChange={(v) => onFiltersChange({ priority: v })}
-            allowClear
-            style={{ flex: 1 }}
-            options={[
-              { value: 'none', label: t('calendar.priorityNone') },
-              { value: 'low', label: t('calendar.priorityLow') },
-              { value: 'medium', label: t('calendar.priorityMedium') },
-              { value: 'high', label: t('calendar.priorityHigh') },
-            ]}
-          />
-          <Select
-            size="small"
-            placeholder={t('calendar.filterTag')}
-            value={filters.tag}
-            onChange={(v) => onFiltersChange({ tag: v })}
-            allowClear
-            style={{ flex: 1 }}
-            options={allTags.map(tg => ({ value: tg, label: tg }))}
+            value={dueRangeValue}
+            onChange={(vals) => handleDueRangeChange(vals as [dayjs.Dayjs | null, dayjs.Dayjs | null] | null)}
+            style={{ width: '100%' }}
+            placeholder={[t('calendar.filterDueFrom'), t('calendar.filterDueTo')]}
           />
         </div>
       )}

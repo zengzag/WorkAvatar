@@ -265,7 +265,6 @@ class EmployeeAgentService {
     const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
     const kmsToolIds = [
       'kms_search',
-      'kms_agent_search',
       'kms_get_content',
       'kms_list_collections',
       'kms_collection_overview',

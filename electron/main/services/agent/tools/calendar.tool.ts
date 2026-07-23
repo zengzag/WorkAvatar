@@ -22,9 +22,8 @@ import type {
  *
  * 设计要点：
  * - 用 operation 字段分发，避免工具数量爆炸
- * - 时间支持两种传参：unix 秒（start_at 等 number）或日期时间字符串（start_time 等 string）
- *   字符串示例："2026-07-24 15:00"、"2026-07-24"、"2026/07/24 15:30:00"
- *   优先使用 number；提供 string 时由 parseNaturalTime 服务端解析，LLM 无需再调用 date_time/calculator
+ * - 时间参数统一为单一字段（start_time/end_time/range_start_time/range_end_time/due_time），
+ *   接受 Unix 秒（number）或日期字符串（string），由 parseNaturalTime 服务端解析，LLM 无需再调用 date_time/calculator
  * - 创建 / 修改后由 handlers 广播 CALENDAR_DATA_CHANGED 事件，前端实时刷新
  * - agent 创建的记录 source = 'agent'，便于区分
  */
@@ -92,14 +91,11 @@ export function parseNaturalTime(input: any): number | null {
   return null
 }
 
-/** 优先用 number，否则解析 string。两者都缺失返回 undefined */
-function resolveTime(numVal: any, strVal: any): number | undefined {
-  if (numVal !== undefined && numVal !== null && !isNaN(Number(numVal))) return Number(numVal)
-  if (strVal !== undefined && strVal !== null && String(strVal).trim() !== '') {
-    const parsed = parseNaturalTime(strVal)
-    if (parsed !== null) return parsed
-  }
-  return undefined
+/** 解析时间参数（接受 Unix 秒或日期字符串），缺失返回 undefined */
+function resolveTime(val: any): number | undefined {
+  if (val === undefined || val === null) return undefined
+  const parsed = parseNaturalTime(val)
+  return parsed !== null ? parsed : undefined
 }
 
 function formatEvent(e: CalendarEvent): string {
@@ -115,7 +111,7 @@ function formatTodo(t: CalendarTodo): string {
   return `• [${t.status === 'completed' ? 'x' : ' '}] ${t.title} | 截止:${due} | 优先级:${t.priority}${tags} [id=${t.id}]`
 }
 
-const TIME_HINT = '时间支持两种传参：unix 秒（start_at 等 number）或日期时间字符串（start_time 等 string，如 "2026-07-24 15:00"、"2026-07-24"、"2026/07/24 15:30:00"）。提供字符串时由服务端解析，无需调用 date_time/calculator。'
+const TIME_HINT = '时间参数接受 Unix 秒（number）或日期字符串（string，如 "2026-07-24 15:00"、"2026-07-24"、"2026/07/24 15:30:00"），由服务端解析，无需调用 date_time/calculator。'
 
 // ====== calendar_event 工具 ======
 
@@ -124,8 +120,8 @@ const calendarEventTool: ToolDefinition = {
   name: 'calendar_event',
   title: '日程管理',
   description: `管理用户的日历日程事件。支持 list / create / update / delete 四种操作。
-- list：列出指定时间区间内的日程（返回展开后的实例，包含重复日程）。需要 range_start/range_end 或 range_start_time/range_end_time。
-- create：创建日程。需要 title、start_at 或 start_time；可选 end_at/end_time、all_day、location、description、color、recurrence_rule、reminders。
+- list：列出指定时间区间内的日程（返回展开后的实例，包含重复日程）。需要 range_start_time/range_end_time。
+- create：创建日程。需要 title、start_time；可选 end_time、all_day、location、description、color、recurrence_rule、reminders。
 - update：修改日程。需要 id；其它字段可选。
 - delete：删除日程。需要 id。
 
@@ -146,10 +142,8 @@ ${TIME_HINT}`,
       title: { type: 'string', description: '日程主题（create 必填）' },
       description: { type: 'string', description: '日程描述' },
       location: { type: 'string', description: '地点' },
-      start_at: { type: 'number', description: '开始时间 unix 秒' },
-      start_time: { type: 'string', description: '开始时间日期字符串（与 start_at 二选一，如 "2026-07-24 15:00"）' },
-      end_at: { type: 'number', description: '结束时间 unix 秒（默认为开始时间+1小时）' },
-      end_time: { type: 'string', description: '结束时间日期字符串（与 end_at 二选一）' },
+      start_time: { type: 'string', description: '开始时间，接受 Unix 秒或日期字符串（如 "2026-07-24 15:00"）' },
+      end_time: { type: 'string', description: '结束时间，接受 Unix 秒或日期字符串（默认为开始时间+1小时）' },
       all_day: { type: 'boolean', description: '是否全天事件' },
       color: {
         type: 'string',
@@ -171,10 +165,8 @@ ${TIME_HINT}`,
         items: { type: 'number' },
         description: '提醒分钟偏移数组（负数表示提前，0表示开始时）',
       },
-      range_start: { type: 'number', description: 'list 操作的区间起点 unix 秒' },
-      range_start_time: { type: 'string', description: 'list 区间起点日期字符串（与 range_start 二选一）' },
-      range_end: { type: 'number', description: 'list 操作的区间终点 unix 秒' },
-      range_end_time: { type: 'string', description: 'list 区间终点日期字符串（与 range_end 二选一）' },
+      range_start_time: { type: 'string', description: 'list 操作的区间起点，接受 Unix 秒或日期字符串' },
+      range_end_time: { type: 'string', description: 'list 操作的区间终点，接受 Unix 秒或日期字符串' },
     },
     required: ['operation'],
   },
@@ -185,10 +177,10 @@ ${TIME_HINT}`,
 
       switch (op) {
         case 'list': {
-          const startAt = resolveTime(args.range_start ?? args.start_at, args.range_start_time ?? args.start_time)
-          const endAt = resolveTime(args.range_end ?? args.end_at, args.range_end_time ?? args.end_time)
+          const startAt = resolveTime(args.range_start_time)
+          const endAt = resolveTime(args.range_end_time)
           if (!startAt || !endAt) {
-            return { success: false, error: 'list 操作需要 range_start/range_end（或对应的 _time 日期字符串）' }
+            return { success: false, error: 'list 操作需要 range_start_time/range_end_time' }
           }
           const instances = service.listEvents({ start_at: startAt, end_at: endAt })
           if (instances.length === 0) {
@@ -202,9 +194,9 @@ ${TIME_HINT}`,
         }
         case 'create': {
           if (!args.title) return { success: false, error: 'create 操作需要 title' }
-          const startAt = resolveTime(args.start_at, args.start_time)
-          if (!startAt) return { success: false, error: 'create 操作需要 start_at 或 start_time' }
-          const endAt = resolveTime(args.end_at, args.end_time)
+          const startAt = resolveTime(args.start_time)
+          if (!startAt) return { success: false, error: 'create 操作需要 start_time' }
+          const endAt = resolveTime(args.end_time)
           const input: CreateEventInput = {
             title: String(args.title),
             description: args.description ? String(args.description) : undefined,
@@ -227,8 +219,8 @@ ${TIME_HINT}`,
         }
         case 'update': {
           if (!args.id) return { success: false, error: 'update 操作需要 id' }
-          const startAt = resolveTime(args.start_at, args.start_time)
-          const endAt = resolveTime(args.end_at, args.end_time)
+          const startAt = resolveTime(args.start_time)
+          const endAt = resolveTime(args.end_time)
           const input: UpdateEventInput = {
             id: String(args.id),
             title: args.title !== undefined ? String(args.title) : undefined,
@@ -274,7 +266,7 @@ const calendarTodoTool: ToolDefinition = {
   title: '待办管理',
   description: `管理用户的 TODO 待办任务。支持 list / create / update / delete / complete / stats 六种操作。
 - list：列出 TODO。可选筛选 filter_status / filter_priority / filter_tag / overdue_only / due_today / limit。
-- create：创建 TODO。需要 title；可选 due_at/due_time、priority、status、tags、description、recurrence_rule、reminders。
+- create：创建 TODO。需要 title；可选 due_time、priority、status、tags、description、recurrence_rule、reminders。
 - update：修改 TODO。需要 id；其它字段可选。
 - delete：删除 TODO。需要 id。
 - complete：标记完成 / 取消完成。需要 id、completed(bool)。
@@ -295,8 +287,7 @@ ${TIME_HINT}`,
       id: { type: 'string', description: 'TODO ID（update/delete/complete 必填）' },
       title: { type: 'string', description: 'TODO 标题（create 必填）' },
       description: { type: 'string', description: '详细描述' },
-      due_at: { type: 'number', description: '截止时间 unix 秒' },
-      due_time: { type: 'string', description: '截止时间日期字符串（与 due_at 二选一，如 "2026-07-24 18:00"）' },
+      due_time: { type: 'string', description: '截止时间，接受 Unix 秒或日期字符串（如 "2026-07-24 18:00"）' },
       priority: {
         type: 'string',
         enum: ['none', 'low', 'medium', 'high'],
@@ -371,7 +362,7 @@ ${TIME_HINT}`,
         }
         case 'create': {
           if (!args.title) return { success: false, error: 'create 操作需要 title' }
-          const dueAt = resolveTime(args.due_at, args.due_time)
+          const dueAt = resolveTime(args.due_time)
           const input: CreateTodoInput = {
             title: String(args.title),
             description: args.description ? String(args.description) : undefined,
@@ -393,7 +384,7 @@ ${TIME_HINT}`,
         }
         case 'update': {
           if (!args.id) return { success: false, error: 'update 操作需要 id' }
-          const dueAt = resolveTime(args.due_at, args.due_time)
+          const dueAt = resolveTime(args.due_time)
           const input: UpdateTodoInput = {
             id: String(args.id),
             title: args.title !== undefined ? String(args.title) : undefined,

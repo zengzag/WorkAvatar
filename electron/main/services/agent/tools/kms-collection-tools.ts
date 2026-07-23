@@ -155,13 +155,13 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
     id: 'kms_get_toc',
     name: 'kms_get_toc',
     title: '获取文件目录',
-    description: '获取文件的层级目录结构（TOC），包含每个章节的 paragraph_id、标题路径和内容偏移范围。file_id 来自 kms_search/kms_agent_search 结果，不要带 "f:" 前缀。',
+    description: '获取文件的层级目录结构（TOC），包含每个章节的 paragraph_id、标题路径和内容偏移范围。file_id 来自 kms_search 结果，不要带 "f:" 前缀。',
     parameters: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: '文件ID（必需）。来自 kms_search/kms_agent_search 结果中的 "file_id" 字段，不要带 "f:" 前缀',
+          description: '文件ID（必需）。来自 kms_search 结果中的 "file_id" 字段，不要带 "f:" 前缀',
         },
       },
       required: ['file_id'],

@@ -272,3 +272,16 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   border: none !important;
   box-shadow: none !important;
 }
+
+/* 笔记编辑器：让工具栏、编辑区、分屏预览背景透明，
+   继承外层 token.colorBgContainer，与笔记工具栏/侧栏背景一致。
+   浮层（emoji、hint）保留 Vditor 原始 --panel-background-color 不受影响。 */
+.notes-vditor-container .vditor-toolbar,
+.notes-vditor-container .vditor-ir pre.vditor-reset,
+.notes-vditor-container .vditor-ir pre.vditor-reset:focus,
+.notes-vditor-container .vditor-sv,
+.notes-vditor-container .vditor-sv:focus,
+.notes-vditor-container .vditor-preview,
+.notes-vditor-container .vditor-devtools {
+  background-color: transparent !important;
+}

@@ -25,9 +25,7 @@ export function buildEmployeeSystemPrompt(options: {
 
   parts.push(
     '逐步分析问题，按需调用工具获取信息，直至完整回答用户问题。',
-    '可调用资料库工具查询相关知识。',
-    KMS_SEARCH_GUIDANCE,
-    CONVERSATION_SEARCH_GUIDANCE
+    '可调用资料库工具查询相关知识。'
   )
 
   if (options.workspaceGuidance) {
@@ -57,7 +55,3 @@ export function buildEmployeeSystemPrompt(options: {
 
   return parts.join('\n')
 }
-
-export const KMS_SEARCH_GUIDANCE = '本地文件检索工具：kms_search 关键词/语义检索本地文件（PDF/Word/Excel/PPT/MD/TXT等）；kms_agent_search AI智能检索（适合复杂查询，自动多轮检索并输出结论）；kms_get_content 按文件ID读取文件内容。当用户需要查找本地文件、定位信息、梳理趋势或综合分析时优先使用这些工具。'
-
-export const CONVERSATION_SEARCH_GUIDANCE = '历史对话搜索工具：search_conversations 搜索与当前用户的历史对话记录，帮助回忆之前讨论过的主题、决策和上下文。'

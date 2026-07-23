@@ -99,6 +99,8 @@ const VditorEditorInner: React.FC<Props> = ({
       toolbarConfig: { pin: true },
       preview: {
         delay: 200,
+        // 隐藏分屏预览顶部的 Desktop/Tablet/复制到知乎 等操作条
+        actions: [],
         hljs: { lineNumber: false, style: isDark ? 'github-dark' : 'github' },
         theme: { current: isDark ? 'dark' : 'light' },
         math: { inlineDigit: true, engine: 'KaTeX' },
