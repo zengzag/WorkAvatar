@@ -1,18 +1,7 @@
 import { calculatorTool } from './calculator.tool'
 import { dateTimeTool } from './date-time.tool'
 import { shellExecTool } from './shell-exec.tool'
-import {
-  readFileTool,
-  writeFileTool,
-  listDirTool,
-  createFolderTool,
-  deleteItemTool,
-  renameItemTool,
-  moveItemTool,
-  copyItemTool,
-  getFileInfoTool,
-  searchFilesTool,
-} from './fs-tools'
+import { fileTool } from './fs-tools'
 import { systemInfoTool } from './system-info.tool'
 import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
@@ -26,16 +15,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   calculatorTool,
   dateTimeTool,
   shellExecTool,
-  readFileTool,
-  writeFileTool,
-  listDirTool,
-  createFolderTool,
-  deleteItemTool,
-  renameItemTool,
-  moveItemTool,
-  copyItemTool,
-  getFileInfoTool,
-  searchFilesTool,
+  fileTool,
   systemInfoTool,
   webSearchTool,
   webFetchTool,
