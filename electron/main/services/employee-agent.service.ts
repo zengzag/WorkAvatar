@@ -263,11 +263,7 @@ class EmployeeAgentService {
     const kmsToolIds = [
       'kms_search',
       'kms_get_content',
-      'kms_knowledge_card',
       'kms_list_collections',
-      'kms_collection_overview',
-      'kms_get_toc',
-      'kms_get_paragraphs',
     ]
     for (const id of kmsToolIds) {
       allBuiltinToolIds.add(id)

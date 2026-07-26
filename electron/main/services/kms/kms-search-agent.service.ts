@@ -30,7 +30,7 @@ export type {
 /**
  * KMS 检索子智能体
  *
- * 使用增量式 Agent Loop 进行检索：LLM 自主调用 kms_search / kms_get_content / kms_knowledge_card 工具，
+ * 使用增量式 Agent Loop 进行检索：LLM 自主调用 kms_search / kms_get_content 工具，
  * 消息在多轮迭代中累积追加（前缀不变、尾部追加），最大化 prompt cache 命中率。
  * 与知识卡片生成共用同一核心链路（runUnifiedAgentLoop），仅在输出格式上不同。
  */

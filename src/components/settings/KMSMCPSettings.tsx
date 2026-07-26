@@ -282,9 +282,11 @@ const KMSMCPSettings: React.FC = () => {
                 <Tag>kms_list_dirs</Tag>
                 <Tag>kms_stats</Tag>
                 <Tag>kms_search</Tag>
-                <Tag color="blue">kms_agent_search</Tag>
                 <Tag>kms_get_content</Tag>
                 <Tag>kms_get_summary</Tag>
+                <Tag>kms_list_collections</Tag>
+                <Tag>kms_list_files_in_collection</Tag>
+                <Tag>kms_get_collection_summary</Tag>
               </Space>
             </Descriptions.Item>
           </Descriptions>

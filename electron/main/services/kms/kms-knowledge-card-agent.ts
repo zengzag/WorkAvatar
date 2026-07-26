@@ -17,9 +17,8 @@ const MAX_ITERATIONS = 30
 const UNIFIED_SYSTEM_PROMPT = `你是一个资料库智能检索与知识整合助手。
 
 你可以使用以下工具获取信息：
-- kms_search: 搜索本地资料库（支持关键词和语义检索）
+- kms_search: 搜索本地资料库（支持关键词和语义检索，结果自动附加知识卡片与合集摘要）
 - kms_get_content: 读取文件正文（需先通过 kms_search 获取 file_id）
-- kms_knowledge_card: 查询已有的知识卡片
 
 工作原则：
 1. 先用关键词直接搜索，根据结果决定是否需要深入
@@ -147,8 +146,7 @@ export async function runUnifiedAgentLoop(
 
   const tools = createKMSTools(scopeRef)
   const registry = new ToolRegistry()
-  const agentTools = tools.filter(t => ['kms_search', 'kms_get_content', 'kms_knowledge_card'].includes(t.name))
-  registry.registerTools(agentTools)
+  registry.registerTools(tools)
   const dispatcher = new ToolDispatcher(registry)
   const openaiTools = registry.getOpenAISchemas()
 
@@ -220,7 +218,7 @@ export async function runUnifiedAgentLoop(
       try { args = JSON.parse(tc.function.arguments) } catch { args = {} }
 
       const toolType: SearchTraceStep['type'] = toolName === 'kms_search' ? 'search' : toolName === 'kms_get_content' ? 'read' : 'info'
-      const argsDesc = toolName === 'kms_search' ? `query="${args.query || ''}", semantic=${args.use_semantic || false}` : toolName === 'kms_get_content' ? `file_id=${args.file_id || ''}` : `query="${args.query || ''}"`
+      const argsDesc = toolName === 'kms_search' ? `query="${args.query || ''}", search_mode=${args.search_mode || 'keyword'}` : toolName === 'kms_get_content' ? `file_id=${args.file_id || ''}` : `query="${args.query || ''}"`
       addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: `调用 ${toolName}`, type: toolType, detail: argsDesc })
 
       const toolStart = Date.now()

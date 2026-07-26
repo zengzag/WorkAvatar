@@ -204,7 +204,7 @@ class KMSKnowledgeCardService {
   }
 
   /**
-   * 沉淀知识卡片：通过 Agent Loop 让 LLM 自主调用 kms_search / kms_get_content / kms_knowledge_card 工具
+   * 沉淀知识卡片：通过 Agent Loop 让 LLM 自主调用 kms_search / kms_get_content 工具
    * LLM 自主决定搜索策略、读取哪些文件正文、何时停止，最终输出结构化摘要
    */
   async generateCard(
@@ -241,7 +241,7 @@ class KMSKnowledgeCardService {
     const statRow = this.db.prepare('SELECT search_count FROM kms_keyword_stats WHERE keyword = ?').get(normalized) as any
     const searchCount = statRow?.search_count || 0
 
-    // === Agent Loop: LLM 自主调用 kms_search / kms_get_content / kms_knowledge_card 工具 ===
+    // === Agent Loop: LLM 自主调用 kms_search / kms_get_content 工具 ===
     const agentResult = await generateCardViaAgentLoop(
       dispKeyword,
       searchCount,

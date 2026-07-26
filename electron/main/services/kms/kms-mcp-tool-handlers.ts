@@ -42,8 +42,74 @@ function parseJsonArray(json: string | undefined): any[] {
 }
 
 /**
+ * 附加搜索知识卡片：在 kms_search 主结果后追加匹配的知识卡片摘要
+ * 让 LLM 一次拿到文档片段 + 已沉淀的卡片结论，无需单独调用 kms_knowledge_card
+ */
+async function appendKnowledgeCards(query: string): Promise<string> {
+  try {
+    const cards = await KMSService.getInstance().searchKnowledgeCards(query, 2)
+    if (cards.length === 0) return ''
+    let output = '\n--- Knowledge Cards ---\n'
+    for (let i = 0; i < cards.length; i++) {
+      const c = cards[i] as any
+      output += `[Card ${i + 1}] ${c.displayKeyword} (searched ${c.searchCount} times, ${c.status === 'stale' ? 'needs refresh' : 'active'})\n`
+      output += `${c.summary}\n`
+      if (c.keyPoints && c.keyPoints.length > 0) {
+        output += 'Key points:\n'
+        for (const kp of c.keyPoints) {
+          const citation = c.citations[kp.sourceIndex]
+          const source = citation ? ` (source: ${citation.fileName})` : ''
+          output += `- ${kp.point}${source}\n`
+        }
+      }
+      output += '\n'
+    }
+    return output
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 附加搜索合集摘要：在 kms_search 主结果后追加匹配的合集摘要
+ * 让 LLM 一次拿到文档片段 + 合集整体结论，无需单独调用 kms_collection_overview
+ */
+function appendCollectionSummaries(query: string): string {
+  try {
+    const hits = KMSService.getInstance().searchCollectionSummaries(query, 2)
+    if (hits.length === 0) return ''
+    let output = '\n--- Related Collection Summaries ---\n'
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i]
+      output += `[Collection ${i + 1}] ${h.collectionName} [${h.collectionId}] ${h.fileCount} files`
+      if (h.keyTopics.length > 0) output += ` | ${h.keyTopics.join(', ')}`
+      output += '\n'
+      output += `${h.summary}\n\n`
+    }
+    return output
+  } catch {
+    return ''
+  }
+}
+
+/** 复杂查询关键词，命中时 auto 模式走深度检索 */
+const DEEP_HINT_KEYWORDS = ['分析', '总结', '趋势', '对比', '梳理', '综合', '深度', '详细', '归纳', '概述', '比较', '异同', '原因', '影响',
+  'analyze', 'summarize', 'trend', 'compare', 'overview', 'synthesis', 'detail']
+
+function shouldUseDeepMode(query: string): boolean {
+  if (query.length > 20) return true
+  const lower = query.toLowerCase()
+  return DEEP_HINT_KEYWORDS.some(kw => query.includes(kw) || lower.includes(kw.toLowerCase()))
+}
+
+/**
  * 工具处理字典：将工具名映射到对应的处理函数
  * 每个处理函数接收 (args, kmsService) 参数，返回 Promise<string>
+ *
+ * 设计原则：与 Agent 工具（kms-search.tool.ts）保持参数语义统一。
+ * kms_search 内部已合并 kms_agent_search（mode=deep）+ kms_knowledge_card（自动附加）+
+ * kms_collection_overview（自动附加）；kms_get_content 内部已合并 kms_get_toc /
+ * kms_get_paragraphs（view 参数）。
  */
 export const toolHandlers: Record<string, ToolHandler> = {
   'kms_list_dirs': async (_args, kmsService) => {
@@ -80,37 +146,102 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
   'kms_search': async (args, kmsService) => {
     const query = String(args.query || '').trim()
-    if (!query || query.length < 2) {
-      return 'Please enter at least 2 characters for the query.'
+    if (!query || query.length < 1) {
+      return 'Please provide a query.'
     }
 
-    const topK = Math.min(Math.max(args.top_k || 10, 1), 50)
-    const useSemantic = Boolean(args.use_semantic)
+    const rawMode = String(args.mode || 'auto')
+    const mode = rawMode === 'simple' || rawMode === 'deep' ? rawMode : (shouldUseDeepMode(query) ? 'deep' : 'simple')
+    const collectionIds = Array.isArray(args.collection_ids) ? args.collection_ids : undefined
+    const dirIds = Array.isArray(args.dir_ids) ? args.dir_ids : undefined
+    const fileExtensions = Array.isArray(args.file_extensions) ? args.file_extensions : undefined
+    const timeRangeStart = typeof args.time_range_start === 'number' ? args.time_range_start : undefined
+    const timeRangeEnd = typeof args.time_range_end === 'number' ? args.time_range_end : undefined
+
+    // ====== deep 模式：检索子智能体多轮检索 ======
+    if (mode === 'deep') {
+      const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
+      const result = await kmsService.agentSearch(query, {
+        maxRounds,
+        collectionIds,
+        dirIds,
+        fileExtensions,
+        timeRangeStart,
+        timeRangeEnd,
+      })
+
+      let output = `Query Type: ${result.queryTypeLabel}\n`
+      output += `Search Rounds: ${result.searchRounds}\n\n`
+      output += `Conclusion:\n${result.conclusion}\n`
+
+      if (result.sources.length > 0) {
+        output += '\nSources:\n'
+        for (let i = 0; i < result.sources.length; i++) {
+          const s = result.sources[i]
+          output += `[${i + 1}] ${s.fileName}`
+          if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
+          output += '\n'
+          output += `file_id: ${s.fileId}\n`
+          if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
+          if (s.startLine !== undefined && s.endLine !== undefined) {
+            output += `lines: ${s.startLine}-${s.endLine}\n`
+          }
+          if (s.startOffset !== undefined && s.endOffset !== undefined) {
+            output += `offset: ${s.startOffset}-${s.endOffset}\n`
+          }
+          output += `path: ${s.filePath}\n`
+          if (s.snippet) output += `snippet: ${s.snippet.substring(0, 150)}...\n`
+          output += '\n'
+        }
+      }
+
+      // 附加知识卡片和合集摘要
+      output += await appendKnowledgeCards(query)
+      output += appendCollectionSummaries(query)
+
+      return output
+    }
+
+    // ====== simple 模式：单次检索 ======
+    const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
+    const useSemantic = String(args.search_mode || 'keyword') === 'hybrid'
 
     const results = await kmsService.search(query, {
       topK,
       useSemantic,
-      fileExtensions: args.file_extensions,
-      // time_range 单位为毫秒，kmsService.search() 内部统一转换为 unix 秒
-      timeRangeStart: args.time_range_start,
-      timeRangeEnd: args.time_range_end,
-      dirIds: args.dir_ids,
-      collectionIds: args.collection_ids,
+      collectionIds,
+      dirIds,
+      fileExtensions,
+      timeRangeStart,
+      timeRangeEnd,
     })
 
     if (results.length === 0) {
-      let msg = `No results for "${query}".`
-      if (!useSemantic) msg += ' Suggestions: enable semantic search (use_semantic:true)'
+      let msg = `No file results for "${query}".`
+      if (collectionIds && collectionIds.length > 0) {
+        msg += ' Currently limited to specified collections. Try searching all files without collection_ids.'
+      }
+      if (!useSemantic) {
+        msg += ' Suggestions: enable hybrid search (search_mode:"hybrid"), or use deep mode (mode:"deep")'
+      }
+      // 即使文件无结果，仍尝试附加卡片和合集摘要
+      const cardsOutput = await appendKnowledgeCards(query)
+      const collectionsOutput = appendCollectionSummaries(query)
+      if (cardsOutput || collectionsOutput) {
+        msg += '\nBut found related knowledge:'
+        msg += cardsOutput + collectionsOutput
+      }
       return msg
     }
 
-    let output = `${results.length} result(s)${useSemantic ? ' (semantic)' : ' (keyword)'}:\n\n`
+    let output = `${results.length} result(s)${useSemantic ? ' (hybrid)' : ' (keyword)'}:\n\n`
     const typeLabels: Record<string, string> = {
       file_title: 'Title',
       file_summary: 'Summary',
       paragraph: 'Paragraph',
       content_paragraph: 'Content',
       hybrid: 'Hybrid',
+      file_name: 'FileName',
     }
     for (let i = 0; i < results.length; i++) {
       const r = results[i] as any
@@ -131,49 +262,9 @@ export const toolHandlers: Record<string, ToolHandler> = {
       output += `path: ${r.file_path}\n\n`
     }
 
-    return output
-  },
-
-  'kms_agent_search': async (args, kmsService) => {
-    const query = String(args.query || '').trim()
-    if (!query || query.length < 2) {
-      return 'Please enter at least 2 characters for the query.'
-    }
-
-    const result = await kmsService.agentSearch(query, {
-      maxRounds: args.max_rounds,
-      topK: args.top_k,
-      dirIds: args.dir_ids,
-      collectionIds: args.collection_ids,
-      fileExtensions: args.file_extensions,
-      timeRangeStart: args.time_range_start,
-      timeRangeEnd: args.time_range_end,
-    })
-
-    let output = `Query Type: ${result.queryTypeLabel}\n`
-    output += `Search Rounds: ${result.searchRounds}\n\n`
-    output += `Conclusion:\n${result.conclusion}\n`
-
-    if (result.sources.length > 0) {
-      output += '\nSources:\n'
-      for (let i = 0; i < result.sources.length; i++) {
-        const s = result.sources[i]
-        output += `[${i + 1}] ${s.fileName}`
-        if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
-        output += '\n'
-        output += `file_id: ${s.fileId}\n`
-        if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
-        if (s.startLine !== undefined && s.endLine !== undefined) {
-          output += `lines: ${s.startLine}-${s.endLine}\n`
-        }
-        if (s.startOffset !== undefined && s.endOffset !== undefined) {
-          output += `offset: ${s.startOffset}-${s.endOffset}\n`
-        }
-        output += `path: ${s.filePath}\n`
-        if (s.snippet) output += `snippet: ${s.snippet.substring(0, 150)}...\n`
-        output += '\n'
-      }
-    }
+    // 附加知识卡片和合集摘要
+    output += await appendKnowledgeCards(query)
+    output += appendCollectionSummaries(query)
 
     return output
   },
@@ -185,8 +276,86 @@ export const toolHandlers: Record<string, ToolHandler> = {
     }
     fileId = stripIdPrefix(fileId)
 
+    const view = String(args.view || 'content')
+
+    // ====== view=toc：获取文件目录结构 ======
+    if (view === 'toc') {
+      const toc = kmsService.getFileToc(fileId) as any[]
+      if (!toc || toc.length === 0) {
+        return 'No table of contents available. TOC is generated when the file is indexed as hot data.'
+      }
+
+      let output = `Table of Contents (${toc.length} entries):\n\n`
+      for (const entry of toc) {
+        const indent = '  '.repeat(Math.max(0, (entry.level || 1) - 1))
+        output += `${indent}- ${entry.title || '(untitled)'}`
+        output += ` [paragraph_id: ${entry.id}]`
+        if (entry.startOffset !== undefined && entry.endOffset !== undefined) {
+          output += ` offset: ${entry.startOffset}-${entry.endOffset}`
+        }
+        output += '\n'
+      }
+      return output
+    }
+
+    // ====== view=paragraphs：获取文件所有段落摘要 ======
+    if (view === 'paragraphs') {
+      const paragraphs = kmsService.getFileParagraphs(fileId) as any[]
+      if (!paragraphs || paragraphs.length === 0) {
+        return 'No paragraphs available. Paragraphs are generated when the file is indexed as hot data.'
+      }
+
+      const MAX_PARAGRAPHS = 200
+      const displayParagraphs = paragraphs.length > MAX_PARAGRAPHS ? paragraphs.slice(0, MAX_PARAGRAPHS) : paragraphs
+      let output = `${paragraphs.length} paragraph(s)`
+      if (paragraphs.length > MAX_PARAGRAPHS) output += ` (showing first ${MAX_PARAGRAPHS})`
+      output += ':\n\n'
+      for (let i = 0; i < displayParagraphs.length; i++) {
+        const p = displayParagraphs[i]
+        const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
+        output += `[${i + 1}] ${indent}${p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
+        if (p.summary) {
+          output += `  summary: ${p.summary}\n`
+        }
+        if (p.start_offset !== undefined && p.end_offset !== undefined) {
+          output += `  offset: ${p.start_offset}-${p.end_offset}\n`
+        }
+        const keywords = parseJsonArray(p.keywords_json)
+        if (keywords.length > 0) {
+          output += `  keywords: ${keywords.join(', ')}\n`
+        }
+        output += '\n'
+      }
+      return output
+    }
+
+    // ====== view=content（默认）：获取文件正文 ======
+    // 优先级：paragraph_ids 批量段落摘要 > paragraph_id 单段定位 > offset/line 范围读取 > 全文
+    if (Array.isArray(args.paragraph_ids) && args.paragraph_ids.length > 0) {
+      const ids = args.paragraph_ids.map((id: any) => stripIdPrefix(String(id)))
+      const paragraphs = kmsService.getParagraphsByIds(ids)
+      if (paragraphs.length === 0) {
+        return 'No matching paragraphs found. Please check paragraph_id.'
+      }
+
+      let output = `${paragraphs.length} paragraph(s):\n\n`
+      for (let i = 0; i < paragraphs.length; i++) {
+        const p = paragraphs[i]
+        output += `[${i + 1}] ${p.title_path || p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
+        if (p.summary) output += `  summary: ${p.summary}\n`
+        const keywords = parseJsonArray(p.keywords_json)
+        if (keywords.length > 0) {
+          output += `  keywords: ${keywords.join(', ')}\n`
+        }
+        output += `  file_id: ${p.file_id} (${p.file_name || ''}) offset: ${p.start_offset}-${p.end_offset}\n\n`
+      }
+      return output
+    }
+
+    const paragraphId = args.paragraph_id ? stripIdPrefix(String(args.paragraph_id)) : undefined
+
     const content = await kmsService.getFileContent(fileId, {
-      paragraphId: stripIdPrefix(String(args.paragraph_id || '')) || undefined,
+      paragraphId,
       startOffset: args.start_offset,
       endOffset: args.end_offset,
       startLine: args.start_line,
@@ -201,7 +370,7 @@ export const toolHandlers: Record<string, ToolHandler> = {
 
     let output = `${file.file_name}\n`
     output += `file_id: ${fileId}\n`
-    if (args.paragraph_id) output += `paragraph_id: ${stripIdPrefix(String(args.paragraph_id))}\n`
+    if (paragraphId) output += `paragraph_id: ${paragraphId}\n`
     if (args.start_offset !== undefined && args.end_offset !== undefined) {
       output += `offset: ${args.start_offset}-${args.end_offset}\n`
     }
@@ -301,110 +470,6 @@ export const toolHandlers: Record<string, ToolHandler> = {
     const topics = parseJsonArray(summary.key_topics_json)
     if (topics.length > 0) {
       output += `\nKey Topics: ${topics.join(', ')}\n`
-    }
-    return output
-  },
-
-  'kms_get_toc': async (args, kmsService) => {
-    let fileId = String(args.file_id || '').trim()
-    if (!fileId) {
-      return 'Please provide file_id.'
-    }
-    fileId = stripIdPrefix(fileId)
-
-    const toc = kmsService.getFileToc(fileId) as any[]
-    if (!toc || toc.length === 0) {
-      return 'No table of contents available. TOC is generated when the file is indexed as hot data.'
-    }
-
-    let output = `Table of Contents (${toc.length} entries):\n\n`
-    for (const entry of toc) {
-      const indent = '  '.repeat(Math.max(0, (entry.level || 1) - 1))
-      output += `${indent}- ${entry.title || '(untitled)'}`
-      output += ` [paragraph_id: ${entry.id}]`
-      if (entry.startOffset !== undefined && entry.endOffset !== undefined) {
-        output += ` offset: ${entry.startOffset}-${entry.endOffset}`
-      }
-      output += '\n'
-    }
-    return output
-  },
-
-  'kms_get_paragraphs': async (args, kmsService) => {
-    let fileId = String(args.file_id || '').trim()
-    if (!fileId) {
-      return 'Please provide file_id.'
-    }
-    fileId = stripIdPrefix(fileId)
-
-    const paragraphs = kmsService.getFileParagraphs(fileId) as any[]
-    if (!paragraphs || paragraphs.length === 0) {
-      return 'No paragraphs available. Paragraphs are generated when the file is indexed as hot data.'
-    }
-
-    // 限制输出条目数，防止大文档（如数百段）产生超大响应
-    const MAX_PARAGRAPHS = 200
-    const displayParagraphs = paragraphs.length > MAX_PARAGRAPHS ? paragraphs.slice(0, MAX_PARAGRAPHS) : paragraphs
-    let output = `${paragraphs.length} paragraph(s)`
-    if (paragraphs.length > MAX_PARAGRAPHS) output += ` (showing first ${MAX_PARAGRAPHS})`
-    output += ':\n\n'
-    for (let i = 0; i < displayParagraphs.length; i++) {
-      const p = displayParagraphs[i]
-      const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
-      output += `[${i + 1}] ${indent}${p.title || '(untitled)'} [paragraph_id: ${p.id}]\n`
-      if (p.summary) {
-        output += `  summary: ${p.summary}\n`
-      }
-      if (p.start_offset !== undefined && p.end_offset !== undefined) {
-        output += `  offset: ${p.start_offset}-${p.end_offset}\n`
-      }
-      const keywords = parseJsonArray(p.keywords_json)
-      if (keywords.length > 0) {
-        output += `  keywords: ${keywords.join(', ')}\n`
-      }
-      output += '\n'
-    }
-    return output
-  },
-
-  'kms_knowledge_card': async (args, kmsService) => {
-    const query = String(args.query || '').trim()
-    if (!query) {
-      return 'Please provide a query topic.'
-    }
-    const topK = Math.min(Math.max(Number(args.top_k) || 3, 1), 5)
-    const cards = await kmsService.searchKnowledgeCards(query, topK)
-
-    if (cards.length === 0) {
-      return `No knowledge cards found matching "${query}". Use kms_search for full-text search.`
-    }
-
-    let output = `${cards.length} knowledge card(s) found:\n\n`
-    for (let i = 0; i < cards.length; i++) {
-      const c = cards[i] as any
-      output += `[${i + 1}] ${c.displayKeyword} (searched ${c.searchCount} times, ${c.status === 'stale' ? 'needs refresh' : 'active'})\n`
-      output += `${c.summary}\n`
-      if (c.keyPoints && c.keyPoints.length > 0) {
-        output += 'Key points:\n'
-        for (const kp of c.keyPoints) {
-          const citation = c.citations[kp.sourceIndex]
-          const source = citation ? ` (source: ${citation.fileName})` : ''
-          output += `- ${kp.point}${source}\n`
-        }
-      }
-      if (c.citations && c.citations.length > 0) {
-        output += 'Citations:\n'
-        for (let j = 0; j < c.citations.length; j++) {
-          const cite = c.citations[j]
-          output += `  [${j}] ${cite.fileName}`
-          if (cite.paragraphTitle) output += ` > ${cite.paragraphTitle}`
-          if (cite.startLine !== undefined && cite.endLine !== undefined) {
-            output += ` (lines ${cite.startLine}-${cite.endLine})`
-          }
-          output += `\n    ${cite.snippet}\n`
-        }
-      }
-      output += '\n'
     }
     return output
   },
