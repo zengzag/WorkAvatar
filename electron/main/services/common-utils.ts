@@ -23,6 +23,12 @@ export function generateId(): string {
   return crypto.randomBytes(12).toString('hex')
 }
 
+export function generateShortId(): string {
+  // 4 字节(32bit) → 8 hex 字符：用于员工工作区目录名等数量有限、需可读的场景
+  // 调用方应自行处理极小概率的目录名碰撞
+  return crypto.randomBytes(4).toString('hex')
+}
+
 export async function calculateFileHash(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256')
   const stream = fs.createReadStream(filePath)

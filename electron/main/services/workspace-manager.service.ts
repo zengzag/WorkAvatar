@@ -3,7 +3,7 @@ import path from 'path'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
-import { generateId, extractMessagePreview } from './common-utils'
+import { generateId, generateShortId, extractMessagePreview } from './common-utils'
 import { createLogger } from './logger'
 
 const logger = createLogger('WorkspaceManager')
@@ -46,7 +46,20 @@ class WorkspaceManagerService {
     const now = Math.floor(Date.now() / 1000)
 
     const basePath = PathService.getInstance().getDataDir()
-    const workspacePath = path.join(basePath, 'employees', employeeId)
+    const employeesRoot = path.join(basePath, 'employees')
+    // 目录名使用 8 字符短 ID（与 24 字符 DB 主键解耦），重试至多 10 次避免极小概率碰撞
+    let workspacePath = ''
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const candidate = path.join(employeesRoot, generateShortId())
+      if (!fs.existsSync(candidate)) {
+        workspacePath = candidate
+        break
+      }
+    }
+    if (!workspacePath) {
+      // 兜底：拼接 employeeId 前缀确保唯一
+      workspacePath = path.join(employeesRoot, `${generateShortId()}-${employeeId.slice(0, 4)}`)
+    }
 
     if (!fs.existsSync(workspacePath)) {
       fs.mkdirSync(workspacePath, { recursive: true })

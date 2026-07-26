@@ -385,6 +385,29 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   line-height: var(--notes-editor-line-height, 1.7) !important;
 }
 
+/* 笔记表格自动换行：限制最大宽度，长文本自动折行，避免表格过宽难以查看 */
+.notes-vditor-container table,
+.notes-preview table {
+  table-layout: fixed !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  display: table !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+}
+.notes-vditor-container th,
+.notes-vditor-container td,
+.notes-preview th,
+.notes-preview td {
+  white-space: normal !important;
+  word-break: break-word !important;
+  overflow-wrap: break-word !important;
+}
+/* IR 模式下表格位于 pre.vditor-reset 内，需允许其内容正常换行 */
+.notes-vditor-container pre.vditor-reset table {
+  white-space: normal !important;
+}
+
 /* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
 @keyframes nav-rec-pulse {
   0% { opacity: 1; transform: scale(1); }
