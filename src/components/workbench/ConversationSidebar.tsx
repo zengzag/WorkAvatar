@@ -10,6 +10,7 @@ import {
   ThunderboltOutlined,
   ExportOutlined,
   BulbOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { memo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -33,6 +34,7 @@ const ConversationItem = memo(({
   onGenerateTitle,
   onExport,
   onExtractMemory,
+  onMove,
   isSelectMode,
   isSelected,
   onToggleSelect,
@@ -52,6 +54,7 @@ const ConversationItem = memo(({
   onGenerateTitle: (conv: Conversation) => void
   onExport: (convId: string) => void
   onExtractMemory: (conv: Conversation) => void
+  onMove: (conv: Conversation) => void
   isSelectMode: boolean
   isSelected: boolean
   onToggleSelect: (id: string) => void
@@ -78,6 +81,12 @@ const ConversationItem = memo(({
       label: t('workbench.exportConversation'),
       icon: <ExportOutlined />,
       onClick: () => onExport(conv.id),
+    },
+    {
+      key: 'move',
+      label: t('workbench.moveConversation'),
+      icon: <SwapOutlined />,
+      onClick: () => onMove(conv),
     },
     { type: 'divider' as const },
     {
@@ -219,6 +228,7 @@ const ConversationSidebar: React.FC<{
   onGenerateTitle: (conv: Conversation) => void
   onExport: (convId: string) => void
   onExtractMemory: (conv: Conversation) => void
+  onMove: (conv: Conversation) => void
 }> = ({
   conversations,
   allConversations,
@@ -240,6 +250,7 @@ const ConversationSidebar: React.FC<{
   onGenerateTitle,
   onExport,
   onExtractMemory,
+  onMove,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -367,6 +378,7 @@ const ConversationSidebar: React.FC<{
             onGenerateTitle={onGenerateTitle}
             onExport={onExport}
             onExtractMemory={onExtractMemory}
+            onMove={onMove}
             isSelectMode={selectMode}
             isSelected={selectedIds.has(conv.id)}
             onToggleSelect={toggleSelect}

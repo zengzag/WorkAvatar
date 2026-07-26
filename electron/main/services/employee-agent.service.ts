@@ -312,6 +312,22 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
+    const automationToolIds = [
+      'automation_list_employees',
+      'automation_list_providers',
+      'automation_task_list',
+      'automation_task_create',
+      'automation_task_update',
+      'automation_task_delete',
+      'automation_task_toggle',
+      'automation_task_run_now',
+      'automation_task_preview',
+      'automation_run_list',
+    ]
+    for (const id of automationToolIds) {
+      allBuiltinToolIds.add(id)
+    }
+
     const enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]

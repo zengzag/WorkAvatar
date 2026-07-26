@@ -634,6 +634,40 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  /**
+   * 将对话移动到其他数字员工名下。
+   * - 调用后端 updateConversation 更新 employee_id（FTS 索引同步）
+   * - 从当前员工对话列表移除
+   * - 若是当前激活对话，清空消息区
+   */
+  const moveConversation = async (convId: string, targetEmployeeId: string): Promise<boolean> => {
+    if (!convId || !targetEmployeeId) return false
+    try {
+      // 终止该对话相关的流式会话
+      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
+      for (const [sessionId] of streamEntries) {
+        streamStatesRef.current.delete(sessionId)
+      }
+      deleteConvMessages(convId)
+      _persistentDrafts.delete(convId)
+
+      await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
+      setAllConversations((prev) => prev.filter((c) => c.id !== convId))
+      if (activeConversationId === convId) {
+        setActiveConversationId(null)
+        activeConversationIdRef.current = null
+        setMessages([])
+        setIsStreaming(false)
+        setInputDraftState('')
+      }
+      message.success(t('workbench.moveConversationSuccess'))
+      return true
+    } catch {
+      message.error(t('workbench.moveConversationFailed'))
+      return false
+    }
+  }
+
   const startEditTitle = (conv: Conversation, e: React.MouseEvent) => {
     e.stopPropagation()
     setEditingConversationId(conv.id)
@@ -1580,6 +1614,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     deleteConversation,
     deleteSelectedConversations,
     deleteAllConversations,
+    moveConversation,
     startEditTitle,
     saveEditTitle,
     cancelEditTitle,

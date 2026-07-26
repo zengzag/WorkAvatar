@@ -169,10 +169,10 @@ class WorkspaceManagerService {
     ).run(title || '', summary || '', preview, id, employeeId)
   }
 
-  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }): boolean {
+  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string }): boolean {
     const ALLOWED_CONVERSATION_COLUMNS = [
       'title', 'messages_json', 'message_count',
-      'status', 'minimal_mode', 'last_message_at'
+      'status', 'minimal_mode', 'last_message_at', 'employee_id'
     ]
 
     const updates: string[] = []
@@ -201,9 +201,9 @@ class WorkspaceManagerService {
 
     if (result.changes === 0) return false
 
-    // FTS 同步：只在 title 或 messages_json 变化时执行
+    // FTS 同步：在 title / messages_json / employee_id 变化时执行
     // 优化：避免 SELECT * 加载完整 messages_json 大字段，只查必要的小字段
-    if (data.title !== undefined || data.messages_json !== undefined) {
+    if (data.title !== undefined || data.messages_json !== undefined || data.employee_id !== undefined) {
       const needMessagesJson = data.messages_json === undefined
       const cols = needMessagesJson
         ? 'employee_id, title, summary, messages_json'
