@@ -9,6 +9,7 @@ import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
+import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
@@ -231,6 +232,13 @@ class EmployeeAgentService {
       agent.registerTools(convSearchTools)
     }
 
+    if (enabledToolIds.has('list_conversations') || enabledToolIds.has('get_conversation_detail')) {
+      const convListTools = createConversationListTool(employeeId).filter(
+        t => enabledToolIds.has(t.id),
+      )
+      agent.registerTools(convListTools)
+    }
+
     // 注入员工已启用的外部 MCP server 工具（标记为按需工具）
     // 失败容忍：单个 server 失败不影响 agent 创建，仅记录日志
     let mcpRelease: (() => Promise<void>) | undefined
@@ -283,7 +291,7 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const agentToolIds = ['search_conversations']
+    const agentToolIds = ['search_conversations', 'list_conversations', 'get_conversation_detail']
     for (const id of agentToolIds) {
       allBuiltinToolIds.add(id)
     }
