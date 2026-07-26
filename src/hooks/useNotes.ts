@@ -1,24 +1,27 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { message } from 'antd'
+import { App } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useNotesStore } from '../stores/notes.store'
-import type { NoteNode, NoteSearchHit, NotesSettings } from '../types/notes'
+import type { NoteNode, NotesSettings } from '../types/notes'
 
-/**
- * 笔记模块 Hook：封装所有 IPC 调用，订阅 NOTES_DATA_CHANGED 自动刷新树。
- * 编辑器内容刷新由 self 标记区分，避免外部变更与自身保存冲突。
- */
 export function useNotes() {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const {
-    tree, treeLoading, currentRelPath, currentContent, savedContent, currentMtime, saveStatus,
-    searchQuery, searchResults, searching, settings, settingsLoading, locateText,
-    setTree, setTreeLoading, setCurrent, setContent, setSaveStatus,
-    setSearchQuery, setSearchResults, setSearching, setSettings, setSettingsLoading, setLocateText, reset,
+    tree, treeLoading, tabs, activeTabId, settings, settingsLoading,
+    setTree, setTreeLoading, setSettings, setSettingsLoading, reset,
+    createEmptyTab, openNoteInTab, switchTab, closeTab, renameTabPath,
+    setTabContent, setTabSaved, setTabSaving, setActiveTabLocateText, clearTabLocateText,
   } = useNotesStore()
 
-  // 防止重复初始化
   const initedRef = useRef(false)
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) || null
+  const currentRelPath = activeTab?.relPath || null
+  const currentContent = activeTab?.content || ''
+  const currentMtime = activeTab?.mtime || 0
+  const saveStatus = activeTab?.saveStatus || 'saved'
+  const locateText = activeTab?.locateText || null
 
   const refreshTree = useCallback(async () => {
     setTreeLoading(true)
@@ -42,62 +45,110 @@ export function useNotes() {
     }
   }, [setSettings, setSettingsLoading])
 
-  const openNote = useCallback(async (relPath: string, recordLast = true) => {
+  const persistTabs = useCallback(async () => {
+    const state = useNotesStore.getState()
+    const tabPaths = state.tabs
+      .map((tab) => tab.relPath)
+      .filter((p): p is string => !!p)
+    await window.electronAPI.notes.setSettings({
+      open_tabs: tabPaths,
+      active_tab: state.activeTabId
+        ? (state.tabs.find((t) => t.id === state.activeTabId)?.relPath || null)
+        : null,
+      last_opened: state.activeTabId
+        ? (state.tabs.find((t) => t.id === state.activeTabId)?.relPath || null)
+        : null,
+    })
+  }, [])
+
+  const handleNewTab = useCallback(async () => {
+    const id = createEmptyTab()
+    await persistTabs()
+    return id
+  }, [createEmptyTab, persistTabs])
+
+  const openNote = useCallback(async (relPath: string, tabId?: string) => {
     try {
       const note = await window.electronAPI.notes.read(relPath)
       if (note && (note as any).error) {
         message.error((note as any).error)
         return
       }
-      setCurrent(relPath, (note as any).content, (note as any).mtime)
-      setLocateText(null)
-      if (recordLast) {
-        await window.electronAPI.notes.setSettings({ last_opened: relPath })
-      }
+      const targetTabId = tabId || activeTabId || createEmptyTab()
+      openNoteInTab(targetTabId, relPath, (note as any).content, (note as any).mtime)
+      await persistTabs()
     } catch (err: any) {
       message.error(err?.message || t('notes.openFailed'))
     }
-  }, [setCurrent, setLocateText, t])
+  }, [activeTabId, createEmptyTab, openNoteInTab, persistTabs, t])
 
   const init = useCallback(async () => {
     if (initedRef.current) return
     initedRef.current = true
     await Promise.all([refreshTree(), loadSettings()])
-    // 恢复最后打开的笔记
     const s = useNotesStore.getState().settings
-    if (s.last_opened) {
-      await openNote(s.last_opened, false)
-    }
-  }, [refreshTree, loadSettings, openNote])
+    const savedTabs = s.open_tabs && s.open_tabs.length > 0 ? s.open_tabs : (s.last_opened ? [s.last_opened] : [])
+    const savedActive = s.active_tab || s.last_opened
 
-  /** 保存当前笔记到磁盘 */
-  const saveCurrent = useCallback(async (): Promise<boolean> => {
-    if (!currentRelPath) return false
-    if (currentContent === savedContent) return true
-    setSaveStatus('saving')
+    let firstTabId: string | null = null
+    let activeTabIdToSet: string | null = null
+
+    if (savedTabs.length > 0) {
+      for (const relPath of savedTabs) {
+        try {
+          const note = await window.electronAPI.notes.read(relPath)
+          if (note && !(note as any).error) {
+            const state = useNotesStore.getState()
+            const existingTab = state.tabs.find((t) => t.relPath === relPath)
+            const tabId = existingTab ? existingTab.id : state.createEmptyTab()
+            state.openNoteInTab(tabId, relPath, (note as any).content, (note as any).mtime)
+            if (!firstTabId) firstTabId = tabId
+            if (relPath === savedActive) activeTabIdToSet = tabId
+          }
+        } catch { /* skip missing */ }
+      }
+      if (activeTabIdToSet || firstTabId) {
+        useNotesStore.getState().switchTab(activeTabIdToSet || firstTabId!)
+      }
+    }
+
+    if (useNotesStore.getState().tabs.length === 0) {
+      useNotesStore.getState().createEmptyTab()
+    }
+  }, [refreshTree, loadSettings])
+
+  const saveTabContent = useCallback(async (tabId: string): Promise<boolean> => {
+    const state = useNotesStore.getState()
+    const tab = state.tabs.find((t) => t.id === tabId)
+    if (!tab || !tab.relPath) return false
+    if (tab.content === tab.savedContent) return true
+    setTabSaving(tabId)
     try {
-      const res = await window.electronAPI.notes.write({
-        relPath: currentRelPath,
-        content: currentContent,
-      })
+      const res = await window.electronAPI.notes.write({ relPath: tab.relPath, content: tab.content })
       if (res && (res as any).error) {
         message.error((res as any).error)
-        setSaveStatus('dirty')
+        useNotesStore.setState((s) => {
+          const t = s.tabs.find((x) => x.id === tabId)
+          if (t) t.saveStatus = 'dirty'
+        })
         return false
       }
-      // 更新已保存基准，避免 watcher 回环
-      useNotesStore.setState((s) => {
-        s.savedContent = currentContent
-        s.currentMtime = (res as any)?.mtime ?? s.currentMtime
-        s.saveStatus = 'saved'
-      })
+      setTabSaved(tabId, tab.content, (res as any)?.mtime ?? tab.mtime)
       return true
     } catch (err: any) {
       message.error(err?.message || t('notes.saveFailed'))
-      setSaveStatus('dirty')
+      useNotesStore.setState((s) => {
+        const t = s.tabs.find((x) => x.id === tabId)
+        if (t) t.saveStatus = 'dirty'
+      })
       return false
     }
-  }, [currentRelPath, currentContent, savedContent, setSaveStatus, t])
+  }, [setTabSaving, setTabSaved, t])
+
+  const saveCurrent = useCallback(async (): Promise<boolean> => {
+    if (!activeTabId) return false
+    return saveTabContent(activeTabId)
+  }, [activeTabId, saveTabContent])
 
   const createNote = useCallback(async (parentRelPath: string, name: string) => {
     try {
@@ -137,10 +188,9 @@ export function useNotes() {
         return null
       }
       const newRel = (res as any)?.relPath as string | undefined
-      // 若重命名的是当前打开的笔记，同步 currentRelPath
-      if (newRel && relPath === currentRelPath) {
-        useNotesStore.setState((s) => { s.currentRelPath = newRel })
-        await window.electronAPI.notes.setSettings({ last_opened: newRel })
+      if (newRel) {
+        renameTabPath(relPath, newRel)
+        await persistTabs()
       }
       await refreshTree()
       return newRel ?? null
@@ -148,7 +198,7 @@ export function useNotes() {
       message.error(err?.message || t('notes.renameFailed'))
       return null
     }
-  }, [currentRelPath, refreshTree, t])
+  }, [renameTabPath, persistTabs, refreshTree, t])
 
   const moveItem = useCallback(async (srcRelPath: string, destParentRelPath: string) => {
     try {
@@ -158,9 +208,9 @@ export function useNotes() {
         return false
       }
       const newRel = (res as any)?.relPath as string | undefined
-      if (newRel && srcRelPath === currentRelPath) {
-        useNotesStore.setState((s) => { s.currentRelPath = newRel })
-        await window.electronAPI.notes.setSettings({ last_opened: newRel })
+      if (newRel) {
+        renameTabPath(srcRelPath, newRel)
+        await persistTabs()
       }
       await refreshTree()
       return true
@@ -168,7 +218,7 @@ export function useNotes() {
       message.error(err?.message || t('notes.moveFailed'))
       return false
     }
-  }, [currentRelPath, refreshTree, t])
+  }, [renameTabPath, persistTabs, refreshTree, t])
 
   const deleteItem = useCallback(async (relPath: string) => {
     try {
@@ -177,42 +227,19 @@ export function useNotes() {
         message.error((res as any).error)
         return false
       }
-      // 删除当前打开的笔记则清空编辑器
-      if (relPath === currentRelPath) {
-        reset()
-        await window.electronAPI.notes.setSettings({ last_opened: null })
+      const state = useNotesStore.getState()
+      const tabToClose = state.tabs.find((tab) => tab.relPath === relPath)
+      if (tabToClose) {
+        state.closeTab(tabToClose.id)
       }
+      await persistTabs()
       await refreshTree()
       return true
     } catch (err: any) {
       message.error(err?.message || t('notes.deleteFailed'))
       return false
     }
-  }, [currentRelPath, reset, refreshTree, t])
-
-  const runSearch = useCallback(async (query: string) => {
-    const q = query.trim()
-    setSearchQuery(q)
-    if (!q) {
-      setSearchResults([])
-      return
-    }
-    setSearching(true)
-    try {
-      const res = await window.electronAPI.notes.search({ query: q })
-      setSearchResults((res || []) as NoteSearchHit[])
-    } catch {
-      setSearchResults([])
-    } finally {
-      setSearching(false)
-    }
-  }, [setSearchQuery, setSearchResults, setSearching])
-
-  /** 打开搜索结果中的笔记并定位到文本片段 */
-  const openSearchHit = useCallback(async (relPath: string, text?: string) => {
-    await openNote(relPath)
-    if (text) setLocateText(text)
-  }, [openNote, setLocateText])
+  }, [persistTabs, refreshTree, t])
 
   const updateSettings = useCallback(async (patch: Partial<NotesSettings>) => {
     try {
@@ -221,36 +248,67 @@ export function useNotes() {
     } catch { /* ignore */ }
   }, [setSettings])
 
-  // 订阅外部文件变更：非自身触发的变更刷新树；若当前笔记被外部修改且本地无未保存改动，则重载
+  const handleSwitchTab = useCallback(async (tabId: string) => {
+    switchTab(tabId)
+    await persistTabs()
+  }, [switchTab, persistTabs])
+
+  const handleCloseTab = useCallback(async (tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId)
+    if (tab?.relPath && tab.saveStatus === 'dirty') {
+      await saveTabContent(tabId)
+    }
+    const result = closeTab(tabId)
+    await persistTabs()
+    if (useNotesStore.getState().tabs.length === 0) {
+      useNotesStore.getState().createEmptyTab()
+      await persistTabs()
+    }
+    return result
+  }, [tabs, closeTab, saveTabContent, persistTabs])
+
+  const updateTabContent = useCallback((tabId: string, content: string) => {
+    setTabContent(tabId, content)
+  }, [setTabContent])
+
+  const setContent = useCallback((content: string) => {
+    if (activeTabId) setTabContent(activeTabId, content)
+  }, [activeTabId, setTabContent])
+
+  const setLocateText = useCallback((text: string | null) => {
+    setActiveTabLocateText(text)
+  }, [setActiveTabLocateText])
+
   useEffect(() => {
     const unsub = window.electronAPI.notes.onDataChanged((payload) => {
       if (payload.scope === 'tree') {
         refreshTree()
-        // 当前笔记被外部修改且本地无未保存改动 → 重载内容
         if (!payload.self && currentRelPath && saveStatus !== 'dirty') {
           window.electronAPI.notes.read(currentRelPath).then((note: any) => {
             if (note && !note.error && note.relPath === currentRelPath) {
-              useNotesStore.setState((s) => {
-                s.currentContent = note.content
-                s.savedContent = note.content
-                s.currentMtime = note.mtime
-                s.saveStatus = 'saved'
-              })
+              const state = useNotesStore.getState()
+              const tab = state.tabs.find((t) => t.id === state.activeTabId)
+              if (tab) {
+                setTabSaved(tab.id, note.content, note.mtime)
+              }
             }
           }).catch(() => { /* ignore */ })
         }
       }
     })
     return () => { unsub() }
-  }, [refreshTree, currentRelPath, saveStatus])
+  }, [refreshTree, currentRelPath, saveStatus, setTabSaved])
 
   return {
-    // state
     tree, treeLoading, currentRelPath, currentContent, currentMtime, saveStatus,
-    searchQuery, searchResults, searching, settings, settingsLoading, locateText,
-    // actions
-    init, refreshTree, openNote, saveCurrent, createNote, createFolder,
-    renameItem, moveItem, deleteItem, runSearch, openSearchHit, updateSettings,
+    tabs, activeTabId, activeTab, settings, settingsLoading, locateText,
+    init, refreshTree, openNote, saveCurrent, createNote, createFolder, newTab: handleNewTab,
+    renameItem, moveItem, deleteItem, updateSettings,
     setContent, setLocateText, reset,
+    switchTab: handleSwitchTab,
+    closeTab: handleCloseTab,
+    updateTabContent,
+    saveTabContent,
+    clearTabLocateText,
   }
 }

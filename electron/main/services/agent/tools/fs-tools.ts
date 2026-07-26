@@ -2,6 +2,7 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import { formatFileSize } from './utils'
+import { moveToTrash } from '../../common-utils'
 import UnifiedInteractionService from '../../unified-interaction.service'
 import { interactionContext } from '../../unified-interaction.service'
 import DatabaseService from '../../database.service'
@@ -84,7 +85,7 @@ async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<
     const response = await interactionService.request({
       type: 'confirm',
       title: '确认删除',
-      message: `即将删除${inWorkspace ? '工作区中的' : '工作区外的'} ${typeLabel}：\n\n${targetPath}\n\n此操作不可撤销，是否确认？`,
+      message: `即将删除${inWorkspace ? '工作区中的' : '工作区外的'} ${typeLabel}：\n\n${targetPath}\n\n文件将移至回收站，可从回收站找回，是否确认？`,
       danger: true,
       source: 'security:fs_delete',
     })
@@ -179,7 +180,7 @@ export const fileManageTool: ToolDefinition = {
   id: 'file_manage',
   name: 'file_manage',
   title: '文件管理',
-  description: '文件/目录管理操作：rm 删除（-rf 语义，需确认）、mv 移动（目标含文件名）、cp 复制（-r 语义）、rename 仅改文件名（new_name 不含路径分隔符）、stat 查看信息（大小/类型/修改时间/权限）。工作区外操作需确认。',
+  description: '文件/目录管理操作：rm 删除（移至回收站，可找回，需确认）、mv 移动（目标含文件名）、cp 复制（-r 语义）、rename 仅改文件名（new_name 不含路径分隔符）、stat 查看信息（大小/类型/修改时间/权限）。工作区外操作需确认。',
   parameters: {
     type: 'object',
     properties: {
@@ -442,13 +443,9 @@ async function deleteItem(args: any) {
   const confirm = await confirmDelete(resolved, isDirectory)
   if (!confirm.ok) return { success: false, error: confirm.error }
 
-  if (isDirectory) {
-    fs.rmSync(resolved, { recursive: true, force: true })
-  } else {
-    fs.unlinkSync(resolved)
-  }
+  await moveToTrash(resolved)
 
-  return { success: true, output: `成功删除: ${resolved}` }
+  return { success: true, output: `成功移至回收站: ${resolved}` }
 }
 
 async function moveItem(args: any) {

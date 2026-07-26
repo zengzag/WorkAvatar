@@ -2,90 +2,202 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import type {
   NoteNode,
-  NoteSearchHit,
   NotesSettings,
   NoteEditorMode,
 } from '../types/notes'
 import { DEFAULT_NOTES_SETTINGS } from '../../electron/shared/channels/notes'
 
+let tabIdCounter = 0
+const generateTabId = () => `tab_${Date.now()}_${++tabIdCounter}`
+
+export interface NoteTab {
+  id: string
+  relPath: string | null
+  content: string
+  savedContent: string
+  mtime: number
+  saveStatus: 'saved' | 'saving' | 'dirty'
+  locateText: string | null
+  title?: string
+}
+
 interface NotesState {
   tree: NoteNode[]
   treeLoading: boolean
-  currentRelPath: string | null
-  currentContent: string
-  /** 磁盘上最后一次已保存的内容，用于判断是否有未保存修改 */
-  savedContent: string
-  currentMtime: number
-  /** 保存状态：saved / saving / dirty */
-  saveStatus: 'saved' | 'saving' | 'dirty'
-  searchQuery: string
-  searchResults: NoteSearchHit[]
-  searching: boolean
+  tabs: NoteTab[]
+  activeTabId: string | null
   settings: NotesSettings
   settingsLoading: boolean
-  /** 定位锚点：打开文件后滚动到的文本片段（标题或搜索命中行） */
-  locateText: string | null
 
   setTree: (tree: NoteNode[]) => void
   setTreeLoading: (loading: boolean) => void
-  setCurrent: (relPath: string | null, content: string, mtime: number) => void
-  setContent: (content: string) => void
-  setSaveStatus: (status: 'saved' | 'saving' | 'dirty') => void
-  setSearchQuery: (query: string) => void
-  setSearchResults: (results: NoteSearchHit[]) => void
-  setSearching: (searching: boolean) => void
   setSettings: (settings: NotesSettings) => void
   setSettingsLoading: (loading: boolean) => void
-  setLocateText: (text: string | null) => void
   reset: () => void
+
+  createEmptyTab: () => string
+  openNoteInTab: (tabId: string, relPath: string, content: string, mtime: number) => void
+  switchTab: (tabId: string) => void
+  closeTab: (tabId: string) => { hasDirty: boolean; nextActiveId: string | null }
+  renameTabPath: (oldRelPath: string, newRelPath: string) => void
+  getTab: (tabId: string) => NoteTab | undefined
+  getActiveTab: () => NoteTab | undefined
+  setTabContent: (tabId: string, content: string) => void
+  setTabSaved: (tabId: string, content: string, mtime: number) => void
+  setTabSaving: (tabId: string) => void
+  setTabDirty: (tabId: string) => void
+  setTabLocateText: (tabId: string, text: string | null) => void
+  clearTabLocateText: (tabId: string) => void
+  setActiveTabLocateText: (text: string | null) => void
 }
 
 export const useNotesStore = create<NotesState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     tree: [],
     treeLoading: false,
-    currentRelPath: null,
-    currentContent: '',
-    savedContent: '',
-    currentMtime: 0,
-    saveStatus: 'saved',
-    searchQuery: '',
-    searchResults: [],
-    searching: false,
+    tabs: [],
+    activeTabId: null,
     settings: DEFAULT_NOTES_SETTINGS,
     settingsLoading: false,
-    locateText: null,
 
     setTree: (tree) => set((s) => { s.tree = tree }),
     setTreeLoading: (loading) => set((s) => { s.treeLoading = loading }),
-    setCurrent: (relPath, content, mtime) =>
-      set((s) => {
-        s.currentRelPath = relPath
-        s.currentContent = content
-        s.savedContent = content
-        s.currentMtime = mtime
-        s.saveStatus = 'saved'
-      }),
-    setContent: (content) =>
-      set((s) => {
-        s.currentContent = content
-        s.saveStatus = content === s.savedContent ? 'saved' : 'dirty'
-      }),
-    setSaveStatus: (status) => set((s) => { s.saveStatus = status }),
-    setSearchQuery: (query) => set((s) => { s.searchQuery = query }),
-    setSearchResults: (results) => set((s) => { s.searchResults = results }),
-    setSearching: (searching) => set((s) => { s.searching = searching }),
     setSettings: (settings) => set((s) => { s.settings = settings }),
     setSettingsLoading: (loading) => set((s) => { s.settingsLoading = loading }),
-    setLocateText: (text) => set((s) => { s.locateText = text }),
     reset: () =>
       set((s) => {
-        s.currentRelPath = null
-        s.currentContent = ''
-        s.savedContent = ''
-        s.currentMtime = 0
-        s.saveStatus = 'saved'
-        s.locateText = null
+        s.tabs = []
+        s.activeTabId = null
+      }),
+
+    createEmptyTab: () => {
+      const id = generateTabId()
+      set((s) => {
+        s.tabs.push({
+          id,
+          relPath: null,
+          content: '',
+          savedContent: '',
+          mtime: 0,
+          saveStatus: 'saved',
+          locateText: null,
+        })
+        s.activeTabId = id
+      })
+      return id
+    },
+
+    openNoteInTab: (tabId, relPath, content, mtime) =>
+      set((s) => {
+        const existingIdx = s.tabs.findIndex((t) => t.relPath === relPath)
+        if (existingIdx >= 0) {
+          s.activeTabId = s.tabs[existingIdx].id
+          return
+        }
+        const idx = s.tabs.findIndex((t) => t.id === tabId)
+        if (idx >= 0) {
+          s.tabs[idx] = {
+            ...s.tabs[idx],
+            relPath,
+            content,
+            savedContent: content,
+            mtime,
+            saveStatus: 'saved',
+            locateText: null,
+          }
+        }
+        s.activeTabId = tabId
+      }),
+
+    switchTab: (tabId) =>
+      set((s) => {
+        s.activeTabId = tabId
+      }),
+
+    closeTab: (tabId) => {
+      const state = get()
+      const tab = state.tabs.find((t) => t.id === tabId)
+      const hasDirty = !!(tab && tab.relPath && tab.saveStatus === 'dirty')
+      let nextActiveId: string | null = null
+
+      set((s) => {
+        const idx = s.tabs.findIndex((t) => t.id === tabId)
+        if (idx < 0) return
+        s.tabs.splice(idx, 1)
+        if (s.activeTabId === tabId) {
+          if (s.tabs.length > 0) {
+            const nextIdx = Math.min(idx, s.tabs.length - 1)
+            nextActiveId = s.tabs[nextIdx].id
+            s.activeTabId = nextActiveId
+          } else {
+            s.activeTabId = null
+          }
+        }
+      })
+
+      return { hasDirty, nextActiveId }
+    },
+
+    renameTabPath: (oldRelPath, newRelPath) =>
+      set((s) => {
+        for (const tab of s.tabs) {
+          if (tab.relPath === oldRelPath) {
+            tab.relPath = newRelPath
+          }
+        }
+      }),
+
+    getTab: (tabId) => get().tabs.find((t) => t.id === tabId),
+    getActiveTab: () => {
+      const s = get()
+      return s.tabs.find((t) => t.id === s.activeTabId)
+    },
+
+    setTabContent: (tabId, content) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (!tab) return
+        tab.content = content
+        tab.saveStatus = content === tab.savedContent ? 'saved' : 'dirty'
+      }),
+
+    setTabSaved: (tabId, content, mtime) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (!tab) return
+        tab.savedContent = content
+        tab.mtime = mtime
+        tab.saveStatus = 'saved'
+      }),
+
+    setTabSaving: (tabId) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (tab) tab.saveStatus = 'saving'
+      }),
+
+    setTabDirty: (tabId) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (tab) tab.saveStatus = 'dirty'
+      }),
+
+    setTabLocateText: (tabId, text) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (tab) tab.locateText = text
+      }),
+
+    clearTabLocateText: (tabId) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === tabId)
+        if (tab) tab.locateText = null
+      }),
+
+    setActiveTabLocateText: (text) =>
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === s.activeTabId)
+        if (tab) tab.locateText = text
       }),
   }))
 )

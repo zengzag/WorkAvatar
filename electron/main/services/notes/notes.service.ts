@@ -3,6 +3,7 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import PathService from '../path.service'
 import { createLogger } from '../logger'
+import { moveToTrash } from '../common-utils'
 import {
   DEFAULT_NOTES_SETTINGS,
   NOTES_CHANNELS,
@@ -300,12 +301,12 @@ class NotesService {
     return { relPath: newRel }
   }
 
-  /** 删除文件 / 递归删除文件夹 */
-  deleteItem(relPath: string): { success: boolean } {
+  /** 删除文件 / 文件夹（移至操作系统回收站，可找回） */
+  async deleteItem(relPath: string): Promise<{ success: boolean }> {
     const full = this.resolve(relPath)
     if (!fs.existsSync(full)) return { success: true }
     this.markSelfWrite(relPath)
-    fs.rmSync(full, { recursive: true, force: true })
+    await moveToTrash(full)
     return { success: true }
   }
 

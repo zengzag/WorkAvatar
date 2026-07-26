@@ -56,9 +56,9 @@ export function registerNotesHandlers(): void {
     return service.moveItem(params.srcRelPath, params.destParentRelPath || '')
   })
 
-  safeHandle(IPC_CHANNELS.NOTES_DELETE, (relPath: string) => {
+  safeHandle(IPC_CHANNELS.NOTES_DELETE, async (relPath: string) => {
     if (!relPath) return { error: 'relPath 必填' }
-    return service.deleteItem(relPath)
+    return await service.deleteItem(relPath)
   })
 
   safeHandle(IPC_CHANNELS.NOTES_SEARCH, (params: NoteSearchParams) => {

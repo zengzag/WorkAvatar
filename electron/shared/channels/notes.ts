@@ -57,15 +57,39 @@ export interface NoteSearchHit {
 export interface NotesSettings {
   editor_mode: 'edit' | 'split' | 'preview'
   last_opened: string | null
+  /** 多标签：已打开的笔记 relPath 列表 */
+  open_tabs: string[]
+  /** 多标签：当前激活的标签 relPath */
+  active_tab: string | null
   sidebar_collapsed: boolean
   outline_collapsed: boolean
+  /** 左侧文件导航栏宽度（像素） */
+  sidebar_width: number
+  /** 右侧大纲面板宽度（像素） */
+  outline_width: number
+  /** 编辑区/阅读区内容最大宽度（像素），0 表示不限 */
+  editor_max_width: number
+  /** 编辑区/阅读区字号（px） */
+  editor_font_size: number
+  /** 编辑区/阅读区行高 */
+  editor_line_height: number
+  /** 文件树展开的文件夹 relPath 列表 */
+  expanded_folders: string[]
 }
 
 export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
   editor_mode: 'edit',
   last_opened: null,
+  open_tabs: [],
+  active_tab: null,
   sidebar_collapsed: false,
   outline_collapsed: false,
+  sidebar_width: 260,
+  outline_width: 260,
+  editor_max_width: 820,
+  editor_font_size: 15,
+  editor_line_height: 1.7,
+  expanded_folders: [],
 }
 
 export interface NoteWriteParams {

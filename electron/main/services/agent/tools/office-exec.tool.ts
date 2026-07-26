@@ -4,6 +4,7 @@ import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
 import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
+import { moveToTrash } from '../../common-utils'
 import { interactionContext } from '../../unified-interaction.service'
 
 const OFFICE_MODULES: Record<string, any> = {}
@@ -145,7 +146,7 @@ function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>
     },
     delete: async (filePath: string): Promise<void> => {
       await checkAndTrack('删除', filePath)
-      fs.unlinkSync(filePath)
+      await moveToTrash(filePath)
     },
     createFolder: async (folderPath: string): Promise<void> => {
       await checkAndTrack('创建文件夹于', folderPath)

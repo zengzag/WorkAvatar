@@ -487,21 +487,35 @@ class DatabaseService {
   }
 
   private migrateConversationsFTS(): void {
-    const count = this.db.prepare('SELECT COUNT(*) AS n FROM conversations_fts').get() as { n: number }
-    if (count.n > 0) return
+    // 版本化重建：当 preview 提取逻辑变更时，通过版本号触发全量重建
+    const CONV_FTS_VERSION = 'v2'
+    const versionRow = this.db.prepare("SELECT value FROM settings WHERE key = 'conversations_fts_version'").get() as { value: string } | undefined
+    const currentVersion = versionRow?.value
+
+    if (currentVersion === CONV_FTS_VERSION) return
+
+    // 全量重建：清空后重新索引所有对话
+    this.db.exec('DELETE FROM conversations_fts')
     const rows = this.db.prepare('SELECT id, employee_id, title, summary, messages_json FROM conversations').all() as any[]
-    if (rows.length === 0) return
-    const insert = this.db.prepare(
-      'INSERT INTO conversations_fts (title, summary, content_preview, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?)'
-    )
-    const tx = this.db.transaction((items: any[]) => {
-      for (const r of items) {
-        const preview = extractMessagePreview(r.messages_json)
-        insert.run(r.title || '', r.summary || '', preview, r.id, r.employee_id)
-      }
-    })
-    tx(rows)
-    logger.info(`Migrated ${rows.length} conversations to FTS5 table`)
+    if (rows.length > 0) {
+      const insert = this.db.prepare(
+        'INSERT INTO conversations_fts (title, summary, content_preview, conversation_id, employee_id) VALUES (?, ?, ?, ?, ?)'
+      )
+      const tx = this.db.transaction((items: any[]) => {
+        for (const r of items) {
+          const preview = extractMessagePreview(r.messages_json)
+          insert.run(r.title || '', r.summary || '', preview, r.id, r.employee_id)
+        }
+      })
+      tx(rows)
+    }
+
+    // 记录版本号
+    this.db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('conversations_fts_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()"
+    ).run(CONV_FTS_VERSION)
+
+    logger.info(`Rebuilt conversations_fts (${rows.length} rows) at version ${CONV_FTS_VERSION}`)
   }
 
   private migrateEmployeeAddWorkspacePath(): void {
