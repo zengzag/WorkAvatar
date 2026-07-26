@@ -1,10 +1,11 @@
 import { theme, Tooltip } from 'antd'
 import { EyeOutlined, FolderOpenOutlined } from '@ant-design/icons'
-import React, { useState, memo, useMemo, Suspense } from 'react'
+import React, { useState, memo, useMemo, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedFileInfo } from '../../types'
 import type { MessageSegment } from './types'
 import { getFileIcon, getFileColor } from './FileViewerModal'
+import { pathToAppFileUrl } from '../../utils/file-url'
 
 const FileViewerModal = React.lazy(() => import('./FileViewerModal'))
 
@@ -22,19 +23,48 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [previewFile, setPreviewFile] = useState<GeneratedFileInfo | null>(null)
+  const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
 
+  // 聚合所有 tool_call 段的 generatedFiles，按路径去重（后写覆盖先写，保留最新 size/mtime）
   const generatedFiles = useMemo(() => {
     if (!segments) return []
-    const files: GeneratedFileInfo[] = []
+    const map = new Map<string, GeneratedFileInfo>()
     for (const seg of segments) {
       if (seg.type === 'tool_call' && seg.generatedFiles && seg.generatedFiles.length > 0) {
-        files.push(...seg.generatedFiles)
+        for (const f of seg.generatedFiles) map.set(f.path, f)
       }
     }
-    return files
+    return Array.from(map.values())
   }, [segments])
 
-  if (generatedFiles.length === 0) return null
+  // 探测文件是否仍存在：消息过程中"先创建后被删除"的文件不展示
+  useEffect(() => {
+    if (generatedFiles.length === 0) {
+      setMissingPaths(new Set())
+      return
+    }
+    let cancelled = false
+    Promise.all(generatedFiles.map(async (f): Promise<[string, boolean]> => {
+      try {
+        const res = await fetch(pathToAppFileUrl(f.path), { method: 'HEAD' })
+        return [f.path, res.ok]
+      } catch {
+        return [f.path, false]
+      }
+    })).then(results => {
+      if (cancelled) return
+      const missing = new Set<string>()
+      for (const [p, ok] of results) if (!ok) missing.add(p)
+      setMissingPaths(missing)
+    })
+    return () => { cancelled = true }
+  }, [generatedFiles])
+
+  const visibleFiles = missingPaths.size === 0
+    ? generatedFiles
+    : generatedFiles.filter(f => !missingPaths.has(f.path))
+
+  if (visibleFiles.length === 0) return null
 
   return (
     <>
@@ -45,7 +75,7 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
         marginTop: 4,
         marginLeft: 2,
       }}>
-        {generatedFiles.map((file, index) => {
+        {visibleFiles.map((file, index) => {
           const IconComp = getFileIcon(file.ext)
           const iconColor = getFileColor(file.ext)
           return (

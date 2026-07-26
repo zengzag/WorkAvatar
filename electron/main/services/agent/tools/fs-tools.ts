@@ -8,9 +8,10 @@ import { interactionContext } from '../../unified-interaction.service'
 import DatabaseService from '../../database.service'
 
 /**
- * 文件操作工具（拆分为 4 个独立工具，降低参数互斥混淆）：
+ * 文件操作工具（拆分为 5 个独立工具，降低参数互斥混淆）：
  *   file_read   读取文件内容
  *   file_write  写入文件 / 创建文件夹
+ *   file_edit   编辑文件部分内容（替换/插入/删除）
  *   file_manage 删除 / 移动 / 复制 / 重命名 / 查看信息
  *   file_list   列出目录 / 按名称搜索文件
  */
@@ -174,6 +175,54 @@ export const fileWriteTool: ToolDefinition = {
   source: 'builtin',
 }
 
+// ====== file_edit：编辑文件部分内容（替换/插入/删除） ======
+
+export const fileEditTool: ToolDefinition = {
+  id: 'file_edit',
+  name: 'file_edit',
+  title: '编辑文件',
+  summary: '对文件部分内容做精确修改（替换/插入/删除），避免全量重写。replace 精确字符串替换；insert 按行号或锚点插入；delete 按行范围或锚点删除。',
+  description: '对已有文件进行部分内容修改，避免每次全量重写。replace: 精确字符串替换（old_string→new_string，默认唯一匹配，replace_all=true 替换全部，new_string 为空即删除）；insert: 插入内容（after_string 锚点优先，否则按 line 行号前插入，都不传则追加末尾）；delete: 删除内容（old_string 精确删除优先，否则按 start_line/end_line 行范围删除）。文件必须已存在。工作区外操作需确认。',
+  parameters: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['replace', 'insert', 'delete'],
+        description: '操作类型：replace 替换 / insert 插入 / delete 删除',
+      },
+      path: { type: 'string', description: '目标文件绝对路径（必须已存在）' },
+      old_string: { type: 'string', description: 'replace: 要查找的精确文本；delete: 要删除的精确文本。默认必须唯一匹配，replace_all=true 时替换全部' },
+      new_string: { type: 'string', description: 'replace: 替换文本（空字符串=删除该文本）' },
+      replace_all: { type: 'boolean', description: 'replace: 是否替换所有匹配（默认false，仅替换唯一匹配）' },
+      content: { type: 'string', description: 'insert: 要插入的内容' },
+      after_string: { type: 'string', description: 'insert: 在该字符串首次出现后插入（优先于 line）' },
+      line: { type: 'number', description: 'insert: 在该行号前插入（1-based，0或不传=追加末尾）', minimum: 0 },
+      start_line: { type: 'number', description: 'delete: 起始行号（1-based，含）', minimum: 1 },
+      end_line: { type: 'number', description: 'delete: 结束行号（1-based，含）', minimum: 1 },
+    },
+    required: ['operation', 'path'],
+  },
+  handler: async (args: any) => {
+    try {
+      const op = String(args.operation || '')
+      switch (op) {
+        case 'replace':
+          return editReplace(args)
+        case 'insert':
+          return editInsert(args)
+        case 'delete':
+          return editDelete(args)
+        default:
+          return { success: false, error: `不支持的 operation: ${op}（可用 replace/insert/delete）` }
+      }
+    } catch (error: any) {
+      return { success: false, error: `文件编辑失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+}
+
 // ====== file_manage：删除 / 移动 / 复制 / 重命名 / 查看信息 ======
 
 export const fileManageTool: ToolDefinition = {
@@ -251,7 +300,7 @@ export const fileListTool: ToolDefinition = {
   source: 'builtin',
 }
 
-export const fileTools: ToolDefinition[] = [fileReadTool, fileWriteTool, fileManageTool, fileListTool]
+export const fileTools: ToolDefinition[] = [fileReadTool, fileWriteTool, fileEditTool, fileManageTool, fileListTool]
 
 // ====== 各操作实现 ======
 
@@ -613,4 +662,166 @@ function searchFiles(args: any) {
     output += `\n\n(已达到最大结果数 ${maxResults}，可能还有更多匹配)`
   }
   return { success: true, output }
+}
+
+// ====== file_edit 各操作实现 ======
+
+/** 读取目标文件内容并校验，返回 { content, resolved } 或错误对象 */
+async function readEditTarget(args: any): Promise<{ content: string; resolved: string } | { success: false; error: string }> {
+  const filePath = String(args.path || '').trim()
+  if (!filePath) return { success: false, error: '文件路径不能为空' }
+
+  const resolved = path.resolve(filePath)
+  if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
+  if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
+
+  const confirm = await confirmOutsideWorkspace('编辑', resolved)
+  if (!confirm.ok) return { success: false, error: confirm.error || '编辑操作已取消' }
+
+  const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
+  return { content, resolved }
+}
+
+/** replace: 精确字符串替换 */
+async function editReplace(args: any) {
+  const oldString = String(args.old_string ?? '')
+  const newString = String(args.new_string ?? '')
+  if (!oldString) return { success: false, error: 'old_string 不能为空' }
+  if (oldString === newString) return { success: false, error: 'old_string 与 new_string 相同，无需替换' }
+
+  const target = await readEditTarget(args)
+  if (!('content' in target)) return target
+
+  const replaceAll = args.replace_all === true
+  const occurrences = target.content.split(oldString).length - 1
+
+  if (occurrences === 0) {
+    return { success: false, error: `未找到匹配文本。请检查 old_string 是否精确匹配文件内容（含缩进/空格/换行）` }
+  }
+  if (!replaceAll && occurrences > 1) {
+    return {
+      success: false,
+      error: `old_string 在文件中匹配 ${occurrences} 处，不唯一。请提供更多上下文使匹配唯一，或设置 replace_all=true 替换全部`,
+    }
+  }
+
+  // 使用 split/join 和 slice 避免正则/ `$` 特殊字符问题（String.replace 的 replacement 会解释 $& 等）
+  const newContent = replaceAll
+    ? target.content.split(oldString).join(newString)
+    : (() => {
+        const idx = target.content.indexOf(oldString)
+        return target.content.slice(0, idx) + newString + target.content.slice(idx + oldString.length)
+      })()
+
+  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+
+  const count = replaceAll ? occurrences : 1
+  return {
+    success: true,
+    output: `✓ replace: 替换 ${count} 处（${oldString.length} 字符 → ${newString.length} 字符）\n文件: ${target.resolved}`,
+  }
+}
+
+/** insert: 插入内容 */
+async function editInsert(args: any) {
+  const content = String(args.content ?? '')
+  if (!content) return { success: false, error: 'content 不能为空' }
+
+  const target = await readEditTarget(args)
+  if (!('content' in target)) return target
+
+  const afterString = args.after_string != null ? String(args.after_string) : ''
+  const hasAfterString = afterString !== ''
+  const lineNum = args.line != null ? Number(args.line) : null
+
+  let newContent: string
+  let positionDesc: string
+
+  if (hasAfterString) {
+    const idx = target.content.indexOf(afterString)
+    if (idx === -1) {
+      return { success: false, error: `after_string 未在文件中找到，无法定位插入位置` }
+    }
+    const insertPos = idx + afterString.length
+    newContent = target.content.slice(0, insertPos) + content + target.content.slice(insertPos)
+    positionDesc = `在指定文本后`
+  } else if (lineNum != null && lineNum > 0) {
+    const lines = target.content.split('\n')
+    if (lineNum > lines.length + 1) {
+      return { success: false, error: `line ${lineNum} 超出文件总行数 ${lines.length}（可插入范围 1~${lines.length + 1}）` }
+    }
+    const insertIdx = lineNum - 1
+    lines.splice(insertIdx, 0, content)
+    newContent = lines.join('\n')
+    positionDesc = `在第 ${lineNum} 行前`
+  } else {
+    // 追加到末尾
+    newContent = target.content.endsWith('\n') || target.content === ''
+      ? target.content + content
+      : target.content + '\n' + content
+    positionDesc = `在文件末尾`
+  }
+
+  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+
+  const insertLines = content.split('\n').length
+  return {
+    success: true,
+    output: `✓ insert: ${positionDesc}插入 ${insertLines} 行内容\n文件: ${target.resolved}`,
+  }
+}
+
+/** delete: 删除内容 */
+async function editDelete(args: any) {
+  const target = await readEditTarget(args)
+  if (!('content' in target)) return target
+
+  const oldString = args.old_string != null ? String(args.old_string) : ''
+  const hasOldString = oldString !== ''
+  const startLine = args.start_line != null ? Number(args.start_line) : null
+  const endLine = args.end_line != null ? Number(args.end_line) : null
+
+  let newContent: string
+  let desc: string
+
+  if (hasOldString) {
+    const occurrences = target.content.split(oldString).length - 1
+    if (occurrences === 0) {
+      return { success: false, error: `old_string 未在文件中找到` }
+    }
+    if (occurrences > 1) {
+      return {
+        success: false,
+        error: `old_string 在文件中匹配 ${occurrences} 处，不唯一。请提供更多上下文使匹配唯一`,
+      }
+    }
+    const delIdx = target.content.indexOf(oldString)
+    newContent = target.content.slice(0, delIdx) + target.content.slice(delIdx + oldString.length)
+    desc = `删除指定文本（${oldString.length} 字符）`
+  } else if (startLine != null && endLine != null) {
+    if (startLine < 1 || endLine < 1) {
+      return { success: false, error: 'start_line 和 end_line 必须 ≥ 1' }
+    }
+    if (startLine > endLine) {
+      return { success: false, error: `start_line(${startLine}) 不能大于 end_line(${endLine})` }
+    }
+    const lines = target.content.split('\n')
+    if (startLine > lines.length) {
+      return { success: false, error: `start_line ${startLine} 超出文件总行数 ${lines.length}` }
+    }
+    const actualEnd = Math.min(endLine, lines.length)
+    const deletedCount = actualEnd - startLine + 1
+    lines.splice(startLine - 1, deletedCount)
+    newContent = lines.join('\n')
+    desc = `删除第 ${startLine}-${actualEnd} 行（共 ${deletedCount} 行）`
+  } else {
+    return { success: false, error: '请提供 old_string 或 start_line+end_line 来指定删除范围' }
+  }
+
+  fs.writeFileSync(target.resolved, newContent, 'utf-8')
+
+  return {
+    success: true,
+    output: `✓ delete: ${desc}\n文件: ${target.resolved}`,
+  }
 }

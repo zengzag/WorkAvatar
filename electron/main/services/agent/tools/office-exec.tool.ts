@@ -60,6 +60,69 @@ function extractWritePathsFromCode(code: string): string[] {
   return [...new Set(paths)]
 }
 
+/** 语法检查结果 */
+interface SyntaxCheckResult {
+  valid: boolean
+  error?: string
+  line?: number
+  column?: number
+  context?: string
+  hint?: string
+}
+
+/**
+ * 检查 JS 代码语法（不执行）。
+ * 用 vm.Script 预编译，语法错误在此阶段抛出，避免完整执行后才发现 SyntaxError。
+ */
+function checkCodeSyntax(code: string): SyntaxCheckResult {
+  const wrappedCode = `(async () => {\n${code}\n})()`
+  try {
+    new vm.Script(wrappedCode, { filename: 'office-exec.js' })
+    return { valid: true }
+  } catch (e: any) {
+    const errorMsg = e.message || String(e)
+    const stack = e.stack || ''
+
+    let line: number | undefined
+    let column: number | undefined
+    const lineMatch = stack.match(/office-exec\.js:(\d+)(?::(\d+))?/)
+    if (lineMatch) {
+      line = parseInt(lineMatch[1], 10)
+      if (lineMatch[2]) column = parseInt(lineMatch[2], 10)
+      if (line > 1) line -= 1 // 用户代码从第 2 行开始（第 1 行是 async 包装）
+    }
+
+    let context: string | undefined
+    if (line && line > 0) {
+      const codeLines = code.split('\n')
+      const errorIdx = line - 1
+      if (errorIdx >= 0 && errorIdx < codeLines.length) {
+        const startIdx = Math.max(0, errorIdx - 3)
+        const endIdx = Math.min(codeLines.length - 1, errorIdx + 2)
+        const ctxLines: string[] = []
+        for (let i = startIdx; i <= endIdx; i++) {
+          const marker = i === errorIdx ? ' >>> ' : '     '
+          ctxLines.push(`${marker}${i + 1} | ${codeLines[i]}`)
+        }
+        context = ctxLines.join('\n')
+      }
+    }
+
+    let hint = ''
+    if (/Unterminated string literal|Unexpected string|Unexpected identifier/i.test(errorMsg)) {
+      hint = "常见原因：字符串引号冲突。建议：1) 外层用单引号 '...'；2) 或用反引号 `...`（支持多行）；3) 或转义内部双引号 \\\""
+    } else if (/Unexpected token/i.test(errorMsg)) {
+      hint = '常见原因：特殊字符未转义。检查字符串中是否含未转义的引号、反斜杠等'
+    } else if (/is not defined/i.test(errorMsg)) {
+      hint = '变量未定义。检查拼写、是否忘记 require 模块。沙箱可用模块：docx、pptxgenjs、xlsx、adm-zip、fs、path、file'
+    } else if (/Unexpected end of input/i.test(errorMsg)) {
+      hint = '代码不完整（括号/引号未闭合）。检查是否缺少闭合的 )、}、]、\'、"、`'
+    }
+
+    return { valid: false, error: errorMsg, line, column, context, hint }
+  }
+}
+
 /**
  * 创建沙箱只读 fs：保留读方法，写方法替换为抛错提示用 `file` 对象。
  * 写操作不再走 fs（同步方法无法 await 异步弹窗），改由注入的 `file` 异步对象处理。
@@ -276,20 +339,70 @@ export const officeExecTool: ToolDefinition = {
   id: 'office_exec',
   name: 'office_exec',
   title: 'Office文档生成',
-  summary: '在 Node.js 沙箱中执行 JS 代码生成或编辑 Office 文档（Word/PPT/Excel）。处理 Office 文档时必须用此工具。',
-  description: '在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。** 使用前先调 list_available_tools(tool_name=["office_exec"]) 获取代码模板和陷阱清单。',
+  summary: '在 Node.js 沙箱中执行 JS 代码生成或编辑 Office 文档（Word/PPT/Excel）。执行前自动语法预检查。处理 Office 文档时必须用此工具。',
+  description: `在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。
+
+**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。**
+
+**语法预检查**：执行前自动校验 JS 语法，语法错误立即返回（不执行），含行号、代码上下文、修复建议。
+
+**长文档分步执行**：生成超长文档（≥1500字）时**必须分步**：先写骨架代码生成基础文档，再用 file_edit 追加章节内容，逐步完善。禁止一次性生成超长代码，极易出现语法错误。
+
+**使用前先调 list_available_tools(tool_name=["office_exec"]) 获取规则与陷阱清单。**
+
+短代码（<800字符）直接传 code 参数；长代码建议先用 file_write 写入 .js 文件再传 code_file 参数执行。`,
   parameters: {
     type: 'object',
     properties: {
-      code: { type: 'string', description: '要执行的JavaScript代码，支持async/await' },
+      code: { type: 'string', description: '要执行的JavaScript代码，支持async/await。短代码（<800字符）建议直接传此参数' },
+      code_file: { type: 'string', description: '本地 .js 文件绝对路径，读取该文件内容作为代码执行。长代码（≥800字符）建议先用 file_write 写入文件再传此参数，避免 JSON 转义导致引号错误。code 与 code_file 二选一，同时传时 code_file 优先' },
       working_dir: { type: 'string', description: '工作目录（文件操作基准路径），默认为当前员工工作区' },
       timeout: { type: 'number', description: '超时时间（秒），默认60秒，最大300秒', minimum: 1, maximum: 300 },
     },
-    required: ['code'],
+    required: [],
   },
   handler: async (args: any) => {
-    const code = String(args.code || '').trim()
-    if (!code) return { success: false, error: '代码不能为空' }
+    let code: string
+    const codeFile = String(args.code_file || '').trim()
+    if (codeFile) {
+      const resolvedCodeFile = path.resolve(codeFile)
+      if (!fs.existsSync(resolvedCodeFile)) return { success: false, error: `代码文件不存在: ${codeFile}` }
+      if (!fs.statSync(resolvedCodeFile).isFile()) return { success: false, error: `路径不是文件: ${codeFile}` }
+      try {
+        code = fs.readFileSync(resolvedCodeFile, 'utf-8')
+      } catch (e: any) {
+        return { success: false, error: `读取代码文件失败: ${e.message || e}` }
+      }
+      if (!code.trim()) return { success: false, error: '代码文件内容为空' }
+    } else {
+      code = String(args.code || '').trim()
+      if (!code) return { success: false, error: '请提供 code 或 code_file 参数' }
+    }
+
+    // 语法预检查：执行前校验 JS 语法，语法错误立即返回（不执行）
+    // 消除"完整执行后才发现 SyntaxError"的往返开销
+    const syntaxResult = checkCodeSyntax(code)
+    if (!syntaxResult.valid) {
+      const errorLines: string[] = ['语法错误（未执行）：']
+      errorLines.push(`  错误: ${syntaxResult.error}`)
+      if (syntaxResult.line) {
+        const colInfo = syntaxResult.column ? `:${syntaxResult.column}` : ''
+        errorLines.push(`  位置: 第 ${syntaxResult.line} 行${colInfo}`)
+      }
+      if (syntaxResult.context) {
+        errorLines.push('')
+        errorLines.push('代码上下文：')
+        errorLines.push(syntaxResult.context)
+      }
+      if (syntaxResult.hint) {
+        errorLines.push('')
+        errorLines.push(`修复建议: ${syntaxResult.hint}`)
+      }
+      return {
+        success: false,
+        error: errorLines.join('\n'),
+      }
+    }
 
     // 优先使用数字员工工作区目录，其次 LLM 传入的 working_dir，最后 process.cwd()
     const employeeWorkspace = getWorkspacePath()
@@ -420,6 +533,7 @@ export const officeExecTool: ToolDefinition = {
 
     try {
       const context = vm.createContext(sandbox)
+
       const wrappedCode = `(async () => {\n${code}\n})()`
       const script = new vm.Script(wrappedCode, { filename: 'office-exec.js' })
 

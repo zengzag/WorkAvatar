@@ -186,6 +186,7 @@ export default {
       shell_exec: '执行命令',
       file_read: '读取文件',
       file_write: '写入文件',
+      file_edit: '编辑文件',
       file_manage: '文件管理',
       file_list: '列出与搜索',
       system_info: '系统信息',

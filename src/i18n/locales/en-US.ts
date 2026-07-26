@@ -186,6 +186,7 @@ export default {
       shell_exec: 'Execute Command',
       file_read: 'Read File',
       file_write: 'Write File',
+      file_edit: 'Edit File',
       file_manage: 'File Manage',
       file_list: 'List & Search',
       system_info: 'System Info',
