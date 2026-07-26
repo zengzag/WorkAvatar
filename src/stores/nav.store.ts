@@ -15,6 +15,7 @@ export type NavItemKey =
   | 'kms'
   | 'voice'
   | 'calendar'
+  | 'notes'
   | 'automation'
   | 'settings'
 
@@ -34,8 +35,9 @@ export const DEFAULT_NAV_CONFIG: NavItemConfig[] = [
   { key: 'kms', visible: true, order: 1 },
   { key: 'voice', visible: true, order: 2 },
   { key: 'calendar', visible: true, order: 3 },
-  { key: 'automation', visible: true, order: 4 },
-  { key: 'settings', visible: true, order: 5 },
+  { key: 'notes', visible: true, order: 4 },
+  { key: 'automation', visible: true, order: 5 },
+  { key: 'settings', visible: true, order: 6 },
 ]
 
 interface NavConfigState {

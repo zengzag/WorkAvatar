@@ -4,6 +4,7 @@ export const envVarsTool: ToolDefinition = {
   id: 'env_vars',
   name: 'env_vars',
   title: '环境变量',
+  summary: '读取允许列表内的系统环境变量。获取环境变量值时使用。',
   description: '读取允许列表内的系统环境变量。',
   parameters: {
     type: 'object',
@@ -34,5 +35,6 @@ export const envVarsTool: ToolDefinition = {
       return { success: false, error: `读取环境变量失败: ${error.message || error}` }
     }
   },
-  source: 'builtin'
+  source: 'builtin',
+  onDemand: true,
 }

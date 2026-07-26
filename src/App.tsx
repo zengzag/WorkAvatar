@@ -6,6 +6,7 @@ import {
   SearchOutlined,
   AudioOutlined,
   CalendarOutlined,
+  BookOutlined,
   FieldTimeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -15,8 +16,15 @@ import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
+import { useVoiceRecordingStore } from './stores/voice-recording.store'
 
 const { Sider, Content } = Layout
+
+/** 语音导航图标：录音进行中时变色，提示后台语音识别运行中 */
+const VoiceNavIcon: React.FC<{ recording: boolean; paused: boolean }> = ({ recording, paused }) => {
+  if (!recording) return <AudioOutlined />
+  return <AudioOutlined style={{ color: paused ? '#faad14' : '#ff4d4f' }} />
+}
 
 const App: React.FC = () => {
   const navigate = useNavigate()
@@ -25,6 +33,8 @@ const App: React.FC = () => {
   const { token } = theme.useToken()
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
+  const isVoiceRecording = useVoiceRecordingStore((s) => s.isRecording)
+  const isVoicePaused = useVoiceRecordingStore((s) => s.isPaused)
 
   const getSelectedKey = useCallback(() => {
     const path = location.pathname
@@ -33,6 +43,7 @@ const App: React.FC = () => {
     if (path.startsWith('/kms')) return 'kms'
     if (path.startsWith('/voice')) return 'voice'
     if (path.startsWith('/calendar')) return 'calendar'
+    if (path.startsWith('/notes')) return 'notes'
     if (path.startsWith('/automation')) return 'automation'
     return 'digital-employees'
   }, [location.pathname])
@@ -85,14 +96,19 @@ const App: React.FC = () => {
       onClick: () => navigate('/kms'),
     },
     'voice': {
-      icon: <AudioOutlined />,
-      label: t('nav.voice'),
+      icon: <VoiceNavIcon recording={isVoiceRecording} paused={isVoicePaused} />,
+      label: isVoiceRecording ? t('nav.voiceRecording') : t('nav.voice'),
       onClick: () => navigate('/voice'),
     },
     'calendar': {
       icon: <CalendarOutlined />,
       label: t('nav.calendar'),
       onClick: () => navigate('/calendar'),
+    },
+    'notes': {
+      icon: <BookOutlined />,
+      label: t('nav.notes'),
+      onClick: () => navigate('/notes'),
     },
     'automation': {
       icon: <FieldTimeOutlined />,
@@ -104,7 +120,7 @@ const App: React.FC = () => {
       label: t('nav.settings'),
       onClick: () => navigate('/settings'),
     },
-  }), [t, navigate])
+  }), [t, navigate, isVoiceRecording, isVoicePaused])
 
   // 按配置过滤+排序后的菜单项
   const menuItems = useMemo(() => {

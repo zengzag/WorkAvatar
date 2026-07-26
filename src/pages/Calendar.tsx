@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { Button, Space, Segmented, Tooltip, theme } from 'antd'
 import {
   PlusOutlined,
@@ -27,12 +27,66 @@ const CalendarPage: React.FC = () => {
   const [editingEvent, setEditingEvent] = useState<CalendarEventInstance | null>(null)
   const [defaultStartAt, setDefaultStartAt] = useState<number | undefined>(undefined)
   const [defaultEndAt, setDefaultEndAt] = useState<number | undefined>(undefined)
+  // 每次打开日程弹窗递增，强制 EventFormModal 重建以获得全新的 form 实例，避免残留上次数据
+  const [eventModalKey, setEventModalKey] = useState(0)
 
   const [todoModalOpen, setTodoModalOpen] = useState(false)
   const [todoModalMode, setTodoModalMode] = useState<TodoFormMode>('create')
   const [editingTodo, setEditingTodo] = useState<CalendarTodo | null>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const calendarWrapRef = useRef<HTMLDivElement | null>(null)
+
+  // 周/日视图首次进入时滚动到中间位置；周↔日切换时保留滚动位置
+  const lastViewRef = useRef<string | null>(null)
+  const savedScrollTopRef = useRef(0)
+  useEffect(() => {
+    const prevView = lastViewRef.current
+    lastViewRef.current = cal.view
+
+    // 月视图不处理
+    if (cal.view === 'month') return
+
+    const isFirstEnter = prevView === null || prevView === 'month'
+    const isWeekDaySwitch = (prevView === 'week' && cal.view === 'day') || (prevView === 'day' && cal.view === 'week')
+
+    if (isWeekDaySwitch) {
+      // 周↔日切换：恢复之前的滚动位置
+      const restore = () => {
+        const target = calendarWrapRef.current
+        if (target && target.scrollHeight > target.clientHeight) {
+          target.scrollTop = savedScrollTopRef.current
+        }
+      }
+      restore()
+      const t1 = setTimeout(restore, 100)
+      const t2 = setTimeout(restore, 400)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+
+    if (isFirstEnter) {
+      // 首次进入周/日视图：滚动到中间
+      const tryScroll = () => {
+        const target = calendarWrapRef.current
+        if (target && target.scrollHeight > target.clientHeight) {
+          target.scrollTop = (target.scrollHeight - target.clientHeight) * 0.6
+        }
+      }
+      tryScroll()
+      const t1 = setTimeout(tryScroll, 100)
+      const t2 = setTimeout(tryScroll, 400)
+      return () => { clearTimeout(t1); clearTimeout(t2) }
+    }
+  }, [cal.view, cal.loadingEvents])
+
+  // 滚动时记录当前位置，用于视图切换恢复
+  useEffect(() => {
+    const el = calendarWrapRef.current
+    if (!el) return
+    const onScroll = () => { savedScrollTopRef.current = el.scrollTop }
+    el.addEventListener('scroll', onScroll)
+    return () => { el.removeEventListener('scroll', onScroll) }
+  }, [])
 
   const existingTags = useMemo(() => {
     const tagSet = new Set<string>()
@@ -48,6 +102,7 @@ const CalendarPage: React.FC = () => {
     // 点击创建默认30分钟
     setDefaultEndAt(endAt ?? (startAt != null ? startAt + DEFAULT_CLICK_DURATION_SEC : undefined))
     setEventModalMode('create')
+    setEventModalKey(k => k + 1)
     setEventModalOpen(true)
   }, [])
 
@@ -56,6 +111,7 @@ const CalendarPage: React.FC = () => {
     setDefaultStartAt(undefined)
     setDefaultEndAt(undefined)
     setEventModalMode('edit')
+    setEventModalKey(k => k + 1)
     setEventModalOpen(true)
   }, [])
 
@@ -147,7 +203,7 @@ const CalendarPage: React.FC = () => {
 
       {/* 主体：左日历 + 右待办 */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        <div style={{ flex: 1, minWidth: 0, padding: 12, overflow: 'auto' }}>
+        <div ref={calendarWrapRef} style={{ flex: 1, minWidth: 0, padding: 12, overflow: 'auto' }}>
           <CalendarPanel
             view={cal.view}
             currentDate={cal.currentDate}
@@ -165,16 +221,18 @@ const CalendarPage: React.FC = () => {
           width: 360,
           flexShrink: 0,
           borderLeft: `1px solid ${token.colorBorderSecondary}`,
-          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
         }}>
           <TodoPanel
             todos={cal.todos}
-            stats={cal.stats}
             loading={cal.loadingTodos}
             filters={cal.filters}
             onFiltersChange={cal.setFilters}
-            onCreateTodo={openCreateTodo}
+            onQuickAddTodo={cal.createTodo}
             onEditTodo={openEditTodo}
+            onUpdateTodo={cal.updateTodo}
             onCompleteTodo={cal.completeTodo}
             onDeleteTodo={cal.deleteTodo}
           />
@@ -183,6 +241,7 @@ const CalendarPage: React.FC = () => {
 
       {/* 弹窗 */}
       <EventFormModal
+        key={eventModalKey}
         open={eventModalOpen}
         mode={eventModalMode}
         event={editingEvent}

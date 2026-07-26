@@ -2,7 +2,6 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { Worker } from 'worker_threads'
-import { dialog } from 'electron'
 import { createLogger } from './logger'
 import PathService from './path.service'
 
@@ -361,6 +360,11 @@ class OCRService {
   private showError(title: string, content: string): void {
     // 同步非阻塞弹窗，不会卡住主进程
     try {
+      // Lazy require：避免打包器把 require('electron') 提升到模块加载时机。
+      // KMS 索引 Worker 会间接引用 OCRService，而 worker_threads 中无法解析
+      // electron 模块，提升后会导致 Worker 启动即崩溃。
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { dialog } = require('electron')
       dialog.showErrorBox(title, content)
     } catch (err) {
       logger.error('Failed to show OCR error dialog:', err)

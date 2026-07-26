@@ -41,7 +41,7 @@ const AnswerSegmentInner: React.FC<{
         wordBreak: 'break-word',
         border: isError ? `1px solid ${token.colorError}` : 'none',
       }}>
-        <div className="markdown-content" style={{ fontSize: 13, color: token.colorText }}>
+        <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
           {markdownNode}
         </div>
         {seg.isStreaming && <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>}

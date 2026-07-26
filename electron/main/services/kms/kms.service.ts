@@ -546,6 +546,68 @@ class KMSService {
     return result
   }
 
+  /**
+   * 按自然语言 query 搜索合集摘要（LIKE 模糊匹配 summary + key_topics_json）
+   * 用于 kms_search 工具内部附加搜索合集摘要内容，无需向量索引
+   * 返回合集元数据 + 摘要 + 主题
+   */
+  searchCollectionSummaries(query: string, topK: number = 3): Array<{
+    collectionId: string
+    collectionName: string
+    description: string
+    summary: string
+    keyTopics: string[]
+    fileCount: number
+  }> {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return []
+
+    // 关键词拆分（与搜索引擎一致：空格 + 中英文边界）
+    const words = normalized.split(/\s+/).filter(s => s.length > 0)
+    if (words.length === 0) return []
+
+    // 一次性 JOIN 查询：合集摘要 + 合集元数据 + 文件计数
+    const rows = this.db.prepare(`
+      SELECT cs.collection_id, cs.summary, cs.key_topics_json,
+             c.name, c.description,
+             (SELECT COUNT(*) FROM kms_file_collections fc WHERE fc.collection_id = c.id) AS file_count
+      FROM kms_collection_summaries cs
+      JOIN kms_collections c ON cs.collection_id = c.id
+    `).all() as any[]
+
+    if (rows.length === 0) return []
+
+    const scored = rows.map(row => {
+      const summary = (row.summary || '').toLowerCase()
+      const topics = (() => { try { const arr = JSON.parse(row.key_topics_json || '[]'); return Array.isArray(arr) ? arr : [] } catch { return [] } })()
+      const topicsText = topics.join(' ').toLowerCase()
+      const name = (row.name || '').toLowerCase()
+      const desc = (row.description || '').toLowerCase()
+
+      const haystack = `${name} ${desc} ${summary} ${topicsText}`
+      let score = 0
+      let matchCount = 0
+      for (const word of words) {
+        if (haystack.includes(word)) {
+          score += word.length * 2
+          matchCount++
+        }
+      }
+      const matchRatio = matchCount / words.length
+      return { row, score: score * (0.5 + matchRatio * 0.5), topics }
+    }).filter(s => s.score > 0)
+
+    scored.sort((a, b) => b.score - a.score)
+    return scored.slice(0, topK).map(s => ({
+      collectionId: s.row.collection_id,
+      collectionName: s.row.name,
+      description: s.row.description || '',
+      summary: s.row.summary || '',
+      keyTopics: s.topics,
+      fileCount: s.row.file_count || 0,
+    }))
+  }
+
   setCollectionSummary(collectionId: string, summary: string, keyTopics: string[] = []): void {
     saveCollectionSummary(this.db, collectionId, summary, keyTopics)
   }

@@ -131,3 +131,17 @@ export type {
   PreviewRunsParams,
   AutomationDataChangedPayload,
 } from './channels/automation'
+export type {
+  NoteNodeType,
+  NoteNode,
+  NoteContent,
+  NoteSearchSnippet,
+  NoteSearchHit,
+  NotesSettings,
+  NoteWriteParams,
+  NoteCreateParams,
+  NoteRenameParams,
+  NoteMoveParams,
+  NoteSearchParams,
+  NotesDataChangedPayload,
+} from './channels/notes'

@@ -1,6 +1,6 @@
 {
   "name": "workavatar",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "本地优先的办公数字员工",
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -23,10 +23,16 @@
   "license": "MIT",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language-data": "^6.5.2",
     "@file-viewer/react-full": "^2.1.26",
+    "@milkdown/kit": "^7.21.3",
+    "@milkdown/react": "^7.21.3",
+    "@milkdown/theme-nord": "^7.21.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@node-rs/jieba": "^2.0.1",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@uiw/react-codemirror": "^4.25.11",
     "adm-zip": "^0.5.17",
     "antd": "^6.3.7",
     "better-sqlite3": "^12.9.0",
@@ -56,6 +62,7 @@
     "sherpa-onnx-node": "^1.13.4",
     "sqlite-vec": "^0.1.9",
     "unpdf": "^1.6.2",
+    "vditor": "^3.11.2",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.13"

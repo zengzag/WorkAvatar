@@ -41,6 +41,9 @@ const _persistentConvList = new Map<string, Conversation[]>()
 // 有了此缓存，initEmployee 可以直接恢复上次的对话，避免 selectConversation IPC。
 const _persistentActiveConvId = new Map<string, string>()
 
+// 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
+const _persistentDrafts = new Map<string, string>()
+
 // 获取或创建指定员工的消息缓存
 const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
   let cache = _persistentMessagesByEmployee.get(employeeId)
@@ -58,16 +61,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     calculator: t('workbench.toolNames.calculator'),
     date_time: t('workbench.toolNames.date_time'),
     shell_exec: t('workbench.toolNames.shell_exec'),
-    read_file: t('workbench.toolNames.read_file'),
-    write_file: t('workbench.toolNames.write_file'),
-    list_dir: t('workbench.toolNames.list_dir'),
-    create_folder: t('workbench.toolNames.create_folder'),
-    delete_item: t('workbench.toolNames.delete_item'),
-    rename_item: t('workbench.toolNames.rename_item'),
-    move_item: t('workbench.toolNames.move_item'),
-    copy_item: t('workbench.toolNames.copy_item'),
-    get_file_info: t('workbench.toolNames.get_file_info'),
-    search_files: t('workbench.toolNames.search_files'),
+    file: t('workbench.toolNames.file'),
     system_info: t('workbench.toolNames.system_info'),
     web_search: t('workbench.toolNames.web_search'),
     web_fetch: t('workbench.toolNames.web_fetch'),
@@ -75,6 +69,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
     ask_user: t('workbench.toolNames.ask_user'),
+    calendar_event_list: t('workbench.toolNames.calendar_event_list'),
+    calendar_event_create: t('workbench.toolNames.calendar_event_create'),
+    calendar_event_update: t('workbench.toolNames.calendar_event_update'),
+    calendar_event_delete: t('workbench.toolNames.calendar_event_delete'),
+    calendar_todo_list: t('workbench.toolNames.calendar_todo_list'),
+    calendar_todo_create: t('workbench.toolNames.calendar_todo_create'),
+    calendar_todo_update: t('workbench.toolNames.calendar_todo_update'),
+    calendar_todo_delete: t('workbench.toolNames.calendar_todo_delete'),
+    calendar_todo_complete: t('workbench.toolNames.calendar_todo_complete'),
+    calendar_todo_stats: t('workbench.toolNames.calendar_todo_stats'),
   }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
@@ -84,6 +88,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  const [inputDraft, setInputDraftState] = useState('')
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
@@ -182,6 +187,26 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       conversationMessagesRef.current = getOrCreateEmployeeMessagesCache(id)
 
       if (getPersistentEmployeeId() && getPersistentEmployeeId() !== id) {
+        // 切换员工：重置可见状态，避免上一个员工的对话界面残留
+        setEmployee(null)
+        setMessages([])
+        setActiveConversationId(null)
+        activeConversationIdRef.current = null
+        setIsStreaming(false)
+        isStreamingRef.current = false
+        setAllConversations([])
+        setLoadingConversationId(null)
+        setInputDraftState('')
+        // 重置 pendingMessage 与延迟发送，避免跨员工串扰
+        setPendingMessage(null)
+        setPendingHighPermission(false)
+        if (pendingSendTimeoutRef.current) {
+          clearTimeout(pendingSendTimeoutRef.current)
+          pendingSendTimeoutRef.current = null
+        }
+        // 重置 initializedRef，让新员工走完整的 selectConversation/startNewConversation 流程
+        initializedRef.current = false
+
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
@@ -229,6 +254,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setActiveConversationId(cachedActiveConvId)
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
+        // 恢复该对话的草稿
+        setInputDraftState(_persistentDrafts.get(cachedActiveConvId) || '')
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
@@ -391,6 +418,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       activeConversationIdRef.current = convId
       setMessages([])
       setConvMessages(convId, [])
+      // 新对话无流式输出，按任务区分 isStreaming，避免沿用上一个任务的状态
+      setIsStreaming(false)
+      isStreamingRef.current = false
+      // 新对话草稿为空
+      setInputDraftState('')
       forceScrollToBottom()
 
       refreshConversationList()
@@ -430,6 +462,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
     setIsStreaming(hasActiveStream)
     isStreamingRef.current = hasActiveStream
+
+    // 切换对话时同步恢复该对话的草稿，避免显示上一个对话的输入内容
+    setInputDraftState(_persistentDrafts.get(convId) || '')
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -535,6 +570,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         streamStatesRef.current.delete(sessionId)
       }
       deleteConvMessages(convId)
+      _persistentDrafts.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -543,6 +579,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         activeConversationIdRef.current = null
         setMessages([])
         setIsStreaming(false)
+        setInputDraftState('')
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -558,6 +595,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           streamStatesRef.current.delete(sessionId)
         }
         deleteConvMessages(convId)
+        _persistentDrafts.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -565,6 +603,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setActiveConversationId(null)
         setMessages([])
         setIsStreaming(false)
+        setInputDraftState('')
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -577,6 +616,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       streamStatesRef.current.clear()
       conversationMessagesRef.current.clear()
+      // 清理当前员工所有对话的草稿
+      for (const conv of allConversations) {
+        _persistentDrafts.delete(conv.id)
+      }
 
       await window.electronAPI.conversation.deleteAll(id)
       setAllConversations([])
@@ -584,9 +627,44 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       activeConversationIdRef.current = null
       setMessages([])
       setIsStreaming(false)
+      setInputDraftState('')
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
+    }
+  }
+
+  /**
+   * 将对话移动到其他数字员工名下。
+   * - 调用后端 updateConversation 更新 employee_id（FTS 索引同步）
+   * - 从当前员工对话列表移除
+   * - 若是当前激活对话，清空消息区
+   */
+  const moveConversation = async (convId: string, targetEmployeeId: string): Promise<boolean> => {
+    if (!convId || !targetEmployeeId) return false
+    try {
+      // 终止该对话相关的流式会话
+      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
+      for (const [sessionId] of streamEntries) {
+        streamStatesRef.current.delete(sessionId)
+      }
+      deleteConvMessages(convId)
+      _persistentDrafts.delete(convId)
+
+      await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
+      setAllConversations((prev) => prev.filter((c) => c.id !== convId))
+      if (activeConversationId === convId) {
+        setActiveConversationId(null)
+        activeConversationIdRef.current = null
+        setMessages([])
+        setIsStreaming(false)
+        setInputDraftState('')
+      }
+      message.success(t('workbench.moveConversationSuccess'))
+      return true
+    } catch {
+      message.error(t('workbench.moveConversationFailed'))
+      return false
     }
   }
 
@@ -1159,6 +1237,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  // 草稿更新：同步到当前对话的持久化缓存，切回时能恢复
+  const setInputDraft = useCallback((value: string) => {
+    setInputDraftState(value)
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentDrafts.set(convId, value)
+    }
+  }, [])
+
   const handleToggleMinimalMode = useCallback((enabled: boolean) => {
     const convId = activeConversationIdRef.current
     if (!convId) return
@@ -1495,6 +1582,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     isStreaming,
     isCreatingConversation,
     loadingConversationId,
+    inputDraft,
+    setInputDraft,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -1525,6 +1614,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     deleteConversation,
     deleteSelectedConversations,
     deleteAllConversations,
+    moveConversation,
     startEditTitle,
     saveEditTitle,
     cancelEditTitle,

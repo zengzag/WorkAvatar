@@ -31,55 +31,201 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     return ref && ref.length > 0 ? ref : undefined
   }
 
+  // 复杂查询关键词，命中时 auto 模式走深度检索
+  const DEEP_HINT_KEYWORDS = ['分析', '总结', '趋势', '对比', '梳理', '综合', '深度', '详细', '归纳', '概述', '比较', '异同', '原因', '影响']
+
+  function shouldUseDeepMode(query: string): boolean {
+    if (query.length > 20) return true
+    return DEEP_HINT_KEYWORDS.some(kw => query.includes(kw))
+  }
+
+  /** 剥离 ID 前缀（如 f:xxx / p:xxx），防御 LLM 误传 */
+  function stripIdPrefix(id: string): string {
+    const trimmed = id.trim()
+    const match = trimmed.match(/^[a-z]+:(.+)$/i)
+    return match ? match[1].trim() : trimmed
+  }
+
+  /**
+   * 附加搜索知识卡片：在 kms_search 主结果后追加匹配的知识卡片摘要
+   * 让 LLM 一次拿到文档片段 + 已沉淀的卡片结论，无需单独调用 kms_knowledge_card
+   */
+  async function appendKnowledgeCards(query: string): Promise<string> {
+    try {
+      const cards = await kmsService.searchKnowledgeCards(query, 2)
+      if (cards.length === 0) return ''
+      let output = '\n--- 知识卡片 ---\n'
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i] as any
+        output += `[卡片${i + 1}] ${c.displayKeyword}（搜索${c.searchCount}次，${c.status === 'stale' ? '需刷新' : '活跃'}）\n`
+        output += `${c.summary}\n`
+        if (c.keyPoints && c.keyPoints.length > 0) {
+          output += '要点：\n'
+          for (const kp of c.keyPoints) {
+            const citation = c.citations[kp.sourceIndex]
+            const source = citation ? `（来源：${citation.fileName}）` : ''
+            output += `- ${kp.point}${source}\n`
+          }
+        }
+        output += '\n'
+      }
+      return output
+    } catch {
+      return ''
+    }
+  }
+
+  /**
+   * 附加搜索合集摘要：在 kms_search 主结果后追加匹配的合集摘要
+   * 让 LLM 一次拿到文档片段 + 合集整体结论，无需单独调用 kms_collection_overview
+   */
+  function appendCollectionSummaries(query: string): string {
+    try {
+      const hits = kmsService.searchCollectionSummaries(query, 2)
+      if (hits.length === 0) return ''
+      let output = '\n--- 相关合集摘要 ---\n'
+      for (let i = 0; i < hits.length; i++) {
+        const h = hits[i]
+        output += `[合集${i + 1}] ${h.collectionName} [${h.collectionId}] ${h.fileCount}篇`
+        if (h.keyTopics.length > 0) output += ` | ${h.keyTopics.join('、')}`
+        output += '\n'
+        output += `${h.summary}\n\n`
+      }
+      return output
+    } catch {
+      return ''
+    }
+  }
+
   const kmsSearchTool: ToolDefinition = {
     id: 'kms_search',
     name: 'kms_search',
-    title: '本地文件检索',
-    description: '对本地资料库中的文件进行关键词、语义或混合检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。返回文件名、路径、匹配片段和定位信息。可通过 collection_ids 限定到指定合集；未指定时按会话默认范围（如有）或全部索引文件检索。',
+    title: '本地资料检索',
+    summary: '检索本地资料库内容（PDF/Word/Excel/PPT/Markdown等），结果自动附加相关知识卡片与合集摘要。需要查找资料库文档、获取文档片段时使用。',
+    description: '对本地资料库进行检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。mode=simple 单次检索（快速，返回匹配片段与定位）；mode=deep 调用检索子智能体多轮检索（自动识别查询意图，输出结论与溯源，适合复杂分析）；mode=auto 由系统根据查询复杂度自动选择。检索结果会自动附加匹配的知识卡片（已沉淀的高频主题摘要）与合集摘要，无需单独调用其他工具。',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: '检索查询语句，支持空格分隔多个关键词',
+          description: '检索查询语句或自然语言问题',
+        },
+        mode: {
+          type: 'string',
+          enum: ['simple', 'deep', 'auto'],
+          description: '检索模式：simple 单次检索（快速） / deep 深度检索（子智能体多轮，适合综合分析） / auto 自动判断（默认）',
+          default: 'auto',
+        },
+        search_mode: {
+          type: 'string',
+          enum: ['keyword', 'hybrid'],
+          description: 'simple 模式下的检索方式：keyword 关键词检索（默认） / hybrid 关键词+向量混合检索（兼顾精确匹配与语义相似，概念性查询建议）',
+          default: 'keyword',
         },
         top_k: {
           type: 'number',
-          description: '返回结果数量（1-20，默认5）',
+          description: 'simple 模式返回结果数量（1-20，默认5）',
           minimum: 1,
           maximum: 20,
           default: 5,
         },
-        use_semantic: {
-          type: 'boolean',
-          description: '是否启用语义检索（需要Embedding模型支持，默认false，使用关键词检索）。启用后实际执行关键词+向量混合检索，能兼顾精确匹配和语义相似。对于概念性查询建议启用',
-          default: false,
+        max_rounds: {
+          type: 'number',
+          description: 'deep 模式最大检索轮次（1-5，默认3）',
+          minimum: 1,
+          maximum: 5,
+          default: 3,
         },
         collection_ids: {
           type: 'array',
           items: { type: 'string' },
           description: '限定检索的合集ID列表（可选）。传入后只在指定合集内的文件中检索。不传则按会话默认范围或全部索引文件。',
         },
+        dir_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '限定检索的索引目录ID列表（可选）',
+        },
         file_extensions: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定文件扩展名（可选，如 ["pdf", "docx", "md"]）',
+          description: '限定文件扩展名（simple 模式可选，如 ["pdf", "docx", "md"]）',
+        },
+        time_range_start: {
+          type: 'number',
+          description: '文件修改时间范围起始（毫秒时间戳，可选）',
+        },
+        time_range_end: {
+          type: 'number',
+          description: '文件修改时间范围结束（毫秒时间戳，可选）',
         },
       },
       required: ['query'],
     },
-    handler: async (args: any) => {
+    timeoutMs: 600000, // deep 模式可能多轮检索，统一 10 分钟超时
+    handler: async (args: any, context?: ToolHandlerContext) => {
       try {
         const query = String(args.query || '').trim()
         if (!query || query.length < 1) {
           return { success: true, output: '请输入查询内容。' }
         }
 
-        const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
-        const useSemantic = Boolean(args.use_semantic)
+        const rawMode = String(args.mode || 'auto')
+        const mode = rawMode === 'simple' || rawMode === 'deep' ? rawMode : (shouldUseDeepMode(query) ? 'deep' : 'simple')
         const collectionIds = resolveCollectionIds(args)
-        const dirIds = resolveDirIds()
+        const dirIds = args.dir_ids && Array.isArray(args.dir_ids) && args.dir_ids.length > 0 ? args.dir_ids : resolveDirIds()
         const fileExtensions = resolveFileExtensions(args)
+        const timeRangeStart = typeof args.time_range_start === 'number' ? args.time_range_start : undefined
+        const timeRangeEnd = typeof args.time_range_end === 'number' ? args.time_range_end : undefined
+
+        // ====== deep 模式：检索子智能体多轮检索 ======
+        if (mode === 'deep') {
+          const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
+          const result = await kmsService.agentSearch(query, {
+            maxRounds,
+            collectionIds,
+            dirIds,
+            fileExtensions,
+            timeRangeStart,
+            timeRangeEnd,
+            onProgress: (step) => {
+              context?.onProgress?.(step)
+            },
+          })
+
+          let output = `【${result.queryTypeLabel}】${result.searchRounds}轮检索\n\n`
+          output += `${result.conclusion}\n`
+
+          if (result.sources.length > 0) {
+            output += '\n--- 来源 ---\n'
+            for (let i = 0; i < result.sources.length; i++) {
+              const s = result.sources[i]
+              output += `[${i + 1}] ${s.fileName}`
+              if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
+              output += '\n'
+              output += `路径: ${s.filePath}\n`
+              output += `file_id: ${s.fileId}\n`
+              if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
+              if (s.startLine !== undefined && s.endLine !== undefined) {
+                output += `lines: ${s.startLine}-${s.endLine}\n`
+              }
+              if (s.startOffset !== undefined && s.endOffset !== undefined) {
+                output += `offset: ${s.startOffset}-${s.endOffset}\n`
+              }
+              output += '\n'
+            }
+          }
+
+          // 附加知识卡片和合集摘要
+          output += await appendKnowledgeCards(query)
+          output += appendCollectionSummaries(query)
+
+          return { success: true, output }
+        }
+
+        // ====== simple 模式：单次检索 ======
+        const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
+        const useSemantic = String(args.search_mode || 'keyword') === 'hybrid'
 
         const results = await kmsService.search(query, {
           topK,
@@ -87,6 +233,8 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
           collectionIds,
           dirIds,
           fileExtensions,
+          timeRangeStart,
+          timeRangeEnd,
         })
 
         if (results.length === 0) {
@@ -95,7 +243,14 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
             msg += ' 当前限定在指定合集中检索，可尝试不传 collection_ids 搜索全部资料库。'
           }
           if (!useSemantic) {
-            msg += ' 建议：尝试启用语义检索(use_semantic:true)'
+            msg += ' 建议：尝试混合检索(search_mode:"hybrid")，或使用深度检索(mode:"deep")'
+          }
+          // 即使文件无结果，仍尝试附加卡片和合集摘要
+          const cardsOutput = await appendKnowledgeCards(query)
+          const collectionsOutput = appendCollectionSummaries(query)
+          if (cardsOutput || collectionsOutput) {
+            msg += '\n但找到相关知识：'
+            msg += cardsOutput + collectionsOutput
           }
           return { success: true, output: msg }
         }
@@ -106,10 +261,11 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
           paragraph: '段落',
           content_paragraph: '原文',
           hybrid: '混合',
+          file_name: '文件名',
         }
 
         const scopeLabel = collectionIds && collectionIds.length > 0 ? `(合集${collectionIds.length}个)` : ''
-        let output = `${results.length} 条结果${useSemantic ? '(语义)' : '(关键词)'}${scopeLabel}:\n\n`
+        let output = `${results.length} 条结果${useSemantic ? '(混合)' : '(关键词)'}${scopeLabel}:\n\n`
         for (let i = 0; i < results.length; i++) {
           const r = results[i]
           const typeLabel = typeLabels[r.match_type] || r.match_type
@@ -130,122 +286,62 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
           output += '\n'
         }
 
+        // 附加知识卡片和合集摘要
+        output += await appendKnowledgeCards(query)
+        output += appendCollectionSummaries(query)
+
         return { success: true, output }
       } catch (error: any) {
         return { success: false, error: `本地搜索失败: ${error.message}` }
       }
     },
     source: 'builtin',
-  }
-
-  const kmsAgentSearchTool: ToolDefinition = {
-    id: 'kms_agent_search',
-    name: 'kms_agent_search',
-    title: '本地AI智能检索',
-    description: '使用独立检索子智能体对本地资料库进行深度检索。自动识别查询意图（定位/概念/趋势/分析），多轮检索后输出核心结论和精准溯源信息。适合需要综合分析、趋势梳理、概念解释的复杂查询。可通过 collection_ids 限定到指定合集。',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: '检索需求描述，可以是自然语言问题',
-        },
-        max_rounds: {
-          type: 'number',
-          description: '最大检索轮次（1-5，默认3）',
-          minimum: 1,
-          maximum: 5,
-          default: 3,
-        },
-        collection_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: '限定检索的合集ID列表（可选）。传入后只在指定合集内的文件中检索。',
-        },
-      },
-      required: ['query'],
-    },
-    timeoutMs: 600000, // 10分钟超时，因为独立检索子智能体可能执行多轮检索
-    handler: async (args: any, context?: ToolHandlerContext) => {
-      try {
-        const query = String(args.query || '').trim()
-        if (!query || query.length < 1) {
-          return { success: true, output: '请输入查询内容。' }
-        }
-
-        const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
-        const collectionIds = resolveCollectionIds(args)
-
-        const result = await kmsService.agentSearch(query, {
-          maxRounds,
-          collectionIds,
-          onProgress: (step) => {
-            context?.onProgress?.(step)
-          },
-        })
-
-        let output = `【${result.queryTypeLabel}】${result.searchRounds}轮检索\n\n`
-        output += `${result.conclusion}\n`
-
-        if (result.sources.length > 0) {
-          output += '\n--- 来源 ---\n'
-          for (let i = 0; i < result.sources.length; i++) {
-            const s = result.sources[i]
-            output += `[${i + 1}] ${s.fileName}`
-            if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
-            output += '\n'
-            output += `路径: ${s.filePath}\n`
-            output += `file_id: ${s.fileId}\n`
-            if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
-            if (s.startLine !== undefined && s.endLine !== undefined) {
-              output += `lines: ${s.startLine}-${s.endLine}\n`
-            }
-            if (s.startOffset !== undefined && s.endOffset !== undefined) {
-              output += `offset: ${s.startOffset}-${s.endOffset}\n`
-            }
-            output += '\n'
-          }
-        }
-
-        return { success: true, output }
-      } catch (error: any) {
-        return { success: false, error: `AI智能检索失败: ${error.message}` }
-      }
-    },
-    source: 'builtin',
+    onDemand: true,
   }
 
   const kmsGetContentTool: ToolDefinition = {
     id: 'kms_get_content',
     name: 'kms_get_content',
     title: '获取本地文件内容',
-    description: '获取本地资料库中文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 或 kms_agent_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
+    summary: '读取资料库中文件的正文、目录或段落信息。需先用 kms_search 获取 file_id。',
+    description: '获取本地资料库中文件的内容。通过 view 参数切换不同视图：view=content（默认）获取文件正文片段，支持按段落ID、字符偏移、行号定位；view=toc 获取文件的层级目录结构（章节标题与段落ID）；view=paragraphs 获取文件所有段落的摘要与元信息。需先通过 kms_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
     parameters: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: '文件ID，来自 kms_search/kms_agent_search 结果中的 "file_id" 字段（如 "8170964a"），不要带 "f:" 前缀',
+          description: '文件ID，来自 kms_search 结果中的 "file_id" 字段（如 "8170964a"），不要带 "f:" 前缀',
+        },
+        view: {
+          type: 'string',
+          enum: ['content', 'toc', 'paragraphs'],
+          description: '视图模式：content 文件正文（默认） / toc 文件目录结构 / paragraphs 文件所有段落摘要',
+          default: 'content',
         },
         paragraph_id: {
           type: 'string',
-          description: '段落ID（可选，指定后返回该段落内容。来自结果中的 "paragraph_id" 字段，不要带 "p:" 前缀）',
+          description: '段落ID（view=content 时可选，指定后返回该段落内容。来自结果中的 "paragraph_id" 字段，不要带 "p:" 前缀）',
+        },
+        paragraph_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '段落ID数组（view=content 时可选，批量获取多个段落的摘要与元信息，来自 kms_search 结果或 view=toc 的输出）',
         },
         start_offset: {
           type: 'number',
-          description: '起始字符偏移（可选）',
+          description: '起始字符偏移（view=content 时可选）',
         },
         end_offset: {
           type: 'number',
-          description: '结束字符偏移（可选）',
+          description: '结束字符偏移（view=content 时可选）',
         },
         start_line: {
           type: 'number',
-          description: '起始行号（可选）',
+          description: '起始行号（view=content 时可选）',
         },
         max_chars: {
           type: 'number',
-          description: '最大返回字符数（默认5000）',
+          description: '最大返回字符数（view=content 时生效，默认5000）',
           default: 5000,
         },
       },
@@ -257,18 +353,75 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
         if (!fileId) {
           return { success: true, output: '请提供 file_id。' }
         }
-        // 防御性剥离前缀（AI 可能误传 f:xxx 格式）
-        const prefixMatch = fileId.match(/^[a-z]+:(.+)$/i)
-        if (prefixMatch) {
-          fileId = prefixMatch[1].trim()
+        fileId = stripIdPrefix(fileId)
+
+        const view = String(args.view || 'content')
+
+        // ====== view=toc：获取文件目录结构 ======
+        if (view === 'toc') {
+          const toc = kmsService.getFileToc(fileId) as any[]
+          if (!toc || toc.length === 0) {
+            return { success: true, output: '该文件暂无段落目录。' }
+          }
+
+          const fileSummary = kmsService.getFileSummary(fileId)
+          const fileName = fileSummary?.file_name || fileId
+
+          let output = `${fileName} (${toc.length}段, #后为段落ID):\n`
+          for (const p of toc) {
+            const indent = '  '.repeat(Math.max(0, (p.level || 1) - 1))
+            output += `${indent}${p.title} #${p.id}\n`
+          }
+          return { success: true, output }
+        }
+
+        // ====== view=paragraphs：获取文件所有段落摘要 ======
+        if (view === 'paragraphs') {
+          const paragraphs = kmsService.getFileParagraphs(fileId) as any[]
+          if (!paragraphs || paragraphs.length === 0) {
+            return { success: true, output: '该文件暂无段落摘要（仅热数据文件有摘要）。' }
+          }
+
+          // 限制输出条目数，防止大文档产生超大响应
+          const MAX_PARAGRAPHS = 200
+          const displayParagraphs = paragraphs.length > MAX_PARAGRAPHS ? paragraphs.slice(0, MAX_PARAGRAPHS) : paragraphs
+          let output = `${paragraphs.length}个段落`
+          if (paragraphs.length > MAX_PARAGRAPHS) output += ` (仅显示前 ${MAX_PARAGRAPHS} 个)`
+          output += ':\n'
+          for (let i = 0; i < displayParagraphs.length; i++) {
+            const p = displayParagraphs[i]
+            output += `[${i + 1}] ${p.title_path || p.title || '(无标题)'} [${p.id}]`
+            if (p.summary) output += ` ${p.summary}`
+            output += `\n    file:${p.file_id || fileId} off:${p.start_offset}-${p.end_offset}\n`
+          }
+          return { success: true, output }
+        }
+
+        // ====== view=content（默认）：获取文件正文 ======
+        // 优先级：paragraph_ids 批量段落摘要 > paragraph_id 单段定位 > offset/line 范围读取 > 全文
+        if (Array.isArray(args.paragraph_ids) && args.paragraph_ids.length > 0) {
+          const ids = args.paragraph_ids.map((id: any) => stripIdPrefix(String(id)))
+          const paragraphs = kmsService.getParagraphsByIds(ids)
+          if (paragraphs.length === 0) {
+            return { success: true, output: '未找到匹配的段落。请检查 paragraph_id 是否正确。' }
+          }
+          let output = `${paragraphs.length}个段落:\n`
+          for (let i = 0; i < paragraphs.length; i++) {
+            const p = paragraphs[i]
+            output += `[${i + 1}] ${p.title_path || p.title} [${p.id}]`
+            if (p.summary) output += ` ${p.summary}`
+            const keywords = (() => { try { const arr = JSON.parse(p.keywords_json || '[]'); return Array.isArray(arr) ? arr : [] } catch { return [] } })()
+            if (keywords.length > 0) {
+              output += ` | 关键词: ${keywords.join('、')}`
+            }
+            output += `\n    file:${p.file_id} (${p.file_name || ''}) off:${p.start_offset}-${p.end_offset}\n`
+          }
+          return { success: true, output }
         }
 
         let paragraphId: string | undefined
         if (args.paragraph_id) {
-          let pId = String(args.paragraph_id).trim()
-          const pMatch = pId.match(/^[a-z]+:(.+)$/i)
-          if (pMatch) pId = pMatch[1].trim()
-          paragraphId = pId
+          paragraphId = stripIdPrefix(String(args.paragraph_id))
         }
 
         const content = await kmsService.getFileContent(fileId, {
@@ -285,78 +438,8 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
-  const kmsKnowledgeCardTool: ToolDefinition = {
-    id: 'kms_knowledge_card',
-    name: 'kms_knowledge_card',
-    title: '知识卡片查询',
-    description: '查找本地资料库中已沉淀的知识卡片。知识卡片是基于用户高频搜索自动生成的主题摘要，包含结构化的要点和原文引用。对于常见问题可快速获取答案，无需重新检索全文。建议在 kms_search 之前先查询知识卡片，若卡片已包含答案则无需再搜索。',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: '查询主题，将与卡片关键词进行精确和语义匹配',
-        },
-        top_k: {
-          type: 'number',
-          description: '返回卡片数量（1-5，默认3）',
-          minimum: 1,
-          maximum: 5,
-          default: 3,
-        },
-      },
-      required: ['query'],
-    },
-    handler: async (args: any) => {
-      try {
-        const query = String(args.query || '').trim()
-        if (!query) {
-          return { success: true, output: '请提供查询主题。' }
-        }
-        const topK = Math.min(Math.max(args.top_k || 3, 1), 5)
-        const cards = await kmsService.searchKnowledgeCards(query, topK)
-
-        if (cards.length === 0) {
-          return { success: true, output: `未找到与"${query}"匹配的知识卡片。可使用 kms_search 进行全文检索。` }
-        }
-
-        let output = `找到 ${cards.length} 张知识卡片：\n\n`
-        for (let i = 0; i < cards.length; i++) {
-          const c = cards[i]
-          output += `[${i + 1}] ${c.displayKeyword}（搜索${c.searchCount}次，${c.status === 'stale' ? '需刷新' : '活跃'}）\n`
-          output += `${c.summary}\n`
-          if (c.keyPoints.length > 0) {
-            output += '要点：\n'
-            for (const kp of c.keyPoints) {
-              const citation = c.citations[kp.sourceIndex]
-              const source = citation ? `（来源：${citation.fileName}）` : ''
-              output += `- ${kp.point}${source}\n`
-            }
-          }
-          if (c.citations.length > 0) {
-            output += `引用来源：\n`
-            for (let j = 0; j < c.citations.length; j++) {
-              const cite = c.citations[j]
-              output += `  [${j}] ${cite.fileName}`
-              if (cite.paragraphTitle) output += ` > ${cite.paragraphTitle}`
-              if (cite.startLine !== undefined && cite.endLine !== undefined) {
-                output += ` (行${cite.startLine}-${cite.endLine})`
-              }
-              output += `\n    ${cite.snippet}\n`
-            }
-          }
-          output += '\n'
-        }
-
-        return { success: true, output }
-      } catch (error: any) {
-        return { success: false, error: `知识卡片查询失败: ${error.message}` }
-      }
-    },
-    source: 'builtin',
-  }
-
-  return [kmsSearchTool, kmsAgentSearchTool, kmsGetContentTool, kmsKnowledgeCardTool]
+  return [kmsSearchTool, kmsGetContentTool]
 }

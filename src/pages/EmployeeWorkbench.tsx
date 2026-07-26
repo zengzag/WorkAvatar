@@ -11,6 +11,7 @@ import {
   App,
   Popover,
   Checkbox,
+  Select,
 } from 'antd'
 import {
   RobotOutlined,
@@ -199,6 +200,8 @@ const EmployeeWorkbench: React.FC = () => {
     messages,
     isStreaming,
     loadingConversationId,
+    inputDraft,
+    setInputDraft,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -226,6 +229,7 @@ const EmployeeWorkbench: React.FC = () => {
     selectConversation,
     deleteConversation,
     deleteSelectedConversations,
+    moveConversation,
     startEditTitle,
     saveEditTitle,
     cancelEditTitle,
@@ -391,6 +395,46 @@ const EmployeeWorkbench: React.FC = () => {
       message.error(t('workbench.extractMemoryFailed'))
     }
   }, [message, t])
+
+  // 移动对话到其他数字员工：弹出选择列表，确认后调用 hook 的 moveConversation
+  const handleMoveConversation = useCallback((conv: Conversation) => {
+    const targets = employees.filter((e) => e.id !== id)
+    if (targets.length === 0) {
+      message.warning(t('workbench.noOtherEmployees'))
+      return
+    }
+    let targetId = ''
+    modal.confirm({
+      title: t('workbench.moveConversation'),
+      icon: null,
+      width: 420,
+      content: (
+        <div>
+          <Text style={{ display: 'block', marginBottom: 12, fontSize: 13, color: token.colorTextSecondary }}>
+            {t('workbench.moveConversationDesc', { title: conv.title || t('workbench.untitledConv') })}
+          </Text>
+          <Select
+            showSearch
+            placeholder={t('workbench.selectTargetEmployee')}
+            style={{ width: '100%' }}
+            optionFilterProp="label"
+            options={targets.map((e) => ({ label: e.name, value: e.id }))}
+            onChange={(v) => { targetId = v }}
+            filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
+          />
+        </div>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        if (!targetId) {
+          message.warning(t('workbench.selectTargetEmployee'))
+          return Promise.reject()
+        }
+        await moveConversation(conv.id, targetId)
+      },
+    })
+  }, [employees, id, modal, message, t, moveConversation])
 
   const handleSendWithReset = useCallback((content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
     setAttachedImages([])
@@ -571,6 +615,7 @@ const EmployeeWorkbench: React.FC = () => {
             onGenerateTitle={handleGenerateTitle}
             onExport={handleExportConversation}
             onExtractMemory={handleExtractMemory}
+            onMove={handleMoveConversation}
           />
         )}
 
@@ -632,6 +677,8 @@ const EmployeeWorkbench: React.FC = () => {
             minimalMode={minimalMode}
             onMinimalModeChange={handleToggleMinimalMode}
             canToggleMinimalMode={messages.length === 0}
+            value={inputDraft}
+            onChange={setInputDraft}
           />
         </div>
       </div>

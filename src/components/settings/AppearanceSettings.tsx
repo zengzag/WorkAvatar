@@ -43,6 +43,7 @@ const AppearanceSettings: React.FC = () => {
             <Radio.Button value="small">{t('settings.small')}</Radio.Button>
             <Radio.Button value="medium">{t('settings.medium')}</Radio.Button>
             <Radio.Button value="large">{t('settings.large')}</Radio.Button>
+            <Radio.Button value="xlarge">{t('settings.xlarge')}</Radio.Button>
           </Radio.Group>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>

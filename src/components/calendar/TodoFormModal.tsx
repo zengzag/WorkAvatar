@@ -53,19 +53,21 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
         reminders: (todo.reminders?.length ? todo.reminders : (settings?.default_todo_reminders || [])).map(toDisplay),
       }
     }
-    const now = Date.now()
+    const now = new Date()
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0, 0)
+    const endOfTodayMs = endOfToday.getTime()
     return {
       title: '',
       description: '',
-      dueDate: dayjs(now + 86400 * MS),
-      dueTime: dayjs(now + 86400 * MS),
+      dueDate: dayjs(endOfTodayMs),
+      dueTime: dayjs(endOfTodayMs),
       hasDue: true,
-      priority: 'medium' as TodoPriority,
+      priority: 'none' as TodoPriority,
       status: 'pending' as TodoStatus,
       tags: [],
       recurrenceFreq: 'none',
       recurrenceInterval: 1,
-      reminders: (settings?.default_todo_reminders || []).map(toDisplay),
+      reminders: [],
     }
   }, [isEdit, todo, settings])
 

@@ -19,6 +19,8 @@ import remarkGfm from 'remark-gfm'
 import dayjs from 'dayjs'
 import { useVoice, type VoiceTask, type TranscriptSegment } from '../../hooks/useVoice'
 import { pathToAppFileUrl } from '../../utils/file-url'
+import { recordingSession, clearRecordingSession, isRecordingActive } from '../../lib/voice-recording-session'
+import { useVoiceRecordingStore } from '../../stores/voice-recording.store'
 
 const { Text, Title, Paragraph } = Typography
 
@@ -180,7 +182,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     saveAudio, saveSecondaryAudio, mergeDualSourceTranscript,
     transcribe, cancelTranscribe,
     generateMinutes, cancelMinutes, loadAudioSources,
-    realtimeStart, realtimeFeed, realtimeStop, realtimeCancel, onRealtimeResult,
+    realtimeStart, realtimeFeed, realtimeStop, onRealtimeResult,
     subtitleShow, subtitleHide, getTask,
   } = useVoice()
 
@@ -212,42 +214,15 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const [notesText, setNotesText] = useState('')
   const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Recording refs
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const mediaRecorderMicRef = useRef<MediaRecorder | null>(null)
-  const mediaRecorderSystemRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-  const audioChunksMicRef = useRef<Blob[]>([])
-  const audioChunksSystemRef = useRef<Blob[]>([])
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const micStreamRef = useRef<MediaStream | null>(null)
-  const systemStreamRef = useRef<MediaStream | null>(null)
-  const combinedStreamRef = useRef<MediaStream | null>(null)
-  const recordStartTimeRef = useRef<number>(0)
-  const pausedDurationRef = useRef<number>(0)
-  const pauseStartTimeRef = useRef<number>(0)
-  // 每个来源的实时识别 refs
-  const scriptProcessorMicRef = useRef<ScriptProcessorNode | null>(null)
-  const scriptProcessorSystemRef = useRef<ScriptProcessorNode | null>(null)
-  const realtimeSourceMicRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const realtimeSourceSystemRef = useRef<MediaStreamAudioSourceNode | null>(null)
-  const realtimeTaskIdRef = useRef<string | null>(null)
-  const realtimeTaskIdMicRef = useRef<string | null>(null)
-  const realtimeTaskIdSystemRef = useRef<string | null>(null)
+  // 组件级 refs（录音状态由 recordingSession 单例持有，跨卸载/挂载持久）
   const realtimeUnsubscribeRef = useRef<(() => void) | null>(null)
-  const realtimeFeedTimerMicRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const realtimeFeedTimerSystemRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const realtimeBufferMicRef = useRef<Float32Array[]>([])
-  const realtimeBufferSystemRef = useRef<Float32Array[]>([])
-  const realtimeActiveRef = useRef<boolean>(false)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
-  const micPausedRef = useRef(false)
-  const systemPausedRef = useRef(false)
-  const recordingTaskIdRef = useRef<string | null>(null)
-  const dualRecorderStopCountRef = useRef<number>(0)
+
+  // 全局录音 store（导航栏指示器）
+  const setRecordingStore = useVoiceRecordingStore(s => s.setRecording)
+  const setPausedStore = useVoiceRecordingStore(s => s.setPaused)
+  const setRecordingTaskIdStore = useVoiceRecordingStore(s => s.setRecordingTaskId)
+  const setRecordSourceStore = useVoiceRecordingStore(s => s.setRecordSource)
 
   useEffect(() => {
     loadTasks()
@@ -255,11 +230,62 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     loadAudioSources()
   }, [loadTasks, loadSettings, loadAudioSources])
 
+  // 挂载时从单例恢复录音状态（后台录音恢复到前台）
+  useEffect(() => {
+    if (isRecordingActive()) {
+      setIsRecording(true)
+      setIsPaused(recordingSession.isPaused)
+      setMicPaused(recordingSession.micPaused)
+      setSystemPaused(recordingSession.systemPaused)
+      setRecordSource(recordingSession.recordSource || 'mic')
+      setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
+      // 重启前台计时器（单例里的 durationTimer 在卸载时已被清除，见下方卸载逻辑）
+      recordingSession.durationTimer = setInterval(() => {
+        setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
+      }, 200)
+      // 重启前台音量可视化
+      const analyser = recordingSession.analyser
+      if (analyser) {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount)
+        const updateLevel = () => {
+          if (recordingSession.analyser) {
+            recordingSession.analyser.getByteFrequencyData(dataArray)
+            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+            const level = Math.min(100, (avg / 128) * 100)
+            setAudioLevel(level)
+            recordingSession.animationFrame = requestAnimationFrame(updateLevel)
+          }
+        }
+        updateLevel()
+      }
+    }
+    // 同步到全局 store（导航栏指示器）
+    setRecordingStore(isRecordingActive())
+    setPausedStore(recordingSession.isPaused)
+    setRecordingTaskIdStore(recordingSession.recordingTaskId)
+    setRecordSourceStore(recordingSession.recordSource)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 本地状态变化同步到全局 store（导航栏指示器）
+  useEffect(() => {
+    setRecordingStore(isRecording)
+  }, [isRecording, setRecordingStore])
+  useEffect(() => {
+    setPausedStore(isPaused)
+  }, [isPaused, setPausedStore])
+  useEffect(() => {
+    setRecordSourceStore(recordSource)
+  }, [recordSource, setRecordSourceStore])
+  useEffect(() => {
+    setRecordingTaskIdStore(recordingSession.recordingTaskId)
+  }, [isRecording, setRecordingTaskIdStore])
+
   // 监听实时识别结果（按来源分组）
   useEffect(() => {
     realtimeUnsubscribeRef.current = onRealtimeResult((data) => {
       const source = data.source || 'mic'
-      const activeIds = [realtimeTaskIdMicRef.current, realtimeTaskIdSystemRef.current, realtimeTaskIdRef.current]
+      const activeIds = [recordingSession.realtimeTaskIdMic, recordingSession.realtimeTaskIdSystem, recordingSession.realtimeTaskId]
       if (!activeIds.includes(data.taskId)) return
 
       if (data.isFinal) {
@@ -288,22 +314,19 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }
   }, [realtimeTextBySource, realtimeSegmentsBySource])
 
-  // 组件卸载时清理实时识别
+  // 组件卸载时仅清理前台计时器/动画帧；录音与实时识别在后台继续运行（由 recordingSession 单例持有）
   useEffect(() => {
     return () => {
-      if (realtimeFeedTimerMicRef.current) clearInterval(realtimeFeedTimerMicRef.current)
-      if (realtimeFeedTimerSystemRef.current) clearInterval(realtimeFeedTimerSystemRef.current)
-      if (realtimeTaskIdMicRef.current && realtimeActiveRef.current) {
-        realtimeCancel(realtimeTaskIdMicRef.current)
+      if (recordingSession.durationTimer) {
+        clearInterval(recordingSession.durationTimer)
+        recordingSession.durationTimer = null
       }
-      if (realtimeTaskIdSystemRef.current && realtimeActiveRef.current) {
-        realtimeCancel(realtimeTaskIdSystemRef.current)
-      }
-      if (realtimeTaskIdRef.current && realtimeActiveRef.current) {
-        realtimeCancel(realtimeTaskIdRef.current)
+      if (recordingSession.animationFrame) {
+        cancelAnimationFrame(recordingSession.animationFrame)
+        recordingSession.animationFrame = null
       }
     }
-  }, [realtimeCancel])
+  }, [])
 
   const selectedTask = useMemo(
     () => tasks.find(t => t.id === selectedTaskId) || null,
@@ -365,11 +388,12 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
   // ==================== Recording Logic ====================
 
-  const createFeedTimer = useCallback((taskId: string, bufferRef: React.MutableRefObject<Float32Array[]>, source: string) => {
+  const createFeedTimer = useCallback((taskId: string, source: string) => {
     return setInterval(() => {
-      const buffers = bufferRef.current
+      const buffers = source === 'system' ? recordingSession.realtimeBufferSystem : recordingSession.realtimeBufferMic
       if (buffers.length === 0) return
-      bufferRef.current = []
+      if (source === 'system') recordingSession.realtimeBufferSystem = []
+      else recordingSession.realtimeBufferMic = []
       const totalLength = buffers.reduce((sum, b) => sum + b.length, 0)
       const merged = new Float32Array(totalLength)
       let offset = 0
@@ -381,27 +405,28 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }, 300)
   }, [realtimeFeed])
 
-  const createSourceProcessor = useCallback((audioCtx: AudioContext, stream: MediaStream, bufferRef: React.MutableRefObject<Float32Array[]>) => {
+  const createSourceProcessor = useCallback((audioCtx: AudioContext, stream: MediaStream, source: string) => {
     const inputSampleRate = audioCtx.sampleRate
-    const source = audioCtx.createMediaStreamSource(stream)
+    const src = audioCtx.createMediaStreamSource(stream)
     const scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1)
     scriptProcessor.onaudioprocess = (e) => {
       const inputData = e.inputBuffer.getChannelData(0)
       const downsampled = downsample(new Float32Array(inputData), inputSampleRate, 16000)
-      bufferRef.current.push(downsampled)
+      if (source === 'system') recordingSession.realtimeBufferSystem.push(downsampled)
+      else recordingSession.realtimeBufferMic.push(downsampled)
     }
     const silentGain = audioCtx.createGain()
     silentGain.gain.value = 0
-    source.connect(scriptProcessor)
+    src.connect(scriptProcessor)
     scriptProcessor.connect(silentGain)
     silentGain.connect(audioCtx.destination)
-    return { source, scriptProcessor }
+    return { source: src, scriptProcessor }
   }, [])
 
   const handleDualSourceStop = useCallback(async (taskId: string, mimeType: string) => {
-    const duration = (Date.now() - recordStartTimeRef.current) / 1000
-    const micWebmBlob = new Blob(audioChunksMicRef.current, { type: mimeType })
-    const systemWebmBlob = new Blob(audioChunksSystemRef.current, { type: mimeType })
+    const duration = (Date.now() - recordingSession.recordStartTime) / 1000
+    const micWebmBlob = new Blob(recordingSession.audioChunksMic, { type: mimeType })
+    const systemWebmBlob = new Blob(recordingSession.audioChunksSystem, { type: mimeType })
 
     try {
       // 分别转换为 16kHz 单声道 WAV
@@ -418,19 +443,19 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }
 
     // 停止实时识别 - 分别停止 mic 和 system，然后合并转录
-    if (realtimeActiveRef.current) {
-      const micTaskId = realtimeTaskIdMicRef.current
-      const systemTaskId = realtimeTaskIdSystemRef.current
+    if (recordingSession.realtimeActive) {
+      const micTaskId = recordingSession.realtimeTaskIdMic
+      const systemTaskId = recordingSession.realtimeTaskIdSystem
 
       if (micTaskId) {
         try { await realtimeStop(micTaskId) } catch (err: any) { console.error('Realtime stop (mic) failed:', err?.message) }
-        realtimeTaskIdMicRef.current = null
+        recordingSession.realtimeTaskIdMic = null
       }
       if (systemTaskId) {
         try { await realtimeStop(systemTaskId) } catch (err: any) { console.error('Realtime stop (system) failed:', err?.message) }
-        realtimeTaskIdSystemRef.current = null
+        recordingSession.realtimeTaskIdSystem = null
       }
-      realtimeActiveRef.current = false
+      recordingSession.realtimeActive = false
 
       // 合并双源转录文本到主任务
       if (micTaskId && systemTaskId) {
@@ -443,13 +468,14 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }
 
     // 清理 recorder refs
-    mediaRecorderMicRef.current = null
-    mediaRecorderSystemRef.current = null
+    recordingSession.mediaRecorderMic = null
+    recordingSession.mediaRecorderSystem = null
 
     setRealtimeTextBySource({})
     setRealtimeSegmentsBySource({})
     setRecordDuration(0)
     subtitleHide()
+    clearRecordingSession()
   }, [saveAudio, saveSecondaryAudio, mergeDualSourceTranscript, realtimeStop, subtitleHide, t, message])
 
   const stopRecording = useCallback(async () => {
@@ -459,65 +485,66 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         rec.stop()
       }
     }
-    stopRecorder(mediaRecorderRef.current)
-    stopRecorder(mediaRecorderMicRef.current)
-    stopRecorder(mediaRecorderSystemRef.current)
+    stopRecorder(recordingSession.mediaRecorder)
+    stopRecorder(recordingSession.mediaRecorderMic)
+    stopRecorder(recordingSession.mediaRecorderSystem)
     // 停止实时识别音频采集 - mic source
-    if (scriptProcessorMicRef.current) {
-      scriptProcessorMicRef.current.disconnect()
-      scriptProcessorMicRef.current = null
+    if (recordingSession.scriptProcessorMic) {
+      recordingSession.scriptProcessorMic.disconnect()
+      recordingSession.scriptProcessorMic = null
     }
-    if (realtimeSourceMicRef.current) {
-      realtimeSourceMicRef.current.disconnect()
-      realtimeSourceMicRef.current = null
+    if (recordingSession.realtimeSourceMic) {
+      recordingSession.realtimeSourceMic.disconnect()
+      recordingSession.realtimeSourceMic = null
     }
     // 停止实时识别音频采集 - system source
-    if (scriptProcessorSystemRef.current) {
-      scriptProcessorSystemRef.current.disconnect()
-      scriptProcessorSystemRef.current = null
+    if (recordingSession.scriptProcessorSystem) {
+      recordingSession.scriptProcessorSystem.disconnect()
+      recordingSession.scriptProcessorSystem = null
     }
-    if (realtimeSourceSystemRef.current) {
-      realtimeSourceSystemRef.current.disconnect()
-      realtimeSourceSystemRef.current = null
+    if (recordingSession.realtimeSourceSystem) {
+      recordingSession.realtimeSourceSystem.disconnect()
+      recordingSession.realtimeSourceSystem = null
     }
     // 清除 feed timers
-    if (realtimeFeedTimerMicRef.current) {
-      clearInterval(realtimeFeedTimerMicRef.current)
-      realtimeFeedTimerMicRef.current = null
+    if (recordingSession.feedTimerMic) {
+      clearInterval(recordingSession.feedTimerMic)
+      recordingSession.feedTimerMic = null
     }
-    if (realtimeFeedTimerSystemRef.current) {
-      clearInterval(realtimeFeedTimerSystemRef.current)
-      realtimeFeedTimerSystemRef.current = null
+    if (recordingSession.feedTimerSystem) {
+      clearInterval(recordingSession.feedTimerSystem)
+      recordingSession.feedTimerSystem = null
     }
     // Cleanup streams
-    micStreamRef.current?.getTracks().forEach(t => t.stop())
-    systemStreamRef.current?.getTracks().forEach(t => t.stop())
-    micStreamRef.current = null
-    systemStreamRef.current = null
-    combinedStreamRef.current = null
+    recordingSession.micStream?.getTracks().forEach(t => t.stop())
+    recordingSession.systemStream?.getTracks().forEach(t => t.stop())
+    recordingSession.micStream = null
+    recordingSession.systemStream = null
+    recordingSession.combinedStream = null
 
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
+    if (recordingSession.durationTimer) {
+      clearInterval(recordingSession.durationTimer)
+      recordingSession.durationTimer = null
     }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
+    if (recordingSession.animationFrame) {
+      cancelAnimationFrame(recordingSession.animationFrame)
+      recordingSession.animationFrame = null
     }
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {})
-      audioContextRef.current = null
+    if (recordingSession.audioContext) {
+      recordingSession.audioContext.close().catch(() => {})
+      recordingSession.audioContext = null
     }
-    analyserRef.current = null
+    recordingSession.analyser = null
     setAudioLevel(0)
     setIsRecording(false)
     setIsPaused(false)
     setMicPaused(false)
     setSystemPaused(false)
-    micPausedRef.current = false
-    systemPausedRef.current = false
-    pausedDurationRef.current = 0
-    pauseStartTimeRef.current = 0
+    recordingSession.micPaused = false
+    recordingSession.systemPaused = false
+    recordingSession.isPaused = false
+    recordingSession.pausedDuration = 0
+    recordingSession.pauseStartTime = 0
     // 不在此处清空实时文本和隐藏字幕，由 onstop 回调处理（确保转录结果保存后再清理）
   }, [])
 
@@ -527,32 +554,33 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         rec.pause()
       }
     }
-    pauseRec(mediaRecorderRef.current)
-    pauseRec(mediaRecorderMicRef.current)
-    pauseRec(mediaRecorderSystemRef.current)
-    pauseStartTimeRef.current = Date.now()
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
+    pauseRec(recordingSession.mediaRecorder)
+    pauseRec(recordingSession.mediaRecorderMic)
+    pauseRec(recordingSession.mediaRecorderSystem)
+    recordingSession.pauseStartTime = Date.now()
+    if (recordingSession.durationTimer) {
+      clearInterval(recordingSession.durationTimer)
+      recordingSession.durationTimer = null
     }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
+    if (recordingSession.animationFrame) {
+      cancelAnimationFrame(recordingSession.animationFrame)
+      recordingSession.animationFrame = null
     }
     // 暂停实时识别音频采集 - both sources
-    if (realtimeFeedTimerMicRef.current) {
-      clearInterval(realtimeFeedTimerMicRef.current)
-      realtimeFeedTimerMicRef.current = null
+    if (recordingSession.feedTimerMic) {
+      clearInterval(recordingSession.feedTimerMic)
+      recordingSession.feedTimerMic = null
     }
-    if (realtimeFeedTimerSystemRef.current) {
-      clearInterval(realtimeFeedTimerSystemRef.current)
-      realtimeFeedTimerSystemRef.current = null
+    if (recordingSession.feedTimerSystem) {
+      clearInterval(recordingSession.feedTimerSystem)
+      recordingSession.feedTimerSystem = null
     }
     setIsPaused(true)
     setMicPaused(true)
     setSystemPaused(true)
-    micPausedRef.current = true
-    systemPausedRef.current = true
+    recordingSession.micPaused = true
+    recordingSession.systemPaused = true
+    recordingSession.isPaused = true
   }, [])
 
   const resumeRecording = useCallback(() => {
@@ -561,27 +589,27 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         rec.resume()
       }
     }
-    resumeRec(mediaRecorderRef.current)
-    resumeRec(mediaRecorderMicRef.current)
-    resumeRec(mediaRecorderSystemRef.current)
-    if (pauseStartTimeRef.current) {
-      pausedDurationRef.current += Date.now() - pauseStartTimeRef.current
-      pauseStartTimeRef.current = 0
+    resumeRec(recordingSession.mediaRecorder)
+    resumeRec(recordingSession.mediaRecorderMic)
+    resumeRec(recordingSession.mediaRecorderSystem)
+    if (recordingSession.pauseStartTime) {
+      recordingSession.pausedDuration += Date.now() - recordingSession.pauseStartTime
+      recordingSession.pauseStartTime = 0
     }
     // 重启计时器
-    timerRef.current = setInterval(() => {
-      setRecordDuration((Date.now() - recordStartTimeRef.current - pausedDurationRef.current) / 1000)
+    recordingSession.durationTimer = setInterval(() => {
+      setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
     }, 200)
     // 重启音量可视化
-    const analyser = analyserRef.current
+    const analyser = recordingSession.analyser
     if (analyser) {
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
       const updateLevel = () => {
-        if (analyserRef.current) {
-          analyserRef.current.getByteFrequencyData(dataArray)
+        if (recordingSession.analyser) {
+          recordingSession.analyser.getByteFrequencyData(dataArray)
           const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
           setAudioLevel(Math.min(100, (avg / 128) * 100))
-          animationFrameRef.current = requestAnimationFrame(updateLevel)
+          recordingSession.animationFrame = requestAnimationFrame(updateLevel)
         }
       }
       updateLevel()
@@ -589,62 +617,63 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     setIsPaused(false)
     setMicPaused(false)
     setSystemPaused(false)
-    micPausedRef.current = false
-    systemPausedRef.current = false
+    recordingSession.micPaused = false
+    recordingSession.systemPaused = false
+    recordingSession.isPaused = false
     // 恢复实时识别音频采集 - mic feed timer
-    if (realtimeActiveRef.current && realtimeTaskIdMicRef.current && !realtimeFeedTimerMicRef.current) {
-      realtimeFeedTimerMicRef.current = createFeedTimer(realtimeTaskIdMicRef.current, realtimeBufferMicRef, 'mic')
+    if (recordingSession.realtimeActive && recordingSession.realtimeTaskIdMic && !recordingSession.feedTimerMic) {
+      recordingSession.feedTimerMic = createFeedTimer(recordingSession.realtimeTaskIdMic, 'mic')
     }
     // 恢复实时识别音频采集 - system feed timer
-    if (realtimeActiveRef.current && realtimeTaskIdSystemRef.current && !realtimeFeedTimerSystemRef.current) {
-      realtimeFeedTimerSystemRef.current = createFeedTimer(realtimeTaskIdSystemRef.current, realtimeBufferSystemRef, 'system')
+    if (recordingSession.realtimeActive && recordingSession.realtimeTaskIdSystem && !recordingSession.feedTimerSystem) {
+      recordingSession.feedTimerSystem = createFeedTimer(recordingSession.realtimeTaskIdSystem, 'system')
     }
     // 恢复实时识别音频采集 - single source (non-both mode)
-    if (realtimeActiveRef.current && realtimeTaskIdRef.current && !realtimeFeedTimerMicRef.current && !realtimeFeedTimerSystemRef.current) {
+    if (recordingSession.realtimeActive && recordingSession.realtimeTaskId && !recordingSession.feedTimerMic && !recordingSession.feedTimerSystem) {
       const source = recordSource === 'system' ? 'system' : 'mic'
-      const bufferRef = source === 'system' ? realtimeBufferSystemRef : realtimeBufferMicRef
-      const timerRefForSource = source === 'system' ? realtimeFeedTimerSystemRef : realtimeFeedTimerMicRef
-      if (!timerRefForSource.current) {
-        timerRefForSource.current = createFeedTimer(realtimeTaskIdRef.current, bufferRef, source)
+      if (source === 'system') {
+        recordingSession.feedTimerSystem = createFeedTimer(recordingSession.realtimeTaskId, 'system')
+      } else {
+        recordingSession.feedTimerMic = createFeedTimer(recordingSession.realtimeTaskId, 'mic')
       }
     }
   }, [createFeedTimer, recordSource])
 
   const togglePauseSource = useCallback((source: 'mic' | 'system') => {
     if (source === 'mic') {
-      const newPaused = !micPausedRef.current
+      const newPaused = !recordingSession.micPaused
       setMicPaused(newPaused)
-      micPausedRef.current = newPaused
+      recordingSession.micPaused = newPaused
       if (newPaused) {
         // Pausing mic - clear feed timer and buffer
-        if (realtimeFeedTimerMicRef.current) {
-          clearInterval(realtimeFeedTimerMicRef.current)
-          realtimeFeedTimerMicRef.current = null
+        if (recordingSession.feedTimerMic) {
+          clearInterval(recordingSession.feedTimerMic)
+          recordingSession.feedTimerMic = null
         }
-        realtimeBufferMicRef.current = []
+        recordingSession.realtimeBufferMic = []
       } else {
         // Resuming mic - restart feed timer
-        const taskId = realtimeTaskIdMicRef.current || realtimeTaskIdRef.current
-        if (realtimeActiveRef.current && taskId && !realtimeFeedTimerMicRef.current) {
-          realtimeFeedTimerMicRef.current = createFeedTimer(taskId, realtimeBufferMicRef, 'mic')
+        const taskId = recordingSession.realtimeTaskIdMic || recordingSession.realtimeTaskId
+        if (recordingSession.realtimeActive && taskId && !recordingSession.feedTimerMic) {
+          recordingSession.feedTimerMic = createFeedTimer(taskId, 'mic')
         }
       }
     } else {
-      const newPaused = !systemPausedRef.current
+      const newPaused = !recordingSession.systemPaused
       setSystemPaused(newPaused)
-      systemPausedRef.current = newPaused
+      recordingSession.systemPaused = newPaused
       if (newPaused) {
         // Pausing system - clear feed timer and buffer
-        if (realtimeFeedTimerSystemRef.current) {
-          clearInterval(realtimeFeedTimerSystemRef.current)
-          realtimeFeedTimerSystemRef.current = null
+        if (recordingSession.feedTimerSystem) {
+          clearInterval(recordingSession.feedTimerSystem)
+          recordingSession.feedTimerSystem = null
         }
-        realtimeBufferSystemRef.current = []
+        recordingSession.realtimeBufferSystem = []
       } else {
         // Resuming system - restart feed timer
-        const taskId = realtimeTaskIdSystemRef.current || realtimeTaskIdRef.current
-        if (realtimeActiveRef.current && taskId && !realtimeFeedTimerSystemRef.current) {
-          realtimeFeedTimerSystemRef.current = createFeedTimer(taskId, realtimeBufferSystemRef, 'system')
+        const taskId = recordingSession.realtimeTaskIdSystem || recordingSession.realtimeTaskId
+        if (recordingSession.realtimeActive && taskId && !recordingSession.feedTimerSystem) {
+          recordingSession.feedTimerSystem = createFeedTimer(taskId, 'system')
         }
       }
     }
@@ -652,11 +681,12 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
   const startRecording = useCallback(async (taskId: string) => {
     try {
-      audioChunksRef.current = []
-      audioChunksMicRef.current = []
-      audioChunksSystemRef.current = []
-      dualRecorderStopCountRef.current = 0
-      recordingTaskIdRef.current = taskId
+      recordingSession.audioChunks = []
+      recordingSession.audioChunksMic = []
+      recordingSession.audioChunksSystem = []
+      recordingSession.dualRecorderStopCount = 0
+      recordingSession.recordingTaskId = taskId
+      recordingSession.recordSource = recordSource
       const isLocalMode = taskSttMode === 'local'
       // 本地模式需要加载识别模型，显示准备状态
       if (isLocalMode) setIsPreparing(true)
@@ -677,7 +707,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           const micStream = await navigator.mediaDevices.getUserMedia({
             audio: micConstraints,
           })
-          micStreamRef.current = micStream
+          recordingSession.micStream = micStream
           streams.push(micStream)
         } catch (err: any) {
           if (err.name === 'NotAllowedError') {
@@ -706,7 +736,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
             message.warning(t('voice.systemAudioFallback'))
           } else {
             const systemStream = new MediaStream(audioTracks)
-            systemStreamRef.current = systemStream
+            recordingSession.systemStream = systemStream
             streams.push(systemStream)
           }
         } catch (err: any) {
@@ -732,68 +762,68 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
 
       // 音频上下文（用于可视化和实时采集）
       const audioCtx = new AudioContext()
-      audioContextRef.current = audioCtx
+      recordingSession.audioContext = audioCtx
 
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm'
 
-      const isDual = recordSource === 'both' && micStreamRef.current && systemStreamRef.current
+      const isDual = recordSource === 'both' && recordingSession.micStream && recordingSession.systemStream
 
       if (isDual) {
         // ========== 双源模式：为 mic 和 system 分别创建 MediaRecorder ==========
         const destination = audioCtx.createMediaStreamDestination()
-        audioCtx.createMediaStreamSource(micStreamRef.current!).connect(destination)
-        audioCtx.createMediaStreamSource(systemStreamRef.current!).connect(destination)
-        combinedStreamRef.current = destination.stream
+        audioCtx.createMediaStreamSource(recordingSession.micStream!).connect(destination)
+        audioCtx.createMediaStreamSource(recordingSession.systemStream!).connect(destination)
+        recordingSession.combinedStream = destination.stream
 
         // 音量可视化基于合并流
         const vizSource = audioCtx.createMediaStreamSource(destination.stream)
         const analyser = audioCtx.createAnalyser()
         analyser.fftSize = 256
         vizSource.connect(analyser)
-        analyserRef.current = analyser
+        recordingSession.analyser = analyser
         const dataArray = new Uint8Array(analyser.frequencyBinCount)
         const updateLevel = () => {
-          if (analyserRef.current) {
-            analyserRef.current.getByteFrequencyData(dataArray)
+          if (recordingSession.analyser) {
+            recordingSession.analyser.getByteFrequencyData(dataArray)
             const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
             setAudioLevel(Math.min(100, (avg / 128) * 100))
-            animationFrameRef.current = requestAnimationFrame(updateLevel)
+            recordingSession.animationFrame = requestAnimationFrame(updateLevel)
           }
         }
         updateLevel()
 
         // ScriptProcessorNodes for realtime PCM capture
-        const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, micStreamRef.current!, realtimeBufferMicRef)
-        scriptProcessorMicRef.current = micProcessor
-        realtimeSourceMicRef.current = micSource
-        const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, systemStreamRef.current!, realtimeBufferSystemRef)
-        scriptProcessorSystemRef.current = systemProcessor
-        realtimeSourceSystemRef.current = systemSource
+        const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, recordingSession.micStream!, 'mic')
+        recordingSession.scriptProcessorMic = micProcessor
+        recordingSession.realtimeSourceMic = micSource
+        const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, recordingSession.systemStream!, 'system')
+        recordingSession.scriptProcessorSystem = systemProcessor
+        recordingSession.realtimeSourceSystem = systemSource
 
         // Mic recorder
-        const micRecorder = new MediaRecorder(micStreamRef.current!, { mimeType })
-        mediaRecorderMicRef.current = micRecorder
+        const micRecorder = new MediaRecorder(recordingSession.micStream!, { mimeType })
+        recordingSession.mediaRecorderMic = micRecorder
         micRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksMicRef.current.push(e.data)
+          if (e.data.size > 0) recordingSession.audioChunksMic.push(e.data)
         }
         micRecorder.onstop = async () => {
-          dualRecorderStopCountRef.current++
-          if (dualRecorderStopCountRef.current >= 2) {
+          recordingSession.dualRecorderStopCount++
+          if (recordingSession.dualRecorderStopCount >= 2) {
             await handleDualSourceStop(taskId, mimeType)
           }
         }
 
         // System recorder
-        const systemRecorder = new MediaRecorder(systemStreamRef.current!, { mimeType })
-        mediaRecorderSystemRef.current = systemRecorder
+        const systemRecorder = new MediaRecorder(recordingSession.systemStream!, { mimeType })
+        recordingSession.mediaRecorderSystem = systemRecorder
         systemRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksSystemRef.current.push(e.data)
+          if (e.data.size > 0) recordingSession.audioChunksSystem.push(e.data)
         }
         systemRecorder.onstop = async () => {
-          dualRecorderStopCountRef.current++
-          if (dualRecorderStopCountRef.current >= 2) {
+          recordingSession.dualRecorderStopCount++
+          if (recordingSession.dualRecorderStopCount >= 2) {
             await handleDualSourceStop(taskId, mimeType)
           }
         }
@@ -809,42 +839,42 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         const analyser = audioCtx.createAnalyser()
         analyser.fftSize = 256
         vizSource.connect(analyser)
-        analyserRef.current = analyser
+        recordingSession.analyser = analyser
         const dataArray = new Uint8Array(analyser.frequencyBinCount)
         const updateLevel = () => {
-          if (analyserRef.current) {
-            analyserRef.current.getByteFrequencyData(dataArray)
+          if (recordingSession.analyser) {
+            recordingSession.analyser.getByteFrequencyData(dataArray)
             const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
             setAudioLevel(Math.min(100, (avg / 128) * 100))
-            animationFrameRef.current = requestAnimationFrame(updateLevel)
+            recordingSession.animationFrame = requestAnimationFrame(updateLevel)
           }
         }
         updateLevel()
 
         // ScriptProcessorNodes for realtime PCM capture
-        if (micStreamRef.current) {
-          const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, micStreamRef.current, realtimeBufferMicRef)
-          scriptProcessorMicRef.current = micProcessor
-          realtimeSourceMicRef.current = micSource
+        if (recordingSession.micStream) {
+          const { source: micSource, scriptProcessor: micProcessor } = createSourceProcessor(audioCtx, recordingSession.micStream, 'mic')
+          recordingSession.scriptProcessorMic = micProcessor
+          recordingSession.realtimeSourceMic = micSource
         }
-        if (systemStreamRef.current) {
-          const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, systemStreamRef.current, realtimeBufferSystemRef)
-          scriptProcessorSystemRef.current = systemProcessor
-          realtimeSourceSystemRef.current = systemSource
+        if (recordingSession.systemStream) {
+          const { source: systemSource, scriptProcessor: systemProcessor } = createSourceProcessor(audioCtx, recordingSession.systemStream, 'system')
+          recordingSession.scriptProcessorSystem = systemProcessor
+          recordingSession.realtimeSourceSystem = systemSource
         }
 
         const recorder = new MediaRecorder(recordStream, { mimeType })
-        mediaRecorderRef.current = recorder
+        recordingSession.mediaRecorder = recorder
 
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0) {
-            audioChunksRef.current.push(e.data)
+            recordingSession.audioChunks.push(e.data)
           }
         }
 
         recorder.onstop = async () => {
-          const duration = (Date.now() - recordStartTimeRef.current) / 1000
-          const webmBlob = new Blob(audioChunksRef.current, { type: mimeType })
+          const duration = (Date.now() - recordingSession.recordStartTime) / 1000
+          const webmBlob = new Blob(recordingSession.audioChunks, { type: mimeType })
 
           try {
             const { blob: wavBlob, sampleRate } = await webmToWavBlob(webmBlob, 16000)
@@ -855,48 +885,50 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           }
 
           // 停止实时识别
-          if (realtimeActiveRef.current) {
-            if (realtimeTaskIdMicRef.current) {
-              try { await realtimeStop(realtimeTaskIdMicRef.current) } catch (err: any) { console.error('Realtime stop (mic) failed:', err?.message) }
-              realtimeTaskIdMicRef.current = null
+          if (recordingSession.realtimeActive) {
+            if (recordingSession.realtimeTaskIdMic) {
+              try { await realtimeStop(recordingSession.realtimeTaskIdMic) } catch (err: any) { console.error('Realtime stop (mic) failed:', err?.message) }
+              recordingSession.realtimeTaskIdMic = null
             }
-            if (realtimeTaskIdSystemRef.current) {
-              try { await realtimeStop(realtimeTaskIdSystemRef.current) } catch (err: any) { console.error('Realtime stop (system) failed:', err?.message) }
-              realtimeTaskIdSystemRef.current = null
+            if (recordingSession.realtimeTaskIdSystem) {
+              try { await realtimeStop(recordingSession.realtimeTaskIdSystem) } catch (err: any) { console.error('Realtime stop (system) failed:', err?.message) }
+              recordingSession.realtimeTaskIdSystem = null
             }
-            if (realtimeTaskIdRef.current) {
-              try { await realtimeStop(realtimeTaskIdRef.current) } catch (err: any) { console.error('Realtime stop failed:', err?.message) }
-              realtimeTaskIdRef.current = null
+            if (recordingSession.realtimeTaskId) {
+              try { await realtimeStop(recordingSession.realtimeTaskId) } catch (err: any) { console.error('Realtime stop failed:', err?.message) }
+              recordingSession.realtimeTaskId = null
             }
-            realtimeActiveRef.current = false
+            recordingSession.realtimeActive = false
           }
 
           setRealtimeTextBySource({})
           setRealtimeSegmentsBySource({})
           setRecordDuration(0)
           subtitleHide()
+          clearRecordingSession()
         }
 
         recorder.start(1000)
       }
 
-      recordStartTimeRef.current = Date.now()
-      pausedDurationRef.current = 0
-      pauseStartTimeRef.current = 0
+      recordingSession.recordStartTime = Date.now()
+      recordingSession.pausedDuration = 0
+      recordingSession.pauseStartTime = 0
+      recordingSession.isPaused = false
       setIsRecording(true)
       setIsPaused(false)
       setMicPaused(false)
       setSystemPaused(false)
-      micPausedRef.current = false
-      systemPausedRef.current = false
+      recordingSession.micPaused = false
+      recordingSession.systemPaused = false
       setRecordDuration(0)
       setRealtimeTextBySource({})
       setRealtimeSegmentsBySource({})
       setRealtimeError('')
 
       // Timer
-      timerRef.current = setInterval(() => {
-        setRecordDuration((Date.now() - recordStartTimeRef.current - pausedDurationRef.current) / 1000)
+      recordingSession.durationTimer = setInterval(() => {
+        setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
       }, 200)
 
       // 启动实时识别（仅本地模式）
@@ -908,14 +940,14 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           const micStartResult = await realtimeStart(micTaskId)
           const systemStartResult = await realtimeStart(systemTaskId)
           if (micStartResult.ok || systemStartResult.ok) {
-            realtimeActiveRef.current = true
+            recordingSession.realtimeActive = true
             if (micStartResult.ok) {
-              realtimeTaskIdMicRef.current = micTaskId
-              realtimeFeedTimerMicRef.current = createFeedTimer(micTaskId, realtimeBufferMicRef, 'mic')
+              recordingSession.realtimeTaskIdMic = micTaskId
+              recordingSession.feedTimerMic = createFeedTimer(micTaskId, 'mic')
             }
             if (systemStartResult.ok) {
-              realtimeTaskIdSystemRef.current = systemTaskId
-              realtimeFeedTimerSystemRef.current = createFeedTimer(systemTaskId, realtimeBufferSystemRef, 'system')
+              recordingSession.realtimeTaskIdSystem = systemTaskId
+              recordingSession.feedTimerSystem = createFeedTimer(systemTaskId, 'system')
             }
             if (subtitleVisible && settings?.subtitleConfig) {
               subtitleShow(settings.subtitleConfig)
@@ -927,12 +959,14 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           // Single source mode
           const startResult = await realtimeStart(taskId)
           if (startResult.ok) {
-            realtimeActiveRef.current = true
-            realtimeTaskIdRef.current = taskId
+            recordingSession.realtimeActive = true
+            recordingSession.realtimeTaskId = taskId
             const source = recordSource === 'system' ? 'system' : 'mic'
-            const bufferRef = source === 'system' ? realtimeBufferSystemRef : realtimeBufferMicRef
-            const timerRefForSource = source === 'system' ? realtimeFeedTimerSystemRef : realtimeFeedTimerMicRef
-            timerRefForSource.current = createFeedTimer(taskId, bufferRef, source)
+            if (source === 'system') {
+              recordingSession.feedTimerSystem = createFeedTimer(taskId, 'system')
+            } else {
+              recordingSession.feedTimerMic = createFeedTimer(taskId, 'mic')
+            }
 
             if (subtitleVisible && settings?.subtitleConfig) {
               subtitleShow(settings.subtitleConfig)
@@ -953,17 +987,6 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       setIsPreparing(false)
     }
   }, [recordSource, message, t, saveAudio, updateTask, settings, realtimeStart, realtimeStop, subtitleVisible, subtitleShow, subtitleHide, createSourceProcessor, createFeedTimer, handleDualSourceStop])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current)
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
-      micStreamRef.current?.getTracks().forEach(t => t.stop())
-      systemStreamRef.current?.getTracks().forEach(t => t.stop())
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {})
-    }
-  }, [])
 
   // ==================== Task Actions ====================
 

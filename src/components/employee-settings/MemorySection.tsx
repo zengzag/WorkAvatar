@@ -16,6 +16,7 @@ import {
   Alert,
   Progress,
   Select,
+  Spin,
   theme,
 } from 'antd'
 import {
@@ -26,6 +27,7 @@ import {
   EditOutlined,
   SearchOutlined,
   CompressOutlined,
+  RestOutlined,
 } from '@ant-design/icons'
 import type { LLMProvider } from '../../types'
 import { getSceneDefaultModel } from '../../utils/default-model'
@@ -44,6 +46,7 @@ interface MemoryItem {
   created_at: number
   updated_at: number
   last_referenced_at: number | null
+  deleted_at: number | null
 }
 
 interface MemoryStats {
@@ -95,6 +98,9 @@ const MemorySection: React.FC<MemorySectionProps> = ({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [editingMemory, setEditingMemory] = useState<MemoryItem | null>(null)
   const [addForm] = Form.useForm()
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trashMemories, setTrashMemories] = useState<MemoryItem[]>([])
+  const [trashLoading, setTrashLoading] = useState(false)
 
   const loadMemories = useCallback(async () => {
     if (!memoryEnabled) return
@@ -255,6 +261,72 @@ const MemorySection: React.FC<MemorySectionProps> = ({
     }
   }, [employeeId, message, t, loadMemories])
 
+  const loadTrash = useCallback(async () => {
+    setTrashLoading(true)
+    try {
+      const result = await window.electronAPI.employee.listTrashedMemories({ employee_id: employeeId })
+      setTrashMemories(result || [])
+    } catch {
+      message.error(t('employeeSettings.memoryLoadFailed'))
+    } finally {
+      setTrashLoading(false)
+    }
+  }, [employeeId, message, t])
+
+  const handleRestoreMemory = useCallback(async (id: string) => {
+    try {
+      await window.electronAPI.employee.restoreMemory(id)
+      message.success(t('employeeSettings.memoryRestored'))
+      loadTrash()
+      loadMemories()
+    } catch {
+      message.error(t('employeeSettings.operationFailed'))
+    }
+  }, [message, t, loadTrash, loadMemories])
+
+  const handlePurgeMemory = useCallback((memory: MemoryItem) => {
+    modal.confirm({
+      title: t('employeeSettings.memoryPurge'),
+      content: memory.content,
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.purgeMemory(memory.id)
+          message.success(t('employeeSettings.memoryPurged'))
+          loadTrash()
+        } catch {
+          message.error(t('common.deleteFailed'))
+        }
+      },
+    })
+  }, [modal, message, t, loadTrash])
+
+  const handleEmptyTrash = useCallback(() => {
+    modal.confirm({
+      title: t('employeeSettings.memoryEmptyTrash'),
+      content: t('employeeSettings.memoryConfirmEmptyTrash'),
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await window.electronAPI.employee.emptyTrash({ employee_id: employeeId })
+          message.success(t('employeeSettings.memoryTrashEmptied'))
+          loadTrash()
+        } catch {
+          message.error(t('common.deleteFailed'))
+        }
+      },
+    })
+  }, [modal, message, t, employeeId, loadTrash])
+
+  const openTrash = useCallback(() => {
+    setTrashOpen(true)
+    loadTrash()
+  }, [loadTrash])
+
   const openAddModal = useCallback(() => {
     setEditingMemory(null)
     addForm.resetFields()
@@ -299,9 +371,16 @@ const MemorySection: React.FC<MemorySectionProps> = ({
               unCheckedChildren={t('employeeSettings.memoryOff')}
             />
             {memoryEnabled && (
-              <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal}>
-                {t('employeeSettings.addMemory')}
-              </Button>
+              <>
+                <Tooltip title={t('employeeSettings.memoryTrashHint')}>
+                  <Button icon={<DeleteOutlined />} onClick={openTrash}>
+                    {t('employeeSettings.memoryTrash')}
+                  </Button>
+                </Tooltip>
+                <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal}>
+                  {t('employeeSettings.addMemory')}
+                </Button>
+              </>
             )}
           </div>
         }
@@ -491,6 +570,86 @@ const MemorySection: React.FC<MemorySectionProps> = ({
             </Select>
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={t('employeeSettings.memoryTrashTitle')}
+        open={trashOpen}
+        onCancel={() => setTrashOpen(false)}
+        footer={trashMemories.length > 0 ? (
+          <Space>
+            <Button onClick={() => setTrashOpen(false)}>{t('common.close')}</Button>
+            <Button danger icon={<DeleteOutlined />} onClick={handleEmptyTrash}>
+              {t('employeeSettings.memoryEmptyTrash')}
+            </Button>
+          </Space>
+        ) : (
+          <Button onClick={() => setTrashOpen(false)}>{t('common.close')}</Button>
+        )}
+        width={640}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {t('employeeSettings.memoryTrashHint')}
+          </Text>
+        </div>
+        {trashLoading ? (
+          <div style={{ padding: 24, textAlign: 'center' }}>
+            <Spin />
+          </div>
+        ) : trashMemories.length === 0 ? (
+          <Empty description={t('employeeSettings.memoryTrashEmpty')} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto' }}>
+            {trashMemories.map(m => (
+              <div
+                key={m.id}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  background: token.colorBgContainer,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                      <Tag color={TOPIC_COLORS[m.topic] || 'default'} style={{ margin: 0 }}>{m.topic}</Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{m.key}</Text>
+                      {m.deleted_at && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {t('employeeSettings.memoryDeletedAt')}: {new Date(m.deleted_at * 1000).toLocaleString()}
+                        </Text>
+                      )}
+                    </div>
+                    <Paragraph style={{ margin: 0 }} ellipsis={{ rows: 2, expandable: true, symbol: t('employeeSettings.expand') }}>
+                      {m.content}
+                    </Paragraph>
+                  </div>
+                  <Space size={4} style={{ flexShrink: 0 }}>
+                    <Tooltip title={t('employeeSettings.memoryRestore')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<RestOutlined />}
+                        onClick={() => handleRestoreMemory(m.id)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t('employeeSettings.memoryPurge')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => handlePurgeMemory(m)}
+                      />
+                    </Tooltip>
+                  </Space>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Modal>
     </div>
   )

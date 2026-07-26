@@ -33,6 +33,10 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_MEMORY_CONSOLIDATE: 'employee:memory-consolidate',
   EMPLOYEE_MEMORY_STATS: 'employee:memory-stats',
   EMPLOYEE_MEMORY_EXTRACT_CONVERSATION: 'employee:memory-extract-conversation',
+  EMPLOYEE_MEMORY_LIST_TRASH: 'employee:memory-list-trash',
+  EMPLOYEE_MEMORY_RESTORE: 'employee:memory-restore',
+  EMPLOYEE_MEMORY_PURGE: 'employee:memory-purge',
+  EMPLOYEE_MEMORY_EMPTY_TRASH: 'employee:memory-empty-trash',
 } as const
 
 export interface EmployeeListParams {

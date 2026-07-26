@@ -42,7 +42,20 @@ export interface JsonRpcResponse {
   }
 }
 
-/** KMS MCP 暴露的八个工具定义 */
+/**
+ * KMS MCP 暴露的工具定义
+ *
+ * 设计原则：与 Agent 工具（kms-search.tool.ts / kms-collection-tools.ts）保持参数语义统一，
+ * 避免维护两套不同的工具抽象。
+ *
+ * 已合并删除的工具：
+ * - kms_agent_search → 合并到 kms_search 的 mode=deep
+ * - kms_get_toc / kms_get_paragraphs → 合并到 kms_get_content 的 view 参数
+ * - kms_knowledge_card → kms_search 内部已自动附加搜索知识卡片
+ *
+ * 保留的合集相关工具（kms_list_collections / kms_list_files_in_collection /
+ * kms_get_collection_summary）是外部 MCP 客户端浏览合集结构所需，无法被 kms_search 替代。
+ */
 export const MCP_TOOLS: MCPTool[] = [
   {
     name: 'kms_list_dirs',
@@ -64,25 +77,39 @@ export const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_search',
-    description: 'Search local files using keyword, semantic, or hybrid mode. Supports filtering by directory, collection, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets).',
+    description: 'Search local files using keyword or hybrid mode. Supports filtering by directory, collection, file extension, and time range. Returns file paths, match snippets, and precise location (line numbers, offsets). Results automatically append matching knowledge cards (curated topic summaries) and collection summaries. For complex analytical queries, use mode="deep" to invoke the retrieval sub-agent.',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search query, supports space-separated keywords',
+          description: 'Search query, supports space-separated keywords or natural language questions',
+        },
+        mode: {
+          type: 'string',
+          enum: ['simple', 'deep', 'auto'],
+          description: 'Search mode: simple single-pass search (fast) / deep sub-agent multi-round search (for complex analysis) / auto system-decided (default)',
+          default: 'auto',
+        },
+        search_mode: {
+          type: 'string',
+          enum: ['keyword', 'hybrid'],
+          description: 'Retrieval method in simple mode: keyword (default) / hybrid (keyword + vector semantic, recommended for conceptual queries)',
+          default: 'keyword',
         },
         top_k: {
           type: 'number',
-          description: 'Number of results to return (1-50, default 10)',
+          description: 'Number of results to return in simple mode (1-20, default 5)',
           minimum: 1,
-          maximum: 50,
-          default: 10,
+          maximum: 20,
+          default: 5,
         },
-        use_semantic: {
-          type: 'boolean',
-          description: 'Enable semantic search (requires Embedding API, default false)',
-          default: false,
+        max_rounds: {
+          type: 'number',
+          description: 'Maximum search rounds in deep mode (1-5, default 3)',
+          minimum: 1,
+          maximum: 5,
+          default: 3,
         },
         dir_ids: {
           type: 'array',
@@ -112,85 +139,45 @@ export const MCP_TOOLS: MCPTool[] = [
     },
   },
   {
-    name: 'kms_agent_search',
-    description: 'Intelligent search powered by a retrieval sub-agent. Autonomously plans search paths, performs multi-round searches, identifies query type (locate/concept/trend/analysis), and distills results into clean conclusions with precise source references. Ideal for complex queries that require synthesis across multiple documents. Output is concise and does not include redundant original text.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Natural language search query describing what information is needed',
-        },
-        max_rounds: {
-          type: 'number',
-          description: 'Maximum search rounds (1-5, default 3)',
-          minimum: 1,
-          maximum: 5,
-          default: 3,
-        },
-        top_k: {
-          type: 'number',
-          description: 'Results per round (3-30, default 10)',
-          minimum: 3,
-          maximum: 30,
-          default: 10,
-        },
-        dir_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Limit search to specific directory IDs (optional)',
-        },
-        collection_ids: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Limit search to files within specified collections (optional). Use kms_list_collections to get available collection IDs.',
-        },
-        file_extensions: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Filter by file extensions (optional)',
-        },
-        time_range_start: {
-          type: 'number',
-          description: 'File modification time range start (milliseconds timestamp, optional)',
-        },
-        time_range_end: {
-          type: 'number',
-          description: 'File modification time range end (milliseconds timestamp, optional)',
-        },
-      },
-      required: ['query'],
-    },
-  },
-  {
     name: 'kms_get_content',
-    description: 'Get file content by file ID, with precise location by paragraph ID, character offset, or line number. Supports context expansion. The file_id must be the raw ID returned by kms_search or kms_agent_search (e.g. "8170964a"), NOT a prefixed format like "f:8170964a".',
+    description: 'Get file content by file ID. Use the "view" parameter to switch between views: content (default, file body with precise location by paragraph ID, character offset, or line number), toc (hierarchical table of contents with paragraph IDs), paragraphs (all paragraph summaries of the file). The file_id must be the raw ID returned by kms_search (e.g. "8170964a"), NOT a prefixed format like "f:8170964a".',
     inputSchema: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search/kms_agent_search results. Do NOT include "f:" prefix.',
+          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search results. Do NOT include "f:" prefix.',
+        },
+        view: {
+          type: 'string',
+          enum: ['content', 'toc', 'paragraphs'],
+          description: 'View mode: content file body (default) / toc table of contents / paragraphs all paragraph summaries',
+          default: 'content',
         },
         paragraph_id: {
           type: 'string',
-          description: 'Paragraph ID for precise paragraph retrieval (optional). Raw ID without "p:" prefix.',
+          description: 'Paragraph ID for precise paragraph retrieval (view=content, optional). Raw ID without "p:" prefix.',
+        },
+        paragraph_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of paragraph IDs to fetch summaries in batch (view=content, optional). Raw IDs without "p:" prefix.',
         },
         start_offset: {
           type: 'number',
-          description: 'Start character offset (0-based, optional)',
+          description: 'Start character offset (view=content, 0-based, optional)',
         },
         end_offset: {
           type: 'number',
-          description: 'End character offset (optional, used with start_offset)',
+          description: 'End character offset (view=content, optional, used with start_offset)',
         },
         start_line: {
           type: 'number',
-          description: 'Start line number (1-based, optional)',
+          description: 'Start line number (view=content, 1-based, optional)',
         },
         max_chars: {
           type: 'number',
-          description: 'Maximum characters to return (default 5000)',
+          description: 'Maximum characters to return (view=content, default 5000, max 50000)',
           default: 5000,
         },
       },
@@ -199,13 +186,13 @@ export const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_get_summary',
-    description: 'Get the summary, keywords, and main topics of a file (available for hot data files). The file_id must be the raw ID returned by kms_search or kms_agent_search, NOT a prefixed format like "f:8170964a".',
+    description: 'Get the summary, keywords, and main topics of a file (available for hot data files). The file_id must be the raw ID returned by kms_search, NOT a prefixed format like "f:8170964a".',
     inputSchema: {
       type: 'object',
       properties: {
         file_id: {
           type: 'string',
-          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search/kms_agent_search results. Do NOT include "f:" prefix.',
+          description: 'The raw file ID (e.g. "8170964a"), obtained from the "file_id" field in kms_search results. Do NOT include "f:" prefix.',
         },
       },
       required: ['file_id'],
@@ -213,7 +200,7 @@ export const MCP_TOOLS: MCPTool[] = [
   },
   {
     name: 'kms_list_collections',
-    description: 'List all manual file collections (curated groups of files, e.g. "Product Spec", "HR Policies"). Each collection has an ID, name, description, and file count. Use collection IDs to filter kms_search and kms_agent_search.',
+    description: 'List all manual file collections (curated groups of files, e.g. "Product Spec", "HR Policies"). Each collection has an ID, name, description, and file count. Use collection IDs to filter kms_search.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -246,55 +233,6 @@ export const MCP_TOOLS: MCPTool[] = [
         },
       },
       required: ['collection_id'],
-    },
-  },
-  {
-    name: 'kms_get_toc',
-    description: 'Get the table of contents (TOC) of a file - the hierarchical structure of its paragraphs/headings. Useful for understanding document structure before reading specific sections. The file_id must be the raw ID without "f:" prefix.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        file_id: {
-          type: 'string',
-          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
-        },
-      },
-      required: ['file_id'],
-    },
-  },
-  {
-    name: 'kms_get_paragraphs',
-    description: 'Get all paragraphs of a file with their titles, hierarchy, and offsets. Useful for browsing document structure and locating specific sections. The file_id must be the raw ID without "f:" prefix.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        file_id: {
-          type: 'string',
-          description: 'The raw file ID (e.g. "8170964a"). Do NOT include "f:" prefix.',
-        },
-      },
-      required: ['file_id'],
-    },
-  },
-  {
-    name: 'kms_knowledge_card',
-    description: 'Look up knowledge cards in the local search engine. Knowledge cards are auto-generated topic summaries based on frequently searched keywords, containing structured key points and source citations. Quick way to get answers for common questions. Returns summary, key points, and citations. Recommended to check before kms_search.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Topic to look up, matched against card keywords (exact + semantic)',
-        },
-        top_k: {
-          type: 'number',
-          description: 'Number of cards to return (1-5, default 3)',
-          minimum: 1,
-          maximum: 5,
-          default: 3,
-        },
-      },
-      required: ['query'],
     },
   },
 ]

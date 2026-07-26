@@ -60,11 +60,53 @@ export class ToolDispatcher {
     } catch (error: any) {
       return {
         success: false,
-        error: `Tool execution failed: ${error.message || error}`,
+        error: this.formatUncaughtError(toolName, toolParams, error),
         toolName,
         latencyMs: Date.now() - startTime,
       }
     }
+  }
+
+  /** 格式化工具未捕获异常：包含工具名、参数摘要、错误信息与堆栈首行 */
+  private formatUncaughtError(toolName: string, params: Record<string, any>, error: any): string {
+    const msg = error?.message || String(error)
+    const parts: string[] = [`工具 "${toolName}" 抛出未捕获异常: ${msg}`]
+
+    // 参数摘要（截断长值，避免错误信息爆掉 LLM 上下文）
+    try {
+      const argParts: string[] = []
+      for (const [k, v] of Object.entries(params || {})) {
+        if (k.startsWith('_')) continue
+        let val: string
+        if (typeof v === 'string') val = v
+        else if (v === undefined) val = 'undefined'
+        else if (v === null) val = 'null'
+        else { try { val = JSON.stringify(v) } catch { val = String(v) } }
+        if (val.length > 200) val = val.slice(0, 200) + `…(${val.length}字符)`
+        argParts.push(`${k}=${val}`)
+      }
+      if (argParts.length > 0) parts.push(`参数: ${argParts.join(', ')}`)
+    } catch { /* 忽略参数摘要失败 */ }
+
+    // 错误类型与堆栈首行（帮助定位代码位置）
+    if (error?.constructor?.name && error.constructor.name !== 'Error') {
+      parts.push(`错误类型: ${error.constructor.name}`)
+    }
+    if (error?.stack) {
+      const stackLines = error.stack.split('\n')
+      // 取堆栈中第一处工具相关位置（含 .tool.ts 或工具名），最多 3 行
+      const relevant = stackLines
+        .slice(1, 6)
+        .map((l: string) => l.trim())
+        .filter((l: string) => l && !l.includes('node:internal'))
+        .slice(0, 3)
+      if (relevant.length > 0) {
+        parts.push(`堆栈:\n  ${relevant.join('\n  ')}`)
+      }
+    }
+
+    parts.push('建议：检查参数是否符合工具 schema；若代码执行类工具（如 office_exec），检查生成的代码语法与运行时逻辑。')
+    return parts.join('\n')
   }
 
   private serializeResult(result: any, excludeKeys: string[] = []): any {

@@ -5,6 +5,7 @@ export const calculatorTool: ToolDefinition = {
   id: 'calculator',
   name: 'calculator',
   title: '计算器',
+  summary: '执行数学计算（加减乘除、百分比、幂运算）。需要数值计算时使用。',
   description: '执行数学计算，支持加减乘除、百分比、幂运算。',
   parameters: {
     type: 'object',
@@ -24,5 +25,7 @@ export const calculatorTool: ToolDefinition = {
       return { success: false, error: error.message }
     }
   },
-  source: 'builtin'
+  source: 'builtin',
+  onDemand: true,
+  permission: 'safe',
 }

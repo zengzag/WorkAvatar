@@ -65,7 +65,7 @@ class EmployeeMemoryService {
 
   listMemories(employeeId: string): EmployeeMemory[] {
     return this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? ORDER BY is_pinned DESC, updated_at DESC'
+      'SELECT * FROM employee_memories WHERE employee_id = ? AND deleted_at IS NULL ORDER BY is_pinned DESC, updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
   }
 
@@ -138,22 +138,25 @@ class EmployeeMemoryService {
   }
 
   deleteMemory(id: string): boolean {
+    // 软删除：移入回收站，保留记录便于恢复
     this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
-    const result = this.db.getDb().prepare('DELETE FROM employee_memories WHERE id = ?').run(id)
+    const result = this.db.getDb().prepare(
+      'UPDATE employee_memories SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL'
+    ).run(Math.floor(Date.now() / 1000), id)
     return result.changes > 0
   }
 
   deleteMemoryByKey(employeeId: string, key: string): boolean {
+    // 软删除：仅标记 deleted_at，不物理删除
     const ids = this.db.getDb().prepare(
-      'SELECT id FROM employee_memories WHERE employee_id = ? AND key = ?'
+      'SELECT id FROM employee_memories WHERE employee_id = ? AND key = ? AND deleted_at IS NULL'
     ).all(employeeId, key) as Array<{ id: string }>
-    if (ids.length > 0) {
-      const placeholders = ids.map(() => '?').join(',')
-      this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
-    }
+    if (ids.length === 0) return false
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
     const result = this.db.getDb().prepare(
-      'DELETE FROM employee_memories WHERE employee_id = ? AND key = ?'
-    ).run(employeeId, key)
+      'UPDATE employee_memories SET deleted_at = ? WHERE employee_id = ? AND key = ? AND deleted_at IS NULL'
+    ).run(Math.floor(Date.now() / 1000), employeeId, key)
     return result.changes > 0
   }
 
@@ -183,7 +186,7 @@ class EmployeeMemoryService {
 
   private queryMemories(employeeId: string, query: string, limit: number): EmployeeMemory[] {
     const pinned = this.db.getDb().prepare(
-      'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 ORDER BY updated_at DESC'
+      'SELECT * FROM employee_memories WHERE employee_id = ? AND is_pinned = 1 AND deleted_at IS NULL ORDER BY updated_at DESC'
     ).all(employeeId) as EmployeeMemory[]
 
     const ftsQuery = buildFtsQuery(query)
@@ -191,7 +194,7 @@ class EmployeeMemoryService {
       ? (this.db.getDb().prepare(
           `SELECT m.* FROM employee_memories m
            JOIN employee_memories_fts f ON f.memory_id = m.id
-           WHERE f.employee_id = ? AND m.is_pinned = 0 AND employee_memories_fts MATCH ?
+           WHERE f.employee_id = ? AND m.is_pinned = 0 AND m.deleted_at IS NULL AND employee_memories_fts MATCH ?
            ORDER BY f.rank LIMIT ?`
         ).all(employeeId, ftsQuery, limit) as EmployeeMemory[])
       : []
@@ -215,7 +218,7 @@ class EmployeeMemoryService {
           (last_referenced_at IS NOT NULL AND last_referenced_at < ?) OR
           (last_referenced_at IS NULL AND created_at < ?)
         ) THEN 1 ELSE 0 END) as staleCount
-      FROM employee_memories WHERE employee_id = ?
+      FROM employee_memories WHERE employee_id = ? AND deleted_at IS NULL
     `).get(staleThreshold, staleThreshold, employeeId) as any
 
     return {
@@ -313,7 +316,7 @@ class EmployeeMemoryService {
         if (allNewKeys.length > 0) {
           const keyPlaceholders = allNewKeys.map(() => '?').join(',')
           const existingRows = this.db.getDb().prepare(
-            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${keyPlaceholders})`
+            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${keyPlaceholders}) AND deleted_at IS NULL`
           ).all(employeeId, ...allNewKeys) as EmployeeMemory[]
           for (const row of existingRows) {
             existingMap.set(row.key, row)
@@ -349,7 +352,7 @@ class EmployeeMemoryService {
         if (allUpdateKeys.length > 0) {
           const upPlaceholders = allUpdateKeys.map(() => '?').join(',')
           const upRows = this.db.getDb().prepare(
-            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${upPlaceholders})`
+            `SELECT * FROM employee_memories WHERE employee_id = ? AND key IN (${upPlaceholders}) AND deleted_at IS NULL`
           ).all(employeeId, ...allUpdateKeys) as EmployeeMemory[]
           for (const row of upRows) {
             updateExistingMap.set(row.key, row)
@@ -516,7 +519,7 @@ class EmployeeMemoryService {
 
     const staleIds = this.db.getDb().prepare(
       `SELECT id FROM employee_memories
-       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'
+       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low' AND deleted_at IS NULL
        AND ((last_referenced_at IS NOT NULL AND last_referenced_at < ?)
             OR (last_referenced_at IS NULL AND created_at < ?))`
     ).all(employeeId, staleThreshold, staleThreshold) as Array<{ id: string }>
@@ -525,16 +528,55 @@ class EmployeeMemoryService {
 
     const placeholders = staleIds.map(() => '?').join(',')
     this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...staleIds.map(i => i.id))
+    // 软删除过期记忆，移入回收站便于恢复
     const result = this.db.getDb().prepare(
-      `DELETE FROM employee_memories
-       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low'
+      `UPDATE employee_memories SET deleted_at = ?
+       WHERE employee_id = ? AND is_pinned = 0 AND importance = 'low' AND deleted_at IS NULL
        AND ((last_referenced_at IS NOT NULL AND last_referenced_at < ?)
             OR (last_referenced_at IS NULL AND created_at < ?))`
-    ).run(employeeId, staleThreshold, staleThreshold)
+    ).run(now, employeeId, staleThreshold, staleThreshold)
 
     if (result.changes > 0) {
-      logger.info(`Removed ${result.changes} stale memories for employee ${employeeId}`)
+      logger.info(`Soft-deleted ${result.changes} stale memories for employee ${employeeId}`)
     }
+    return result.changes
+  }
+
+  listTrashedMemories(employeeId: string): EmployeeMemory[] {
+    return this.db.getDb().prepare(
+      'SELECT * FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC'
+    ).all(employeeId) as EmployeeMemory[]
+  }
+
+  restoreMemory(id: string): EmployeeMemory | undefined {
+    const existing = this.getMemory(id)
+    if (!existing || !existing.deleted_at) return undefined
+    this.db.getDb().prepare(
+      'UPDATE employee_memories SET deleted_at = NULL, updated_at = ? WHERE id = ?'
+    ).run(Math.floor(Date.now() / 1000), id)
+    // 恢复 FTS 索引
+    this.syncMemoryFTS(id, existing.employee_id, existing.key, existing.topic, existing.content)
+    return this.getMemory(id)
+  }
+
+  purgeMemory(id: string): boolean {
+    this.db.getDb().prepare('DELETE FROM employee_memories_fts WHERE memory_id = ?').run(id)
+    const result = this.db.getDb().prepare(
+      'DELETE FROM employee_memories WHERE id = ? AND deleted_at IS NOT NULL'
+    ).run(id)
+    return result.changes > 0
+  }
+
+  emptyTrash(employeeId: string): number {
+    const ids = this.db.getDb().prepare(
+      'SELECT id FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL'
+    ).all(employeeId) as Array<{ id: string }>
+    if (ids.length === 0) return 0
+    const placeholders = ids.map(() => '?').join(',')
+    this.db.getDb().prepare(`DELETE FROM employee_memories_fts WHERE memory_id IN (${placeholders})`).run(...ids.map(i => i.id))
+    const result = this.db.getDb().prepare(
+      'DELETE FROM employee_memories WHERE employee_id = ? AND deleted_at IS NOT NULL'
+    ).run(employeeId)
     return result.changes
   }
 

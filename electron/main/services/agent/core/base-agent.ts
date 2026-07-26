@@ -485,10 +485,12 @@ export abstract class BaseAgent {
 
       const toolName = toolCall.function.name
       let args: any
+      let parseError: string | null = null
       try {
         args = JSON.parse(toolCall.function.arguments)
-      } catch {
+      } catch (e: any) {
         args = {}
+        parseError = e?.message || String(e)
       }
 
       this.eventEmitter.emit('tool:call:start', { tool: toolName, args })
@@ -502,7 +504,17 @@ export abstract class BaseAgent {
           }
         : undefined
 
-      const result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
+      let result: ToolCallResult
+      if (parseError) {
+        // 参数 JSON 解析失败：不调用工具，直接返回结构化错误，便于 LLM 修正后重试
+        result = {
+          success: false,
+          error: this.formatParseError(toolName, toolCall.function.arguments, parseError),
+          toolName,
+        }
+      } else {
+        result = await this.toolDispatcher.dispatch(toolName, args, toolContext)
+      }
 
       if (signal?.aborted) return
 
@@ -527,9 +539,69 @@ export abstract class BaseAgent {
       currentMessages.push({
         role: 'tool',
         toolCallId: toolCall.id,
-        content: result.success ? String(result.output) : String(result.error),
+        content: this.formatToolMessageContent(result),
       })
     }
+  }
+
+  /**
+   * 格式化工具参数 JSON 解析失败错误
+   *
+   * 不静默吞错，把解析错误信息 + 原始 arguments 片段返回给 LLM，
+   * 便于 LLM 定位是引号/转义/括号不匹配等问题并修正后重试
+   */
+  private formatParseError(toolName: string, rawArguments: string, parseError: string): string {
+    const raw = typeof rawArguments === 'string' ? rawArguments : String(rawArguments ?? '')
+    // 截断过长的原始参数，避免爆掉 LLM 上下文
+    const maxLen = 800
+    const truncated = raw.length > maxLen
+      ? raw.slice(0, maxLen) + `\n…(${raw.length} 字符，已截断)`
+      : raw
+
+    return [
+      `工具 "${toolName}" 的参数 JSON 解析失败，未执行工具。`,
+      `解析错误: ${parseError}`,
+      '',
+      '--- 原始 arguments ---',
+      truncated || '(空)',
+      '',
+      '请检查并修正 JSON：',
+      '- 字符串值需用双引号包裹，内部双引号需转义为 \\"',
+      '- 不要在 JSON 中使用注释、尾随逗号、单引号',
+      '- 多行字符串需转义换行为 \\n，或拆分为字符串数组',
+      '- 复杂代码可作为字符串传入，避免裸花括号被误解析',
+    ].join('\n')
+  }
+
+  /**
+   * 格式化工具结果为 LLM tool message 内容
+   *
+   * - 成功：返回 output（兜底提示无输出）
+   * - 失败：合并 error + output（如 invoke_tool 已提供结构化失败上下文，
+   *   或 office_exec 等工具返回的 console 日志/已写入文件），让 LLM 能据此判断
+   *   具体错误原因并修正参数或代码后重试
+   */
+  private formatToolMessageContent(result: ToolCallResult): string {
+    if (result.success) {
+      return result.output !== undefined && result.output !== null && result.output !== ''
+        ? String(result.output)
+        : '(工具执行成功，无输出)'
+    }
+
+    const parts: string[] = []
+    const err = result.error || '(无错误信息)'
+    parts.push(`[错误] ${err}`)
+
+    if (result.output !== undefined && result.output !== null && result.output !== '') {
+      const outputStr = typeof result.output === 'string'
+        ? result.output
+        : (() => { try { return JSON.stringify(result.output, null, 2) } catch { return String(result.output) } })()
+      if (outputStr.trim()) {
+        parts.push(outputStr)
+      }
+    }
+
+    return parts.join('\n\n')
   }
 
   private convertToLLMMessages(messages: Message[]): any[] {

@@ -69,6 +69,7 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
+  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell/CMD' : 'Bash'}）。运行系统命令、脚本时使用。`,
   description: `执行系统shell命令。${IS_WINDOWS ? 'Windows环境，支持PowerShell/CMD。' : '类Unix环境，支持Bash。'}`,
   parameters: {
     type: 'object',
@@ -194,5 +195,6 @@ export const shellExecTool: ToolDefinition = {
       }
     }
   },
-  source: 'builtin'
+  source: 'builtin',
+  onDemand: true,
 }

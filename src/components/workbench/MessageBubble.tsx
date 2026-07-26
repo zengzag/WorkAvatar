@@ -1,4 +1,4 @@
-import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag } from 'antd'
+import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App } from 'antd'
 import {
   RobotOutlined,
   UserOutlined,
@@ -12,6 +12,7 @@ import {
   RightOutlined,
   SwapOutlined,
   SearchOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -128,6 +129,7 @@ const MessageBubble: React.FC<{
 }> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
+  const { message: messageApi } = App.useApp()
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const bubbleRef = useRef<HTMLDivElement>(null)
@@ -189,6 +191,52 @@ const MessageBubble: React.FC<{
       : msg
   , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
 
+  // 从回答内容生成笔记标题：优先首个标题，其次首行非空文本，最后时间戳兜底
+  const generateNoteName = useCallback((content: string, timestamp: number): string => {
+    const headingMatch = content.match(/^#+\s+(.+)$/m)
+    if (headingMatch) {
+      const title = headingMatch[1].replace(/[*_`~\[\]]/g, '').trim().slice(0, 40)
+      if (title) return title
+    }
+    const firstLine = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || ''
+    const cleaned = firstLine
+      .replace(/^#+\s+/, '')
+      .replace(/[*_`~\[\]()]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 40)
+    if (cleaned) return cleaned
+    const d = new Date(timestamp || Date.now())
+    const pad = (n: number) => n.toString().padStart(2, '0')
+    return `AI回复-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  }, [])
+
+  // 将 AI 回答保存为 .md 笔记到 vault 根目录
+  const handleSaveToNote = useCallback(async () => {
+    if (!displayContent) return
+    const name = generateNoteName(displayContent, msg.timestamp)
+    try {
+      const createRes = await window.electronAPI.notes.createNote({ parentRelPath: '', name })
+      if (createRes && (createRes as any).error) {
+        messageApi.error((createRes as any).error)
+        return
+      }
+      const relPath = (createRes as any)?.relPath as string
+      if (!relPath) {
+        messageApi.error(t('workbench.saveToNoteFailed'))
+        return
+      }
+      const writeRes = await window.electronAPI.notes.write({ relPath, content: displayContent })
+      if (writeRes && (writeRes as any).error) {
+        messageApi.error((writeRes as any).error)
+        return
+      }
+      messageApi.success(t('workbench.saveToNoteSuccess', { name: (createRes as any)?.name || name }))
+    } catch (err: any) {
+      messageApi.error(err?.message || t('workbench.saveToNoteFailed'))
+    }
+  }, [displayContent, msg.timestamp, generateNoteName, messageApi, t])
+
   return (
     <div
       ref={bubbleRef}
@@ -224,7 +272,7 @@ const MessageBubble: React.FC<{
                   onChange={(e) => setEditValue(e.target.value)}
                   autoSize={{ minRows: 3, maxRows: 15 }}
                   style={{
-                    fontSize: 13,
+                    fontSize: 14,
                     lineHeight: 1.6,
                     borderRadius: 8,
                     width: '100%',
@@ -251,7 +299,7 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorText, fontSize: 13 }}>{msg.content}</Text>
+                <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     {msg.images.map((img, i) => (
@@ -298,7 +346,7 @@ const MessageBubble: React.FC<{
                 background: token.colorBgContainer,
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorTextQuaternary, fontSize: 13 }}>{t('workbench.thinking')}</Text>
+                <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>{t('workbench.thinking')}</Text>
               </div>
             )}
 
@@ -321,7 +369,7 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 border: displayIsError ? `1px solid ${token.colorError}` : 'none',
               }}>
-                <div className="markdown-content" style={{ fontSize: 13, color: token.colorText }}>
+                <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
@@ -381,6 +429,10 @@ const MessageBubble: React.FC<{
                 {displayContent && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     onClick={() => onCopy(displayContent)} />
+                )}
+                {displayContent && !displayIsError && (
+                  <Button type="text" size="small" icon={<FileTextOutlined style={{ fontSize: 12 }} />}
+                    onClick={handleSaveToNote} title={t('workbench.saveToNote')} />
                 )}
                 <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
                   onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />

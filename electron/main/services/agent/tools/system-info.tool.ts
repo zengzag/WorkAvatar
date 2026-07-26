@@ -9,6 +9,7 @@ export const systemInfoTool: ToolDefinition = {
   id: 'system_info',
   name: 'system_info',
   title: '系统信息',
+  summary: '获取系统信息（平台/CPU/内存/磁盘/网络）。了解系统资源时使用。',
   description: '获取操作系统信息：平台、CPU、内存、磁盘、网络。',
   parameters: {
     type: 'object',
@@ -96,5 +97,6 @@ export const systemInfoTool: ToolDefinition = {
       return { success: false, error: `获取系统信息失败: ${error.message || error}` }
     }
   },
-  source: 'builtin'
+  source: 'builtin',
+  onDemand: true,
 }

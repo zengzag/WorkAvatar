@@ -2,20 +2,12 @@ import { BaseAgent } from '../core/base-agent'
 import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
-import type { ToolDefinition, ToolCallResult } from '../tools/types'
-import { PlannerFactory } from '../planning/planner'
-import type { PlanningStrategy } from '../planning/types'
+import type { ToolDefinition } from '../tools/types'
 import { buildEmployeeSystemPrompt } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
-  treeOfThought?: boolean
-  totModel?: string
-  totApiKey?: string
-  totBaseUrl?: string
-  totProviderType?: string
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
-  planningStrategy?: PlanningStrategy
   workspaceGuidance?: string
 }
 
@@ -48,8 +40,6 @@ export class EmployeeAgent extends BaseAgent {
 
   private memoryPrompt: string | undefined
   private kbContextPrompt: string | undefined
-  private toolPlanningPrompt: string | undefined
-  private persistedSkillInstructions: string[] = []
   private minimalMode: boolean = false
   private cachedSystemPrompt: string | undefined = undefined
 
@@ -63,10 +53,6 @@ export class EmployeeAgent extends BaseAgent {
 
   updateKBContextPrompt(prompt: string | undefined): void {
     this.kbContextPrompt = prompt
-  }
-
-  updateToolPlanningPrompt(prompt: string | null): void {
-    this.toolPlanningPrompt = prompt || undefined
   }
 
   setMinimalMode(enabled: boolean): void {
@@ -85,25 +71,6 @@ export class EmployeeAgent extends BaseAgent {
     return this.cachedSystemPrompt
   }
 
-  resetPersistedSkillInstructions(): void {
-    this.persistedSkillInstructions = []
-  }
-
-  getPersistedSkillInstructions(): string[] {
-    return [...this.persistedSkillInstructions]
-  }
-
-  protected async onToolCallExecuted(toolName: string, args: any, result: ToolCallResult): Promise<void> {
-    await super.onToolCallExecuted(toolName, args, result)
-    if (toolName === 'activate_skill' && result.success) {
-      const rawOutput = result.rawOutput as Record<string, any> | undefined
-      const skillInstructions = rawOutput?.instructions as string | undefined
-      if (skillInstructions && !this.persistedSkillInstructions.includes(skillInstructions)) {
-        this.persistedSkillInstructions.push(skillInstructions)
-      }
-    }
-  }
-
   protected buildSystemPrompt(options: AgentRunOptions): string {
     if (this.cachedSystemPrompt) {
       return this.cachedSystemPrompt
@@ -111,6 +78,11 @@ export class EmployeeAgent extends BaseAgent {
 
     const useSkills = options.useSkills !== false
     const skillsXml = useSkills ? this.skillManager.getSkillsXml() : undefined
+
+    const onDemandTools = this.toolRegistry.getOnDemandTools()
+    const onDemandToolList = onDemandTools
+      .map(t => `${t.title}(${t.name})`)
+      .join('、')
 
     const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',
@@ -120,11 +92,8 @@ export class EmployeeAgent extends BaseAgent {
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
       memoryPrompt: this.memoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
-      skillInstructions: this.persistedSkillInstructions.length > 0
-        ? this.persistedSkillInstructions
-        : undefined,
-      toolPlanningHint: this.toolPlanningPrompt,
       minimalMode: this.minimalMode,
+      onDemandToolList: onDemandToolList || undefined,
     })
 
     this.cachedSystemPrompt = prompt
@@ -136,35 +105,6 @@ export class EmployeeAgent extends BaseAgent {
       return []
     }
     return super.resolveActiveTools(runtimeToolNames)
-  }
-
-  public async buildToolPlanningHint(query: string): Promise<string | null> {
-    if (!this.employeeConfig.treeOfThought && !this.employeeConfig.planningStrategy) {
-      return null
-    }
-
-    const strategy = this.employeeConfig.planningStrategy || 'tool_filter'
-    const planner = PlannerFactory.create(
-      strategy,
-      this.getLLMProvider(),
-      this.employeeConfig.totModel ? {
-        model: this.employeeConfig.totModel,
-        apiKey: this.employeeConfig.totApiKey,
-        baseUrl: this.employeeConfig.totBaseUrl,
-        providerType: this.employeeConfig.totProviderType,
-      } : undefined
-    )
-
-    const allTools = this.getToolRegistry().getOpenAISchemas()
-    const plan = await planner.plan(query, allTools)
-
-    this.getEventEmitter().emit('plan:generated', plan)
-
-    if (plan.selectedToolNames && plan.selectedToolNames.length > 0) {
-      return `建议优先使用以下工具: ${plan.selectedToolNames.join(', ')}`
-    }
-
-    return null
   }
 
   async runStream(
@@ -249,7 +189,6 @@ export class EmployeeAgent extends BaseAgent {
   private normalizeEmployeeConfig(config: EmployeeAgentConfig): EmployeeAgentConfig {
     return {
       ...config,
-      treeOfThought: config.treeOfThought || false,
       allowedSkillPaths: config.allowedSkillPaths,
       autoDiscoverSkills: config.autoDiscoverSkills !== false,
     }

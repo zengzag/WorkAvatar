@@ -1,3 +1,4 @@
+import { BrowserWindow } from 'electron'
 import Database from 'better-sqlite3'
 import DatabaseService from '../database.service'
 import WorkspaceManagerService from '../workspace-manager.service'
@@ -5,6 +6,7 @@ import EmployeeAgentService from '../employee-agent.service'
 import NotificationService from '../notification.service'
 import { createLogger } from '../logger'
 import { generateId } from '../common-utils'
+import { IPC_CHANNELS } from '../../../shared/ipc-channels'
 import type {
   AutomationTask,
   AutomationRun,
@@ -16,6 +18,7 @@ import type {
   UpdateAutomationTaskInput,
   ListAutomationTasksParams,
   ListAutomationRunsParams,
+  AutomationDataChangedPayload,
 } from '../../../shared/ipc-channels'
 
 const logger = createLogger('Automation')
@@ -38,6 +41,18 @@ class AutomationService {
       AutomationService.instance = new AutomationService()
     }
     return AutomationService.instance
+  }
+
+  /** 广播数据变更事件给所有渲染窗口（供 agent 工具与 IPC handler 共用） */
+  broadcastDataChanged(scope: 'task' | 'run' | 'settings'): void {
+    const payload: AutomationDataChangedPayload = { scope, ts: Date.now() }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try {
+          win.webContents.send(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, payload)
+        } catch { /* ignore */ }
+      }
+    }
   }
 
   // ====== Tasks CRUD ======

@@ -69,6 +69,13 @@ import type {
   CreateAutomationTaskInput,
   UpdateAutomationTaskInput,
   PreviewRunsParams,
+  NoteWriteParams,
+  NoteCreateParams,
+  NoteRenameParams,
+  NoteMoveParams,
+  NoteSearchParams,
+  NotesSettings,
+  NotesDataChangedPayload,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -119,6 +126,15 @@ export type {
   ListAutomationRunsParams as ListAutomationRunsParamsType,
   PreviewRunsParams as PreviewRunsParamsType,
 } from '../shared/ipc-channels'
+export type {
+  NoteNodeType,
+  NoteNode,
+  NoteContent,
+  NoteSearchSnippet,
+  NoteSearchHit,
+  NotesSettings as NotesSettingsType,
+  NotesDataChangedPayload as NotesDataChangedPayloadType,
+} from '../shared/ipc-channels'
 
 const electronAPI = {
   workspace: {
@@ -162,13 +178,17 @@ const electronAPI = {
     consolidateMemories: (params: EmployeeMemoryConsolidateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_CONSOLIDATE, params),
     getMemoryStats: (params: EmployeeMemoryStatsParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_STATS, params),
     extractConversationMemories: (params: EmployeeMemoryExtractConversationParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EXTRACT_CONVERSATION, params),
+    listTrashedMemories: (params: EmployeeMemoryListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_LIST_TRASH, params),
+    restoreMemory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_RESTORE, id),
+    purgeMemory: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_PURGE, id),
+    emptyTrash: (params: EmployeeMemoryListParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_MEMORY_EMPTY_TRASH, params),
   },
 
   conversation: {
     list: (params: ConversationListParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
-    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }) =>
+    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
@@ -367,6 +387,25 @@ const electronAPI = {
       const handler = (_event: any, payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
+    },
+  },
+
+  notes: {
+    listTree: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST_TREE),
+    read: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ, relPath),
+    write: (params: NoteWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE, params),
+    createNote: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_NOTE, params),
+    createFolder: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_FOLDER, params),
+    rename: (params: NoteRenameParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_RENAME, params),
+    move: (params: NoteMoveParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_MOVE, params),
+    delete: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, relPath),
+    search: (params: NoteSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
+    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_SETTINGS),
+    setSettings: (params: Partial<NotesSettings>) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SET_SETTINGS, params),
+    onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
+      const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
     },
   },
 

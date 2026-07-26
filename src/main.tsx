@@ -81,6 +81,9 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           itemBorderRadius: 4,
           iconSize: 16,
           darkSubMenuItemBg: '#1a1a1a',
+          // 悬停时给图标一个更明显的背景，类似选中的交互感
+          itemHoverBg: 'rgba(0, 0, 0, 0.06)',
+          darkItemHoverBg: 'rgba(255, 255, 255, 0.10)',
         },
         Table: {
           stickyScrollBarBg: effectiveTheme === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)',

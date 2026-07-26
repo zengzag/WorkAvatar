@@ -24,4 +24,7 @@ export interface TodoFilters {
   status?: TodoStatus | TodoStatus[]
   priority?: TodoPriority | TodoPriority[]
   tag?: string
+  /** 截止时间范围（unix ms），仅过滤有截止时间的待办 */
+  dueFrom?: number
+  dueTo?: number
 }
