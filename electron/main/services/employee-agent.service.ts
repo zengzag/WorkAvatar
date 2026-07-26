@@ -6,7 +6,7 @@ import McpRegistryService from './mcp-registry.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, createOfficeGuideTool, officeExecTool, createKMSTools, calendarTools, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
@@ -165,12 +165,6 @@ class EmployeeAgentService {
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
-      treeOfThought: modelConfig?.tree_of_thought ?? false,
-      totModel: modelConfig?.tot_model,
-      totApiKey: modelConfig?.tot_api_key ?? config.api_key,
-      totBaseUrl: modelConfig?.tot_base_url ?? (config.base_url || this.llmClient.getBaseURL(config)),
-      totProviderType: modelConfig?.tot_provider_type ?? config.provider_type,
-      planningStrategy: modelConfig?.planning_strategy,
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
@@ -221,12 +215,8 @@ class EmployeeAgentService {
     const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsCollectionTools)
 
-    const officeGuideTool = createOfficeGuideTool(emp.workspace_path || '')
-    agent.registerTools([officeGuideTool, officeExecTool])
-
-    // 注入日历工具：所有员工默认可用（日程 + TODO 的 CRUD 与统计）
-    if (enabledToolIds.has('calendar_event') || enabledToolIds.has('calendar_todo')) {
-      agent.registerTools(calendarTools.filter(t => enabledToolIds.has(t.id)))
+    if (enabledToolIds.has('office_exec')) {
+      agent.registerTools([officeExecTool])
     }
 
     if (enabledToolIds.has('search_conversations')) {
@@ -234,19 +224,26 @@ class EmployeeAgentService {
       agent.registerTools(convSearchTools)
     }
 
-    // 注入员工已启用的外部 MCP server 工具
+    // 注入员工已启用的外部 MCP server 工具（标记为按需工具）
     // 失败容忍：单个 server 失败不影响 agent 创建，仅记录日志
     let mcpRelease: (() => Promise<void>) | undefined
     try {
       const mcpResult = await this.mcpRegistry.buildAgentTools(employeeId)
       if (mcpResult.tools.length > 0) {
-        agent.registerTools(mcpResult.tools)
+        const mcpOnDemandTools = mcpResult.tools.map(t => ({ ...t, onDemand: true }))
+        agent.registerTools(mcpOnDemandTools)
         mcpRelease = mcpResult.release
-        logger.info(`Injected ${mcpResult.tools.length} MCP tools for employee ${employeeId}`)
+        logger.info(`Injected ${mcpOnDemandTools.length} MCP tools for employee ${employeeId}`)
       }
     } catch (err: any) {
       logger.warn(`Failed to inject MCP tools for employee ${employeeId}: ${err?.message || err}`)
     }
+
+    // 注册元工具（常驻 LLM tools 数组）：list_available_tools + invoke_tool
+    agent.registerTools([
+      createListAvailableToolsTool(agent.getToolRegistry(), emp.workspace_path || ''),
+      createInvokeToolTool(agent.getToolDispatcher(), agent.getToolRegistry()),
+    ])
 
     if (memoryPrompt) {
       agent.updateMemoryPrompt(memoryPrompt)
@@ -266,6 +263,7 @@ class EmployeeAgentService {
     const kmsToolIds = [
       'kms_search',
       'kms_get_content',
+      'kms_knowledge_card',
       'kms_list_collections',
       'kms_collection_overview',
       'kms_get_toc',
@@ -277,7 +275,6 @@ class EmployeeAgentService {
 
     const officeToolIds = [
       'office_exec',
-      'office_guide',
     ]
     for (const id of officeToolIds) {
       allBuiltinToolIds.add(id)
@@ -288,7 +285,18 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const calendarToolIds = ['calendar_event', 'calendar_todo']
+    const calendarToolIds = [
+      'calendar_event_list',
+      'calendar_event_create',
+      'calendar_event_update',
+      'calendar_event_delete',
+      'calendar_todo_list',
+      'calendar_todo_create',
+      'calendar_todo_update',
+      'calendar_todo_delete',
+      'calendar_todo_complete',
+      'calendar_todo_stats',
+    ]
     for (const id of calendarToolIds) {
       allBuiltinToolIds.add(id)
     }
@@ -358,7 +366,7 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      const systemPromptCached = await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode, query)
+      const systemPromptCached = await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(
@@ -393,7 +401,6 @@ class EmployeeAgentService {
     conversationId: string | undefined,
     collectionIds: string[],
     minimalMode: boolean,
-    query: string
   ): Promise<boolean> {
     if (conversationId) {
       const conv = this.db.getDb().prepare(
@@ -402,14 +409,12 @@ class EmployeeAgentService {
       if (conv?.system_prompt) {
         agent.setCachedSystemPrompt(conv.system_prompt)
         agent.updateKBContextPrompt(undefined)
-        agent.updateToolPlanningPrompt(null)
         return true
       }
     }
 
     if (minimalMode) {
       agent.updateKBContextPrompt(undefined)
-      agent.updateToolPlanningPrompt(null)
     } else {
       if (collectionIds.length > 0) {
         const kmsService = require('./kms/kms.service').default.getInstance()
@@ -424,8 +429,6 @@ class EmployeeAgentService {
       } else {
         agent.updateKBContextPrompt(undefined)
       }
-      const toolPlanningHint = await agent.buildToolPlanningHint(query).catch(() => null)
-      agent.updateToolPlanningPrompt(toolPlanningHint)
     }
     return false
   }

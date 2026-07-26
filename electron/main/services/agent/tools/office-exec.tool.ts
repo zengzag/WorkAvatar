@@ -276,7 +276,8 @@ export const officeExecTool: ToolDefinition = {
   id: 'office_exec',
   name: 'office_exec',
   title: 'Office文档生成',
-  description: '在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。** 使用前先调 office_guide 获取代码模板和陷阱清单。',
+  summary: '在 Node.js 沙箱中执行 JS 代码生成或编辑 Office 文档（Word/PPT/Excel）。处理 Office 文档时必须用此工具。',
+  description: '在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。** 使用前先调 list_available_tools(tool_name=["office_exec"]) 获取代码模板和陷阱清单。',
   parameters: {
     type: 'object',
     properties: {
@@ -502,6 +503,7 @@ export const officeExecTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  onDemand: true,
   timeoutMs: 120000,
 }
 

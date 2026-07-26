@@ -43,6 +43,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     id: 'kms_search',
     name: 'kms_search',
     title: '本地资料检索',
+    summary: '检索本地资料库内容（PDF/Word/Excel/PPT/Markdown等）。需要查找资料库文档、获取文档片段时使用。',
     description: '对本地资料库进行检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。mode=simple 单次检索（快速，返回匹配片段与定位）；mode=deep 调用检索子智能体多轮检索（自动识别查询意图，输出结论与溯源，适合复杂分析）；mode=auto 由系统根据查询复杂度自动选择。',
     parameters: {
       type: 'object',
@@ -200,12 +201,14 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   const kmsGetContentTool: ToolDefinition = {
     id: 'kms_get_content',
     name: 'kms_get_content',
     title: '获取本地文件内容',
+    summary: '读取资料库中文件的完整内容或指定片段。需先用 kms_search 获取 file_id。',
     description: '获取本地资料库中文件的完整内容或指定片段。支持按段落ID、字符偏移、行号定位读取。需先通过 kms_search 获取 file_id。注意：file_id 是纯ID字符串（如 "8170964a"），不要带 "f:" 等前缀。',
     parameters: {
       type: 'object',
@@ -272,12 +275,14 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   const kmsKnowledgeCardTool: ToolDefinition = {
     id: 'kms_knowledge_card',
     name: 'kms_knowledge_card',
     title: '知识卡片查询',
+    summary: '查询已沉淀的知识卡片（高频主题摘要）。常见问题可快速获取答案，建议在 kms_search 前先查询。',
     description: '查找本地资料库中已沉淀的知识卡片。知识卡片是基于用户高频搜索自动生成的主题摘要，包含结构化的要点和原文引用。对于常见问题可快速获取答案，无需重新检索全文。建议在 kms_search 之前先查询知识卡片，若卡片已包含答案则无需再搜索。',
     parameters: {
       type: 'object',
@@ -343,6 +348,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   return [kmsSearchTool, kmsGetContentTool, kmsKnowledgeCardTool]

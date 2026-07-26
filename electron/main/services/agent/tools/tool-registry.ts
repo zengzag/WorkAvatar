@@ -23,7 +23,10 @@ export class ToolRegistry {
       })
     }
 
-    this.openaiFunctionSchemas.push(this.toOpenAISchema(tool))
+    // 按需工具不加入 LLM API 的 tools 数组，通过 list_available_tools + invoke_tool 发现和调用
+    if (!tool.onDemand) {
+      this.openaiFunctionSchemas.push(this.toOpenAISchema(tool))
+    }
     return true
   }
 
@@ -43,6 +46,11 @@ export class ToolRegistry {
 
   getTools(): ToolDefinition[] {
     return Array.from(this.functionMappings.values())
+  }
+
+  /** 返回所有按需工具（不在 LLM tools 数组中，通过 invoke_tool 调用） */
+  getOnDemandTools(): ToolDefinition[] {
+    return Array.from(this.functionMappings.values()).filter(t => t.onDemand)
   }
 
   getOpenAISchemas(): OpenAIToolDefinition[] {

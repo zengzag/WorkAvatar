@@ -6,8 +6,6 @@ export function buildEmployeeSystemPrompt(options: {
   workspaceGuidance?: string
   memoryPrompt?: string
   kbContextPrompt?: string
-  skillInstructions?: string[]
-  toolPlanningHint?: string
   minimalMode?: boolean
 }): string {
   const parts: string[] = []
@@ -25,7 +23,10 @@ export function buildEmployeeSystemPrompt(options: {
 
   parts.push(
     '逐步分析问题，按需调用工具获取信息，直至完整回答用户问题。',
-    '可调用资料库工具查询相关知识。'
+    '## 工具使用',
+    '常用工具（文件读写、计算、时间、搜索、提问等）可直接调用。',
+    '其他工具（资料库检索、日程管理、文档生成、Shell命令等）需先调用 list_available_tools 浏览可用工具并获取详细参数说明，再通过 invoke_tool 调用。',
+    '不确定是否需要某工具时，先调用 list_available_tools 查看可用工具列表。'
   )
 
   if (options.workspaceGuidance) {
@@ -43,14 +44,6 @@ export function buildEmployeeSystemPrompt(options: {
 
   if (options.kbContextPrompt) {
     parts.push(`\n## ${options.kbContextPrompt}`)
-  }
-
-  if (options.skillInstructions && options.skillInstructions.length > 0) {
-    parts.push(`\n## 已激活技能指令\n${options.skillInstructions.join('\n\n---\n\n')}`)
-  }
-
-  if (options.toolPlanningHint) {
-    parts.push(`\n## ${options.toolPlanningHint}`)
   }
 
   return parts.join('\n')

@@ -30,6 +30,7 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
     id: 'search_conversations',
     name: 'search_conversations',
     title: '搜索历史对话',
+    summary: '搜索与当前用户的历史对话记录。回忆之前讨论过的内容时使用。',
     description: '搜索与当前用户的历史对话记录。可检索之前讨论过的主题、决策和上下文。返回匹配的对话标题、摘要和相关内容片段。当需要回忆之前讨论过的内容时使用此工具。',
     parameters: {
       type: 'object',
@@ -139,6 +140,7 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
       }
     },
     source: 'builtin',
+    onDemand: true,
     permission: 'safe',
   }
 

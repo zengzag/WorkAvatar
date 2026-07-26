@@ -66,6 +66,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
     ask_user: t('workbench.toolNames.ask_user'),
+    calendar_event_list: t('workbench.toolNames.calendar_event_list'),
+    calendar_event_create: t('workbench.toolNames.calendar_event_create'),
+    calendar_event_update: t('workbench.toolNames.calendar_event_update'),
+    calendar_event_delete: t('workbench.toolNames.calendar_event_delete'),
+    calendar_todo_list: t('workbench.toolNames.calendar_todo_list'),
+    calendar_todo_create: t('workbench.toolNames.calendar_todo_create'),
+    calendar_todo_update: t('workbench.toolNames.calendar_todo_update'),
+    calendar_todo_delete: t('workbench.toolNames.calendar_todo_delete'),
+    calendar_todo_complete: t('workbench.toolNames.calendar_todo_complete'),
+    calendar_todo_stats: t('workbench.toolNames.calendar_todo_stats'),
   }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)

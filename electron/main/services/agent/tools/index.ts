@@ -24,7 +24,8 @@ export const allBuiltinTools: ToolDefinition[] = [
 ]
 
 export { officeExecTool } from './office-exec.tool'
-export { createOfficeGuideTool } from './office-prompts'
 export { createKMSTools, type SearchScopeRef } from './kms-search.tool'
 export { createKMSCollectionTools } from './kms-collection-tools'
 export { calendarTools } from './calendar.tool'
+export { createListAvailableToolsTool, createInvokeToolTool } from './meta-tools'
+export { buildOfficeGuide } from './office-prompts'

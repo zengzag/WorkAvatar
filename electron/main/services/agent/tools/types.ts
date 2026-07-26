@@ -46,6 +46,14 @@ export interface ToolDefinition {
   permission?: ToolPermission
   timeoutMs?: number
   metadata?: Record<string, any>
+  /** 按需工具：不加入 LLM API 的 tools 数组，通过 list_available_tools + invoke_tool 发现和调用 */
+  onDemand?: boolean
+  /**
+   * 摘要：list_available_tools 无参调用（摘要模式）时显示的精炼描述。
+   * 一句话说明工具大致功能与使用场景；不传则回退到 title。
+   * 详细参数说明、调用方式、陷阱等放在 description（详情模式展示）。
+   */
+  summary?: string
 }
 
 export interface OpenAIToolDefinition {

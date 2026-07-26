@@ -1,7 +1,6 @@
-import type { ToolDefinition } from './types'
 import { getOfficeModuleStatus } from './office-exec.tool'
 
-function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
+export function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
   const moduleStatus = getOfficeModuleStatus()
   const availableModules = Object.entries(moduleStatus)
     .filter(([, s]) => s.loaded)
@@ -28,7 +27,7 @@ function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
   parts.push('')
   parts.push('**必须用 `office_exec`，不要用 `shell_exec` 调外部脚本。** 沙箱内置 docx/pptxgenjs/xlsx/adm-zip，文件通过 `file.save` 异步写入工作区。')
   parts.push('')
-  parts.push('**工作流**：`office_guide({ formats: [...] })` 获取模板 → `office_exec({ code: "..." })` 执行。')
+  parts.push('**工作流**：先调用 `list_available_tools(tool_name=["office_exec"])` 获取模板与陷阱清单 → `office_exec({ code: "..." })` 执行。')
 
   // ===== 模块速览 =====
   parts.push('\n### 可用模块')
@@ -413,26 +412,4 @@ function buildQuoteRules(): string {
   ].join('\n')
 }
 
-export function createOfficeGuideTool(workspacePath?: string): ToolDefinition {
-  return {
-    id: 'office_guide',
-    name: 'office_guide',
-    title: 'Office文档使用指南',
-    description: '获取Office文档(Word/PowerPoint/Excel)创建和编辑的完整指南。**创建或修改Office文档前必须先调用此工具获取指南**，然后用 office_exec 执行代码。包含代码模板、API速查、关键陷阱。',
-    parameters: {
-      type: 'object',
-      properties: {
-        formats: {
-          type: 'array',
-          items: { type: 'string', enum: ['docx', 'pptx', 'xlsx'] },
-          description: '指定格式（可多选）。docx=Word文档，pptx=PowerPoint演示文稿，xlsx=Excel电子表格。不传返回概览。',
-        },
-      },
-    },
-    handler: (args: any) => {
-      const formats = Array.isArray(args?.formats) ? args.formats : undefined
-      return { success: true, guide: buildOfficeGuide(workspacePath, formats) }
-    },
-    source: 'builtin',
-  }
-}
+// office_guide 工具已移除：内容合并到 list_available_tools 的 office_exec 详情中（meta-tools.ts）

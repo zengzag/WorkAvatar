@@ -25,6 +25,7 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
     id: 'kms_list_collections',
     name: 'kms_list_collections',
     title: '资料库合集列表',
+    summary: '列出资料库合集（手动组织的文件分组）。了解可用资料范围时使用。',
     description: '列出当前可访问的资料库合集（手动组织的文件分组）。每个合集包含若干文档，可用于了解可用资料范围。若会话已选定合集则只显示选定的，否则显示全部。',
     parameters: {
       type: 'object',
@@ -75,12 +76,14 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   const kmsCollectionOverviewTool: ToolDefinition = {
     id: 'kms_collection_overview',
     name: 'kms_collection_overview',
     title: '合集概览',
+    summary: '查看合集的全局摘要、主题和文件清单。确定要深入的目标文档时使用。',
     description: '查看合集的全局摘要、核心主题和文件清单（含每篇文件的摘要与主题），帮助确定要深入的目标文档。请先使用 kms_list_collections 获取可用的合集ID。',
     parameters: {
       type: 'object',
@@ -149,12 +152,14 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   const kmsGetTocTool: ToolDefinition = {
     id: 'kms_get_toc',
     name: 'kms_get_toc',
     title: '获取文件目录',
+    summary: '获取文件的层级目录结构（TOC）。定位文件章节时使用，需先通过 kms_search 获取 file_id。',
     description: '获取文件的层级目录结构（TOC），包含每个章节的 paragraph_id、标题路径和内容偏移范围。file_id 来自 kms_search 结果，不要带 "f:" 前缀。',
     parameters: {
       type: 'object',
@@ -196,12 +201,14 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   const kmsGetParagraphsTool: ToolDefinition = {
     id: 'kms_get_paragraphs',
     name: 'kms_get_paragraphs',
     title: '获取段落摘要',
+    summary: '批量获取段落的详细摘要和元信息。了解目录后深入查看章节时使用。',
     description: '批量获取多个段落的详细摘要和元信息（标题路径、内容偏移范围），用于在了解目录结构后深入查看感兴趣章节。paragraph_ids 来自 kms_get_toc 或 kms_search 结果。',
     parameters: {
       type: 'object',
@@ -252,6 +259,7 @@ export function createKMSCollectionTools(scopeRef: SearchScopeRef): ToolDefiniti
       }
     },
     source: 'builtin',
+    onDemand: true,
   }
 
   return [

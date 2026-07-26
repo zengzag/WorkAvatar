@@ -10,6 +10,7 @@ import type SkillRegistryService from '../services/skill-registry.service'
 import { allBuiltinTools, createKMSTools, createKMSCollectionTools } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
+import EmployeeAgentService from '../services/employee-agent.service'
 import { safeHandle } from './_shared'
 
 function getUnifiedBuiltinToolCatalog() {
@@ -87,6 +88,8 @@ export function registerToolHandlers(
 
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {
     assignToolStmt.run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
+    // 工具启用状态变更后清除该员工的 agent 缓存，确保下次对话使用最新工具集
+    EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
