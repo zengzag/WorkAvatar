@@ -41,6 +41,9 @@ const _persistentConvList = new Map<string, Conversation[]>()
 // 有了此缓存，initEmployee 可以直接恢复上次的对话，避免 selectConversation IPC。
 const _persistentActiveConvId = new Map<string, string>()
 
+// 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
+const _persistentDrafts = new Map<string, string>()
+
 // 获取或创建指定员工的消息缓存
 const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
   let cache = _persistentMessagesByEmployee.get(employeeId)
@@ -85,6 +88,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  const [inputDraft, setInputDraftState] = useState('')
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
@@ -183,6 +187,26 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       conversationMessagesRef.current = getOrCreateEmployeeMessagesCache(id)
 
       if (getPersistentEmployeeId() && getPersistentEmployeeId() !== id) {
+        // 切换员工：重置可见状态，避免上一个员工的对话界面残留
+        setEmployee(null)
+        setMessages([])
+        setActiveConversationId(null)
+        activeConversationIdRef.current = null
+        setIsStreaming(false)
+        isStreamingRef.current = false
+        setAllConversations([])
+        setLoadingConversationId(null)
+        setInputDraftState('')
+        // 重置 pendingMessage 与延迟发送，避免跨员工串扰
+        setPendingMessage(null)
+        setPendingHighPermission(false)
+        if (pendingSendTimeoutRef.current) {
+          clearTimeout(pendingSendTimeoutRef.current)
+          pendingSendTimeoutRef.current = null
+        }
+        // 重置 initializedRef，让新员工走完整的 selectConversation/startNewConversation 流程
+        initializedRef.current = false
+
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
@@ -230,6 +254,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setActiveConversationId(cachedActiveConvId)
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
+        // 恢复该对话的草稿
+        setInputDraftState(_persistentDrafts.get(cachedActiveConvId) || '')
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
@@ -392,6 +418,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       activeConversationIdRef.current = convId
       setMessages([])
       setConvMessages(convId, [])
+      // 新对话无流式输出，按任务区分 isStreaming，避免沿用上一个任务的状态
+      setIsStreaming(false)
+      isStreamingRef.current = false
+      // 新对话草稿为空
+      setInputDraftState('')
       forceScrollToBottom()
 
       refreshConversationList()
@@ -431,6 +462,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
     setIsStreaming(hasActiveStream)
     isStreamingRef.current = hasActiveStream
+
+    // 切换对话时同步恢复该对话的草稿，避免显示上一个对话的输入内容
+    setInputDraftState(_persistentDrafts.get(convId) || '')
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -536,6 +570,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         streamStatesRef.current.delete(sessionId)
       }
       deleteConvMessages(convId)
+      _persistentDrafts.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -544,6 +579,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         activeConversationIdRef.current = null
         setMessages([])
         setIsStreaming(false)
+        setInputDraftState('')
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -559,6 +595,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           streamStatesRef.current.delete(sessionId)
         }
         deleteConvMessages(convId)
+        _persistentDrafts.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -566,6 +603,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         setActiveConversationId(null)
         setMessages([])
         setIsStreaming(false)
+        setInputDraftState('')
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -578,6 +616,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     try {
       streamStatesRef.current.clear()
       conversationMessagesRef.current.clear()
+      // 清理当前员工所有对话的草稿
+      for (const conv of allConversations) {
+        _persistentDrafts.delete(conv.id)
+      }
 
       await window.electronAPI.conversation.deleteAll(id)
       setAllConversations([])
@@ -585,6 +627,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       activeConversationIdRef.current = null
       setMessages([])
       setIsStreaming(false)
+      setInputDraftState('')
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
@@ -1160,6 +1203,15 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
+  // 草稿更新：同步到当前对话的持久化缓存，切回时能恢复
+  const setInputDraft = useCallback((value: string) => {
+    setInputDraftState(value)
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentDrafts.set(convId, value)
+    }
+  }, [])
+
   const handleToggleMinimalMode = useCallback((enabled: boolean) => {
     const convId = activeConversationIdRef.current
     if (!convId) return
@@ -1496,6 +1548,8 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     isStreaming,
     isCreatingConversation,
     loadingConversationId,
+    inputDraft,
+    setInputDraft,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,

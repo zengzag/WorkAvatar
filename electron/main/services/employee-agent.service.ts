@@ -3,6 +3,7 @@ import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
+import NotesService from './notes/notes.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -168,7 +169,13 @@ class EmployeeAgentService {
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
-      workspaceGuidance: emp.workspace_path ? `\n## 工作区\n工作区根目录：${emp.workspace_path}` : undefined,
+      workspaceGuidance: (() => {
+        const parts: string[] = []
+        if (emp.workspace_path) parts.push(`\n## 工作区\n工作区根目录：${emp.workspace_path}`)
+        const notesRoot = NotesService.getInstance().getVaultRoot()
+        parts.push(`\n## 用户笔记\n笔记根目录：${notesRoot}\n用户的笔记以真实 .md 文件存储在该目录，可通过 file_read / file_write / file_list / file_edit / file_manage 工具直接读写。`)
+        return parts.join('\n')
+      })(),
     }
 
     const agentOptions: BaseAgentOptions = {

@@ -67,8 +67,49 @@ export function useNotes() {
     return id
   }, [createEmptyTab, persistTabs])
 
+  const saveTabContent = useCallback(async (tabId: string): Promise<boolean> => {
+    const state = useNotesStore.getState()
+    const tab = state.tabs.find((t) => t.id === tabId)
+    if (!tab || !tab.relPath) return false
+    if (tab.content === tab.savedContent) return true
+    setTabSaving(tabId)
+    try {
+      const res = await window.electronAPI.notes.write({ relPath: tab.relPath, content: tab.content })
+      if (res && (res as any).error) {
+        message.error((res as any).error)
+        useNotesStore.setState((s) => {
+          const t = s.tabs.find((x) => x.id === tabId)
+          if (t) t.saveStatus = 'dirty'
+        })
+        return false
+      }
+      setTabSaved(tabId, tab.content, (res as any)?.mtime ?? tab.mtime)
+      return true
+    } catch (err: any) {
+      message.error(err?.message || t('notes.saveFailed'))
+      useNotesStore.setState((s) => {
+        const t = s.tabs.find((x) => x.id === tabId)
+        if (t) t.saveStatus = 'dirty'
+      })
+      return false
+    }
+  }, [setTabSaving, setTabSaved, t])
+
+  const saveCurrent = useCallback(async (): Promise<boolean> => {
+    if (!activeTabId) return false
+    return saveTabContent(activeTabId)
+  }, [activeTabId, saveTabContent])
+
   const openNote = useCallback(async (relPath: string, tabId?: string) => {
     try {
+      // 切换文档前先保存当前激活 Tab 的脏内容，避免自动保存未触发导致编辑丢失
+      if (!tabId) {
+        const st = useNotesStore.getState()
+        const active = st.tabs.find((t) => t.id === st.activeTabId)
+        if (active?.relPath && active.relPath !== relPath && active.saveStatus === 'dirty') {
+          await saveTabContent(active.id)
+        }
+      }
       const note = await window.electronAPI.notes.read(relPath)
       if (note && (note as any).error) {
         message.error((note as any).error)
@@ -80,7 +121,7 @@ export function useNotes() {
     } catch (err: any) {
       message.error(err?.message || t('notes.openFailed'))
     }
-  }, [activeTabId, createEmptyTab, openNoteInTab, persistTabs, t])
+  }, [activeTabId, createEmptyTab, openNoteInTab, persistTabs, saveTabContent, t])
 
   const init = useCallback(async () => {
     if (initedRef.current) return
@@ -116,39 +157,6 @@ export function useNotes() {
       useNotesStore.getState().createEmptyTab()
     }
   }, [refreshTree, loadSettings])
-
-  const saveTabContent = useCallback(async (tabId: string): Promise<boolean> => {
-    const state = useNotesStore.getState()
-    const tab = state.tabs.find((t) => t.id === tabId)
-    if (!tab || !tab.relPath) return false
-    if (tab.content === tab.savedContent) return true
-    setTabSaving(tabId)
-    try {
-      const res = await window.electronAPI.notes.write({ relPath: tab.relPath, content: tab.content })
-      if (res && (res as any).error) {
-        message.error((res as any).error)
-        useNotesStore.setState((s) => {
-          const t = s.tabs.find((x) => x.id === tabId)
-          if (t) t.saveStatus = 'dirty'
-        })
-        return false
-      }
-      setTabSaved(tabId, tab.content, (res as any)?.mtime ?? tab.mtime)
-      return true
-    } catch (err: any) {
-      message.error(err?.message || t('notes.saveFailed'))
-      useNotesStore.setState((s) => {
-        const t = s.tabs.find((x) => x.id === tabId)
-        if (t) t.saveStatus = 'dirty'
-      })
-      return false
-    }
-  }, [setTabSaving, setTabSaved, t])
-
-  const saveCurrent = useCallback(async (): Promise<boolean> => {
-    if (!activeTabId) return false
-    return saveTabContent(activeTabId)
-  }, [activeTabId, saveTabContent])
 
   const createNote = useCallback(async (parentRelPath: string, name: string) => {
     try {
@@ -249,9 +257,17 @@ export function useNotes() {
   }, [setSettings])
 
   const handleSwitchTab = useCallback(async (tabId: string) => {
+    // 切换 Tab 前先保存当前激活 Tab 的脏内容，避免自动保存未触发导致编辑丢失
+    if (tabId !== activeTabId) {
+      const st = useNotesStore.getState()
+      const active = st.tabs.find((t) => t.id === st.activeTabId)
+      if (active?.relPath && active.saveStatus === 'dirty') {
+        await saveTabContent(active.id)
+      }
+    }
     switchTab(tabId)
     await persistTabs()
-  }, [switchTab, persistTabs])
+  }, [activeTabId, switchTab, persistTabs, saveTabContent])
 
   const handleCloseTab = useCallback(async (tabId: string) => {
     const tab = tabs.find((t) => t.id === tabId)

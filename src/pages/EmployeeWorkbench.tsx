@@ -199,6 +199,8 @@ const EmployeeWorkbench: React.FC = () => {
     messages,
     isStreaming,
     loadingConversationId,
+    inputDraft,
+    setInputDraft,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -632,6 +634,8 @@ const EmployeeWorkbench: React.FC = () => {
             minimalMode={minimalMode}
             onMinimalModeChange={handleToggleMinimalMode}
             canToggleMinimalMode={messages.length === 0}
+            value={inputDraft}
+            onChange={setInputDraft}
           />
         </div>
       </div>
