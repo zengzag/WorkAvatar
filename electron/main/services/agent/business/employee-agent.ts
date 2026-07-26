@@ -79,6 +79,11 @@ export class EmployeeAgent extends BaseAgent {
     const useSkills = options.useSkills !== false
     const skillsXml = useSkills ? this.skillManager.getSkillsXml() : undefined
 
+    const onDemandTools = this.toolRegistry.getOnDemandTools()
+    const onDemandToolList = onDemandTools
+      .map(t => `${t.title}(${t.name})`)
+      .join('、')
+
     const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',
       instructions: this.config.instructions || '',
@@ -88,6 +93,7 @@ export class EmployeeAgent extends BaseAgent {
       memoryPrompt: this.memoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
       minimalMode: this.minimalMode,
+      onDemandToolList: onDemandToolList || undefined,
     })
 
     this.cachedSystemPrompt = prompt

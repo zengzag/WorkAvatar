@@ -143,11 +143,96 @@ export function createListAvailableToolsTool(
   }
 }
 
+/** 截断过长的参数值，避免错误信息爆掉 LLM 上下文 */
+function summarizeArgs(args: Record<string, any>, maxLen = 200): string {
+  try {
+    const parts: string[] = []
+    for (const [k, v] of Object.entries(args || {})) {
+      let val: string
+      if (typeof v === 'string') val = v
+      else if (v === undefined) val = 'undefined'
+      else if (v === null) val = 'null'
+      else {
+        try { val = JSON.stringify(v) } catch { val = String(v) }
+      }
+      if (val.length > maxLen) val = val.slice(0, maxLen) + `…(${val.length}字符)`
+      parts.push(`${k}=${val}`)
+    }
+    return parts.length > 0 ? parts.join(', ') : '(空)'
+  } catch {
+    return '(序列化失败)'
+  }
+}
+
+/** 根据错误信息文本特征识别错误类型并给出修复建议 */
+function diagnoseError(errorMessage: string): { type: string; hint: string } {
+  const msg = errorMessage || ''
+  if (/不存在|not found|找不到|未找到|无此/i.test(msg)) {
+    return { type: 'not_found', hint: '检查参数是否正确（如 ID、路径、工具名），或调用 list_available_tools 重新确认可用工具与参数说明。' }
+  }
+  if (/超时|timeout|timed out/i.test(msg)) {
+    return { type: 'timeout', hint: '工具执行超时，可尝试增大 timeout 参数（秒），或拆分任务、简化输入。' }
+  }
+  if (/权限|permission|denied|拒绝|取消|未授权/i.test(msg)) {
+    return { type: 'permission_denied', hint: '权限被拒绝或用户取消。需用户在弹窗中授权后重试；后台任务无法弹窗时请改用工作区内路径。' }
+  }
+  if (/必填|required|缺少|不能为空|需要\s*\w+|invalid/i.test(msg)) {
+    return { type: 'param_error', hint: '参数错误。调用 list_available_tools(tool_name=["工具名"]) 查看完整参数说明后修正参数。' }
+  }
+  if (/syntax|parse|json|unexpected token/i.test(msg)) {
+    return { type: 'parse_error', hint: '解析失败。检查传入参数格式（如 JSON 字符串、数组、对象是否符合 schema）。' }
+  }
+  return { type: 'internal', hint: '工具内部异常。可检查参数是否符合规范后重试；若持续失败，调用 list_available_tools(tool_name=["工具名"]) 复查参数说明。' }
+}
+
+/** 拼装失败时返回给 LLM 的结构化上下文 */
+function buildFailureContext(
+  toolName: string,
+  toolArgs: Record<string, any>,
+  result: { error?: string; output?: any; generatedFiles?: any[] },
+): string {
+  const lines: string[] = []
+  lines.push(`# 工具调用失败`)
+  lines.push(`工具: ${toolName}`)
+  lines.push(`参数: ${summarizeArgs(toolArgs)}`)
+  lines.push('')
+
+  const errorMsg = result.error || '(无错误信息)'
+  const diag = diagnoseError(errorMsg)
+  lines.push(`错误类型: ${diag.type}`)
+  lines.push(`错误信息: ${errorMsg}`)
+  lines.push(`修复建议: ${diag.hint}`)
+  lines.push('')
+
+  // 保留工具内部产出的调试上下文（console 日志、已写入文件列表等）
+  if (result.output !== undefined && result.output !== null && result.output !== '') {
+    const outputStr = typeof result.output === 'string' ? result.output : (() => { try { return JSON.stringify(result.output, null, 2) } catch { return String(result.output) } })()
+    if (outputStr.trim()) {
+      lines.push('--- 工具输出（调试上下文）---')
+      lines.push(outputStr)
+      lines.push('')
+    }
+  }
+
+  if (result.generatedFiles && result.generatedFiles.length > 0) {
+    lines.push(`--- 错误前已生成文件（共 ${result.generatedFiles.length} 个，可能需要清理）---`)
+    for (const f of result.generatedFiles) {
+      lines.push(`  - ${(f as any).path || (f as any).name || JSON.stringify(f)}`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
 /**
  * 创建 invoke_tool 元工具
  *
  * 通用按需工具调用入口，通过 dispatcher 分发到实际工具 handler，
  * 复用中间件链（超时/重试/大小限制）。
+ *
+ * 失败时返回结构化错误上下文（参数摘要、错误类型、修复建议、工具输出、已生成文件），
+ * 便于 LLM 判断具体原因并修正参数或代码后重试。
  */
 export function createInvokeToolTool(
   dispatcher: ToolDispatcher,
@@ -157,7 +242,7 @@ export function createInvokeToolTool(
     id: 'invoke_tool',
     name: 'invoke_tool',
     title: '调用按需工具',
-    description: '调用按需工具。先用 list_available_tools 获取工具名和参数说明，再将参数组装为 args 对象传入。args 的结构由对应工具的参数说明决定。',
+    description: '调用按需工具。先用 list_available_tools 获取工具名和参数说明，再将参数组装为 args 对象传入。args 的结构由对应工具的参数说明决定。失败时返回结构化错误上下文（错误类型、修复建议、工具输出、已生成文件），请据此修正参数或代码后重试。',
     parameters: {
       type: 'object',
       properties: {
@@ -176,24 +261,50 @@ export function createInvokeToolTool(
     handler: async (args: any, context?: ToolHandlerContext) => {
       const toolName = String(args?.tool_name || '').trim()
       if (!toolName) {
-        return { success: false, error: '请提供 tool_name 参数。' }
+        return {
+          success: false,
+          error: '参数错误：缺少 tool_name。',
+          output: buildFailureContext('invoke_tool', args || {}, {
+            error: 'invoke_tool 必填参数 tool_name 缺失。args 结构应为 { tool_name: string, args: object }。',
+          }),
+        }
       }
 
       const toolArgs = (args?.args && typeof args.args === 'object') ? args.args : {}
       const tool = registry.getTool(toolName)
 
       if (!tool) {
+        const available = registry.getOnDemandTools().map(t => t.name).join(', ')
+        const error = `工具 "${toolName}" 不存在。可用工具: ${available || '(无)'}`
         return {
           success: false,
-          error: `工具 "${toolName}" 不存在。请先调用 list_available_tools 查看可用工具。`,
+          error,
+          output: buildFailureContext(toolName, toolArgs, {
+            error,
+          }),
         }
       }
 
       // 通过 dispatcher 调用，复用中间件链
       const result = await dispatcher.dispatch(toolName, toolArgs, context)
+
+      if (result.success) {
+        return {
+          success: true,
+          output: result.output,
+          generatedFiles: result.generatedFiles,
+        }
+      }
+
+      // 失败时保留 error 作为简短摘要，output 返回完整结构化上下文供 LLM 诊断
       return {
-        success: result.success,
-        output: result.success ? result.output : result.error,
+        success: false,
+        error: result.error || `工具 "${toolName}" 执行失败`,
+        output: buildFailureContext(toolName, toolArgs, {
+          error: result.error,
+          output: result.output,
+          generatedFiles: result.generatedFiles,
+        }),
         generatedFiles: result.generatedFiles,
       }
     },
