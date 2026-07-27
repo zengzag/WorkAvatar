@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import PathService from '../path.service'
 import { createLogger } from '../logger'
 import { moveToTrash } from '../common-utils'
@@ -299,6 +299,62 @@ class NotesService {
       : this.toPosix(baseName)
     this.markSelfWrite(newRel)
     return { relPath: newRel }
+  }
+
+  /** 复制文件 / 文件夹到目标父文件夹（重名自动加序号）。返回新的 relPath */
+  copyItem(srcRelPath: string, destParentRelPath: string): { relPath: string } {
+    const srcFull = this.resolve(srcRelPath)
+    if (!fs.existsSync(srcFull)) throw new Error('源不存在')
+    const destParentAbs = destParentRelPath ? this.resolve(destParentRelPath) : this.vaultRoot
+    if (!fs.existsSync(destParentAbs) || !fs.statSync(destParentAbs).isDirectory()) {
+      throw new Error('目标文件夹不存在')
+    }
+    const baseName = path.basename(srcFull)
+    const isFolder = fs.statSync(srcFull).isDirectory()
+    const stem = isFolder ? baseName : baseName.replace(/\.md$/i, '')
+    const finalName = this.uniqueName(destParentAbs, stem, isFolder)
+    const destFull = path.join(destParentAbs, finalName)
+    // 防止把文件夹复制到自身子目录
+    if (isFolder && destFull.startsWith(srcFull + path.sep)) {
+      throw new Error('不能复制到自身子目录')
+    }
+    this.copyRecursive(srcFull, destFull)
+    const newRel = destParentRelPath
+      ? this.toPosix(`${destParentRelPath}/${finalName}`)
+      : this.toPosix(finalName)
+    this.markSelfWrite(newRel)
+    return { relPath: newRel }
+  }
+
+  private copyRecursive(src: string, dest: string): void {
+    const stat = fs.statSync(src)
+    if (stat.isDirectory()) {
+      fs.mkdirSync(dest, { recursive: true })
+      const entries = fs.readdirSync(src, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue
+        this.copyRecursive(path.join(src, entry.name), path.join(dest, entry.name))
+      }
+    } else {
+      fs.copyFileSync(src, dest)
+    }
+  }
+
+  /** 获取笔记 / 文件夹的绝对路径（用于复制路径、资源管理器打开等） */
+  getAbsolutePath(relPath: string): string {
+    return this.resolve(relPath)
+  }
+
+  /** 在系统资源管理器中打开：文件高亮定位，文件夹直接打开 */
+  openInExplorer(relPath: string): void {
+    const full = this.resolve(relPath)
+    if (!fs.existsSync(full)) throw new Error('目标不存在')
+    const stat = fs.statSync(full)
+    if (stat.isDirectory()) {
+      shell.openPath(full)
+    } else {
+      shell.showItemInFolder(full)
+    }
   }
 
   /** 删除文件 / 文件夹（移至操作系统回收站，可找回） */

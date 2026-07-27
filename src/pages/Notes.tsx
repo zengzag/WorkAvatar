@@ -301,6 +301,7 @@ const NotesPage: React.FC = () => {
                     onRename={notes.renameItem}
                     onDelete={notes.deleteItem}
                     onMove={notes.moveItem}
+                    onCopy={notes.copyItem}
                   />
                 )}
               </div>

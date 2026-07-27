@@ -216,11 +216,19 @@ class CalendarService {
   // ====== Events CRUD ======
 
   listEvents(params: ListEventsParams): CalendarEventInstance[] {
+    // 重复事件的原始 end_at 是首次发生时段的结束时间，翻页到未来窗口时
+    // 原 end_at 早于窗口起点会被过滤掉，导致重复实例消失。
+    // 因此重复事件只看 start_at <= winEnd（可能产生实例落在窗口内），
+    // 非重复事件仍按原时段与窗口相交判断。
     const rows = this.db.prepare(
       `SELECT * FROM calendar_events
-       WHERE end_at >= ? AND start_at <= ?
+       WHERE start_at <= ?
+         AND (
+           end_at >= ?
+           OR (recurrence_rule IS NOT NULL AND recurrence_rule != '')
+         )
        ORDER BY start_at ASC`
-    ).all(params.start_at, params.end_at) as any[]
+    ).all(params.end_at, params.start_at) as any[]
 
     const instances: CalendarEventInstance[] = []
     for (const row of rows) {
@@ -561,10 +569,18 @@ class CalendarService {
     const duration = event.end_at - event.start_at
     const instances: CalendarEventInstance[] = []
     const until = rule.until ?? winEnd + 86400
-    const maxIterations = 500
+    // 提高上限作为安全网；fastForwardCursor 已跳过大量历史迭代
+    const maxIterations = 10000
     let iter = 0
 
-    let cursor = event.start_at
+    // 跳过窗口之前的历史实例，避免对长期重复事件做无效迭代
+    let cursor = this.fastForwardCursor(event.start_at, winStart - 86400, rule)
+    // count 限制基于从 start_at 起的总实例数，需消耗已跳过的迭代
+    if (rule.count) {
+      const skipped = this.countOccurrencesBetween(event.start_at, cursor, rule)
+      iter = skipped
+    }
+
     while (iter < maxIterations) {
       iter++
       if (cursor > until) break
@@ -586,6 +602,69 @@ class CalendarService {
       cursor = next
     }
     return instances
+  }
+
+  /**
+   * 将 cursor 从 eventStart 快进到不超过 target 的最近一次重复发生时间。
+   * 用于跳过窗口之前的大量历史实例，避免 expandEventInstances 迭代超限。
+   * 仅做近似跳进，可能比 target 略早一个间隔，后续迭代会补齐。
+   */
+  private fastForwardCursor(eventStart: number, target: number, rule: RecurrenceRule): number {
+    if (eventStart >= target) return eventStart
+    const interval = Math.max(1, rule.interval)
+    const diffSec = target - eventStart
+    switch (rule.freq) {
+      case 'daily':
+        return eventStart + Math.floor(diffSec / (interval * 86400)) * interval * 86400
+      case 'weekly':
+        return eventStart + Math.floor(diffSec / (interval * 7 * 86400)) * interval * 7 * 86400
+      case 'weekdays': {
+        // 按周为单位跳进，剩余由迭代补齐
+        const chunkSec = interval * 7 * 86400
+        return eventStart + Math.floor(diffSec / chunkSec) * chunkSec
+      }
+      case 'monthly': {
+        const startDate = new Date(eventStart * 1000)
+        const targetDate = new Date(target * 1000)
+        const monthsDiff = (targetDate.getFullYear() - startDate.getFullYear()) * 12 + (targetDate.getMonth() - startDate.getMonth())
+        const skipMonths = Math.floor(monthsDiff / interval) * interval
+        if (skipMonths <= 0) return eventStart
+        const skipped = new Date(startDate.getFullYear(), startDate.getMonth() + skipMonths, startDate.getDate(), startDate.getHours(), startDate.getMinutes(), startDate.getSeconds())
+        return Math.floor(skipped.getTime() / 1000)
+      }
+      case 'yearly': {
+        const startDate = new Date(eventStart * 1000)
+        const targetDate = new Date(target * 1000)
+        const yearsDiff = targetDate.getFullYear() - startDate.getFullYear()
+        const skipYears = Math.floor(yearsDiff / interval) * interval
+        if (skipYears <= 0) return eventStart
+        const skipped = new Date(startDate.getFullYear() + skipYears, startDate.getMonth(), startDate.getDate(), startDate.getHours(), startDate.getMinutes(), startDate.getSeconds())
+        return Math.floor(skipped.getTime() / 1000)
+      }
+      default:
+        return eventStart
+    }
+  }
+
+  /** 估算从 from 到 to 之间按规则产生的实例数（用于消耗 count 配额） */
+  private countOccurrencesBetween(from: number, to: number, rule: RecurrenceRule): number {
+    if (to <= from) return 0
+    const interval = Math.max(1, rule.interval)
+    const diffSec = to - from
+    switch (rule.freq) {
+      case 'daily':
+        return Math.floor(diffSec / (interval * 86400))
+      case 'weekly':
+        return Math.floor(diffSec / (interval * 7 * 86400))
+      case 'weekdays':
+        return Math.floor(diffSec / (interval * 7 * 86400)) * 5
+      case 'monthly':
+        return Math.floor(diffSec / (interval * 30 * 86400))
+      case 'yearly':
+        return Math.floor(diffSec / (interval * 365 * 86400))
+      default:
+        return 0
+    }
   }
 
   /** 根据重复规则推算下一个发生时间 */

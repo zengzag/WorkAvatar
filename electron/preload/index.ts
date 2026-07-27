@@ -73,6 +73,7 @@ import type {
   NoteCreateParams,
   NoteRenameParams,
   NoteMoveParams,
+  NoteCopyParams,
   NoteSearchParams,
   NotesSettings,
   NotesDataChangedPayload,
@@ -398,10 +399,13 @@ const electronAPI = {
     createFolder: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_FOLDER, params),
     rename: (params: NoteRenameParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_RENAME, params),
     move: (params: NoteMoveParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_MOVE, params),
+    copy: (params: NoteCopyParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_COPY, params),
     delete: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, relPath),
     search: (params: NoteSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_SETTINGS),
     setSettings: (params: Partial<NotesSettings>) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SET_SETTINGS, params),
+    getAbsolutePath: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_ABS_PATH, relPath),
+    openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
     onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
       const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)

@@ -40,7 +40,7 @@ export function buildOfficeGuide(workspacePath?: string, formats?: string[]): st
   parts.push('')
   parts.push('```js')
   parts.push('// 步骤1：file_write 写入骨架代码（含 Document 结构 + 前 1-2 个章节）')
-  parts.push('file_write({ operation: "write", path: "/workspace/gen-doc.js", content: "..." })')
+  parts.push('file_write({ path: "/workspace/gen-doc.js", content: "..." })')
   parts.push('')
   parts.push('// 步骤2：office_exec 执行骨架，生成基础文档')
   parts.push('office_exec({ code_file: "/workspace/gen-doc.js" })')

@@ -558,6 +558,21 @@ const VditorEditorInner: React.FC<Props> = ({
       lastInternalContent.current = content
     }
 
+    // 失焦时同步最新内容到 store，避免切换文件时编辑未保存
+    const handleFocusOut = (e: FocusEvent) => {
+      const related = e.relatedTarget as Node | null
+      if (related && container.contains(related)) return
+      if (!vditor) return
+      try {
+        const value = vditor.getValue()
+        lastInternalContent.current = value
+        if (value !== lastExternalContent.current) {
+          onContentChangeRef.current(value)
+        }
+      } catch { /* ignore */ }
+    }
+    container.addEventListener('focusout', handleFocusOut)
+
     rafId1 = requestAnimationFrame(() => {
       rafId2 = requestAnimationFrame(initVditor)
     })
@@ -567,6 +582,7 @@ const VditorEditorInner: React.FC<Props> = ({
       cancelAnimationFrame(rafId1)
       cancelAnimationFrame(rafId2)
       resizeTimers.forEach(clearTimeout)
+      container.removeEventListener('focusout', handleFocusOut)
       const editorEl = container.querySelector('.vditor-ir, .vditor-sv')
       if (editorEl) {
         editorEl.removeEventListener('paste', handlePaste as any, true)

@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, message,
+  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, message, theme,
 } from 'antd'
+import { DownOutlined, RightOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -33,8 +34,15 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
   open, mode, todo, settings, existingTags = [], onClose, onSubmit,
 }) => {
   const { t } = useTranslation()
+  const { token } = theme.useToken()
   const [form] = Form.useForm()
   const isEdit = mode === 'edit'
+  // 创建与编辑均默认折叠非主题/描述字段，展开内容置于底部
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (open) setExpanded(false)
+  }, [open])
 
   const initialValues = useMemo(() => {
     if (isEdit && todo) {
@@ -135,6 +143,7 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       onCancel={onClose}
       onOk={() => form.submit()}
       destroyOnHidden
+      centered
       width={480}
     >
       <Form
@@ -145,103 +154,129 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
         size="small"
       >
         <Form.Item name="title" label={t('calendar.todoTitle')} rules={[{ required: true, message: t('calendar.todoTitlePlaceholder') }]} style={compactItem}>
-          <Input placeholder={t('calendar.todoTitlePlaceholder')} autoFocus />
+          <Input placeholder={t('calendar.todoTitlePlaceholder')} autoFocus size="middle" />
         </Form.Item>
 
-        <Row gutter={8}>
-          <Col>
-            <Form.Item name="hasDue" label={t('calendar.dueDate')} valuePropName="checked" style={compactItem}>
-              <Switch />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        {hasDue && (
-          <Row gutter={8}>
-            <Col span={12}>
-              <Form.Item name="dueDate" label={t('calendar.dueDate')} style={compactItem}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="dueTime" label={t('calendar.dueTime')} style={compactItem}>
-                <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-        )}
-
-        <Row gutter={8}>
-          <Col span={8}>
-            <Form.Item name="priority" label={t('calendar.priority')} style={compactItem}>
-              <Select
-                options={[
-                  { value: 'none', label: t('calendar.priorityNone') },
-                  { value: 'low', label: t('calendar.priorityLow') },
-                  { value: 'medium', label: t('calendar.priorityMedium') },
-                  { value: 'high', label: t('calendar.priorityHigh') },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="status" label={t('calendar.status')} style={compactItem}>
-              <Select
-                options={[
-                  { value: 'pending', label: t('calendar.statusPending') },
-                  { value: 'in_progress', label: t('calendar.statusInProgress') },
-                  { value: 'completed', label: t('calendar.statusCompleted') },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="recurrenceFreq" label={t('calendar.repeat')} style={compactItem}>
-              <Select
-                options={[
-                  { value: 'none', label: t('calendar.repeatNone') },
-                  { value: 'daily', label: t('calendar.repeatDaily') },
-                  { value: 'weekdays', label: t('calendar.repeatWeekdays') },
-                  { value: 'weekly', label: t('calendar.repeatWeekly') },
-                  { value: 'monthly', label: t('calendar.repeatMonthly') },
-                  { value: 'yearly', label: t('calendar.repeatYearly') },
-                ]}
-              />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        {recurrenceFreq && recurrenceFreq !== 'none' && (
-          <Form.Item name="recurrenceInterval" label={t('calendar.repeatInterval')} style={compactItem}>
-            <InputNumber min={1} max={99} style={{ width: '100%' }} />
-          </Form.Item>
-        )}
-
-        <Row gutter={8}>
-          <Col span={12}>
-            <Form.Item name="reminders" label={t('calendar.reminders')} style={compactItem}>
-              <Select
-                mode="multiple"
-                placeholder={t('calendar.addReminder')}
-                options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
-              />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="tags" label={t('calendar.tags')} style={compactItem}>
-              <Select
-                mode="tags"
-                placeholder={t('calendar.tagsPlaceholder')}
-                tokenSeparators={[',', ' ']}
-                options={existingTags.map(tag => ({ value: tag, label: tag }))}
-              />
-            </Form.Item>
-          </Col>
-        </Row>
-
-        <Form.Item name="description" label={t('calendar.description')} style={{ marginBottom: 0 }}>
-          <Input.TextArea rows={2} placeholder={t('calendar.descriptionPlaceholder')} />
+        <Form.Item name="description" label={t('calendar.description')} style={compactItem}>
+          <Input.TextArea rows={4} size="middle" placeholder={t('calendar.descriptionPlaceholder')} />
         </Form.Item>
+
+        {!expanded && (
+          <Button
+            type="link"
+            size="small"
+            onClick={() => setExpanded(true)}
+            icon={<RightOutlined style={{ fontSize: 10 }} />}
+            style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
+          >
+            {t('calendar.moreOptions')}
+          </Button>
+        )}
+
+        {expanded && (
+          <>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => setExpanded(false)}
+              icon={<DownOutlined style={{ fontSize: 10 }} />}
+              style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
+            >
+              {t('calendar.lessOptions')}
+            </Button>
+
+            <Row gutter={8}>
+              <Col>
+                <Form.Item name="hasDue" label={t('calendar.dueDate')} valuePropName="checked" style={compactItem}>
+                  <Switch />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {hasDue && (
+              <Row gutter={8}>
+                <Col span={12}>
+                  <Form.Item name="dueDate" label={t('calendar.dueDate')} style={compactItem}>
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item name="dueTime" label={t('calendar.dueTime')} style={compactItem}>
+                    <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            )}
+
+            <Row gutter={8}>
+              <Col span={8}>
+                <Form.Item name="priority" label={t('calendar.priority')} style={compactItem}>
+                  <Select
+                    options={[
+                      { value: 'none', label: t('calendar.priorityNone') },
+                      { value: 'low', label: t('calendar.priorityLow') },
+                      { value: 'medium', label: t('calendar.priorityMedium') },
+                      { value: 'high', label: t('calendar.priorityHigh') },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="status" label={t('calendar.status')} style={compactItem}>
+                  <Select
+                    options={[
+                      { value: 'pending', label: t('calendar.statusPending') },
+                      { value: 'in_progress', label: t('calendar.statusInProgress') },
+                      { value: 'completed', label: t('calendar.statusCompleted') },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="recurrenceFreq" label={t('calendar.repeat')} style={compactItem}>
+                  <Select
+                    options={[
+                      { value: 'none', label: t('calendar.repeatNone') },
+                      { value: 'daily', label: t('calendar.repeatDaily') },
+                      { value: 'weekdays', label: t('calendar.repeatWeekdays') },
+                      { value: 'weekly', label: t('calendar.repeatWeekly') },
+                      { value: 'monthly', label: t('calendar.repeatMonthly') },
+                      { value: 'yearly', label: t('calendar.repeatYearly') },
+                    ]}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {recurrenceFreq && recurrenceFreq !== 'none' && (
+              <Form.Item name="recurrenceInterval" label={t('calendar.repeatInterval')} style={compactItem}>
+                <InputNumber min={1} max={99} style={{ width: '100%' }} />
+              </Form.Item>
+            )}
+
+            <Row gutter={8}>
+              <Col span={12}>
+                <Form.Item name="reminders" label={t('calendar.reminders')} style={compactItem}>
+                  <Select
+                    mode="multiple"
+                    placeholder={t('calendar.addReminder')}
+                    options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="tags" label={t('calendar.tags')} style={compactItem}>
+                  <Select
+                    mode="tags"
+                    placeholder={t('calendar.tagsPlaceholder')}
+                    tokenSeparators={[',', ' ']}
+                    options={existingTags.map(tag => ({ value: tag, label: tag }))}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          </>
+        )}
       </Form>
     </Modal>
   )

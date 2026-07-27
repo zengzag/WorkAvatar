@@ -13,10 +13,13 @@ export const NOTES_CHANNELS = {
   NOTES_CREATE_FOLDER: 'notes:create-folder',
   NOTES_RENAME: 'notes:rename',
   NOTES_MOVE: 'notes:move',
+  NOTES_COPY: 'notes:copy',
   NOTES_DELETE: 'notes:delete',
   NOTES_SEARCH: 'notes:search',
   NOTES_GET_SETTINGS: 'notes:get-settings',
   NOTES_SET_SETTINGS: 'notes:set-settings',
+  NOTES_GET_ABS_PATH: 'notes:get-abs-path',
+  NOTES_OPEN_IN_EXPLORER: 'notes:open-in-explorer',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -110,6 +113,12 @@ export interface NoteRenameParams {
 
 export interface NoteMoveParams {
   srcRelPath: string
+  destParentRelPath: string
+}
+
+export interface NoteCopyParams {
+  srcRelPath: string
+  /** 目标父文件夹 relPath，空串表示 vault 根 */
   destParentRelPath: string
 }
 

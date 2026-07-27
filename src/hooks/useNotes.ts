@@ -103,25 +103,25 @@ export function useNotes() {
   const openNote = useCallback(async (relPath: string, tabId?: string) => {
     try {
       // 切换文档前先保存当前激活 Tab 的脏内容，避免自动保存未触发导致编辑丢失
-      if (!tabId) {
-        const st = useNotesStore.getState()
-        const active = st.tabs.find((t) => t.id === st.activeTabId)
-        if (active?.relPath && active.relPath !== relPath && active.saveStatus === 'dirty') {
-          await saveTabContent(active.id)
-        }
+      const st = useNotesStore.getState()
+      const active = st.tabs.find((t) => t.id === st.activeTabId)
+      if (active?.relPath && active.relPath !== relPath && active.saveStatus === 'dirty') {
+        await saveTabContent(active.id)
       }
       const note = await window.electronAPI.notes.read(relPath)
       if (note && (note as any).error) {
         message.error((note as any).error)
         return
       }
-      const targetTabId = tabId || activeTabId || createEmptyTab()
+      // 目标 Tab：优先复用传入/激活的空 Tab，否则由 store 新建
+      const currentSt = useNotesStore.getState()
+      const targetTabId = tabId || currentSt.activeTabId || currentSt.createEmptyTab()
       openNoteInTab(targetTabId, relPath, (note as any).content, (note as any).mtime)
       await persistTabs()
     } catch (err: any) {
       message.error(err?.message || t('notes.openFailed'))
     }
-  }, [activeTabId, createEmptyTab, openNoteInTab, persistTabs, saveTabContent, t])
+  }, [saveTabContent, openNoteInTab, persistTabs, t])
 
   const init = useCallback(async () => {
     if (initedRef.current) return
@@ -228,6 +228,21 @@ export function useNotes() {
     }
   }, [renameTabPath, persistTabs, refreshTree, t])
 
+  const copyItem = useCallback(async (srcRelPath: string, destParentRelPath: string) => {
+    try {
+      const res = await window.electronAPI.notes.copy({ srcRelPath, destParentRelPath })
+      if (res && (res as any).error) {
+        message.error((res as any).error)
+        return false
+      }
+      await refreshTree()
+      return true
+    } catch (err: any) {
+      message.error(err?.message || t('notes.copyFailed'))
+      return false
+    }
+  }, [refreshTree, t])
+
   const deleteItem = useCallback(async (relPath: string) => {
     try {
       const res = await window.electronAPI.notes.delete(relPath)
@@ -319,7 +334,7 @@ export function useNotes() {
     tree, treeLoading, currentRelPath, currentContent, currentMtime, saveStatus,
     tabs, activeTabId, activeTab, settings, settingsLoading, locateText,
     init, refreshTree, openNote, saveCurrent, createNote, createFolder, newTab: handleNewTab,
-    renameItem, moveItem, deleteItem, updateSettings,
+    renameItem, moveItem, copyItem, deleteItem, updateSettings,
     setContent, setLocateText, reset,
     switchTab: handleSwitchTab,
     closeTab: handleCloseTab,

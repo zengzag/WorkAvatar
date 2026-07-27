@@ -14,6 +14,9 @@ import {
   FileAddOutlined,
   CaretDownOutlined,
   CaretRightOutlined,
+  CopyOutlined,
+  SnippetsOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { NoteNode } from '../../types/notes'
@@ -32,6 +35,7 @@ interface Props {
   onRename: (relPath: string, newName: string) => Promise<unknown>
   onDelete: (relPath: string) => Promise<boolean>
   onMove: (srcRelPath: string, destParentRelPath: string) => Promise<boolean>
+  onCopy: (srcRelPath: string, destParentRelPath: string) => Promise<boolean>
 }
 
 type EditingState =
@@ -147,7 +151,7 @@ const TreeNodeTitle = memo(function TreeNodeTitle({
 
 const NotesTree: React.FC<Props> = ({
   tree, loading, currentRelPath, expandedFolders, settingsLoading, onExpandedFoldersChange,
-  onOpen, onRefresh, onCreateNote, onCreateFolder, onRename, onDelete, onMove,
+  onOpen, onRefresh, onCreateNote, onCreateFolder, onRename, onDelete, onMove, onCopy,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -158,14 +162,21 @@ const NotesTree: React.FC<Props> = ({
   const [editingName, setEditingName] = useState('')
   const [contextNode, setContextNode] = useState<NoteNode | null>(null)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null)
-  const [moveModal, setMoveModal] = useState<{ srcRelPath: string } | null>(null)
+  const [moveModal, setMoveModal] = useState<{ srcRelPaths: string[] } | null>(null)
   const [dragSrcKey, setDragSrcKey] = useState<string | null>(null)
   const [rootHover, setRootHover] = useState(false)
+  const [clipboardRelPath, setClipboardRelPath] = useState<string | null>(null)
+  const [selectedNode, setSelectedNode] = useState<NoteNode | null>(null)
+  const [treeSelectedKeys, setTreeSelectedKeys] = useState<React.Key[]>([])
   const inputRef = useRef<InputRef>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const submittingRef = useRef(false)
   const cancelingRef = useRef(false)
   const initedExpandRef = useRef(false)
   const preFilterKeysRef = useRef<React.Key[] | null>(null)
+  // 拖拽时靠近顶部/底部自动滚动
+  const dragScrollDirRef = useRef<'up' | 'down' | null>(null)
+  const dragScrollRafRef = useRef<number | null>(null)
 
   const lowerFilter = filter.trim().toLowerCase()
 
@@ -237,7 +248,11 @@ const NotesTree: React.FC<Props> = ({
   const handleContextMenuOpen = useCallback((node: NoteNode, pos: { x: number; y: number }) => {
     setContextNode(node)
     setMenuPos(pos)
-  }, [])
+    // 右击未在当前选中的节点：重置为单选
+    if (!treeSelectedKeys.includes(node.relPath)) {
+      setTreeSelectedKeys([node.relPath])
+    }
+  }, [treeSelectedKeys])
 
   const handleRootContextMenu = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.notes-tree-row')) return
@@ -364,17 +379,79 @@ const NotesTree: React.FC<Props> = ({
     return result
   }, [tree, lowerFilter, editing])
 
-  const selectedKeys = useMemo(() => (currentRelPath ? [currentRelPath] : []), [currentRelPath])
+  // 多选状态与 active 文件分离：selectedKeys 控制背景高亮（多选），
+  // currentRelPath 通过 titleRender 控制主色文字（当前打开的文件）
+  const selectedKeys = treeSelectedKeys
+  const anchorKeyRef = useRef<string | null>(null)
 
-  const handleSelect = useCallback((keys: React.Key[]) => {
-    const key = keys[0] as string | undefined
-    if (!key) return
-    if (editing?.mode === 'create' && key === editing.tempKey) return
-    const node = nodeMapRef.current.get(key)
-    if (node && node.type === 'file') onOpen(key)
-  }, [onOpen, editing])
+  // 当 currentRelPath 外部变化（如搜索点击、Tab 切换）时，重置为单选
+  useEffect(() => {
+    setTreeSelectedKeys(currentRelPath ? [currentRelPath] : [])
+    anchorKeyRef.current = currentRelPath
+  }, [currentRelPath])
+
+  // 当前展开状态下可见节点的 relPath 列表（按渲染顺序），用于 Shift 范围选择
+  const getVisibleNodePaths = useCallback((): string[] => {
+    const result: string[] = []
+    const walk = (nodes: ExtendedTreeDataNode[]) => {
+      for (const n of nodes) {
+        const key = String(n.key)
+        if (key.startsWith('__new_')) continue
+        result.push(key)
+        if (n.children && expandedKeys.includes(key)) {
+          walk(n.children)
+        }
+      }
+    }
+    walk(treeData)
+    return result
+  }, [treeData, expandedKeys])
+
+  const handleSelect = useCallback((keys: React.Key[], info: any) => {
+    const e = info?.nativeEvent as MouseEvent | undefined
+    const hasCtrl = e?.ctrlKey || e?.metaKey
+    const hasShift = e?.shiftKey
+    const clickedKey = String(info?.node?.key ?? '')
+
+    // Shift 范围选择：从锚点到当前节点之间所有可见节点
+    if (hasShift && anchorKeyRef.current && clickedKey) {
+      const visible = getVisibleNodePaths()
+      const startIdx = visible.indexOf(anchorKeyRef.current)
+      const endIdx = visible.indexOf(clickedKey)
+      if (startIdx >= 0 && endIdx >= 0) {
+        const [from, to] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx]
+        const rangeKeys = visible.slice(from, to + 1)
+        setTreeSelectedKeys(rangeKeys)
+        const node = nodeMapRef.current.get(clickedKey)
+        if (node) setSelectedNode(node)
+      }
+      return
+    }
+
+    // Ctrl/Cmd 单击 toggle 选中
+    if (hasCtrl && clickedKey) {
+      setTreeSelectedKeys(keys)
+      anchorKeyRef.current = clickedKey
+      const node = nodeMapRef.current.get(clickedKey)
+      if (node) setSelectedNode(node)
+      return
+    }
+
+    // 普通点击：单选 + 打开文件（与未启用多选时行为一致）
+    setTreeSelectedKeys(clickedKey ? [clickedKey] : [])
+    anchorKeyRef.current = clickedKey || null
+    if (clickedKey && !clickedKey.startsWith('__new_')) {
+      const node = nodeMapRef.current.get(clickedKey)
+      if (node) {
+        setSelectedNode(node)
+        if (node.type === 'file') onOpen(clickedKey)
+      }
+    }
+  }, [onOpen, getVisibleNodePaths])
 
   const handleTitleClick = useCallback((e: React.MouseEvent, node: NoteNode) => {
+    // 修饰键点击交由 Tree onSelect 处理多选，不阻止冒泡，也不切换展开
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return
     if (node.type !== 'folder') return
     e.stopPropagation()
     setExpandedKeys((prev) => {
@@ -407,10 +484,27 @@ const NotesTree: React.FC<Props> = ({
     if (!dragKey || !dropKey || dragKey === dropKey) return
     if (dragKey.startsWith('__new_')) return
     setDragSrcKey(null)
-    try {
-      await onMove(dragKey, dropKey)
-    } catch { /* ignore */ }
-  }, [onMove])
+    // 批量拖拽：拖动选中项时移动所有选中项
+    const selected = treeSelectedKeys.filter((k) => typeof k === 'string' && !String(k).startsWith('__new_')) as string[]
+    const pathsToMove = selected.includes(dragKey) ? selected : [dragKey]
+    // 过滤掉目标是自身或祖先-后代关系冲突的项
+    const dropNode = nodeMapRef.current.get(dropKey)
+    const validPaths = pathsToMove.filter((p) => {
+      if (p === dropKey) return false
+      const n = nodeMapRef.current.get(p)
+      if (!n) return false
+      if (n.type === 'folder' && dropNode && isInSubtree(n, dropKey)) return false
+      return true
+    })
+    // 去重：移除被其他选中项祖先包含的项
+    const dedupedPaths = validPaths.filter((p) =>
+      !validPaths.some((other) => other !== p && p.startsWith(other + '/'))
+    )
+    for (const p of dedupedPaths) {
+      try { await onMove(p, dropKey) } catch { /* ignore */ }
+    }
+    setTreeSelectedKeys([])
+  }, [onMove, treeSelectedKeys])
 
   const handleDragStart = useCallback((info: any) => {
     const key = String(info?.node?.key ?? '')
@@ -421,6 +515,55 @@ const NotesTree: React.FC<Props> = ({
     setRootHover(false)
   }, [])
 
+  // 拖拽进行中：rAF 循环根据 dragScrollDirRef 自动滚动容器
+  useEffect(() => {
+    if (!dragSrcKey) {
+      dragScrollDirRef.current = null
+      if (dragScrollRafRef.current) {
+        cancelAnimationFrame(dragScrollRafRef.current)
+        dragScrollRafRef.current = null
+      }
+      return
+    }
+    const STEP = 10
+    const tick = () => {
+      const el = containerRef.current
+      const dir = dragScrollDirRef.current
+      if (el && dir) {
+        el.scrollTop += dir === 'down' ? STEP : -STEP
+      }
+      dragScrollRafRef.current = requestAnimationFrame(tick)
+    }
+    dragScrollRafRef.current = requestAnimationFrame(tick)
+    return () => {
+      dragScrollDirRef.current = null
+      if (dragScrollRafRef.current) {
+        cancelAnimationFrame(dragScrollRafRef.current)
+        dragScrollRafRef.current = null
+      }
+    }
+  }, [dragSrcKey])
+
+  // 拖拽时根据光标位置决定滚动方向
+  const handleContainerDragOver = useCallback((e: React.DragEvent) => {
+    const el = containerRef.current
+    if (!el) { dragScrollDirRef.current = null; return }
+    const rect = el.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const threshold = 120
+    if (y < threshold) {
+      dragScrollDirRef.current = 'up'
+    } else if (y > rect.height - threshold) {
+      dragScrollDirRef.current = 'down'
+    } else {
+      dragScrollDirRef.current = null
+    }
+  }, [])
+
+  const handleContainerDragLeave = useCallback(() => {
+    dragScrollDirRef.current = null
+  }, [])
+
   const showRootDropZone = !!dragSrcKey && dragSrcKey.includes('/')
   const handleRootDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -428,14 +571,178 @@ const NotesTree: React.FC<Props> = ({
     const key = dragSrcKey
     setDragSrcKey(null)
     if (!key) return
+    // 批量拖到根目录：移动所有选中项
+    const selected = treeSelectedKeys.filter((k) => typeof k === 'string' && !String(k).startsWith('__new_')) as string[]
+    const pathsToMove = selected.includes(key) ? selected : [key]
+    // 去重：移除被其他选中项祖先包含的项
+    const dedupedPaths = pathsToMove.filter((p) =>
+      !pathsToMove.some((other) => other !== p && p.startsWith(other + '/'))
+    )
+    let anyOk = false
+    for (const p of dedupedPaths) {
+      try {
+        const ok = await onMove(p, '')
+        if (ok) anyOk = true
+      } catch { /* ignore */ }
+    }
+    if (anyOk) message.success(t('notes.moveSuccess'))
+    setTreeSelectedKeys([])
+  }, [dragSrcKey, onMove, t, treeSelectedKeys])
+
+  // 获取节点的父文件夹 relPath
+  const getParentRelPath = useCallback((relPath: string): string => {
+    const idx = relPath.lastIndexOf('/')
+    return idx >= 0 ? relPath.substring(0, idx) : ''
+  }, [])
+
+  // 创建副本：在同父文件夹下复制
+  const handleCreateCopy = useCallback(async (node: NoteNode) => {
+    const parentRelPath = getParentRelPath(node.relPath)
+    const ok = await onCopy(node.relPath, parentRelPath)
+    if (ok) message.success(t('notes.pasteSuccess'))
+  }, [onCopy, getParentRelPath, t, message])
+
+  // 粘贴：将剪贴板中的节点复制到目标父文件夹
+  const handlePaste = useCallback(async (destParentRelPath: string) => {
+    if (!clipboardRelPath) {
+      message.warning(t('notes.nothingToPaste'))
+      return
+    }
+    const ok = await onCopy(clipboardRelPath, destParentRelPath)
+    if (ok) message.success(t('notes.pasteSuccess'))
+  }, [clipboardRelPath, onCopy, t, message])
+
+  // 在资源管理器中打开
+  const handleOpenInExplorer = useCallback(async (relPath: string) => {
     try {
-      const ok = await onMove(key, '')
-      if (ok) message.success(t('notes.moveSuccess'))
+      const res = await window.electronAPI.notes.openInExplorer(relPath)
+      if (res && (res as any).error) message.error((res as any).error)
     } catch { /* ignore */ }
-  }, [dragSrcKey, onMove, t])
+  }, [message])
+
+  // 复制路径到剪贴板
+  const handleCopyPath = useCallback(async (relPath: string, type: 'relative' | 'absolute') => {
+    try {
+      let pathValue = relPath
+      if (type === 'absolute') {
+        const res = await window.electronAPI.notes.getAbsolutePath(relPath)
+        if (res && (res as any).error) {
+          message.error((res as any).error)
+          return
+        }
+        pathValue = (res as any).absPath || relPath
+      }
+      await navigator.clipboard.writeText(pathValue)
+      message.success(t('notes.pathCopied'))
+    } catch {
+      message.error(t('notes.copyFailed'))
+    }
+  }, [t, message])
+
+  // 批量删除
+  const handleBatchDelete = useCallback((relPaths: string[]) => {
+    if (relPaths.length === 0) return
+    modal.confirm({
+      title: t('notes.confirmBatchDelete'),
+      content: t('notes.batchDeleteDesc', { count: relPaths.length }),
+      okType: 'danger',
+      okText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        for (const p of relPaths) {
+          await onDelete(p)
+        }
+        setTreeSelectedKeys([])
+      },
+    })
+  }, [modal, t, onDelete])
+
+  // 批量移动
+  const handleBatchMove = useCallback((relPaths: string[]) => {
+    if (relPaths.length === 0) return
+    setMoveModal({ srcRelPaths: relPaths })
+  }, [])
+
+  // 获取当前多选路径（仅有效节点）
+  const getSelectedPaths = useCallback((): string[] => {
+    return treeSelectedKeys
+      .filter((k) => typeof k === 'string' && !String(k).startsWith('__new_'))
+      .map((k) => String(k))
+      .filter((p) => nodeMapRef.current.has(p))
+  }, [treeSelectedKeys])
+
+  // 键盘快捷键：Delete 删除、F2 重命名、Ctrl/Cmd+C 复制、Ctrl/Cmd+V 粘贴、Ctrl/Cmd+D 创建副本
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (editing) return
+      const container = containerRef.current
+      if (!container) return
+      const active = document.activeElement
+      if (!container.contains(active)) return
+      const tag = active?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || (active as HTMLElement)?.isContentEditable) return
+      if (!selectedNode) return
+      // 校验节点仍存在
+      if (!nodeMapRef.current.has(selectedNode.relPath)) return
+      const mod = e.metaKey || e.ctrlKey
+      const key = e.key.toLowerCase()
+      if (e.key === 'Delete') {
+        e.preventDefault()
+        const selectedPaths = getSelectedPaths()
+        if (selectedPaths.length > 1) {
+          handleBatchDelete(selectedPaths)
+        } else {
+          const desc = selectedNode.type === 'folder' ? t('notes.deleteFolderDesc') : t('notes.deleteFileDesc')
+          modal.confirm({
+            title: t('notes.confirmDelete'),
+            content: `${selectedNode.relPath}\n\n${desc}`,
+            okType: 'danger',
+            okText: t('common.delete'),
+            cancelText: t('common.cancel'),
+            onOk: async () => { await onDelete(selectedNode.relPath) },
+          })
+        }
+      } else if (e.key === 'F2') {
+        e.preventDefault()
+        startRename(selectedNode)
+      } else if (mod && key === 'c' && !e.shiftKey) {
+        e.preventDefault()
+        setClipboardRelPath(selectedNode.relPath)
+      } else if (mod && key === 'v' && !e.shiftKey) {
+        e.preventDefault()
+        if (!clipboardRelPath) return
+        const destParent = selectedNode.type === 'folder' ? selectedNode.relPath : getParentRelPath(selectedNode.relPath)
+        handlePaste(destParent)
+      } else if (mod && key === 'd' && !e.shiftKey) {
+        e.preventDefault()
+        handleCreateCopy(selectedNode)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [editing, selectedNode, clipboardRelPath, t, modal, message, onDelete, startRename, getParentRelPath, handlePaste, handleCreateCopy, getSelectedPaths, handleBatchDelete])
 
   const contextMenu: MenuProps = useMemo(() => {
     if (!contextNode) return { items: [] }
+    // 多选菜单：右击的节点在当前多选中
+    const selectedPaths = treeSelectedKeys
+      .filter((k) => typeof k === 'string' && !String(k).startsWith('__new_'))
+      .map((k) => String(k))
+    const isMulti = selectedPaths.length > 1 && selectedPaths.includes(contextNode.relPath)
+    if (isMulti) {
+      const items: MenuProps['items'] = [
+        { key: 'batch-move', icon: <FolderOutlined />, label: t('notes.batchMoveTo'), onClick: () => { closeContextMenu(); handleBatchMove(selectedPaths) } },
+        { type: 'divider' },
+        {
+          key: 'batch-delete',
+          icon: <DeleteOutlined />,
+          danger: true,
+          label: t('notes.batchDelete'),
+          onClick: () => { closeContextMenu(); handleBatchDelete(selectedPaths) },
+        },
+      ]
+      return { items }
+    }
     const items: MenuProps['items'] = []
     if (contextNode.type === 'folder') {
       items.push({ key: 'new-note', icon: <FileAddOutlined />, label: t('notes.newNote'), onClick: () => { closeContextMenu(); startCreate(contextNode.relPath, 'note') } })
@@ -444,8 +751,24 @@ const NotesTree: React.FC<Props> = ({
     } else {
       items.push({ key: 'open', icon: <FormOutlined />, label: t('common.view'), onClick: () => { closeContextMenu(); onOpen(contextNode.relPath) } })
     }
+    items.push({ key: 'create-copy', icon: <CopyOutlined />, label: t('notes.createCopy'), onClick: () => { closeContextMenu(); handleCreateCopy(contextNode) } })
+    items.push({ key: 'copy', icon: <CopyOutlined />, label: t('notes.copy'), onClick: () => { closeContextMenu(); setClipboardRelPath(contextNode.relPath) } })
+    if (contextNode.type === 'folder' && clipboardRelPath) {
+      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('notes.paste'), onClick: () => { closeContextMenu(); handlePaste(contextNode.relPath) } })
+    }
     items.push({ key: 'rename', icon: <FormOutlined />, label: t('common.rename'), onClick: () => { closeContextMenu(); startRename(contextNode) } })
-    items.push({ key: 'move', icon: <FolderOutlined />, label: t('notes.moveTo'), onClick: () => { closeContextMenu(); setMoveModal({ srcRelPath: contextNode.relPath }) } })
+    items.push({ key: 'move', icon: <FolderOutlined />, label: t('notes.moveTo'), onClick: () => { closeContextMenu(); setMoveModal({ srcRelPaths: [contextNode.relPath] }) } })
+    items.push({ type: 'divider' })
+    items.push({ key: 'open-in-explorer', icon: <FolderOpenOutlined />, label: t('notes.openInExplorer'), onClick: () => { closeContextMenu(); handleOpenInExplorer(contextNode.relPath) } })
+    items.push({
+      key: 'copy-path',
+      icon: <LinkOutlined />,
+      label: t('notes.copyPath'),
+      children: [
+        { key: 'copy-relative', label: t('notes.copyRelativePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'relative') } },
+        { key: 'copy-absolute', label: t('notes.copyAbsolutePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'absolute') } },
+      ],
+    })
     items.push({ type: 'divider' })
     items.push({
       key: 'delete',
@@ -466,14 +789,19 @@ const NotesTree: React.FC<Props> = ({
       },
     })
     return { items }
-  }, [contextNode, t, startCreate, startRename, onOpen, onDelete, modal, closeContextMenu])
+  }, [contextNode, treeSelectedKeys, t, startCreate, startRename, onOpen, onDelete, modal, closeContextMenu, handleCreateCopy, handlePaste, handleOpenInExplorer, handleCopyPath, clipboardRelPath, handleBatchDelete, handleBatchMove])
 
-  const rootContextMenu: MenuProps = useMemo(() => ({
-    items: [
+  const rootContextMenu: MenuProps = useMemo(() => {
+    const items: MenuProps['items'] = [
       { key: 'new-note', icon: <FileAddOutlined />, label: t('notes.newNote'), onClick: () => { closeContextMenu(); startCreate('', 'note') } },
       { key: 'new-folder', icon: <FolderAddOutlined />, label: t('notes.newFolder'), onClick: () => { closeContextMenu(); startCreate('', 'folder') } },
-    ],
-  }), [t, startCreate, closeContextMenu])
+    ]
+    if (clipboardRelPath) {
+      items.push({ type: 'divider' })
+      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('notes.paste'), onClick: () => { closeContextMenu(); handlePaste('') } })
+    }
+    return { items }
+  }, [t, startCreate, closeContextMenu, clipboardRelPath, handlePaste])
 
   const folders = useMemo(() => collectFolders(tree), [tree])
 
@@ -545,8 +873,15 @@ const NotesTree: React.FC<Props> = ({
         </Tooltip>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0, position: 'relative' }}>
-        {tree.length === 0 && !loading ? (
+      <div
+        ref={containerRef}
+        tabIndex={0}
+        onDragOver={handleContainerDragOver}
+        onDragLeave={handleContainerDragLeave}
+        onDrop={handleContainerDragLeave}
+        style={{ flex: 1, overflow: 'auto', minHeight: 0, position: 'relative', outline: 'none' }}
+      >
+        {tree.length === 0 && !loading && !editing ? (
           <Empty
             style={{ padding: '32px 0' }}
             image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -567,6 +902,7 @@ const NotesTree: React.FC<Props> = ({
             >
               <Tree
                 blockNode
+                multiple
                 draggable={{ icon: false }}
                 allowDrop={handleAllowDrop}
                 onDrop={handleDrop}
@@ -607,11 +943,19 @@ const NotesTree: React.FC<Props> = ({
       <MoveModal
         open={!!moveModal}
         folders={folders}
+        srcCount={moveModal?.srcRelPaths.length || 0}
         onCancel={() => setMoveModal(null)}
         onOk={async (destParent) => {
           if (moveModal) {
-            const ok = await onMove(moveModal.srcRelPath, destParent)
-            if (ok) message.success(t('notes.moveSuccess'))
+            let anyOk = false
+            for (const src of moveModal.srcRelPaths) {
+              try {
+                const ok = await onMove(src, destParent)
+                if (ok) anyOk = true
+              } catch { /* ignore */ }
+            }
+            if (anyOk) message.success(t('notes.moveSuccess'))
+            setTreeSelectedKeys([])
           }
           setMoveModal(null)
         }}
@@ -632,18 +976,22 @@ const NotesTree: React.FC<Props> = ({
 const MoveModal: React.FC<{
   open: boolean
   folders: { label: string; value: string }[]
+  srcCount?: number
   onCancel: () => void
   onOk: (destParent: string) => void
-}> = ({ open, folders, onCancel, onOk }) => {
+}> = ({ open, folders, srcCount, onCancel, onOk }) => {
   const { t } = useTranslation()
   const [selected, setSelected] = useState('')
   const options = useMemo(() => [
     { label: t('notes.vaultRoot'), value: '' },
     ...folders,
   ], [folders, t])
+  const title = srcCount && srcCount > 1
+    ? `${t('notes.batchMoveTo')} (${srcCount})`
+    : t('notes.moveTo')
   return (
     <Modal
-      title={t('notes.moveTo')}
+      title={title}
       open={open}
       onOk={() => onOk(selected)}
       onCancel={onCancel}
@@ -651,19 +999,21 @@ const MoveModal: React.FC<{
       cancelText={t('common.cancel')}
       destroyOnClose
     >
-      <Tree
-        showIcon
-        blockNode
-        defaultExpandAll
-        selectedKeys={selected ? [selected] : ['__root__']}
-        onSelect={(keys) => setSelected(String(keys[0] === '__root__' ? '' : keys[0] || ''))}
-        treeData={[{
-          key: '__root__',
-          title: t('notes.vaultRoot'),
-          icon: <FolderOutlined />,
-          children: toTreeData(toNoteNodes(options.filter((o) => o.value !== ''))),
-        }]}
-      />
+      <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+        <Tree
+          showIcon
+          blockNode
+          defaultExpandAll
+          selectedKeys={selected ? [selected] : ['__root__']}
+          onSelect={(keys) => setSelected(String(keys[0] === '__root__' ? '' : keys[0] || ''))}
+          treeData={[{
+            key: '__root__',
+            title: t('notes.vaultRoot'),
+            icon: <FolderOutlined />,
+            children: toTreeData(toNoteNodes(options.filter((o) => o.value !== ''))),
+          }]}
+        />
+      </div>
     </Modal>
   )
 }

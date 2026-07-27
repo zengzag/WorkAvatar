@@ -8,12 +8,22 @@ import { interactionContext } from '../../unified-interaction.service'
 import DatabaseService from '../../database.service'
 
 /**
- * 文件操作工具（拆分为 5 个独立工具，降低参数互斥混淆）：
+ * 文件操作工具（聚合已拆分，file_edit 保留 operation 字段聚合）：
+ *
+ * 常驻工具（加入 LLM tools 数组，对话全程不变）：
  *   file_read   读取文件内容
- *   file_write  写入文件 / 创建文件夹
- *   file_edit   编辑文件部分内容（替换/插入/删除）
- *   file_manage 删除 / 移动 / 复制 / 重命名 / 查看信息
- *   file_list   列出目录 / 按名称搜索文件
+ *   file_write  写入文件（覆盖/追加）
+ *   file_edit   编辑文件部分内容（replace/insert/delete 三种模式）
+ *
+ * 按需工具（通过 list_available_tools + invoke_tool 发现和调用）：
+ *   file_mkdir   创建文件夹
+ *   file_list    列出目录内容
+ *   file_search  按通配符搜索文件名
+ *   file_delete  删除（移至回收站）
+ *   file_move    移动
+ *   file_copy    复制
+ *   file_rename  重命名
+ *   file_stat    查看文件/目录信息
  */
 
 const ignoreDirs = new Set([
@@ -108,6 +118,8 @@ const PARSABLE_EXTENSIONS = new Set([
 const DEFAULT_MAX_LENGTH = 5000
 const MAX_LENGTH_LIMIT = 50000
 
+// ====== 常驻工具 ======
+
 // ====== file_read：读取文件内容 ======
 
 export const fileReadTool: ToolDefinition = {
@@ -136,38 +148,25 @@ export const fileReadTool: ToolDefinition = {
   source: 'builtin',
 }
 
-// ====== file_write：写入文件 / 创建文件夹 ======
+// ====== file_write：写入文件（覆盖/追加） ======
 
 export const fileWriteTool: ToolDefinition = {
   id: 'file_write',
   name: 'file_write',
   title: '写入文件',
-  description: '写入文件或创建文件夹。write 写入文件（自动建父目录，append=true 追加，默认覆盖）；mkdir 创建文件夹（-p 语义，自动建父目录）。工作区外操作需确认。',
+  description: '写入文件，自动建父目录。append=true 追加到文件末尾（默认false，覆盖）。工作区外操作需确认。',
   parameters: {
     type: 'object',
     properties: {
-      operation: {
-        type: 'string',
-        enum: ['write', 'mkdir'],
-        description: '操作类型：write 写文件 / mkdir 创建文件夹',
-      },
-      path: { type: 'string', description: '目标路径绝对路径' },
-      content: { type: 'string', description: '写入内容（write 使用）' },
-      append: { type: 'boolean', description: 'write 是否追加模式（默认false，覆盖）' },
+      path: { type: 'string', description: '目标文件绝对路径' },
+      content: { type: 'string', description: '写入内容' },
+      append: { type: 'boolean', description: '是否追加模式（默认false，覆盖）' },
     },
-    required: ['operation', 'path'],
+    required: ['path', 'content'],
   },
   handler: async (args: any) => {
     try {
-      const op = String(args.operation || '')
-      switch (op) {
-        case 'write':
-          return writeFile(args)
-        case 'mkdir':
-          return createFolder(args)
-        default:
-          return { success: false, error: `不支持的 operation: ${op}（可用 write/mkdir）` }
-      }
+      return writeFile(args)
     } catch (error: any) {
       return { success: false, error: `文件写入失败: ${error.message || error}` }
     }
@@ -175,7 +174,7 @@ export const fileWriteTool: ToolDefinition = {
   source: 'builtin',
 }
 
-// ====== file_edit：编辑文件部分内容（替换/插入/删除） ======
+// ====== file_edit：编辑文件部分内容（replace/insert/delete） ======
 
 export const fileEditTool: ToolDefinition = {
   id: 'file_edit',
@@ -223,108 +222,276 @@ export const fileEditTool: ToolDefinition = {
   source: 'builtin',
 }
 
-// ====== file_manage：删除 / 移动 / 复制 / 重命名 / 查看信息 ======
+/** 常驻文件工具：读/写/编辑，对话全程加入 LLM tools 数组 */
+export const residentFileTools: ToolDefinition[] = [
+  fileReadTool,
+  fileWriteTool,
+  fileEditTool,
+]
 
-export const fileManageTool: ToolDefinition = {
-  id: 'file_manage',
-  name: 'file_manage',
-  title: '文件管理',
-  description: '文件/目录管理操作：rm 删除（移至回收站，可找回，需确认）、mv 移动（目标含文件名）、cp 复制（-r 语义）、rename 仅改文件名（new_name 不含路径分隔符）、stat 查看信息（大小/类型/修改时间/权限）。工作区外操作需确认。',
+// ====== 按需工具 ======
+
+// ====== file_mkdir：创建文件夹 ======
+
+export const fileMkdirTool: ToolDefinition = {
+  id: 'file_mkdir',
+  name: 'file_mkdir',
+  title: '创建文件夹',
+  summary: '创建文件夹（-p 语义，自动建父目录）。路径已存在时报错。',
+  description: '创建文件夹，自动建父目录（-p 语义）。路径已存在时报错。工作区外操作需确认。',
   parameters: {
     type: 'object',
     properties: {
-      operation: {
-        type: 'string',
-        enum: ['rm', 'mv', 'cp', 'rename', 'stat'],
-        description: '操作类型',
-      },
-      path: { type: 'string', description: '目标路径绝对路径（rm/rename/stat 使用）' },
-      source: { type: 'string', description: '源路径绝对路径（mv/cp 使用）' },
-      destination: { type: 'string', description: '目标绝对路径含文件名（mv/cp 使用）' },
-      new_name: { type: 'string', description: '新名称，仅文件名不含路径（rename 使用）' },
-    },
-    required: ['operation'],
-  },
-  handler: async (args: any) => {
-    try {
-      const op = String(args.operation || '')
-      switch (op) {
-        case 'rm':
-          return deleteItem(args)
-        case 'mv':
-          return moveItem(args)
-        case 'cp':
-          return copyItem(args)
-        case 'rename':
-          return renameItem(args)
-        case 'stat':
-          return getFileInfo(args)
-        default:
-          return { success: false, error: `不支持的 operation: ${op}（可用 rm/mv/cp/rename/stat）` }
-      }
-    } catch (error: any) {
-      return { success: false, error: `文件管理失败: ${error.message || error}` }
-    }
-  },
-  source: 'builtin',
-}
-
-// ====== file_list：列出目录 / 按名称搜索文件 ======
-
-export const fileListTool: ToolDefinition = {
-  id: 'file_list',
-  name: 'file_list',
-  title: '列出与搜索',
-  description: '列出目录内容或按名称搜索文件。不传 pattern 时列出目录（recursive 递归，max_entries 上限默认200）；传 pattern 时按通配符搜索文件名（支持 * 与 ?，如 *.txt）。',
-  parameters: {
-    type: 'object',
-    properties: {
-      path: { type: 'string', description: '目标目录绝对路径' },
-      recursive: { type: 'boolean', description: '列出时是否递归子目录（默认false）' },
-      max_entries: { type: 'number', description: '最大返回条目数（默认200，上限1000）', minimum: 1, maximum: 1000 },
-      pattern: { type: 'string', description: '文件名匹配模式，支持通配符 * 与 ?（如 *.txt）。传入时执行搜索而非列出目录' },
+      path: { type: 'string', description: '目标文件夹绝对路径' },
     },
     required: ['path'],
   },
   handler: async (args: any) => {
     try {
-      const pattern = String(args.pattern || '').trim()
-      if (pattern) {
-        return searchFiles({ ...args, max_results: args.max_entries })
-      }
-      return listDir(args)
+      return createFolder(args)
     } catch (error: any) {
-      return { success: false, error: `文件列表失败: ${error.message || error}` }
+      return { success: false, error: `创建文件夹失败: ${error.message || error}` }
     }
   },
   source: 'builtin',
+  onDemand: true,
 }
 
-export const fileTools: ToolDefinition[] = [fileReadTool, fileWriteTool, fileEditTool, fileManageTool, fileListTool]
+// ====== file_list：列出目录内容 ======
+
+export const fileListTool: ToolDefinition = {
+  id: 'file_list',
+  name: 'file_list',
+  title: '列出目录',
+  summary: '列出目录内容。recursive 递归子目录，max_entries 上限默认200。',
+  description: '列出目录内容。recursive=true 递归子目录；max_entries 限制返回条目数（默认200，上限1000）。自动过滤 .git/node_modules 等忽略目录。按文件夹优先、名称排序。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标目录绝对路径' },
+      recursive: { type: 'boolean', description: '是否递归子目录（默认false）' },
+      max_entries: { type: 'number', description: '最大返回条目数（默认200，上限1000）', minimum: 1, maximum: 1000 },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      return await listDir(args)
+    } catch (error: any) {
+      return { success: false, error: `列出目录失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_search：按通配符搜索文件名 ======
+
+export const fileSearchTool: ToolDefinition = {
+  id: 'file_search',
+  name: 'file_search',
+  title: '搜索文件',
+  summary: '按通配符（* 与 ?）搜索目录下的文件名，如 *.txt。',
+  description: '按通配符模式搜索目录下的文件名。pattern 支持 * 与 ?（如 *.txt、report-?.md）。递归搜索子目录，自动过滤 .git/node_modules 等忽略目录。max_results 限制结果数（默认50，上限200）。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '搜索根目录绝对路径' },
+      pattern: { type: 'string', description: '文件名匹配模式，支持通配符 * 与 ?（如 *.txt）' },
+      max_results: { type: 'number', description: '最大返回结果数（默认50，上限200）', minimum: 1, maximum: 200 },
+    },
+    required: ['path', 'pattern'],
+  },
+  handler: async (args: any) => {
+    try {
+      return await searchFiles(args)
+    } catch (error: any) {
+      return { success: false, error: `文件搜索失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_delete：删除（移至回收站） ======
+
+export const fileDeleteTool: ToolDefinition = {
+  id: 'file_delete',
+  name: 'file_delete',
+  title: '删除文件',
+  summary: '删除文件/文件夹，移至系统回收站可找回。需用户确认。',
+  description: '删除文件或文件夹，移至系统回收站（基于 shell.trashItem），可从回收站找回。回收站不可用时回退永久删除。需用户确认（高权限模式跳过）。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标路径绝对路径' },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      return deleteItem(args)
+    } catch (error: any) {
+      return { success: false, error: `文件删除失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_move：移动 ======
+
+export const fileMoveTool: ToolDefinition = {
+  id: 'file_move',
+  name: 'file_move',
+  title: '移动文件',
+  summary: '移动文件/文件夹到目标路径（含文件名）。目标已存在报错。',
+  description: '移动文件或文件夹。source 为源路径，destination 为目标绝对路径（含文件名）。目标路径已存在时报错。自动建目标父目录。工作区外操作需确认。',
+  parameters: {
+    type: 'object',
+    properties: {
+      source: { type: 'string', description: '源路径绝对路径' },
+      destination: { type: 'string', description: '目标绝对路径（含文件名）' },
+    },
+    required: ['source', 'destination'],
+  },
+  handler: async (args: any) => {
+    try {
+      return moveItem(args)
+    } catch (error: any) {
+      return { success: false, error: `文件移动失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_copy：复制 ======
+
+export const fileCopyTool: ToolDefinition = {
+  id: 'file_copy',
+  name: 'file_copy',
+  title: '复制文件',
+  summary: '复制文件/文件夹到目标路径（-r 语义）。目标已存在报错。',
+  description: '复制文件或文件夹。source 为源路径，destination 为目标绝对路径（含文件名）。文件夹递归复制。目标路径已存在时报错。自动建目标父目录。工作区外操作需确认。',
+  parameters: {
+    type: 'object',
+    properties: {
+      source: { type: 'string', description: '源路径绝对路径' },
+      destination: { type: 'string', description: '目标绝对路径（含文件名）' },
+    },
+    required: ['source', 'destination'],
+  },
+  handler: async (args: any) => {
+    try {
+      return copyItem(args)
+    } catch (error: any) {
+      return { success: false, error: `文件复制失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_rename：重命名 ======
+
+export const fileRenameTool: ToolDefinition = {
+  id: 'file_rename',
+  name: 'file_rename',
+  title: '重命名文件',
+  summary: '重命名文件/文件夹。new_name 仅文件名不含路径分隔符。',
+  description: '重命名文件或文件夹，保持原位置不变。new_name 仅文件名，不能包含路径分隔符或上级引用（..）。目标名称已存在时报错。工作区外操作需确认。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标路径绝对路径' },
+      new_name: { type: 'string', description: '新名称，仅文件名不含路径分隔符' },
+    },
+    required: ['path', 'new_name'],
+  },
+  handler: async (args: any) => {
+    try {
+      return renameItem(args)
+    } catch (error: any) {
+      return { success: false, error: `文件重命名失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+// ====== file_stat：查看文件/目录信息 ======
+
+export const fileStatTool: ToolDefinition = {
+  id: 'file_stat',
+  name: 'file_stat',
+  title: '文件信息',
+  summary: '查看文件/目录信息：大小、类型、修改时间、创建时间、权限。',
+  description: '查看文件或目录信息，包括：路径、类型（file/directory）、大小（人类可读+字节数）、修改时间、创建时间、权限（八进制）、扩展名（文件）。',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标路径绝对路径' },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      return getFileInfo(args)
+    } catch (error: any) {
+      return { success: false, error: `获取文件信息失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  onDemand: true,
+}
+
+/** 按需文件工具：通过 list_available_tools + invoke_tool 发现和调用 */
+export const onDemandFileTools: ToolDefinition[] = [
+  fileMkdirTool,
+  fileListTool,
+  fileSearchTool,
+  fileDeleteTool,
+  fileMoveTool,
+  fileCopyTool,
+  fileRenameTool,
+  fileStatTool,
+]
+
+/** 全部文件工具（常驻 + 按需），供 allBuiltinTools 聚合使用 */
+export const fileTools: ToolDefinition[] = [...residentFileTools, ...onDemandFileTools]
 
 // ====== 各操作实现 ======
 
-function listDir(args: any) {
+async function listDir(args: any) {
   const dirPath = String(args.path || '').trim()
   if (!dirPath) return { success: false, error: '目录路径不能为空' }
 
   const resolved = path.resolve(dirPath)
-  if (!fs.existsSync(resolved)) return { success: false, error: `目录不存在: ${dirPath}` }
-  if (!fs.statSync(resolved).isDirectory()) return { success: false, error: `路径不是目录: ${dirPath}` }
+  let rootStats: fs.Stats
+  try {
+    rootStats = await fs.promises.stat(resolved)
+  } catch {
+    return { success: false, error: `目录不存在: ${dirPath}` }
+  }
+  if (!rootStats.isDirectory()) return { success: false, error: `路径不是目录: ${dirPath}` }
 
   const recursive = args.recursive === true
   const maxEntries = Math.min(Math.max(args.max_entries || 200, 1), 1000)
   const items: Array<{ name: string; path: string; type: 'file' | 'dir'; size?: number; modified?: string }> = []
   let total = 0
   let truncated = false
+  let yieldCounter = 0
+  const yieldEvery = 20
 
-  const walk = (current: string, prefix: string) => {
+  const walk = async (current: string, prefix: string) => {
     let entries: fs.Dirent[]
     try {
-      entries = fs.readdirSync(current, { withFileTypes: true })
-        .filter(e => !ignoreDirs.has(e.name))
-        .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+      entries = await fs.promises.readdir(current, { withFileTypes: true })
     } catch { return }
+    entries = entries
+      .filter(e => !ignoreDirs.has(e.name))
+      .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
 
     for (const entry of entries) {
       if (total >= maxEntries) { truncated = true; break }
@@ -333,10 +500,13 @@ function listDir(args: any) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
         items.push({ name: entry.name, path: relativePath, type: 'dir' })
-        if (recursive) walk(fullPath, relativePath)
+        if (recursive) {
+          await walk(fullPath, relativePath)
+          if (truncated) break
+        }
       } else {
         try {
-          const stats = fs.statSync(fullPath)
+          const stats = await fs.promises.stat(fullPath)
           items.push({
             name: entry.name,
             path: relativePath,
@@ -348,10 +518,15 @@ function listDir(args: any) {
           items.push({ name: entry.name, path: relativePath, type: 'file' })
         }
       }
+      yieldCounter++
+      if (yieldCounter >= yieldEvery) {
+        yieldCounter = 0
+        await new Promise(resolve => setImmediate(resolve))
+      }
     }
   }
 
-  walk(resolved, '')
+  await walk(resolved, '')
 
   if (items.length === 0) return { success: true, output: `目录 ${dirPath} 为空` }
 
@@ -374,8 +549,13 @@ async function readFile(args: any) {
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
   const resolved = path.resolve(filePath)
-  if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}` }
-  if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
+  let stat: fs.Stats
+  try {
+    stat = await fs.promises.stat(resolved)
+  } catch {
+    return { success: false, error: `文件不存在: ${filePath}` }
+  }
+  if (!stat.isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
   const offset = Math.max(0, args.offset || 0)
   const maxLength = Math.min(Math.max(args.max_length || DEFAULT_MAX_LENGTH, 1), MAX_LENGTH_LIMIT)
@@ -405,7 +585,7 @@ async function readFile(args: any) {
     return { success: true, output }
   }
 
-  const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
+  const content = (await fs.promises.readFile(resolved, 'utf-8')).replace(/\r\n/g, '\n')
   const totalChars = content.length
 
   if (offset >= totalChars) {
@@ -607,15 +787,20 @@ function getFileInfo(args: any) {
   return { success: true, output: lines.join('\n') }
 }
 
-function searchFiles(args: any) {
+async function searchFiles(args: any) {
   const dirPath = String(args.path || '').trim()
   const pattern = String(args.pattern || '').trim()
   if (!dirPath) return { success: false, error: '目录路径不能为空' }
   if (!pattern) return { success: false, error: '搜索模式不能为空' }
 
   const resolved = path.resolve(dirPath)
-  if (!fs.existsSync(resolved)) return { success: false, error: `目录不存在: ${dirPath}` }
-  if (!fs.statSync(resolved).isDirectory()) return { success: false, error: `路径不是目录: ${dirPath}` }
+  let rootStats: fs.Stats
+  try {
+    rootStats = await fs.promises.stat(resolved)
+  } catch {
+    return { success: false, error: `目录不存在: ${dirPath}` }
+  }
+  if (!rootStats.isDirectory()) return { success: false, error: `路径不是目录: ${dirPath}` }
 
   const maxResults = Math.min(Math.max(args.max_results || 50, 1), 200)
 
@@ -626,12 +811,14 @@ function searchFiles(args: any) {
   const regex = new RegExp(`^${regexStr}$`, 'i')
 
   const results: string[] = []
+  let yieldCounter = 0
+  const yieldEvery = 20
 
-  const walk = (current: string) => {
+  const walk = async (current: string) => {
     if (results.length >= maxResults) return
     let entries: fs.Dirent[]
     try {
-      entries = fs.readdirSync(current, { withFileTypes: true })
+      entries = await fs.promises.readdir(current, { withFileTypes: true })
     } catch { return }
 
     for (const entry of entries) {
@@ -640,18 +827,27 @@ function searchFiles(args: any) {
 
       const fullPath = path.join(current, entry.name)
       if (entry.isDirectory()) {
-        walk(fullPath)
+        await walk(fullPath)
       } else {
         if (regex.test(entry.name)) {
           const relativePath = path.relative(resolved, fullPath).replace(/\\/g, '/')
-          const stat = fs.statSync(fullPath)
-          results.push(`📄 ${relativePath} (${formatFileSize(stat.size)})`)
+          try {
+            const stat = await fs.promises.stat(fullPath)
+            results.push(`📄 ${relativePath} (${formatFileSize(stat.size)})`)
+          } catch {
+            results.push(`📄 ${relativePath}`)
+          }
         }
+      }
+      yieldCounter++
+      if (yieldCounter >= yieldEvery) {
+        yieldCounter = 0
+        await new Promise(resolve => setImmediate(resolve))
       }
     }
   }
 
-  walk(resolved)
+  await walk(resolved)
 
   if (results.length === 0) {
     return { success: true, output: `未找到匹配 "${pattern}" 的文件` }
