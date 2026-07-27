@@ -5,6 +5,7 @@
  * 所有操作经 NotesService 落到 vault 真实文件；外部文件变更由 watcher 广播 DATA_CHANGED。
  */
 
+import { ipcMain, app, nativeImage } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   NoteWriteParams,
@@ -12,11 +13,15 @@ import type {
   NoteRenameParams,
   NoteMoveParams,
   NoteCopyParams,
+  NoteImportExternalParams,
   NoteSearchParams,
   NotesSettings,
 } from '../../shared/ipc-channels'
 import NotesService from '../services/notes/notes.service'
 import { safeHandle } from './_shared'
+import { createLogger } from '../services/logger'
+
+const logger = createLogger('NotesIPC')
 
 export function registerNotesHandlers(): void {
   const service = NotesService.getInstance()
@@ -96,6 +101,32 @@ export function registerNotesHandlers(): void {
       return { success: true }
     } catch (err: any) {
       return { error: err?.message || '打开失败' }
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, async (params: NoteImportExternalParams) => {
+    if (!params?.srcAbsPath) return { error: 'srcAbsPath 必填' }
+    try {
+      return await service.importExternal(params.srcAbsPath, params.destParentRelPath || '')
+    } catch (err: any) {
+      return { error: err?.message || '导入失败' }
+    }
+  })
+
+  // 拖出文件到系统文件管理器：使用 webContents.startDrag 触发原生 OS 拖拽
+  // 必须用 ipcMain.on（非 handle），因为需要 event.sender 且不返回值
+  ipcMain.on(IPC_CHANNELS.NOTES_START_DRAG, async (event, filePaths: string[]) => {
+    try {
+      if (!Array.isArray(filePaths) || filePaths.length === 0) return
+      let icon: Electron.NativeImage
+      try {
+        icon = await app.getFileIcon(filePaths[0], { size: 'normal' })
+      } catch {
+        icon = nativeImage.createEmpty()
+      }
+      event.sender.startDrag({ file: filePaths[0], files: filePaths, icon })
+    } catch (err: any) {
+      logger.error('startDrag failed:', err?.message || err)
     }
   })
 }

@@ -172,9 +172,9 @@ class EmployeeAgentService {
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         const parts: string[] = []
-        if (emp.workspace_path) parts.push(`\n## 工作区\n工作区根目录：${emp.workspace_path}`)
+        if (emp.workspace_path) parts.push(`\n## 工作区\n工作区根目录：${emp.workspace_path}\n工作区文件默认授权可被增删改查。`)
         const notesRoot = NotesService.getInstance().getVaultRoot()
-        parts.push(`\n## 用户笔记\n笔记根目录：${notesRoot}\n用户的笔记以真实 .md 文件存储在该目录，可通过 file_read / file_write / file_edit 工具直接读写。更多文件操作（列出目录、搜索、创建文件夹、删除、移动、复制、重命名、查看信息）通过 list_available_tools 发现后用 invoke_tool 调用。`)
+        parts.push(`\n## 用户笔记\n笔记根目录：${notesRoot}\n用户的笔记以 .md 文件存储在该目录，默认仅拥有读取权限，增删改需要用户二次授权确认。`)
         return parts.join('\n')
       })(),
     }

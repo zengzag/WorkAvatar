@@ -1440,6 +1440,8 @@ export default {
     lessOptions: 'Collapse',
     deleteEvent: 'Event deleted',
     deleteEventConfirm: 'Are you sure you want to delete this event?',
+    deleteTodo: 'Task deleted',
+    deleteTodoConfirm: 'Are you sure you want to delete this task?',
     newTodo: 'New Task',
     editTodo: 'Edit Task',
     editDetail: 'Edit details',
@@ -1569,6 +1571,7 @@ export default {
     pasteFailed: 'Paste failed',
     pasteSuccess: 'Pasted',
     nothingToPaste: 'Nothing to paste',
+    importSuccess: 'Imported {{count}} file(s)',
     // Multi-select batch operations
     batchMoveTo: 'Batch Move to...',
     batchDelete: 'Batch Delete',

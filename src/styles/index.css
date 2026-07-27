@@ -321,6 +321,7 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
+  cursor: default;
   transition: background 0.15s;
 }
 .notes-tree .ant-tree .ant-tree-node-content-wrapper:hover {
@@ -341,13 +342,16 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
 .notes-tree .ant-tree .ant-tree-treenode-dragging {
   opacity: 0.5;
 }
-/* 拖到文件夹上方时（dropPosition=0）：隐藏默认线条指示器，
-   改用整行高亮 + 内描边表示将放入该文件夹。
-   rc-tree 在 .ant-tree-treenode 上加 drag-over 类（dropPosition===0） */
-.notes-tree .ant-tree .ant-tree-treenode.drag-over .ant-tree-drop-indicator {
+/* 文件夹拖放：任意位置（上方/中间/下方）均视为放入该文件夹。
+   隐藏 rc-tree 默认线条指示器，改用整行高亮 + 内描边。 */
+.notes-tree .ant-tree .ant-tree-treenode.drag-over .ant-tree-drop-indicator,
+.notes-tree .ant-tree .ant-tree-treenode.drag-over-gap-top .ant-tree-drop-indicator,
+.notes-tree .ant-tree .ant-tree-treenode.drag-over-gap-bottom .ant-tree-drop-indicator {
   display: none !important;
 }
-.notes-tree .ant-tree .ant-tree-treenode.drag-over > .ant-tree-node-content-wrapper {
+.notes-tree .ant-tree .ant-tree-treenode.notes-tree-folder.drag-over > .ant-tree-node-content-wrapper,
+.notes-tree .ant-tree .ant-tree-treenode.notes-tree-folder.drag-over-gap-top > .ant-tree-node-content-wrapper,
+.notes-tree .ant-tree .ant-tree-treenode.notes-tree-folder.drag-over-gap-bottom > .ant-tree-node-content-wrapper {
   background: var(--ant-color-primary-bg) !important;
   box-shadow: inset 0 0 0 1.5px var(--ant-color-primary) !important;
   border-radius: 4px;

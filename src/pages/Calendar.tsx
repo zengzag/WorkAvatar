@@ -134,6 +134,10 @@ const CalendarPage: React.FC = () => {
     return await cal.deleteEvent(id)
   }, [cal])
 
+  const handleDeleteTodo = useCallback(async (id: string) => {
+    return await cal.deleteTodo(id)
+  }, [cal])
+
   const openCreateTodo = useCallback(() => {
     setEditingTodo(null)
     setTodoModalMode('create')
@@ -260,6 +264,7 @@ const CalendarPage: React.FC = () => {
         existingTags={existingTags}
         onClose={() => setTodoModalOpen(false)}
         onSubmit={handleTodoSubmit}
+        onDelete={handleDeleteTodo}
       />
       <CalendarSettingsModal
         open={settingsOpen}

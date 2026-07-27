@@ -20,6 +20,8 @@ export const NOTES_CHANNELS = {
   NOTES_SET_SETTINGS: 'notes:set-settings',
   NOTES_GET_ABS_PATH: 'notes:get-abs-path',
   NOTES_OPEN_IN_EXPLORER: 'notes:open-in-explorer',
+  NOTES_IMPORT_EXTERNAL: 'notes:import-external',
+  NOTES_START_DRAG: 'notes:start-drag',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -118,6 +120,13 @@ export interface NoteMoveParams {
 
 export interface NoteCopyParams {
   srcRelPath: string
+  /** 目标父文件夹 relPath，空串表示 vault 根 */
+  destParentRelPath: string
+}
+
+export interface NoteImportExternalParams {
+  /** 源文件 / 文件夹的绝对路径（vault 外部） */
+  srcAbsPath: string
   /** 目标父文件夹 relPath，空串表示 vault 根 */
   destParentRelPath: string
 }

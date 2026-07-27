@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, message, theme,
+  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, Popconfirm, message, theme,
 } from 'antd'
-import { DownOutlined, RightOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -22,6 +22,7 @@ interface TodoFormModalProps {
   existingTags?: string[]
   onClose: () => void
   onSubmit: (input: CreateTodoInput | UpdateTodoInput) => Promise<any>
+  onDelete?: (id: string) => Promise<any>
 }
 
 const REMINDER_OPTIONS = [0, 5, 15, 30, 60, 120, 1440, 2880]
@@ -31,7 +32,7 @@ const toStore = (v: number) => -v
 const compactItem: React.CSSProperties = { marginBottom: 12 }
 
 const TodoFormModal: React.FC<TodoFormModalProps> = ({
-  open, mode, todo, settings, existingTags = [], onClose, onSubmit,
+  open, mode, todo, settings, existingTags = [], onClose, onSubmit, onDelete,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -136,6 +137,21 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
     return `${Math.floor(m / 1440)} ${t('calendar.daysBefore')}`
   }
 
+  const handleDelete = async () => {
+    if (!todo || !onDelete) return
+    try {
+      const result = await onDelete(todo.id)
+      if (result && !result.error) {
+        message.success(t('calendar.deleteTodo'))
+        onClose()
+      } else if (result?.error) {
+        message.error(result.error)
+      }
+    } catch (err: any) {
+      message.error(err?.message || 'Failed to delete todo')
+    }
+  }
+
   return (
     <Modal
       open={open}
@@ -147,6 +163,27 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       destroyOnHidden
       centered
       width={480}
+      footer={(_, { OkBtn, CancelBtn }) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {isEdit && onDelete && (
+              <Popconfirm
+                title={t('calendar.deleteTodoConfirm')}
+                onConfirm={handleDelete}
+                okText={t('common.confirm')}
+                cancelText={t('common.cancel')}
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
+              </Popconfirm>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <CancelBtn />
+            <OkBtn />
+          </div>
+        </div>
+      )}
     >
       <Form
         form={form}

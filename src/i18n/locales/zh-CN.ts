@@ -1447,6 +1447,8 @@ export default {
     lessOptions: '收起',
     deleteEvent: '已删除日程',
     deleteEventConfirm: '确定删除该日程吗？',
+    deleteTodo: '已删除待办',
+    deleteTodoConfirm: '确定删除该待办吗？',
     newTodo: '新建待办',
     editTodo: '编辑待办',
     editDetail: '编辑详情',
@@ -1586,6 +1588,7 @@ export default {
     pasteFailed: '粘贴失败',
     pasteSuccess: '已粘贴',
     nothingToPaste: '没有可粘贴的内容',
+    importSuccess: '已导入 {{count}} 个文件',
     // 多选批量操作
     batchMoveTo: '批量移动到...',
     batchDelete: '批量删除',

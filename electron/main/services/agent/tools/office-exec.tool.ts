@@ -348,8 +348,6 @@ export const officeExecTool: ToolDefinition = {
 
 **长文档分步执行**：生成超长文档（≥1500字）时**必须分步**：先写骨架代码生成基础文档，再用 file_edit 追加章节内容，逐步完善。禁止一次性生成超长代码，极易出现语法错误。
 
-**使用前先调 list_available_tools(tool_name=["office_exec"]) 获取规则与陷阱清单。**
-
 短代码（<800字符）直接传 code 参数；长代码建议先用 file_write 写入 .js 文件再传 code_file 参数执行。`,
   parameters: {
     type: 'object',

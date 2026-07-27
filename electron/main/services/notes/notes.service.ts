@@ -340,6 +340,42 @@ class NotesService {
     }
   }
 
+  private async copyRecursiveAsync(src: string, dest: string): Promise<void> {
+    const stat = await fs.promises.stat(src)
+    if (stat.isDirectory()) {
+      await fs.promises.mkdir(dest, { recursive: true })
+      const entries = await fs.promises.readdir(src, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue
+        await this.copyRecursiveAsync(path.join(src, entry.name), path.join(dest, entry.name))
+      }
+    } else {
+      await fs.promises.copyFile(src, dest)
+    }
+  }
+
+  /** 从 vault 外部导入文件 / 文件夹（重名自动加序号） */
+  async importExternal(srcAbsPath: string, destParentRelPath: string): Promise<{ relPath: string }> {
+    if (!srcAbsPath || !fs.existsSync(srcAbsPath)) throw new Error('源文件不存在')
+    const destParentAbs = destParentRelPath ? this.resolve(destParentRelPath) : this.vaultRoot
+    if (!fs.existsSync(destParentAbs) || !fs.statSync(destParentAbs).isDirectory()) {
+      throw new Error('目标文件夹不存在')
+    }
+    const baseName = path.basename(srcAbsPath)
+    const isFolder = fs.statSync(srcAbsPath).isDirectory()
+    const finalName = this.uniqueName(destParentAbs, baseName, isFolder)
+    const destFull = path.join(destParentAbs, finalName)
+    if (isFolder && destFull.startsWith(srcAbsPath + path.sep)) {
+      throw new Error('不能复制到自身子目录')
+    }
+    await this.copyRecursiveAsync(srcAbsPath, destFull)
+    const newRel = destParentRelPath
+      ? this.toPosix(`${destParentRelPath}/${finalName}`)
+      : this.toPosix(finalName)
+    this.markSelfWrite(newRel)
+    return { relPath: newRel }
+  }
+
   /** 获取笔记 / 文件夹的绝对路径（用于复制路径、资源管理器打开等） */
   getAbsolutePath(relPath: string): string {
     return this.resolve(relPath)
