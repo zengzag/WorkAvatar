@@ -9,6 +9,7 @@ const logger = createLogger('DB')
 class DatabaseService {
   private db: Database.Database
   private static instance: DatabaseService
+  private checkpointTimer: NodeJS.Timeout | null = null
 
   private constructor() {
     const pathService = PathService.getInstance()
@@ -24,9 +25,25 @@ class DatabaseService {
 
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+    // 设置 WAL 自动检查点阈值（每 1000 页自动 checkpoint）
+    this.db.pragma('wal_autocheckpoint = 1000')
 
     this.initializeSchema()
     this.cleanupOldConversations()
+    this.startPeriodicCheckpoint()
+  }
+
+  /** 定期手动 checkpoint，防止 WAL 文件无限增长 */
+  private startPeriodicCheckpoint(): void {
+    const CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000 // 5 分钟
+    this.checkpointTimer = setInterval(() => {
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)')
+      } catch (err: any) {
+        logger.warn('WAL checkpoint failed:', err?.message || err)
+      }
+    }, CHECKPOINT_INTERVAL_MS)
+    if (this.checkpointTimer.unref) this.checkpointTimer.unref()
   }
 
   /**

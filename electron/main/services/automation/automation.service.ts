@@ -25,6 +25,7 @@ const logger = createLogger('Automation')
 
 const MAX_PREVIEW = 10
 const MAX_RETRY_ATTEMPTS = 3
+const TASK_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000
 
 // ====== 服务实现 ======
 
@@ -206,6 +207,17 @@ class AutomationService {
     return this.getTask(id)
   }
 
+  moveTask(id: string, targetEmployeeId: string): AutomationTask | null {
+    const task = this.getTask(id)
+    if (!task) return null
+    const now = Math.floor(Date.now() / 1000)
+    this.db.prepare(
+      'UPDATE automation_tasks SET employee_id = ?, updated_at = ? WHERE id = ?'
+    ).run(targetEmployeeId, now, id)
+    logger.info(`Task ${id} moved to employee ${targetEmployeeId}`)
+    return this.getTask(id)
+  }
+
   // ====== Runs CRUD ======
 
   listRuns(params: ListAutomationRunsParams = {}): AutomationRun[] {
@@ -300,15 +312,28 @@ class AutomationService {
     return rows.map((r) => r.id)
   }
 
-  /** 启动恢复：将所有 status='running' 的 task/run 标记为 failed（上次进程崩溃残留） */
+  /** 启动恢复：将所有 status='running' 的 task/run 标记为 failed，清理孤儿 conversation */
   recoverOrphanRuns(): { tasks: number; runs: number } {
     const now = Math.floor(Date.now() / 1000)
+    const ws = WorkspaceManagerService.getInstance()
+
+    // 查找孤儿 run 关联的 conversation，逐个清理
+    const orphanRuns = this.db.prepare(
+      `SELECT id, conversation_id FROM automation_runs WHERE status = 'running' AND conversation_id IS NOT NULL`
+    ).all() as { id: string; conversation_id: string }[]
+
     const taskRes = this.db.prepare(
       `UPDATE automation_tasks SET last_status = 'failed', last_error = 'orphan recovered on startup', updated_at = ? WHERE last_status = 'running'`
     ).run(now)
     const runRes = this.db.prepare(
       `UPDATE automation_runs SET status = 'failed', finished_at = ?, error_message = 'orphan recovered on startup' WHERE status = 'running'`
     ).run(now)
+
+    // 清理孤儿 conversation
+    for (const r of orphanRuns) {
+      try { ws.deleteConversation(r.conversation_id) } catch { /* ignore */ }
+    }
+
     return { tasks: taskRes.changes, runs: runRes.changes }
   }
 
@@ -328,12 +353,11 @@ class AutomationService {
     const interval = Math.max(1, rule.interval)
     const until = rule.until ?? Infinity
     const maxIterations = 500
-    // 起始游标：start_at（首次运行时间）
-    let cursor = startAt
+    // 快进跳过历史，避免长期重复任务迭代超限
+    let cursor = this.fastForwardCursor(startAt, Math.max(after, now - 1), rule, interval)
     let iter = 0
     while (iter < maxIterations) {
       iter++
-      // 找到第一个 > after 的游标
       if (cursor > after && cursor > now - 1) {
         if (cursor > until) return null
         return cursor
@@ -344,6 +368,41 @@ class AutomationService {
       cursor = next
     }
     return null
+  }
+
+  private fastForwardCursor(startAt: number, target: number, rule: AutomationRecurrenceRule, interval: number): number {
+    if (startAt >= target) return startAt
+    const diffSec = target - startAt
+    switch (rule.freq) {
+      case 'daily':
+        return startAt + Math.floor(diffSec / (interval * 86400)) * interval * 86400
+      case 'weekly':
+        return startAt + Math.floor(diffSec / (interval * 7 * 86400)) * interval * 7 * 86400
+      case 'weekdays': {
+        const chunkSec = interval * 7 * 86400
+        return startAt + Math.floor(diffSec / chunkSec) * chunkSec
+      }
+      case 'monthly': {
+        const startDate = new Date(startAt * 1000)
+        const targetDate = new Date(target * 1000)
+        const monthsDiff = (targetDate.getFullYear() - startDate.getFullYear()) * 12 + (targetDate.getMonth() - startDate.getMonth())
+        const skipMonths = Math.floor(monthsDiff / interval) * interval
+        if (skipMonths <= 0) return startAt
+        const skipped = this.addMonths(startDate, skipMonths)
+        return Math.floor(skipped.getTime() / 1000)
+      }
+      case 'yearly': {
+        const startDate = new Date(startAt * 1000)
+        const targetDate = new Date(target * 1000)
+        const yearsDiff = targetDate.getFullYear() - startDate.getFullYear()
+        const skipYears = Math.floor(yearsDiff / interval) * interval
+        if (skipYears <= 0) return startAt
+        const skipped = this.addYears(startDate, skipYears)
+        return Math.floor(skipped.getTime() / 1000)
+      }
+      default:
+        return startAt
+    }
   }
 
   /** 预览未来 N 次运行时间 */
@@ -370,6 +429,27 @@ class AutomationService {
     return result
   }
 
+  private addMonths(date: Date, months: number): Date {
+    const originalDay = date.getDate()
+    const result = new Date(date)
+    result.setMonth(result.getMonth() + months)
+    if (result.getDate() !== originalDay) {
+      result.setDate(0)
+    }
+    return result
+  }
+
+  private addYears(date: Date, years: number): Date {
+    const originalDay = date.getDate()
+    const originalMonth = date.getMonth()
+    const result = new Date(date)
+    result.setFullYear(result.getFullYear() + years)
+    if (result.getMonth() !== originalMonth || result.getDate() !== originalDay) {
+      result.setDate(0)
+    }
+    return result
+  }
+
   private advanceRecurrence(current: number, rule: AutomationRecurrenceRule, interval: number): number {
     const date = new Date(current * 1000)
     switch (rule.freq) {
@@ -389,11 +469,11 @@ class AutomationService {
       case 'weekly':
         return current + interval * 7 * 86400
       case 'monthly': {
-        const d = new Date(date.getFullYear(), date.getMonth() + interval, date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds())
+        const d = this.addMonths(date, interval)
         return Math.floor(d.getTime() / 1000)
       }
       case 'yearly': {
-        const d = new Date(date.getFullYear() + interval, date.getMonth(), date.getDate(), date.getHours(), date.getMinutes(), date.getSeconds())
+        const d = this.addYears(date, interval)
         return Math.floor(d.getTime() / 1000)
       }
       default:
@@ -433,46 +513,59 @@ class AutomationService {
     const titleTime = this.formatRunTitleTime(now)
     const convTitle = `自动化-${task.title}-${titleTime}`
 
-    // 1. 创建对话
-    const conv = ws.createConversation(task.employee_id, undefined, convTitle, false)
+    let conv: any = null
+    let runId: string | null = null
+    let nextRunAt: number | null = null
+    let willDisable = false
 
-    // 2. 写入 user message
-    const userMessage = {
-      id: `msg_${generateId()}`,
-      role: 'user',
-      content: task.prompt,
-      timestamp: Date.now(),
+    try {
+      nextRunAt = triggeredBy === 'scheduler'
+        ? this.computeNextRunAfter(task.recurrence_rule, task.start_at, now, now)
+        : task.next_run_at
+      willDisable = triggeredBy === 'scheduler' && !task.recurrence_rule && nextRunAt === null
+
+      const tx = this.db.transaction(() => {
+        conv = ws.createConversation(task.employee_id, undefined, convTitle, false)
+
+        const userMessage = {
+          id: `msg_${generateId()}`,
+          role: 'user',
+          content: task.prompt,
+          timestamp: Date.now(),
+        }
+        const initialMessages = [userMessage]
+        const messagesJson = JSON.stringify(initialMessages)
+        ws.updateConversation(conv.id, {
+          messages_json: messagesJson,
+          message_count: 1,
+          last_message_at: now,
+        })
+
+        runId = generateId()
+        this.db.prepare(
+          `INSERT INTO automation_runs
+            (id, task_id, conversation_id, employee_id, provider_id, model_id,
+             status, triggered_by, started_at, finished_at, duration_ms, error_message, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, NULL, NULL, NULL, ?)`
+        ).run(runId, task.id, conv.id, task.employee_id, task.provider_id, task.model_id, triggeredBy, now, now)
+
+        this.db.prepare(
+          `UPDATE automation_tasks
+           SET last_run_at = ?, next_run_at = ?, last_status = 'running', last_error = NULL,
+               is_enabled = ?, updated_at = ?
+           WHERE id = ?`
+        ).run(now, nextRunAt, willDisable ? 0 : task.is_enabled ? 1 : 0, now, task.id)
+      })
+      tx()
+
+      logger.info(`Task ${task.id} run ${runId} started (attempt ${attempt + 1}, by ${triggeredBy})`)
+    } catch (initErr: any) {
+      logger.error(`Task ${task.id} failed to initialize: ${initErr?.message || initErr}`)
+      if (conv?.id) {
+        try { ws.deleteConversation(conv.id) } catch { /* ignore */ }
+      }
+      throw initErr
     }
-    const initialMessages = [userMessage]
-    const messagesJson = JSON.stringify(initialMessages)
-    ws.updateConversation(conv.id, {
-      messages_json: messagesJson,
-      message_count: 1,
-      last_message_at: now,
-    })
-
-    // 3. 创建 automation_run
-    const runId = generateId()
-    this.db.prepare(
-      `INSERT INTO automation_runs
-        (id, task_id, conversation_id, employee_id, provider_id, model_id,
-         status, triggered_by, started_at, finished_at, duration_ms, error_message, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, NULL, NULL, NULL, ?)`
-    ).run(runId, task.id, conv.id, task.employee_id, task.provider_id, task.model_id, triggeredBy, now, now)
-
-    // 4. 更新 task 状态
-    const nextRunAt = triggeredBy === 'scheduler'
-      ? this.computeNextRunAfter(task.recurrence_rule, task.start_at, now, now)
-      : task.next_run_at
-    const willDisable = triggeredBy === 'scheduler' && !task.recurrence_rule && nextRunAt === null
-    this.db.prepare(
-      `UPDATE automation_tasks
-       SET last_run_at = ?, next_run_at = ?, last_status = 'running', last_error = NULL,
-           is_enabled = ?, updated_at = ?
-       WHERE id = ?`
-    ).run(now, nextRunAt, willDisable ? 0 : task.is_enabled ? 1 : 0, now, task.id)
-
-    logger.info(`Task ${task.id} run ${runId} started (attempt ${attempt + 1}, by ${triggeredBy})`)
 
     const startMs = Date.now()
     let assistantContent = ''
@@ -481,7 +574,10 @@ class AutomationService {
 
     try {
       const agentService = EmployeeAgentService.getInstance()
-      await agentService.chatStream(
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Task execution timeout after ${TASK_EXECUTION_TIMEOUT_MS / 60000} minutes`)), TASK_EXECUTION_TIMEOUT_MS)
+      })
+      const execPromise = agentService.chatStream(
         {
           employee_id: task.employee_id,
           provider_id: task.provider_id,
@@ -489,7 +585,7 @@ class AutomationService {
           messages: [{ role: 'user', content: task.prompt }],
           use_skills: true,
           enable_thinking: false,
-          conversation_id: conv.id,
+          conversation_id: conv!.id,
           minimal_mode: false,
           high_permission: task.high_permission,
         },
@@ -504,6 +600,7 @@ class AutomationService {
           onError: (err: string) => { errorMsg = err },
         }
       )
+      await Promise.race([execPromise, timeoutPromise])
     } catch (err: any) {
       errorMsg = err?.message || String(err)
     }
@@ -512,61 +609,76 @@ class AutomationService {
     const durationMs = Date.now() - startMs
     const success = !errorMsg && assistantContent.trim().length > 0
 
-    if (success) {
-      // 写入 assistant message 到 conversation
-      const assistantMessage = {
-        id: `msg_${generateId()}`,
-        role: 'assistant',
-        content: assistantContent,
-        reasoning_content: thinkContent || undefined,
-        timestamp: Date.now(),
+    try {
+      if (success) {
+        const assistantMessage = {
+          id: `msg_${generateId()}`,
+          role: 'assistant',
+          content: assistantContent,
+          reasoning_content: thinkContent || undefined,
+          timestamp: Date.now(),
+        }
+        const finalMessages = [
+          { id: `msg_${generateId()}`, role: 'user', content: task.prompt, timestamp: startMs },
+          assistantMessage,
+        ]
+        ws.updateConversation(conv!.id, {
+          messages_json: JSON.stringify(finalMessages),
+          message_count: finalMessages.length,
+          last_message_at: finishedAt,
+        })
+
+        this.db.prepare(
+          `UPDATE automation_runs SET status = 'success', finished_at = ?, duration_ms = ?, error_message = NULL WHERE id = ?`
+        ).run(finishedAt, durationMs, runId)
+        this.db.prepare(
+          `UPDATE automation_tasks SET last_status = 'success', last_error = NULL, updated_at = ? WHERE id = ?`
+        ).run(finishedAt, task.id)
+
+        logger.info(`Task ${task.id} run ${runId} success in ${durationMs}ms`)
+
+        if (task.notify_on_complete) {
+          this.sendNotification(task, 'success', durationMs, undefined, conv!.id, task.employee_id)
+        }
+        return this.getRun(runId!)!
       }
-      const finalMessages = [...initialMessages, assistantMessage]
-      ws.updateConversation(conv.id, {
-        messages_json: JSON.stringify(finalMessages),
-        message_count: finalMessages.length,
-        last_message_at: finishedAt,
-      })
 
       this.db.prepare(
-        `UPDATE automation_runs SET status = 'success', finished_at = ?, duration_ms = ?, error_message = NULL WHERE id = ?`
-      ).run(finishedAt, durationMs, runId)
-      this.db.prepare(
-        `UPDATE automation_tasks SET last_status = 'success', last_error = NULL, updated_at = ? WHERE id = ?`
-      ).run(finishedAt, task.id)
+        `UPDATE automation_runs SET status = 'failed', finished_at = ?, duration_ms = ?, error_message = ? WHERE id = ?`
+      ).run(finishedAt, durationMs, errorMsg || 'Unknown error', runId)
 
-      logger.info(`Task ${task.id} run ${runId} success in ${durationMs}ms`)
+      const shouldRetry = attempt < task.retry_count && attempt < MAX_RETRY_ATTEMPTS
+
+      if (!shouldRetry) {
+        this.db.prepare(
+          `UPDATE automation_tasks SET last_status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`
+        ).run(errorMsg || 'Unknown error', finishedAt, task.id)
+      } else {
+        this.db.prepare(
+          `UPDATE automation_tasks SET last_status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`
+        ).run(`Attempt ${attempt + 1} failed: ${errorMsg || 'Unknown error'}, retrying...`, finishedAt, task.id)
+      }
+
+      logger.warn(`Task ${task.id} run ${runId} failed: ${errorMsg}`)
+
+      if (shouldRetry) {
+        const waitMs = Math.min(30000, 2000 * Math.pow(2, attempt))
+        logger.info(`Task ${task.id} retrying in ${waitMs}ms (attempt ${attempt + 2}/${task.retry_count + 1})`)
+        await new Promise(resolve => setTimeout(resolve, waitMs))
+        const refreshed = this.getTask(task.id)
+        if (refreshed) {
+          return await this.executeOnce(refreshed, triggeredBy, attempt + 1)
+        }
+      }
 
       if (task.notify_on_complete) {
-        this.sendNotification(task, 'success', durationMs, undefined, conv.id, task.employee_id)
+        this.sendNotification(task, 'failed', durationMs, errorMsg || undefined, conv!.id, task.employee_id)
       }
-      return this.getRun(runId)!
+    } catch (finalizeErr: any) {
+      logger.error(`Task ${task.id} failed to finalize run ${runId}: ${finalizeErr?.message || finalizeErr}`)
     }
 
-    // 失败
-    this.db.prepare(
-      `UPDATE automation_runs SET status = 'failed', finished_at = ?, duration_ms = ?, error_message = ? WHERE id = ?`
-    ).run(finishedAt, durationMs, errorMsg || 'Unknown error', runId)
-    this.db.prepare(
-      `UPDATE automation_tasks SET last_status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`
-    ).run(errorMsg || 'Unknown error', finishedAt, task.id)
-
-    logger.warn(`Task ${task.id} run ${runId} failed: ${errorMsg}`)
-
-    // 自动重试
-    if (attempt < task.retry_count && attempt < MAX_RETRY_ATTEMPTS) {
-      logger.info(`Task ${task.id} retrying (attempt ${attempt + 2}/${task.retry_count + 1})`)
-      // 重新读取最新 task 状态
-      const refreshed = this.getTask(task.id)
-      if (refreshed) {
-        return await this.executeOnce(refreshed, triggeredBy, attempt + 1)
-      }
-    }
-
-    if (task.notify_on_complete) {
-      this.sendNotification(task, 'failed', durationMs, errorMsg || undefined, conv.id, task.employee_id)
-    }
-    return this.getRun(runId)!
+    return this.getRun(runId!)!
   }
 
   private getRun(id: string): AutomationRun | null {

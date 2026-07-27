@@ -1,5 +1,6 @@
 import AutomationService from './automation.service'
 import { createLogger } from '../logger'
+import { ScheduledTaskBase } from '../scheduled-task-base'
 
 const logger = createLogger('AutomationScheduler')
 
@@ -15,13 +16,13 @@ const MAX_PARALLEL = 4
  * - 每次最多并行 MAX_PARALLEL 个任务，避免一次性触发过多对话
  * - runTask 内部已做 last_status='running' 跳过与重试，这里只负责发现到期任务
  */
-class AutomationSchedulerService {
+class AutomationSchedulerService extends ScheduledTaskBase {
   private static instance: AutomationSchedulerService
-  private timer: NodeJS.Timeout | null = null
-  private running = false
   private ticking = false
 
-  private constructor() {}
+  private constructor() {
+    super('AutomationScheduler', TICK_INTERVAL_MS)
+  }
 
   static getInstance(): AutomationSchedulerService {
     if (!AutomationSchedulerService.instance) {
@@ -31,8 +32,6 @@ class AutomationSchedulerService {
   }
 
   start(): void {
-    if (this.running) return
-    this.running = true
     try {
       const recovered = AutomationService.getInstance().recoverOrphanRuns()
       if (recovered.tasks > 0 || recovered.runs > 0) {
@@ -41,23 +40,10 @@ class AutomationSchedulerService {
     } catch (err: any) {
       logger.warn('Recover orphan runs failed:', err?.message || err)
     }
-    // 启动后立即跑一次，避免错失启动期间到期的任务
-    this.tick()
-    this.timer = setInterval(() => this.tick(), TICK_INTERVAL_MS)
-    logger.info('Automation scheduler started')
+    super.start()
   }
 
-  stop(): void {
-    if (!this.running) return
-    this.running = false
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
-    logger.info('Automation scheduler stopped')
-  }
-
-  private async tick(): Promise<void> {
+  protected async runCheck(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
     try {

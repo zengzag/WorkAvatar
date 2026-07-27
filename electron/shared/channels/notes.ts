@@ -21,6 +21,7 @@ export const NOTES_CHANNELS = {
   NOTES_GET_ABS_PATH: 'notes:get-abs-path',
   NOTES_OPEN_IN_EXPLORER: 'notes:open-in-explorer',
   NOTES_IMPORT_EXTERNAL: 'notes:import-external',
+  NOTES_SAVE_IMAGE: 'notes:save-image',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -133,6 +134,13 @@ export interface NoteImportExternalParams {
 export interface NoteSearchParams {
   query: string
   maxResults?: number
+}
+
+export interface NoteSaveImageParams {
+  /** 图片数据（Buffer 或 base64） */
+  buffer: ArrayBuffer | Uint8Array
+  /** 原始文件名（用于提取扩展名） */
+  fileName: string
 }
 
 export interface NotesDataChangedPayload {

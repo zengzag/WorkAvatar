@@ -40,6 +40,7 @@ class NotesService {
   private selfWriteTimer: NodeJS.Timeout | null = null
   private settingsCache: NotesSettings | null = null
   private debouncedBroadcastTimer: NodeJS.Timeout | null = null
+  private treeCache: { tree: NoteNode[]; mtime: number } | null = null
 
   private constructor() {
     const dataDir = PathService.getInstance().getDataDir()
@@ -56,6 +57,10 @@ class NotesService {
 
   getVaultRoot(): string {
     return this.vaultRoot
+  }
+
+  private invalidateTreeCache(): void {
+    this.treeCache = null
   }
 
   /** 启动文件监听（应用启动时调用一次） */
@@ -108,13 +113,23 @@ class NotesService {
   }
 
   private toPosix(p: string): string {
-    return p.split(path.sep).join('/')
+    return p.replace(/\\/g, '/')
   }
 
   // ====== 树读取 ======
 
   listTree(): NoteNode[] {
-    return this.readDir(this.vaultRoot, '')
+    try {
+      const stat = fs.statSync(this.vaultRoot)
+      if (this.treeCache && this.treeCache.mtime === stat.mtimeMs) {
+        return this.treeCache.tree
+      }
+      const tree = this.readDir(this.vaultRoot, '')
+      this.treeCache = { tree, mtime: stat.mtimeMs }
+      return tree
+    } catch {
+      return this.readDir(this.vaultRoot, '')
+    }
   }
 
   private readDir(absDir: string, relDir: string): NoteNode[] {
@@ -167,10 +182,15 @@ class NotesService {
 
   readNote(relPath: string): NoteContent {
     const full = this.resolve(relPath)
-    if (!fs.existsSync(full) || !fs.statSync(full).isFile()) {
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(full)
+    } catch {
       throw new Error('笔记不存在')
     }
-    const stat = fs.statSync(full)
+    if (!stat.isFile()) {
+      throw new Error('笔记不存在')
+    }
     const content = fs.readFileSync(full, 'utf-8')
     return {
       relPath: this.toPosix(relPath),
@@ -302,7 +322,7 @@ class NotesService {
   }
 
   /** 复制文件 / 文件夹到目标父文件夹（重名自动加序号）。返回新的 relPath */
-  copyItem(srcRelPath: string, destParentRelPath: string): { relPath: string } {
+  async copyItem(srcRelPath: string, destParentRelPath: string): Promise<{ relPath: string }> {
     const srcFull = this.resolve(srcRelPath)
     if (!fs.existsSync(srcFull)) throw new Error('源不存在')
     const destParentAbs = destParentRelPath ? this.resolve(destParentRelPath) : this.vaultRoot
@@ -318,26 +338,12 @@ class NotesService {
     if (isFolder && destFull.startsWith(srcFull + path.sep)) {
       throw new Error('不能复制到自身子目录')
     }
-    this.copyRecursive(srcFull, destFull)
+    await this.copyRecursiveAsync(srcFull, destFull)
     const newRel = destParentRelPath
       ? this.toPosix(`${destParentRelPath}/${finalName}`)
       : this.toPosix(finalName)
     this.markSelfWrite(newRel)
     return { relPath: newRel }
-  }
-
-  private copyRecursive(src: string, dest: string): void {
-    const stat = fs.statSync(src)
-    if (stat.isDirectory()) {
-      fs.mkdirSync(dest, { recursive: true })
-      const entries = fs.readdirSync(src, { withFileTypes: true })
-      for (const entry of entries) {
-        if (entry.name.startsWith('.')) continue
-        this.copyRecursive(path.join(src, entry.name), path.join(dest, entry.name))
-      }
-    } else {
-      fs.copyFileSync(src, dest)
-    }
   }
 
   private async copyRecursiveAsync(src: string, dest: string): Promise<void> {
@@ -404,7 +410,7 @@ class NotesService {
 
   // ====== 搜索 ======
 
-  search(query: string, maxResults = 100): NoteSearchHit[] {
+  async search(query: string, maxResults = 100): Promise<NoteSearchHit[]> {
     const q = (query || '').trim()
     if (!q) return []
     const lowerQ = q.toLowerCase()
@@ -415,7 +421,7 @@ class NotesService {
       if (hits.length >= maxResults) break
       let content: string
       try {
-        content = fs.readFileSync(path.join(this.vaultRoot, file), 'utf-8')
+        content = await fs.promises.readFile(path.join(this.vaultRoot, file), 'utf-8')
       } catch {
         continue
       }
@@ -464,6 +470,22 @@ class NotesService {
     const start = Math.max(0, idx - 40)
     const end = Math.min(trimmed.length, idx + query.length + 80)
     return (start > 0 ? '…' : '') + trimmed.slice(start, end) + (end < trimmed.length ? '…' : '')
+  }
+
+  /** 保存粘贴/上传的图片到 vault 的 attachments 目录，返回 markdown 相对路径 */
+  saveImage(buffer: Buffer, fileName: string): string {
+    const attachmentsDir = path.join(this.vaultRoot, 'attachments')
+    if (!fs.existsSync(attachmentsDir)) {
+      fs.mkdirSync(attachmentsDir, { recursive: true })
+    }
+    const ext = path.extname(fileName) || '.png'
+    const baseName = path.basename(fileName, ext).replace(/[^\w\u4e00-\u9fa5-]/g, '_')
+    const timestamp = Date.now()
+    const uniqueName = `${baseName}_${timestamp}${ext}`
+    const absPath = path.join(attachmentsDir, uniqueName)
+    fs.writeFileSync(absPath, buffer)
+    this.markSelfWrite(`attachments/${uniqueName}`)
+    return `attachments/${uniqueName}`
   }
 
   // ====== 设置 ======
@@ -542,6 +564,7 @@ class NotesService {
     const relPath = this.toPosix(filename).replace(/^\//, '')
     // 自身写触发的变更：仅静默刷新树，不强制重载当前编辑器内容
     const isSelf = this.selfWritePaths.has(relPath)
+    this.invalidateTreeCache()
     if (this.debouncedBroadcastTimer) clearTimeout(this.debouncedBroadcastTimer)
     this.debouncedBroadcastTimer = setTimeout(() => {
       this.debouncedBroadcastTimer = null

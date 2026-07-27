@@ -19,6 +19,11 @@ export abstract class ScheduledTaskBase {
 
   start(): void {
     this.stop()
+    this.running = true
+    // 启动后立即跑一次，避免错失启动期间到期的任务
+    this.runCheck().catch(err => {
+      logger.error(`[${this.name}] Initial check failed:`, err)
+    })
     this.timer = setInterval(() => {
       this.runCheck().catch(err => {
         logger.error(`[${this.name}] Scheduled check failed:`, err)
@@ -30,6 +35,7 @@ export abstract class ScheduledTaskBase {
   }
 
   stop(): void {
+    this.running = false
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -37,7 +43,7 @@ export abstract class ScheduledTaskBase {
     }
   }
 
-  get isRunning(): boolean {
+  isRunning(): boolean {
     return this.running
   }
 

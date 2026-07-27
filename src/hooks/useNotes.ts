@@ -310,13 +310,21 @@ export function useNotes() {
     setActiveTabLocateText(text)
   }, [setActiveTabLocateText])
 
+  // 使用 ref 保存最新值，避免 onDataChanged 回调过期闭包
+  const currentRelPathRef = useRef(currentRelPath)
+  const saveStatusRef = useRef(saveStatus)
+  useEffect(() => { currentRelPathRef.current = currentRelPath }, [currentRelPath])
+  useEffect(() => { saveStatusRef.current = saveStatus }, [saveStatus])
+
   useEffect(() => {
     const unsub = window.electronAPI.notes.onDataChanged((payload) => {
       if (payload.scope === 'tree') {
         refreshTree()
-        if (!payload.self && currentRelPath && saveStatus !== 'dirty') {
-          window.electronAPI.notes.read(currentRelPath).then((note: any) => {
-            if (note && !note.error && note.relPath === currentRelPath) {
+        const relPath = currentRelPathRef.current
+        const status = saveStatusRef.current
+        if (!payload.self && relPath && status !== 'dirty') {
+          window.electronAPI.notes.read(relPath).then((note: any) => {
+            if (note && !note.error && note.relPath === relPath) {
               const state = useNotesStore.getState()
               const tab = state.tabs.find((t) => t.id === state.activeTabId)
               if (tab) {
@@ -328,7 +336,7 @@ export function useNotes() {
       }
     })
     return () => { unsub() }
-  }, [refreshTree, currentRelPath, saveStatus, setTabSaved])
+  }, [refreshTree, setTabSaved])
 
   return {
     tree, treeLoading, currentRelPath, currentContent, currentMtime, saveStatus,

@@ -12,6 +12,7 @@ export interface NotifyClickPayload {
 /**
  * 监听主进程的 CALENDAR_NOTIFY 事件：
  * - 主窗口激活时由主进程推送，渲染进程用 antd notification 展示
+ * - 如果 payload 含 i18nKey，则用 t() 本地化 body；否则直接使用 body
  * - 点击通知 → 通过 onClick 回调让外层跳转目标
  */
 export function useCalendarNotify(onClick?: (payload: NotifyPayload) => void): void {
@@ -20,6 +21,11 @@ export function useCalendarNotify(onClick?: (payload: NotifyPayload) => void): v
   useEffect(() => {
     const unsubscribe = window.electronAPI.calendar.onNotify((payload: NotifyPayload) => {
       const key = `cal-notify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      // 如果携带 i18n key，使用 t() 本地化展示文案
+      const i18nKey = (payload as any)?.i18nKey as string | undefined
+      const displayBody: string = i18nKey
+        ? String(t(i18nKey, { ...(payload as any).i18nParams, defaultValue: payload.body }))
+        : payload.body
       const btn = (
         <Button
           type="link"
@@ -35,7 +41,7 @@ export function useCalendarNotify(onClick?: (payload: NotifyPayload) => void): v
       notification.open({
         key,
         message: payload.title,
-        description: payload.body,
+        description: displayBody,
         btn,
         duration: 8,
         onClick: () => onClick?.(payload),

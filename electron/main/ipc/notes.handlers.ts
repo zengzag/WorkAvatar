@@ -14,6 +14,7 @@ import type {
   NoteCopyParams,
   NoteImportExternalParams,
   NoteSearchParams,
+  NoteSaveImageParams,
   NotesSettings,
 } from '../../shared/ipc-channels'
 import NotesService from '../services/notes/notes.service'
@@ -58,9 +59,9 @@ export function registerNotesHandlers(): void {
     return service.moveItem(params.srcRelPath, params.destParentRelPath || '')
   })
 
-  safeHandle(IPC_CHANNELS.NOTES_COPY, (params: NoteCopyParams) => {
+  safeHandle(IPC_CHANNELS.NOTES_COPY, async (params: NoteCopyParams) => {
     if (!params?.srcRelPath) return { error: 'srcRelPath 必填' }
-    return service.copyItem(params.srcRelPath, params.destParentRelPath || '')
+    return await service.copyItem(params.srcRelPath, params.destParentRelPath || '')
   })
 
   safeHandle(IPC_CHANNELS.NOTES_DELETE, async (relPath: string) => {
@@ -68,9 +69,9 @@ export function registerNotesHandlers(): void {
     return await service.deleteItem(relPath)
   })
 
-  safeHandle(IPC_CHANNELS.NOTES_SEARCH, (params: NoteSearchParams) => {
+  safeHandle(IPC_CHANNELS.NOTES_SEARCH, async (params: NoteSearchParams) => {
     if (!params?.query) return []
-    return service.search(params.query, params.maxResults)
+    return await service.search(params.query, params.maxResults)
   })
 
   safeHandle(IPC_CHANNELS.NOTES_GET_SETTINGS, () => {
@@ -106,6 +107,17 @@ export function registerNotesHandlers(): void {
       return await service.importExternal(params.srcAbsPath, params.destParentRelPath || '')
     } catch (err: any) {
       return { error: err?.message || '导入失败' }
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.NOTES_SAVE_IMAGE, (params: NoteSaveImageParams) => {
+    if (!params?.buffer) return { error: 'buffer 必填' }
+    try {
+      const buffer = Buffer.from(params.buffer as ArrayBuffer)
+      const relPath = service.saveImage(buffer, params.fileName || 'image.png')
+      return { relPath }
+    } catch (err: any) {
+      return { error: err?.message || '保存图片失败' }
     }
   })
 }

@@ -13,12 +13,27 @@ import { createLogger, LoggerBackend } from './services/logger'
 
 const logger = createLogger('Main')
 
-// 全局异常兜底：捕获逃逸的 Promise rejection 和未捕获异常
+// 全局异常兜底：捕获逃逸的 Promise rejection 和未捕获异常，记录日志并尝试恢复关键服务
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled Rejection:', reason)
 })
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error)
+  // 尝试重启调度器，避免异常导致定时任务/日历提醒永久失效
+  try {
+    if (CalendarSchedulerService.getInstance().isRunning()) {
+      logger.warn('Restarting CalendarScheduler after uncaughtException...')
+      CalendarSchedulerService.getInstance().stop()
+      CalendarSchedulerService.getInstance().start()
+    }
+  } catch { /* ignore */ }
+  try {
+    if (AutomationSchedulerService.getInstance().isRunning()) {
+      logger.warn('Restarting AutomationScheduler after uncaughtException...')
+      AutomationSchedulerService.getInstance().stop()
+      AutomationSchedulerService.getInstance().start()
+    }
+  } catch { /* ignore */ }
 })
 
 const gotTheLock = app.requestSingleInstanceLock()
