@@ -64,6 +64,20 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
   }
 }
 
+/** 判断错误是否可重试：仅对瞬时错误重试，避免对不可恢复错误浪费重试配额 */
+export function isRetryableToolError(error: any): boolean {
+  if (!error) return false
+  const msg = String(error.message || error).toLowerCase()
+  // 超时、网络、速率限制、服务端错误可重试
+  if (msg.includes('timeout') || msg.includes('timed out')) return true
+  if (msg.includes('econnreset') || msg.includes('enetunreach') || msg.includes('econnrefused')) return true
+  if (msg.includes('rate limit') || msg.includes('429')) return true
+  if (msg.includes('socket hang up')) return true
+  // 5xx 服务端错误
+  if (error?.status >= 500 || error?.statusCode >= 500) return true
+  return false
+}
+
 export function createRetryMiddleware(maxRetries: number = 2, baseDelayMs: number = 1000): ToolMiddleware {
   return {
     name: 'retry',
@@ -75,14 +89,15 @@ export function createRetryMiddleware(maxRetries: number = 2, baseDelayMs: numbe
           const result = await next()
           if (result.success) return result
 
-          if (attempt < maxRetries) {
+          // 仅对可重试的错误（瞬时故障）进行重试，参数错误/权限拒绝等不重试
+          if (attempt < maxRetries && isRetryableToolError(new Error(result.error || ''))) {
             const delay = baseDelayMs * Math.pow(2, attempt)
             await new Promise(resolve => setTimeout(resolve, delay))
           }
           lastError = new Error(result.error || 'Tool execution failed')
         } catch (error: any) {
           lastError = error
-          if (attempt < maxRetries) {
+          if (attempt < maxRetries && isRetryableToolError(error)) {
             const delay = baseDelayMs * Math.pow(2, attempt)
             await new Promise(resolve => setTimeout(resolve, delay))
           }

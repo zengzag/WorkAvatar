@@ -20,7 +20,8 @@ function loadOfficeModules() {
 
 loadOfficeModules()
 
-const ALLOWED_NODE_MODULES = ['fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto']
+// 移除 'os' 模块：os.hostname()/userInfo()/networkInterfaces() 等会泄漏系统敏感信息
+const ALLOWED_NODE_MODULES = ['fs', 'path', 'stream', 'buffer', 'util', 'crypto']
 
 /** 沙箱中允许暴露给 LLM 生成代码的环境变量白名单（避免泄漏 API key、数据库路径等敏感信息） */
 const ALLOWED_ENV_KEYS = ['PATH', 'Path', 'TEMP', 'TMP', 'OS', 'PLATFORM', 'LANG', 'LC_ALL', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']

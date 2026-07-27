@@ -541,29 +541,33 @@ class DatabaseService {
     const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
     if (hasProjectId) {
       logger.info('Migrating employees: removing project_id column...')
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS employees_new (
-          id TEXT PRIMARY KEY,
-          workspace_path TEXT DEFAULT '',
-          name TEXT NOT NULL,
-          description TEXT DEFAULT '',
-          avatar_type TEXT DEFAULT 'default',
-          status TEXT NOT NULL DEFAULT 'draft',
-          default_skill_id TEXT,
-          profile_json TEXT DEFAULT '',
-          arch_version INTEGER NOT NULL DEFAULT 1,
-          total_tasks INTEGER DEFAULT 0,
-          total_approvals INTEGER DEFAULT 0,
-          memory_enabled BOOLEAN NOT NULL DEFAULT 0,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-        );
-        INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
-          SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
-        DROP TABLE employees;
-        ALTER TABLE employees_new RENAME TO employees;
-        CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
-      `)
+      // 事务保护：DROP TABLE + RENAME 中途崩溃会导致数据丢失
+      const migrateTx = this.db.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS employees_new (
+            id TEXT PRIMARY KEY,
+            workspace_path TEXT DEFAULT '',
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            avatar_type TEXT DEFAULT 'default',
+            status TEXT NOT NULL DEFAULT 'draft',
+            default_skill_id TEXT,
+            profile_json TEXT DEFAULT '',
+            arch_version INTEGER NOT NULL DEFAULT 1,
+            total_tasks INTEGER DEFAULT 0,
+            total_approvals INTEGER DEFAULT 0,
+            memory_enabled BOOLEAN NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+          );
+          INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+            SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
+          DROP TABLE employees;
+          ALTER TABLE employees_new RENAME TO employees;
+          CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+        `)
+      })
+      migrateTx()
       logger.info('Migration completed: employees.project_id removed, workspace_path added')
     }
   }
@@ -580,6 +584,17 @@ class DatabaseService {
   }
 
   public close(): void {
+    // 先清除定时器，避免关闭后定时器仍触发访问已关闭的 DB
+    if (this.checkpointTimer) {
+      clearInterval(this.checkpointTimer)
+      this.checkpointTimer = null
+    }
+    // 关闭前执行 TRUNCATE checkpoint，确保 WAL 内容写回主库文件
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch (err: any) {
+      logger.warn('关闭前 checkpoint 失败:', err?.message || err)
+    }
     this.db.close()
   }
 }

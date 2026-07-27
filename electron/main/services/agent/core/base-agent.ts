@@ -49,6 +49,8 @@ export abstract class BaseAgent {
   protected context: AgentContext
   protected middlewareChain: ToolMiddlewareChain
   protected agentOptions: BaseAgentOptions
+  // 并发保护：同一 Agent 实例不允许并发执行 run/runStream
+  private _running: boolean = false
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
     this.config = this.normalizeConfig(config)
@@ -118,6 +120,10 @@ export abstract class BaseAgent {
   }
 
   async run(options: AgentRunOptions): Promise<AgentResponse> {
+    if (this._running) {
+      throw new Error(`Agent "${this.name}" is already running, cannot start concurrent run`)
+    }
+    this._running = true
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -173,6 +179,8 @@ export abstract class BaseAgent {
           iterations: this.context.getIterationCount(),
         },
       }
+    } finally {
+      this._running = false
     }
   }
 
@@ -181,6 +189,10 @@ export abstract class BaseAgent {
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal
   ): Promise<void> {
+    if (this._running) {
+      throw new Error(`Agent "${this.name}" is already running, cannot start concurrent runStream`)
+    }
+    this._running = true
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -234,6 +246,8 @@ export abstract class BaseAgent {
       this.context.setState('error')
       this.eventEmitter.emit('run:error', { error: error.message })
       callbacks.onError?.(error.message)
+    } finally {
+      this._running = false
     }
   }
 
@@ -267,12 +281,14 @@ export abstract class BaseAgent {
   }
 
   protected setupDefaultMiddleware(): void {
+    // 顺序：logging(外) → retry → timeout(内) → result_size
+    // retry 在 timeout 外层：每次重试获得完整 timeout，避免首次失败后剩余时间不足
     this.middlewareChain
       .use(createLoggingMiddleware((level, action, data) => {
         this.log(level, action, data)
       }))
-      .use(createTimeoutMiddleware(this.agentOptions.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS))
       .use(createRetryMiddleware(this.agentOptions.toolMaxRetries ?? DEFAULT_TOOL_MAX_RETRIES))
+      .use(createTimeoutMiddleware(this.agentOptions.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS))
       .use(createResultSizeMiddleware(this.agentOptions.toolMaxResultSize ?? DEFAULT_MAX_RESULT_SIZE))
   }
 
@@ -294,6 +310,38 @@ export abstract class BaseAgent {
 
   protected setupEventListeners(): void {}
 
+  /**
+   * 当消息累积过大时，截断较早的 tool 结果内容，防止上下文溢出。
+   * 保留最近 KEEP_RECENT 条 tool 消息完整，更早的截断为摘要。
+   * 不删除消息，保持 tool_call/tool_response 配对完整。
+   */
+  private trimToolResultsIfNeeded(messages: Message[]): void {
+    const MAX_ESTIMATED_TOKENS = 80000
+    const KEEP_RECENT = 6
+    const SUMMARY_PREFIX = '[已截断] '
+
+    let totalChars = 0
+    for (const msg of messages) {
+      totalChars += (msg.content?.length ?? 0)
+    }
+    if (totalChars / 3.5 < MAX_ESTIMATED_TOKENS) return
+
+    const toolIndices: number[] = []
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role === 'tool') toolIndices.push(i)
+    }
+
+    const keepCount = Math.min(KEEP_RECENT, toolIndices.length)
+    const toTrim = toolIndices.slice(0, toolIndices.length - keepCount)
+    for (const idx of toTrim) {
+      const msg = messages[idx]
+      const content = msg.content || ''
+      if (content.length > 500 && !content.startsWith(SUMMARY_PREFIX)) {
+        msg.content = SUMMARY_PREFIX + content.slice(0, 300) + `\n…(原 ${content.length} 字符，已截断以节省上下文)`
+      }
+    }
+  }
+
   private async executeLoop(
     messages: Message[],
     tools: OpenAIToolDefinition[],
@@ -307,6 +355,7 @@ export abstract class BaseAgent {
       this.eventEmitter.emit('iteration:start', { iteration })
 
       try {
+        this.trimToolResultsIfNeeded(currentMessages)
         const llmMessages = this.convertToLLMMessages(currentMessages)
         const response = await this.llmProvider.chat(llmMessages, tools)
 
@@ -388,8 +437,14 @@ export abstract class BaseAgent {
       this.eventEmitter.emit('iteration:start', { iteration })
       callbacks.onIterationStart?.(iteration)
 
+      // 跟踪本次迭代是否已向客户端推送过流式数据
+      // 若已推送则不重试，避免重试导致重复内容
+      // 声明在 try 外，catch 中可访问
+      let chunksSentThisIteration = false
+
       try {
         this.context.setState('running')
+        this.trimToolResultsIfNeeded(currentMessages)
         const llmMessages = this.convertToLLMMessages(currentMessages)
 
         this.context.setState('responding')
@@ -398,6 +453,7 @@ export abstract class BaseAgent {
           tools,
           {
             onChunk: (chunk: string) => {
+              chunksSentThisIteration = true
               callbacks.onChunk?.(chunk)
             },
             onThought: (thought: string) => {
@@ -452,6 +508,11 @@ export abstract class BaseAgent {
 
         if (!this.isRetryableError(error)) {
           throw error
+        }
+
+        // 已向客户端推送过流式数据时不重试，避免重复内容破坏消息序列
+        if (chunksSentThisIteration) {
+          throw new Error(`Stream failed after partial content was sent: ${error.message}`)
         }
 
         if (iteration === maxIterations - 1) {

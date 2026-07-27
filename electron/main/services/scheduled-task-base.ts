@@ -49,6 +49,7 @@ export abstract class ScheduledTaskBase {
 
   /** 立即触发一次检查（不等待下一个间隔） */
   async triggerNow(): Promise<void> {
+    if (!this.running) return
     return this.runCheck()
   }
 

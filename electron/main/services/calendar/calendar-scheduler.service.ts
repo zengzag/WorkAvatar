@@ -65,6 +65,12 @@ class CalendarSchedulerService extends ScheduledTaskBase {
           })
         }
         calendar.markReminderFired(reminder.id)
+        // 提醒触发后检查重复事件/TODO 的未来提醒是否耗尽，滚动再生避免 90 天后静默消失
+        try {
+          calendar.ensureRemindersForRecurring(reminder.target_type, reminder.target_id)
+        } catch (err: any) {
+          logger.warn(`ensureRemindersForRecurring failed for ${reminder.target_type}:${reminder.target_id}:`, err?.message || err)
+        }
       }
       logger.info(`Fired ${due.length} reminder(s)`)
     } catch (err: any) {

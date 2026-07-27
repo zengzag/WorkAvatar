@@ -122,8 +122,16 @@ class WorkspaceManagerService {
     if (deleteWorkspace) {
       const employee = this.getEmployee(id)
       if (employee && employee.workspace_path) {
+        // 安全校验：workspace_path 必须位于数据目录的 employees/ 子目录下，
+        // 防止 DB 被篡改后通过 workspace_path 递归删除任意系统目录
+        const basePath = PathService.getInstance().getDataDir()
+        const employeesRoot = path.resolve(basePath, 'employees')
         const workspaceRoot = path.resolve(employee.workspace_path)
-        if (fs.existsSync(workspaceRoot)) {
+        const relative = path.relative(employeesRoot, workspaceRoot)
+        const isWithinEmployees = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+        if (!isWithinEmployees) {
+          logger.warn(`Refused to delete workspace outside employees root: ${employee.workspace_path}`)
+        } else if (fs.existsSync(workspaceRoot)) {
           try { fs.rmSync(workspaceRoot, { recursive: true, force: true }) } catch (error) { logger.warn('Failed to remove workspace directory', workspaceRoot, error) }
         }
       }

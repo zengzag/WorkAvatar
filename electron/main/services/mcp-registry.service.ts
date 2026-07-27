@@ -240,7 +240,6 @@ class McpRegistryService {
     for (const row of rows) {
       try {
         const client = await this.getOrCreateClient(row)
-        acquiredServerIds.push(row.id)
         let toolList: McpToolInfo[]
         try {
           toolList = await client.listTools()
@@ -248,10 +247,13 @@ class McpRegistryService {
           // listTools 失败：标记 server 状态为 error，跳过该 server 的工具注入
           logger.warn(`MCP server "${row.name}" listTools 失败: ${err.message}`)
           this.markServerError(row.id, err.message).catch(() => { /* ignore */ })
-          // 释放刚才获取的引用
+          // 释放刚才获取的引用（仅 releaseClient，不加入 acquiredServerIds，
+          // 避免 release() 再次 releaseClient 造成 double-release）
           this.releaseClient(row.id).catch(() => { /* ignore */ })
           continue
         }
+        // listTools 成功后才登记到 acquiredServerIds，确保 release() 只释放成功的引用
+        acquiredServerIds.push(row.id)
         // 更新工具缓存与状态
         this.markServerConnected(row.id, toolList).catch(() => { /* ignore */ })
 

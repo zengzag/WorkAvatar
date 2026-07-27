@@ -58,7 +58,8 @@ export async function confirmOutsideWorkspace(operation: string, targetPath: str
   if (isPathInWorkspace(targetPath)) return { ok: true }
 
   const ctx = interactionContext.getStore()
-  if (!ctx) return { ok: true }
+  // 无交互上下文时默认拒绝，防止自动化任务等后台场景绕过工作区边界
+  if (!ctx) return { ok: false, error: `${operation}工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝` }
 
   if (ctx.highPermission) return { ok: true }
 
@@ -84,7 +85,8 @@ export async function confirmOutsideWorkspace(operation: string, targetPath: str
 /** 删除操作（含工作区内）需用户确认，高权限模式下跳过 */
 async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<{ ok: boolean; error?: string }> {
   const ctx = interactionContext.getStore()
-  if (!ctx) return { ok: true }
+  // 无交互上下文时默认拒绝，防止后台任务静默删除文件
+  if (!ctx) return { ok: false, error: '删除操作需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝' }
 
   if (ctx.highPermission) return { ok: true }
 
@@ -561,6 +563,12 @@ async function readFile(args: any) {
   const maxLength = Math.min(Math.max(args.max_length || DEFAULT_MAX_LENGTH, 1), MAX_LENGTH_LIMIT)
   const enableParse = args.parse === true
   const ext = path.extname(resolved).toLowerCase().slice(1)
+
+  // 大文件保护：超过 50MB 拒绝全量读取（parse 模式由 file-parser 自身控制），防止 OOM 崩溃
+  const MAX_FILE_SIZE = 50 * 1024 * 1024
+  if (stat.size > MAX_FILE_SIZE && !enableParse) {
+    return { success: false, error: `文件过大（${(stat.size / 1024 / 1024).toFixed(1)}MB），超过 ${MAX_FILE_SIZE / 1024 / 1024}MB 限制。请使用 offset/max_length 分段读取，或使用专用工具处理大文件` }
+  }
 
   if (enableParse && PARSABLE_EXTENSIONS.has(ext)) {
     const parser = require('../../file-parser.service').default.getInstance()

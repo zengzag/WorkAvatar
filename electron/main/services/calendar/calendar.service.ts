@@ -440,13 +440,55 @@ class CalendarService {
     return updated
   }
 
-  /** 标记 TODO 完成（便捷方法） */
+  /** 标记 TODO 完成（便捷方法）。重复 TODO 完成时推进到下一次到期而非标记整系列完成 */
   completeTodo(id: string, completed: boolean): CalendarTodo | null {
     const now = Math.floor(Date.now() / 1000)
-    const result = this.db.prepare(
-      `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
-    ).run(completed ? 'completed' : 'pending', completed ? now : null, now, id)
-    if (result.changes === 0) return null
+    const existing = this.getTodo(id)
+    if (!existing) return null
+
+    if (completed && existing.recurrence_rule && existing.due_at) {
+      // 重复 TODO：推进 due_at 到下一次到期，保持 pending 状态
+      const rule = existing.recurrence_rule
+      const nextDueAt = this.advanceRecurrence(existing.due_at, rule)
+      if (nextDueAt === existing.due_at) {
+        // 无法推进（规则耗尽），标记整系列完成
+        this.db.prepare(
+          `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
+        ).run('completed', now, now, id)
+      } else {
+        // 检查是否超过 until 或 count 上限
+        const until = rule.until ?? Infinity
+        if (nextDueAt > until) {
+          this.db.prepare(
+            `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
+          ).run('completed', now, now, id)
+        } else if (rule.count && rule.count > 0) {
+          // 统计已完成的实例数（通过已 fire 的提醒近似）
+          const firedCount = (this.db.prepare(
+            `SELECT COUNT(*) as n FROM calendar_reminders WHERE target_type = ? AND target_id = ? AND fired_at IS NOT NULL`
+          ).get('todo', id) as any).n
+          if (firedCount + 1 >= rule.count) {
+            this.db.prepare(
+              `UPDATE calendar_todos SET status=?, completed_at=?, due_at=?, updated_at=? WHERE id=?`
+            ).run('completed', now, nextDueAt, now, id)
+          } else {
+            this.db.prepare(
+              `UPDATE calendar_todos SET due_at=?, updated_at=? WHERE id=?`
+            ).run(nextDueAt, now, id)
+          }
+        } else {
+          this.db.prepare(
+            `UPDATE calendar_todos SET due_at=?, updated_at=? WHERE id=?`
+          ).run(nextDueAt, now, id)
+        }
+      }
+    } else {
+      // 非重复 TODO 或取消完成：直接更新状态
+      this.db.prepare(
+        `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
+      ).run(completed ? 'completed' : 'pending', completed ? now : null, now, id)
+    }
+
     const todo = this.getTodo(id)
     if (todo) {
       this.regenerateTodoReminders(todo)
@@ -522,6 +564,27 @@ class CalendarService {
     this.db.prepare('UPDATE calendar_reminders SET fired_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), id)
   }
 
+  /**
+   * 检查重复事件/TODO 的未来提醒是否耗尽，若耗尽则滚动再生。
+   * 解决 90 天地平线导致的长期重复任务提醒静默消失问题。
+   */
+  ensureRemindersForRecurring(targetType: ReminderTargetType, targetId: string): void {
+    const now = Math.floor(Date.now() / 1000)
+    const futureCount = (this.db.prepare(
+      `SELECT COUNT(*) as n FROM calendar_reminders
+       WHERE target_type = ? AND target_id = ? AND fired_at IS NULL AND trigger_at > ?`
+    ).get(targetType, targetId, now) as any).n
+    if (futureCount > 0) return
+
+    if (targetType === 'event') {
+      const event = this.getEvent(targetId)
+      if (event?.recurrence_rule) this.regenerateEventReminders(event)
+    } else if (targetType === 'todo') {
+      const todo = this.getTodo(targetId)
+      if (todo?.recurrence_rule && todo.status !== 'completed') this.regenerateTodoReminders(todo)
+    }
+  }
+
   /** 清理 7 天前已 fired 的提醒记录 */
   cleanupOldReminders(): number {
     const cutoff = Math.floor(Date.now() / 1000) - 7 * 86400
@@ -572,16 +635,19 @@ class CalendarService {
       let cursor = todo.due_at
       const maxIter = 1000
       let iter = 0
+      // count 限制基于从 due_at 起的总实例数（含已过期），而非仅未来实例数
+      let totalOccurrenceCount = 0
       while (iter < maxIter) {
         iter++
         if (cursor > until) break
+        totalOccurrenceCount++
         if (cursor > now - 86400) {
           dueDates.push(cursor)
         }
+        if (rule.count && totalOccurrenceCount >= rule.count) break
         const next = this.advanceRecurrence(cursor, rule)
         if (next === cursor) break
         cursor = next
-        if (rule.count && dueDates.length >= rule.count) break
       }
     } else {
       if (todo.due_at > now - 86400) {
@@ -686,19 +752,22 @@ class CalendarService {
         return eventStart + Math.floor(diffSec / chunkSec) * chunkSec
       }
       case 'monthly': {
+        // 少跳一个 interval，避免月末钳位导致 cursor 偏离实际序列
+        // expandEventInstances 的 while 循环会逐月修正
         const startDate = new Date(eventStart * 1000)
         const targetDate = new Date(target * 1000)
         const monthsDiff = (targetDate.getFullYear() - startDate.getFullYear()) * 12 + (targetDate.getMonth() - startDate.getMonth())
-        const skipMonths = Math.floor(monthsDiff / interval) * interval
+        const skipMonths = Math.max(0, (Math.floor(monthsDiff / interval) - 1) * interval)
         if (skipMonths <= 0) return eventStart
         const skipped = this.addMonths(startDate, skipMonths)
         return Math.floor(skipped.getTime() / 1000)
       }
       case 'yearly': {
+        // 少跳一个 interval，与 monthly 同理
         const startDate = new Date(eventStart * 1000)
         const targetDate = new Date(target * 1000)
         const yearsDiff = targetDate.getFullYear() - startDate.getFullYear()
-        const skipYears = Math.floor(yearsDiff / interval) * interval
+        const skipYears = Math.max(0, (Math.floor(yearsDiff / interval) - 1) * interval)
         if (skipYears <= 0) return eventStart
         const skipped = this.addYears(startDate, skipYears)
         return Math.floor(skipped.getTime() / 1000)

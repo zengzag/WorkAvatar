@@ -13,27 +13,27 @@ import { createLogger, LoggerBackend } from './services/logger'
 
 const logger = createLogger('Main')
 
-// 全局异常兜底：捕获逃逸的 Promise rejection 和未捕获异常，记录日志并尝试恢复关键服务
+// 全局异常兜底：捕获逃逸的 Promise rejection 和未捕获异常
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled Rejection:', reason)
 })
+// uncaughtException 后进程状态不确定，Node.js 最佳实践是清理后退出而非继续运行。
+// 标志位防止多个异常并发触发时重复执行清理逻辑。
+let isCrashing = false
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error)
-  // 尝试重启调度器，避免异常导致定时任务/日历提醒永久失效
-  try {
-    if (CalendarSchedulerService.getInstance().isRunning()) {
-      logger.warn('Restarting CalendarScheduler after uncaughtException...')
-      CalendarSchedulerService.getInstance().stop()
-      CalendarSchedulerService.getInstance().start()
-    }
-  } catch { /* ignore */ }
-  try {
-    if (AutomationSchedulerService.getInstance().isRunning()) {
-      logger.warn('Restarting AutomationScheduler after uncaughtException...')
-      AutomationSchedulerService.getInstance().stop()
-      AutomationSchedulerService.getInstance().start()
-    }
-  } catch { /* ignore */ }
+  if (isCrashing) return
+  isCrashing = true
+  // 停止调度器，避免在进程退出期间继续触发新任务产生更多异常
+  try { CalendarSchedulerService.getInstance().stop() } catch { /* ignore */ }
+  try { AutomationSchedulerService.getInstance().stop() } catch { /* ignore */ }
+  // 延迟 1s 退出，让日志写入磁盘；不可恢复的异常下继续运行会放大损坏
+  setTimeout(() => {
+    try { LLMLoggerService.getInstance().destroy() } catch { /* ignore */ }
+    try { DatabaseService.getInstance().close() } catch { /* ignore */ }
+    try { LoggerBackend.getInstance().destroy() } catch { /* ignore */ }
+    app.exit(1)
+  }, 1000)
 })
 
 const gotTheLock = app.requestSingleInstanceLock()
@@ -395,6 +395,18 @@ app.on('before-quit', () => {
   } catch (error) {
     logger.error('Failed to stop AutomationSchedulerService:', error)
   }
+  // 关闭悬浮字幕窗口
+  try {
+    require('./services/voice/subtitle-window.service').default.getInstance().destroy()
+  } catch (error) {
+    logger.error('Failed to destroy subtitle window:', error)
+  }
+})
+
+// will-quit 在所有窗口关闭后、进程退出前触发，不可被取消，
+// 适合执行不可逆清理（DB close / logger destroy）。
+// before-quit 可能被其他 handler 取消，若在其中关闭 DB 会导致取消后应用无法继续工作。
+app.on('will-quit', () => {
   // 清理资源：关闭 LLM 日志定时器与数据库连接
   try {
     LLMLoggerService.getInstance().destroy()
@@ -405,12 +417,6 @@ app.on('before-quit', () => {
     DatabaseService.getInstance().close()
   } catch (error) {
     logger.error('Failed to close database:', error)
-  }
-  // 关闭悬浮字幕窗口
-  try {
-    require('./services/voice/subtitle-window.service').default.getInstance().destroy()
-  } catch (error) {
-    logger.error('Failed to destroy subtitle window:', error)
   }
   // 关闭应用日志文件流
   try {

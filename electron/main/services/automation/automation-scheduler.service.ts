@@ -19,6 +19,7 @@ const MAX_PARALLEL = 4
 class AutomationSchedulerService extends ScheduledTaskBase {
   private static instance: AutomationSchedulerService
   private ticking = false
+  private activeCount = 0
 
   private constructor() {
     super('AutomationScheduler', TICK_INTERVAL_MS)
@@ -49,19 +50,21 @@ class AutomationSchedulerService extends ScheduledTaskBase {
     try {
       const now = Math.floor(Date.now() / 1000)
       const service = AutomationService.getInstance()
-      const due = service.listDueTaskIds(now, MAX_PARALLEL * 2)
+      // fire-and-forget 模式：不等待任务完成，用 activeCount 控制并发
+      // 避免长任务执行期间 ticking 阻塞后续 tick 导致新到期任务被延迟
+      const slots = MAX_PARALLEL - this.activeCount
+      if (slots <= 0) return
+      const due = service.listDueTaskIds(now, slots)
       if (due.length === 0) return
 
-      logger.info(`Found ${due.length} due task(s)`)
-      // 限制并发，超出部分等下一个 tick
-      const batch = due.slice(0, MAX_PARALLEL)
-      await Promise.allSettled(
-        batch.map((id) =>
-          service
-            .runTask(id, 'scheduler')
-            .catch((err: any) => logger.warn(`Task ${id} run error:`, err?.message || err))
-        )
-      )
+      logger.info(`Found ${due.length} due task(s), ${this.activeCount} active`)
+      for (const id of due) {
+        this.activeCount++
+        service
+          .runTask(id, 'scheduler')
+          .catch((err: any) => logger.warn(`Task ${id} run error:`, err?.message || err))
+          .finally(() => { this.activeCount-- })
+      }
     } catch (err: any) {
       logger.error('Scheduler tick error:', err?.message || err)
     } finally {

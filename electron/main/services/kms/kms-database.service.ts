@@ -45,6 +45,91 @@ class KMSDatabaseService {
     this.initializeVectorSchema()
     this.migrateEmbeddingsToVectorDb()
     this.autoCleanup()
+    // 异步清理孤儿记录：跨库删除（FTS5/embedding）非事务，崩溃后可能残留孤儿
+    // 延迟到下一个 tick 执行，避免阻塞构造函数（大库下扫描 embedding 较慢）
+    setImmediate(() => this.cleanupOrphanedRecords())
+  }
+
+  /**
+   * 清理孤儿记录：主库已删除文件但 FTS5 / 向量库仍残留的记录。
+   *
+   * 触发场景：deleteIndexByFile 跨库删除非原子，崩溃后向量库会残留孤儿 embedding。
+   * cleanupDatabase() 是用户主动触发的全量清理（含 VACUUM），此方法为启动时的轻量清理。
+   * 仅删除残留记录，不执行 VACUUM / FTS5 rebuild，避免启动卡顿。
+   */
+  private cleanupOrphanedRecords(): void {
+    let cleanedFts = 0
+    let cleanedEmbeddings = 0
+
+    // 1. 清理残留 FTS5 条目：file_id 不在 kms_files 中
+    try {
+      const result = this.db.prepare(
+        `DELETE FROM kms_fts WHERE file_id NOT IN (SELECT id FROM kms_files)`
+      ).run()
+      cleanedFts = result.changes
+    } catch (err: any) {
+      logger.warn('启动清理残留 FTS5 条目失败:', err?.message || err)
+    }
+
+    // 2. 清理向量库残留 embedding：file_id 不在主库 kms_files 中
+    try {
+      const fileIds = this.db.prepare('SELECT id FROM kms_files').all() as any[]
+      const idSet = new Set(fileIds.map(r => r.id))
+      // 仅加载 DISTINCT file_id（远小于全量 BLOB 行），避免大库 OOM
+      const distinctFileIds = this.vectorDb.prepare('SELECT DISTINCT file_id FROM kms_embeddings').all() as any[]
+      const orphanFileIds = distinctFileIds.filter(e => !idSet.has(e.file_id)).map(r => r.file_id)
+
+      if (orphanFileIds.length > 0) {
+        const delTx = this.vectorDb.transaction(() => {
+          for (let i = 0; i < orphanFileIds.length; i += 500) {
+            const batch = orphanFileIds.slice(i, i + 500)
+            const placeholders = batch.map(() => '?').join(',')
+
+            // 先收集 rowid（vec_kms_embeddings 通过 rowid 关联，不自动级联删除）
+            let rowids: number[] = []
+            try {
+              const rows = this.vectorDb.prepare(
+                `SELECT rowid FROM kms_embeddings WHERE file_id IN (${placeholders})`
+              ).all(...batch) as any[]
+              rowids = rows.map(r => r.rowid)
+            } catch (err: any) {
+              logger.warn('收集残留 embedding rowid 失败:', err?.message || err)
+            }
+
+            const countResult = this.vectorDb.prepare(
+              `SELECT COUNT(*) as cnt FROM kms_embeddings WHERE file_id IN (${placeholders})`
+            ).get(...batch) as any
+            cleanedEmbeddings += countResult?.cnt || 0
+
+            this.vectorDb.prepare(
+              `DELETE FROM kms_embeddings WHERE file_id IN (${placeholders})`
+            ).run(...batch)
+
+            if (rowids.length > 0) {
+              for (let j = 0; j < rowids.length; j += 500) {
+                const rowidBatch = rowids.slice(j, j + 500)
+                const rowidPlaceholders = rowidBatch.map(() => '?').join(',')
+                try {
+                  // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 类型校验回归
+                  this.vectorDb.prepare(
+                    `DELETE FROM vec_kms_embeddings WHERE rowid IN (${rowidPlaceholders})`
+                  ).run(...rowidBatch.map(r => BigInt(r)))
+                } catch (e: any) {
+                  logger.warn('清理 vec_kms_embeddings 残留行失败:', e?.message || e)
+                }
+              }
+            }
+          }
+        })
+        delTx()
+      }
+    } catch (err: any) {
+      logger.warn('启动清理残留 embedding 失败:', err?.message || err)
+    }
+
+    if (cleanedFts > 0 || cleanedEmbeddings > 0) {
+      logger.info(`启动孤儿记录清理：FTS5 ${cleanedFts} 条，embedding ${cleanedEmbeddings} 条`)
+    }
   }
 
   /**

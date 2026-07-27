@@ -10,9 +10,17 @@ const execAsync = promisify(execCb)
 const IS_WINDOWS = process.platform === 'win32'
 
 const dangerousPatterns = [
-  /\brm\s+-[rf]{1,2}\b/i, /\bdel\s+\/f\b/i, /\brmdir\s+\/s\b/i,
+  // 删除类（含 --recursive/--force 长选项形式）
+  /\brm\s+(-[rf]{1,2}\s+|--recursive\b|--force\b)/i, /\bdel\s+\/f\b/i, /\brmdir\s+\/s\b/i,
+  /\bRemove-Item\b.*-Recurse/i, /\bRemove-Item\b.*-Force/i,
+  // 系统破坏类
   /\bformat\s+[a-z]:/i, /\bdiskpart\b/i, /\bdd\s+if=/i,
   /\bshutdown\b/i, /\breboot\b/i, /:.*?\(\)\s*\{.*?\};\s*:/,
+  // 编码/混淆执行（绕过检测）
+  /\bpowershell\s+.*-enc\b/i, /\bpowershell\s+.*-EncodedCommand\b/i,
+  /\bcmd\s+\/c\s+.*\becho\b.*\|.*\bclip\b/i,
+  // 危险解释器执行
+  /\bpython\s+-c\b/i, /\bpython3\s+-c\b/i, /\bnode\s+-e\b/i, /\bperl\s+-e\b/i,
 ]
 
 // 删除类命令模式
@@ -80,6 +88,8 @@ export const shellExecTool: ToolDefinition = {
     },
     required: ['command']
   },
+  // 设置工具级超时为 310s（略大于最大 300s），避免 middleware 默认 30s 超时截断用户指定的长命令
+  timeoutMs: 310_000,
   handler: async (args: any) => {
     try {
       const command = String(args.command || '').trim()
