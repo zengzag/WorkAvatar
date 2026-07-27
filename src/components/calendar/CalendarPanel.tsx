@@ -28,6 +28,13 @@ const TODO_PRIORITY_COLOR: Record<string, string> = {
   none: '#8c8c8c',
 }
 
+const getTodoBarColorMap = (isDark: boolean): Record<string, { bg: string; border: string }> => ({
+  high: { bg: `rgba(245,34,45,${isDark ? 0.14 : 0.22})`, border: '#f5222d' },
+  medium: { bg: `rgba(250,140,22,${isDark ? 0.14 : 0.22})`, border: '#fa8c16' },
+  low: { bg: `rgba(22,119,255,${isDark ? 0.14 : 0.22})`, border: '#1677ff' },
+  none: { bg: `rgba(140,140,140,${isDark ? 0.14 : 0.22})`, border: '#8c8c8c' },
+})
+
 interface CalendarPanelProps {
   view: 'month' | 'week' | 'day'
   currentDate: number
@@ -156,6 +163,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
   const effectiveTheme = useMemo(() => getEffectiveTheme(themeMode), [themeMode])
   const isDark = effectiveTheme === 'dark'
   const eventColorMap = useMemo(() => getEventColorMap(isDark), [isDark])
+  const todoBarColorMap = useMemo(() => getTodoBarColorMap(isDark), [isDark])
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   // 周/日视图进入时滚动到一半位置
@@ -505,9 +513,10 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     )
                   })}
 
-                  {/* TODO 到期点（同时间段横向排列） */}
+                  {/* TODO 到期长条（同时间段横向平分宽度） */}
                   {(() => {
-                    const SNAP_H = 14
+                    const BAR_HEIGHT = 16
+                    const SNAP_H = BAR_HEIGHT
                     const groups: { baseTop: number; todos: CalendarTodo[] }[] = []
                     dayTodos.forEach((td) => {
                       if (!td.due_at) return
@@ -526,33 +535,52 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                         key={`tg-${group.baseTop}`}
                         style={{
                           position: 'absolute',
-                          right: 3,
-                          top: Math.max(0, group.baseTop - 3),
+                          left: 2,
+                          right: 2,
+                          top: group.baseTop,
                           display: 'flex',
-                          gap: 3,
+                          gap: 2,
                           zIndex: 4,
                         }}
                       >
-                        {group.todos.map((td) => (
-                          <Tooltip
-                            key={td.id}
-                            title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.due_at!)}`}
-                          >
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                onEditTodo?.(td)
-                              }}
-                              style={{
-                                width: 7,
-                                height: 7,
-                                borderRadius: '50%',
-                                background: TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none,
-                                cursor: 'pointer',
-                              }}
-                            />
-                          </Tooltip>
-                        ))}
+                        {group.todos.map((td) => {
+                          const c = todoBarColorMap[td.priority] || todoBarColorMap.none
+                          return (
+                            <Tooltip
+                              key={td.id}
+                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.due_at!)}`}
+                            >
+                              <div
+                                onMouseDown={(e) => {
+                                  e.stopPropagation()
+                                  e.preventDefault()
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onEditTodo?.(td)
+                                }}
+                                style={{
+                                  flex: 1,
+                                  height: BAR_HEIGHT,
+                                  background: c.bg,
+                                  borderLeft: `3px solid ${c.border}`,
+                                  borderRadius: 3,
+                                  padding: '0 6px',
+                                  fontSize: 10,
+                                  lineHeight: `${BAR_HEIGHT}px`,
+                                  overflow: 'hidden',
+                                  whiteSpace: 'nowrap',
+                                  textOverflow: 'ellipsis',
+                                  color: token.colorText,
+                                  cursor: 'pointer',
+                                  userSelect: 'none',
+                                }}
+                              >
+                                {td.title}
+                              </div>
+                            </Tooltip>
+                          )
+                        })}
                       </div>
                     ))
                   })()}

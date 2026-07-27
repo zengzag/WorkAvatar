@@ -93,7 +93,9 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
   }, [isEdit, event, defaultStartAt, defaultEndAt, settings])
 
   useEffect(() => {
-    if (open) form.resetFields()
+    // 显式 setFieldsValue 而非 resetFields：后者会回到 Form 挂载时捕获的 initialValues，
+    // 在 destroyOnHidden 动画期间切换不同事件时会显示上一次的内容。
+    if (open) form.setFieldsValue(initialValues)
   }, [open, form, initialValues])
 
   const allDay = Form.useWatch('allDay', form)
