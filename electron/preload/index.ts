@@ -408,7 +408,6 @@ const electronAPI = {
     getAbsolutePath: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_ABS_PATH, relPath),
     openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
     importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
-    startDrag: (filePaths: string[]) => ipcRenderer.send(IPC_CHANNELS.NOTES_START_DRAG, filePaths),
     onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
       const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)

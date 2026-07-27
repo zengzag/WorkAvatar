@@ -81,6 +81,9 @@ const TreeNodeTitle = memo(function TreeNodeTitle({
   onTitleClick,
   onContextMenuOpen,
   externalDragOver,
+  onExternalDragOver,
+  onExternalDragLeave,
+  onExternalDrop,
 }: {
   node: NoteNode
   isActive: boolean
@@ -94,6 +97,9 @@ const TreeNodeTitle = memo(function TreeNodeTitle({
   onTitleClick: (e: React.MouseEvent, node: NoteNode) => void
   onContextMenuOpen: (node: NoteNode, pos: { x: number; y: number }) => void
   externalDragOver: boolean
+  onExternalDragOver: (e: React.DragEvent, node: NoteNode) => void
+  onExternalDragLeave: (e: React.DragEvent) => void
+  onExternalDrop: (e: React.DragEvent, node: NoteNode) => void
 }) {
   const { token } = theme.useToken()
   const isFolder = node.type === 'folder'
@@ -138,6 +144,9 @@ const TreeNodeTitle = memo(function TreeNodeTitle({
       title={node.name}
       onClick={(e) => onTitleClick(e, node)}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenuOpen(node, { x: e.clientX, y: e.clientY }) }}
+      onDragOver={(e) => onExternalDragOver(e, node)}
+      onDragLeave={(e) => onExternalDragLeave(e)}
+      onDrop={(e) => onExternalDrop(e, node)}
     >
       {isFolder ? (
         <span style={{ flex: 'none', display: 'inline-flex', color: token.colorTextTertiary, fontSize: 10 }}>
@@ -524,23 +533,8 @@ const NotesTree: React.FC<Props> = ({
   const handleDragStart = useCallback((info: any) => {
     const key = String(info?.node?.key ?? '')
     if (!key || key.startsWith('__new_')) return
-    // Shift+拖拽：导出到系统文件管理器
-    const nativeEvent = info?.event as DragEvent
-    if (nativeEvent?.shiftKey) {
-      nativeEvent.preventDefault()
-      const selected = treeSelectedKeys.filter((k) => typeof k === 'string' && !String(k).startsWith('__new_')) as string[]
-      const pathsToDrag = selected.includes(key) ? selected : [key]
-      Promise.all(pathsToDrag.map((p) => window.electronAPI.notes.getAbsolutePath(p)))
-        .then((results) => {
-          const absPaths = results
-            .filter((r) => r && !(r as any).error)
-            .map((r) => (r as any).absPath as string)
-          if (absPaths.length > 0) window.electronAPI.notes.startDrag(absPaths)
-        })
-      return
-    }
     setDragSrcKey(key)
-  }, [treeSelectedKeys])
+  }, [])
   const handleDragEnd = useCallback(() => {
     setDragSrcKey(null)
     setRootHover(false)
@@ -581,7 +575,13 @@ const NotesTree: React.FC<Props> = ({
     }
   }, [dragSrcKey])
 
-  // 拖拽时根据光标位置决定滚动方向 + 外部文件拖入高亮 + 自动展开
+  // 获取节点的父文件夹 relPath
+  const getParentRelPath = useCallback((relPath: string): string => {
+    const idx = relPath.lastIndexOf('/')
+    return idx >= 0 ? relPath.substring(0, idx) : ''
+  }, [])
+
+  // 拖拽时根据光标位置决定滚动方向（仅内部拖拽滚动用）
   const handleContainerDragOver = useCallback((e: React.DragEvent) => {
     const el = containerRef.current
     if (!el) { dragScrollDirRef.current = null; return }
@@ -596,24 +596,14 @@ const NotesTree: React.FC<Props> = ({
       dragScrollDirRef.current = null
     }
 
-    // 外部文件拖入：高亮目标文件夹 + 自动展开折叠文件夹
+    // 外部文件拖入：容器级别处理空白区域（导入到根）
     const isExternal = e.dataTransfer.types.includes('Files')
     if (!isExternal) return
     e.preventDefault()
-    const rowEl = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest('[data-relpath]') as HTMLElement | null
-    const relPath = rowEl?.getAttribute('data-relpath') || ''
-    const nodeType = rowEl?.getAttribute('data-type') || ''
-    const folderKey = nodeType === 'folder' ? relPath : ''
-    setExternalDragOverKey(folderKey || '__root__')
-
-    // 自动展开：悬停在折叠文件夹上 600ms 后展开
-    if (folderKey && folderKey !== dragOverKeyRef.current) {
-      dragOverKeyRef.current = folderKey
-      if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current)
-      autoExpandTimerRef.current = setTimeout(() => {
-        setExpandedKeys((prev) => prev.includes(folderKey) ? prev : [...prev, folderKey])
-      }, 600)
-    } else if (!folderKey) {
+    // 未命中具体行时高亮根区域
+    const rowEl = (e.target as HTMLElement | null)?.closest('[data-relpath]') as HTMLElement | null
+    if (!rowEl) {
+      setExternalDragOverKey('__root__')
       dragOverKeyRef.current = null
       if (autoExpandTimerRef.current) {
         clearTimeout(autoExpandTimerRef.current)
@@ -632,8 +622,50 @@ const NotesTree: React.FC<Props> = ({
     }
   }, [])
 
-  // 外部文件拖入：导入到目标文件夹
-  const handleContainerDrop = useCallback(async (e: React.DragEvent) => {
+  // 行级外部拖入：高亮 + 自动展开
+  const handleRowExternalDragOver = useCallback((e: React.DragEvent, node: NoteNode) => {
+    const isExternal = e.dataTransfer.types.includes('Files')
+    if (!isExternal) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+    if (node.type === 'folder') {
+      setExternalDragOverKey(node.relPath)
+      // 自动展开：悬停在折叠文件夹上 600ms 后展开
+      if (node.relPath !== dragOverKeyRef.current) {
+        dragOverKeyRef.current = node.relPath
+        if (autoExpandTimerRef.current) clearTimeout(autoExpandTimerRef.current)
+        autoExpandTimerRef.current = setTimeout(() => {
+          setExpandedKeys((prev) => prev.includes(node.relPath) ? prev : [...prev, node.relPath])
+        }, 600)
+      }
+    } else {
+      // 文件行：不高亮，但允许 preventDefault 以避免容器抢夺
+      setExternalDragOverKey(null)
+      dragOverKeyRef.current = null
+      if (autoExpandTimerRef.current) {
+        clearTimeout(autoExpandTimerRef.current)
+        autoExpandTimerRef.current = null
+      }
+    }
+  }, [])
+
+  const handleRowExternalDragLeave = useCallback((e: React.DragEvent) => {
+    const isExternal = e.dataTransfer.types.includes('Files')
+    if (!isExternal) return
+    // 仅在真正离开行时清除（relatedTarget 不在当前行内）
+    const related = e.relatedTarget as HTMLElement | null
+    if (related?.closest('[data-relpath]')) return
+    setExternalDragOverKey(null)
+    dragOverKeyRef.current = null
+    if (autoExpandTimerRef.current) {
+      clearTimeout(autoExpandTimerRef.current)
+      autoExpandTimerRef.current = null
+    }
+  }, [])
+
+  // 行级外部拖入放置：导入到目标文件夹
+  const handleRowExternalDrop = useCallback(async (e: React.DragEvent, node: NoteNode) => {
     const isExternal = e.dataTransfer.types.includes('Files')
     if (!isExternal) return
     e.preventDefault()
@@ -646,15 +678,38 @@ const NotesTree: React.FC<Props> = ({
     }
     const files = Array.from(e.dataTransfer.files)
     if (files.length === 0) return
-    const rowEl = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest('[data-relpath]') as HTMLElement | null
-    const relPath = rowEl?.getAttribute('data-relpath') || ''
-    const nodeType = rowEl?.getAttribute('data-type') || ''
-    const destFolder = nodeType === 'folder' ? relPath : ''
+    // 文件夹→导入到该文件夹；文件→导入到同级父文件夹
+    const destFolder = node.type === 'folder' ? node.relPath : getParentRelPath(node.relPath)
     let imported = 0
     for (const file of files) {
       try {
         const srcAbsPath = window.electronAPI.getPathForFile(file)
         const res = await window.electronAPI.notes.importExternal({ srcAbsPath, destParentRelPath: destFolder })
+        if (res && !(res as any).error) imported++
+      } catch { /* ignore */ }
+    }
+    if (imported > 0) message.success(t('notes.importSuccess', { count: imported }))
+  }, [t, message, getParentRelPath])
+
+  // 容器级外部拖入放置：导入到根目录
+  const handleContainerDrop = useCallback(async (e: React.DragEvent) => {
+    const isExternal = e.dataTransfer.types.includes('Files')
+    if (!isExternal) return
+    // 如果 drop 命中了行，行级 onDrop 已经 stopPropagation，不会走到这里
+    e.preventDefault()
+    setExternalDragOverKey(null)
+    dragOverKeyRef.current = null
+    if (autoExpandTimerRef.current) {
+      clearTimeout(autoExpandTimerRef.current)
+      autoExpandTimerRef.current = null
+    }
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+    let imported = 0
+    for (const file of files) {
+      try {
+        const srcAbsPath = window.electronAPI.getPathForFile(file)
+        const res = await window.electronAPI.notes.importExternal({ srcAbsPath, destParentRelPath: '' })
         if (res && !(res as any).error) imported++
       } catch { /* ignore */ }
     }
@@ -685,12 +740,6 @@ const NotesTree: React.FC<Props> = ({
     if (anyOk) message.success(t('notes.moveSuccess'))
     setTreeSelectedKeys([])
   }, [dragSrcKey, onMove, t, treeSelectedKeys])
-
-  // 获取节点的父文件夹 relPath
-  const getParentRelPath = useCallback((relPath: string): string => {
-    const idx = relPath.lastIndexOf('/')
-    return idx >= 0 ? relPath.substring(0, idx) : ''
-  }, [])
 
   // 创建副本：在同父文件夹下复制
   const handleCreateCopy = useCallback(async (node: NoteNode) => {
@@ -922,6 +971,9 @@ const NotesTree: React.FC<Props> = ({
           onTitleClick={handleTitleClick}
           onContextMenuOpen={() => {}}
           externalDragOver={false}
+          onExternalDragOver={() => {}}
+          onExternalDragLeave={() => {}}
+          onExternalDrop={() => {}}
         />
       )
     }
@@ -942,9 +994,12 @@ const NotesTree: React.FC<Props> = ({
         onTitleClick={handleTitleClick}
         onContextMenuOpen={handleContextMenuOpen}
         externalDragOver={n.type === 'folder' && externalDragOverKey === key}
+        onExternalDragOver={handleRowExternalDragOver}
+        onExternalDragLeave={handleRowExternalDragLeave}
+        onExternalDrop={handleRowExternalDrop}
       />
     )
-  }, [editing, editingName, currentRelPath, expandedKeys, externalDragOverKey, commitEdit, cancelEdit, handleTitleClick, handleContextMenuOpen])
+  }, [editing, editingName, currentRelPath, expandedKeys, externalDragOverKey, commitEdit, cancelEdit, handleTitleClick, handleContextMenuOpen, handleRowExternalDragOver, handleRowExternalDragLeave, handleRowExternalDrop])
 
   return (
     <div

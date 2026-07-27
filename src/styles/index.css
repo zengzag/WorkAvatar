@@ -302,6 +302,7 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   align-items: center;
   padding: 0 4px;
   border-radius: 4px;
+  cursor: default !important;
 }
 .notes-tree .ant-tree .ant-tree-indent-unit {
   width: 10px !important;
@@ -311,6 +312,7 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   display: none !important;
 }
 /* 让 title 容器撑满剩余宽度，实现整行点击/右键，hover/selected 统一高亮 */
+/* cursor: default 覆盖 antd draggable 模式下的 cursor: move/grab，消除行间交界处光标闪烁 */
 .notes-tree .ant-tree .ant-tree-node-content-wrapper {
   display: flex !important;
   align-items: center;
@@ -321,8 +323,13 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   flex: 1 1 auto;
   min-width: 0;
   width: auto;
-  cursor: default;
+  cursor: default !important;
   transition: background 0.15s;
+}
+.notes-tree .ant-tree .ant-tree-title,
+.notes-tree .ant-tree .ant-tree-node-content-wrapper .notes-tree-row,
+.notes-tree .ant-tree .ant-tree-draggable-icon {
+  cursor: default !important;
 }
 .notes-tree .ant-tree .ant-tree-node-content-wrapper:hover {
   background: var(--ant-color-fill-quaternary) !important;

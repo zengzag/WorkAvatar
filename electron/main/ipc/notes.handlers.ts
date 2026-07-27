@@ -1,11 +1,10 @@
 /**
  * 笔记模块 IPC handlers。
  *
- * 暴露树读取、笔记读写、新建、重命名、移动、复制、删除、搜索、设置、路径相关共 14 个通道。
+ * 暴露树读取、笔记读写、新建、重命名、移动、复制、删除、搜索、设置、路径相关、外部导入共 15 个通道。
  * 所有操作经 NotesService 落到 vault 真实文件；外部文件变更由 watcher 广播 DATA_CHANGED。
  */
 
-import { ipcMain, app, nativeImage } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   NoteWriteParams,
@@ -19,9 +18,6 @@ import type {
 } from '../../shared/ipc-channels'
 import NotesService from '../services/notes/notes.service'
 import { safeHandle } from './_shared'
-import { createLogger } from '../services/logger'
-
-const logger = createLogger('NotesIPC')
 
 export function registerNotesHandlers(): void {
   const service = NotesService.getInstance()
@@ -110,23 +106,6 @@ export function registerNotesHandlers(): void {
       return await service.importExternal(params.srcAbsPath, params.destParentRelPath || '')
     } catch (err: any) {
       return { error: err?.message || '导入失败' }
-    }
-  })
-
-  // 拖出文件到系统文件管理器：使用 webContents.startDrag 触发原生 OS 拖拽
-  // 必须用 ipcMain.on（非 handle），因为需要 event.sender 且不返回值
-  ipcMain.on(IPC_CHANNELS.NOTES_START_DRAG, async (event, filePaths: string[]) => {
-    try {
-      if (!Array.isArray(filePaths) || filePaths.length === 0) return
-      let icon: Electron.NativeImage
-      try {
-        icon = await app.getFileIcon(filePaths[0], { size: 'normal' })
-      } catch {
-        icon = nativeImage.createEmpty()
-      }
-      event.sender.startDrag({ file: filePaths[0], files: filePaths, icon })
-    } catch (err: any) {
-      logger.error('startDrag failed:', err?.message || err)
     }
   })
 }

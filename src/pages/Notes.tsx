@@ -495,7 +495,7 @@ const NotesPage: React.FC = () => {
             >
               <span>{t('notes.outline')}</span>
               <Tooltip title={t('notes.hideOutline')}>
-                <Button type="text" size="small" icon={<MenuFoldOutlined />} onClick={handleToggleOutline} />
+                <Button type="text" size="small" icon={<MenuUnfoldOutlined />} onClick={handleToggleOutline} />
               </Tooltip>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
@@ -510,7 +510,7 @@ const NotesPage: React.FC = () => {
             <Button
               type="text"
               size="small"
-              icon={<MenuUnfoldOutlined />}
+              icon={<MenuFoldOutlined />}
               onClick={handleToggleOutline}
               style={{
                 position: 'absolute',
