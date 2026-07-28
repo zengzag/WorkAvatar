@@ -63,6 +63,10 @@ export interface RecordingSession {
 
   // 双源停止计数
   dualRecorderStopCount: number
+
+  // 实时识别文本（按来源分组）—— 跨组件卸载/挂载持久，避免切换界面时字幕丢失
+  realtimeTextBySource: Record<string, string>
+  realtimeSegmentsBySource: Record<string, { start: number; end: number; text: string }[]>
 }
 
 function createEmptySession(): RecordingSession {
@@ -101,6 +105,8 @@ function createEmptySession(): RecordingSession {
     micPaused: false,
     systemPaused: false,
     dualRecorderStopCount: 0,
+    realtimeTextBySource: {},
+    realtimeSegmentsBySource: {},
   }
 }
 

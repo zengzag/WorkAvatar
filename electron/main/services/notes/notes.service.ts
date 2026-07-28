@@ -522,6 +522,34 @@ class NotesService {
     return next
   }
 
+  // ====== 日记 ======
+
+  /** 打开今日日记：在 diary_root 下创建/打开以 YYYY.MM.DD.md 命名的文件 */
+  openOrCreateDiary(): { relPath: string; created: boolean } {
+    const settings = this.getSettings()
+    if (!settings.diary_enabled) throw new Error('日记功能未启用')
+    const rootRel = (settings.diary_root || '').trim() || 'diary'
+    const rootFull = this.resolve(rootRel)
+    if (fs.existsSync(rootFull) && !fs.statSync(rootFull).isDirectory()) {
+      throw new Error('日记根目录已被文件占用')
+    }
+    this.ensureDir(rootFull)
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = String(now.getMonth() + 1).padStart(2, '0')
+    const d = String(now.getDate()).padStart(2, '0')
+    const fileName = `${y}.${m}.${d}.md`
+    const fileFull = path.join(rootFull, fileName)
+    const relPath = this.toPosix(path.relative(this.vaultRoot, fileFull))
+    let created = false
+    if (!fs.existsSync(fileFull)) {
+      this.markSelfWrite(relPath)
+      fs.writeFileSync(fileFull, '', 'utf-8')
+      created = true
+    }
+    return { relPath, created }
+  }
+
   // ====== 名称处理 ======
 
   private sanitizeName(name: string): string {

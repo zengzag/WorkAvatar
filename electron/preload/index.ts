@@ -410,6 +410,7 @@ const electronAPI = {
     openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
     importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
     saveImage: (params: NoteSaveImageParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SAVE_IMAGE, params),
+    openDiary: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_DIARY),
     onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
       const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)

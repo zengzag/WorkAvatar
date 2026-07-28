@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card, Space, Typography, Input, Button, Radio, Divider, App, theme, Tag,
-  InputNumber, ColorPicker, Select,
+  InputNumber, ColorPicker, Select, Tabs,
 } from 'antd'
 import {
   CloudServerOutlined, DesktopOutlined, AudioOutlined, RobotOutlined,
@@ -10,6 +10,7 @@ import {
   DesktopOutlined as SubtitleIcon,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
+import SettingsItem from '../common/SettingsItem'
 import type { VoiceSettings, VoiceLocalModelStatus } from '../../hooks/useVoice'
 
 const { Text } = Typography
@@ -107,41 +108,36 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
     return <div style={{ padding: 20 }}><Text type="secondary">{t('voice.loadingSettings')}</Text></div>
   }
 
-  return (
+  const cardStyle: React.CSSProperties = { borderColor: token.colorBorderSecondary }
+
+  const renderEngineTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* STT Mode */}
-      <Card size="small" title={<Space><AudioOutlined /> {t('voice.sttEngine')}</Space>}>
-        <Radio.Group
-          value={localSettings.sttMode}
-          onChange={(e) => update({ sttMode: e.target.value })}
-          style={{ marginBottom: 16 }}
-        >
-          <Radio.Button value="local"><DesktopOutlined /> {t('voice.sttModeLocal')}</Radio.Button>
-          <Radio.Button value="api"><CloudServerOutlined /> {t('voice.sttModeApi')}</Radio.Button>
-        </Radio.Group>
+      {/* STT 引擎模式 */}
+      <Card size="small" style={cardStyle}>
+        <SettingsItem
+          title={t('voice.sttEngine')}
+          description={localSettings.sttMode === 'api' ? t('voice.sttModeApiHint') : t('voice.sttModeLocalHint')}
+          extra={
+            <Radio.Group
+              value={localSettings.sttMode}
+              onChange={(e) => update({ sttMode: e.target.value })}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="local"><DesktopOutlined /> {t('voice.sttModeLocal')}</Radio.Button>
+              <Radio.Button value="api"><CloudServerOutlined /> {t('voice.sttModeApi')}</Radio.Button>
+            </Radio.Group>
+          }
+        />
+      </Card>
 
-        <div style={{ marginBottom: 8, padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {localSettings.sttMode === 'api'
-              ? t('voice.sttModeApiHint')
-              : t('voice.sttModeLocalHint')}
-          </Text>
-        </div>
-
-        {/* Local Config */}
-        {localSettings.sttMode === 'local' && (
-          <>
-            <Divider style={{ margin: '12px 0' }} />
-            <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-              <div style={{ padding: 8, background: token.colorFillQuaternary, borderRadius: 6 }}>
-                <Text>
-                  <DesktopOutlined /> {t('voice.localModelBuiltin')}
-                </Text>
-                <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-                  {t('voice.localModelBuiltinHint')}
-                </Text>
-              </div>
-              {/* Model status check */}
+      {/* 本地引擎配置 */}
+      {localSettings.sttMode === 'local' && (
+        <Card size="small" style={cardStyle}>
+          <SettingsItem
+            title={t('voice.localModelBuiltin')}
+            description={t('voice.localModelBuiltinHint')}
+            extra={
               <Space>
                 <Button
                   icon={<CheckCircleOutlined />}
@@ -162,17 +158,22 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                   )
                 )}
               </Space>
-            </Space>
-          </>
-        )}
+            }
+          />
+        </Card>
+      )}
 
-        {/* API Config */}
-        {localSettings.sttMode === 'api' && (
-          <>
-            <Divider style={{ margin: '12px 0' }} />
-            <Space orientation="vertical" style={{ width: '100%' }} size={12}>
+      {/* API 配置 */}
+      {localSettings.sttMode === 'api' && (
+        <Card size="small" style={cardStyle}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <SettingsItem
+              title={t('voice.sttModeApi')}
+              description={t('voice.sttModeApiHint')}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.apiEndpoint')}</Text>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>{t('voice.apiEndpoint')}</Text>
                 <Input
                   value={localSettings.apiConfig.endpoint}
                   onChange={(e) => updateApiConfig({ endpoint: e.target.value })}
@@ -180,7 +181,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                 />
               </div>
               <div>
-                <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.apiKey')}</Text>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>{t('voice.apiKey')}</Text>
                 <Input.Password
                   value={localSettings.apiConfig.apiKey}
                   onChange={(e) => updateApiConfig({ apiKey: e.target.value })}
@@ -189,7 +190,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
               </div>
               <Space size={12}>
                 <div>
-                  <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.sttModel')}</Text>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>{t('voice.sttModel')}</Text>
                   <Input
                     value={localSettings.apiConfig.model}
                     onChange={(e) => updateApiConfig({ model: e.target.value })}
@@ -198,7 +199,7 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                   />
                 </div>
                 <div>
-                  <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.language')}</Text>
+                  <Text type="secondary" style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>{t('voice.language')}</Text>
                   <Input
                     value={localSettings.apiConfig.language}
                     onChange={(e) => updateApiConfig({ language: e.target.value })}
@@ -207,72 +208,89 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                   />
                 </div>
               </Space>
-            </Space>
-          </>
-        )}
-      </Card>
+            </div>
+          </div>
+        </Card>
+      )}
 
-      {/* Microphone Device Selection */}
-      <Card size="small" title={<Space><AudioOutlined /> {t('voice.micDevice')}</Space>}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-          {t('voice.micDeviceHint')}
-        </Text>
-        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-          <Select
-            style={{ width: '100%' }}
-            value={localSettings.micDeviceId || ''}
-            onChange={(val) => update({ micDeviceId: val })}
-            placeholder={t('voice.micDeviceDefault')}
-            options={[
-              { label: t('voice.micDeviceDefault'), value: '' },
-              ...micDevices.map(d => ({
-                label: d.label || `Device ${d.deviceId.slice(0, 8)}`,
-                value: d.deviceId,
-              })),
-            ]}
-          />
-          {micDevices.length === 0 && (
+      {/* 麦克风设备 */}
+      <Card size="small" style={cardStyle}>
+        <SettingsItem
+          title={t('voice.micDevice')}
+          description={t('voice.micDeviceHint')}
+          extra={
+            <Select
+              style={{ width: 200 }}
+              value={localSettings.micDeviceId || ''}
+              onChange={(val) => update({ micDeviceId: val })}
+              placeholder={t('voice.micDeviceDefault')}
+              options={[
+                { label: t('voice.micDeviceDefault'), value: '' },
+                ...micDevices.map(d => ({
+                  label: d.label || `Device ${d.deviceId.slice(0, 8)}`,
+                  value: d.deviceId,
+                })),
+              ]}
+            />
+          }
+        />
+        {micDevices.length === 0 && (
+          <div>
             <Text type="warning" style={{ fontSize: 12 }}>
               <ExclamationCircleOutlined /> {t('voice.micDevicePermissionHint')}
             </Text>
-          )}
-        </Space>
+          </div>
+        )}
       </Card>
+    </div>
+  )
 
-      {/* Minutes LLM Model */}
-      <Card size="small" title={<Space><RobotOutlined /> {t('voice.minutesModel')}</Space>}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-          {t('voice.minutesModelHint')}
-        </Text>
-        <LLMSelector
-          providerId={localSettings.minutesModel?.provider_id}
-          modelId={localSettings.minutesModel?.model_id}
-          onChange={(providerId, modelId) => {
-            update({ minutesModel: { provider_id: providerId, model_id: modelId } })
-          }}
+  const renderMinutesTab = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card size="small" style={cardStyle}>
+        <SettingsItem
+          title={t('voice.minutesModel')}
+          description={t('voice.minutesModelHint')}
+          extra={
+            <LLMSelector
+              providerId={localSettings.minutesModel?.provider_id}
+              modelId={localSettings.minutesModel?.model_id}
+              onChange={(providerId, modelId) => {
+                update({ minutesModel: { provider_id: providerId, model_id: modelId } })
+              }}
+            />
+          }
         />
       </Card>
+    </div>
+  )
 
-      {/* Floating Subtitle Settings */}
-      <Card size="small" title={<Space><SubtitleIcon /> {t('voice.subtitleSettings')}</Space>}>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-          {t('voice.subtitleEnabledHint')}
-        </Text>
-        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleFontSize')}</Text>
-            <InputNumber
-              min={12}
-              max={72}
-              value={localSettings.subtitleConfig.fontSize}
-              onChange={(val) => updateSubtitleConfig({ fontSize: val || 28 })}
-              style={{ width: 120 }}
-            />
-            <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>px</Text>
-          </div>
-          <Space size={24}>
-            <div>
-              <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleTextColor')}</Text>
+  const renderSubtitleTab = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Card size="small" style={cardStyle}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <SettingsItem
+            title={t('voice.subtitleSettings')}
+            description={t('voice.subtitleEnabledHint')}
+          />
+          <Divider style={{ margin: '4px 0' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text strong style={{ fontSize: 13 }}>{t('voice.subtitleFontSize')}</Text>
+              <Space>
+                <InputNumber
+                  min={12}
+                  max={72}
+                  value={localSettings.subtitleConfig.fontSize}
+                  onChange={(val) => updateSubtitleConfig({ fontSize: val || 28 })}
+                  style={{ width: 120 }}
+                />
+                <Text type="secondary" style={{ fontSize: 12 }}>px</Text>
+              </Space>
+            </div>
+            <Divider style={{ margin: '4px 0' }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text strong style={{ fontSize: 13 }}>{t('voice.subtitleTextColor')}</Text>
               <ColorPicker
                 value={localSettings.subtitleConfig.textColor}
                 onChange={(color) => updateSubtitleConfig({ textColor: color.toHexString() })}
@@ -285,8 +303,9 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                 }} />
               </ColorPicker>
             </div>
-            <div>
-              <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleBgColor')}</Text>
+            <Divider style={{ margin: '4px 0' }} />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text strong style={{ fontSize: 13 }}>{t('voice.subtitleBgColor')}</Text>
               <ColorPicker
                 value={localSettings.subtitleConfig.backgroundColor}
                 onChange={(color) => updateSubtitleConfig({ backgroundColor: color.toHexString() })}
@@ -299,48 +318,78 @@ const KMSVoiceSettings: React.FC<KMSVoiceSettingsProps> = ({
                 }} />
               </ColorPicker>
             </div>
-          </Space>
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 4 }}>
-              {t('voice.subtitleOpacity')}: {localSettings.subtitleConfig.backgroundOpacity}%
-            </Text>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={localSettings.subtitleConfig.backgroundOpacity}
-              onChange={(e) => updateSubtitleConfig({ backgroundOpacity: Number(e.target.value) })}
-              style={{ width: '100%', accentColor: token.colorPrimary }}
-            />
+            <Divider style={{ margin: '4px 0' }} />
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>
+                {t('voice.subtitleOpacity')}: {localSettings.subtitleConfig.backgroundOpacity}%
+              </Text>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={localSettings.subtitleConfig.backgroundOpacity}
+                onChange={(e) => updateSubtitleConfig({ backgroundOpacity: Number(e.target.value) })}
+                style={{ width: '100%', accentColor: token.colorPrimary }}
+              />
+            </div>
+            <Divider style={{ margin: '4px 0' }} />
+            <div>
+              <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>{t('voice.subtitleWindowSize')}</Text>
+              <Space>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleWidth')}</Text>
+                  <InputNumber
+                    min={300}
+                    max={1920}
+                    value={localSettings.subtitleConfig.windowWidth}
+                    onChange={(val) => updateSubtitleConfig({ windowWidth: val || 600 })}
+                    style={{ width: 100, marginLeft: 8 }}
+                  />
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleHeight')}</Text>
+                  <InputNumber
+                    min={60}
+                    max={400}
+                    value={localSettings.subtitleConfig.windowHeight}
+                    onChange={(val) => updateSubtitleConfig({ windowHeight: val || 120 })}
+                    style={{ width: 100, marginLeft: 8 }}
+                  />
+                </div>
+              </Space>
+            </div>
           </div>
-          <div>
-            <Text strong style={{ display: 'block', marginBottom: 4 }}>{t('voice.subtitleWindowSize')}</Text>
-            <Space>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleWidth')}</Text>
-                <InputNumber
-                  min={300}
-                  max={1920}
-                  value={localSettings.subtitleConfig.windowWidth}
-                  onChange={(val) => updateSubtitleConfig({ windowWidth: val || 600 })}
-                  style={{ width: 100 }}
-                />
-              </div>
-              <div>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('voice.subtitleHeight')}</Text>
-                <InputNumber
-                  min={60}
-                  max={400}
-                  value={localSettings.subtitleConfig.windowHeight}
-                  onChange={(val) => updateSubtitleConfig({ windowHeight: val || 120 })}
-                  style={{ width: 100 }}
-                />
-              </div>
-            </Space>
-          </div>
-        </Space>
+        </div>
       </Card>
     </div>
+  )
+
+  const tabItems = [
+    {
+      key: 'engine',
+      label: <span><AudioOutlined style={{ marginRight: 4 }} />{t('voice.settingsTabEngine')}</span>,
+      children: renderEngineTab(),
+    },
+    {
+      key: 'minutes',
+      label: <span><RobotOutlined style={{ marginRight: 4 }} />{t('voice.settingsTabMinutes')}</span>,
+      children: renderMinutesTab(),
+    },
+    {
+      key: 'subtitle',
+      label: <span><SubtitleIcon style={{ marginRight: 4 }} />{t('voice.settingsTabSubtitle')}</span>,
+      children: renderSubtitleTab(),
+    },
+  ]
+
+  return (
+    <Tabs
+      defaultActiveKey="engine"
+      items={tabItems}
+      size="small"
+      style={{ height: '100%' }}
+      tabBarStyle={{ marginBottom: 16 }}
+    />
   )
 }
 

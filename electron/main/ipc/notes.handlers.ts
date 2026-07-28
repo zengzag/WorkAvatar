@@ -120,4 +120,12 @@ export function registerNotesHandlers(): void {
       return { error: err?.message || '保存图片失败' }
     }
   })
+
+  safeHandle(IPC_CHANNELS.NOTES_OPEN_DIARY, () => {
+    try {
+      return service.openOrCreateDiary()
+    } catch (err: any) {
+      return { error: err?.message || '打开日记失败' }
+    }
+  })
 }

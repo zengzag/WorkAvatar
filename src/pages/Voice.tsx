@@ -36,7 +36,8 @@ const VoicePage: React.FC = () => {
         title={t('voice.settings')}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        size={520}
+        size={640}
+        styles={{ body: { padding: 16, overflow: 'auto' } }}
         destroyOnHidden
       >
         <KMSVoiceSettings

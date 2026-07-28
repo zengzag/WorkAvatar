@@ -13,7 +13,7 @@ import CalendarPanel from '../components/calendar/CalendarPanel'
 import TodoPanel from '../components/calendar/TodoPanel'
 import EventFormModal, { type EventFormMode } from '../components/calendar/EventFormModal'
 import TodoFormModal, { type TodoFormMode } from '../components/calendar/TodoFormModal'
-import CalendarSettingsModal from '../components/calendar/CalendarSettingsModal'
+import CalendarSettingsDrawer from '../components/calendar/CalendarSettingsDrawer'
 import type { CalendarEventInstance, CalendarTodo, CreateEventInput, UpdateEventInput, CreateTodoInput, UpdateTodoInput } from '../types/calendar'
 
 const DEFAULT_CLICK_DURATION_SEC = 30 * 60
@@ -266,7 +266,7 @@ const CalendarPage: React.FC = () => {
         onSubmit={handleTodoSubmit}
         onDelete={handleDeleteTodo}
       />
-      <CalendarSettingsModal
+      <CalendarSettingsDrawer
         open={settingsOpen}
         settings={cal.settings}
         onClose={() => setSettingsOpen(false)}

@@ -1,22 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
-  Card,
-  Tabs,
-  Form,
-  Button,
-  Checkbox,
-  App,
-  theme,
-  Tooltip,
-  Typography,
+  Drawer, Tabs, Form, App, theme, Checkbox, Typography, Tooltip, Button, Spin,
 } from 'antd'
-import { FolderOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import {
-  SaveOutlined,
+  IdcardOutlined, ToolOutlined, ApiOutlined, AppstoreOutlined,
+  DatabaseOutlined, BarChartOutlined, ImportOutlined,
+  FolderOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
-import PageHeader from '../components/common/PageHeader'
 import {
   BasicInfoSection,
   ProfileSection,
@@ -25,8 +16,8 @@ import {
   ExportImportSection,
   MemorySection,
   McpSection,
-} from '../components/employee-settings'
-import type { Employee } from '../types'
+} from '../employee-settings'
+import type { Employee } from '../../types'
 
 interface ToolInfo {
   id: string
@@ -54,30 +45,37 @@ interface EmployeeSkill extends InstalledSkill {
   enabled: boolean
 }
 
-const EmployeeSettings: React.FC = () => {
+interface EmployeeSettingsDrawerProps {
+  open: boolean
+  employeeId: string | undefined
+  onClose: () => void
+  initialTab?: string
+}
+
+const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
+  open, employeeId, onClose, initialTab,
+}) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
-  const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
-  const location = useLocation()
   const { token } = theme.useToken()
   const [activeTab, setActiveTab] = useState('basic')
 
-  useEffect(() => {
-    const state = location.state as any
-    if (state?.tab) {
-      setActiveTab(state.tab)
-    }
-  }, [location.state])
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
 
   const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
-
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [employeeSkills, setEmployeeSkills] = useState<EmployeeSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
+
+  useEffect(() => {
+    if (open && initialTab) {
+      setActiveTab(initialTab)
+    } else if (open && !initialTab) {
+      setActiveTab('basic')
+    }
+  }, [open, initialTab])
 
   useEffect(() => {
     if (employee) {
@@ -87,25 +85,27 @@ const EmployeeSettings: React.FC = () => {
         avatar_type: employee.avatar_type,
       })
     }
-  }, [employee])
+  }, [employee, form])
 
   const loadEmployee = useCallback(async () => {
+    if (!employeeId) return
     try {
-      const result = await window.electronAPI.employee.get(id!)
+      const result = await window.electronAPI.employee.get(employeeId)
       setEmployee(result)
     } catch {
       message.error(t('employeeSettings.loadFailed'))
     }
-  }, [id, message, t])
+  }, [employeeId, message, t])
 
   const loadTools = useCallback(async () => {
+    if (!employeeId) return
     try {
-      const result = await window.electronAPI.tool.getEmployeeTools({ employee_id: id! })
+      const result = await window.electronAPI.tool.getEmployeeTools({ employee_id: employeeId })
       setEmployeeTools(result || [])
     } catch {
       console.error('加载工具失败')
     }
-  }, [id])
+  }, [employeeId])
 
   const loadInstalledSkills = useCallback(async () => {
     try {
@@ -117,8 +117,9 @@ const EmployeeSettings: React.FC = () => {
   }, [])
 
   const loadEmployeeSkills = useCallback(async () => {
+    if (!employeeId) return
     try {
-      const result = await window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: id! })
+      const result = await window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: employeeId })
       const allSkills: EmployeeSkill[] = [
         ...result.enabled.map((s: InstalledSkill) => ({ ...s, enabled: true })),
         ...result.disabled.map((s: InstalledSkill) => ({ ...s, enabled: false })),
@@ -127,16 +128,16 @@ const EmployeeSettings: React.FC = () => {
     } catch {
       console.error('加载员工 Skills 失败')
     }
-  }, [id])
+  }, [employeeId])
 
   useEffect(() => {
-    if (id) {
+    if (open && employeeId) {
       loadEmployee()
       loadTools()
       loadInstalledSkills()
       loadEmployeeSkills()
     }
-  }, [id, loadEmployee, loadTools, loadInstalledSkills, loadEmployeeSkills])
+  }, [open, employeeId, loadEmployee, loadTools, loadInstalledSkills, loadEmployeeSkills])
 
   const handleInstallSkillFromDir = async () => {
     try {
@@ -206,14 +207,16 @@ const EmployeeSettings: React.FC = () => {
         message.error(t('employeeSettings.uninstallFailed'))
       }
     } catch {
-      message.error(t('employeeSettings.uninstallFailed'))
+      message.error(t('employeeSettings.uninstallFailed')
+      )
     }
   }
 
   const handleToggleSkill = async (skillId: string, enabled: boolean) => {
+    if (!employeeId) return
     try {
       await window.electronAPI.skillRegistry.toggleForEmployee({
-        employee_id: id!,
+        employee_id: employeeId,
         skill_id: skillId,
         enabled,
       })
@@ -226,10 +229,11 @@ const EmployeeSettings: React.FC = () => {
   }
 
   const handleSaveBasic = async (values: any) => {
+    if (!employeeId) return
     setLoading(true)
     try {
       await window.electronAPI.employee.update({
-        id: id!,
+        id: employeeId,
         ...values,
       })
       message.success(t('common.saveSuccess'))
@@ -242,9 +246,10 @@ const EmployeeSettings: React.FC = () => {
   }
 
   const handleMemoryEnabledChange = async (enabled: boolean) => {
+    if (!employeeId) return
     try {
       await window.electronAPI.employee.update({
-        id: id!,
+        id: employeeId,
         memory_enabled: enabled,
       })
       message.success(t('common.saveSuccess'))
@@ -254,11 +259,11 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  const { Text } = Typography
-
   const handleDeleteEmployee = async (workspacePath?: string) => {
+    if (!employeeId) return
     let deleteWorkspace = false
 
+    const { Text } = Typography
     const handleOpenExplorer = (path: string) => {
       window.electronAPI.workspace.openInExplorer({ path }).catch(() => {})
     }
@@ -321,11 +326,11 @@ const EmployeeSettings: React.FC = () => {
       onOk: async () => {
         try {
           await window.electronAPI.employee.delete({
-            id: id!,
+            id: employeeId,
             delete_workspace: deleteWorkspace,
           })
           message.success(t('common.deleted'))
-          navigate('/')
+          onClose()
         } catch {
           message.error(t('common.deleteFailed'))
         }
@@ -334,9 +339,10 @@ const EmployeeSettings: React.FC = () => {
   }
 
   const handleToggleTool = async (toolId: string, enabled: boolean) => {
+    if (!employeeId) return
     try {
       await window.electronAPI.tool.assignToEmployee({
-        employee_id: id!,
+        employee_id: employeeId,
         tool_id: toolId,
         is_enabled: enabled,
       })
@@ -347,145 +353,132 @@ const EmployeeSettings: React.FC = () => {
     }
   }
 
-  if (!employee) {
-    return (
-      <div style={{ padding: 16 }}>
-        <Card loading />
-      </div>
-    )
-  }
-
   // 内容区容器：统一顶部留白 + 滚动
   const contentWrap = (node: React.ReactNode) => (
-    <div style={{ padding: '16px 16px 20px', height: '100%', overflow: 'auto' }}>
+    <div style={{ padding: '0 0 20px', height: '100%', overflow: 'auto' }}>
       {node}
     </div>
   )
 
-  return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
-        <PageHeader
-          title={employee.name}
-          subTitle={t('employeeSettings.subtitle')}
-          onBack={() => navigate(`/employee/${id}`)}
-          breadcrumb={[
-            { title: t('employeeSettings.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
-            { title: employee.name },
-            { title: t('employeeSettings.breadcrumbConfig') },
-          ]}
-          extra={
-            <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => form.submit()}>
-              {t('common.save')}
-            </Button>
-          }
+  const tabItems = [
+    {
+      key: 'basic',
+      label: <span><IdcardOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabBasic')}</span>,
+      children: contentWrap(
+        <BasicInfoSection
+          form={form}
+          loading={loading}
+          onSave={handleSaveBasic}
+          onDelete={handleDeleteEmployee}
+          workspacePath={employee?.workspace_path}
+          employeeId={employeeId || ''}
         />
-      </div>
+      ),
+    },
+    {
+      key: 'tools',
+      label: <span><ToolOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabTools')}</span>,
+      children: contentWrap(
+        <ToolsSection
+          employeeTools={employeeTools}
+          onToggleTool={handleToggleTool}
+        />
+      ),
+    },
+    {
+      key: 'mcp',
+      label: <span><ApiOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMcp')}</span>,
+      children: contentWrap(<McpSection employeeId={employeeId || ''} />),
+    },
+    {
+      key: 'skills-market',
+      label: <span><AppstoreOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabSkills')}</span>,
+      children: contentWrap(
+        <SkillsSection
+          installedSkills={installedSkills}
+          employeeSkills={employeeSkills}
+          installingSkill={installingSkill}
+          onInstallFromDir={handleInstallSkillFromDir}
+          onInstallFromZip={handleInstallSkillFromZip}
+          onUninstallSkill={handleUninstallSkill}
+          onToggleSkill={handleToggleSkill}
+        />
+      ),
+    },
+    {
+      key: 'memory',
+      label: <span><DatabaseOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMemory')}</span>,
+      children: contentWrap(
+        <MemorySection
+          employeeId={employeeId || ''}
+          memoryEnabled={employee?.memory_enabled ?? false}
+          onMemoryEnabledChange={handleMemoryEnabledChange}
+        />
+      ),
+    },
+    {
+      key: 'stats',
+      label: <span><BarChartOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMonitor')}</span>,
+      children: contentWrap(
+        employee ? <ProfileSection employee={employee} /> : (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
+            <Spin />
+          </div>
+        )
+      ),
+    },
+    {
+      key: 'export-import',
+      label: <span><ImportOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabExportImport')}</span>,
+      children: contentWrap(
+        <ExportImportSection
+          employeeId={employeeId || ''}
+          employeeName={employee?.name || ''}
+        />
+      ),
+    },
+  ]
 
+  return (
+    <Drawer
+      title={employee ? `${employee.name} - ${t('employeeSettings.subtitle')}` : t('employeeSettings.subtitle')}
+      open={open}
+      onClose={onClose}
+      size={640}
+      styles={{ body: { padding: 0, overflow: 'hidden' } }}
+      destroyOnHidden
+    >
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
-        className="employee-settings-tabs"
-        style={{ flex: 1, minHeight: 0, height: '100%', paddingLeft: 16, paddingRight: 16 }}
-        items={[
-          {
-            key: 'basic',
-            label: t('employeeSettings.tabBasic'),
-            children: contentWrap(
-              <BasicInfoSection
-                form={form}
-                loading={loading}
-                onSave={handleSaveBasic}
-                onDelete={handleDeleteEmployee}
-                workspacePath={employee.workspace_path}
-                employeeId={id!}
-              />
-            )
-          },
-          {
-            key: 'tools',
-            label: t('employeeSettings.tabTools'),
-            children: contentWrap(
-              <ToolsSection
-                employeeTools={employeeTools}
-                onToggleTool={handleToggleTool}
-              />
-            )
-          },
-          {
-            key: 'mcp',
-            label: t('employeeSettings.tabMcp'),
-            children: contentWrap(<McpSection employeeId={id!} />)
-          },
-          {
-            key: 'skills-market',
-            label: t('employeeSettings.tabSkills'),
-            children: contentWrap(
-              <SkillsSection
-                installedSkills={installedSkills}
-                employeeSkills={employeeSkills}
-                installingSkill={installingSkill}
-                onInstallFromDir={handleInstallSkillFromDir}
-                onInstallFromZip={handleInstallSkillFromZip}
-                onUninstallSkill={handleUninstallSkill}
-                onToggleSkill={handleToggleSkill}
-              />
-            )
-          },
-          {
-            key: 'memory',
-            label: t('employeeSettings.tabMemory'),
-            children: contentWrap(
-              <MemorySection
-                employeeId={id!}
-                memoryEnabled={employee.memory_enabled}
-                onMemoryEnabledChange={handleMemoryEnabledChange}
-              />
-            )
-          },
-          {
-            key: 'stats',
-            label: t('employeeSettings.tabMonitor'),
-            children: contentWrap(
-              <ProfileSection
-                employee={employee}
-              />
-            )
-          },
-          {
-            key: 'export-import',
-            label: t('employeeSettings.tabExportImport'),
-            children: contentWrap(
-              <ExportImportSection
-                employeeId={id!}
-                employeeName={employee.name}
-              />
-            )
-          }
-        ]}
+        className="employee-settings-drawer-tabs"
+        style={{ height: '100%', padding: '0 16px' }}
+        items={tabItems}
+        size="small"
+        tabBarStyle={{ marginBottom: 16 }}
       />
       <style>{`
-        .employee-settings-tabs.ant-tabs {
+        .employee-settings-drawer-tabs.ant-tabs {
           height: 100%;
         }
-        .employee-settings-tabs .ant-tabs-body-holder {
+        .employee-settings-drawer-tabs .ant-tabs-body-holder {
           flex: auto;
           min-width: 0;
           min-height: 0;
           overflow: hidden;
         }
-        .employee-settings-tabs .ant-tabs-body {
+        .employee-settings-drawer-tabs .ant-tabs-body {
           height: 100%;
         }
-        .employee-settings-tabs .ant-tabs-content {
+        .employee-settings-drawer-tabs .ant-tabs-content {
           height: 100%;
         }
-        .employee-settings-tabs .ant-tabs-tabpane {
+        .employee-settings-drawer-tabs .ant-tabs-tabpane {
           height: 100%;
         }
       `}</style>
-    </div>
+    </Drawer>
   )
 }
 
-export default EmployeeSettings
+export default EmployeeSettingsDrawer

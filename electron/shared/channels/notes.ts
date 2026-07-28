@@ -22,6 +22,7 @@ export const NOTES_CHANNELS = {
   NOTES_OPEN_IN_EXPLORER: 'notes:open-in-explorer',
   NOTES_IMPORT_EXTERNAL: 'notes:import-external',
   NOTES_SAVE_IMAGE: 'notes:save-image',
+  NOTES_OPEN_DIARY: 'notes:open-diary',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -80,6 +81,10 @@ export interface NotesSettings {
   editor_line_height: number
   /** 文件树展开的文件夹 relPath 列表 */
   expanded_folders: string[]
+  /** 是否启用日记功能（关闭则隐藏日记按钮） */
+  diary_enabled: boolean
+  /** 日记根目录（相对 vault，空串表示 vault 根） */
+  diary_root: string
 }
 
 export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
@@ -95,6 +100,8 @@ export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
   editor_font_size: 15,
   editor_line_height: 1.7,
   expanded_folders: [],
+  diary_enabled: false,
+  diary_root: 'diary',
 }
 
 export interface NoteWriteParams {
