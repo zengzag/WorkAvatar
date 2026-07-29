@@ -553,7 +553,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
     },
-    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number }) => void) => {
+    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number; chunk?: string; accumulated?: string }) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.VOICE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_PROGRESS, handler)

@@ -1336,6 +1336,7 @@ export default {
     minutesGenerated: 'Meeting minutes generated',
     minutesGenerateFailed: 'Failed to generate meeting minutes',
     noMinutes: 'No meeting minutes yet. Generate from transcript.',
+    minutesStreamingHint: 'AI is generating minutes, please wait...',
     minutes: 'Meeting Minutes',
     copyMinutes: 'Copy Minutes',
     minutesTypeMeeting: 'Meeting Minutes',

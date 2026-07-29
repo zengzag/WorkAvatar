@@ -1341,6 +1341,7 @@ export default {
     minutesGenerated: '会议纪要已生成',
     minutesGenerateFailed: '会议纪要生成失败',
     noMinutes: '暂无会议纪要，请先生成',
+    minutesStreamingHint: 'AI 正在生成纪要内容，请稍候...',
     minutes: '会议纪要',
     copyMinutes: '复制纪要',
     minutesTypeMeeting: '会议纪要',

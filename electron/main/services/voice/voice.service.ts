@@ -51,6 +51,10 @@ export interface VoiceProgress {
   phase: string
   message: string
   progress?: number
+  /** 流式生成时的本次增量片段（generateMinutes 期间） */
+  chunk?: string
+  /** 流式生成时累积的完整文本（generateMinutes 期间） */
+  accumulated?: string
 }
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
@@ -415,7 +419,7 @@ class VoiceService {
     const controller = new AbortController()
     this.minutesAbortControllers.set(taskId, controller)
 
-    this.notifyProgress(taskId, 'generating_minutes', '正在生成会议纪要...', 20)
+    this.notifyProgress(taskId, 'generating_minutes', '正在准备会议纪要生成...', 10)
 
     try {
       const prompt = this.buildMinutesPrompt(minutesType, customPrompt)
@@ -424,24 +428,55 @@ class VoiceService {
         { role: 'user', content: this.formatTranscriptForLLM(task) },
       ]
 
-      this.notifyProgress(taskId, 'generating_minutes', 'AI 正在分析转录文本...', 50)
+      this.notifyProgress(taskId, 'generating_minutes', 'AI 正在分析转录文本...', 25)
 
-      const result = await llmClient.chat(llmConfig.provider_id, messages as any, {
-        model: llmConfig.model_id || providerConfig.model,
-        temperature: 0.3,
-        max_tokens: 4096,
-        signal: controller.signal,
-        logSource: 'voice-minutes',
-      })
+      // 流式生成：每收到一个 chunk 即推送进度，progress 在 30~90 之间渐进
+      let accumulated = ''
+      await llmClient.chatStream(
+        llmConfig.provider_id,
+        messages as any,
+        (chunk) => {
+          accumulated += chunk
+          // 进度估算：基于累积字符数渐进推进，上限 90（剩余 10% 留给整理与入库）
+          const estimated = Math.min(90, 30 + accumulated.length / 50)
+          this.notifyProgress(
+            taskId,
+            'generating_minutes',
+            '正在生成纪要内容...',
+            Math.round(estimated),
+            chunk,
+            accumulated,
+          )
+        },
+        () => {
+          // onDone：流式结束，标记进度 95 等待最终入库
+          this.notifyProgress(taskId, 'generating_minutes', '正在整理纪要内容...', 95, undefined, accumulated)
+        },
+        (error) => {
+          throw error
+        },
+        {
+          model: llmConfig.model_id || providerConfig.model,
+          temperature: 0.3,
+          max_tokens: 4096,
+          logSource: 'voice-minutes',
+        },
+        controller.signal,
+      )
+
+      const finalText = accumulated.trim()
+      if (!finalText) {
+        throw new Error('AI 未返回任何内容')
+      }
 
       const updated = this.updateTask({
         id: taskId,
         status: 'completed',
-        minutes: result,
+        minutes: finalText,
         minutesType,
       })
 
-      this.notifyProgress(taskId, 'done', '会议纪要生成完成', 100)
+      this.notifyProgress(taskId, 'done', '会议纪要生成完成', 100, undefined, finalText)
       return updated
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -572,8 +607,8 @@ ${correctionNote}
     return `${m}:${String(s).padStart(2, '0')}`
   }
 
-  private notifyProgress(taskId: string, phase: string, message: string, progress?: number): void {
-    const data: VoiceProgress = { taskId, phase, message, progress }
+  private notifyProgress(taskId: string, phase: string, message: string, progress?: number, chunk?: string, accumulated?: string): void {
+    const data: VoiceProgress = { taskId, phase, message, progress, chunk, accumulated }
     for (const win of BrowserWindow.getAllWindows()) {
       try {
         if (!win.isDestroyed()) {

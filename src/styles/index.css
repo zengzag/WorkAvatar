@@ -428,3 +428,9 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
 .nav-rec-indicator {
   animation: nav-rec-pulse 1.2s ease-in-out infinite;
 }
+
+/* 通用光标闪烁：用于实时字幕、流式纪要生成等场景 */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
