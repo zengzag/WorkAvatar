@@ -15,7 +15,7 @@ interface QuickAddBarProps {
 
 const endOfTodaySec = (): number => {
   const now = new Date()
-  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0, 0).getTime() / MS)
+  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0, 0).getTime() / MS)
 }
 
 const endOfTomorrowSec = (): number => endOfTodaySec() + 86400
@@ -24,14 +24,14 @@ const endOfThisWeekSec = (): number => {
   const now = new Date()
   const day = now.getDay()
   const diff = day === 0 ? 0 : 7 - day
-  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 23, 59, 0, 0).getTime() / MS)
+  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 18, 0, 0, 0).getTime() / MS)
 }
 
 const nextMondaySec = (): number => {
   const now = new Date()
   const day = now.getDay()
   const diff = day === 0 ? 1 : 8 - day
-  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 23, 59, 0, 0).getTime() / MS)
+  return Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 18, 0, 0, 0).getTime() / MS)
 }
 
 const QuickAddBar: React.FC<QuickAddBarProps> = ({ onSubmit }) => {
@@ -90,7 +90,6 @@ const QuickAddBar: React.FC<QuickAddBarProps> = ({ onSubmit }) => {
         priority: 'none',
         status: 'pending',
         reminders: [],
-        tags: [],
       }
       const result = await onSubmit(input)
       if (result && !result.error) {

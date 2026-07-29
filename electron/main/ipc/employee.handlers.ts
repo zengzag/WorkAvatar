@@ -29,6 +29,7 @@ import type EmployeeMemoryService from '../services/employee-memory.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import AutomationService from '../services/automation/automation.service'
+import EmployeeAgentService from '../services/employee-agent.service'
 import { safeHandle } from './_shared'
 
 export function registerEmployeeHandlers(
@@ -51,11 +52,21 @@ export function registerEmployeeHandlers(
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_UPDATE, (params: EmployeeUpdateParams) => {
     const { id, ...data } = params
-    return workspaceManager.updateEmployee(id, data)
+    const result = workspaceManager.updateEmployee(id, data)
+    // 员工配置变更后清除 Agent 缓存，避免使用过期的 system prompt / 配置
+    if (result) {
+      try { EmployeeAgentService.getInstance().clearAgentCache(id) } catch { /* ignore */ }
+    }
+    return result
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams) => {
-    return workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
+    const ok = workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
+    if (ok) {
+      // 删除员工时清除关联的 Agent 缓存
+      try { EmployeeAgentService.getInstance().clearAgentCache(params.id) } catch { /* ignore */ }
+    }
+    return ok
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_LIST, (params: ConversationListParams) => {
@@ -87,10 +98,12 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
-    // 清理该员工下所有会话的授权缓存
+    // 清理该员工下所有会话的授权缓存和自动化历史关联记录
     const conversations = workspaceManager.getConversationList(employeeId)
     for (const conv of conversations) {
       UnifiedInteractionService.getInstance().clearAllowedSources(conv.id)
+      // 同步删除自动化执行历史中关联的记录（与 CONVERSATION_DELETE 保持一致）
+      try { AutomationService.getInstance().deleteRunByConversation(conv.id) } catch { /* ignore */ }
     }
     return workspaceManager.deleteAllConversations(employeeId)
   })

@@ -5,7 +5,6 @@ import EmployeeRedirect from '../components/common/EmployeeRedirect'
 
 const EmployeeWorkbench = lazy(() => import('../pages/EmployeeWorkbench'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
-const EmployeeSettings = lazy(() => import('../pages/EmployeeSettings'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
 const VoicePage = lazy(() => import('../pages/Voice'))
@@ -35,10 +34,6 @@ const router = createHashRouter([
       {
         path: 'employee/:id',
         element: lazyElement(<EmployeeWorkbench />),
-      },
-      {
-        path: 'employee/:id/settings',
-        element: lazyElement(<EmployeeSettings />),
       },
       {
         path: 'settings',

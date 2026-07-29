@@ -433,12 +433,25 @@ const VditorEditorInner: React.FC<Props> = ({
       for (const item of imageItems) {
         const blob = item.getAsFile()
         if (blob) {
-          const reader = new FileReader()
-          reader.onload = () => {
-            const dataUrl = reader.result as string
-            insertTextAtCursor(`![图片](${dataUrl})\n`)
-          }
-          reader.readAsDataURL(blob)
+          // 保存图片到 vault/attachments，避免 data URL 导致文件体积膨胀
+          blob.arrayBuffer().then(async (arrayBuffer) => {
+            try {
+              const res = await window.electronAPI.notes.saveImage({
+                buffer: arrayBuffer,
+                fileName: blob.name || 'pasted-image.png',
+              })
+              if (res && (res as any).error) {
+                console.error('Save image failed:', (res as any).error)
+                return
+              }
+              const relPath = (res as any)?.relPath as string
+              if (relPath) {
+                insertTextAtCursor(`![${blob.name?.replace(/\.[^.]+$/, '') || '图片'}](${relPath})\n`)
+              }
+            } catch (err) {
+              console.error('Save image error:', err)
+            }
+          })
         }
       }
       return
@@ -516,12 +529,24 @@ const VditorEditorInner: React.FC<Props> = ({
           base64ToLink: (base64: string) => base64,
           handler: (files: File[]) => {
             for (const file of files) {
-              const reader = new FileReader()
-              reader.onload = () => {
-                const dataUrl = reader.result as string
-                insertTextAtCursor(`![${file.name.replace(/\.[^.]+$/, '')}](${dataUrl})\n`)
-              }
-              reader.readAsDataURL(file)
+              file.arrayBuffer().then(async (arrayBuffer) => {
+                try {
+                  const res = await window.electronAPI.notes.saveImage({
+                    buffer: arrayBuffer,
+                    fileName: file.name || 'upload-image.png',
+                  })
+                  if (res && (res as any).error) {
+                    console.error('Save image failed:', (res as any).error)
+                    return
+                  }
+                  const relPath = (res as any)?.relPath as string
+                  if (relPath) {
+                    insertTextAtCursor(`![${file.name.replace(/\.[^.]+$/, '')}](${relPath})\n`)
+                  }
+                } catch (err) {
+                  console.error('Save image error:', err)
+                }
+              })
             }
             return null
           },
@@ -558,6 +583,21 @@ const VditorEditorInner: React.FC<Props> = ({
       lastInternalContent.current = content
     }
 
+    // 失焦时同步最新内容到 store，避免切换文件时编辑未保存
+    const handleFocusOut = (e: FocusEvent) => {
+      const related = e.relatedTarget as Node | null
+      if (related && container.contains(related)) return
+      if (!vditor) return
+      try {
+        const value = vditor.getValue()
+        lastInternalContent.current = value
+        if (value !== lastExternalContent.current) {
+          onContentChangeRef.current(value)
+        }
+      } catch { /* ignore */ }
+    }
+    container.addEventListener('focusout', handleFocusOut)
+
     rafId1 = requestAnimationFrame(() => {
       rafId2 = requestAnimationFrame(initVditor)
     })
@@ -567,6 +607,7 @@ const VditorEditorInner: React.FC<Props> = ({
       cancelAnimationFrame(rafId1)
       cancelAnimationFrame(rafId2)
       resizeTimers.forEach(clearTimeout)
+      container.removeEventListener('focusout', handleFocusOut)
       const editorEl = container.querySelector('.vditor-ir, .vditor-sv')
       if (editorEl) {
         editorEl.removeEventListener('paste', handlePaste as any, true)

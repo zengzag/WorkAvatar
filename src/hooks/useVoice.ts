@@ -77,6 +77,10 @@ export interface VoiceProgress {
   phase: string
   message: string
   progress?: number
+  /** 流式生成时的本次增量片段（generateMinutes 期间） */
+  chunk?: string
+  /** 流式生成时累积的完整文本（generateMinutes 期间） */
+  accumulated?: string
 }
 
 export interface AudioSource {
@@ -90,15 +94,36 @@ export function useVoice() {
   const [settings, setSettings] = useState<VoiceSettings | null>(null)
   const [progress, setProgress] = useState<VoiceProgress | null>(null)
   const [audioSources, setAudioSources] = useState<AudioSource[]>([])
+  /** 流式生成的纪要内容：taskId → 累积文本。done/error/cancelled 时清空对应条目 */
+  const [streamingMinutes, setStreamingMinutes] = useState<Record<string, string>>({})
   const progressUnsubscribe = useRef<(() => void) | null>(null)
 
   // 进度监听
   useEffect(() => {
     progressUnsubscribe.current = window.electronAPI.voice.onProgress((data) => {
       setProgress(data)
-      // 终止阶段刷新任务列表
+      // 生成中：同步 task.status 并累积流式文本
+      if (data.phase === 'generating_minutes' && data.taskId) {
+        setTasks(prev => prev.map(t => t.id === data.taskId && t.status !== 'generating_minutes' ? { ...t, status: 'generating_minutes' } : t))
+        if (data.accumulated !== undefined) {
+          setStreamingMinutes(prev => ({ ...prev, [data.taskId]: data.accumulated as string }))
+        }
+      }
+      // 转写中：同步 task.status
+      if (data.phase === 'transcribing' && data.taskId) {
+        setTasks(prev => prev.map(t => t.id === data.taskId && t.status !== 'transcribing' ? { ...t, status: 'transcribing' } : t))
+      }
+      // 终止阶段刷新任务列表，并清理流式状态
       if (data.phase === 'done' || data.phase === 'error' || data.phase === 'cancelled') {
         loadTasks()
+        if (data.taskId) {
+          setStreamingMinutes(prev => {
+            if (!(data.taskId in prev)) return prev
+            const next = { ...prev }
+            delete next[data.taskId]
+            return next
+          })
+        }
       }
     })
     return () => {
@@ -252,6 +277,8 @@ export function useVoice() {
 
   const transcribe = useCallback(async (taskId: string, language?: string) => {
     try {
+      // 乐观更新：立即进入 transcribing 状态，让 UI 即时反馈（进度条、禁用按钮等）
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'transcribing' } : t))
       const result = await window.electronAPI.voice.transcribe({ taskId, language })
       if (result && (result as any).error) {
         throw new Error((result as any).error)
@@ -274,6 +301,9 @@ export function useVoice() {
 
   const generateMinutes = useCallback(async (taskId: string, minutesType: string, customPrompt?: string) => {
     try {
+      // 乐观更新：立即进入 generating_minutes 状态，让进度条和流式渲染立即生效
+      // 否则前端 task.status 仍是旧值（如 completed），isBusy 判断失效，用户看不到反馈
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'generating_minutes' } : t))
       const result = await window.electronAPI.voice.generateMinutes({ taskId, minutesType, customPrompt })
       if (result && (result as any).error) {
         throw new Error((result as any).error)
@@ -416,6 +446,7 @@ export function useVoice() {
     settings,
     progress,
     audioSources,
+    streamingMinutes,
     loadTasks,
     loadSettings,
     saveSettings,

@@ -20,7 +20,8 @@ function loadOfficeModules() {
 
 loadOfficeModules()
 
-const ALLOWED_NODE_MODULES = ['fs', 'path', 'os', 'stream', 'buffer', 'util', 'crypto']
+// 移除 'os' 模块：os.hostname()/userInfo()/networkInterfaces() 等会泄漏系统敏感信息
+const ALLOWED_NODE_MODULES = ['fs', 'path', 'stream', 'buffer', 'util', 'crypto']
 
 /** 沙箱中允许暴露给 LLM 生成代码的环境变量白名单（避免泄漏 API key、数据库路径等敏感信息） */
 const ALLOWED_ENV_KEYS = ['PATH', 'Path', 'TEMP', 'TMP', 'OS', 'PLATFORM', 'LANG', 'LC_ALL', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']
@@ -347,8 +348,6 @@ export const officeExecTool: ToolDefinition = {
 **语法预检查**：执行前自动校验 JS 语法，语法错误立即返回（不执行），含行号、代码上下文、修复建议。
 
 **长文档分步执行**：生成超长文档（≥1500字）时**必须分步**：先写骨架代码生成基础文档，再用 file_edit 追加章节内容，逐步完善。禁止一次性生成超长代码，极易出现语法错误。
-
-**使用前先调 list_available_tools(tool_name=["office_exec"]) 获取规则与陷阱清单。**
 
 短代码（<800字符）直接传 code 参数；长代码建议先用 file_write 写入 .js 文件再传 code_file 参数执行。`,
   parameters: {

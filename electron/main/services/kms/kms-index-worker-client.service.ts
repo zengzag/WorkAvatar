@@ -228,8 +228,17 @@ class KMSIndexWorkerClientService {
 
   /**
    * 主动销毁 Worker（用于应用退出或数据目录切换）
+   *
+   * 必须先拒绝所有 pending 任务，否则调用方 await 的 Promise 会永久挂起。
+   * 应用退出场景下，未拒绝的 pending 会导致退出流程卡住。
    */
   async terminate(): Promise<void> {
+    // 先拒绝所有待处理任务，避免调用方永久 await
+    for (const pending of this.pendingTasks.values()) {
+      pending.reject(new Error('Worker terminated'))
+    }
+    this.pendingTasks.clear()
+
     if (this.worker) {
       try {
         // 给 Worker 一个清理的机会

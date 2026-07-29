@@ -27,6 +27,7 @@ import {
 import LLMSelector from '../components/llm/LLMSelector'
 import EmployeeSelector from '../components/workbench/EmployeeSelector'
 import MessageList from '../components/workbench/MessageList'
+import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { ConversationSidebar, ChatInput, MultiChatPanel } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
@@ -79,6 +80,7 @@ const EmployeeWorkbench: React.FC = () => {
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
   const [allCollections, setAllCollections] = useState<any[]>([])
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
     loadEmployees()
@@ -587,7 +589,7 @@ const EmployeeWorkbench: React.FC = () => {
           </Tooltip>
           <Tooltip title={t('workbench.employeeConfig')}>
             <Button type="text" size="small" icon={<SettingOutlined />}
-              onClick={() => navigate(`/employee/${id}/settings`)} />
+              onClick={() => setSettingsOpen(true)} />
           </Tooltip>
         </Space>
       </div>
@@ -684,6 +686,12 @@ const EmployeeWorkbench: React.FC = () => {
       </div>
 
       <style>{workbenchStyle}</style>
+
+      <EmployeeSettingsDrawer
+        open={settingsOpen}
+        employeeId={id}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   )
 }

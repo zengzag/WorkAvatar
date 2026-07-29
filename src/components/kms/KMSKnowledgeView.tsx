@@ -305,7 +305,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
               onChange: (p, ps) => { setPage(p); setPageSize(ps) },
               size: 'small',
             }}
-            scroll={{ x: 1000 }}
+            scroll={{ x: 1000, y: 'calc(100vh - 370px)' }}
           />
         </Spin>
       </div>
@@ -446,6 +446,7 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
           onChange={handleTabChange}
           size="small"
           style={{ height: '100%' }}
+          className="kms-knowledge-tabs"
           tabBarStyle={{ marginBottom: 12 }}
           items={[
             {
@@ -475,6 +476,16 @@ const KMSKnowledgeView: React.FC<KMSKnowledgeViewProps> = ({
             },
           ]}
         />
+        {/* antd Tabs 默认 .ant-tabs-tabpane 高度为 content-based，会导致
+            renderFilesTab 根节点的 height:100% 失效，Table 因无 scroll.y
+            而撑高，把分页挤出可视区。强制 content/tabpane 撑满高度以恢复
+            内层 flex+overflow 布局，让分页常驻底部可见。 */}
+        <style>{`
+          .kms-knowledge-tabs.ant-tabs { height: 100%; }
+          .kms-knowledge-tabs .ant-tabs-content-holder { flex: auto; min-height: 0; overflow: hidden; }
+          .kms-knowledge-tabs .ant-tabs-content { height: 100%; }
+          .kms-knowledge-tabs .ant-tabs-tabpane { height: 100%; }
+        `}</style>
       </div>
     </div>
   )

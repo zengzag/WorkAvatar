@@ -9,6 +9,7 @@ const logger = createLogger('DB')
 class DatabaseService {
   private db: Database.Database
   private static instance: DatabaseService
+  private checkpointTimer: NodeJS.Timeout | null = null
 
   private constructor() {
     const pathService = PathService.getInstance()
@@ -24,9 +25,25 @@ class DatabaseService {
 
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+    // 设置 WAL 自动检查点阈值（每 1000 页自动 checkpoint）
+    this.db.pragma('wal_autocheckpoint = 1000')
 
     this.initializeSchema()
     this.cleanupOldConversations()
+    this.startPeriodicCheckpoint()
+  }
+
+  /** 定期手动 checkpoint，防止 WAL 文件无限增长 */
+  private startPeriodicCheckpoint(): void {
+    const CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000 // 5 分钟
+    this.checkpointTimer = setInterval(() => {
+      try {
+        this.db.pragma('wal_checkpoint(PASSIVE)')
+      } catch (err: any) {
+        logger.warn('WAL checkpoint failed:', err?.message || err)
+      }
+    }, CHECKPOINT_INTERVAL_MS)
+    if (this.checkpointTimer.unref) this.checkpointTimer.unref()
   }
 
   /**
@@ -104,6 +121,14 @@ class DatabaseService {
     const columnExists = result.some((c) => c.name === column)
     if (!columnExists) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+    }
+  }
+
+  private dropColumnIfExists(table: string, column: string): void {
+    const result = this.db.prepare(`PRAGMA table_info(${table})`).all() as any[]
+    const columnExists = result.some((c) => c.name === column)
+    if (columnExists) {
+      this.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
     }
   }
 
@@ -331,7 +356,6 @@ class DatabaseService {
         priority TEXT NOT NULL DEFAULT 'none',
         -- 状态：pending / in_progress / completed
         status TEXT NOT NULL DEFAULT 'pending',
-        tags_json TEXT DEFAULT '[]',
         recurrence_rule TEXT DEFAULT '',
         reminders_json TEXT DEFAULT '[]',
         completed_at INTEGER,
@@ -435,6 +459,12 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
     this.addColumnIfNotExists('employee_memories', 'deleted_at', 'INTEGER')
 
+    // TODO 进入"进行中"状态的时间戳
+    this.addColumnIfNotExists('calendar_todos', 'started_at', 'INTEGER')
+
+    // 标签功能已移除，删除遗留的 tags_json 列
+    this.dropColumnIfExists('calendar_todos', 'tags_json')
+
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);
@@ -524,29 +554,33 @@ class DatabaseService {
     const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
     if (hasProjectId) {
       logger.info('Migrating employees: removing project_id column...')
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS employees_new (
-          id TEXT PRIMARY KEY,
-          workspace_path TEXT DEFAULT '',
-          name TEXT NOT NULL,
-          description TEXT DEFAULT '',
-          avatar_type TEXT DEFAULT 'default',
-          status TEXT NOT NULL DEFAULT 'draft',
-          default_skill_id TEXT,
-          profile_json TEXT DEFAULT '',
-          arch_version INTEGER NOT NULL DEFAULT 1,
-          total_tasks INTEGER DEFAULT 0,
-          total_approvals INTEGER DEFAULT 0,
-          memory_enabled BOOLEAN NOT NULL DEFAULT 0,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-        );
-        INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
-          SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
-        DROP TABLE employees;
-        ALTER TABLE employees_new RENAME TO employees;
-        CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
-      `)
+      // 事务保护：DROP TABLE + RENAME 中途崩溃会导致数据丢失
+      const migrateTx = this.db.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS employees_new (
+            id TEXT PRIMARY KEY,
+            workspace_path TEXT DEFAULT '',
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            avatar_type TEXT DEFAULT 'default',
+            status TEXT NOT NULL DEFAULT 'draft',
+            default_skill_id TEXT,
+            profile_json TEXT DEFAULT '',
+            arch_version INTEGER NOT NULL DEFAULT 1,
+            total_tasks INTEGER DEFAULT 0,
+            total_approvals INTEGER DEFAULT 0,
+            memory_enabled BOOLEAN NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+          );
+          INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+            SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
+          DROP TABLE employees;
+          ALTER TABLE employees_new RENAME TO employees;
+          CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
+        `)
+      })
+      migrateTx()
       logger.info('Migration completed: employees.project_id removed, workspace_path added')
     }
   }
@@ -563,6 +597,17 @@ class DatabaseService {
   }
 
   public close(): void {
+    // 先清除定时器，避免关闭后定时器仍触发访问已关闭的 DB
+    if (this.checkpointTimer) {
+      clearInterval(this.checkpointTimer)
+      this.checkpointTimer = null
+    }
+    // 关闭前执行 TRUNCATE checkpoint，确保 WAL 内容写回主库文件
+    try {
+      this.db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch (err: any) {
+      logger.warn('关闭前 checkpoint 失败:', err?.message || err)
+    }
     this.db.close()
   }
 }

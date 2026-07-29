@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
-import { Button, Segmented, Tooltip, Empty, Spin, theme, Modal, InputNumber, Form } from 'antd'
+import { Button, Segmented, Tooltip, Empty, Spin, theme, App } from 'antd'
 import {
   PlusOutlined,
   EditOutlined,
@@ -12,12 +12,14 @@ import {
   LoadingOutlined,
   SettingOutlined,
   CloseOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNotes } from '../hooks/useNotes'
 import NotesTree from '../components/notes/NotesTree'
 import VditorEditor from '../components/notes/VditorEditor'
 import NoteOutline from '../components/notes/NoteOutline'
+import NotesSettingsDrawer from '../components/notes/NotesSettingsDrawer'
 import type { NoteEditorMode } from '../types/notes'
 
 const SIDEBAR_MIN = 180
@@ -79,6 +81,7 @@ const SidebarResizer: React.FC<{ onResize: (deltaX: number) => void; onResizeEnd
 const NotesPage: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const { message } = App.useApp()
   const notes = useNotes()
 
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -121,6 +124,23 @@ const NotesPage: React.FC = () => {
       }
     } catch { /* ignore */ }
   }, [])
+
+  const handleOpenDiary = useCallback(async () => {
+    try {
+      const res = await window.electronAPI.notes.openDiary()
+      if (res && (res as any).error) {
+        message.error((res as any).error)
+        return
+      }
+      const relPath = (res as any)?.relPath as string | undefined
+      if (relPath) {
+        await notes.refreshTree()
+        await notes.openNote(relPath)
+      }
+    } catch (err: any) {
+      message.error(err?.message || t('notes.openFailed'))
+    }
+  }, [notes, message, t])
 
   const handleModeChange = useCallback((mode: NoteEditorMode) => {
     notes.updateSettings({ editor_mode: mode })
@@ -245,6 +265,12 @@ const NotesPage: React.FC = () => {
           <Button type="text" size="small" icon={<FolderOpenOutlined />} onClick={handleOpenVault} />
         </Tooltip>
 
+        {notes.settings.diary_enabled && (
+          <Tooltip title={t('notes.openDiary')}>
+            <Button type="text" size="small" icon={<BookOutlined />} onClick={handleOpenDiary} />
+          </Tooltip>
+        )}
+
         <div style={{ flex: 1 }} />
 
         <Segmented
@@ -301,6 +327,7 @@ const NotesPage: React.FC = () => {
                     onRename={notes.renameItem}
                     onDelete={notes.deleteItem}
                     onMove={notes.moveItem}
+                    onCopy={notes.copyItem}
                   />
                 )}
               </div>
@@ -494,7 +521,7 @@ const NotesPage: React.FC = () => {
             >
               <span>{t('notes.outline')}</span>
               <Tooltip title={t('notes.hideOutline')}>
-                <Button type="text" size="small" icon={<MenuFoldOutlined />} onClick={handleToggleOutline} />
+                <Button type="text" size="small" icon={<MenuUnfoldOutlined />} onClick={handleToggleOutline} />
               </Tooltip>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
@@ -509,7 +536,7 @@ const NotesPage: React.FC = () => {
             <Button
               type="text"
               size="small"
-              icon={<MenuUnfoldOutlined />}
+              icon={<MenuFoldOutlined />}
               onClick={handleToggleOutline}
               style={{
                 position: 'absolute',
@@ -553,103 +580,16 @@ const NotesPage: React.FC = () => {
         </div>
       )}
 
-      <NotesSettingsModal
+      <NotesSettingsDrawer
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         settings={notes.settings}
+        tree={notes.tree}
         onSave={async (patch) => {
           await notes.updateSettings(patch)
         }}
       />
     </div>
-  )
-}
-
-const NotesSettingsModal: React.FC<{
-  open: boolean
-  onClose: () => void
-  settings: import('../types/notes').NotesSettings
-  onSave: (patch: Partial<import('../types/notes').NotesSettings>) => Promise<void>
-}> = ({ open, onClose, settings, onSave }) => {
-  const { t } = useTranslation()
-  const [form] = Form.useForm()
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (open) {
-      form.setFieldsValue({
-        editor_max_width: settings.editor_max_width ?? 820,
-        editor_font_size: settings.editor_font_size ?? 15,
-        editor_line_height: settings.editor_line_height ?? 1.7,
-        sidebar_width: settings.sidebar_width ?? 260,
-        outline_width: settings.outline_width ?? 260,
-      })
-    }
-  }, [open, settings, form])
-
-  const handleOk = useCallback(async () => {
-    try {
-      const values = await form.validateFields()
-      setSaving(true)
-      await onSave({
-        editor_max_width: Number(values.editor_max_width) || 0,
-        editor_font_size: Number(values.editor_font_size) || 15,
-        editor_line_height: Number(values.editor_line_height) || 1.7,
-        sidebar_width: Number(values.sidebar_width) || 260,
-        outline_width: Number(values.outline_width) || 260,
-      })
-      onClose()
-    } catch { /* 校验失败 */ } finally {
-      setSaving(false)
-    }
-  }, [form, onSave, onClose])
-
-  return (
-    <Modal
-      title={t('notes.settings')}
-      open={open}
-      onOk={handleOk}
-      onCancel={onClose}
-      okText={t('common.save')}
-      cancelText={t('common.cancel')}
-      confirmLoading={saving}
-      destroyOnClose
-      width={420}
-    >
-      <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
-        <Form.Item
-          name="editor_max_width"
-          label={t('notes.settingsEditorMaxWidth')}
-          tooltip={t('notes.settingsEditorMaxWidthTip')}
-        >
-          <InputNumber min={0} max={2000} step={20} style={{ width: '100%' }} addonAfter="px" />
-        </Form.Item>
-        <Form.Item
-          name="editor_font_size"
-          label={t('notes.settingsEditorFontSize')}
-        >
-          <InputNumber min={12} max={24} step={1} style={{ width: '100%' }} addonAfter="px" />
-        </Form.Item>
-        <Form.Item
-          name="editor_line_height"
-          label={t('notes.settingsEditorLineHeight')}
-        >
-          <InputNumber min={1} max={2.5} step={0.1} style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item
-          name="sidebar_width"
-          label={t('notes.settingsSidebarWidth')}
-        >
-          <InputNumber min={180} max={480} step={10} style={{ width: '100%' }} addonAfter="px" />
-        </Form.Item>
-        <Form.Item
-          name="outline_width"
-          label={t('notes.settingsOutlineWidth')}
-        >
-          <InputNumber min={160} max={480} step={10} style={{ width: '100%' }} addonAfter="px" />
-        </Form.Item>
-      </Form>
-    </Modal>
   )
 }
 

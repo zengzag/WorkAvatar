@@ -73,7 +73,10 @@ import type {
   NoteCreateParams,
   NoteRenameParams,
   NoteMoveParams,
+  NoteCopyParams,
+  NoteImportExternalParams,
   NoteSearchParams,
+  NoteSaveImageParams,
   NotesSettings,
   NotesDataChangedPayload,
 } from '../shared/ipc-channels'
@@ -398,10 +401,16 @@ const electronAPI = {
     createFolder: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_FOLDER, params),
     rename: (params: NoteRenameParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_RENAME, params),
     move: (params: NoteMoveParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_MOVE, params),
+    copy: (params: NoteCopyParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_COPY, params),
     delete: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, relPath),
     search: (params: NoteSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_SETTINGS),
     setSettings: (params: Partial<NotesSettings>) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SET_SETTINGS, params),
+    getAbsolutePath: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_ABS_PATH, relPath),
+    openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
+    importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
+    saveImage: (params: NoteSaveImageParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SAVE_IMAGE, params),
+    openDiary: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_DIARY),
     onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
       const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
@@ -544,7 +553,7 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
     },
-    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number }) => void) => {
+    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number; chunk?: string; accumulated?: string }) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.VOICE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_PROGRESS, handler)

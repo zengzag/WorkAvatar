@@ -25,7 +25,7 @@ export function buildEmployeeSystemPrompt(options: {
   parts.push('逐步分析问题，按需调用工具获取信息，直至完整回答用户问题。')
 
   if (options.onDemandToolList) {
-    parts.push(`当前可用按需工具包括：【${options.onDemandToolList}】，可以调用 list_available_tools 获取详细工具信息。`)
+    parts.push(`当前可用按需工具包括：【${options.onDemandToolList}】，调用前务必先调用 list_available_tools 获取详细工具详细使用说明。`)
   }
 
   if (options.workspaceGuidance) {

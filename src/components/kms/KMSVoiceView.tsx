@@ -13,6 +13,7 @@ import {
   PauseOutlined, PlayCircleOutlined, FontSizeOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined,
   CloudServerOutlined, SettingOutlined,
+  CaretRightOutlined, CaretDownOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -176,7 +177,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   }, [token.colorBgContainer])
   const { message, modal } = App.useApp()
   const {
-    tasks, settings, progress,
+    tasks, settings, progress, streamingMinutes,
     loadTasks, loadSettings,
     createTask, updateTask, deleteTask,
     saveAudio, saveSecondaryAudio, mergeDualSourceTranscript,
@@ -212,11 +213,38 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const [taskListCollapsed, setTaskListCollapsed] = useState(false)
   const [isPreparing, setIsPreparing] = useState(false)
   const [notesText, setNotesText] = useState('')
+  const [transcriptCollapsed, setTranscriptCollapsed] = useState(false)
+  const [minutesCollapsed, setMinutesCollapsed] = useState(false)
+  const [notesCollapsed, setNotesCollapsed] = useState(false)
   const notesSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // 组件级 refs（录音状态由 recordingSession 单例持有，跨卸载/挂载持久）
   const realtimeUnsubscribeRef = useRef<(() => void) | null>(null)
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
+  // 是否自动滚动到底部：用户向上滚动时暂停自动滚动，重新滚到底部时恢复
+  const autoScrollRef = useRef(true)
+  // scroll 监听器清理函数（配合回调 ref 使用，确保 DOM 绑定时立即注册监听器）
+  const scrollCleanupRef = useRef<(() => void) | null>(null)
+  // 流式纪要区域 ref + 自动滚动控制
+  const minutesScrollRef = useRef<HTMLDivElement | null>(null)
+  const minutesAutoScrollRef = useRef(true)
+
+  // 回调 ref：DOM 元素绑定时立即注册 scroll 监听器，避免 effect 依赖时序问题
+  const setTranscriptScrollRef = useCallback((el: HTMLDivElement | null) => {
+    if (scrollCleanupRef.current) {
+      scrollCleanupRef.current()
+      scrollCleanupRef.current = null
+    }
+    transcriptScrollRef.current = el
+    if (el) {
+      const handleScroll = () => {
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+        autoScrollRef.current = distanceFromBottom < 40
+      }
+      el.addEventListener('scroll', handleScroll, { passive: true })
+      scrollCleanupRef.current = () => el.removeEventListener('scroll', handleScroll)
+    }
+  }, [])
 
   // 全局录音 store（导航栏指示器）
   const setRecordingStore = useVoiceRecordingStore(s => s.setRecording)
@@ -239,6 +267,9 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       setSystemPaused(recordingSession.systemPaused)
       setRecordSource(recordingSession.recordSource || 'mic')
       setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
+      // 恢复卸载前已识别的实时字幕（避免切换界面后字幕丢失）
+      setRealtimeTextBySource(recordingSession.realtimeTextBySource)
+      setRealtimeSegmentsBySource(recordingSession.realtimeSegmentsBySource)
       // 重启前台计时器（单例里的 durationTimer 在卸载时已被清除，见下方卸载逻辑）
       recordingSession.durationTimer = setInterval(() => {
         setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
@@ -281,7 +312,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     setRecordingTaskIdStore(recordingSession.recordingTaskId)
   }, [isRecording, setRecordingTaskIdStore])
 
-  // 监听实时识别结果（按来源分组）
+  // 监听实时识别结果（按来源分组）。组件卸载后单例仍持数据，重新挂载时从单例恢复。
   useEffect(() => {
     realtimeUnsubscribeRef.current = onRealtimeResult((data) => {
       const source = data.source || 'mic'
@@ -289,14 +320,26 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       if (!activeIds.includes(data.taskId)) return
 
       if (data.isFinal) {
-        setRealtimeTextBySource(prev => ({ ...prev, [source]: data.text }))
+        setRealtimeTextBySource(prev => {
+          const next = { ...prev, [source]: data.text }
+          recordingSession.realtimeTextBySource = next
+          return next
+        })
       } else {
-        setRealtimeTextBySource(prev => ({ ...prev, [source]: data.text }))
+        setRealtimeTextBySource(prev => {
+          const next = { ...prev, [source]: data.text }
+          recordingSession.realtimeTextBySource = next
+          return next
+        })
         if (data.segment) {
-          setRealtimeSegmentsBySource(prev => ({
-            ...prev,
-            [source]: [...(prev[source] || []), data.segment!],
-          }))
+          setRealtimeSegmentsBySource(prev => {
+            const next = {
+              ...prev,
+              [source]: [...(prev[source] || []), data.segment!],
+            }
+            recordingSession.realtimeSegmentsBySource = next
+            return next
+          })
         }
       }
     })
@@ -306,13 +349,28 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     }
   }, [onRealtimeResult])
 
-  // 字幕区自动滚动到底部
+  // 字幕区自适应滚动：用户向上滚动时暂停自动滚动，重新滚到底部时恢复。
+  // scroll 监听器通过回调 ref (setTranscriptScrollRef) 在 DOM 绑定时立即注册，
+  // 避免组件重新挂载后 effect 依赖时序导致监听器未注册的问题。
+  // 仅在自动滚动开启时跟随最新字幕
   useEffect(() => {
+    if (!autoScrollRef.current) return
     const el = transcriptScrollRef.current
     if (el) {
       el.scrollTop = el.scrollHeight
     }
   }, [realtimeTextBySource, realtimeSegmentsBySource])
+
+  // 流式纪要区域自动滚动到底部（生成期间）
+  const streamingMinutesText = selectedTaskId ? streamingMinutes[selectedTaskId] : undefined
+  useEffect(() => {
+    if (!streamingMinutesText) return
+    if (!minutesAutoScrollRef.current) return
+    const el = minutesScrollRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [streamingMinutesText])
 
   // 组件卸载时仅清理前台计时器/动画帧；录音与实时识别在后台继续运行（由 recordingSession 单例持有）
   useEffect(() => {
@@ -924,6 +982,9 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       setRecordDuration(0)
       setRealtimeTextBySource({})
       setRealtimeSegmentsBySource({})
+      recordingSession.realtimeTextBySource = {}
+      recordingSession.realtimeSegmentsBySource = {}
+      autoScrollRef.current = true
       setRealtimeError('')
 
       // Timer
@@ -1324,7 +1385,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           <div style={{ display: 'flex', gap: 12, height: 380 }}>
             {/* 字幕区 */}
             <div
-              ref={transcriptScrollRef}
+              ref={setTranscriptScrollRef}
               style={{
                 flex: 1, minWidth: 0, overflowY: 'auto', padding: '16px 20px',
                 background: token.colorBgContainer, borderRadius: 10,
@@ -1596,6 +1657,50 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   }
 
   const renderMinutes = (task: VoiceTask) => {
+    const currentStreaming = streamingMinutes[task.id]
+    const isGenerating = task.status === 'generating_minutes'
+
+    // 生成中且已有流式内容：显示流式文本 + 闪烁光标
+    if (isGenerating && currentStreaming) {
+      return (
+        <div
+          ref={minutesScrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            minutesAutoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          }}
+          style={{ maxHeight: 500, overflowY: 'auto', paddingRight: 8 }}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentStreaming}</ReactMarkdown>
+          <span
+            style={{
+              display: 'inline-block',
+              width: 8,
+              height: 16,
+              background: token.colorPrimary,
+              marginLeft: 2,
+              verticalAlign: 'text-bottom',
+              animation: 'blink 1s infinite',
+              borderRadius: 1,
+            }}
+          />
+        </div>
+      )
+    }
+
+    // 生成中但还没收到流式内容：显示加载占位（重新生成时旧纪要会被此占位替换）
+    if (isGenerating) {
+      return (
+        <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+          <LoadingOutlined style={{ fontSize: 24, marginBottom: 12, color: token.colorPrimary }} />
+          <Text type="secondary" style={{ display: 'block', fontSize: 13 }}>
+            {t('voice.minutesStreamingHint')}
+          </Text>
+        </div>
+      )
+    }
+
+    // 非生成中：显示已保存的纪要
     if (!task.minutes) {
       return (
         <AntEmpty
@@ -1758,9 +1863,17 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                     {task.transcript_language && <Tag>{task.transcript_language}</Tag>}
                   </Space>
                 }
+                extra={
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={transcriptCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                    onClick={() => setTranscriptCollapsed(v => !v)}
+                  />
+                }
                 style={{ marginBottom: 12 }}
               >
-                {renderTranscript(task)}
+                {!transcriptCollapsed && renderTranscript(task)}
               </Card>
             )}
 
@@ -1774,8 +1887,16 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                     {task.minutes_type && <Tag>{t(`voice.minutesType_${task.minutes_type}`)}</Tag>}
                   </Space>
                 }
+                extra={
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={minutesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                    onClick={() => setMinutesCollapsed(v => !v)}
+                  />
+                }
               >
-                {renderMinutes(task)}
+                {!minutesCollapsed && renderMinutes(task)}
               </Card>
             )}
 
@@ -1788,14 +1909,24 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
                   <span>{t('voice.manualNotes')}</span>
                 </Space>
               }
+              extra={
+                <Button
+                  type="text"
+                  size="small"
+                  icon={notesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                  onClick={() => setNotesCollapsed(v => !v)}
+                />
+              }
             >
-              <Input.TextArea
-                value={notesText}
-                onChange={(e) => handleNotesChange(e.target.value)}
-                placeholder={t('voice.notesPlaceholder')}
-                autoSize={{ minRows: 4, maxRows: 12 }}
-                style={{ fontSize: 14, lineHeight: 1.6 }}
-              />
+              {!notesCollapsed && (
+                <Input.TextArea
+                  value={notesText}
+                  onChange={(e) => handleNotesChange(e.target.value)}
+                  placeholder={t('voice.notesPlaceholder')}
+                  autoSize={{ minRows: 4, maxRows: 12 }}
+                  style={{ fontSize: 14, lineHeight: 1.6 }}
+                />
+              )}
             </Card>
           </>
         )}

@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import CalendarService from './calendar.service'
 import NotificationService from '../notification.service'
 import { createLogger } from '../logger'
+import { ScheduledTaskBase } from '../scheduled-task-base'
 
 const logger = createLogger('CalendarScheduler')
 
@@ -13,12 +14,12 @@ const TICK_INTERVAL_MS = 30_000
  *
  * 启动时清理 7 天前已 fired 的提醒，避免表无限膨胀。
  */
-class CalendarSchedulerService {
+class CalendarSchedulerService extends ScheduledTaskBase {
   private static instance: CalendarSchedulerService
-  private timer: NodeJS.Timeout | null = null
-  private running = false
 
-  private constructor() {}
+  private constructor() {
+    super('CalendarScheduler', TICK_INTERVAL_MS)
+  }
 
   static getInstance(): CalendarSchedulerService {
     if (!CalendarSchedulerService.instance) {
@@ -28,31 +29,16 @@ class CalendarSchedulerService {
   }
 
   start(): void {
-    if (this.running) return
-    this.running = true
     try {
       const cleaned = CalendarService.getInstance().cleanupOldReminders()
       if (cleaned > 0) logger.info(`Cleaned ${cleaned} old reminders`)
     } catch (err: any) {
       logger.warn('Cleanup old reminders failed:', err?.message || err)
     }
-    // 启动后立即跑一次，避免错失启动期间到期的提醒
-    this.tick()
-    this.timer = setInterval(() => this.tick(), TICK_INTERVAL_MS)
-    logger.info('Calendar scheduler started')
+    super.start()
   }
 
-  stop(): void {
-    if (!this.running) return
-    this.running = false
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
-    logger.info('Calendar scheduler stopped')
-  }
-
-  private async tick(): Promise<void> {
+  protected async runCheck(): Promise<void> {
     try {
       const now = Math.floor(Date.now() / 1000)
       const calendar = CalendarService.getInstance()
@@ -79,6 +65,12 @@ class CalendarSchedulerService {
           })
         }
         calendar.markReminderFired(reminder.id)
+        // 提醒触发后检查重复事件/TODO 的未来提醒是否耗尽，滚动再生避免 90 天后静默消失
+        try {
+          calendar.ensureRemindersForRecurring(reminder.target_type, reminder.target_id)
+        } catch (err: any) {
+          logger.warn(`ensureRemindersForRecurring failed for ${reminder.target_type}:${reminder.target_id}:`, err?.message || err)
+        }
       }
       logger.info(`Fired ${due.length} reminder(s)`)
     } catch (err: any) {

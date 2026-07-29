@@ -13,10 +13,16 @@ export const NOTES_CHANNELS = {
   NOTES_CREATE_FOLDER: 'notes:create-folder',
   NOTES_RENAME: 'notes:rename',
   NOTES_MOVE: 'notes:move',
+  NOTES_COPY: 'notes:copy',
   NOTES_DELETE: 'notes:delete',
   NOTES_SEARCH: 'notes:search',
   NOTES_GET_SETTINGS: 'notes:get-settings',
   NOTES_SET_SETTINGS: 'notes:set-settings',
+  NOTES_GET_ABS_PATH: 'notes:get-abs-path',
+  NOTES_OPEN_IN_EXPLORER: 'notes:open-in-explorer',
+  NOTES_IMPORT_EXTERNAL: 'notes:import-external',
+  NOTES_SAVE_IMAGE: 'notes:save-image',
+  NOTES_OPEN_DIARY: 'notes:open-diary',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -75,6 +81,10 @@ export interface NotesSettings {
   editor_line_height: number
   /** 文件树展开的文件夹 relPath 列表 */
   expanded_folders: string[]
+  /** 是否启用日记功能（关闭则隐藏日记按钮） */
+  diary_enabled: boolean
+  /** 日记根目录（相对 vault，空串表示 vault 根） */
+  diary_root: string
 }
 
 export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
@@ -90,6 +100,8 @@ export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
   editor_font_size: 15,
   editor_line_height: 1.7,
   expanded_folders: [],
+  diary_enabled: false,
+  diary_root: 'diary',
 }
 
 export interface NoteWriteParams {
@@ -113,9 +125,29 @@ export interface NoteMoveParams {
   destParentRelPath: string
 }
 
+export interface NoteCopyParams {
+  srcRelPath: string
+  /** 目标父文件夹 relPath，空串表示 vault 根 */
+  destParentRelPath: string
+}
+
+export interface NoteImportExternalParams {
+  /** 源文件 / 文件夹的绝对路径（vault 外部） */
+  srcAbsPath: string
+  /** 目标父文件夹 relPath，空串表示 vault 根 */
+  destParentRelPath: string
+}
+
 export interface NoteSearchParams {
   query: string
   maxResults?: number
+}
+
+export interface NoteSaveImageParams {
+  /** 图片数据（Buffer 或 base64） */
+  buffer: ArrayBuffer | Uint8Array
+  /** 原始文件名（用于提取扩展名） */
+  fileName: string
 }
 
 export interface NotesDataChangedPayload {

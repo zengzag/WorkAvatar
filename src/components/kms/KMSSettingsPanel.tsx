@@ -4,9 +4,8 @@ import {
   Tabs, Card, Space, Typography, theme, InputNumber, Divider, Tag, Switch, Tooltip,
 } from 'antd'
 import {
-  RobotOutlined, CloudServerOutlined, FolderOpenOutlined,
-  DatabaseOutlined, ThunderboltOutlined, AimOutlined, FileTextOutlined, SearchOutlined,
-  FireOutlined, BookOutlined,
+  RobotOutlined, FolderOpenOutlined,
+  DatabaseOutlined, ThunderboltOutlined,
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
@@ -174,23 +173,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-              <div style={{
-                width: 40,
-                height: 40,
-                borderRadius: 8,
-                background: token.colorBgTextHover,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}>
-                <RobotOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
-              </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               <LLMSelector
@@ -222,7 +207,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             </div>
           </div>
           {modelConfig?.provider_id && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
                 <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
@@ -245,23 +230,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-              <div style={{
-                width: 40,
-                height: 40,
-                borderRadius: 8,
-                background: token.colorBgTextHover,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}>
-                <FileTextOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.summaryModel')}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.summaryModelDesc')}</Text>
-              </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.summaryModel')}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.summaryModelDesc')}</Text>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               <LLMSelector
@@ -293,7 +264,7 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
             </div>
           </div>
           {summaryModelConfig?.provider_id && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 52 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
                 <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
@@ -315,23 +286,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       {/* 智能索引模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <CloudServerOutlined style={{ fontSize: 20, color: token.colorInfo }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.embeddingModel')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.embeddingModelDesc')}</Text>
-            </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.embeddingModel')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.embeddingModelDesc')}</Text>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             <LLMSelector
@@ -363,23 +320,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       {/* 智能索引最大字符数 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorInfo }} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
-            </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Text strong style={{ display: 'block' }}>{t('settings.embeddingMaxCharsTitle')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.embeddingMaxCharsDesc')}</Text>
           </div>
           <Space style={{ flexShrink: 0 }}>
             <InputNumber
@@ -400,22 +343,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <AimOutlined style={{ fontSize: 20, color: token.colorInfo }} />
-            </div>
-            <div>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.maxRounds')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.maxRoundsDesc')}</Text>
-            </div>
+          <div>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.maxRounds')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.maxRoundsDesc')}</Text>
           </div>
           <InputNumber
             value={maxRounds}
@@ -429,22 +359,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         <Divider style={{ margin: '12px 0' }} />
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <ThunderboltOutlined style={{ fontSize: 20, color: token.colorWarning }} />
-            </div>
-            <div>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.topK')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.topKDesc')}</Text>
-            </div>
+          <div>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.topK')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.topKDesc')}</Text>
           </div>
           <InputNumber
             value={topK}
@@ -458,22 +375,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         <Divider style={{ margin: '12px 0' }} />
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <SearchOutlined style={{ fontSize: 20, color: token.colorSuccess }} />
-            </div>
-            <div>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.resultLimit')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.resultLimitDesc')}</Text>
-            </div>
+          <div>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.resultLimit')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.resultLimitDesc')}</Text>
           </div>
           <InputNumber
             value={resultLimit}
@@ -487,22 +391,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
         <Divider style={{ margin: '12px 0' }} />
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <FireOutlined style={{ fontSize: 20, color: token.colorError }} />
-            </div>
-            <div>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.autoReparseHotData')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.autoReparseHotDataDesc')}</Text>
-            </div>
+          <div>
+            <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.autoReparseHotData')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.autoReparseHotDataDesc')}</Text>
           </div>
           <Switch
             checked={autoReparseHotData}
@@ -514,22 +405,9 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
       {/* 知识卡片设置 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 40,
-              height: 40,
-              borderRadius: 8,
-              background: token.colorBgTextHover,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}>
-              <BookOutlined style={{ fontSize: 20, color: token.colorPrimary }} />
-            </div>
-            <div>
-              <Text strong style={{ display: 'block' }}>{t('kms.knowledgeCards.enableCards')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.subtitle')}</Text>
-            </div>
+          <div>
+            <Text strong style={{ display: 'block' }}>{t('kms.knowledgeCards.enableCards')}</Text>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.subtitle')}</Text>
           </div>
           <Switch
             checked={enableKnowledgeCards}

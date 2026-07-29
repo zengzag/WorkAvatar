@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Button, Space, Segmented, Tooltip, theme } from 'antd'
 import {
   PlusOutlined,
@@ -13,7 +13,7 @@ import CalendarPanel from '../components/calendar/CalendarPanel'
 import TodoPanel from '../components/calendar/TodoPanel'
 import EventFormModal, { type EventFormMode } from '../components/calendar/EventFormModal'
 import TodoFormModal, { type TodoFormMode } from '../components/calendar/TodoFormModal'
-import CalendarSettingsModal from '../components/calendar/CalendarSettingsModal'
+import CalendarSettingsDrawer from '../components/calendar/CalendarSettingsDrawer'
 import type { CalendarEventInstance, CalendarTodo, CreateEventInput, UpdateEventInput, CreateTodoInput, UpdateTodoInput } from '../types/calendar'
 
 const DEFAULT_CLICK_DURATION_SEC = 30 * 60
@@ -88,14 +88,6 @@ const CalendarPage: React.FC = () => {
     return () => { el.removeEventListener('scroll', onScroll) }
   }, [])
 
-  const existingTags = useMemo(() => {
-    const tagSet = new Set<string>()
-    for (const td of cal.todos) {
-      if (td.tags) td.tags.forEach(t => tagSet.add(t))
-    }
-    return Array.from(tagSet).sort()
-  }, [cal.todos])
-
   const openCreateEvent = useCallback((startAt?: number, endAt?: number) => {
     setEditingEvent(null)
     setDefaultStartAt(startAt)
@@ -132,6 +124,10 @@ const CalendarPage: React.FC = () => {
 
   const handleDeleteEvent = useCallback(async (id: string) => {
     return await cal.deleteEvent(id)
+  }, [cal])
+
+  const handleDeleteTodo = useCallback(async (id: string) => {
+    return await cal.deleteTodo(id)
   }, [cal])
 
   const openCreateTodo = useCallback(() => {
@@ -257,11 +253,11 @@ const CalendarPage: React.FC = () => {
         mode={todoModalMode}
         todo={editingTodo}
         settings={cal.settings}
-        existingTags={existingTags}
         onClose={() => setTodoModalOpen(false)}
         onSubmit={handleTodoSubmit}
+        onDelete={handleDeleteTodo}
       />
-      <CalendarSettingsModal
+      <CalendarSettingsDrawer
         open={settingsOpen}
         settings={cal.settings}
         onClose={() => setSettingsOpen(false)}

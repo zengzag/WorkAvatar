@@ -1,17 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Input, Tag, Checkbox, Tooltip, Popconfirm, Popover, DatePicker, Button, theme } from 'antd'
-import { DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { Input, Tag, Checkbox, Tooltip, Popconfirm, Popover, DatePicker, Button, ConfigProvider, theme } from 'antd'
+import { DeleteOutlined, EditOutlined, ClockCircleOutlined, WarningFilled } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { CalendarTodo, TodoPriority, TodoStatus, UpdateTodoInput } from '../../types/calendar'
 
 const MS = 1000
 
-const PRIORITY_BAR_COLOR: Record<TodoPriority, string> = {
-  none: 'transparent',
-  low: '#1677ff',
-  medium: '#fa8c16',
-  high: '#f5222d',
+/** 优先级对应的复选框颜色（饱和度略低，弱化视觉干扰）；none 使用主题默认色 */
+const PRIORITY_CHECKBOX_COLOR: Record<TodoPriority, string | undefined> = {
+  none: undefined,
+  low: '#5b8def',
+  medium: '#e8a04b',
+  high: '#e57373',
 }
 
 const STATUS_COLOR: Record<TodoStatus, string> = {
@@ -20,7 +21,13 @@ const STATUS_COLOR: Record<TodoStatus, string> = {
   completed: 'success',
 }
 
-const PRIORITY_CYCLE: TodoPriority[] = ['none', 'low', 'medium', 'high']
+/** 状态循环顺序：pending → in_progress → completed → pending */
+const STATUS_CYCLE: TodoStatus[] = ['pending', 'in_progress', 'completed']
+
+const nextStatus = (current: TodoStatus): TodoStatus => {
+  const idx = STATUS_CYCLE.indexOf(current)
+  return STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length]
+}
 
 const formatDueTime = (sec: number): string => {
   const d = new Date(sec * MS)
@@ -30,6 +37,28 @@ const formatDueTime = (sec: number): string => {
   if (sameDay) return hm
   const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
   if (d.toDateString() === tomorrow.toDateString()) return `${hm} +1d`
+  return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
+/** 计算逾期时长的人类可读描述 */
+const formatOverdueDuration = (dueSec: number): string => {
+  const diffMs = Date.now() - dueSec * MS
+  if (diffMs < 0) return ''
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin < 60) return `${diffMin}m`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h`
+  const diffDay = Math.floor(diffHr / 24)
+  return `${diffDay}d`
+}
+
+/** 格式化时间戳为 MM-DD HH:mm 或 HH:mm */
+const formatTimestamp = (sec: number): string => {
+  const d = new Date(sec * MS)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  const hm = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  if (sameDay) return hm
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`
 }
 
@@ -64,7 +93,9 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
   }, [editingTitle])
 
   const isCompleted = todo.status === 'completed'
+  const isInProgress = todo.status === 'in_progress'
   const isOverdue = !isCompleted && todo.due_at != null && todo.due_at * MS < Date.now()
+  const overdueDuration = isOverdue ? formatOverdueDuration(todo.due_at!) : ''
 
   const commitTitle = useCallback(async () => {
     const trimmed = titleDraft.trim()
@@ -84,13 +115,25 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
     setTimePopoverOpen(false)
   }, [todo.id, todo.due_at, onUpdate])
 
-  const cyclePriority = useCallback(async () => {
-    const idx = PRIORITY_CYCLE.indexOf(todo.priority)
-    const next = PRIORITY_CYCLE[(idx + 1) % PRIORITY_CYCLE.length]
-    await onUpdate({ id: todo.id, priority: next })
-  }, [todo.id, todo.priority, onUpdate])
+  /** 三态循环：pending → in_progress → completed → pending
+   *  - pending → in_progress：直接 updateTodo
+   *  - in_progress → completed：走 completeTodo（处理重复 TODO 推进）
+   *  - completed → pending：走 completeTodo(false) */
+  const cycleStatus = useCallback(async () => {
+    const next = nextStatus(todo.status)
+    if (next === 'in_progress') {
+      await onUpdate({ id: todo.id, status: 'in_progress' })
+    } else if (next === 'completed') {
+      onComplete(todo.id, true)
+    } else {
+      onComplete(todo.id, false)
+    }
+  }, [todo.id, todo.status, onUpdate, onComplete])
 
   const showActions = hovered || editingTitle || timePopoverOpen
+
+  // 未完成时：复选框边框按优先级着色（饱和度略低）；完成后统一使用主题默认色
+  const priorityColor = isCompleted ? undefined : PRIORITY_CHECKBOX_COLOR[todo.priority]
 
   return (
     <div
@@ -101,38 +144,36 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
         display: 'flex',
         alignItems: 'flex-start',
         gap: 8,
-        padding: '6px 8px 6px 12px',
+        padding: '6px 8px',
         borderRadius: 6,
         margin: '1px 0',
         cursor: 'default',
-        background: hovered ? token.colorFillQuaternary : 'transparent',
+        // 逾期项：左侧红色细条 + 极淡红底色
+        background: isOverdue
+          ? `linear-gradient(90deg, ${token.colorErrorBg} 0%, transparent 30%)`
+          : hovered ? token.colorFillQuaternary : 'transparent',
         transition: 'background 0.15s',
       }}
     >
-      {/* 优先级色条：左侧细条 */}
-      <Tooltip title={t(`calendar.priority${todo.priority.charAt(0).toUpperCase() + todo.priority.slice(1)}`)}>
-        <div
-          onClick={(e) => { e.stopPropagation(); cyclePriority() }}
-          style={{
-            position: 'absolute',
-            left: 2,
-            top: 8,
-            bottom: 8,
-            width: 3,
-            borderRadius: 2,
-            cursor: 'pointer',
-            background: PRIORITY_BAR_COLOR[todo.priority],
-            opacity: todo.priority === 'none' ? 0 : 1,
-            transition: 'opacity 0.15s',
-          }}
-        />
-      </Tooltip>
-
-      <Checkbox
-        checked={isCompleted}
-        onChange={(e) => onComplete(todo.id, e.target.checked)}
-        style={{ marginTop: 2, flexShrink: 0 }}
-      />
+      {/* 三态复选框：pending（空）→ in_progress（indeterminate 横线）→ completed（对勾）
+          未完成时边框颜色由优先级决定；完成后统一主题色 */}
+      <ConfigProvider theme={priorityColor ? {
+        components: {
+          Checkbox: {
+            colorPrimary: priorityColor,
+            colorBorder: priorityColor,
+          },
+        },
+      } : undefined}>
+        <Tooltip title={t('calendar.clickToCycleStatus')} mouseEnterDelay={0.8}>
+          <Checkbox
+            checked={isCompleted}
+            indeterminate={isInProgress}
+            onChange={cycleStatus}
+            style={{ marginTop: 2, flexShrink: 0 }}
+          />
+        </Tooltip>
+      </ConfigProvider>
 
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* 标题：点击行内编辑 */}
@@ -167,10 +208,31 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
 
         {/* 元信息行 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2, flexWrap: 'wrap' }}>
-          {todo.status === 'in_progress' && (
+          {isInProgress && (
             <Tag color={STATUS_COLOR.in_progress} style={{ margin: 0, fontSize: 10, lineHeight: '14px', padding: '0 4px', borderRadius: 3 }}>
               {t('calendar.statusInProgress')}
             </Tag>
+          )}
+
+          {/* 逾期标记：红色警告图标 + 逾期时长 */}
+          {isOverdue && (
+            <Tooltip title={t('calendar.overdueHint')}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 2,
+                fontSize: 10,
+                lineHeight: '14px',
+                color: token.colorError,
+                fontWeight: 500,
+                background: token.colorErrorBg,
+                padding: '0 4px',
+                borderRadius: 3,
+              }}>
+                <WarningFilled style={{ fontSize: 9 }} />
+                {t('calendar.overdue')} {overdueDuration}
+              </span>
+            </Tooltip>
           )}
 
           {/* 截止时间：点击行内编辑 */}
@@ -200,6 +262,7 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
                   color: isOverdue ? token.colorError : token.colorTextTertiary,
                   cursor: 'pointer',
                   lineHeight: '14px',
+                  fontWeight: isOverdue ? 500 : 400,
                 }}
               >
                 {formatDueTime(todo.due_at)}
@@ -207,17 +270,24 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
             </Popover>
           )}
 
-          {(todo.tags || []).slice(0, 2).map(tg => (
-            <Tag key={tg} style={{ margin: 0, fontSize: 10, lineHeight: '14px', padding: '0 4px', borderRadius: 3 }}>{tg}</Tag>
-          ))}
-          {(todo.tags || []).length > 2 && (
-            <span style={{ fontSize: 10, color: token.colorTextTertiary }}>+{todo.tags.length - 2}</span>
+          {/* 进行中：显示进入时间 */}
+          {isInProgress && todo.started_at != null && (
+            <Tooltip title={t('calendar.startedAtHint')}>
+              <span style={{ fontSize: 10, color: token.colorTextQuaternary, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <ClockCircleOutlined style={{ fontSize: 9 }} />
+                {formatTimestamp(todo.started_at)}
+              </span>
+            </Tooltip>
           )}
 
+          {/* 已完成：显示完成时间 */}
           {isCompleted && todo.completed_at != null && (
-            <span style={{ fontSize: 10, color: token.colorTextQuaternary }}>
-              {new Date(todo.completed_at * MS).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
+            <Tooltip title={t('calendar.completedAtHint')}>
+              <span style={{ fontSize: 10, color: token.colorTextQuaternary, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <ClockCircleOutlined style={{ fontSize: 9 }} />
+                {formatTimestamp(todo.completed_at)}
+              </span>
+            </Tooltip>
           )}
         </div>
       </div>

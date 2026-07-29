@@ -118,8 +118,7 @@ function formatEvent(e: CalendarEvent): string {
 
 function formatTodo(t: CalendarTodo): string {
   const due = t.due_at ? new Date(t.due_at * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '无截止'
-  const tags = t.tags.length > 0 ? ` #${t.tags.join(' #')}` : ''
-  return `• [${t.status === 'completed' ? 'x' : ' '}] ${t.title} | 截止:${due} | 优先级:${t.priority}${tags} [id=${t.id}]`
+  return `• [${t.status === 'completed' ? 'x' : ' '}] ${t.title} | 截止:${due} | 优先级:${t.priority} [id=${t.id}]`
 }
 
 const TIME_HINT = '时间参数接受 Unix 秒（number）或日期字符串（string，如 "2026-07-24 15:00"、"2026-07-24"、"2026/07/24 15:30:00"），由服务端解析，无需调用 date_time/calculator。'
@@ -355,9 +354,9 @@ const calendarTodoListTool: ToolDefinition = {
   id: 'calendar_todo_list',
   name: 'calendar_todo_list',
   title: '列出待办',
-  summary: '列出/筛选 TODO 待办任务。查看待办列表时使用，支持按状态/优先级/标签筛选。',
+  summary: '列出/筛选 TODO 待办任务。查看待办列表时使用，支持按状态/优先级筛选。',
   description: `列出用户的 TODO 待办任务，支持筛选。
-- 可选筛选：filter_status / filter_priority / filter_tag / overdue_only / due_today / limit
+- 可选筛选：filter_status / filter_priority / overdue_only / due_today / limit
 - 不传任何筛选条件时返回全部 TODO
 
 priority：none / low / medium / high
@@ -375,7 +374,6 @@ status：pending / in_progress / completed`,
         enum: ['none', 'low', 'medium', 'high'],
         description: '按优先级筛选',
       },
-      filter_tag: { type: 'string', description: '按标签筛选' },
       overdue_only: { type: 'boolean', description: '仅返回已逾期' },
       due_today: { type: 'boolean', description: '仅返回今日到期' },
       limit: { type: 'number', description: '返回条数上限' },
@@ -386,7 +384,6 @@ status：pending / in_progress / completed`,
       const todos = CalendarService.getInstance().listTodos({
         status: args.filter_status as TodoStatus | undefined,
         priority: args.filter_priority as TodoPriority | undefined,
-        tag: args.filter_tag ? String(args.filter_tag) : undefined,
         overdue_only: args.overdue_only === true,
         due_today: args.due_today === true,
         limit: args.limit ? Number(args.limit) : undefined,
@@ -412,10 +409,10 @@ const calendarTodoCreateTool: ToolDefinition = {
   id: 'calendar_todo_create',
   name: 'calendar_todo_create',
   title: '创建待办',
-  summary: '创建新的 TODO 待办任务。新建待办时使用，支持优先级、标签、重复与提醒。',
+  summary: '创建新的 TODO 待办任务。新建待办时使用，支持优先级、重复与提醒。',
   description: `创建一个新的 TODO 待办任务。
 - 必填：title
-- 可选：due_time、priority、status、tags、description、recurrence_rule、reminders
+- 可选：due_time、priority、status、description、recurrence_rule、reminders
 
 priority：none / low / medium / high
 status：pending / in_progress / completed
@@ -436,11 +433,6 @@ ${TIME_HINT}`,
         type: 'string',
         enum: ['pending', 'in_progress', 'completed'],
         description: '状态',
-      },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-        description: '标签列表',
       },
       recurrence_rule: {
         type: 'object',
@@ -470,7 +462,6 @@ ${TIME_HINT}`,
         due_at: dueAt !== undefined ? dueAt : null,
         priority: args.priority as TodoPriority | undefined,
         status: args.status as TodoStatus | undefined,
-        tags: Array.isArray(args.tags) ? args.tags.map(String) : undefined,
         recurrence_rule: parseRecurrenceRule(args.recurrence_rule),
         reminders: Array.isArray(args.reminders) ? args.reminders.map(Number) : undefined,
         employee_id: getEmployeeId(),
@@ -517,11 +508,6 @@ ${TIME_HINT}`,
         enum: ['pending', 'in_progress', 'completed'],
         description: '状态',
       },
-      tags: {
-        type: 'array',
-        items: { type: 'string' },
-        description: '标签列表',
-      },
       recurrence_rule: {
         type: 'object',
         description: '重复规则',
@@ -551,7 +537,6 @@ ${TIME_HINT}`,
         due_at: dueAt,
         priority: args.priority as TodoPriority | undefined,
         status: args.status as TodoStatus | undefined,
-        tags: Array.isArray(args.tags) ? args.tags.map(String) : undefined,
         recurrence_rule: args.recurrence_rule !== undefined ? parseRecurrenceRule(args.recurrence_rule) : undefined,
         reminders: Array.isArray(args.reminders) ? args.reminders.map(Number) : undefined,
       }

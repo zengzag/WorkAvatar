@@ -95,6 +95,7 @@ export const useNotesStore = create<NotesState>()(
           return
         }
         const idx = s.tabs.findIndex((t) => t.id === tabId)
+        // 复用传入 Tab（openNote 已先保存脏内容，替换安全）；Tab 不存在则新建
         if (idx >= 0) {
           s.tabs[idx] = {
             ...s.tabs[idx],
@@ -105,8 +106,20 @@ export const useNotesStore = create<NotesState>()(
             saveStatus: 'saved',
             locateText: null,
           }
+          s.activeTabId = tabId
+        } else {
+          const newId = generateTabId()
+          s.tabs.push({
+            id: newId,
+            relPath,
+            content,
+            savedContent: content,
+            mtime,
+            saveStatus: 'saved',
+            locateText: null,
+          })
+          s.activeTabId = newId
         }
-        s.activeTabId = tabId
       }),
 
     switchTab: (tabId) =>

@@ -142,6 +142,9 @@ export type {
   NoteCreateParams,
   NoteRenameParams,
   NoteMoveParams,
+  NoteCopyParams,
+  NoteImportExternalParams,
   NoteSearchParams,
+  NoteSaveImageParams,
   NotesDataChangedPayload,
 } from './channels/notes'

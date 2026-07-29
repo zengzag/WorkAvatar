@@ -174,112 +174,119 @@ export class OpenAIProvider implements ILLMProvider {
         throw new Error('No response body for streaming')
       }
 
-      let assistantContent = ''
-      let assistantReasoning = ''
-      let accumulatedToolCalls: LLMToolCall[] = []
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let streamUsage: LLMUsage | undefined
+      try {
+        let assistantContent = ''
+        let assistantReasoning = ''
+        let accumulatedToolCalls: LLMToolCall[] = []
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let streamUsage: LLMUsage | undefined
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+        while (true) {
+          // 在每次读取前检查 AbortSignal，确保取消请求后尽快退出循环
+          if (signal?.aborted) break
+          const { done, value } = await reader.read()
+          if (done) break
 
-        const decoded = decoder.decode(value, { stream: true })
-        buffer += decoded
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+          const decoded = decoder.decode(value, { stream: true })
+          buffer += decoded
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || !trimmed.startsWith('data: ')) continue
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || !trimmed.startsWith('data: ')) continue
 
-          const data = trimmed.slice(6)
-          if (data === '[DONE]') continue
+            const data = trimmed.slice(6)
+            if (data === '[DONE]') continue
 
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.choices?.[0]?.delta
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta
 
-            if (delta?.reasoning_content) {
-              assistantReasoning += delta.reasoning_content
-              callbacks.onThought(delta.reasoning_content)
-            }
-
-            if (delta?.content) {
-              assistantContent += delta.content
-              callbacks.onChunk(delta.content)
-            }
-
-            if (delta?.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const index = tc.index || 0
-                if (!accumulatedToolCalls[index]) {
-                  accumulatedToolCalls[index] = {
-                    id: tc.id || '',
-                    type: 'function',
-                    function: { name: '', arguments: '' },
-                  }
-                }
-                if (tc.id) accumulatedToolCalls[index].id = tc.id
-                if (tc.function?.name) accumulatedToolCalls[index].function.name += tc.function.name
-                if (tc.function?.arguments) accumulatedToolCalls[index].function.arguments += tc.function.arguments
-
-                // 流式推送 tool_call 增量，让前端在 LLM 生成参数阶段即可看到进度
-                const tc2 = accumulatedToolCalls[index]
-                callbacks.onToolCallDelta?.({
-                  index,
-                  id: tc2.id || undefined,
-                  name: tc2.function.name || undefined,
-                  arguments: tc2.function.arguments,
-                })
+              if (delta?.reasoning_content) {
+                assistantReasoning += delta.reasoning_content
+                callbacks.onThought(delta.reasoning_content)
               }
-            }
 
-            if (parsed.usage) {
-              streamUsage = this.normalizeUsage(parsed.usage)
+              if (delta?.content) {
+                assistantContent += delta.content
+                callbacks.onChunk(delta.content)
+              }
+
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const index = tc.index || 0
+                  if (!accumulatedToolCalls[index]) {
+                    accumulatedToolCalls[index] = {
+                      id: tc.id || '',
+                      type: 'function',
+                      function: { name: '', arguments: '' },
+                    }
+                  }
+                  if (tc.id) accumulatedToolCalls[index].id = tc.id
+                  if (tc.function?.name) accumulatedToolCalls[index].function.name += tc.function.name
+                  if (tc.function?.arguments) accumulatedToolCalls[index].function.arguments += tc.function.arguments
+
+                  // 流式推送 tool_call 增量，让前端在 LLM 生成参数阶段即可看到进度
+                  const tc2 = accumulatedToolCalls[index]
+                  callbacks.onToolCallDelta?.({
+                    index,
+                    id: tc2.id || undefined,
+                    name: tc2.function.name || undefined,
+                    arguments: tc2.function.arguments,
+                  })
+                }
+              }
+
+              if (parsed.usage) {
+                streamUsage = this.normalizeUsage(parsed.usage)
+              }
+            } catch (err: any) {
+              // SSE 分块可能在边界处不完整，解析失败属正常情况；记录 debug 便于排查连续失败
+              logger.debug('SSE chunk parse skipped:', err?.message || err)
             }
-          } catch (err: any) {
-            // SSE 分块可能在边界处不完整，解析失败属正常情况；记录 debug 便于排查连续失败
-            logger.debug('SSE chunk parse skipped:', err?.message || err)
           }
         }
-      }
 
-      if (accumulatedToolCalls.length > 0) {
-        callbacks.onToolCall(accumulatedToolCalls)
-      }
+        if (accumulatedToolCalls.length > 0) {
+          callbacks.onToolCall(accumulatedToolCalls)
+        }
 
-      const usage = streamUsage
-      const latencyMs = Date.now() - startTime
+        const usage = streamUsage
+        const latencyMs = Date.now() - startTime
 
-      LLMLoggerService.getInstance().logCall({
-        type: 'chatStream',
-        source: logSource,
-        model: this.config.model,
-        providerType: this.config.providerType,
-        request: {
-          messages: this.sanitizeMessagesForLog(messages),
-          tools: tools?.length ? tools : undefined,
-          temperature: body.temperature,
-          max_tokens: body.max_tokens,
-          stream: true,
-        },
-        response: {
+        LLMLoggerService.getInstance().logCall({
+          type: 'chatStream',
+          source: logSource,
+          model: this.config.model,
+          providerType: this.config.providerType,
+          request: {
+            messages: this.sanitizeMessagesForLog(messages),
+            tools: tools?.length ? tools : undefined,
+            temperature: body.temperature,
+            max_tokens: body.max_tokens,
+            stream: true,
+          },
+          response: {
+            content: assistantContent,
+            reasoningContent: assistantReasoning || undefined,
+            toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
+            usage,
+            latencyMs,
+          },
+        })
+
+        return {
           content: assistantContent,
           reasoningContent: assistantReasoning || undefined,
           toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
-          usage,
           latencyMs,
-        },
-      })
-
-      return {
-        content: assistantContent,
-        reasoningContent: assistantReasoning || undefined,
-        toolCalls: accumulatedToolCalls.length > 0 ? accumulatedToolCalls : undefined,
-        latencyMs,
-        usage,
+          usage,
+        }
+      } finally {
+        // 确保释放 reader，避免流中断时 TCP 连接和文件描述符泄漏
+        try { await reader.cancel() } catch { /* reader 已释放或流已结束 */ }
       }
     } catch (error: any) {
       if (!(error as any).status) {

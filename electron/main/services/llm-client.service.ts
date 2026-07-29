@@ -246,9 +246,9 @@ class LLMClientService {
 
     const controller = new AbortController()
     // 流式调用使用双重超时：
-    // 1. 总超时：config.timeout_ms（默认 60s），覆盖从请求开始到流结束的全过程
+    // 1. 总超时：config.timeout_ms（默认 600s/10min），长文档生成可能持续数分钟
     // 2. 空闲超时：30s 无数据则中止，防止服务端发完 header 后卡住流不结束
-    const totalTimeoutMs = config.timeout_ms || 60000
+    const totalTimeoutMs = config.timeout_ms || 600_000
     const STREAM_IDLE_TIMEOUT_MS = 30_000
     let idleTimer: NodeJS.Timeout | null = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
     const totalTimer = setTimeout(() => controller.abort(), totalTimeoutMs)
@@ -296,91 +296,96 @@ class LLMClientService {
         throw new Error('No response body')
       }
 
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let fullContent = ''
-      let fullThought = ''
+      try {
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullContent = ''
+        let fullThought = ''
 
-      const logSuccess = () => {
-        LLMLoggerService.getInstance().logCall({
-          type: 'chatStream',
-          source: logSource,
-          model: modelName,
-          providerType: config.provider_type,
-          request: requestLog,
-          response: {
-            content: fullContent,
-            reasoningContent: fullThought || undefined,
-            latencyMs: Date.now() - startTime,
-          },
-        })
-      }
+        const logSuccess = () => {
+          LLMLoggerService.getInstance().logCall({
+            type: 'chatStream',
+            source: logSource,
+            model: modelName,
+            providerType: config.provider_type,
+            request: requestLog,
+            response: {
+              content: fullContent,
+              reasoningContent: fullThought || undefined,
+              latencyMs: Date.now() - startTime,
+            },
+          })
+        }
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        // 每收到数据重置空闲超时，防止服务端中途卡住
-        if (idleTimer) clearTimeout(idleTimer)
-        idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
+          // 每收到数据重置空闲超时，防止服务端中途卡住
+          if (idleTimer) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
 
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (!trimmed || !trimmed.startsWith('data: ')) continue
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || !trimmed.startsWith('data: ')) continue
 
-          const data = trimmed.slice(6)
-          if (data === '[DONE]') {
-            logSuccess()
-            onDone()
-            return
-          }
-
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.choices?.[0]?.delta
-
-            if (delta?.reasoning_content && onThought) {
-              fullThought += delta.reasoning_content
-              onThought(delta.reasoning_content)
+            const data = trimmed.slice(6)
+            if (data === '[DONE]') {
+              logSuccess()
+              onDone()
+              return
             }
 
-            const content = delta?.content
-            if (content) {
-              const result = thinkProcessor.processChunk(content)
-              if (result.thought && onThought) {
-                fullThought += result.thought
-                onThought(result.thought)
+            try {
+              const parsed = JSON.parse(data)
+              const delta = parsed.choices?.[0]?.delta
+
+              if (delta?.reasoning_content && onThought) {
+                fullThought += delta.reasoning_content
+                onThought(delta.reasoning_content)
               }
-              if (result.content) {
-                fullContent += result.content
-                onChunk(result.content)
+
+              const content = delta?.content
+              if (content) {
+                const result = thinkProcessor.processChunk(content)
+                if (result.thought && onThought) {
+                  fullThought += result.thought
+                  onThought(result.thought)
+                }
+                if (result.content) {
+                  fullContent += result.content
+                  onChunk(result.content)
+                }
               }
+            } catch (e) {
+              logger.debug('Failed to parse stream chunk', e)
             }
-          } catch (e) {
-            logger.debug('Failed to parse stream chunk', e)
           }
         }
-      }
 
-      const finalResult = thinkProcessor.finalize()
-      if (finalResult.thought && onThought) {
-        fullThought += finalResult.thought
-        onThought(finalResult.thought)
-      }
-      if (finalResult.content) {
-        fullContent += finalResult.content
-        onChunk(finalResult.content)
-      }
+        const finalResult = thinkProcessor.finalize()
+        if (finalResult.thought && onThought) {
+          fullThought += finalResult.thought
+          onThought(finalResult.thought)
+        }
+        if (finalResult.content) {
+          fullContent += finalResult.content
+          onChunk(finalResult.content)
+        }
 
-      // 流正常结束，清除所有定时器
-      if (idleTimer) clearTimeout(idleTimer)
-      clearTimeout(totalTimer)
-      logSuccess()
-      onDone()
+        // 流正常结束，清除所有定时器
+        if (idleTimer) clearTimeout(idleTimer)
+        clearTimeout(totalTimer)
+        logSuccess()
+        onDone()
+      } finally {
+        // 确保释放 reader，避免流中断时连接泄漏
+        try { await reader.cancel() } catch { /* reader 已释放或流已结束 */ }
+      }
     } catch (err: any) {
       if (idleTimer) clearTimeout(idleTimer)
       clearTimeout(totalTimer)
