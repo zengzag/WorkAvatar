@@ -124,6 +124,14 @@ class DatabaseService {
     }
   }
 
+  private dropColumnIfExists(table: string, column: string): void {
+    const result = this.db.prepare(`PRAGMA table_info(${table})`).all() as any[]
+    const columnExists = result.some((c) => c.name === column)
+    if (columnExists) {
+      this.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+    }
+  }
+
   private initializeSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS employees (
@@ -348,7 +356,6 @@ class DatabaseService {
         priority TEXT NOT NULL DEFAULT 'none',
         -- 状态：pending / in_progress / completed
         status TEXT NOT NULL DEFAULT 'pending',
-        tags_json TEXT DEFAULT '[]',
         recurrence_rule TEXT DEFAULT '',
         reminders_json TEXT DEFAULT '[]',
         completed_at INTEGER,
@@ -454,6 +461,9 @@ class DatabaseService {
 
     // TODO 进入"进行中"状态的时间戳
     this.addColumnIfNotExists('calendar_todos', 'started_at', 'INTEGER')
+
+    // 标签功能已移除，删除遗留的 tags_json 列
+    this.dropColumnIfExists('calendar_todos', 'tags_json')
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);

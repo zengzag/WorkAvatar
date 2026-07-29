@@ -270,13 +270,6 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
             </Popover>
           )}
 
-          {(todo.tags || []).slice(0, 2).map(tg => (
-            <Tag key={tg} style={{ margin: 0, fontSize: 10, lineHeight: '14px', padding: '0 4px', borderRadius: 3 }}>{tg}</Tag>
-          ))}
-          {(todo.tags || []).length > 2 && (
-            <span style={{ fontSize: 10, color: token.colorTextTertiary }}>+{todo.tags.length - 2}</span>
-          )}
-
           {/* 进行中：显示进入时间 */}
           {isInProgress && todo.started_at != null && (
             <Tooltip title={t('calendar.startedAtHint')}>

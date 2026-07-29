@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Button, Space, Segmented, Tooltip, theme } from 'antd'
 import {
   PlusOutlined,
@@ -87,14 +87,6 @@ const CalendarPage: React.FC = () => {
     el.addEventListener('scroll', onScroll)
     return () => { el.removeEventListener('scroll', onScroll) }
   }, [])
-
-  const existingTags = useMemo(() => {
-    const tagSet = new Set<string>()
-    for (const td of cal.todos) {
-      if (td.tags) td.tags.forEach(t => tagSet.add(t))
-    }
-    return Array.from(tagSet).sort()
-  }, [cal.todos])
 
   const openCreateEvent = useCallback((startAt?: number, endAt?: number) => {
     setEditingEvent(null)
@@ -261,7 +253,6 @@ const CalendarPage: React.FC = () => {
         mode={todoModalMode}
         todo={editingTodo}
         settings={cal.settings}
-        existingTags={existingTags}
         onClose={() => setTodoModalOpen(false)}
         onSubmit={handleTodoSubmit}
         onDelete={handleDeleteTodo}

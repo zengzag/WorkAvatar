@@ -1490,6 +1490,7 @@ export default {
     repeatInterval: '间隔',
     repeatCount: '次数',
     repeatUntil: '截止日期',
+    repeatUntilShort: '截止',
     // 颜色
     colorDefault: '默认',
     colorBlue: '蓝色',
@@ -1511,8 +1512,6 @@ export default {
     statusPending: '待办',
     statusInProgress: '进行中',
     statusCompleted: '已完成',
-    tags: '标签',
-    tagsPlaceholder: '输入标签后回车',
     // TODO 统计
     statsTotal: '总数',
     statsPending: '待办',
@@ -1535,7 +1534,6 @@ export default {
     filter: '筛选',
     filterStatus: '状态',
     filterPriority: '优先级',
-    filterTag: '标签',
     filterDueFrom: '截止起',
     filterDueTo: '截止止',
     // 操作

@@ -100,12 +100,6 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
   const { token } = theme.useToken()
   const [filterOpen, setFilterOpen] = useState(false)
 
-  const allTags = useMemo(() => {
-    const s = new Set<string>()
-    todos.forEach(td => (td.tags || []).forEach(tg => s.add(tg)))
-    return Array.from(s)
-  }, [todos])
-
   const filtered = useMemo(() => {
     return todos.filter(td => {
       if (filters.status) {
@@ -116,7 +110,6 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
         const prios = Array.isArray(filters.priority) ? filters.priority : [filters.priority]
         if (!prios.includes(td.priority)) return false
       }
-      if (filters.tag && !(td.tags || []).includes(filters.tag)) return false
       if (filters.dueFrom != null || filters.dueTo != null) {
         if (td.due_at == null) return false
         const dueMs = td.due_at * MS
@@ -147,7 +140,6 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
     let n = 0
     if (filters.status) n++
     if (filters.priority) n++
-    if (filters.tag) n++
     if (filters.dueFrom != null || filters.dueTo != null) n++
     return n
   }, [filters])
@@ -233,15 +225,6 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
                 { value: 'medium', label: t('calendar.priorityMedium') },
                 { value: 'high', label: t('calendar.priorityHigh') },
               ]}
-            />
-            <Select
-              size="small"
-              placeholder={t('calendar.filterTag')}
-              value={filters.tag}
-              onChange={(v) => onFiltersChange({ tag: v })}
-              allowClear
-              style={{ flex: 1 }}
-              options={allTags.map(tg => ({ value: tg, label: tg }))}
             />
           </div>
           <DatePicker.RangePicker

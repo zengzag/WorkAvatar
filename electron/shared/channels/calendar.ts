@@ -76,7 +76,6 @@ export interface CalendarTodo {
   due_at: number | null
   priority: TodoPriority
   status: TodoStatus
-  tags: string[]
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
   /** 进入"进行中"状态的时间戳 */
@@ -114,7 +113,6 @@ export interface ListEventsParams {
 export interface ListTodosParams {
   status?: TodoStatus | TodoStatus[]
   priority?: TodoPriority | TodoPriority[]
-  tag?: string
   overdue_only?: boolean
   due_today?: boolean
   due_from?: number
@@ -155,7 +153,6 @@ export interface CreateTodoInput {
   due_at?: number | null
   priority?: TodoPriority
   status?: TodoStatus
-  tags?: string[]
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
   employee_id?: string | null
@@ -169,7 +166,6 @@ export interface UpdateTodoInput {
   due_at?: number | null
   priority?: TodoPriority
   status?: TodoStatus
-  tags?: string[]
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
 }

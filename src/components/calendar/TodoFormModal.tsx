@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import {
-  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, Popconfirm, message, theme, Descriptions,
+  Modal, Form, Input, DatePicker, Select, InputNumber, Row, Col, Button, Popconfirm, message, theme, Space, Checkbox, AutoComplete,
 } from 'antd'
-import { DeleteOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
+import { DeleteOutlined, BellOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -19,7 +19,6 @@ interface TodoFormModalProps {
   mode: TodoFormMode
   todo?: CalendarTodo | null
   settings?: CalendarSettings | null
-  existingTags?: string[]
   onClose: () => void
   onSubmit: (input: CreateTodoInput | UpdateTodoInput) => Promise<any>
   onDelete?: (id: string) => Promise<any>
@@ -29,21 +28,20 @@ const REMINDER_OPTIONS = [0, 5, 15, 30, 60, 120, 1440, 2880]
 const toDisplay = (v: number) => Math.abs(v)
 const toStore = (v: number) => -v
 
-const compactItem: React.CSSProperties = { marginBottom: 12 }
+const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
+  const h = Math.floor(i / 2)
+  const m = i % 2 === 0 ? '00' : '30'
+  const value = `${String(h).padStart(2, '0')}:${m}`
+  return { value, label: value }
+})
 
 const TodoFormModal: React.FC<TodoFormModalProps> = ({
-  open, mode, todo, settings, existingTags = [], onClose, onSubmit, onDelete,
+  open, mode, todo, settings, onClose, onSubmit, onDelete,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const [form] = Form.useForm()
   const isEdit = mode === 'edit'
-  // 创建与编辑均默认折叠非主题/描述字段，展开内容置于底部
-  const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    if (open) setExpanded(false)
-  }, [open])
 
   const initialValues = useMemo(() => {
     if (isEdit && todo) {
@@ -52,11 +50,10 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
         title: todo.title,
         description: todo.description || '',
         dueDate: dueMs ? dayjs(dueMs) : null,
-        dueTime: dueMs ? dayjs(dueMs) : null,
+        dueTime: dueMs ? dayjs(dueMs).format('HH:mm') : null,
         hasDue: todo.due_at != null,
         priority: todo.priority,
         status: todo.status,
-        tags: todo.tags || [],
         recurrenceFreq: todo.recurrence_rule?.freq || 'none',
         recurrenceInterval: todo.recurrence_rule?.interval || 1,
         reminders: (todo.reminders?.length ? todo.reminders : (settings?.default_todo_reminders || [])).map(toDisplay),
@@ -69,11 +66,10 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       title: '',
       description: '',
       dueDate: dayjs(endOfTodayMs),
-      dueTime: dayjs(endOfTodayMs),
+      dueTime: dayjs(endOfTodayMs).format('HH:mm'),
       hasDue: true,
       priority: 'none' as TodoPriority,
       status: 'pending' as TodoStatus,
-      tags: [],
       recurrenceFreq: 'none',
       recurrenceInterval: 1,
       reminders: [],
@@ -81,8 +77,6 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
   }, [isEdit, todo, settings])
 
   useEffect(() => {
-    // 显式 setFieldsValue 而非 resetFields：后者会回到 Form 挂载时捕获的 initialValues，
-    // 在 destroyOnHidden 动画期间切换不同 TODO 时会显示上一次的内容。
     if (open) form.setFieldsValue(initialValues)
   }, [open, form, initialValues])
 
@@ -92,8 +86,8 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
   const handleFinish = async (values: any) => {
     let dueAt: number | null = null
     if (values.hasDue && values.dueDate) {
-      const timePart = values.dueTime ? { hour: values.dueTime.hour(), minute: values.dueTime.minute() } : { hour: 23, minute: 59 }
-      const dueMs = values.dueDate.hour(timePart.hour).minute(timePart.minute).second(0).millisecond(0).valueOf()
+      const [th, tm] = (values.dueTime || '23:59').split(':').map(Number)
+      const dueMs = values.dueDate.hour(th || 23).minute(tm || 59).second(0).millisecond(0).valueOf()
       dueAt = Math.floor(dueMs / MS)
     }
 
@@ -111,7 +105,6 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       due_at: dueAt,
       priority: values.priority,
       status: values.status,
-      tags: values.tags || [],
       recurrence_rule: recurrenceRule,
       reminders: (values.reminders || []).map(toStore),
     }
@@ -132,9 +125,9 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
 
   const reminderLabel = (m: number): string => {
     if (m === 0) return t('calendar.atStart')
-    if (m < 60) return `${m} ${t('calendar.minutesBefore')}`
-    if (m < 1440) return `${Math.floor(m / 60)} ${t('calendar.hoursBefore')}`
-    return `${Math.floor(m / 1440)} ${t('calendar.daysBefore')}`
+    if (m < 60) return `${m}${t('calendar.minutesBefore')}`
+    if (m < 1440) return `${Math.floor(m / 60)}${t('calendar.hoursBefore')}`
+    return `${Math.floor(m / 1440)}${t('calendar.daysBefore')}`
   }
 
   const handleDelete = async () => {
@@ -152,6 +145,8 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
     }
   }
 
+  const itemMb: React.CSSProperties = { marginBottom: 8 }
+
   return (
     <Modal
       open={open}
@@ -162,7 +157,12 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
       onOk={() => form.submit()}
       destroyOnHidden
       centered
-      width={480}
+      width={520}
+      styles={{
+        header: { paddingLeft: 16, paddingRight: 16, paddingBottom: 2, paddingTop: 12 },
+        body: { padding: '4px 16px' },
+        footer: { paddingLeft: 16, paddingRight: 16, paddingBottom: 10, paddingTop: 0, marginTop: 0 },
+      }}
       footer={(_, { OkBtn, CancelBtn }) => (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -174,14 +174,14 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
                 cancelText={t('common.cancel')}
                 okButtonProps={{ danger: true }}
               >
-                <Button danger icon={<DeleteOutlined />}>{t('common.delete')}</Button>
+                <Button danger icon={<DeleteOutlined />} size="small">{t('common.delete')}</Button>
               </Popconfirm>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <Space size={8}>
             <CancelBtn />
             <OkBtn />
-          </div>
+          </Space>
         </div>
       )}
     >
@@ -192,152 +192,139 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
         onFinish={handleFinish}
         size="small"
       >
-        <Form.Item name="title" label={t('calendar.todoTitle')} rules={[{ required: true, message: t('calendar.todoTitlePlaceholder') }]} style={compactItem}>
-          <Input placeholder={t('calendar.todoTitlePlaceholder')} autoFocus size="middle" />
+        {/* 标题 */}
+        <Form.Item name="title" rules={[{ required: true, message: t('calendar.todoTitlePlaceholder') }]} style={itemMb}>
+          <Input
+            placeholder={t('calendar.todoTitle')}
+            autoFocus
+            size="middle"
+            style={{ fontSize: 15, fontWeight: 500 }}
+          />
         </Form.Item>
 
-        <Form.Item name="description" label={t('calendar.description')} style={compactItem}>
-          <Input.TextArea rows={4} size="middle" placeholder={t('calendar.descriptionPlaceholder')} />
+        {/* 描述 */}
+        <Form.Item name="description" style={itemMb}>
+          <Input.TextArea
+            size="middle"
+            placeholder={t('calendar.description')}
+            autoSize={{ minRows: 3, maxRows: 6 }}
+          />
         </Form.Item>
 
-        {!expanded && (
-          <Button
-            type="link"
-            size="small"
-            onClick={() => setExpanded(true)}
-            icon={<RightOutlined style={{ fontSize: 10 }} />}
-            style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
-          >
-            {t('calendar.moreOptions')}
-          </Button>
-        )}
-
-        {expanded && (
-          <>
-            <Button
-              type="link"
-              size="small"
-              onClick={() => setExpanded(false)}
-              icon={<DownOutlined style={{ fontSize: 10 }} />}
-              style={{ padding: '0 0 12px', height: 'auto', color: token.colorTextTertiary, fontSize: 12 }}
-            >
-              {t('calendar.lessOptions')}
-            </Button>
-
-            <Row gutter={8}>
-              <Col>
-                <Form.Item name="hasDue" label={t('calendar.dueDate')} valuePropName="checked" style={compactItem}>
-                  <Switch />
+        {/* 截止时间 + 提醒：同一行 */}
+        <Row gutter={8} align="middle" style={{ marginBottom: 8 }}>
+          <Col flex="0 0 auto">
+            <Form.Item name="hasDue" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox>{t('calendar.dueDate')}</Checkbox>
+            </Form.Item>
+          </Col>
+          {hasDue && (
+            <>
+              <Col flex="1 1 80px">
+                <Form.Item name="dueDate" style={{ marginBottom: 0 }}>
+                  <DatePicker style={{ width: '100%' }} size="middle" placeholder={t('calendar.dueDate')} />
                 </Form.Item>
               </Col>
-            </Row>
-
-            {hasDue && (
-              <Row gutter={8}>
-                <Col span={12}>
-                  <Form.Item name="dueDate" label={t('calendar.dueDate')} style={compactItem}>
-                    <DatePicker style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="dueTime" label={t('calendar.dueTime')} style={compactItem}>
-                    <TimePicker format="HH:mm" minuteStep={5} style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-              </Row>
-            )}
-
-            <Row gutter={8}>
-              <Col span={8}>
-                <Form.Item name="priority" label={t('calendar.priority')} style={compactItem}>
-                  <Select
-                    options={[
-                      { value: 'none', label: t('calendar.priorityNone') },
-                      { value: 'low', label: t('calendar.priorityLow') },
-                      { value: 'medium', label: t('calendar.priorityMedium') },
-                      { value: 'high', label: t('calendar.priorityHigh') },
-                    ]}
+              <Col flex="0 0 80px">
+                <Form.Item name="dueTime" style={{ marginBottom: 0 }}>
+                  <AutoComplete
+                    options={TIME_OPTIONS}
+                    style={{ width: '100%' }}
+                    size="middle"
+                    placeholder={t('calendar.dueTime')}
+                    filterOption={() => true}
                   />
                 </Form.Item>
               </Col>
-              <Col span={8}>
-                <Form.Item name="status" label={t('calendar.status')} style={compactItem}>
-                  <Select
-                    options={[
-                      { value: 'pending', label: t('calendar.statusPending') },
-                      { value: 'in_progress', label: t('calendar.statusInProgress') },
-                      { value: 'completed', label: t('calendar.statusCompleted') },
-                    ]}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="recurrenceFreq" label={t('calendar.repeat')} style={compactItem}>
-                  <Select
-                    options={[
-                      { value: 'none', label: t('calendar.repeatNone') },
-                      { value: 'daily', label: t('calendar.repeatDaily') },
-                      { value: 'weekdays', label: t('calendar.repeatWeekdays') },
-                      { value: 'weekly', label: t('calendar.repeatWeekly') },
-                      { value: 'monthly', label: t('calendar.repeatMonthly') },
-                      { value: 'yearly', label: t('calendar.repeatYearly') },
-                    ]}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
+            </>
+          )}
+          <Col flex="1 1 80px">
+            <Form.Item name="reminders" style={{ marginBottom: 0 }}>
+              <Select
+                mode="multiple"
+                size="middle"
+                maxTagCount="responsive"
+                placeholder={t('calendar.addReminder')}
+                suffixIcon={<BellOutlined style={{ color: token.colorTextTertiary }} />}
+                options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
 
-            {recurrenceFreq && recurrenceFreq !== 'none' && (
-              <Form.Item name="recurrenceInterval" label={t('calendar.repeatInterval')} style={compactItem}>
-                <InputNumber min={1} max={99} style={{ width: '100%' }} />
-              </Form.Item>
-            )}
-
-            <Row gutter={8}>
-              <Col span={12}>
-                <Form.Item name="reminders" label={t('calendar.reminders')} style={compactItem}>
-                  <Select
-                    mode="multiple"
-                    placeholder={t('calendar.addReminder')}
-                    options={REMINDER_OPTIONS.map((m) => ({ value: m, label: reminderLabel(m) }))}
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name="tags" label={t('calendar.tags')} style={compactItem}>
-                  <Select
-                    mode="tags"
-                    placeholder={t('calendar.tagsPlaceholder')}
-                    tokenSeparators={[',', ' ']}
-                    options={existingTags.map(tag => ({ value: tag, label: tag }))}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-
-            {/* 时间追踪：显示进入进行中和完成的时间戳（只读） */}
-            {isEdit && (todo?.started_at || todo?.completed_at) && (
-              <Descriptions
-                size="small"
-                column={2}
-                style={{ marginTop: 4 }}
-                labelStyle={{ color: token.colorTextTertiary, fontSize: 12 }}
-                contentStyle={{ fontSize: 12 }}
-                items={[
-                  ...(todo?.started_at ? [{
-                    key: 'started_at',
-                    label: t('calendar.startedAt'),
-                    children: dayjs(todo.started_at * MS).format('YYYY-MM-DD HH:mm'),
-                  }] : []),
-                  ...(todo?.completed_at ? [{
-                    key: 'completed_at',
-                    label: t('calendar.completedAt'),
-                    children: dayjs(todo.completed_at * MS).format('YYYY-MM-DD HH:mm'),
-                  }] : []),
+        {/* 优先级 / 状态 / 重复 / 间隔（选重复时） */}
+        <Row gutter={8} align="middle" style={{ marginBottom: 8 }}>
+          <Col flex="0 0 110px">
+            <Form.Item name="priority" style={{ marginBottom: 0 }}>
+              <Select
+                size="middle"
+                placeholder={t('calendar.priority')}
+                optionLabelProp="label"
+                options={[
+                  { value: 'none', label: <span style={{ display: 'inline-flex', alignItems: 'center' }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: token.colorTextQuaternary, display: 'inline-block', marginRight: 4 }} />{t('calendar.priorityNone')}</span> },
+                  { value: 'low', label: <span style={{ display: 'inline-flex', alignItems: 'center' }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: '#1677ff', display: 'inline-block', marginRight: 4 }} />{t('calendar.priorityLow')}</span> },
+                  { value: 'medium', label: <span style={{ display: 'inline-flex', alignItems: 'center' }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fa8c16', display: 'inline-block', marginRight: 4 }} />{t('calendar.priorityMedium')}</span> },
+                  { value: 'high', label: <span style={{ display: 'inline-flex', alignItems: 'center' }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f5222d', display: 'inline-block', marginRight: 4 }} />{t('calendar.priorityHigh')}</span> },
                 ]}
               />
+            </Form.Item>
+          </Col>
+          <Col flex="0 0 110px">
+            <Form.Item name="status" style={{ marginBottom: 0 }}>
+              <Select
+                size="middle"
+                placeholder={t('calendar.status')}
+                options={[
+                  { value: 'pending', label: t('calendar.statusPending') },
+                  { value: 'in_progress', label: t('calendar.statusInProgress') },
+                  { value: 'completed', label: t('calendar.statusCompleted') },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+          <Col flex="1 1 0">
+            <Form.Item name="recurrenceFreq" style={{ marginBottom: 0 }}>
+              <Select
+                size="middle"
+                placeholder={t('calendar.repeat')}
+                options={[
+                  { value: 'none', label: t('calendar.repeatNone') },
+                  { value: 'daily', label: t('calendar.repeatDaily') },
+                  { value: 'weekdays', label: t('calendar.repeatWeekdays') },
+                  { value: 'weekly', label: t('calendar.repeatWeekly') },
+                  { value: 'monthly', label: t('calendar.repeatMonthly') },
+                  { value: 'yearly', label: t('calendar.repeatYearly') },
+                ]}
+              />
+            </Form.Item>
+          </Col>
+          {recurrenceFreq && recurrenceFreq !== 'none' && (
+            <Col flex="0 0 60px">
+              <Form.Item name="recurrenceInterval" style={{ marginBottom: 0 }}>
+                <InputNumber min={1} max={99} style={{ width: '100%' }} size="middle" placeholder={t('calendar.repeatInterval')} />
+              </Form.Item>
+            </Col>
+          )}
+        </Row>
+
+        {/* 时间追踪 */}
+        {isEdit && (todo?.started_at || todo?.completed_at) && (
+          <div style={{
+            fontSize: 12,
+            color: token.colorTextTertiary,
+            marginTop: 4,
+            paddingTop: 8,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            display: 'flex',
+            gap: 16
+          }}>
+            {todo?.started_at && (
+              <span>{t('calendar.startedAt')}: {dayjs(todo.started_at * MS).format('YYYY-MM-DD HH:mm')}</span>
             )}
-          </>
+            {todo?.completed_at && (
+              <span>{t('calendar.completedAt')}: {dayjs(todo.completed_at * MS).format('YYYY-MM-DD HH:mm')}</span>
+            )}
+          </div>
         )}
       </Form>
     </Modal>

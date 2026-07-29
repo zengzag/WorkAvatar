@@ -90,7 +90,6 @@ const QuickAddBar: React.FC<QuickAddBarProps> = ({ onSubmit }) => {
         priority: 'none',
         status: 'pending',
         reminders: [],
-        tags: [],
       }
       const result = await onSubmit(input)
       if (result && !result.error) {

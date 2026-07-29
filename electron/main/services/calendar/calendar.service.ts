@@ -49,7 +49,6 @@ export interface CalendarTodo {
   due_at: number | null
   priority: TodoPriority
   status: TodoStatus
-  tags: string[]
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
   /** 进入"进行中"状态的时间戳 */
@@ -105,7 +104,6 @@ export interface ListEventsParams {
 export interface ListTodosParams {
   status?: TodoStatus | TodoStatus[]
   priority?: TodoPriority | TodoPriority[]
-  tag?: string
   /** 仅返回已逾期（status != completed 且 due_at < now） */
   overdue_only?: boolean
   /** 仅返回今日到期 */
@@ -149,7 +147,6 @@ export interface CreateTodoInput {
   due_at?: number | null
   priority?: TodoPriority
   status?: TodoStatus
-  tags?: string[]
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
   employee_id?: string | null
@@ -163,7 +160,6 @@ export interface UpdateTodoInput {
   due_at?: number | null
   priority?: TodoPriority
   status?: TodoStatus
-  tags?: string[]
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
 }
@@ -338,12 +334,6 @@ class CalendarService {
         args.push(params.priority)
       }
     }
-    if (params.tag) {
-      // 转义LIKE通配符，防止SQL注入和误匹配
-      const escapedTag = params.tag.replace(/[%_"\\]/g, '\\$&')
-      conditions.push("tags_json LIKE ? ESCAPE '\\'")
-      args.push(`%"${escapedTag}"%`)
-    }
     if (params.due_from !== undefined) {
       conditions.push('due_at >= ?')
       args.push(params.due_from)
@@ -396,12 +386,12 @@ class CalendarService {
     const completedAt = status === 'completed' ? now : null
 
     this.db.prepare(
-      `INSERT INTO calendar_todos (id, title, description, due_at, priority, status, tags_json, recurrence_rule, reminders_json, started_at, completed_at, employee_id, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO calendar_todos (id, title, description, due_at, priority, status, recurrence_rule, reminders_json, started_at, completed_at, employee_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, input.title, input.description || '', input.due_at ?? null,
       input.priority || 'none', status,
-      JSON.stringify(input.tags || []), ruleJson, JSON.stringify(reminders),
+      ruleJson, JSON.stringify(reminders),
       startedAt, completedAt, input.employee_id ?? null, input.source || 'user', now, now
     )
 
@@ -422,7 +412,6 @@ class CalendarService {
     }
     if (input.recurrence_rule !== undefined) merged.recurrence_rule = input.recurrence_rule
     if (input.reminders !== undefined) merged.reminders = input.reminders
-    if (input.tags !== undefined) merged.tags = input.tags
 
     // 状态变更时同步 started_at / completed_at
     if (input.status && input.status !== existing.status) {
@@ -443,10 +432,10 @@ class CalendarService {
 
     const ruleJson = merged.recurrence_rule ? JSON.stringify(merged.recurrence_rule) : ''
     this.db.prepare(
-      `UPDATE calendar_todos SET title=?, description=?, due_at=?, priority=?, status=?, tags_json=?, recurrence_rule=?, reminders_json=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
+      `UPDATE calendar_todos SET title=?, description=?, due_at=?, priority=?, status=?, recurrence_rule=?, reminders_json=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
     ).run(
       merged.title, merged.description, merged.due_at,
-      merged.priority, merged.status, JSON.stringify(merged.tags),
+      merged.priority, merged.status,
       ruleJson, JSON.stringify(merged.reminders), merged.started_at, merged.completed_at, now, input.id
     )
     const updated = this.getTodo(input.id)!
@@ -925,7 +914,6 @@ class CalendarService {
       due_at: row.due_at ?? null,
       priority: row.priority,
       status: row.status,
-      tags: this.safeParseJson(row.tags_json, []),
       recurrence_rule: row.recurrence_rule ? this.safeParseJson(row.recurrence_rule, null) : null,
       reminders: this.safeParseJson(row.reminders_json, []),
       started_at: row.started_at ?? null,
