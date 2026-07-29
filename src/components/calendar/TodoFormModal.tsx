@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, Popconfirm, message, theme,
+  Modal, Form, Input, DatePicker, TimePicker, Select, Switch, InputNumber, Row, Col, Button, Popconfirm, message, theme, Descriptions,
 } from 'antd'
 import { DeleteOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -314,6 +314,29 @@ const TodoFormModal: React.FC<TodoFormModalProps> = ({
                 </Form.Item>
               </Col>
             </Row>
+
+            {/* 时间追踪：显示进入进行中和完成的时间戳（只读） */}
+            {isEdit && (todo?.started_at || todo?.completed_at) && (
+              <Descriptions
+                size="small"
+                column={2}
+                style={{ marginTop: 4 }}
+                labelStyle={{ color: token.colorTextTertiary, fontSize: 12 }}
+                contentStyle={{ fontSize: 12 }}
+                items={[
+                  ...(todo?.started_at ? [{
+                    key: 'started_at',
+                    label: t('calendar.startedAt'),
+                    children: dayjs(todo.started_at * MS).format('YYYY-MM-DD HH:mm'),
+                  }] : []),
+                  ...(todo?.completed_at ? [{
+                    key: 'completed_at',
+                    label: t('calendar.completedAt'),
+                    children: dayjs(todo.completed_at * MS).format('YYYY-MM-DD HH:mm'),
+                  }] : []),
+                ]}
+              />
+            )}
           </>
         )}
       </Form>

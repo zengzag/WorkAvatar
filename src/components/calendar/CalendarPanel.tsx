@@ -274,26 +274,32 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                 )}
                 {dayTodos.length > 0 && (
                   <div style={{ display: 'flex', gap: 2, marginTop: 2, flexWrap: 'wrap' }}>
-                    {dayTodos.slice(0, 5).map((td) => (
-                      <Tooltip
-                        key={td.id}
-                        title={`${t('calendar.todos')}: ${td.title}${td.due_at ? ' · ' + formatEventTime(td.due_at) : ''}`}
-                      >
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onEditTodo?.(td)
-                          }}
-                          style={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: '50%',
-                            background: TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none,
-                            cursor: 'pointer',
-                          }}
-                        />
-                      </Tooltip>
-                    ))}
+                    {dayTodos.slice(0, 5).map((td) => {
+                      const isDone = td.status === 'completed'
+                      return (
+                        <Tooltip
+                          key={td.id}
+                          title={`${t('calendar.todos')}: ${td.title}${td.due_at ? ' · ' + formatEventTime(td.due_at) : ''}`}
+                        >
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onEditTodo?.(td)
+                            }}
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: '50%',
+                              background: isDone
+                                ? token.colorTextQuaternary
+                                : TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none,
+                              cursor: 'pointer',
+                              opacity: isDone ? 0.5 : 1,
+                            }}
+                          />
+                        </Tooltip>
+                      )
+                    })}
                     {dayTodos.length > 5 && (
                       <span style={{ fontSize: 10, color: token.colorTextTertiary }}>+{dayTodos.length - 5}</span>
                     )}
@@ -545,6 +551,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                       >
                         {group.todos.map((td) => {
                           const c = todoBarColorMap[td.priority] || todoBarColorMap.none
+                          const isDone = td.status === 'completed'
                           return (
                             <Tooltip
                               key={td.id}
@@ -562,8 +569,8 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                                 style={{
                                   flex: 1,
                                   height: BAR_HEIGHT,
-                                  background: c.bg,
-                                  borderLeft: `3px solid ${c.border}`,
+                                  background: isDone ? token.colorFillQuaternary : c.bg,
+                                  borderLeft: `3px solid ${isDone ? token.colorTextQuaternary : c.border}`,
                                   borderRadius: 3,
                                   padding: '0 6px',
                                   fontSize: 10,
@@ -571,9 +578,11 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                                   overflow: 'hidden',
                                   whiteSpace: 'nowrap',
                                   textOverflow: 'ellipsis',
-                                  color: token.colorText,
+                                  color: isDone ? token.colorTextTertiary : token.colorText,
+                                  textDecoration: isDone ? 'line-through' : 'none',
                                   cursor: 'pointer',
                                   userSelect: 'none',
+                                  opacity: isDone ? 0.6 : 1,
                                 }}
                               >
                                 {td.title}

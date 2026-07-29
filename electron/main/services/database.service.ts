@@ -452,6 +452,9 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
     this.addColumnIfNotExists('employee_memories', 'deleted_at', 'INTEGER')
 
+    // TODO 进入"进行中"状态的时间戳
+    this.addColumnIfNotExists('calendar_todos', 'started_at', 'INTEGER')
+
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
       CREATE INDEX IF NOT EXISTS idx_employee_memories_last_ref ON employee_memories(last_referenced_at);

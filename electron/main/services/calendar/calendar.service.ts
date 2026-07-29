@@ -52,6 +52,9 @@ export interface CalendarTodo {
   tags: string[]
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
+  /** 进入"进行中"状态的时间戳 */
+  started_at: number | null
+  /** 完成时间戳 */
   completed_at: number | null
   employee_id: string | null
   source: 'user' | 'agent'
@@ -388,16 +391,18 @@ class CalendarService {
     const now = Math.floor(Date.now() / 1000)
     const reminders = input.reminders ?? this.getSettings().default_todo_reminders
     const ruleJson = input.recurrence_rule ? JSON.stringify(input.recurrence_rule) : ''
-    const completedAt = input.status === 'completed' ? now : null
+    const status = input.status || 'pending'
+    const startedAt = status === 'in_progress' ? now : null
+    const completedAt = status === 'completed' ? now : null
 
     this.db.prepare(
-      `INSERT INTO calendar_todos (id, title, description, due_at, priority, status, tags_json, recurrence_rule, reminders_json, completed_at, employee_id, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO calendar_todos (id, title, description, due_at, priority, status, tags_json, recurrence_rule, reminders_json, started_at, completed_at, employee_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, input.title, input.description || '', input.due_at ?? null,
-      input.priority || 'none', input.status || 'pending',
+      input.priority || 'none', status,
       JSON.stringify(input.tags || []), ruleJson, JSON.stringify(reminders),
-      completedAt, input.employee_id ?? null, input.source || 'user', now, now
+      startedAt, completedAt, input.employee_id ?? null, input.source || 'user', now, now
     )
 
     const todo = this.getTodo(id)!
@@ -419,20 +424,30 @@ class CalendarService {
     if (input.reminders !== undefined) merged.reminders = input.reminders
     if (input.tags !== undefined) merged.tags = input.tags
 
-    // 状态变更时同步 completed_at
-    if (input.status === 'completed' && existing.status !== 'completed') {
-      merged.completed_at = now
-    } else if (input.status && input.status !== 'completed') {
-      merged.completed_at = null
+    // 状态变更时同步 started_at / completed_at
+    if (input.status && input.status !== existing.status) {
+      if (input.status === 'in_progress') {
+        // 进入进行中：首次设置 started_at，清除 completed_at
+        if (!existing.started_at) merged.started_at = now
+        merged.completed_at = null
+      } else if (input.status === 'completed') {
+        merged.completed_at = now
+        // 若从未记录 started_at 但直接完成，回填 started_at 为完成时间
+        if (!merged.started_at) merged.started_at = now
+      } else {
+        // 回到 pending：清除 started_at / completed_at
+        merged.started_at = null
+        merged.completed_at = null
+      }
     }
 
     const ruleJson = merged.recurrence_rule ? JSON.stringify(merged.recurrence_rule) : ''
     this.db.prepare(
-      `UPDATE calendar_todos SET title=?, description=?, due_at=?, priority=?, status=?, tags_json=?, recurrence_rule=?, reminders_json=?, completed_at=?, updated_at=? WHERE id=?`
+      `UPDATE calendar_todos SET title=?, description=?, due_at=?, priority=?, status=?, tags_json=?, recurrence_rule=?, reminders_json=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
     ).run(
       merged.title, merged.description, merged.due_at,
       merged.priority, merged.status, JSON.stringify(merged.tags),
-      ruleJson, JSON.stringify(merged.reminders), merged.completed_at, now, input.id
+      ruleJson, JSON.stringify(merged.reminders), merged.started_at, merged.completed_at, now, input.id
     )
     const updated = this.getTodo(input.id)!
     this.regenerateTodoReminders(updated)
@@ -453,15 +468,15 @@ class CalendarService {
       if (nextDueAt === existing.due_at) {
         // 无法推进（规则耗尽），标记整系列完成
         this.db.prepare(
-          `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
-        ).run('completed', now, now, id)
+          `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
+        ).run('completed', now, now, now, id)
       } else {
         // 检查是否超过 until 或 count 上限
         const until = rule.until ?? Infinity
         if (nextDueAt > until) {
           this.db.prepare(
-            `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
-          ).run('completed', now, now, id)
+            `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
+          ).run('completed', now, now, now, id)
         } else if (rule.count && rule.count > 0) {
           // 统计已完成的实例数（通过已 fire 的提醒近似）
           const firedCount = (this.db.prepare(
@@ -469,24 +484,32 @@ class CalendarService {
           ).get('todo', id) as any).n
           if (firedCount + 1 >= rule.count) {
             this.db.prepare(
-              `UPDATE calendar_todos SET status=?, completed_at=?, due_at=?, updated_at=? WHERE id=?`
-            ).run('completed', now, nextDueAt, now, id)
+              `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), due_at=?, updated_at=? WHERE id=?`
+            ).run('completed', now, now, nextDueAt, now, id)
           } else {
+            // 重复实例推进：清除 started_at（下一轮重新计时）
             this.db.prepare(
-              `UPDATE calendar_todos SET due_at=?, updated_at=? WHERE id=?`
+              `UPDATE calendar_todos SET due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
             ).run(nextDueAt, now, id)
           }
         } else {
           this.db.prepare(
-            `UPDATE calendar_todos SET due_at=?, updated_at=? WHERE id=?`
+            `UPDATE calendar_todos SET due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
           ).run(nextDueAt, now, id)
         }
       }
     } else {
       // 非重复 TODO 或取消完成：直接更新状态
-      this.db.prepare(
-        `UPDATE calendar_todos SET status=?, completed_at=?, updated_at=? WHERE id=?`
-      ).run(completed ? 'completed' : 'pending', completed ? now : null, now, id)
+      if (completed) {
+        this.db.prepare(
+          `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
+        ).run('completed', now, now, now, id)
+      } else {
+        // 取消完成：回到 pending，清除 started_at / completed_at（重新计时）
+        this.db.prepare(
+          `UPDATE calendar_todos SET status=?, completed_at=NULL, started_at=NULL, updated_at=? WHERE id=?`
+        ).run('pending', now, id)
+      }
     }
 
     const todo = this.getTodo(id)
@@ -905,6 +928,7 @@ class CalendarService {
       tags: this.safeParseJson(row.tags_json, []),
       recurrence_rule: row.recurrence_rule ? this.safeParseJson(row.recurrence_rule, null) : null,
       reminders: this.safeParseJson(row.reminders_json, []),
+      started_at: row.started_at ?? null,
       completed_at: row.completed_at ?? null,
       employee_id: row.employee_id ?? null,
       source: row.source || 'user',

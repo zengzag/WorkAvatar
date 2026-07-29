@@ -79,6 +79,9 @@ export interface CalendarTodo {
   tags: string[]
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
+  /** 进入"进行中"状态的时间戳 */
+  started_at: number | null
+  /** 完成时间戳 */
   completed_at: number | null
   employee_id: string | null
   source: 'user' | 'agent'
