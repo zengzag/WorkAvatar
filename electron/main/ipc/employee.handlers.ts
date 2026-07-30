@@ -7,6 +7,7 @@ import type {
   EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationSearchParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
@@ -106,6 +107,14 @@ export function registerEmployeeHandlers(
       try { AutomationService.getInstance().deleteRunByConversation(conv.id) } catch { /* ignore */ }
     }
     return workspaceManager.deleteAllConversations(employeeId)
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, (params: ConversationSearchParams) => {
+    return workspaceManager.searchConversationsGlobal({
+      query: params.query,
+      employeeIds: params.employee_ids,
+      limit: params.limit,
+    })
   })
 
   // 需要事件回调推送进度，保留 ipcMain.handle + try-catch

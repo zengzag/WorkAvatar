@@ -28,7 +28,7 @@ import LLMSelector from '../components/llm/LLMSelector'
 import EmployeeSelector from '../components/workbench/EmployeeSelector'
 import MessageList from '../components/workbench/MessageList'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
-import { ConversationSidebar, ChatInput, MultiChatPanel } from '../components/workbench'
+import { ConversationSidebar, ChatInput, MultiChatPanel, GlobalSearchBox } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
@@ -492,6 +492,7 @@ const EmployeeWorkbench: React.FC = () => {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
       <div style={{
         height: 40,
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -499,6 +500,7 @@ const EmployeeWorkbench: React.FC = () => {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         background: token.colorBgContainer,
         flexShrink: 0,
+        gap: 8,
       }}>
         <Space size={8}>
           <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
@@ -537,8 +539,6 @@ const EmployeeWorkbench: React.FC = () => {
               <Text strong style={{ fontSize: 13 }}>{employee.name}</Text>
             </Button>
           </Popover>
-        </Space>
-        <Space size={6}>
           {employee?.workspace_path && (
             <Tooltip
               title={
@@ -573,6 +573,21 @@ const EmployeeWorkbench: React.FC = () => {
               </Button>
             </Tooltip>
           )}
+        </Space>
+        <div style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+        }}>
+          <GlobalSearchBox
+            currentEmployeeId={id}
+            onSelectConversation={selectConversation}
+            width={240}
+            dropdownWidth={380}
+          />
+        </div>
+        <Space size={6}>
           <LLMSelector
             providerId={selectedLlmProviderId}
             modelId={selectedLlmModelId}

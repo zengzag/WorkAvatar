@@ -9,6 +9,8 @@ export type {
   EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationSearchParams,
+  ConversationSearchResultItem,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   EmployeeExportConfigParams,

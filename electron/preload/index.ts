@@ -8,6 +8,7 @@ import type {
   EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationSearchParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
   LLMProviderCreateParams,
@@ -195,6 +196,7 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
+    searchGlobal: (params: ConversationSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, params),
   },
 
   llm: {

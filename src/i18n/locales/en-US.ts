@@ -277,6 +277,14 @@ export default {
     saveToNoteSuccess: 'Saved to notes: {{name}}',
     saveToNoteFailed: 'Failed to save to notes',
   },
+  globalSearch: {
+    placeholder: 'Search conversations... (across agents)',
+    noResults: 'No matching conversations',
+    resultsCount: '{{count}} results',
+    crossAgentHint: 'Across agents',
+    shortcutHint: 'Press Ctrl+K to focus search',
+    unknownEmployee: 'Unknown',
+  },
   employeeSettings: {
     subtitle: 'Digital Employee Configuration',
     breadcrumbDigitalEmployees: 'Digital Employees',

@@ -244,6 +244,149 @@ class WorkspaceManagerService {
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
     return result.changes
   }
+
+  /**
+   * 跨智能体检索历史对话（FTS5 优先，无结果降级 LIKE）
+   * - 支持 employeeIds 过滤（为空则搜索全部员工）
+   * - snippet 来自 conversations_fts 的 content_preview 列，高亮匹配片段
+   * - 排序：标题相似度优先（精确 > 开头 > 包含），其次内容命中次数，最后时间降序
+   */
+  searchConversationsGlobal(params: {
+    query: string
+    employeeIds?: string[]
+    limit?: number
+  }): Array<{
+    conversationId: string
+    employeeId: string
+    employeeName: string
+    title: string
+    summary: string
+    previewSnippet: string
+    lastMessageAt: number | null
+    messageCount: number
+  }> {
+    const query = String(params.query || '').trim()
+    if (!query) return []
+
+    const limit = Math.min(Math.max(params.limit ?? 20, 1), 50)
+    const employeeIds = params.employeeIds?.filter(Boolean) ?? []
+    const ftsQuery = buildFtsQuery(query)
+    // 去空格版本，用于标题/内容的子串匹配（用户用空格分词，不应把空格当作必须出现的字符）
+    const queryNoSpace = query.replace(/\s+/g, '')
+    const titleLikePattern = `%${queryNoSpace.replace(/[%_]/g, (m) => '\\' + m)}%`
+
+    // 标题相似度评分 SQL 片段（精确匹配 > 标题以查询开头 > 标题包含查询）
+    const titleScoreExpr = `CASE
+      WHEN c.title = ? THEN 100000
+      WHEN c.title LIKE ? ESCAPE '\\' THEN 50000
+      WHEN c.title LIKE ? ESCAPE '\\' THEN 20000
+      ELSE 0
+    END`
+    // 标题匹配参数顺序：精确匹配 queryNoSpace / 开头匹配 queryNoSpace% / 包含匹配 %queryNoSpace%
+    const titleStartPattern = `${queryNoSpace.replace(/[%_]/g, (m) => '\\' + m)}%`
+
+    // Phase 1: FTS5 隐式 AND 匹配（rank 已包含内容相关度，叠加标题命中加成）
+    let results: any[] = []
+    if (ftsQuery) {
+      const employeePlaceholders = employeeIds.length > 0
+        ? `AND c.employee_id IN (${employeeIds.map(() => '?').join(',')})`
+        : ''
+      const employeeParams = employeeIds
+
+      results = this.db.getDb().prepare(`
+        SELECT
+          c.id, c.employee_id, e.name as employee_name,
+          c.title, c.summary, c.last_message_at, c.message_count,
+          snippet(conversations_fts, 2, '<highlight>', '</highlight>', '...', 30) as preview_snippet,
+          ${titleScoreExpr} as title_score
+        FROM conversations_fts f
+        JOIN conversations c ON c.id = f.conversation_id
+        JOIN employees e ON e.id = c.employee_id
+        WHERE conversations_fts MATCH ?
+          AND c.status = 'active'
+          ${employeePlaceholders}
+        ORDER BY title_score DESC, f.rank ASC
+        LIMIT ?
+      `).all(queryNoSpace, titleStartPattern, titleLikePattern, ftsQuery, ...employeeParams, limit) as any[]
+    }
+
+    // Phase 2: FTS 无结果降级 LIKE（逐 token AND）
+    // 叠加标题分 + content_preview 中查询出现次数，实现内容相似度排序
+    if (results.length === 0) {
+      const likeTokens = query.split(/\s+/).filter((t) => t.length > 0)
+      if (likeTokens.length > 0) {
+        const tokenCond = `(c.title LIKE ? ESCAPE '\\' OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM conversations_fts f WHERE f.conversation_id = c.id AND f.content_preview LIKE ? ESCAPE '\\'))`
+        const andClause = likeTokens.map(() => tokenCond).join(' AND ')
+        const tokenParams = likeTokens.flatMap((t) => {
+          const p = `%${t.replace(/[%_]/g, (m) => '\\' + m)}%`
+          return [p, p, p]
+        })
+
+        const employeePlaceholders = employeeIds.length > 0
+          ? `AND c.employee_id IN (${employeeIds.map(() => '?').join(',')})`
+          : ''
+        const employeeParams = employeeIds
+
+        // content_preview 中 queryNoSpace 出现次数（LENGTH 差值法）
+        const contentHitsExpr = `COALESCE((
+          SELECT (LENGTH(f.content_preview) - LENGTH(REPLACE(LOWER(f.content_preview), LOWER(?), ''))) / MAX(LENGTH(?), 1)
+          FROM conversations_fts f WHERE f.conversation_id = c.id
+        ), 0)`
+
+        results = this.db.getDb().prepare(`
+          SELECT
+            c.id, c.employee_id, e.name as employee_name,
+            c.title, c.summary, c.last_message_at, c.message_count,
+            '' as preview_snippet,
+            ${titleScoreExpr} as title_score,
+            ${contentHitsExpr} as content_hits
+          FROM conversations c
+          JOIN employees e ON e.id = c.employee_id
+          WHERE c.status = 'active'
+            ${employeePlaceholders}
+            AND (${andClause})
+          ORDER BY title_score DESC, content_hits DESC, COALESCE(c.last_message_at, c.created_at) DESC
+          LIMIT ?
+        `).all(
+          queryNoSpace, titleStartPattern, titleLikePattern,
+          queryNoSpace, queryNoSpace,
+          ...employeeParams, ...tokenParams, limit,
+        ) as any[]
+      }
+    }
+
+    return results.map((r) => ({
+      conversationId: r.id,
+      employeeId: r.employee_id,
+      employeeName: r.employee_name || '',
+      title: r.title || '',
+      summary: r.summary || '',
+      previewSnippet: r.preview_snippet || r.summary || '',
+      lastMessageAt: r.last_message_at,
+      messageCount: r.message_count || 0,
+    }))
+  }
+}
+
+/**
+ * 构建 FTS5 MATCH 表达式：
+ * - 英文 token 追加 * 实现前缀匹配
+ * - 中文 token 逐字拆分后用空格连接（FTS5 隐式 AND，要求所有字出现但不要求连续）
+ *   避免 FTS5 将整个中文串当作 phrase（要求连续）导致短查询结果反常偏少
+ */
+function buildFtsQuery(query: string): string {
+  const cleaned = query.replace(/["*()^+\-]/g, '').trim()
+  if (!cleaned) return ''
+  const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0)
+  return tokens
+    .map((tok) => {
+      if (/^[a-zA-Z0-9]+$/.test(tok) && tok.length >= 2) {
+        return `${tok}*`
+      }
+      // 中文逐字拆分，用空格连接 → FTS5 隐式 AND（所有字都出现即可，不要求连续）
+      return tok.split('').join(' ')
+    })
+    .join(' ')
 }
 
 export default WorkspaceManagerService

@@ -277,6 +277,14 @@ export default {
     saveToNoteSuccess: '已保存到笔记：{{name}}',
     saveToNoteFailed: '保存到笔记失败',
   },
+  globalSearch: {
+    placeholder: '搜索历史对话... (跨数字员工)',
+    noResults: '未找到相关对话',
+    resultsCount: '{{count}} 条结果',
+    crossAgentHint: '跨数字员工',
+    shortcutHint: '快捷键 Ctrl+K 聚焦搜索',
+    unknownEmployee: '未知员工',
+  },
   employeeSettings: {
     subtitle: '数字员工配置管理',
     breadcrumbDigitalEmployees: '数字员工',
