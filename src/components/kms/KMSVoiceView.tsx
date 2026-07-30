@@ -1857,19 +1857,17 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
               <Card
                 size="small"
                 title={
-                  <Space>
-                    <FileTextOutlined />
-                    <span>{t('voice.transcript')}</span>
-                    {task.transcript_language && <Tag>{task.transcript_language}</Tag>}
-                  </Space>
-                }
-                extra={
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={transcriptCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                  <div
                     onClick={() => setTranscriptCollapsed(v => !v)}
-                  />
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <Space>
+                      <FileTextOutlined />
+                      <span>{t('voice.transcript')}</span>
+                      {task.transcript_language && <Tag>{task.transcript_language}</Tag>}
+                    </Space>
+                    {transcriptCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                  </div>
                 }
                 style={{ marginBottom: 12 }}
               >
@@ -1881,20 +1879,19 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
               <Card
                 size="small"
                 title={
-                  <Space>
-                    <ProfileOutlined />
-                    <span>{t('voice.minutes')}</span>
-                    {task.minutes_type && <Tag>{t(`voice.minutesType_${task.minutes_type}`)}</Tag>}
-                  </Space>
-                }
-                extra={
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={minutesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                  <div
                     onClick={() => setMinutesCollapsed(v => !v)}
-                  />
+                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                  >
+                    <Space>
+                      <ProfileOutlined />
+                      <span>{t('voice.minutes')}</span>
+                      {task.minutes_type && <Tag>{t(`voice.minutesType_${task.minutes_type}`)}</Tag>}
+                    </Space>
+                    {minutesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                  </div>
                 }
+                style={{ marginBottom: 12 }}
               >
                 {!minutesCollapsed && renderMinutes(task)}
               </Card>
@@ -1904,18 +1901,16 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
             <Card
               size="small"
               title={
-                <Space>
-                  <EditOutlined />
-                  <span>{t('voice.manualNotes')}</span>
-                </Space>
-              }
-              extra={
-                <Button
-                  type="text"
-                  size="small"
-                  icon={notesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                <div
                   onClick={() => setNotesCollapsed(v => !v)}
-                />
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                >
+                  <Space>
+                    <EditOutlined />
+                    <span>{t('voice.manualNotes')}</span>
+                  </Space>
+                  {notesCollapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                </div>
               }
             >
               {!notesCollapsed && (

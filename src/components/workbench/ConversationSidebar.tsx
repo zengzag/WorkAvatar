@@ -113,7 +113,7 @@ const ConversationItem = memo(({
         onClick={() => {
           if (isSelectMode) {
             onToggleSelect(conv.id)
-          } else if (!isEditing) {
+          } else if (!isEditing && !isActive) {
             onSelect(conv.id)
           }
         }}
