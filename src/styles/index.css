@@ -419,6 +419,22 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   white-space: normal !important;
 }
 
+/* 笔记表格区域选择高亮：明暗主题适配，编辑器与预览模式共用 */
+.notes-vditor-container .vditor-table-selected,
+.notes-preview .vditor-table-selected {
+  background-color: rgba(22, 119, 255, 0.16) !important;
+  box-shadow: inset 0 0 0 2px rgba(22, 119, 255, 0.45) !important;
+}
+.notes-vditor-container .vditor--dark .vditor-table-selected,
+.notes-preview .vditor-table-selected {
+  background-color: rgba(64, 169, 255, 0.22) !important;
+  box-shadow: inset 0 0 0 2px rgba(64, 169, 255, 0.6) !important;
+}
+/* 预览模式表格禁用文本选择，避免与单元格选区冲突 */
+.notes-preview table {
+  user-select: none;
+}
+
 /* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
 @keyframes nav-rec-pulse {
   0% { opacity: 1; transform: scale(1); }
