@@ -20,9 +20,9 @@ import {
   StopOutlined,
 } from '@ant-design/icons'
 import type {
-  SkillEnvTool,
-  SkillEnvToolId,
-  SkillEnvInstallProgress,
+  RuntimeEnvTool,
+  RuntimeEnvToolId,
+  RuntimeEnvInstallProgress,
 } from '../../../electron/shared/ipc-channels'
 
 const { Text, Paragraph } = Typography
@@ -33,7 +33,7 @@ const { Text, Paragraph } = Typography
  * - 未安装但可一键安装：橙色（warning）
  * - 未安装且不可一键安装：灰色（default）
  */
-function getStatusColor(tool: SkillEnvTool): string {
+function getStatusColor(tool: RuntimeEnvTool): string {
   if (tool.installed) return 'success'
   if (tool.installable) return 'warning'
   return 'default'
@@ -42,37 +42,37 @@ function getStatusColor(tool: SkillEnvTool): string {
 /**
  * 安装进度阶段 → 中文文案映射
  */
-function getPhaseLabel(phase: SkillEnvInstallProgress['phase'], t: (k: string) => string): string {
+function getPhaseLabel(phase: RuntimeEnvInstallProgress['phase'], t: (k: string) => string): string {
   switch (phase) {
-    case 'pending': return t('employeeSettings.skillEnvPhasePending')
-    case 'downloading': return t('employeeSettings.skillEnvPhaseDownloading')
-    case 'installing': return t('employeeSettings.skillEnvPhaseInstalling')
-    case 'verifying': return t('employeeSettings.skillEnvPhaseVerifying')
-    case 'done': return t('employeeSettings.skillEnvPhaseDone')
-    case 'error': return t('employeeSettings.skillEnvPhaseError')
-    case 'cancelled': return t('employeeSettings.skillEnvPhaseCancelled')
+    case 'pending': return t('settings.runtimeEnvPhasePending')
+    case 'downloading': return t('settings.runtimeEnvPhaseDownloading')
+    case 'installing': return t('settings.runtimeEnvPhaseInstalling')
+    case 'verifying': return t('settings.runtimeEnvPhaseVerifying')
+    case 'done': return t('settings.runtimeEnvPhaseDone')
+    case 'error': return t('settings.runtimeEnvPhaseError')
+    case 'cancelled': return t('settings.runtimeEnvPhaseCancelled')
     default: return phase
   }
 }
 
-const SkillEnvSection: React.FC = () => {
+const RuntimeEnvSection: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
-  const [tools, setTools] = useState<SkillEnvTool[]>([])
+  const [tools, setTools] = useState<RuntimeEnvTool[]>([])
   const [loading, setLoading] = useState(false)
   // 当前正在安装的工具 id 与进度
-  const [installingId, setInstallingId] = useState<SkillEnvToolId | null>(null)
-  const [installProgress, setInstallProgress] = useState<SkillEnvInstallProgress | null>(null)
+  const [installingId, setInstallingId] = useState<RuntimeEnvToolId | null>(null)
+  const [installProgress, setInstallProgress] = useState<RuntimeEnvInstallProgress | null>(null)
 
   // 拉取检测状态
   const loadTools = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await window.electronAPI.skillEnv.list()
+      const result = await window.electronAPI.runtimeEnv.list()
       setTools(result || [])
     } catch (err: any) {
-      message.error(t('employeeSettings.skillEnvDetectFailed') + (err?.message ? `: ${err.message}` : ''))
+      message.error(t('settings.runtimeEnvDetectFailed') + (err?.message ? `: ${err.message}` : ''))
     } finally {
       setLoading(false)
     }
@@ -84,7 +84,7 @@ const SkillEnvSection: React.FC = () => {
 
   // 订阅安装进度事件
   useEffect(() => {
-    const unsubscribe = window.electronAPI.skillEnv.onProgress((progress) => {
+    const unsubscribe = window.electronAPI.runtimeEnv.onProgress((progress) => {
       setInstallProgress(progress)
       // 收到 done / error / cancelled 时，自动重新检测并清空安装状态
       if (progress.phase === 'done' || progress.phase === 'error' || progress.phase === 'cancelled') {
@@ -100,21 +100,21 @@ const SkillEnvSection: React.FC = () => {
   }, [loadTools])
 
   // 触发一键安装
-  const handleInstall = useCallback(async (toolId: SkillEnvToolId) => {
+  const handleInstall = useCallback(async (toolId: RuntimeEnvToolId) => {
     if (installingId) return
     setInstallingId(toolId)
-    setInstallProgress({ toolId, phase: 'pending', message: t('employeeSettings.skillEnvPhasePending') })
+    setInstallProgress({ toolId, phase: 'pending', message: t('settings.runtimeEnvPhasePending') })
     try {
-      const result = await window.electronAPI.skillEnv.install({ toolId })
+      const result = await window.electronAPI.runtimeEnv.install({ toolId })
       if (result.success) {
-        message.success(t('employeeSettings.skillEnvInstallSuccess'))
+        message.success(t('settings.runtimeEnvInstallSuccess'))
       } else if ((result as any).cancelled) {
-        message.info(t('employeeSettings.skillEnvInstallCancelled'))
+        message.info(t('settings.runtimeEnvInstallCancelled'))
       } else {
-        message.error(result.error || t('employeeSettings.skillEnvInstallFailed'))
+        message.error(result.error || t('settings.runtimeEnvInstallFailed'))
       }
     } catch (err: any) {
-      message.error(t('employeeSettings.skillEnvInstallFailed') + (err?.message ? `: ${err.message}` : ''))
+      message.error(t('settings.runtimeEnvInstallFailed') + (err?.message ? `: ${err.message}` : ''))
     } finally {
       // 进度事件最终会触发清空；这里兜底
       setTimeout(() => {
@@ -127,8 +127,8 @@ const SkillEnvSection: React.FC = () => {
   // 取消正在进行的安装
   const handleCancelInstall = useCallback(async () => {
     try {
-      await window.electronAPI.skillEnv.cancelInstall()
-      message.info(t('employeeSettings.skillEnvInstallCancelling'))
+      await window.electronAPI.runtimeEnv.cancelInstall()
+      message.info(t('settings.runtimeEnvInstallCancelling'))
     } catch {
       // ignore
     }
@@ -136,13 +136,14 @@ const SkillEnvSection: React.FC = () => {
 
   return (
     <Collapse
+      defaultActiveKey={['env']}
       items={[
         {
           key: 'env',
           label: (
             <Space>
               <ToolOutlined />
-              <span>{t('employeeSettings.skillEnvTitle')}</span>
+              <span>{t('settings.runtimeEnvTitle')}</span>
               {/* 折叠态下在标题旁快速显示摘要 */}
               <Space size={4}>
                 {tools.length > 0 && tools.map((tool) => (
@@ -171,7 +172,7 @@ const SkillEnvSection: React.FC = () => {
           children: (
             <>
               <Paragraph type="secondary" style={{ marginTop: 0, marginBottom: 12 }}>
-                {t('employeeSettings.skillEnvDesc')}
+                {t('settings.runtimeEnvDesc')}
               </Paragraph>
 
               <div>
@@ -212,8 +213,8 @@ const SkillEnvSection: React.FC = () => {
                                 <ExclamationCircleFilled style={{ marginRight: 4 }} />
                               ) : null}
                               {tool.installed
-                                ? t('employeeSettings.skillEnvInstalled')
-                                : t('employeeSettings.skillEnvNotInstalled')}
+                                ? t('settings.runtimeEnvInstalled')
+                                : t('settings.runtimeEnvNotInstalled')}
                             </Tag>
                           </div>
                           <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
@@ -260,7 +261,7 @@ const SkillEnvSection: React.FC = () => {
                             onClick={() => handleInstall(tool.id)}
                             disabled={installingId !== null}
                           >
-                            {t('employeeSettings.skillEnvOneClickInstall')}
+                            {t('settings.runtimeEnvOneClickInstall')}
                           </Button>
                         )}
                         {isInstallingThis && (
@@ -278,7 +279,7 @@ const SkillEnvSection: React.FC = () => {
                   )
                 })}
                 {tools.length === 0 && !loading && (
-                  <Text type="secondary">{t('employeeSettings.skillEnvEmpty')}</Text>
+                  <Text type="secondary">{t('settings.runtimeEnvEmpty')}</Text>
                 )}
               </div>
             </>
@@ -289,4 +290,4 @@ const SkillEnvSection: React.FC = () => {
   )
 }
 
-export default React.memo(SkillEnvSection)
+export default React.memo(RuntimeEnvSection)

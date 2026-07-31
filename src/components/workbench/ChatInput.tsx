@@ -30,6 +30,15 @@ export interface SendOptions {
   highPermission?: boolean
 }
 
+// 已启用的 skill 简要信息，用于斜杠菜单触发
+export interface AvailableSkill {
+  id: string
+  name: string
+  description: string
+  userInvocable: boolean
+  disableModelInvocation: boolean
+}
+
 const ChatInput: React.FC<{
   onSend: (content: string, images: string[], models: ModelSelection[], options?: SendOptions) => void
   onStop: () => void
@@ -49,7 +58,8 @@ const ChatInput: React.FC<{
   canToggleMinimalMode: boolean
   value: string
   onChange: (value: string) => void
-}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange }) => {
+  availableSkills?: AvailableSkill[]
+}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -63,32 +73,78 @@ const ChatInput: React.FC<{
   const attachedImagesRef = useRef(attachedImages)
   attachedImagesRef.current = attachedImages
 
-  const slashCommands = useMemo(() => [
-    { key: '/clear', label: '/clear', description: t('workbench.cmdClear') },
-    { key: '/new', label: '/new', description: t('workbench.cmdNew') },
-  ], [t])
+  // 可通过斜杠菜单触发的 skills：user-invocable 且注册为 LLM 工具（disableModelInvocation=false）
+  const invocableSkills = useMemo(() => {
+    return (availableSkills || []).filter(s => s.userInvocable && !s.disableModelInvocation)
+  }, [availableSkills])
+
+  // 斜杠命令：基础命令 + 已启用 skills（user-invocable 且 LLM 可调用）
+  // skill 命令 key 为 `/<skill-name>`，选中后填充输入框让用户继续输入参数
+  const slashCommands = useMemo(() => {
+    const base: Array<{ key: string; label: string; description: string; isSkill: boolean }> = [
+      { key: '/clear', label: '/clear', description: t('workbench.cmdClear'), isSkill: false },
+      { key: '/new', label: '/new', description: t('workbench.cmdNew'), isSkill: false },
+    ]
+    const skillCmds: Array<{ key: string; label: string; description: string; isSkill: boolean }> = invocableSkills.map(s => ({
+      key: `/${s.name}`,
+      label: `/${s.name}`,
+      description: s.description || '',
+      isSkill: true,
+    }))
+    return [...base, ...skillCmds]
+  }, [t, invocableSkills])
 
   const currentSlashItems = useMemo(() => {
     if (!value.startsWith('/')) return []
-    return slashCommands.filter(cmd => cmd.key.startsWith(value.toLowerCase()))
+    const lower = value.toLowerCase()
+    // 精确控制：仅当输入恰好是 / 或 /xxx（无空格）时才提示命令
+    const hasSpace = value.includes(' ')
+    if (hasSpace) return []
+    return slashCommands.filter(cmd => cmd.key.startsWith(lower))
   }, [value, slashCommands])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (value.startsWith('/') && currentSlashItems.length === 1) {
+      // 唯一匹配且是基础命令（/clear /new）：直接执行
+      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1 && !currentSlashItems[0].isSkill) {
         onCommand(currentSlashItems[0].key)
         onChange('')
+        return
+      }
+      // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
+      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1 && currentSlashItems[0].isSkill) {
+        const skillName = currentSlashItems[0].key.slice(1)
+        onChange(`/${skillName} `)
         return
       }
       handleSend()
     }
   }
 
+  // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
+  const convertSkillCommand = useCallback((raw: string): string => {
+    const match = raw.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
+    if (!match) return raw
+    const skillName = match[1]
+    const args = (match[2] || '').trim()
+    // 校验该 name 是否属于已启用 skill
+    const skill = invocableSkills.find(s => s.name === skillName)
+    if (!skill) return raw
+    if (args) {
+      return `[用户通过斜杠菜单激活 skill "${skillName}"] 请立即调用 skill_${skillName} 工具（arguments 参数填入下方内容）处理此请求：\n${args}`
+    }
+    return `[用户通过斜杠菜单激活 skill "${skillName}"] 请立即调用 skill_${skillName} 工具处理此请求。`
+  }, [invocableSkills])
+
   const handleSend = useCallback(() => {
     if (!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
     let content = value.trim()
+    // skill 斜杠命令转换
+    if (content.startsWith('/') && invocableSkills.some(s => content.slice(1).startsWith(s.name))) {
+      content = convertSkillCommand(content)
+    }
     if (attachedFiles.length > 0) {
       const filePaths = attachedFiles.map(f => f.path).filter(Boolean).join('\n')
       if (filePaths) {
@@ -100,7 +156,7 @@ const ChatInput: React.FC<{
     onChange('')
     setAttachedFiles([])
     setHighPermission(false)
-  }, [value, attachedImages, attachedFiles, selectedModels, highPermission, onSend, onChange])
+  }, [value, attachedImages, attachedFiles, selectedModels, highPermission, onSend, onChange, invocableSkills, convertSkillCommand])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return

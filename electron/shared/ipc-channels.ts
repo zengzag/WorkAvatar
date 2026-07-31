@@ -87,11 +87,11 @@ export type {
   VoiceLocalModelStatus,
 } from './channels/voice'
 export type {
-  SkillEnvToolId,
-  SkillEnvTool,
-  SkillEnvInstallParams,
-  SkillEnvInstallProgress,
-} from './channels/skill-env'
+  RuntimeEnvToolId,
+  RuntimeEnvTool,
+  RuntimeEnvInstallParams,
+  RuntimeEnvInstallProgress,
+} from './channels/runtime-env'
 export type {
   McpTransportType,
   McpServerConfig,

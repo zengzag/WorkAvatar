@@ -7,7 +7,7 @@ import NotesService from './notes/notes.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { ToolDefinition } from './agent/tools/types'
@@ -195,7 +195,12 @@ class EmployeeAgentService {
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
 
+    // 注册启用的 skill 为 LLM 可调用工具
+    // - disableModelInvocation=true 的 skill 跳过（仅手动 /skill-name 触发，由前端处理）
+    // - 工具接受 arguments 参数，支持 $ARGUMENTS / $1 $2... 替换
+    // - handler 返回 renderSkillBody 结果（渐进披露第 2 层：仅正文 + references 路径提示）
     for (const skill of employeeSkills.enabled) {
+      if (skill.disableModelInvocation) continue
       const skillDef: ToolDefinition = {
         id: `skill_${skill.id}`,
         name: `skill_${skill.name}`,
@@ -203,10 +208,16 @@ class EmployeeAgentService {
         description: skill.description || '',
         parameters: {
           type: 'object',
-          properties: {},
+          properties: {
+            arguments: {
+              type: 'string',
+              description: '可选参数，会替换 SKILL.md 中的 $ARGUMENTS / $1 / $2 ... 占位符',
+            },
+          },
         },
-        handler: async () => {
-          return this.skillRegistry.getSkillPrompt(skill.id)
+        handler: async (args: Record<string, any>) => {
+          const userArgs = typeof args?.arguments === 'string' ? args.arguments : ''
+          return this.skillRegistry.renderSkillBody(skill.id, userArgs)
         },
         source: 'skill',
       }
@@ -225,6 +236,12 @@ class EmployeeAgentService {
 
     if (enabledToolIds.has('office_exec')) {
       agent.registerTools([officeExecTool])
+    }
+
+    // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
+    const scriptExecRow = this.db.getDb().prepare("SELECT value FROM settings WHERE key = 'skills_enable_script_execution'").get() as { value: string } | undefined
+    if (scriptExecRow?.value === '1' || scriptExecRow?.value === 'true') {
+      agent.registerTools([runSkillScriptTool])
     }
 
     if (enabledToolIds.has('search_conversations')) {

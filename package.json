@@ -65,6 +65,7 @@
     "vditor": "^3.11.2",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
+    "yaml": "^2.9.0",
     "zustand": "^5.0.13"
   },
   "devDependencies": {

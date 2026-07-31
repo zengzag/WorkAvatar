@@ -19,8 +19,8 @@ const dangerousPatterns = [
   // 编码/混淆执行（绕过检测）
   /\bpowershell\s+.*-enc\b/i, /\bpowershell\s+.*-EncodedCommand\b/i,
   /\bcmd\s+\/c\s+.*\becho\b.*\|.*\bclip\b/i,
-  // 危险解释器执行
-  /\bpython\s+-c\b/i, /\bpython3\s+-c\b/i, /\bnode\s+-e\b/i, /\bperl\s+-e\b/i,
+  // 危险解释器执行（python/node 已被释放，允许智能体使用系统环境）
+  /\bperl\s+-e\b/i,
 ]
 
 // 删除类命令模式

@@ -112,6 +112,8 @@ export function registerToolHandlers(
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_UNINSTALL, async (id: string) => {
     const result = await skillRegistry.uninstallSkill(id)
+    // 卸载可能影响多个员工，清空全部 agent 缓存（低频操作）
+    EmployeeAgentService.getInstance().clearAgentCache()
     return { success: result }
   })
 
@@ -121,16 +123,19 @@ export function registerToolHandlers(
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, (params: { employee_id: string; skill_id: string }) => {
     skillRegistry.assignSkillToEmployee(params.skill_id, params.employee_id)
+    EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, (params: { employee_id: string; skill_id: string }) => {
     skillRegistry.removeSkillFromEmployee(params.skill_id, params.employee_id)
+    EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, (params: { employee_id: string; skill_id: string; enabled: boolean }) => {
     skillRegistry.toggleSkillForEmployee(params.skill_id, params.employee_id, params.enabled)
+    EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 

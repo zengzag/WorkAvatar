@@ -7,6 +7,7 @@ import {
   GlobalOutlined,
   SearchOutlined,
   AppstoreOutlined,
+  ToolOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -20,6 +21,7 @@ import {
   InternetSearchSettings,
   KMSMCPSettings,
   NavSettings,
+  RuntimeEnvSection,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -90,6 +92,15 @@ const Settings: React.FC = () => {
       children: contentWrap(<NavSettings />),
     },
     {
+      key: 'runtime',
+      label: (
+        <span>
+          <ToolOutlined /> {t('settings.tabRuntime')}
+        </span>
+      ),
+      children: contentWrap(<RuntimeEnvSection />),
+    },
+    {
       key: 'internetSearch',
       label: (
         <span>
@@ -105,7 +116,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'internetSearch', 'about']
+  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'runtime', 'internetSearch', 'about']
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (

@@ -29,7 +29,6 @@ import {
   CodeOutlined,
   LinkOutlined,
 } from '@ant-design/icons'
-import SkillEnvSection from './SkillEnvSection'
 import type {
   McpServerInfo,
   McpServerConfig,
@@ -580,9 +579,6 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
           </div>
         )}
       </Card>
-
-      {/* Skill 环境设置（从 SkillsSection 迁移过来） */}
-      <SkillEnvSection />
 
       {/* 使用说明 */}
       <Card

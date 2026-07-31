@@ -31,6 +31,7 @@ interface InstalledSkill {
   is_enabled: boolean
   created_at: number
   skillMdContent?: string
+  source?: 'global' | 'project' | 'bundled'
 }
 
 interface EmployeeSkill extends InstalledSkill {
@@ -124,6 +125,11 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                       <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
+                      {skill.source && skill.source !== 'global' && (
+                        <Tag color={skill.source === 'project' ? 'green' : 'purple'} style={{ flexShrink: 0 }}>
+                          {t(`employeeSettings.skillSource_${skill.source}`)}
+                        </Tag>
+                      )}
                     </div>
                     <Space orientation="vertical" size={0} style={{ width: '100%' }}>
                       <Text type="secondary" ellipsis style={{ display: 'block' }}>{getSkillDescription(skill, noDescText)}</Text>
@@ -185,6 +191,11 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     <div style={{ marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
+                      {skill.source && skill.source !== 'global' && (
+                        <Tag color={skill.source === 'project' ? 'green' : 'purple'} style={{ flexShrink: 0 }}>
+                          {t(`employeeSettings.skillSource_${skill.source}`)}
+                        </Tag>
+                      )}
                     </div>
                     <Text type="secondary" ellipsis style={{ display: 'block' }}>{getSkillDescription(skill, noDescText)}</Text>
                   </div>
@@ -192,6 +203,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                 <Switch
                   checked={skill.enabled}
                   onChange={(checked) => handleToggle(skill.id, checked)}
+                  disabled={skill.source === 'project'}
                   checkedChildren={t('common.enable')}
                   unCheckedChildren={t('common.disable')}
                 />

@@ -30,6 +30,7 @@ import MessageList from '../components/workbench/MessageList'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { ConversationSidebar, ChatInput, MultiChatPanel, GlobalSearchBox } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
+import type { AvailableSkill } from '../components/workbench/ChatInput'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import type { Employee, Conversation } from '../types'
@@ -193,6 +194,30 @@ const EmployeeWorkbench: React.FC = () => {
   }, [id, modal, message, t, token])
 
   const chatHook = useEmployeeChat({ id, message })
+
+  // 已启用 skills 列表，供 ChatInput 斜杠菜单使用
+  const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([])
+  useEffect(() => {
+    if (!id) {
+      setAvailableSkills([])
+      return
+    }
+    let cancelled = false
+    window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: id })
+      .then((result: any) => {
+        if (cancelled) return
+        const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description || '',
+          userInvocable: s.userInvocable !== false,
+          disableModelInvocation: !!s.disableModelInvocation,
+        }))
+        setAvailableSkills(skills)
+      })
+      .catch(() => { /* ignore */ })
+    return () => { cancelled = true }
+  }, [id])
 
   const {
     employee,
@@ -696,6 +721,7 @@ const EmployeeWorkbench: React.FC = () => {
             canToggleMinimalMode={messages.length === 0}
             value={inputDraft}
             onChange={setInputDraft}
+            availableSkills={availableSkills}
           />
         </div>
       </div>
