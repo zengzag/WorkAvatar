@@ -3,7 +3,7 @@ import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
 import type { ToolDefinition } from '../tools/types'
-import { buildEmployeeSystemPrompt } from './prompts'
+import { buildEmployeeSystemPrompt, prependDynamicContext } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
   allowedSkillPaths?: string[]
@@ -84,14 +84,14 @@ export class EmployeeAgent extends BaseAgent {
       .map(t => `${t.title}(${t.name})`)
       .join('、')
 
+    // memory / kb 不再拼入 system prompt → 改为在 run/runStream 中 prepend 到 query
+    // 这样 system prompt 字节级稳定 → KV cache 前缀高命中
     const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',
       instructions: this.config.instructions || '',
       role: this.config.role,
       skillsXml: skillsXml || undefined,
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
-      memoryPrompt: this.memoryPrompt,
-      kbContextPrompt: this.kbContextPrompt,
       minimalMode: this.minimalMode,
       onDemandToolList: onDemandToolList || undefined,
     })
@@ -107,16 +107,32 @@ export class EmployeeAgent extends BaseAgent {
     return super.resolveActiveTools(runtimeToolNames)
   }
 
+  /**
+   * 在调用父类执行前，将动态上下文（memory / 知识库范围）
+   * prepend 到用户 query，保持 system prompt 稳定以便 KV cache 命中。
+   */
+  private patchOptionsWithDynamicContext(options: AgentRunOptions): AgentRunOptions {
+    const hasMemory = !!this.memoryPrompt
+    const hasKb = !!this.kbContextPrompt
+    if (!hasMemory && !hasKb) return options
+    return {
+      ...options,
+      query: prependDynamicContext(options.query, this.memoryPrompt, this.kbContextPrompt),
+    }
+  }
+
   async runStream(
     options: AgentRunOptions,
     callbacks: any,
     signal?: AbortSignal
   ): Promise<void> {
-    return super.runStream(options, callbacks, signal)
+    const patched = this.patchOptionsWithDynamicContext(options)
+    return super.runStream(patched, callbacks, signal)
   }
 
   async run(options: AgentRunOptions): Promise<any> {
-    return super.run(options)
+    const patched = this.patchOptionsWithDynamicContext(options)
+    return super.run(patched)
   }
 
   createSkillTools(): ToolDefinition[] {
