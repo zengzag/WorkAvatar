@@ -35,6 +35,8 @@ export type {
 } from './channels/llm'
 export type {
   ToolAssignParams,
+  ToolCategoryAssignParams,
+  ToolCategoryInfo,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
 } from './channels/tool'
@@ -66,6 +68,8 @@ export type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
+  KMSMCPToolCategoryInfo,
+  KMSMCPExposedTool,
 } from './channels/kms'
 export type {
   VoiceCreateTaskParams,

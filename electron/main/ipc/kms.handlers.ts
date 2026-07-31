@@ -416,6 +416,14 @@ export function registerKMSHandlers(): void {
     return { success: true }
   })
 
+  safeHandle(IPC_CHANNELS.KMS_MCP_LIST_CATEGORIES, async () => {
+    return kmsMcpService.listCategories()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_MCP_LIST_EXPOSED_TOOLS, async (params?: { tool_categories?: string[] }) => {
+    return kmsMcpService.listExposedToolsDetailed(params?.tool_categories as any)
+  })
+
   // ==================== 知识卡片 ====================
   safeHandle(IPC_CHANNELS.KMS_GET_KEYWORD_STATS, async (params?: { limit?: number; minCount?: number; recentDays?: number }) => {
     return kmsService.getKeywordStats(params || {})

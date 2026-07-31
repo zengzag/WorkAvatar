@@ -21,6 +21,8 @@ import type {
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   ToolAssignParams,
+  ToolCategoryAssignParams,
+  ToolCategoryInfo,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -53,6 +55,8 @@ import type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
+  KMSMCPToolCategoryInfo,
+  KMSMCPExposedTool,
   RuntimeEnvInstallParams,
   RuntimeEnvInstallProgress,
   McpSaveParams,
@@ -286,6 +290,10 @@ const electronAPI = {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
+    getEmployeeToolCategories: (params: { employee_id: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, params) as Promise<ToolCategoryInfo[]>,
+    assignCategoryToEmployee: (params: ToolCategoryAssignParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE, params),
   },
 
   searchWindow: {
@@ -523,6 +531,9 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
     setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
+    listCategories: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_CATEGORIES) as Promise<KMSMCPToolCategoryInfo[]>,
+    listExposedTools: (params?: { tool_categories?: string[] }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_EXPOSED_TOOLS, params) as Promise<KMSMCPExposedTool[]>,
   },
 
   voice: {

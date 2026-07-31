@@ -29,6 +29,24 @@ interface ToolInfo {
   is_assigned: boolean
 }
 
+interface ToolCategoryInfo {
+  id: string
+  name: string
+  title: string
+  description: string
+  icon: string
+  tool_ids: string[]
+  tools: Array<{
+    id: string
+    name: string
+    title: string
+    description: string
+  }>
+  is_enabled: boolean
+  enabled_count: number
+  total_count: number
+}
+
 interface InstalledSkill {
   id: string
   name: string
@@ -65,6 +83,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const [form] = Form.useForm()
 
   const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
+  const [toolCategories, setToolCategories] = useState<ToolCategoryInfo[]>([])
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [employeeSkills, setEmployeeSkills] = useState<EmployeeSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
@@ -100,8 +119,13 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const loadTools = useCallback(async () => {
     if (!employeeId) return
     try {
-      const result = await window.electronAPI.tool.getEmployeeTools({ employee_id: employeeId })
-      setEmployeeTools(result || [])
+      // 同时加载平铺的工具列表（兼容）和分类聚合列表（新）
+      const [toolsResult, categoriesResult] = await Promise.all([
+        window.electronAPI.tool.getEmployeeTools({ employee_id: employeeId }),
+        window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId }),
+      ])
+      setEmployeeTools(toolsResult || [])
+      setToolCategories(categoriesResult || [])
     } catch {
       console.error('加载工具失败')
     }
@@ -347,7 +371,43 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         is_enabled: enabled,
       })
       setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, is_enabled: enabled, is_assigned: true } : t))
+      // 切换单个工具后重新加载分类，保持分类状态同步
+      const categoriesResult = await window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId })
+      setToolCategories(categoriesResult || [])
       message.success(enabled ? t('employeeSettings.toolEnabled') : t('employeeSettings.toolDisabled'))
+    } catch {
+      message.error(t('employeeSettings.operationFailed'))
+    }
+  }
+
+  const handleToggleCategory = async (categoryId: string, enabled: boolean) => {
+    if (!employeeId) return
+    try {
+      await window.electronAPI.tool.assignCategoryToEmployee({
+        employee_id: employeeId,
+        category_id: categoryId,
+        is_enabled: enabled,
+      })
+      // 批量更新前端状态
+      setToolCategories(prev => prev.map(cat => {
+        if (cat.id !== categoryId) return cat
+        return {
+          ...cat,
+          is_enabled: enabled,
+          enabled_count: enabled ? cat.total_count : 0,
+        }
+      }))
+      setEmployeeTools(prev => {
+        const targetCat = toolCategories.find(c => c.id === categoryId)
+        if (!targetCat) return prev
+        const affectedIds = new Set(targetCat.tool_ids)
+        return prev.map(t => affectedIds.has(t.id) ? { ...t, is_enabled: enabled, is_assigned: true } : t)
+      })
+      message.success(
+        enabled
+          ? t('employeeSettings.toolCategoryEnabled', { name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }) })
+          : t('employeeSettings.toolCategoryDisabled', { name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }) }),
+      )
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
@@ -381,7 +441,9 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       children: contentWrap(
         <ToolsSection
           employeeTools={employeeTools}
+          toolCategories={toolCategories}
           onToggleTool={handleToggleTool}
+          onToggleCategory={handleToggleCategory}
         />
       ),
     },

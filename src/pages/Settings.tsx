@@ -5,7 +5,6 @@ import {
   SettingOutlined,
   RobotOutlined,
   GlobalOutlined,
-  SearchOutlined,
   AppstoreOutlined,
   ToolOutlined,
 } from '@ant-design/icons'
@@ -59,7 +58,7 @@ const Settings: React.FC = () => {
       key: 'kmsMcp',
       label: (
         <span>
-          <SearchOutlined /> {t('settings.tabKmsMcp')}
+          <ApiOutlined /> {t('settings.tabKmsMcp')}
         </span>
       ),
       children: contentWrap(<KMSMCPSettings />),

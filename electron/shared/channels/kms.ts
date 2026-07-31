@@ -62,12 +62,16 @@ export const KMS_CHANNELS = {
   KMS_REBUILD_FILE_INDEX: 'kms:rebuild-file-index',
   // KMS 文件搜索（按文件名匹配）
   KMS_SEARCH_FILES: 'kms:search-files',
-  // KMS MCP 服务
+  // KMS MCP 服务（已扩展为通用内置工具 MCP）
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
   KMS_MCP_GET_STATUS: 'kms-mcp:get-status',
   KMS_MCP_GET_CONFIG: 'kms-mcp:get-config',
   KMS_MCP_SET_CONFIG: 'kms-mcp:set-config',
+  // 列出工具类别（含工具数、默认启用状态）
+  KMS_MCP_LIST_CATEGORIES: 'kms-mcp:list-categories',
+  // 列出当前配置启用的所有对外工具（MCP 格式），可选传入自定义类别做预览
+  KMS_MCP_LIST_EXPOSED_TOOLS: 'kms-mcp:list-exposed-tools',
   // KMS 数据库清理（回收磁盘空间 + 清理残留索引数据）
   KMS_GET_DATABASE_STATS: 'kms:get-database-stats',
   KMS_CLEANUP_DATABASE: 'kms:cleanup-database',
@@ -140,10 +144,34 @@ export interface KMSGetFileContentParams {
   maxChars?: number
 }
 
+import type { BuiltinToolCategoryId } from '../../main/services/mcp/builtin-mcp-converter'
+
 export interface KMSMCPSetConfigParams {
   enabled?: boolean
   port?: number
   apiKey?: string
+  tool_categories?: BuiltinToolCategoryId[]
+}
+
+export interface KMSMCPToolCategoryInfo {
+  id: BuiltinToolCategoryId
+  toolIds: string[]
+  defaultEnabled: boolean
+  toolCount: number
+}
+
+export interface KMSMCPExposedTool {
+  name: string
+  description: string
+  inputSchema: {
+    type: 'object'
+    properties: Record<string, any>
+    required?: string[]
+  }
+  /** 所属工具类别（用于前端标签颜色区分、过滤显示），可能为 'unknown' 当无法匹配到任何 BUILTIN_TOOL_CATEGORIES 时 */
+  category: BuiltinToolCategoryId | 'unknown'
+  /** 对应 ToolDefinition 的 id（用于调试/关联）*/
+  toolId: string
 }
 
 export interface KMSGetFileSummariesParams {

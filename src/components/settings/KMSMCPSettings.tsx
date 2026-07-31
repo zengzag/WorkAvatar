@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  Typography, Switch, InputNumber, Input, Button, Divider, Space, Tag, App, theme, Descriptions, Alert
+  Typography, Switch, InputNumber, Input, Button, Divider, Space, Tag, App, theme, Descriptions, Alert, Tooltip, Empty,
 } from 'antd'
 import {
   PlayCircleOutlined, StopOutlined, CopyOutlined, ApiOutlined, ReloadOutlined,
+  DatabaseOutlined, CalendarOutlined, ThunderboltOutlined,
+  BulbOutlined, GlobalOutlined, MessageOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 
@@ -13,12 +15,41 @@ interface KMSMCPConfig {
   enabled: boolean
   port: number
   apiKey: string
+  tool_categories?: string[]
 }
 
 interface KMSMCPStatus {
   running: boolean
   port: number
   url: string
+}
+
+interface MCPToolCategoryInfo {
+  id: string
+  toolIds: string[]
+  defaultEnabled: boolean
+  toolCount: number
+}
+
+interface MCPExposedTool {
+  name: string
+  description: string
+  inputSchema: {
+    type: 'object'
+    properties: Record<string, any>
+    required?: string[]
+  }
+  category: string
+  toolId: string
+}
+
+const CATEGORY_ICON: Record<string, React.ReactNode> = {
+  kms: <DatabaseOutlined />,
+  calendar: <CalendarOutlined />,
+  automation: <ThunderboltOutlined />,
+  general: <BulbOutlined />,
+  web: <GlobalOutlined />,
+  conversation: <MessageOutlined />,
 }
 
 const KMSMCPSettings: React.FC = () => {
@@ -30,10 +61,16 @@ const KMSMCPSettings: React.FC = () => {
     enabled: false,
     port: 3101,
     apiKey: '',
+    tool_categories: [],
   })
   const [status, setStatus] = useState<KMSMCPStatus>({ running: false, port: 3101, url: '' })
   const [loading, setLoading] = useState(false)
   const [switchLoading, setSwitchLoading] = useState(false)
+  const [categories, setCategories] = useState<MCPToolCategoryInfo[]>([])
+  const [exposedTools, setExposedTools] = useState<MCPExposedTool[]>([])
+  const [loadingCategories, setLoadingCategories] = useState(false)
+  const [loadingTools, setLoadingTools] = useState(false)
+  const [savingCategory, setSavingCategory] = useState(false)
 
   const loadConfig = useCallback(async () => {
     try {
@@ -48,9 +85,72 @@ const KMSMCPSettings: React.FC = () => {
     }
   }, [])
 
+  const loadCategories = useCallback(async () => {
+    setLoadingCategories(true)
+    try {
+      const res = await window.electronAPI.kmsMcp.listCategories()
+      setCategories((res || []) as unknown as MCPToolCategoryInfo[])
+    } catch {
+      // ignore
+    } finally {
+      setLoadingCategories(false)
+    }
+  }, [])
+
+  const loadExposedTools = useCallback(async (toolCategories?: string[]) => {
+    setLoadingTools(true)
+    try {
+      const res = await window.electronAPI.kmsMcp.listExposedTools(
+        toolCategories ? { tool_categories: toolCategories } : undefined,
+      )
+      setExposedTools((res || []) as unknown as MCPExposedTool[])
+    } catch {
+      // ignore
+    } finally {
+      setLoadingTools(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadConfig()
-  }, [loadConfig])
+    loadCategories()
+  }, [loadConfig, loadCategories])
+
+  useEffect(() => {
+    if (config?.tool_categories?.length) {
+      loadExposedTools(config.tool_categories)
+    } else {
+      loadExposedTools()
+    }
+  }, [loadExposedTools, config?.tool_categories])
+
+  const enabledCategoriesSet = useMemo(() => {
+    if (config?.tool_categories?.length) return new Set(config.tool_categories)
+    return new Set(categories.filter((c) => c.defaultEnabled).map((c) => c.id))
+  }, [config, categories])
+
+  const isCategoryEnabled = useCallback(
+    (catId: string): boolean => enabledCategoriesSet.has(catId),
+    [enabledCategoriesSet],
+  )
+
+  const handleToggleCategory = useCallback(
+    async (catId: string, checked: boolean) => {
+      setSavingCategory(true)
+      try {
+        const current: string[] = Array.from(enabledCategoriesSet)
+        const next = checked ? [...current, catId] : current.filter((id) => id !== catId)
+        await window.electronAPI.kmsMcp.setConfig({ tool_categories: next } as any)
+        setConfig((prev) => ({ ...prev, tool_categories: next }))
+        message.success(t('settings.mcpCategorySaved'))
+      } catch {
+        message.error(t('settings.mcpCategorySaveFailed'))
+      } finally {
+        setSavingCategory(false)
+      }
+    },
+    [enabledCategoriesSet, message, t],
+  )
 
   const handleToggle = useCallback(async (checked: boolean) => {
     setSwitchLoading(true)
@@ -112,7 +212,6 @@ const KMSMCPSettings: React.FC = () => {
 
   const handleCopyUrl = useCallback(() => {
     if (status.url) {
-      // clipboard API 在某些环境下可能被拒绝，吞掉错误避免未处理的 Promise 拒绝
       navigator.clipboard.writeText(status.url).catch(() => {})
       message.success(t('settings.kmsMcpUrlCopied'))
     }
@@ -121,14 +220,38 @@ const KMSMCPSettings: React.FC = () => {
   const handleRefresh = useCallback(async () => {
     setLoading(true)
     try {
-      const st = await window.electronAPI.kmsMcp.getStatus()
-      setStatus(st)
+      await Promise.all([
+        (async () => {
+          const st = await window.electronAPI.kmsMcp.getStatus()
+          setStatus(st)
+        })(),
+        loadExposedTools(config.tool_categories),
+      ])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadExposedTools, config.tool_categories])
 
   const mcpUrl = status.running ? status.url : `http://localhost:${config.port}/mcp`
+
+  const renderCategoryTitle = (cat: MCPToolCategoryInfo) => {
+    const key = `settings.mcpCategory_${cat.id}` as any
+    const labeled = t(key, { defaultValue: cat.id })
+    return (
+      <Space size={6}>
+        {CATEGORY_ICON[cat.id] || <BulbOutlined />}
+        <Text strong>{labeled}</Text>
+        <Tag color="blue" style={{ marginLeft: 4 }}>
+          {cat.toolCount}
+        </Tag>
+      </Space>
+    )
+  }
+
+  const renderCategoryDesc = (cat: MCPToolCategoryInfo) => {
+    const key = `settings.mcpCategory_${cat.id}Desc` as any
+    return t(key, { defaultValue: '' })
+  }
 
   return (
     <div>
@@ -138,6 +261,7 @@ const KMSMCPSettings: React.FC = () => {
       </Paragraph>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* 启用开关 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <Text strong>{t('settings.kmsMcpEnable')}</Text>
@@ -157,6 +281,7 @@ const KMSMCPSettings: React.FC = () => {
 
         <Divider style={{ margin: '4px 0' }} />
 
+        {/* 端口 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <Text strong>{t('settings.kmsMcpPort')}</Text>
@@ -187,6 +312,7 @@ const KMSMCPSettings: React.FC = () => {
 
         <Divider style={{ margin: '4px 0' }} />
 
+        {/* API Key */}
         <div>
           <Text strong style={{ display: 'block', marginBottom: 4 }}>
             {t('settings.kmsMcpApiKey')}
@@ -209,6 +335,65 @@ const KMSMCPSettings: React.FC = () => {
 
         <Divider style={{ margin: '4px 0' }} />
 
+        {/* 工具类别细分 */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <Text strong>{t('settings.mcpCategoryTitle')}</Text>
+            {loadingCategories && <Text type="secondary" style={{ fontSize: 12 }}>…</Text>}
+          </div>
+          <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
+            {t('settings.mcpCategoryDesc')}
+          </Paragraph>
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={<Text style={{ fontSize: 12 }}>{t('settings.mcpCategoryHint')}</Text>}
+          />
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gap: 12,
+            }}
+          >
+            {categories.map((cat) => {
+              const checked = isCategoryEnabled(cat.id)
+              return (
+                <div
+                  key={cat.id}
+                  style={{
+                    padding: 12,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: token.borderRadius,
+                    background: token.colorBgContainer,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1, marginRight: 12 }}>
+                      {renderCategoryTitle(cat)}
+                      <div style={{ marginTop: 6 }}>
+                        <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.5 }}>
+                          {renderCategoryDesc(cat)}
+                        </Text>
+                      </div>
+                    </div>
+                    <Switch
+                      size="small"
+                      checked={checked}
+                      loading={savingCategory}
+                      onChange={(v) => handleToggleCategory(cat.id, v)}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <Divider style={{ margin: '4px 0' }} />
+
+        {/* 连接信息与暴露工具 */}
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <Text strong>
@@ -250,7 +435,7 @@ const KMSMCPSettings: React.FC = () => {
             size="small"
             bordered
             styles={{
-              label: { width: 140, background: token.colorBgContainer },
+              label: { width: 160, background: token.colorBgContainer },
               content: { background: token.colorBgContainer },
             }}
           >
@@ -277,23 +462,40 @@ const KMSMCPSettings: React.FC = () => {
                 <Tag color="orange">{t('settings.kmsMcpAuthDisabled')}</Tag>
               )}
             </Descriptions.Item>
-            <Descriptions.Item label={t('settings.kmsMcpTools')}>
-              <Space wrap size={[4, 4]}>
-                <Tag>kms_list_dirs</Tag>
-                <Tag>kms_stats</Tag>
-                <Tag>kms_search</Tag>
-                <Tag>kms_get_content</Tag>
-                <Tag>kms_get_summary</Tag>
-                <Tag>kms_list_collections</Tag>
-                <Tag>kms_list_files_in_collection</Tag>
-                <Tag>kms_get_collection_summary</Tag>
-              </Space>
+            <Descriptions.Item
+              label={
+                <Space>
+                  <span>{t('settings.kmsMcpTools')}</span>
+                  <Tag color="blue">
+                    {t('settings.mcpExposedToolCount', { count: exposedTools.length })}
+                  </Tag>
+                </Space>
+              }
+            >
+              {loadingTools ? (
+                <Text type="secondary" style={{ fontSize: 12 }}>…</Text>
+              ) : exposedTools.length === 0 ? (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  description={null}
+                  style={{ margin: '8px 0', padding: 0 }}
+                />
+              ) : (
+                <Space wrap size={[4, 4]}>
+                  {exposedTools.map((tool) => (
+                    <Tooltip key={tool.toolId || tool.name} title={tool.description || tool.name}>
+                      <Tag>{tool.name}</Tag>
+                    </Tooltip>
+                  ))}
+                </Space>
+              )}
             </Descriptions.Item>
           </Descriptions>
         </div>
 
         <Divider style={{ margin: '4px 0' }} />
 
+        {/* 客户端配置示例 */}
         <div>
           <Text strong style={{ display: 'block', marginBottom: 8 }}>
             {t('settings.kmsMcpUsageTitle')}
@@ -314,9 +516,12 @@ const KMSMCPSettings: React.FC = () => {
           >
 {`{
   "mcpServers": {
-    "workavatar-kms": {
+    "workavatar-mcp": {
       "type": "streamableHttp",
-      "url": "${mcpUrl}"${config.apiKey ? `,\\n      "headers": {\\n        "Authorization": "Bearer YOUR_API_KEY"\\n      }` : ''}
+      "url": "${mcpUrl}"${config.apiKey ? `,
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }` : ''}
     }
   }
 }`}

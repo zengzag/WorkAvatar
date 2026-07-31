@@ -6,14 +6,34 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
   DEFAULT_CONFIG,
-  MCP_TOOLS,
 } from './kms-mcp-types'
-import { executeTool } from './kms-mcp-tool-handlers'
+import type {
+  KMSMCPToolCategoryInfo,
+  KMSMCPExposedTool,
+} from '../../../shared/channels/kms'
+import {
+  BUILTIN_TOOL_CATEGORIES,
+  convertToolDefinitionToMcpTool,
+  invokeBuiltinTool,
+  resolveEnabledToolIds,
+  type BuiltinToolCategoryId,
+  type McpTool,
+} from '../mcp/builtin-mcp-converter'
+import { buildAllBuiltinToolDefinitions } from '../mcp/kms-mcp-adapters'
+import type { ToolDefinition } from '../agent/tools/types'
 
-const logger = createLogger('KMS-MCP')
+const logger = createLogger('Builtin-MCP')
 
 // 向后兼容：重新导出类型
 export type { KMSMCPConfig } from './kms-mcp-types'
+
+/** 对外工具类别元信息（不含工具列表，仅用于前端展示类别分组） */
+export interface BuiltinToolCategoryInfo {
+  id: BuiltinToolCategoryId
+  toolIds: string[]
+  defaultEnabled: boolean
+  toolCount: number
+}
 
 class KMSMCPService {
   private server: http.Server | null = null
@@ -30,6 +50,12 @@ class KMSMCPService {
   private static readonly CLOSE_TIMEOUT_MS = 5 * 1000
   private static instance: KMSMCPService
 
+  /**
+   * 缓存：完整 ToolDefinition 列表（name → tool）
+   * 懒加载首次用到时构建，避免启动时依赖链过重。
+   */
+  private toolDefsCache: Map<string, ToolDefinition> | null = null
+
   private constructor() {}
 
   static getInstance(): KMSMCPService {
@@ -38,6 +64,10 @@ class KMSMCPService {
     }
     return KMSMCPService.instance
   }
+
+  // ============================================================
+  // 配置与状态
+  // ============================================================
 
   getConfig(): KMSMCPConfig {
     return { ...this.config }
@@ -55,6 +85,74 @@ class KMSMCPService {
       url: running ? `http://localhost:${this.config.port}/mcp` : '',
     }
   }
+
+  /**
+   * 返回工具类别元信息（id / 工具数 / 默认是否启用），供 UI 绘制类别开关。
+   */
+  listCategories(): KMSMCPToolCategoryInfo[] {
+    return BUILTIN_TOOL_CATEGORIES.map((c) => ({
+      id: c.id,
+      toolIds: [...c.toolIds],
+      defaultEnabled: c.defaultEnabled,
+      toolCount: c.toolIds.length,
+    }))
+  }
+
+  /** 根据 toolId 或 name 查所属工具类别，无法匹配返回 'unknown'。 */
+  private findToolCategory(toolId: string, name: string): BuiltinToolCategoryId | 'unknown' {
+    for (const cat of BUILTIN_TOOL_CATEGORIES) {
+      for (const id of cat.toolIds) {
+        if (id === toolId || id === name) {
+          return cat.id
+        }
+      }
+    }
+    return 'unknown'
+  }
+
+  /**
+   * 返回按类别过滤后的对外工具列表（纯 MCP 协议格式），供 MCP tools/list 端点返回。
+   * - 不传 enabledCategories 时使用当前 config.tool_categories 过滤
+   */
+  listExposedTools(enabledCategories?: BuiltinToolCategoryId[]): McpTool[] {
+    const allDefs = this.getAllToolDefinitions()
+    const enabledIds = resolveEnabledToolIds(
+      enabledCategories ?? this.config.tool_categories,
+    )
+    const result: McpTool[] = []
+    for (const [name, def] of allDefs) {
+      if (enabledIds.has(def.id) || enabledIds.has(name)) {
+        result.push(convertToolDefinitionToMcpTool(def))
+      }
+    }
+    return result
+  }
+
+  /**
+   * 返回按类别过滤后的对外工具列表（带 category / toolId 元信息），供 UI 展示用。
+   */
+  listExposedToolsDetailed(enabledCategories?: BuiltinToolCategoryId[]): KMSMCPExposedTool[] {
+    const allDefs = this.getAllToolDefinitions()
+    const enabledIds = resolveEnabledToolIds(
+      enabledCategories ?? this.config.tool_categories,
+    )
+    const result: KMSMCPExposedTool[] = []
+    for (const [name, def] of allDefs) {
+      if (enabledIds.has(def.id) || enabledIds.has(name)) {
+        const mcp = convertToolDefinitionToMcpTool(def)
+        result.push({
+          ...mcp,
+          category: this.findToolCategory(def.id, name),
+          toolId: def.id || name,
+        })
+      }
+    }
+    return result
+  }
+
+  // ============================================================
+  // HTTP 服务启停
+  // ============================================================
 
   async start(): Promise<{ success: boolean; error?: string }> {
     if (this.server) {
@@ -80,15 +178,13 @@ class KMSMCPService {
       server.listen(this.config.port, () => {
         this.server = server
         // 服务器级别超时：防止慢速攻击（慢头发送、慢 body 读取）
-        // requestTimeout：整个请求处理超时（含 body），Node 默认 300s → 收紧到 60s
         server.requestTimeout = 60 * 1000
-        // headersTimeout： headers 接收超时，必须略大于 requestTimeout 的 keep-alive 超时
         server.headersTimeout = 65 * 1000
         this.sessionCleanupTimer = setInterval(
           () => this.cleanupExpiredSessions(),
           KMSMCPService.SESSION_CLEANUP_INTERVAL_MS,
         )
-        logger.info(`MCP server started on port ${this.config.port}`)
+        logger.info(`Builtin MCP server started on port ${this.config.port}`)
         resolve({ success: true })
       })
     })
@@ -106,14 +202,11 @@ class KMSMCPService {
         this.sessionCleanupTimer = null
       }
 
-      // 超时兜底：如果 server.close() 在 CLOSE_TIMEOUT_MS 内未完成（有连接未关闭），
-      // 强制销毁所有连接并完成 stop，避免永久挂起
       let resolved = false
       const forceCloseTimer = setTimeout(() => {
         if (resolved) return
         resolved = true
         this.server?.closeAllConnections?.()
-        // closeAllConnections 在 Node 18.2+ 可用；兜底再 close 一次
         this.server = null
         this.sessions.clear()
         logger.warn('MCP server stop timed out, forced close all connections')
@@ -126,11 +219,32 @@ class KMSMCPService {
         clearTimeout(forceCloseTimer)
         this.server = null
         this.sessions.clear()
-        logger.info('MCP server stopped')
+        logger.info('Builtin MCP server stopped')
         resolve({ success: true })
       })
     })
   }
+
+  // ============================================================
+  // 工具定义缓存
+  // ============================================================
+
+  private getAllToolDefinitions(): Map<string, ToolDefinition> {
+    if (this.toolDefsCache) return this.toolDefsCache
+    const defs = buildAllBuiltinToolDefinitions()
+    const map = new Map<string, ToolDefinition>()
+    for (const t of defs) {
+      // name 与 id 都存一份索引，方便匹配（大部分工具 id===name）
+      map.set(t.name, t)
+      if (t.id !== t.name) map.set(t.id, t)
+    }
+    this.toolDefsCache = map
+    return map
+  }
+
+  // ============================================================
+  // HTTP 请求处理
+  // ============================================================
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     if (req.method === 'OPTIONS') {
@@ -163,16 +277,13 @@ class KMSMCPService {
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined
 
-    // 读取请求 body，带超时和大小限制：
-    // - 超时：慢客户端在 BODY_TIMEOUT_MS 内未发送完 body 则中止，防止挂起
-    // - 大小限制：超过 MAX_BODY_BYTES 立即返回 413，防止 OOM
+    // 读取 body：带超时与大小限制
     let body = ''
     let bodySize = 0
     let bodyTooLarge = false
     let bodyTimedOut = false
     const bodyTimer = setTimeout(() => {
       bodyTimedOut = true
-      // 超时后销毁 socket，中止 for-await 循环
       req.destroy(new Error('Request body timeout'))
     }, KMSMCPService.BODY_TIMEOUT_MS)
 
@@ -191,7 +302,6 @@ class KMSMCPService {
       clearTimeout(bodyTimer)
     }
 
-    // 超时后 socket 已销毁，无法再写响应，直接返回
     if (bodyTimedOut) {
       logger.warn('MCP request body read timed out, connection destroyed')
       return
@@ -243,7 +353,6 @@ class KMSMCPService {
     }
   }
 
-  /** 清理过期 session：移除超过 SESSION_IDLE_TTL_MS 未活动的条目 */
   private cleanupExpiredSessions(): void {
     if (this.sessions.size === 0) return
     const now = Date.now()
@@ -259,6 +368,10 @@ class KMSMCPService {
     }
   }
 
+  // ============================================================
+  // JSON-RPC 消息处理
+  // ============================================================
+
   private async handleMessage(message: JsonRpcRequest, sessionId?: string): Promise<JsonRpcResponse> {
     const { id, method, params } = message
 
@@ -272,8 +385,8 @@ class KMSMCPService {
             tools: { listChanged: false },
           },
           serverInfo: {
-            name: 'WorkAvatar KMS MCP Server',
-            version: '1.0.0',
+            name: 'WorkAvatar Builtin MCP Server',
+            version: '2.0.0',
           },
         },
       }
@@ -292,12 +405,12 @@ class KMSMCPService {
     }
 
     if (method === 'tools/list') {
+      // 使用配置的 tool_categories 过滤
+      const tools = this.listExposedTools(this.config.tool_categories)
       return {
         jsonrpc: '2.0',
         id: id ?? null,
-        result: {
-          tools: MCP_TOOLS,
-        },
+        result: { tools },
       }
     }
 
@@ -312,7 +425,10 @@ class KMSMCPService {
     }
   }
 
-  private async handleToolCall(id: string | number | null, params?: Record<string, any>): Promise<JsonRpcResponse> {
+  private async handleToolCall(
+    id: string | number | null,
+    params?: Record<string, any>,
+  ): Promise<JsonRpcResponse> {
     if (!params || !params.name) {
       return {
         jsonrpc: '2.0',
@@ -320,9 +436,12 @@ class KMSMCPService {
         error: { code: -32602, message: 'Missing tool name' },
       }
     }
+    const toolName: string = String(params.name)
 
-    try {
-      const result = await executeTool(params.name, params.arguments || {})
+    // 白名单：未启用类别中的工具直接拒绝
+    const enabledToolIds = resolveEnabledToolIds(this.config.tool_categories)
+    if (!enabledToolIds.has(toolName)) {
+      logger.warn(`MCP tool "${toolName}" called but not in enabled categories`)
       return {
         jsonrpc: '2.0',
         id: id ?? null,
@@ -330,13 +449,36 @@ class KMSMCPService {
           content: [
             {
               type: 'text',
-              text: result,
+              text: `Error: Tool "${toolName}" is not enabled. Please enable its category in WorkAvatar settings.`,
             },
           ],
+          isError: true,
         },
       }
+    }
+
+    const allDefs = this.getAllToolDefinitions()
+    const tool = allDefs.get(toolName)
+    if (!tool) {
+      return {
+        jsonrpc: '2.0',
+        id: id ?? null,
+        result: {
+          content: [{ type: 'text', text: `Error: Unknown tool: ${toolName}` }],
+          isError: true,
+        },
+      }
+    }
+
+    try {
+      const result = await invokeBuiltinTool(tool, params.arguments || {})
+      return {
+        jsonrpc: '2.0',
+        id: id ?? null,
+        result,
+      }
     } catch (error: any) {
-      logger.error(`MCP tool "${params.name}" execution failed:`, error?.message || error)
+      logger.error(`MCP tool "${toolName}" execution failed:`, error?.message || error)
       return {
         jsonrpc: '2.0',
         id: id ?? null,
@@ -344,7 +486,7 @@ class KMSMCPService {
           content: [
             {
               type: 'text',
-              text: `Error: ${error.message}`,
+              text: `Error: ${String(error?.message || error || 'Unknown error')}`,
             },
           ],
           isError: true,
@@ -360,7 +502,13 @@ class KMSMCPService {
   }
 
   /** 发送 JSON-RPC 错误响应 */
-  private sendJsonRpcError(res: http.ServerResponse, httpStatus: number, code: number, message: string, id: string | number | null) {
+  private sendJsonRpcError(
+    res: http.ServerResponse,
+    httpStatus: number,
+    code: number,
+    message: string,
+    id: string | number | null,
+  ) {
     res.writeHead(httpStatus, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }))
   }
