@@ -1544,6 +1544,14 @@ export default {
     filterPriority: '优先级',
     filterDueFrom: '截止起',
     filterDueTo: '截止止',
+    // 快速筛选与已完成分组
+    quickFilterToday: '今日',
+    quickFilterOverdue: '逾期',
+    quickFilterCompleted: '已完成',
+    groupTodayDone: '今日已完成',
+    hideCompleted: '隐藏已完成',
+    hideCompletedHint: '点击隐藏历史已完成项',
+    showCompletedHint: '点击显示历史已完成项',
     // 操作
     complete: '完成',
     uncomplete: '取消完成',

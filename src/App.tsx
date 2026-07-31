@@ -10,8 +10,9 @@ import {
   FieldTimeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import UnifiedInteractionModal from './components/common/UnifiedInteractionModal'
+import KeepAliveOutlet from './components/common/KeepAliveOutlet'
 import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
@@ -170,7 +171,7 @@ const App: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            <Outlet />
+            <KeepAliveOutlet />
           </Content>
         </Layout>
       </Layout>

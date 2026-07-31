@@ -273,12 +273,6 @@ export function useDragInteraction(options: UseDragInteractionOptions): UseDragI
     e.preventDefault()
     e.stopPropagation()
 
-    // 全天事件不拖拽
-    if (ev.all_day) {
-      onEditEvent(ev)
-      return
-    }
-
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     const relY = e.clientY - rect.top
     const height = rect.height

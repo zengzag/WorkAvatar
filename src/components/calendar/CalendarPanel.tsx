@@ -199,6 +199,13 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
     return Array.from({ length: 7 }, (_, i) => monday + i * 86400 * MS)
   }, [view, currentDate])
 
+  // 每日全天事件（独立于时间网格渲染，固定在顶部）
+  const allDayEventsByDay = useMemo(
+    () => dayColumns.map(dms => getEventsForDay(events, dms).filter(e => e.all_day)),
+    [dayColumns, events],
+  )
+  const hasAllDayEvents = allDayEventsByDay.some(arr => arr.length > 0)
+
   const weekdayLabels = [
     t('calendar.viewSunday'), t('calendar.viewMonday'), t('calendar.viewTuesday'),
     t('calendar.viewWednesday'), t('calendar.viewThursday'), t('calendar.viewFriday'),
@@ -317,51 +324,118 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
   return (
     <Spin spinning={loading}>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* 表头 */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: `56px repeat(${dayColumns.length}, 1fr)`,
-          borderBottom: `1px solid ${token.colorBorder}`,
-          flexShrink: 0,
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-          background: token.colorBgContainer,
-        }}>
-          <div />
-          {dayColumns.map((dms) => {
-            const d = new Date(dms)
-            const isToday = startOfDayMs(Date.now()) === dms
-            return (
-              <div
-                key={dms}
-                style={{
-                  textAlign: 'center',
-                  padding: '8px 4px',
-                  borderLeft: `1px solid ${token.colorBorder}`,
-                }}
-              >
-                <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
-                  {view === 'week' ? weekdayLabels[d.getDay()] : t('calendar.today')}
+        {/* sticky 容器：表头 + 全天事件区作为整体固定在顶部，不随滚动消失 */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+          {/* 表头 */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: `56px repeat(${dayColumns.length}, 1fr)`,
+            borderBottom: `1px solid ${token.colorBorder}`,
+            background: token.colorBgContainer,
+          }}>
+            <div />
+            {dayColumns.map((dms) => {
+              const d = new Date(dms)
+              const isToday = startOfDayMs(Date.now()) === dms
+              return (
+                <div
+                  key={dms}
+                  style={{
+                    textAlign: 'center',
+                    padding: '8px 4px',
+                    borderLeft: `1px solid ${token.colorBorder}`,
+                  }}
+                >
+                  <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
+                    {view === 'week' ? weekdayLabels[d.getDay()] : t('calendar.today')}
+                  </div>
+                  <div style={{
+                    fontSize: 18,
+                    fontWeight: 500,
+                    color: isToday ? token.colorPrimary : token.colorText,
+                    background: isToday ? token.colorPrimaryBg : 'transparent',
+                    borderRadius: 999,
+                    display: 'inline-block',
+                    minWidth: 28,
+                    padding: '0 6px',
+                  }}>
+                    {d.getDate()}
+                  </div>
                 </div>
-                <div style={{
-                  fontSize: 18,
-                  fontWeight: 500,
-                  color: isToday ? token.colorPrimary : token.colorText,
-                  background: isToday ? token.colorPrimaryBg : 'transparent',
-                  borderRadius: 999,
-                  display: 'inline-block',
-                  minWidth: 28,
-                  padding: '0 6px',
-                }}>
-                  {d.getDate()}
-                </div>
+              )
+            })}
+          </div>
+
+          {/* 全天事件区（紧贴表头下方固定） */}
+          {hasAllDayEvents && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: `56px repeat(${dayColumns.length}, 1fr)`,
+              borderBottom: `1px solid ${token.colorBorder}`,
+              background: token.colorBgLayout,
+            }}>
+              <div style={{
+                fontSize: 11,
+                color: token.colorTextSecondary,
+                padding: '4px 6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                {t('calendar.allDay')}
               </div>
-            )
-          })}
+              {allDayEventsByDay.map((dayAllDayEvents, idx) => (
+                <div key={idx} style={{
+                  borderLeft: `1px solid ${token.colorBorder}`,
+                  padding: '3px 4px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  minHeight: 28,
+                }}>
+                  {dayAllDayEvents.slice(0, 3).map((ev) => {
+                    const c = eventColorMap[ev.color] || eventColorMap.default
+                    return (
+                      <Tooltip
+                        key={`${ev.id}-${ev.instance_start_at}`}
+                        title={ev.title}
+                      >
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onEditEvent(ev)
+                          }}
+                          style={{
+                            background: c.bg,
+                            borderLeft: `3px solid ${c.border}`,
+                            padding: '1px 6px',
+                            fontSize: 11,
+                            borderRadius: 3,
+                            color: token.colorText,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            cursor: 'pointer',
+                            lineHeight: '20px',
+                          }}
+                        >
+                          {ev.title}
+                        </div>
+                      </Tooltip>
+                    )
+                  })}
+                  {dayAllDayEvents.length > 3 && (
+                    <div style={{ fontSize: 10, color: token.colorTextTertiary, padding: '0 4px' }}>
+                      +{dayAllDayEvents.length - 3} {t('calendar.events')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* 时间网格 */}
+        {/* 时间网格（滚动容器） */}
         <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', position: 'relative', background: token.colorBgContainer }}>
           <div data-day-cols style={{
             position: 'relative',
@@ -408,7 +482,8 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
 
             {/* 每日列 */}
             {dayColumns.map((dms, colIdx) => {
-              const dayEvents = getEventsForDay(events, dms)
+              // 全天事件已移至顶部独立区域，时间网格仅渲染非全天事件
+              const dayEvents = getEventsForDay(events, dms).filter(e => !e.all_day)
               const dayTodos = getTodosForDay(todos, dms)
               return (
                 <div
@@ -465,7 +540,6 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     const top = (startMins / 60) * HOUR_HEIGHT
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
                     const c = eventColorMap[ev.color] || eventColorMap.default
-                    const isAllDay = ev.all_day
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
@@ -485,35 +559,31 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             padding: '2px 6px',
                             fontSize: 11,
                             overflow: 'hidden',
-                            cursor: isAllDay ? 'pointer' : 'grab',
+                            cursor: 'grab',
                             color: token.colorText,
                             userSelect: 'none',
                           }}
                         >
                           {/* 顶部 resize 手柄 */}
-                          {!isAllDay && (
-                            <div style={{
-                              position: 'absolute', left: 0, right: 0, top: 0,
-                              height: RESIZE_HANDLE_HEIGHT,
-                              cursor: 'ns-resize', zIndex: 2,
-                            }} />
-                          )}
+                          <div style={{
+                            position: 'absolute', left: 0, right: 0, top: 0,
+                            height: RESIZE_HANDLE_HEIGHT,
+                            cursor: 'ns-resize', zIndex: 2,
+                          }} />
                           <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {isAllDay ? '🕐 ' : ''}{ev.title}
+                            {ev.title}
                           </div>
-                          {!isAllDay && height > 32 && (
+                          {height > 32 && (
                             <div style={{ fontSize: 10, color: token.colorTextSecondary }}>
                               {formatEventTime(ev.instance_start_at)} - {formatEventTime(ev.instance_end_at)}
                             </div>
                           )}
                           {/* 底部 resize 手柄 */}
-                          {!isAllDay && (
-                            <div style={{
-                              position: 'absolute', left: 0, right: 0, bottom: 0,
-                              height: RESIZE_HANDLE_HEIGHT,
-                              cursor: 'ns-resize', zIndex: 2,
-                            }} />
-                          )}
+                          <div style={{
+                            position: 'absolute', left: 0, right: 0, bottom: 0,
+                            height: RESIZE_HANDLE_HEIGHT,
+                            cursor: 'ns-resize', zIndex: 2,
+                          }} />
                         </div>
                       </Tooltip>
                     )

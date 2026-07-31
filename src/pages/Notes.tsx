@@ -363,7 +363,6 @@ const NotesPage: React.FC = () => {
               {notes.tabs.map((tab) => {
                 const isActive = tab.id === notes.activeTabId
                 const tabFileName = tab.relPath ? (tab.relPath.split('/').pop() || tab.relPath) : t('notes.newTab')
-                const isDirty = tab.saveStatus === 'dirty'
                 return (
                   <div
                     key={tab.id}
@@ -388,9 +387,6 @@ const NotesPage: React.FC = () => {
                     }}
                   >
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tabFileName}</span>
-                    {isDirty && (
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: token.colorWarning, flexShrink: 0 }} />
-                    )}
                     <CloseOutlined
                       style={{ fontSize: 11, opacity: 0.45, flexShrink: 0 }}
                       onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id) }}
