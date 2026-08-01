@@ -106,8 +106,18 @@ function buildErrorContext(params: {
   if (code === -2 || signal === 'SIGKILL') lines.push('- 命令已超时或被强制 kill：考虑增大 timeout 参数或拆分长命令')
   else if (code === 127) lines.push('- 退出码 127：命令/解释器不存在，检查命令拼写或 PATH')
   else if (code === 126) lines.push('- 退出码 126：文件不可执行或权限不足')
-  else if (code === 2 && IS_WINDOWS) lines.push('- Windows 退出码 2：常见于文件未找到或 CMD/PowerShell 语法错误')
-  else if ((code ?? 0) !== 0) lines.push(`- 非零退出码：请根据 stderr 与命令内容定位原因`)
+  else if (code === 2 && IS_WINDOWS) lines.push('- Windows 退出码 2：常见于文件未找到或 PowerShell 语法错误')
+  else if (code === 1 && IS_WINDOWS && stderr.toLowerCase().includes('executionpolicy')) {
+    lines.push('- Windows 执行策略(ExecutionPolicy)限制：PowerShell 脚本被禁止执行')
+    lines.push('- 修复：以管理员身份运行 `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`')
+  } else if (code === 1 && IS_WINDOWS && stderr.toLowerCase().includes('not recognized')) {
+    lines.push('- 命令未识别：该命令不在系统 PATH 中，或需要安装对应工具')
+  } else if (code === 1 && IS_WINDOWS && stderr.toLowerCase().includes('access denied')) {
+    lines.push('- 权限不足(Access Denied)：需要管理员权限运行，或文件/目录被锁定')
+  } else if (code === 1 && IS_WINDOWS && stderr.toLowerCase().includes('long path')) {
+    lines.push('- 路径过长(>260 字符)：Windows 默认路径长度限制，建议将项目移到短路径下')
+    lines.push('- 修复：注册表启用长路径支持 `HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem\\LongPathsEnabled=1`')
+  } else if ((code ?? 0) !== 0) lines.push(`- 非零退出码：请根据 stderr 与命令内容定位原因`)
   else lines.push('- 退出码为 0 但报错：常见于 stderr 警告 + 上层业务判断失败')
   return lines.join('\n')
 }
@@ -116,16 +126,25 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell/CMD' : 'Bash'}），用于git/pip/npm/外部exe等系统级操作。纯JS代码用javascript_exec。`,
+  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于git/pip/npm/外部exe等系统级操作。纯JS代码用javascript_exec。`,
   description:
-    `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell/CMD' : 'Bash'}）。
+    `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}）。
 
-**与 javascript_exec 的区别：**
+**与其他执行工具的区别：**
 • shell_exec：执行系统命令（git/pip/npm/docker/外部exe），或需要shell管道/条件语法时使用
-• javascript_exec：写纯JS代码用此工具，不要用 shell_exec 调 node
-• 执行Python代码（python -c / stdin）也可用此工具，通过 pip 安装所需依赖后直接运行
+• javascript_exec：写纯JS代码用此工具，**不要用 shell_exec 调 node**
+• python_exec：执行纯Python代码优先用此工具；shell_exec仅用于pip安装依赖等系统操作
 
-统一 UTF-8 输出，严格分离 stdout/stderr。多行脚本用 stdin_content 参数，避免 JSON 引号转义。`,
+**重要使用规则：**
+1. **不要在命令末尾加 echo $LASTEXITCODE/echo EXIT=$?** —— 工具已自动正确返回原生命令退出码，加echo会掩盖真实退出码导致 exit_code=0
+2. 多行脚本用 stdin_content 参数，command 仅写解释器（如 python -、bash -s），避免 JSON 引号转义
+3. 失败时会自动返回 stderr 全文 + 退出码 + 诊断提示，无需额外探测
+4. Windows 统一使用 PowerShell，**自动检测 pwsh.exe (PowerShell 7) 优先，回退 powershell.exe (PowerShell 5.1)**，自动设置 UTF-8 编码，中文正常显示
+5. **长命令自动写入临时 .ps1 文件执行**，避免命令行参数长度限制
+6. **超时自动使用 taskkill /T /F 彻底杀死进程树**，避免孤儿进程残留
+7. **依赖顺序**：如果需要先写文件再执行命令，**必须串行调用**（同一批内不要同时 file_write 和 shell_exec 依赖刚写的文件，会有竞态）
+
+统一 UTF-8 输出，严格分离 stdout/stderr。`,
   parameters: {
     type: 'object',
     properties: {

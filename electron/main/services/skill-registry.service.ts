@@ -63,6 +63,7 @@ export interface ClaudeSkill {
     name: string
     path: string
     content: string
+    relPath: string
   }>
   is_enabled: boolean
   created_at: number
@@ -369,24 +370,30 @@ class SkillRegistryService {
     return refs
   }
 
-  private loadScripts(skillDir: string): Array<{ name: string; path: string; content: string }> {
+  private loadScripts(skillDir: string): Array<{ name: string; path: string; content: string; relPath: string }> {
     const scriptsDir = path.join(skillDir, 'scripts')
-    const scripts: Array<{ name: string; path: string; content: string }> = []
+    const scripts: Array<{ name: string; path: string; content: string; relPath: string }> = []
 
     if (!fs.existsSync(scriptsDir)) return scripts
 
-    const files = fs.readdirSync(scriptsDir)
-    for (const file of files) {
-      const filePath = path.join(scriptsDir, file)
-      if (fs.statSync(filePath).isFile()) {
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8')
-          scripts.push({ name: file, path: filePath, content })
-        } catch (err: any) {
-          logger.warn(`Failed to read skill script file ${file}:`, err?.message || err)
+    const walkDir = (dir: string, baseRel: string = '') => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name)
+        const relPath = baseRel ? `${baseRel}/${entry.name}` : entry.name
+        if (entry.isDirectory()) {
+          walkDir(fullPath, relPath)
+        } else if (entry.isFile()) {
+          try {
+            const content = fs.readFileSync(fullPath, 'utf-8')
+            scripts.push({ name: entry.name, path: fullPath, content, relPath })
+          } catch (err: any) {
+            logger.warn(`Failed to read skill script file ${relPath}:`, err?.message || err)
+          }
         }
       }
     }
+    walkDir(scriptsDir)
 
     return scripts
   }
@@ -557,18 +564,28 @@ class SkillRegistryService {
       })
     }
 
+    // 追加技能目录绝对路径与环境提示（解决脚本路径不可解析问题）
+    body += '\n\n## 技能路径信息\n'
+    body += `- 技能根目录（绝对路径）: \`${skill.installPath}\`\n`
+    body += `- scripts 目录: \`${path.join(skill.installPath, 'scripts')}\`\n`
+    body += '\n**重要环境提示**：\n'
+    body += '- `docx`/`pptxgenjs`/`xlsx`/`adm-zip` 已内置在 javascript_exec 沙箱中，无需 npm install，直接 require 即可\n'
+    body += '- 技能文档中提到的 soffice.py/pandoc/pdftoppm 等外部工具不一定存在，执行前请先用 env_probe 探测环境\n'
+    body += '- 若外部工具不存在，可降级使用纯 JS/Python 方案（如 docx 文件是 ZIP 包，可用 adm-zip 解包校验 XML）\n'
+    body += '- 脚本路径：直接使用下面提供的绝对路径调用 file_read 读取内容，或用 python_exec/shell_exec 执行\n'
+
     // 追加 references 路径提示，引导 agent 用 file_read 按需读取（第 3 层渐进披露）
     if (skill.references.length > 0) {
-      body += '\n\n## 可用参考资料（按需用 file_read 工具读取）\n'
+      body += '\n## 可用参考资料（按需用 file_read 工具读取绝对路径）\n'
       for (const ref of skill.references) {
         body += `- ${ref.name}: \`${ref.path}\`\n`
       }
     }
-    // 追加 scripts 路径提示（Phase 3 run_skill_script 工具会用）
+    // 追加 scripts 路径提示（递归列出所有子目录脚本）
     if (skill.scripts.length > 0) {
-      body += '\n## 可用脚本（按需用 run_skill_script 工具执行）\n'
+      body += '\n## 可用脚本（按需用 file_read 读取、python_exec/shell_exec 执行绝对路径）\n'
       for (const script of skill.scripts) {
-        body += `- ${script.name}: \`${script.path}\`\n`
+        body += `- ${script.relPath}: \`${script.path}\`\n`
       }
     }
 
