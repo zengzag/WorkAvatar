@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useLayoutEffect, useRef, useEffect, Fragment } from 'react'
+import { useState, useMemo, useCallback, useLayoutEffect, useRef, useEffect, Fragment, memo } from 'react'
 import { Button, Spin, Typography } from 'antd'
 import { RobotOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -184,4 +184,14 @@ const MessageList: React.FC<MessageListProps> = ({
   )
 }
 
-export default MessageList
+// 输入框输入时 inputDraft 变化会触发父组件重新渲染，
+// 但回调函数未用 useCallback 稳定化，默认 shallow memo 会失效。
+// 这些回调均通过 ref 读取最新值，行为稳定，故只对比数据 props 即可安全跳过渲染。
+export default memo(MessageList, (prev, next) => {
+  return (
+    prev.messages === next.messages &&
+    prev.loadingConversationId === next.loadingConversationId &&
+    prev.activeConversationId === next.activeConversationId &&
+    prev.providers === next.providers
+  )
+})

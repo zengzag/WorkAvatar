@@ -260,6 +260,7 @@ export default {
     minimalMode: '极简模式',
     minimalModeTooltip: '开启后不使用任何工具、技能和资料库合集，仅进行纯任务',
     minimalModeDisabledTooltip: '任务已有内容，无法切换极简模式',
+    selectSkillToExecute: '选取技能执行',
     dropFileHint: '松开以附加文件路径',
     attachedFile: '附件文件',
     previewFile: '预览文件',
@@ -275,7 +276,7 @@ export default {
     saveToNoteFailed: '保存到笔记失败',
   },
   globalSearch: {
-    placeholder: '搜索历史对话... (跨数字员工)',
+    placeholder: '搜索历史任务',
     noResults: '未找到相关对话',
     resultsCount: '{{count}} 条结果',
     crossAgentHint: '跨数字员工',

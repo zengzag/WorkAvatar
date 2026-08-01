@@ -41,7 +41,6 @@ export interface AvailableSkill {
 const ChatInput: React.FC<{
   onSend: (content: string, images: string[], models: ModelSelection[], options?: SendOptions) => void
   onStop: () => void
-  onCommand: (command: string) => void
   isStreaming: boolean
   placeholder: string
   providers: any[]
@@ -58,7 +57,7 @@ const ChatInput: React.FC<{
   value: string
   onChange: (value: string) => void
   availableSkills?: AvailableSkill[]
-}> = ({ onSend, onStop, onCommand, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -78,19 +77,13 @@ const ChatInput: React.FC<{
     return (availableSkills || []).filter(s => s.userInvocable)
   }, [availableSkills])
 
-  // 斜杠命令：基础命令 + 已启用 skills（仅显示名称）
+  // 斜杠命令：已启用 skills（仅显示名称）
   // skill 命令 key 为 `/<skill-name>`，选中后填充输入框让用户继续输入参数
   const slashCommands = useMemo(() => {
-    const base: Array<{ key: string; label: string; isSkill: boolean }> = [
-      { key: '/clear', label: '/clear', isSkill: false },
-      { key: '/new', label: '/new', isSkill: false },
-    ]
-    const skillCmds: Array<{ key: string; label: string; isSkill: boolean }> = invocableSkills.map(s => ({
+    return invocableSkills.map(s => ({
       key: `/${s.name}`,
       label: `/${s.name}`,
-      isSkill: true,
     }))
-    return [...base, ...skillCmds]
   }, [invocableSkills])
 
   const currentSlashItems = useMemo(() => {
@@ -105,14 +98,8 @@ const ChatInput: React.FC<{
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      // 唯一匹配且是基础命令（/clear /new）：直接执行
-      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1 && !currentSlashItems[0].isSkill) {
-        onCommand(currentSlashItems[0].key)
-        onChange('')
-        return
-      }
       // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
-      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1 && currentSlashItems[0].isSkill) {
+      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1) {
         const skillName = currentSlashItems[0].key.slice(1)
         onChange(`/${skillName} `)
         return
@@ -137,16 +124,11 @@ const ChatInput: React.FC<{
     return `用户要求使用 ${skillName} skill 处理。`
   }, [invocableSkills])
 
-  // 斜杠菜单选中处理：基础命令直接执行并清空输入；skill 命令填充 `/<name> ` 让用户继续输入参数
-  const handleSlashSelect = useCallback((cmd: { key: string; isSkill: boolean }) => {
-    if (cmd.isSkill) {
-      const skillName = cmd.key.slice(1)
-      onChange(`/${skillName} `)
-    } else {
-      onCommand(cmd.key)
-      onChange('')
-    }
-  }, [onCommand, onChange])
+  // 斜杠菜单选中处理：skill 命令填充 `/<name> ` 让用户继续输入参数
+  const handleSlashSelect = useCallback((cmd: { key: string }) => {
+    const skillName = cmd.key.slice(1)
+    onChange(`/${skillName} `)
+  }, [onChange])
 
   const handleSend = useCallback(() => {
     if (!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
@@ -615,10 +597,12 @@ const ChatInput: React.FC<{
                   onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
                   style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
               </Tooltip>
-              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
-                <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
-                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
-              </Dropdown>
+              <Tooltip title={t('workbench.selectSkillToExecute')}>
+                <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
+                  <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
+                    style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                </Dropdown>
+              </Tooltip>
             </div>
             {charCount > 0 && (
               <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>{charCount}</Text>

@@ -288,7 +288,6 @@ export function runCommandPlatform(
     if (opts.timeoutMs) {
       setTimeout(() => {
         if (!settled) {
-          settled = true
           const pid = child.pid
           try {
             // Windows 使用 taskkill /T /F 彻底杀死进程树（包括所有子进程/孙进程）
@@ -303,6 +302,7 @@ export function runCommandPlatform(
               }
             }
           } catch { /* noop */ }
+          // 由 finish 统一设置 settled 并 resolve，避免提前设 true 导致 finish 被跳过、Promise 永不 resolve
           finish(-2, 'SIGKILL')
         }
       }, opts.timeoutMs + 500)

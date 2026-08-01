@@ -260,6 +260,7 @@ export default {
     minimalMode: 'Minimal Mode',
     minimalModeTooltip: 'When enabled, no tools, skills, or collections are used; pure task only',
     minimalModeDisabledTooltip: 'Cannot toggle minimal mode when task has messages',
+    selectSkillToExecute: 'Select skill to execute',
     dropFileHint: 'Release to attach file path',
     attachedFile: 'Attached File',
     previewFile: 'Preview File',
@@ -275,7 +276,7 @@ export default {
     saveToNoteFailed: 'Failed to save to notes',
   },
   globalSearch: {
-    placeholder: 'Search conversations... (across agents)',
+    placeholder: 'Search task history',
     noResults: 'No matching conversations',
     resultsCount: '{{count}} results',
     crossAgentHint: 'Across agents',

@@ -1218,22 +1218,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     )
   }
 
-  const handleCommand = (command: string) => {
-    if (command === '/clear') {
-      const convId = activeConversationIdRef.current
-      if (convId) {
-        setConvMessages(convId, [])
-        window.electronAPI.conversation.update({
-          id: convId,
-          messages_json: JSON.stringify([]),
-          message_count: 0,
-        }).catch(() => {})
-      }
-    } else if (command === '/new') {
-      startNewConversation()
-    }
-  }
-
   // 草稿更新：同步到当前对话的持久化缓存，切回时能恢复
   const setInputDraft = useCallback((value: string) => {
     setInputDraftState(value)
@@ -1624,7 +1608,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleRegenerate,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
-    handleCommand,
     handleExportConversation,
     handleSwitchBranch,
     handleToggleSegment,

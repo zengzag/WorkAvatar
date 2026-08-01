@@ -268,7 +268,6 @@ const EmployeeWorkbench: React.FC = () => {
     handleRegenerate,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
-    handleCommand,
     handleExportConversation,
     handleSwitchBranch,
     handleToggleSegment,
@@ -704,7 +703,6 @@ const EmployeeWorkbench: React.FC = () => {
           <ChatInput
             onSend={handleSendWithReset}
             onStop={handleStop}
-            onCommand={handleCommand}
             isStreaming={isStreaming}
             placeholder={t('workbench.inputPlaceholder')}
             providers={providers}
