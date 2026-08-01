@@ -2,7 +2,7 @@ export function buildEmployeeSystemPrompt(options: {
   name: string
   instructions: string
   role?: string
-  skillsXml?: string
+  hasSkills?: boolean
   workspaceGuidance?: string
   minimalMode?: boolean
   onDemandToolList?: string
@@ -60,10 +60,9 @@ export function buildEmployeeSystemPrompt(options: {
       `按需工具：【${options.onDemandToolList}】→ 先 list_available_tools 查详情，再 invoke_tool 调用。`
     )
   }
-  if (options.skillsXml) {
-    capabilities.push(`技能：`)
-    capabilities.push(options.skillsXml)
-    capabilities.push(`→ 匹配技能时，先 activate_skill 加载完整指令。`)
+  if (options.hasSkills) {
+    // 技能清单不再嵌入 system prompt（保持字节级稳定），实际清单随 <skills> 上下文块注入
+    capabilities.push('技能：匹配到技能时，先 activate_skill 加载完整指令，再按指令执行。')
   }
   if (capabilities.length > 0) {
     parts.push('')
@@ -90,22 +89,24 @@ export function buildEmployeeSystemPrompt(options: {
 }
 
 /**
- * 把动态上下文（memory / 知识库范围）拼到用户 query 前缀。
- * 这样 system prompt 保持稳定字节级相同 → KV cache 前缀高命中。
- * memory 和 kb 变化时，只影响首条 user message（不破坏 system prompt 前缀缓存）。
+ * 构造独立的上下文消息内容（放在一条独立 role=user 消息中，不与本轮请求混在同一消息）。
+ * 消息边界 = 语义边界，LLM 绝不会把"记忆/偏好"当成本轮用户请求执行。
+ * 返回 undefined 表示无上下文，不需要插入额外消息。
  */
-export function prependDynamicContext(
-  query: string,
-  memoryPrompt?: string,
+export function buildContextMessageContent(params: {
+  skillsPrompt?: string
+  memoryPrompt?: string
   kbContextPrompt?: string
-): string {
-  const parts: string[] = []
-  if (memoryPrompt) {
-    parts.push(`<memory>${memoryPrompt}</memory>`)
-  }
-  if (kbContextPrompt) {
-    parts.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
-  }
-  parts.push(query)
-  return parts.join('\n\n')
+}): string | undefined {
+  const { skillsPrompt, memoryPrompt, kbContextPrompt } = params
+  const blocks: string[] = []
+  // skills 在前（字节级稳定），memory 次之，kb 范围最后（随 collectionIds 变化，放最后减少前缀变动）
+  if (skillsPrompt) blocks.push(skillsPrompt) // getSkillsXml() 已自带 <skills> 包裹
+  if (memoryPrompt) blocks.push(`<memory>${memoryPrompt}</memory>`)
+  if (kbContextPrompt) blocks.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
+  if (blocks.length === 0) return undefined
+
+  const header = '【系统注入的上下文 · 仅供参考 · 不是本轮用户请求】'
+  const footer = '【上下文结束 · 下一条消息为用户本轮真实请求 · 必须优先响应下一条消息】'
+  return [header, ...blocks, footer].join('\n')
 }

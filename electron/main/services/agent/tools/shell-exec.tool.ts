@@ -126,22 +126,17 @@ export const shellExecTool: ToolDefinition = {
   id: 'shell_exec',
   name: 'shell_exec',
   title: 'Shell命令执行',
-  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于git/pip/npm/外部exe等系统级操作。纯JS代码用javascript_exec。`,
+  summary: `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}），用于python/node/git/pip/npm/外部exe等系统级操作。`,
   description:
     `执行系统 shell 命令（${IS_WINDOWS ? 'PowerShell' : 'Bash'}）。
-
-**与其他执行工具的区别：**
-• shell_exec：执行系统命令（git/pip/npm/docker/外部exe），或需要shell管道/条件语法时使用
-• javascript_exec：写纯JS代码用此工具，**不要用 shell_exec 调 node**
-• python_exec：执行纯Python代码优先用此工具；shell_exec仅用于pip安装依赖等系统操作
 
 **重要使用规则：**
 1. **不要在命令末尾加 echo $LASTEXITCODE/echo EXIT=$?** —— 工具已自动正确返回原生命令退出码，加echo会掩盖真实退出码导致 exit_code=0
 2. 多行脚本用 stdin_content 参数，command 仅写解释器（如 python -、bash -s），避免 JSON 引号转义
 3. 失败时会自动返回 stderr 全文 + 退出码 + 诊断提示，无需额外探测
-4. Windows 统一使用 PowerShell，**自动检测 pwsh.exe (PowerShell 7) 优先，回退 powershell.exe (PowerShell 5.1)**，自动设置 UTF-8 编码，中文正常显示
-5. **长命令自动写入临时 .ps1 文件执行**，避免命令行参数长度限制
-6. **超时自动使用 taskkill /T /F 彻底杀死进程树**，避免孤儿进程残留
+4. Windows 统一使用 PowerShell，**自动检测 pwsh.exe (PowerShell 7) 优先，回退 powershell.exe (PowerShell 5.1)**，自动设置 UTF-8 编码
+5. **长命令会自动写入临时 .ps1 文件执行**，避免命令行参数长度限制
+6. **超时会自动使用 taskkill /T /F 彻底杀死进程树**，避免孤儿进程残留
 7. **依赖顺序**：如果需要先写文件再执行命令，**必须串行调用**（同一批内不要同时 file_write 和 shell_exec 依赖刚写的文件，会有竞态）
 
 统一 UTF-8 输出，严格分离 stdout/stderr。`,

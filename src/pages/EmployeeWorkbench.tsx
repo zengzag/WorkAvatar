@@ -211,7 +211,6 @@ const EmployeeWorkbench: React.FC = () => {
           name: s.name,
           description: s.description || '',
           userInvocable: s.userInvocable !== false,
-          disableModelInvocation: !!s.disableModelInvocation,
         }))
         setAvailableSkills(skills)
       })

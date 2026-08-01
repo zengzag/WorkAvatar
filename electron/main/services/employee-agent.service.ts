@@ -11,7 +11,6 @@ import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
-import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
@@ -201,35 +200,9 @@ class EmployeeAgentService {
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
 
-    // 注册启用的 skill 为 LLM 可调用工具
-    // - disableModelInvocation=true 的 skill 跳过（仅手动 /skill-name 触发，由前端处理）
-    // - 工具接受 arguments 参数，支持 $ARGUMENTS / $1 $2... 替换
-    // - handler 返回 renderSkillBody 结果（渐进披露第 2 层：仅正文 + references 路径提示）
-    for (const skill of employeeSkills.enabled) {
-      if (skill.disableModelInvocation) continue
-      const skillDef: ToolDefinition = {
-        id: `skill_${skill.id}`,
-        name: `skill_${skill.name}`,
-        title: skill.name,
-        description: skill.description || '',
-        parameters: {
-          type: 'object',
-          properties: {
-            arguments: {
-              type: 'string',
-              description: '可选参数，会替换 SKILL.md 中的 $ARGUMENTS / $1 / $2 ... 占位符',
-            },
-          },
-        },
-        handler: async (args: Record<string, any>) => {
-          const userArgs = typeof args?.arguments === 'string' ? args.arguments : ''
-          return this.skillRegistry.renderSkillBody(skill.id, userArgs)
-        },
-        source: 'skill',
-      }
-      agent.registerTools([skillDef])
-    }
-
+    // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
+    // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
+    // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
     const enabledToolIds = this.getEnabledBuiltinToolIds(employeeId)
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
@@ -468,6 +441,7 @@ class EmployeeAgentService {
         const isLegacy = cached.includes('## 跨任务记忆')
           || cached.includes('## 当前对话可使用的资料库合集')
           || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
+          || cached.includes('<skills>')
         if (!isLegacy) {
           agent.setCachedSystemPrompt(cached)
           systemPromptCached = true

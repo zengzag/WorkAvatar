@@ -141,15 +141,17 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     </Space>
                   </div>
                 </div>
-                <Popconfirm
-                  title={t('employeeSettings.confirmUninstallSkill')}
-                  description={t('employeeSettings.uninstallSkillDesc')}
-                  onConfirm={() => onUninstallSkill(skill.id)}
-                >
-                  <Button type="text" danger icon={<DeleteOutlined />}>
-                    {t('common.uninstall')}
-                  </Button>
-                </Popconfirm>
+                {skill.source !== 'bundled' && (
+                  <Popconfirm
+                    title={t('employeeSettings.confirmUninstallSkill')}
+                    description={t('employeeSettings.uninstallSkillDesc')}
+                    onConfirm={() => onUninstallSkill(skill.id)}
+                  >
+                    <Button type="text" danger icon={<DeleteOutlined />}>
+                      {t('common.uninstall')}
+                    </Button>
+                  </Popconfirm>
+                )}
               </div>
             ))}
           </div>

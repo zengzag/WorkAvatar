@@ -36,7 +36,6 @@ export interface AvailableSkill {
   name: string
   description: string
   userInvocable: boolean
-  disableModelInvocation: boolean
 }
 
 const ChatInput: React.FC<{
@@ -73,26 +72,26 @@ const ChatInput: React.FC<{
   const attachedImagesRef = useRef(attachedImages)
   attachedImagesRef.current = attachedImages
 
-  // 可通过斜杠菜单触发的 skills：user-invocable 且注册为 LLM 工具（disableModelInvocation=false）
+  // 可通过斜杠菜单触发的 skills：user-invocable 即可
+  // skill 激活统一走 activate_skill 工具，不再依赖 skill_<name> 工具注册
   const invocableSkills = useMemo(() => {
-    return (availableSkills || []).filter(s => s.userInvocable && !s.disableModelInvocation)
+    return (availableSkills || []).filter(s => s.userInvocable)
   }, [availableSkills])
 
-  // 斜杠命令：基础命令 + 已启用 skills（user-invocable 且 LLM 可调用）
+  // 斜杠命令：基础命令 + 已启用 skills（仅显示名称）
   // skill 命令 key 为 `/<skill-name>`，选中后填充输入框让用户继续输入参数
   const slashCommands = useMemo(() => {
-    const base: Array<{ key: string; label: string; description: string; isSkill: boolean }> = [
-      { key: '/clear', label: '/clear', description: t('workbench.cmdClear'), isSkill: false },
-      { key: '/new', label: '/new', description: t('workbench.cmdNew'), isSkill: false },
+    const base: Array<{ key: string; label: string; isSkill: boolean }> = [
+      { key: '/clear', label: '/clear', isSkill: false },
+      { key: '/new', label: '/new', isSkill: false },
     ]
-    const skillCmds: Array<{ key: string; label: string; description: string; isSkill: boolean }> = invocableSkills.map(s => ({
+    const skillCmds: Array<{ key: string; label: string; isSkill: boolean }> = invocableSkills.map(s => ({
       key: `/${s.name}`,
       label: `/${s.name}`,
-      description: s.description || '',
       isSkill: true,
     }))
     return [...base, ...skillCmds]
-  }, [t, invocableSkills])
+  }, [invocableSkills])
 
   const currentSlashItems = useMemo(() => {
     if (!value.startsWith('/')) return []
@@ -123,6 +122,7 @@ const ChatInput: React.FC<{
   }
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
+  // skill 激活统一通过 activate_skill 工具
   const convertSkillCommand = useCallback((raw: string): string => {
     const match = raw.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
     if (!match) return raw
@@ -132,10 +132,21 @@ const ChatInput: React.FC<{
     const skill = invocableSkills.find(s => s.name === skillName)
     if (!skill) return raw
     if (args) {
-      return `[用户通过斜杠菜单激活 skill "${skillName}"] 请立即调用 skill_${skillName} 工具（arguments 参数填入下方内容）处理此请求：\n${args}`
+      return `用户要求使用 ${skillName} skill 处理：\n${args}`
     }
-    return `[用户通过斜杠菜单激活 skill "${skillName}"] 请立即调用 skill_${skillName} 工具处理此请求。`
+    return `用户要求使用 ${skillName} skill 处理。`
   }, [invocableSkills])
+
+  // 斜杠菜单选中处理：基础命令直接执行并清空输入；skill 命令填充 `/<name> ` 让用户继续输入参数
+  const handleSlashSelect = useCallback((cmd: { key: string; isSkill: boolean }) => {
+    if (cmd.isSkill) {
+      const skillName = cmd.key.slice(1)
+      onChange(`/${skillName} `)
+    } else {
+      onCommand(cmd.key)
+      onChange('')
+    }
+  }, [onCommand, onChange])
 
   const handleSend = useCallback(() => {
     if (!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
@@ -512,12 +523,11 @@ const ChatInput: React.FC<{
       {value.startsWith('/') && currentSlashItems.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 0', flexWrap: 'wrap' }}>
           {currentSlashItems.map(cmd => (
-            <div key={cmd.key} onClick={() => onCommand(cmd.key)}
+            <div key={cmd.key} onClick={() => handleSlashSelect(cmd)}
               style={{ padding: '4px 10px', borderRadius: 6, background: token.colorBgTextHover, cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, border: `1px solid ${token.colorBorderSecondary}`, transition: 'all 0.2s' }}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimary; e.currentTarget.style.background = token.colorPrimaryBg }}
               onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary; e.currentTarget.style.background = token.colorBgTextHover }}>
               <Text strong style={{ fontSize: 12, color: token.colorPrimary }}>{cmd.label}</Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text>
             </div>
           ))}
         </div>
@@ -605,7 +615,7 @@ const ChatInput: React.FC<{
                   onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
                   style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
               </Tooltip>
-              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Text strong style={{ fontSize: 12 }}>{cmd.label}</Text><Text type="secondary" style={{ fontSize: 11 }}>{cmd.description}</Text></div>, onClick: () => { onCommand(cmd.key); onChange('') } })) }} trigger={['click']}>
+              <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
                 <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Dropdown>

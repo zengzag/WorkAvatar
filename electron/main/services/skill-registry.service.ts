@@ -164,11 +164,8 @@ class SkillRegistryService {
           fs.rmSync(installPath, { recursive: true })
         }
         this.copyDirectory(sourceDir, installPath)
-      } else {
-        // bundled：先按 name+source 删除旧记录，避免 id 变化导致重复
-        const db = this.db.getDb()
-        db.prepare("DELETE FROM installed_skills WHERE source='bundled' AND name = ?").run(manifest.name)
       }
+      // bundled 不复制目录，installPath 直接指向只读 resources 目录
 
       const references = this.loadReferences(installPath)
       const scripts = this.loadScripts(installPath)
@@ -422,11 +419,32 @@ class SkillRegistryService {
   private saveToDatabase(skill: ClaudeSkill): void {
     const db = this.db.getDb()
     db.prepare(
-      `INSERT OR REPLACE INTO installed_skills (
+      `INSERT INTO installed_skills (
         id, name, description, version, author, tags_json, install_path, manifest_json, skill_md_content,
         license, compatibility, allowed_tools_json, metadata_json, context, agent, source,
         disable_model_invocation, user_invocable, hooks_json, is_enabled, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        version = excluded.version,
+        author = excluded.author,
+        tags_json = excluded.tags_json,
+        install_path = excluded.install_path,
+        manifest_json = excluded.manifest_json,
+        skill_md_content = excluded.skill_md_content,
+        license = excluded.license,
+        compatibility = excluded.compatibility,
+        allowed_tools_json = excluded.allowed_tools_json,
+        metadata_json = excluded.metadata_json,
+        context = excluded.context,
+        agent = excluded.agent,
+        source = excluded.source,
+        disable_model_invocation = excluded.disable_model_invocation,
+        user_invocable = excluded.user_invocable,
+        hooks_json = excluded.hooks_json,
+        is_enabled = excluded.is_enabled,
+        created_at = excluded.created_at`
     ).run(
       skill.id,
       skill.name,
@@ -572,7 +590,7 @@ class SkillRegistryService {
     body += '- `docx`/`pptxgenjs`/`xlsx`/`adm-zip` 已内置在 javascript_exec 沙箱中，无需 npm install，直接 require 即可\n'
     body += '- 技能文档中提到的 soffice.py/pandoc/pdftoppm 等外部工具不一定存在，执行前请先用 env_probe 探测环境\n'
     body += '- 若外部工具不存在，可降级使用纯 JS/Python 方案（如 docx 文件是 ZIP 包，可用 adm-zip 解包校验 XML）\n'
-    body += '- 脚本路径：直接使用下面提供的绝对路径调用 file_read 读取内容，或用 python_exec/shell_exec 执行\n'
+    body += '- 脚本路径：直接使用下面提供的绝对路径调用 file_read 读取内容，或用 shell_exec 执行\n'
 
     // 追加 references 路径提示，引导 agent 用 file_read 按需读取（第 3 层渐进披露）
     if (skill.references.length > 0) {
@@ -583,7 +601,7 @@ class SkillRegistryService {
     }
     // 追加 scripts 路径提示（递归列出所有子目录脚本）
     if (skill.scripts.length > 0) {
-      body += '\n## 可用脚本（按需用 file_read 读取、python_exec/shell_exec 执行绝对路径）\n'
+      body += '\n## 可用脚本（按需用 file_read 读取、shell_exec 执行绝对路径）\n'
       for (const script of skill.scripts) {
         body += `- ${script.relPath}: \`${script.path}\`\n`
       }
