@@ -1,7 +1,7 @@
-import { getOfficeModuleStatus } from './office-exec.tool'
+import { getJavascriptModuleStatus } from './javascript-exec.tool'
 
 export function buildOfficeGuide(workspacePath?: string, formats?: string[]): string {
-  const moduleStatus = getOfficeModuleStatus()
+  const moduleStatus = getJavascriptModuleStatus()
   const availableModules = Object.entries(moduleStatus)
     .filter(([, s]) => s.loaded)
     .map(([name]) => name)
@@ -25,7 +25,7 @@ export function buildOfficeGuide(workspacePath?: string, formats?: string[]): st
   // ===== 头部：核心规则 =====
   parts.push('## Office 文档规则与陷阱')
   parts.push('')
-  parts.push('**必须用 `office_exec`，禁止 `shell_exec` 调外部脚本。**')
+  parts.push('**必须用 `javascript_exec`，禁止 `shell_exec` 调外部脚本。**')
   parts.push('')
 
   // ===== 语法预检查 =====
@@ -42,14 +42,14 @@ export function buildOfficeGuide(workspacePath?: string, formats?: string[]): st
   parts.push('// 步骤1：file_write 写入骨架代码（含 Document 结构 + 前 1-2 个章节）')
   parts.push('file_write({ path: "/workspace/gen-doc.js", content: "..." })')
   parts.push('')
-  parts.push('// 步骤2：office_exec 执行骨架，生成基础文档')
-  parts.push('office_exec({ code_file: "/workspace/gen-doc.js" })')
+  parts.push('// 步骤2：javascript_exec 执行骨架，生成基础文档')
+  parts.push('javascript_exec({ code_file: "/workspace/gen-doc.js" })')
   parts.push('')
   parts.push('// 步骤3：file_edit 在 sections.children 数组中追加章节内容')
   parts.push('file_edit({ operation: "insert", path: "/workspace/gen-doc.js", after_string: "/* SECTION_END */", content: "..." })')
   parts.push('')
-  parts.push('// 步骤4：重复 office_exec 验证，逐步完善')
-  parts.push('office_exec({ code_file: "/workspace/gen-doc.js" })')
+  parts.push('// 步骤4：重复 javascript_exec 验证，逐步完善')
+  parts.push('javascript_exec({ code_file: "/workspace/gen-doc.js" })')
   parts.push('```')
   parts.push('')
   parts.push('**分步原则**：')
@@ -217,4 +217,4 @@ function buildQuoteRules(): string {
   ].join('\n')
 }
 
-// office_guide 工具已移除：内容合并到 list_available_tools 的 office_exec 详情中（meta-tools.ts）
+// office_guide 工具已移除：内容合并到 list_available_tools 的 javascript_exec 详情中（meta-tools.ts）

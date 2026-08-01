@@ -6,11 +6,10 @@ import {
   CalendarOutlined,
   RobotOutlined,
   GlobalOutlined,
-  SettingOutlined,
-  FileTextOutlined,
   MessageOutlined,
   BulbOutlined,
   ToolOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -78,14 +77,9 @@ const TOOL_CATEGORIES: Array<{
     toolIds: ['web_search', 'web_fetch'],
   },
   {
-    id: 'system',
-    icon: <SettingOutlined />,
-    toolIds: ['system_info', 'env_vars', 'shell_exec'],
-  },
-  {
-    id: 'office',
-    icon: <FileTextOutlined />,
-    toolIds: ['office_exec'],
+    id: 'scripting',
+    icon: <CodeOutlined />,
+    toolIds: ['shell_exec', 'javascript_exec'],
   },
   {
     id: 'conversation_memory',
@@ -95,7 +89,7 @@ const TOOL_CATEGORIES: Array<{
   {
     id: 'basic_helpers',
     icon: <BulbOutlined />,
-    toolIds: ['calculator', 'date_time', 'ask_user'],
+    toolIds: ['date_time', 'ask_user'],
   },
 ]
 

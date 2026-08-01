@@ -95,6 +95,27 @@ class SkillRegistryService {
     if (!fs.existsSync(this.skillsDir)) {
       fs.mkdirSync(this.skillsDir, { recursive: true })
     }
+    // 启动时同步内置（bundled）Skills：resources/skills/* → DB
+    this.syncBundledSkills().catch((err) => logger.warn('sync bundled skills failed:', err?.message || err))
+  }
+
+  /** 同步内置（bundled）Skills：resources/skills 目录下每个子目录视为一个 skill */
+  private async syncBundledSkills(): Promise<void> {
+    const resourcesDir = PathService.getInstance().getResourcesDir()
+    const bundledRoot = path.join(resourcesDir, 'skills')
+    if (!fs.existsSync(bundledRoot)) return
+    const entries = fs.readdirSync(bundledRoot, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const skillDir = path.join(bundledRoot, entry.name)
+      const skillMdPath = path.join(skillDir, 'SKILL.md')
+      if (!fs.existsSync(skillMdPath)) continue
+      try {
+        await this.installFromDirectory(skillDir, 'bundled')
+      } catch (err: any) {
+        logger.warn(`sync bundled skill ${entry.name} failed:`, err?.message || err)
+      }
+    }
   }
 
   static getInstance(): SkillRegistryService {
@@ -127,14 +148,26 @@ class SkillRegistryService {
         this.validateManifest(manifest)
       }
 
-      const skillId = this.generateSkillId(manifest.name)
-      const installPath = path.join(this.skillsDir, skillId)
+      // bundled 来源：不复制目录，installPath 直接指向只读 resources 目录，id 不附加随机后缀（稳定）
+      // 非 bundled：复制目录到 skillsDir，id 带随机后缀
+      const isBundled = source === 'bundled'
+      const skillId = isBundled
+        ? manifest.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+        : this.generateSkillId(manifest.name)
+      const installPath = isBundled
+        ? sourceDir
+        : path.join(this.skillsDir, skillId)
 
-      if (fs.existsSync(installPath)) {
-        fs.rmSync(installPath, { recursive: true })
+      if (!isBundled) {
+        if (fs.existsSync(installPath)) {
+          fs.rmSync(installPath, { recursive: true })
+        }
+        this.copyDirectory(sourceDir, installPath)
+      } else {
+        // bundled：先按 name+source 删除旧记录，避免 id 变化导致重复
+        const db = this.db.getDb()
+        db.prepare("DELETE FROM installed_skills WHERE source='bundled' AND name = ?").run(manifest.name)
       }
-
-      this.copyDirectory(sourceDir, installPath)
 
       const references = this.loadReferences(installPath)
       const scripts = this.loadScripts(installPath)
@@ -459,7 +492,8 @@ class SkillRegistryService {
   async uninstallSkill(id: string): Promise<boolean> {
     try {
       const skill = this.getSkillById(id)
-      if (skill && fs.existsSync(skill.installPath)) {
+      // bundled 来源的 skill 目录在只读 resources/ 下，不可删除；仅删除 DB 记录（下次启动会自动重装）
+      if (skill && skill.source !== 'bundled' && fs.existsSync(skill.installPath)) {
         fs.rmSync(skill.installPath, { recursive: true, force: true })
       }
 

@@ -42,6 +42,7 @@ export function buildEmployeeSystemPrompt(options: {
   parts.push('- 小任务直接执行，不做过度规划。')
   parts.push('- 高风险操作（删除/覆盖/命令执行/增删笔记）前必须 ask_user 二次确认。')
   parts.push('- 简单常识问题直接回答，避免无意义工具调用。')
+  parts.push('- 注意当前系统环境差异（路径分隔符、脚本语法等）。')
 
   // 长自定义指令（≥100 字）：放在标准 RULES 之后，避免挤压硬规则权重
   if (instructions && instructions.length >= 100) {

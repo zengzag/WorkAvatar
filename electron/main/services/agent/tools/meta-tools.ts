@@ -1,7 +1,6 @@
 import type { ToolDefinition, ToolHandlerContext } from './types'
 import { ToolRegistry } from './tool-registry'
 import { ToolDispatcher } from './tool-dispatcher'
-import { buildOfficeGuide } from './office-prompts'
 
 /**
  * 元工具：list_available_tools + invoke_tool
@@ -48,7 +47,7 @@ function formatToolsSummary(tools: ToolDefinition[]): string {
 }
 
 /** 详情模式：返回指定工具的完整参数说明 */
-function formatToolDetail(tool: ToolDefinition, workspacePath?: string): string {
+function formatToolDetail(tool: ToolDefinition, _workspacePath?: string): string {
   const parts: string[] = []
   parts.push(`## ${tool.name} — ${tool.title}`)
   parts.push('')
@@ -58,12 +57,6 @@ function formatToolDetail(tool: ToolDefinition, workspacePath?: string): string 
   parts.push(formatParameters(tool.parameters))
   parts.push('')
   parts.push(`调用方式: invoke_tool(tool_name="${tool.name}", args={...})`)
-
-  // office_exec 追加完整 Office 指南（含代码模板与陷阱清单）
-  if (tool.name === 'office_exec') {
-    parts.push('')
-    parts.push(buildOfficeGuide(workspacePath, ['docx', 'pptx', 'xlsx']))
-  }
 
   return parts.join('\n')
 }

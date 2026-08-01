@@ -81,9 +81,32 @@ export class SkillManager {
       throw new Error(`Skill "${skillName}" not found`)
     }
 
-    const content = skill.references.get(referencePath)
+    // 容错匹配：LLM 可能传入 references/xxx.md、xxx.md、完整路径或带大小写差异
+    const availableNames = [...skill.references.keys()]
+    const normalized = referencePath.replace(/\\/g, '/').replace(/^\.?\//, '')
+    const basename = normalized.split('/').pop() || normalized
+
+    // 1. 精确匹配
+    let content = skill.references.get(referencePath)
+    // 2. 去掉 references/ 前缀后匹配
+    if (!content) content = skill.references.get(normalized)
+    // 3. 仅用文件名匹配（兼容 LLM 传入 references/xxx.md 的情况）
+    if (!content) content = skill.references.get(basename)
+    // 4. 大小写不敏感匹配
     if (!content) {
-      throw new Error(`Reference "${referencePath}" not found in skill "${skillName}"`)
+      const lower = basename.toLowerCase()
+      const hit = availableNames.find(n => n.toLowerCase() === lower)
+      if (hit) content = skill.references.get(hit)
+    }
+
+    if (!content) {
+      const list = availableNames.length > 0
+        ? availableNames.map(n => `- ${n}`).join('\n')
+        : '(无参考文件)'
+      throw new Error(
+        `Reference "${referencePath}" not found in skill "${skillName}".\n` +
+        `可用参考文件：\n${list}`
+      )
     }
 
     return content

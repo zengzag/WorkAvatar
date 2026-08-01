@@ -186,8 +186,12 @@ export class EmployeeAgent extends BaseAgent {
         required: ['skill_name', 'reference_path']
       },
       handler: (args: any) => {
-        const content = this.skillManager.readReference(args.skill_name, args.reference_path)
-        return { success: true, output: content }
+        try {
+          const content = this.skillManager.readReference(args.skill_name, args.reference_path)
+          return { success: true, output: content }
+        } catch (error: any) {
+          return { success: false, error: error.message || String(error) }
+        }
       },
       source: 'skill',
       permission: 'safe',

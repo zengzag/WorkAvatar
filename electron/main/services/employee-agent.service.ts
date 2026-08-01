@@ -1,3 +1,4 @@
+import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
@@ -7,7 +8,7 @@ import NotesService from './notes/notes.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { ToolDefinition } from './agent/tools/types'
@@ -171,7 +172,12 @@ class EmployeeAgentService {
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
+        const platformMap: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
+        const osName = platformMap[process.platform] || process.platform
+        const osRelease = os.release()
+        const osArch = os.arch()
         const parts: string[] = []
+        parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
         if (emp.workspace_path) parts.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
         const notesRoot = NotesService.getInstance().getVaultRoot()
         parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
@@ -234,8 +240,8 @@ class EmployeeAgentService {
     const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsCollectionTools)
 
-    if (enabledToolIds.has('office_exec')) {
-      agent.registerTools([officeExecTool])
+    if (enabledToolIds.has('javascript_exec')) {
+      agent.registerTools([javascriptExecTool])
     }
 
     // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
@@ -301,10 +307,10 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const officeToolIds = [
-      'office_exec',
+    const scriptingToolIds = [
+      'javascript_exec',
     ]
-    for (const id of officeToolIds) {
+    for (const id of scriptingToolIds) {
       allBuiltinToolIds.add(id)
     }
 
@@ -345,9 +351,11 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const enabledRows = this.db.getDb().prepare(
+    let enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
+
+    enabledRows = enabledRows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
 
     if (enabledRows.length === 0) {
       return allBuiltinToolIds

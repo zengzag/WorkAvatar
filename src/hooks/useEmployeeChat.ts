@@ -58,14 +58,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
   const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
-    calculator: t('workbench.toolNames.calculator'),
     date_time: t('workbench.toolNames.date_time'),
     shell_exec: t('workbench.toolNames.shell_exec'),
     file: t('workbench.toolNames.file'),
-    system_info: t('workbench.toolNames.system_info'),
     web_search: t('workbench.toolNames.web_search'),
     web_fetch: t('workbench.toolNames.web_fetch'),
-    env_vars: t('workbench.toolNames.env_vars'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
     ask_user: t('workbench.toolNames.ask_user'),

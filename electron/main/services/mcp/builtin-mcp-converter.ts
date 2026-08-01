@@ -65,7 +65,7 @@ export const BUILTIN_TOOL_CATEGORIES = [
     id: 'general',
     defaultEnabled: true,
     toolIds: [
-      'calculator', 'date_time', 'system_info', 'env_vars',
+      'date_time',
     ],
   },
   {

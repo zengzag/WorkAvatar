@@ -274,8 +274,8 @@ const EXCLUDED_MCP_TOOL_IDS = new Set<string>([
   'file_mkdir', 'file_list', 'file_search',
   'file_delete', 'file_move', 'file_copy',
   'file_rename', 'file_stat',
-  // office（Office 自动化）
-  'office_exec',
+  // scripting（代码执行）
+  'javascript_exec',
   // shell（命令行执行）
   'shell_exec',
   // ask_user（向用户询问）

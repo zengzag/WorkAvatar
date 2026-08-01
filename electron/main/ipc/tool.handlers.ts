@@ -8,7 +8,7 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
-import { allBuiltinTools, createKMSTools, createKMSCollectionTools, officeExecTool } from '../services/agent/tools'
+import { allBuiltinTools, createKMSTools, createKMSCollectionTools, javascriptExecTool, shellExecTool } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
 import EmployeeAgentService from '../services/employee-agent.service'
@@ -114,28 +114,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'web_fetch',
     ],
   },
-  {
-    id: 'system',
-    name: 'system',
-    title: '系统工具',
-    description: '系统信息查询、环境变量读取、Shell命令执行等系统级操作',
-    icon: 'setting',
-    toolIds: [
-      'system_info',
-      'env_vars',
-      'shell_exec',
-    ],
-  },
-  {
-    id: 'office',
-    name: 'office',
-    title: 'Office文档',
-    description: 'Word/Excel/PPT/PDF等Office文档的生成与处理',
-    icon: 'file-document',
-    toolIds: [
-      'office_exec',
-    ],
-  },
+  { id: 'scripting', name: 'scripting', title: '脚本执行', description: 'Shell命令、JavaScript代码执行，处理数据、调用语言生态、操作系统命令', icon: 'code', toolIds: ['shell_exec', 'javascript_exec'], },
   {
     id: 'conversation_memory',
     name: 'conversation_memory',
@@ -152,10 +131,9 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'basic_helpers',
     name: 'basic_helpers',
     title: '基础辅助',
-    description: '计算器、日期时间获取、用户询问交互等轻量辅助工具',
+    description: '日期时间获取、用户询问交互等轻量辅助工具',
     icon: 'tool',
     toolIds: [
-      'calculator',
       'date_time',
       'ask_user',
     ],
@@ -189,26 +167,32 @@ function getUnifiedBuiltinToolCatalog() {
     category: 'kms_collection' as const,
   }))
 
-  // office_exec 工具
-  const officeTools = [{
-    id: officeExecTool.id,
-    name: officeExecTool.name,
-    title: officeExecTool.title,
-    description: officeExecTool.description,
-    category: 'office' as const,
-  }]
+  // shell_exec + javascript_exec 工具（category 覆盖 agent 里的默认 'agent'）
+  const scriptingTools = [
+    {
+      id: shellExecTool.id,
+      name: shellExecTool.name,
+      title: shellExecTool.title,
+      description: shellExecTool.description,
+      category: 'scripting' as const,
+    },
+    {
+      id: javascriptExecTool.id,
+      name: javascriptExecTool.name,
+      title: javascriptExecTool.title,
+      description: javascriptExecTool.description,
+      category: 'scripting' as const,
+    },
+    ]
 
-  const seen = new Set<string>()
-  const unified: Array<{ id: string; name: string; title: string; description: string; category: string }> = []
+  // 用 Map 去重：后出现的覆盖先出现的，确保 scriptingTools 的 category='scripting' 覆盖 agentTools 里的 'agent'
+  const idToTool = new Map<string, { id: string; name: string; title: string; description: string; category: string }>()
 
-  for (const tool of [...agentTools, ...kmsTools, ...kmsCollectionTools, ...officeTools]) {
-    if (!seen.has(tool.id)) {
-      seen.add(tool.id)
-      unified.push(tool)
-    }
+  for (const tool of [...agentTools, ...kmsTools, ...kmsCollectionTools, ...scriptingTools]) {
+    idToTool.set(tool.id, tool)
   }
 
-  return unified
+  return Array.from(idToTool.values())
 }
 
 /** 根据工具ID → 工具详情的查找表（含 category 字段） */
