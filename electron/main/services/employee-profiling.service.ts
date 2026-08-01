@@ -278,7 +278,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
 
     let prompt: string
-    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"file"、"calculator"等）`
+    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"file"、"date_time"等）`
     if (hasCollection) {
       prompt = `分析资料库合集内容，设计数字员工角色，JSON格式输出。
 

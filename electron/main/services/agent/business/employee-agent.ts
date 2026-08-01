@@ -3,7 +3,7 @@ import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
 import type { ToolDefinition } from '../tools/types'
-import { buildEmployeeSystemPrompt } from './prompts'
+import { buildEmployeeSystemPrompt, buildContextMessageContent } from './prompts'
 
 export interface EmployeeAgentConfig extends AgentConfig {
   allowedSkillPaths?: string[]
@@ -14,6 +14,7 @@ export interface EmployeeAgentConfig extends AgentConfig {
 export class EmployeeAgent extends BaseAgent {
   private employeeConfig: EmployeeAgentConfig
   private skillManager: SkillManager
+  private skillsPrompt: string | undefined
 
   constructor(config: EmployeeAgentConfig, options?: BaseAgentOptions) {
     super(config, options)
@@ -26,6 +27,8 @@ export class EmployeeAgent extends BaseAgent {
     if (this.employeeConfig.autoDiscoverSkills) {
       this.skillManager.discoverSkills()
     }
+    // 技能清单在 agent 创建时一次性计算并冻结，之后稳定复用（与 memory 同理）
+    this.skillsPrompt = this.skillManager.getSkillsXml() || undefined
 
     this.registerSkillTools()
   }
@@ -77,21 +80,19 @@ export class EmployeeAgent extends BaseAgent {
     }
 
     const useSkills = options.useSkills !== false
-    const skillsXml = useSkills ? this.skillManager.getSkillsXml() : undefined
-
     const onDemandTools = this.toolRegistry.getOnDemandTools()
     const onDemandToolList = onDemandTools
       .map(t => `${t.title}(${t.name})`)
       .join('、')
 
+    // memory / skills / kb 不再拼入 system prompt → 改为在 run/runStream 中 prepend 到 query
+    // 这样 system prompt 字节级稳定 → KV cache 前缀高命中
     const prompt = buildEmployeeSystemPrompt({
       name: this.config.name || '数字员工',
       instructions: this.config.instructions || '',
       role: this.config.role,
-      skillsXml: skillsXml || undefined,
+      hasSkills: useSkills && !!this.skillsPrompt,
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
-      memoryPrompt: this.memoryPrompt,
-      kbContextPrompt: this.kbContextPrompt,
       minimalMode: this.minimalMode,
       onDemandToolList: onDemandToolList || undefined,
     })
@@ -107,16 +108,59 @@ export class EmployeeAgent extends BaseAgent {
     return super.resolveActiveTools(runtimeToolNames)
   }
 
+  /**
+   * 上下文消息识别标记（开头）。多轮 history 中若存在已注入的上下文消息，
+   * 以此为特征过滤掉旧的，替换成最新的，避免上下文重复堆积。
+   */
+  private static readonly CONTEXT_MSG_PREFIX = '【系统注入的上下文 · 仅供参考 · 不是本轮用户请求】'
+
+  /**
+   * 在调用父类执行前，将动态上下文（memory / 知识库范围）
+   * 作为一条独立的 role=user 消息插入到 history 头部。
+   * 保持 真实 query 独占末尾 user 消息 → 语义边界清晰，意图执行准确率最高。
+   * 同时 system prompt 仍字节级稳定 → KV cache 前缀高命中。
+   */
+  private patchOptionsWithDynamicContext(options: AgentRunOptions): AgentRunOptions {
+    const useSkills = options.useSkills !== false && !this.minimalMode
+    const contextContent = buildContextMessageContent({
+      skillsPrompt: useSkills ? this.skillsPrompt : undefined,
+      memoryPrompt: this.memoryPrompt,
+      kbContextPrompt: this.kbContextPrompt,
+    })
+
+    // 1) 无上下文 → 原样返回
+    if (!contextContent) return options
+
+    // 2) 清理 history 中之前注入的旧上下文消息（多轮历史中重复调用 patch 会叠加，防重复）
+    const prevHistory = options.history || []
+    const cleanedHistory = prevHistory.filter(
+      m => !(m.role === 'user' && typeof m.content === 'string' &&
+             m.content.startsWith(EmployeeAgent.CONTEXT_MSG_PREFIX))
+    )
+
+    // 3) 新上下文消息插入到 history 头部
+    const contextMessage: import('../core/types').Message = {
+      role: 'user',
+      content: contextContent,
+    }
+    const newHistory = [contextMessage, ...cleanedHistory]
+
+    // 4) query 保持不变（独占 Last 位置加权）
+    return { ...options, history: newHistory }
+  }
+
   async runStream(
     options: AgentRunOptions,
     callbacks: any,
     signal?: AbortSignal
   ): Promise<void> {
-    return super.runStream(options, callbacks, signal)
+    const patched = this.patchOptionsWithDynamicContext(options)
+    return super.runStream(patched, callbacks, signal)
   }
 
   async run(options: AgentRunOptions): Promise<any> {
-    return super.run(options)
+    const patched = this.patchOptionsWithDynamicContext(options)
+    return super.run(patched)
   }
 
   createSkillTools(): ToolDefinition[] {
@@ -170,8 +214,12 @@ export class EmployeeAgent extends BaseAgent {
         required: ['skill_name', 'reference_path']
       },
       handler: (args: any) => {
-        const content = this.skillManager.readReference(args.skill_name, args.reference_path)
-        return { success: true, output: content }
+        try {
+          const content = this.skillManager.readReference(args.skill_name, args.reference_path)
+          return { success: true, output: content }
+        } catch (error: any) {
+          return { success: false, error: error.message || String(error) }
+        }
       },
       source: 'skill',
       permission: 'safe',

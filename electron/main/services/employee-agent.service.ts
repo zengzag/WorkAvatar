@@ -1,3 +1,4 @@
+import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
@@ -7,10 +8,9 @@ import NotesService from './notes/notes.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, officeExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
-import type { ToolDefinition } from './agent/tools/types'
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
@@ -171,10 +171,15 @@ class EmployeeAgentService {
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
+        const platformMap: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
+        const osName = platformMap[process.platform] || process.platform
+        const osRelease = os.release()
+        const osArch = os.arch()
         const parts: string[] = []
-        if (emp.workspace_path) parts.push(`\n## 工作区\n工作区根目录：${emp.workspace_path}\n工作区文件默认授权可被增删改查。`)
+        parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
+        if (emp.workspace_path) parts.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
         const notesRoot = NotesService.getInstance().getVaultRoot()
-        parts.push(`\n## 用户笔记\n笔记根目录：${notesRoot}\n用户的笔记以 .md 文件存储在该目录，默认仅拥有读取权限，增删改需要用户二次授权确认。`)
+        parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
         return parts.join('\n')
       })(),
     }
@@ -195,24 +200,9 @@ class EmployeeAgentService {
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
 
-    for (const skill of employeeSkills.enabled) {
-      const skillDef: ToolDefinition = {
-        id: `skill_${skill.id}`,
-        name: `skill_${skill.name}`,
-        title: skill.name,
-        description: skill.description || '',
-        parameters: {
-          type: 'object',
-          properties: {},
-        },
-        handler: async () => {
-          return this.skillRegistry.getSkillPrompt(skill.id)
-        },
-        source: 'skill',
-      }
-      agent.registerTools([skillDef])
-    }
-
+    // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
+    // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
+    // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
     const enabledToolIds = this.getEnabledBuiltinToolIds(employeeId)
     const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
     agent.registerTools(builtinTools)
@@ -223,8 +213,14 @@ class EmployeeAgentService {
     const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
     agent.registerTools(kmsCollectionTools)
 
-    if (enabledToolIds.has('office_exec')) {
-      agent.registerTools([officeExecTool])
+    if (enabledToolIds.has('javascript_exec')) {
+      agent.registerTools([javascriptExecTool])
+    }
+
+    // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
+    const scriptExecRow = this.db.getDb().prepare("SELECT value FROM settings WHERE key = 'skills_enable_script_execution'").get() as { value: string } | undefined
+    if (scriptExecRow?.value === '1' || scriptExecRow?.value === 'true') {
+      agent.registerTools([runSkillScriptTool])
     }
 
     if (enabledToolIds.has('search_conversations')) {
@@ -284,10 +280,10 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const officeToolIds = [
-      'office_exec',
+    const scriptingToolIds = [
+      'javascript_exec',
     ]
-    for (const id of officeToolIds) {
+    for (const id of scriptingToolIds) {
       allBuiltinToolIds.add(id)
     }
 
@@ -328,9 +324,11 @@ class EmployeeAgentService {
       allBuiltinToolIds.add(id)
     }
 
-    const enabledRows = this.db.getDb().prepare(
+    let enabledRows = this.db.getDb().prepare(
       'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
+
+    enabledRows = enabledRows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
 
     if (enabledRows.length === 0) {
       return allBuiltinToolIds
@@ -429,35 +427,46 @@ class EmployeeAgentService {
     collectionIds: string[],
     minimalMode: boolean,
   ): Promise<boolean> {
+    // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
+    //    memory / 知识库范围不再嵌入 system prompt，改为 prepend 到用户 query（见 EmployeeAgent.patchOptionsWithDynamicContext）
+    //    向后兼容：旧缓存中若含 "## 跨任务记忆" / "## 当前对话可使用的资料库合集" 等旧标记，
+    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免 memory/kb 与 <memory>/<knowledge_scope> 重复。
+    let systemPromptCached = false
     if (conversationId) {
       const conv = this.db.getDb().prepare(
         `SELECT system_prompt FROM conversations WHERE id = ?`
       ).get(conversationId) as { system_prompt?: string } | undefined
-      if (conv?.system_prompt) {
-        agent.setCachedSystemPrompt(conv.system_prompt)
-        agent.updateKBContextPrompt(undefined)
-        return true
+      const cached = conv?.system_prompt
+      if (cached) {
+        const isLegacy = cached.includes('## 跨任务记忆')
+          || cached.includes('## 当前对话可使用的资料库合集')
+          || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
+          || cached.includes('<skills>')
+        if (!isLegacy) {
+          agent.setCachedSystemPrompt(cached)
+          systemPromptCached = true
+        }
       }
     }
 
-    if (minimalMode) {
+    // 2) 知识库范围：独立于 system prompt，始终根据本轮 collectionIds 设置
+    //    （它会在 EmployeeAgent.runStream/run 中作为 <knowledge_scope> 拼到 query 前缀，
+    //     不影响 system prompt 的字节级稳定性）
+    if (minimalMode || collectionIds.length === 0) {
       agent.updateKBContextPrompt(undefined)
     } else {
-      if (collectionIds.length > 0) {
-        const kmsService = require('./kms/kms.service').default.getInstance()
-        const allCollections = kmsService.listCollections() as any[]
-        const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
-        if (selected.length > 0) {
-          const names = selected.map((c: any) => c.name).join('、')
-          agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
-        } else {
-          agent.updateKBContextPrompt(undefined)
-        }
+      const kmsService = require('./kms/kms.service').default.getInstance()
+      const allCollections = kmsService.listCollections() as any[]
+      const selected = allCollections.filter((c: any) => collectionIds.includes(c.id))
+      if (selected.length > 0) {
+        const names = selected.map((c: any) => c.name).join('、')
+        agent.updateKBContextPrompt(`当前对话可使用的资料库合集: ${names}（检索默认限定在此范围内）`)
       } else {
         agent.updateKBContextPrompt(undefined)
       }
     }
-    return false
+
+    return systemPromptCached
   }
 
   private async resolveMaxIterations(providerId: string, modelId?: string): Promise<number> {

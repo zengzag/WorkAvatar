@@ -58,14 +58,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
   const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
-    calculator: t('workbench.toolNames.calculator'),
     date_time: t('workbench.toolNames.date_time'),
     shell_exec: t('workbench.toolNames.shell_exec'),
     file: t('workbench.toolNames.file'),
-    system_info: t('workbench.toolNames.system_info'),
     web_search: t('workbench.toolNames.web_search'),
     web_fetch: t('workbench.toolNames.web_fetch'),
-    env_vars: t('workbench.toolNames.env_vars'),
     activate_skill: t('workbench.toolNames.activate_skill'),
     read_reference: t('workbench.toolNames.read_reference'),
     ask_user: t('workbench.toolNames.ask_user'),
@@ -1221,22 +1218,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     )
   }
 
-  const handleCommand = (command: string) => {
-    if (command === '/clear') {
-      const convId = activeConversationIdRef.current
-      if (convId) {
-        setConvMessages(convId, [])
-        window.electronAPI.conversation.update({
-          id: convId,
-          messages_json: JSON.stringify([]),
-          message_count: 0,
-        }).catch(() => {})
-      }
-    } else if (command === '/new') {
-      startNewConversation()
-    }
-  }
-
   // 草稿更新：同步到当前对话的持久化缓存，切回时能恢复
   const setInputDraft = useCallback((value: string) => {
     setInputDraftState(value)
@@ -1627,7 +1608,6 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleRegenerate,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
-    handleCommand,
     handleExportConversation,
     handleSwitchBranch,
     handleToggleSegment,

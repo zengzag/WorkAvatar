@@ -78,7 +78,7 @@ interface SyntaxCheckResult {
 function checkCodeSyntax(code: string): SyntaxCheckResult {
   const wrappedCode = `(async () => {\n${code}\n})()`
   try {
-    new vm.Script(wrappedCode, { filename: 'office-exec.js' })
+    new vm.Script(wrappedCode, { filename: 'js-exec.js' })
     return { valid: true }
   } catch (e: any) {
     const errorMsg = e.message || String(e)
@@ -86,7 +86,7 @@ function checkCodeSyntax(code: string): SyntaxCheckResult {
 
     let line: number | undefined
     let column: number | undefined
-    const lineMatch = stack.match(/office-exec\.js:(\d+)(?::(\d+))?/)
+    const lineMatch = stack.match(/js-exec\.js:(\d+)(?::(\d+))?/)
     if (lineMatch) {
       line = parseInt(lineMatch[1], 10)
       if (lineMatch[2]) column = parseInt(lineMatch[2], 10)
@@ -139,7 +139,7 @@ function createSandboxedReadOnlyFs(): any {
     'writeFile', 'appendFile', 'unlink', 'rm', 'rmdir',
     'mkdir', 'copyFile', 'rename', 'truncate',
   ])
-  const blockedMsg = 'office_exec 沙箱中 fs 不支持写/删操作。请使用注入的 `file` 对象（如 await file.save(path, content)）进行文件写入。'
+  const blockedMsg = 'javascript_exec 沙箱中 fs 不支持写/删操作。请使用注入的 `file` 对象（如 await file.save(path, content)）进行文件写入。'
   for (const key of Object.keys(realFs)) {
     if (blockedMethods.has(key)) {
       wrappedFs[key] = () => { throw new Error(blockedMsg) }
@@ -301,7 +301,7 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
       ...ALLOWED_NODE_MODULES,
     ]
     throw new Error(
-      `Module "${moduleName}" is not available in the office sandbox. Available modules: ${available.join(', ')}`
+      `Module "${moduleName}" is not available in the javascript sandbox. Available modules: ${available.join(', ')}`
     )
   }
 }
@@ -336,20 +336,18 @@ function collectGeneratedFiles(writtenFiles: Set<string>): GeneratedFileInfo[] {
   return result
 }
 
-export const officeExecTool: ToolDefinition = {
-  id: 'office_exec',
-  name: 'office_exec',
-  title: 'Office文档生成',
-  summary: '在 Node.js 沙箱中执行 JS 代码生成或编辑 Office 文档（Word/PPT/Excel）。执行前自动语法预检查。处理 Office 文档时必须用此工具。',
-  description: `在Node.js沙箱中执行JavaScript代码，创建或编辑Office文档（Word/PowerPoint/Excel）。内置 docx/pptxgenjs/xlsx/adm-zip 模块。
+export const javascriptExecTool: ToolDefinition = {
+  id: 'javascript_exec',
+  name: 'javascript_exec',
+  title: 'JavaScript执行',
+  summary: 'Node.js沙箱中执行JS代码，自动语法预检查、写入路径追踪。纯计算/数据处理/写文件类任务用此，不要用shell_exec调node。',
+  description: `在Node.js沙箱中执行JavaScript代码（支持async/await）。
 
-**处理Office文档时必须用此工具，不要用 shell_exec 调 python/node 脚本。**
+写JS代码用此工具，不要用shell_exec调node。
 
-**语法预检查**：执行前自动校验 JS 语法，语法错误立即返回（不执行），含行号、代码上下文、修复建议。
-
-**长文档分步执行**：生成超长文档（≥1500字）时**必须分步**：先写骨架代码生成基础文档，再用 file_edit 追加章节内容，逐步完善。禁止一次性生成超长代码，极易出现语法错误。
-
-短代码（<800字符）直接传 code 参数；长代码建议先用 file_write 写入 .js 文件再传 code_file 参数执行。`,
+短代码(<800字)传 code；长代码用 file_write 写 .js 后传 code_file。
+文件写入用 await file.save(path, content)，不要用 fs 写方法。
+执行前语法预检查，精确行号+修复建议。`,
   parameters: {
     type: 'object',
     properties: {
@@ -534,7 +532,7 @@ export const officeExecTool: ToolDefinition = {
       const context = vm.createContext(sandbox)
 
       const wrappedCode = `(async () => {\n${code}\n})()`
-      const script = new vm.Script(wrappedCode, { filename: 'office-exec.js' })
+      const script = new vm.Script(wrappedCode, { filename: 'js-exec.js' })
 
       const resultPromise = script.runInContext(context, { timeout: timeoutMs })
 
@@ -563,17 +561,23 @@ export const officeExecTool: ToolDefinition = {
       }
 
       const generatedFiles = collectGeneratedFiles(writtenFiles)
-      const statusLines: string[] = []
+      const parts: string[] = ['[javascript_exec] 执行成功']
+
       if (generatedFiles.length > 0) {
-        statusLines.push(`[office_exec] 写入成功，共 ${generatedFiles.length} 个文件：`)
-        for (const f of generatedFiles) statusLines.push(`  ✓ ${f.path}`)
+        parts.push(`写入文件（共 ${generatedFiles.length} 个）：`)
+        for (const f of generatedFiles) parts.push(`  ✓ ${f.path}`)
+      } else {
+        parts.push('未写入可预览文件（如确实调用了 file.save 但未出现在此列表，可能扩展名不在预览白名单内）')
       }
-      const statusBlock = statusLines.join('\n')
-      const finalOutput = [statusBlock, output].filter(Boolean).join('\n') || '(无输出)'
+
+      if (output) {
+        parts.push('--- stdout ---')
+        parts.push(output)
+      }
 
       return {
         success: true,
-        output: finalOutput,
+        output: parts.join('\n'),
         generatedFiles,
       }
     } catch (error: any) {
@@ -589,7 +593,7 @@ export const officeExecTool: ToolDefinition = {
       if (error.stack) {
         const stackLines = error.stack.split('\n')
         const relevantLines = stackLines.filter(
-          (line: string) => line.includes('office-exec.js') || line.includes('Error')
+          (line: string) => line.includes('js-exec.js') || line.includes('Error')
         )
         if (relevantLines.length > 0 && relevantLines.length < stackLines.length) {
           errorMessage = relevantLines.join('\n')
@@ -599,10 +603,10 @@ export const officeExecTool: ToolDefinition = {
       const generatedFiles = collectGeneratedFiles(writtenFiles)
       const statusLines: string[] = []
       if (generatedFiles.length > 0) {
-        statusLines.push(`[office_exec] 错误前已写入 ${generatedFiles.length} 个文件：`)
+        statusLines.push(`[javascript_exec] 错误前已写入 ${generatedFiles.length} 个文件：`)
         for (const f of generatedFiles) statusLines.push(`  ✓ ${f.path}`)
       } else {
-        statusLines.push('[office_exec] 错误：未写入任何文件')
+        statusLines.push('[javascript_exec] 错误：未写入任何文件')
       }
       const statusBlock = statusLines.join('\n')
       const finalOutput = [statusBlock, output].filter(Boolean).join('\n')
@@ -620,7 +624,7 @@ export const officeExecTool: ToolDefinition = {
   timeoutMs: 120000,
 }
 
-export function getOfficeModuleStatus(): Record<string, { loaded: boolean; error?: string }> {
+export function getJavascriptModuleStatus(): Record<string, { loaded: boolean; error?: string }> {
   const status: Record<string, { loaded: boolean; error?: string }> = {}
   for (const name of ['docx', 'pptxgenjs', 'xlsx', 'adm-zip']) {
     status[name] = {

@@ -499,6 +499,18 @@ class DatabaseService {
       );
     `)
     this.migrateConversationsFTS()
+
+    // Skills v2: 对齐 agentskills.io 开放标准 + Claude Code 扩展字段
+    this.addColumnIfNotExists('installed_skills', 'license', "TEXT DEFAULT ''")
+    this.addColumnIfNotExists('installed_skills', 'compatibility', "TEXT DEFAULT ''")
+    this.addColumnIfNotExists('installed_skills', 'allowed_tools_json', "TEXT DEFAULT '[]'")
+    this.addColumnIfNotExists('installed_skills', 'metadata_json', "TEXT DEFAULT '{}'")
+    this.addColumnIfNotExists('installed_skills', 'context', "TEXT DEFAULT 'inherit'")
+    this.addColumnIfNotExists('installed_skills', 'agent', "TEXT DEFAULT ''")
+    this.addColumnIfNotExists('installed_skills', 'source', "TEXT DEFAULT 'global'")
+    this.addColumnIfNotExists('installed_skills', 'disable_model_invocation', "BOOLEAN NOT NULL DEFAULT 0")
+    this.addColumnIfNotExists('installed_skills', 'user_invocable', "BOOLEAN NOT NULL DEFAULT 1")
+    this.addColumnIfNotExists('installed_skills', 'hooks_json', "TEXT DEFAULT '[]'")
   }
 
   private migrateEmployeeMemoriesFTS(): void {

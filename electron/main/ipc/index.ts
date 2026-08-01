@@ -6,7 +6,7 @@ import { registerAppHandlers } from './app.handlers'
 import { registerToolHandlers } from './tool.handlers'
 import { registerKMSHandlers } from './kms.handlers'
 import { registerVoiceHandlers } from './voice.handlers'
-import { registerSkillEnvHandlers } from './skill-env.handlers'
+import { registerRuntimeEnvHandlers } from './runtime-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
 import { registerCalendarHandlers } from './calendar.handlers'
 import { registerAutomationHandlers } from './automation.handlers'
@@ -41,7 +41,7 @@ export function registerIpcHandlers() {
   registerToolHandlers(db, skillRegistry)
   registerKMSHandlers()
   registerVoiceHandlers()
-  registerSkillEnvHandlers()
+  registerRuntimeEnvHandlers()
   registerMcpHandlers()
   registerCalendarHandlers()
   registerAutomationHandlers()

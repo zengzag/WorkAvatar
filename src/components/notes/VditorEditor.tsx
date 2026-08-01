@@ -26,6 +26,69 @@ function toVditorMode(mode: NoteEditorMode): 'ir' | 'sv' {
   return mode === 'split' ? 'sv' : 'ir'
 }
 
+// 表格区域选择辅助：计算矩形范围内所有单元格
+function computeTableCells(start: HTMLTableCellElement, end: HTMLTableCellElement): HTMLTableCellElement[] {
+  const table = start.closest('table')
+  if (!table || !table.contains(end)) return [start]
+  const rows = Array.from(table.querySelectorAll('tr'))
+  const startRow = start.closest('tr')
+  const endRow = end.closest('tr')
+  if (!startRow || !endRow) return [start]
+  const startRowIndex = rows.indexOf(startRow)
+  const endRowIndex = rows.indexOf(endRow)
+  if (startRowIndex < 0 || endRowIndex < 0) return [start]
+  const minRow = Math.min(startRowIndex, endRowIndex)
+  const maxRow = Math.max(startRowIndex, endRowIndex)
+  const minCol = Math.min(start.cellIndex, end.cellIndex)
+  const maxCol = Math.max(start.cellIndex, end.cellIndex)
+  const cells: HTMLTableCellElement[] = []
+  for (let r = minRow; r <= maxRow; r++) {
+    const row = rows[r]
+    if (!row) continue
+    const rowCells = Array.from(row.querySelectorAll('td, th'))
+    for (let c = minCol; c <= maxCol; c++) {
+      const cell = rowCells[c] as HTMLTableCellElement | undefined
+      if (cell) cells.push(cell)
+    }
+  }
+  return cells
+}
+
+// 表格区域选择辅助：将矩形区域转为 TSV（可粘贴到 Excel）
+function tableCellsToTSV(start: HTMLTableCellElement, end: HTMLTableCellElement): string {
+  const table = start.closest('table')
+  if (!table || !table.contains(end)) return (start.textContent || '').trim()
+  const rows = Array.from(table.querySelectorAll('tr'))
+  const startRow = start.closest('tr')!
+  const endRow = end.closest('tr')!
+  const startRowIndex = rows.indexOf(startRow)
+  const endRowIndex = rows.indexOf(endRow)
+  const minRow = Math.min(startRowIndex, endRowIndex)
+  const maxRow = Math.max(startRowIndex, endRowIndex)
+  const minCol = Math.min(start.cellIndex, end.cellIndex)
+  const maxCol = Math.max(start.cellIndex, end.cellIndex)
+  const lines: string[] = []
+  for (let r = minRow; r <= maxRow; r++) {
+    const row = rows[r]
+    if (!row) continue
+    const rowCells = Array.from(row.querySelectorAll('td, th'))
+    const parts: string[] = []
+    for (let c = minCol; c <= maxCol; c++) {
+      const cell = rowCells[c] as HTMLTableCellElement | undefined
+      parts.push(cell ? (cell.textContent || '').replace(/\t/g, ' ').replace(/\n/g, ' ').trim() : '')
+    }
+    lines.push(parts.join('\t'))
+  }
+  return lines.join('\n')
+}
+
+// 解析 TSV 为二维数组（去掉 Excel 尾随空行）
+function parseTSV(text: string): string[][] {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  while (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+  return lines.map(line => line.split('\t'))
+}
+
 function cleanWordHtml(html: string): string {
   let cleaned = html
   cleaned = cleaned.replace(/<\!--\[if[\s\S]*?endif\]-->/gi, '')
@@ -298,6 +361,31 @@ const VditorEditorInner: React.FC<Props> = ({
   useEffect(() => { onSaveRef.current = onSave }, [onSave])
   useEffect(() => { onSelectionChangeRef.current = onSelectionChange }, [onSelectionChange])
 
+  // 表格矩形选区状态：拖动 td/th 生成，仅在 IR 模式生效
+  const tableSelRef = useRef<{ start: HTMLTableCellElement; end: HTMLTableCellElement } | null>(null)
+
+  const clearTableSelection = useCallback(() => {
+    // 编辑器容器与预览容器都可能存在选中单元格，需同时清理
+    ;[containerRef.current, previewRef.current].forEach((c) => {
+      if (!c) return
+      c.querySelectorAll('.vditor-table-selected').forEach((el) => {
+        el.classList.remove('vditor-table-selected')
+      })
+    })
+    tableSelRef.current = null
+  }, [])
+
+  const updateTableHighlight = useCallback((start: HTMLTableCellElement, end: HTMLTableCellElement) => {
+    ;[containerRef.current, previewRef.current].forEach((c) => {
+      if (!c) return
+      c.querySelectorAll('.vditor-table-selected').forEach((el) => {
+        el.classList.remove('vditor-table-selected')
+      })
+    })
+    const cells = computeTableCells(start, end)
+    cells.forEach((cell) => cell.classList.add('vditor-table-selected'))
+  }, [])
+
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (saveStatus !== 'dirty') return
@@ -318,6 +406,106 @@ const VditorEditorInner: React.FC<Props> = ({
     document.addEventListener('selectionchange', handler)
     return () => document.removeEventListener('selectionchange', handler)
   }, [isReadOnly, vditorMode])
+
+  // 表格矩形选区：在 td/th 上按下并拖动超过阈值进入选区模式，
+  // 单击不触发（编辑模式保留 Vditor 原生光标编辑，预览模式不干扰文本选择）。
+  // 编辑模式（IR）与预览模式均生效。根容器随模式切换：IR→编辑器，预览→预览容器。
+  useEffect(() => {
+    if (vditorMode === 'sv') return // SV 源码模式不生效
+    const root = isReadOnly ? previewRef.current : containerRef.current
+    if (!root) return
+
+    let dragStarted = false
+    let startCell: HTMLTableCellElement | null = null
+    let startX = 0
+    let startY = 0
+
+    const onMouseMove = (me: MouseEvent) => {
+      if (!startCell) return
+      const dx = Math.abs(me.clientX - startX)
+      const dy = Math.abs(me.clientY - startY)
+      if (!dragStarted && (dx > 4 || dy > 4)) {
+        dragStarted = true
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        const table = startCell.closest('table')
+        if (table) table.style.userSelect = 'none'
+      }
+      if (dragStarted) {
+        me.preventDefault()
+        const elem = document.elementFromPoint(me.clientX, me.clientY) as HTMLElement | null
+        const newEnd = elem?.closest('td, th') as HTMLTableCellElement | null
+        if (newEnd && root.contains(newEnd) && startCell.closest('table') === newEnd.closest('table')) {
+          updateTableHighlight(startCell, newEnd)
+          tableSelRef.current = { start: startCell, end: newEnd }
+        }
+      }
+    }
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      if (startCell) {
+        const table = startCell.closest('table')
+        if (table) table.style.userSelect = ''
+      }
+      if (!dragStarted) {
+        // 单击未拖动：清除选区
+        clearTableSelection()
+      }
+      startCell = null
+      dragStarted = false
+    }
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return
+      const target = e.target as HTMLElement
+      const cell = target.closest('td, th') as HTMLTableCellElement | null
+      if (!cell || !root.contains(cell) || !cell.closest('table')) {
+        clearTableSelection()
+        return
+      }
+      startCell = cell
+      startX = e.clientX
+      startY = e.clientY
+      dragStarted = false
+      tableSelRef.current = { start: cell, end: cell }
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    }
+
+    root.addEventListener('mousedown', onMouseDown, true)
+    return () => {
+      root.removeEventListener('mousedown', onMouseDown, true)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [isReadOnly, vditorMode, clearTableSelection, updateTableHighlight])
+
+  // 表格选区复制：通过隐藏 textarea + execCommand 主动写入剪贴板。
+  // 拖拽选区会清空文本选区，浏览器默认 copy 事件不会触发，故用 keydown 拦截。
+  const copyTableSelectionToClipboard = useCallback(() => {
+    const sel = tableSelRef.current
+    if (!sel) return false
+    const tsv = tableCellsToTSV(sel.start, sel.end)
+    if (!tsv) return false
+    const activeEl = document.activeElement as HTMLElement | null
+    const textarea = document.createElement('textarea')
+    textarea.value = tsv
+    textarea.style.position = 'fixed'
+    textarea.style.top = '-9999px'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch { /* ignore */ }
+    document.body.removeChild(textarea)
+    if (activeEl && typeof activeEl.focus === 'function') {
+      activeEl.focus()
+    }
+    return ok
+  }, [])
 
   const toolbar = useMemo(() => [
     'headings', 'bold', 'italic', 'strike', '|',
@@ -424,6 +612,58 @@ const VditorEditorInner: React.FC<Props> = ({
     const cbd = e.clipboardData
     if (!cbd) return
 
+    // 表格选区内粘贴：将 TSV 填充到选区起始位置（Excel 风格"贴入"）
+    const tableSel = tableSelRef.current
+    if (tableSel) {
+      const text = cbd.getData('text/plain') || ''
+      const tsvRows = parseTSV(text)
+      const isMultiCell = tsvRows.length > 1 || (tsvRows[0]?.length || 0) > 1
+      if (isMultiCell) {
+        const table = tableSel.start.closest('table')
+        if (table) {
+          e.preventDefault()
+          e.stopPropagation()
+          const rows = Array.from(table.querySelectorAll('tr'))
+          const startRow = tableSel.start.closest('tr')!
+          const startRowIndex = rows.indexOf(startRow)
+          const startCol = tableSel.start.cellIndex
+          let endRowIdx = startRowIndex
+          let endColIdx = startCol
+          for (let r = 0; r < tsvRows.length; r++) {
+            const rowIndex = startRowIndex + r
+            if (rowIndex >= rows.length) break
+            const rowCells = Array.from(rows[rowIndex].querySelectorAll('td, th'))
+            for (let c = 0; c < tsvRows[r].length; c++) {
+              const colIndex = startCol + c
+              if (colIndex >= rowCells.length) break
+              const cell = rowCells[colIndex] as HTMLTableCellElement
+              cell.textContent = tsvRows[r][c]
+              endRowIdx = rowIndex
+              endColIdx = Math.max(endColIdx, colIndex)
+            }
+          }
+          table.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }))
+          // 更新选区为粘贴范围
+          const newEndRow = rows[endRowIdx]
+          const newEndCells = Array.from(newEndRow.querySelectorAll('td, th'))
+          const newEnd = newEndCells[endColIdx] as HTMLTableCellElement | undefined
+          if (newEnd) {
+            updateTableHighlight(tableSel.start, newEnd)
+            tableSelRef.current = { start: tableSel.start, end: newEnd }
+          }
+          // 同步内容到 store
+          try {
+            const value = vditorRef.current.getValue() || ''
+            lastInternalContent.current = value
+            if (value !== lastExternalContent.current) {
+              onContentChangeRef.current(value)
+            }
+          } catch { /* ignore */ }
+          return
+        }
+      }
+    }
+
     const imageItems = Array.from(cbd.items).filter(
       (item) => item.kind === 'file' && item.type.startsWith('image/')
     )
@@ -488,7 +728,7 @@ const VditorEditorInner: React.FC<Props> = ({
       }
       return
     }
-  }, [insertTextAtCursor])
+  }, [insertTextAtCursor, updateTableHighlight])
 
   useEffect(() => {
     if (isReadOnly || !containerRef.current) return
@@ -678,11 +918,56 @@ const VditorEditorInner: React.FC<Props> = ({
           sel?.addRange(range)
         }
       }
+      // 表格选区清空：Delete/Backspace 清空选中单元格内容（仅多格选区）
+      if ((e.key === 'Delete' || e.key === 'Backspace') && vditorMode === 'ir') {
+        const sel = tableSelRef.current
+        if (sel && sel.start !== sel.end) {
+          e.preventDefault()
+          e.stopPropagation()
+          const cells = computeTableCells(sel.start, sel.end)
+          cells.forEach((cell) => { cell.textContent = '' })
+          const table = sel.start.closest('table')
+          if (table) {
+            table.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }))
+          }
+          clearTableSelection()
+          try {
+            const value = vditorRef.current?.getValue() || ''
+            lastInternalContent.current = value
+            if (value !== lastExternalContent.current) {
+              onContentChangeRef.current(value)
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      // 表格选区复制：Ctrl/Cmd+C 主动写入 TSV 到剪贴板（仅 IR 编辑模式）
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && vditorMode === 'ir') {
+        if (copyTableSelectionToClipboard()) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }
     }
     const el = containerRef.current
     el?.addEventListener('keydown', handler, true)
     return () => { el?.removeEventListener('keydown', handler, true) }
-  }, [isReadOnly, vditorMode])
+  }, [isReadOnly, vditorMode, clearTableSelection, copyTableSelectionToClipboard])
+
+  // 预览模式表格选区复制：预览容器非可编辑元素无 keydown 焦点，
+  // 用 document 级别 keydown 监听 Ctrl/Cmd+C，通过 execCommand 主动写入剪贴板。
+  useEffect(() => {
+    if (!isReadOnly || vditorMode === 'sv') return
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (copyTableSelectionToClipboard()) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [isReadOnly, vditorMode, copyTableSelectionToClipboard])
 
   useEffect(() => {
     if (!locateText) return

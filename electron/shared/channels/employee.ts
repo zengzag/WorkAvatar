@@ -11,6 +11,7 @@ export const EMPLOYEE_CHANNELS = {
   CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',
   CONVERSATION_DELETE_ALL: 'conversation:delete-all',
+  CONVERSATION_SEARCH_GLOBAL: 'conversation:search-global',
 
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
@@ -76,6 +77,23 @@ export interface ConversationCreateParams {
   skill_id?: string
   title?: string
   minimal_mode?: boolean
+}
+
+export interface ConversationSearchParams {
+  query: string
+  employee_ids?: string[]
+  limit?: number
+}
+
+export interface ConversationSearchResultItem {
+  conversationId: string
+  employeeId: string
+  employeeName: string
+  title: string
+  summary: string
+  previewSnippet: string
+  lastMessageAt: number | null
+  messageCount: number
 }
 
 export interface EmployeeProfileAnalyzeParams {

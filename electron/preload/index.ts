@@ -8,6 +8,7 @@ import type {
   EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationSearchParams,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
   LLMProviderCreateParams,
@@ -20,6 +21,8 @@ import type {
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   ToolAssignParams,
+  ToolCategoryAssignParams,
+  ToolCategoryInfo,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -52,8 +55,10 @@ import type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
-  SkillEnvInstallParams,
-  SkillEnvInstallProgress,
+  KMSMCPToolCategoryInfo,
+  KMSMCPExposedTool,
+  RuntimeEnvInstallParams,
+  RuntimeEnvInstallProgress,
   McpSaveParams,
   McpTestParams,
   ListEventsParams,
@@ -195,6 +200,7 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
+    searchGlobal: (params: ConversationSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, params),
   },
 
   llm: {
@@ -284,6 +290,10 @@ const electronAPI = {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
+    getEmployeeToolCategories: (params: { employee_id: string }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, params) as Promise<ToolCategoryInfo[]>,
+    assignCategoryToEmployee: (params: ToolCategoryAssignParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE, params),
   },
 
   searchWindow: {
@@ -302,18 +312,18 @@ const electronAPI = {
     toggleForEmployee: (params: { employee_id: string; skill_id: string; enabled: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, params),
   },
 
-  skillEnv: {
+  runtimeEnv: {
     // 检测所有受支持运行时的安装状态
-    list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_LIST),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_ENV_LIST),
     // 一键安装指定运行时（uv / python / node / pip）
-    install: (params: SkillEnvInstallParams) => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_INSTALL, params),
+    install: (params: RuntimeEnvInstallParams) => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_ENV_INSTALL, params),
     // 取消正在进行的安装
-    cancelInstall: () => ipcRenderer.invoke(IPC_CHANNELS.SKILL_ENV_CANCEL_INSTALL),
+    cancelInstall: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_ENV_CANCEL_INSTALL),
     // 订阅安装进度事件（主进程 → 渲染进程），返回取消订阅函数
-    onProgress: (callback: (progress: SkillEnvInstallProgress) => void) => {
-      const handler = (_event: any, progress: SkillEnvInstallProgress) => callback(progress)
-      ipcRenderer.on(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.SKILL_ENV_PROGRESS, handler)
+    onProgress: (callback: (progress: RuntimeEnvInstallProgress) => void) => {
+      const handler = (_event: any, progress: RuntimeEnvInstallProgress) => callback(progress)
+      ipcRenderer.on(IPC_CHANNELS.RUNTIME_ENV_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.RUNTIME_ENV_PROGRESS, handler)
     },
   },
 
@@ -521,6 +531,9 @@ const electronAPI = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_STATUS),
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_GET_CONFIG),
     setConfig: (params: KMSMCPSetConfigParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_SET_CONFIG, params),
+    listCategories: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_CATEGORIES) as Promise<KMSMCPToolCategoryInfo[]>,
+    listExposedTools: (params?: { tool_categories?: string[] }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_EXPOSED_TOOLS, params) as Promise<KMSMCPExposedTool[]>,
   },
 
   voice: {

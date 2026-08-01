@@ -9,6 +9,8 @@ export type {
   EmployeeDeleteParams,
   ConversationListParams,
   ConversationCreateParams,
+  ConversationSearchParams,
+  ConversationSearchResultItem,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
   EmployeeExportConfigParams,
@@ -33,6 +35,8 @@ export type {
 } from './channels/llm'
 export type {
   ToolAssignParams,
+  ToolCategoryAssignParams,
+  ToolCategoryInfo,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
 } from './channels/tool'
@@ -64,6 +68,8 @@ export type {
   KMSGetKnowledgeCardsParams,
   KMSUpdateKnowledgeCardParams,
   KMSSearchKnowledgeCardsParams,
+  KMSMCPToolCategoryInfo,
+  KMSMCPExposedTool,
 } from './channels/kms'
 export type {
   VoiceCreateTaskParams,
@@ -85,11 +91,11 @@ export type {
   VoiceLocalModelStatus,
 } from './channels/voice'
 export type {
-  SkillEnvToolId,
-  SkillEnvTool,
-  SkillEnvInstallParams,
-  SkillEnvInstallProgress,
-} from './channels/skill-env'
+  RuntimeEnvToolId,
+  RuntimeEnvTool,
+  RuntimeEnvInstallParams,
+  RuntimeEnvInstallProgress,
+} from './channels/runtime-env'
 export type {
   McpTransportType,
   McpServerConfig,

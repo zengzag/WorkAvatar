@@ -41,6 +41,7 @@
     "file2md": "^1.4.55",
     "filesize": "^11.0.17",
     "i18next": "^26.1.0",
+    "iconv-lite": "^0.7.3",
     "immer": "^11.1.7",
     "js-yaml": "^5.2.1",
     "katex": "^0.18.0",
@@ -65,6 +66,7 @@
     "vditor": "^3.11.2",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
+    "yaml": "^2.9.0",
     "zustand": "^5.0.13"
   },
   "devDependencies": {

@@ -28,8 +28,9 @@ import LLMSelector from '../components/llm/LLMSelector'
 import EmployeeSelector from '../components/workbench/EmployeeSelector'
 import MessageList from '../components/workbench/MessageList'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
-import { ConversationSidebar, ChatInput, MultiChatPanel } from '../components/workbench'
+import { ConversationSidebar, ChatInput, MultiChatPanel, GlobalSearchBox } from '../components/workbench'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
+import type { AvailableSkill } from '../components/workbench/ChatInput'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
 import type { Employee, Conversation } from '../types'
@@ -194,6 +195,29 @@ const EmployeeWorkbench: React.FC = () => {
 
   const chatHook = useEmployeeChat({ id, message })
 
+  // 已启用 skills 列表，供 ChatInput 斜杠菜单使用
+  const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([])
+  useEffect(() => {
+    if (!id) {
+      setAvailableSkills([])
+      return
+    }
+    let cancelled = false
+    window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: id })
+      .then((result: any) => {
+        if (cancelled) return
+        const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description || '',
+          userInvocable: s.userInvocable !== false,
+        }))
+        setAvailableSkills(skills)
+      })
+      .catch(() => { /* ignore */ })
+    return () => { cancelled = true }
+  }, [id])
+
   const {
     employee,
     conversations,
@@ -244,7 +268,6 @@ const EmployeeWorkbench: React.FC = () => {
     handleRegenerate,
     handleSwitchModelRegenerate,
     handleEditAndResubmit,
-    handleCommand,
     handleExportConversation,
     handleSwitchBranch,
     handleToggleSegment,
@@ -492,6 +515,7 @@ const EmployeeWorkbench: React.FC = () => {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
       <div style={{
         height: 40,
+        position: 'relative',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -499,6 +523,7 @@ const EmployeeWorkbench: React.FC = () => {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         background: token.colorBgContainer,
         flexShrink: 0,
+        gap: 8,
       }}>
         <Space size={8}>
           <Tooltip title={showSidePanel ? t('workbench.closePanel') : t('workbench.historyConv')}>
@@ -537,8 +562,6 @@ const EmployeeWorkbench: React.FC = () => {
               <Text strong style={{ fontSize: 13 }}>{employee.name}</Text>
             </Button>
           </Popover>
-        </Space>
-        <Space size={6}>
           {employee?.workspace_path && (
             <Tooltip
               title={
@@ -573,6 +596,21 @@ const EmployeeWorkbench: React.FC = () => {
               </Button>
             </Tooltip>
           )}
+        </Space>
+        <div style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+        }}>
+          <GlobalSearchBox
+            currentEmployeeId={id}
+            onSelectConversation={selectConversation}
+            width={240}
+            dropdownWidth={380}
+          />
+        </div>
+        <Space size={6}>
           <LLMSelector
             providerId={selectedLlmProviderId}
             modelId={selectedLlmModelId}
@@ -665,7 +703,6 @@ const EmployeeWorkbench: React.FC = () => {
           <ChatInput
             onSend={handleSendWithReset}
             onStop={handleStop}
-            onCommand={handleCommand}
             isStreaming={isStreaming}
             placeholder={t('workbench.inputPlaceholder')}
             providers={providers}
@@ -681,6 +718,7 @@ const EmployeeWorkbench: React.FC = () => {
             canToggleMinimalMode={messages.length === 0}
             value={inputDraft}
             onChange={setInputDraft}
+            availableSkills={availableSkills}
           />
         </div>
       </div>

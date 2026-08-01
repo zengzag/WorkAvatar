@@ -42,6 +42,8 @@ if (!gotTheLock) {
   app.quit()
 }
 
+// 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
+app.setName('WorkAvatar')
 app.setAppUserModelId('com.workavatar.desktop')
 
 const isDev = !app.isPackaged
