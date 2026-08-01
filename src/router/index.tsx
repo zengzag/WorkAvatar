@@ -3,7 +3,8 @@ import { lazy, Suspense, ReactNode } from 'react'
 import App from '../App'
 import EmployeeRedirect from '../components/common/EmployeeRedirect'
 
-const EmployeeWorkbench = lazy(() => import('../pages/EmployeeWorkbench'))
+const Tasks = lazy(() => import('../pages/Tasks'))
+const Employees = lazy(() => import('../pages/Employees'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
@@ -28,12 +29,16 @@ const router = createHashRouter([
         element: <EmployeeRedirect />,
       },
       {
-        path: 'wizard',
-        element: lazyElement(<CreationWizard />),
+        path: 'tasks',
+        element: lazyElement(<Tasks />),
       },
       {
-        path: 'employee/:id',
-        element: lazyElement(<EmployeeWorkbench />),
+        path: 'employees',
+        element: lazyElement(<Employees />),
+      },
+      {
+        path: 'wizard',
+        element: lazyElement(<CreationWizard />),
       },
       {
         path: 'settings',

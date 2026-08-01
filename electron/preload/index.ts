@@ -7,6 +7,7 @@ import type {
   EmployeeUpdateParams,
   EmployeeDeleteParams,
   ConversationListParams,
+  ConversationListWithEmployeeParams,
   ConversationCreateParams,
   ConversationSearchParams,
   AppShowOpenDialogParams,
@@ -155,6 +156,11 @@ const electronAPI = {
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
     delete: (params: EmployeeDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    onChanged: (callback: (data: { ts: number }) => void) => {
+      const handler = (_event: any, data: { ts: number }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_ON_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EMPLOYEE_ON_CHANGED, handler)
+    },
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
@@ -194,6 +200,7 @@ const electronAPI = {
 
   conversation: {
     list: (params: ConversationListParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST, params),
+    listAll: (params?: ConversationListWithEmployeeParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST_ALL, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
     update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string }) =>

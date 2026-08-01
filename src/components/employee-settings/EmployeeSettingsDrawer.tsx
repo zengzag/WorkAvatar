@@ -68,10 +68,11 @@ interface EmployeeSettingsDrawerProps {
   employeeId: string | undefined
   onClose: () => void
   initialTab?: string
+  onDeleted?: (deletedId: string) => void
 }
 
 const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
-  open, employeeId, onClose, initialTab,
+  open, employeeId, onClose, initialTab, onDeleted,
 }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
@@ -349,12 +350,14 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
+          const deletedId = employeeId
           await window.electronAPI.employee.delete({
             id: employeeId,
             delete_workspace: deleteWorkspace,
           })
           message.success(t('common.deleted'))
           onClose()
+          if (deletedId) onDeleted?.(deletedId)
         } catch {
           message.error(t('common.deleteFailed'))
         }

@@ -1,13 +1,14 @@
 import { useMemo, useCallback } from 'react'
 import { Layout, Menu, theme } from 'antd'
 import {
-  RobotOutlined,
   SettingOutlined,
   SearchOutlined,
   AudioOutlined,
   CalendarOutlined,
   BookOutlined,
   FieldTimeOutlined,
+  MessageOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -39,14 +40,15 @@ const App: React.FC = () => {
 
   const getSelectedKey = useCallback(() => {
     const path = location.pathname
-    if (path === '/' || path.startsWith('/employee')) return 'digital-employees'
+    if (path.startsWith('/employees') || path === '/wizard') return 'employees'
+    if (path === '/' || path.startsWith('/tasks')) return 'tasks'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/kms')) return 'kms'
     if (path.startsWith('/voice')) return 'voice'
     if (path.startsWith('/calendar')) return 'calendar'
     if (path.startsWith('/notes')) return 'notes'
     if (path.startsWith('/automation')) return 'automation'
-    return 'digital-employees'
+    return 'tasks'
   }, [location.pathname])
 
   // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
@@ -56,7 +58,7 @@ const App: React.FC = () => {
         const { conversationId, employeeId } = JSON.parse(payload.clickId)
         if (employeeId && conversationId) {
           localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
-          navigate(`/employee/${employeeId}`)
+          navigate('/tasks')
           return
         }
       } catch { /* ignore parse error */ }
@@ -70,7 +72,7 @@ const App: React.FC = () => {
         const { conversationId, employeeId } = JSON.parse(payload.id)
         if (employeeId && conversationId) {
           localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
-          navigate(`/employee/${employeeId}`)
+          navigate('/tasks')
           return
         }
       } catch { /* ignore parse error */ }
@@ -83,13 +85,15 @@ const App: React.FC = () => {
 
   // 所有导航项的定义（icon + label + onClick）
   const navItemDefs = useMemo(() => ({
-    'digital-employees': {
-      icon: <RobotOutlined />,
-      label: t('nav.digitalEmployees'),
-      onClick: () => {
-        const lastId = localStorage.getItem('employeeWorkbench:lastEmployeeId')
-        navigate(lastId ? `/employee/${lastId}` : '/')
-      },
+    'tasks': {
+      icon: <MessageOutlined />,
+      label: t('nav.tasks'),
+      onClick: () => navigate('/tasks'),
+    },
+    'employees': {
+      icon: <TeamOutlined />,
+      label: t('nav.employees'),
+      onClick: () => navigate('/employees'),
     },
     'kms': {
       icon: <SearchOutlined />,
@@ -131,6 +135,10 @@ const App: React.FC = () => {
     }))
   }, [navConfig, navItemDefs])
 
+  // 分离 settings 到最底部，其余保持原顺序
+  const mainMenuItems = useMemo(() => menuItems.filter(item => item.key !== 'settings'), [menuItems])
+  const settingsMenuItem = useMemo(() => menuItems.filter(item => item.key === 'settings'), [menuItems])
+
   const siderBg = effectiveTheme === 'dark' ? '#1a1a1a' : '#ffffff'
 
   return (
@@ -144,26 +152,41 @@ const App: React.FC = () => {
           collapsed={true}
           collapsible={false}
           trigger={null}
+          className="app-sider"
           style={{
-            display: 'flex',
-            flexDirection: 'column',
             borderRight: `1px solid ${token.colorBorderSecondary}`,
             background: siderBg,
           }}
         >
-          <Menu
-            mode="inline"
-            selectedKeys={[getSelectedKey()]}
-            items={menuItems}
-            inlineCollapsed={true}
-            style={{
-              borderRight: 'none',
-              marginTop: 4,
-              flex: 1,
-              background: 'transparent',
-            }}
-            theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
-          />
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <Menu
+              mode="inline"
+              selectedKeys={[getSelectedKey()]}
+              items={mainMenuItems}
+              inlineCollapsed={true}
+              style={{
+                borderRight: 'none',
+                marginTop: 4,
+                flex: 1,
+                background: 'transparent',
+              }}
+              theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
+            />
+            {settingsMenuItem.length > 0 && (
+              <Menu
+                mode="inline"
+                selectedKeys={[getSelectedKey()]}
+                items={settingsMenuItem}
+                inlineCollapsed={true}
+                style={{
+                  borderRight: 'none',
+                  marginBottom: 10,
+                  background: 'transparent',
+                }}
+                theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
+              />
+            )}
+          </div>
         </Sider>
         <Layout>
           <Content

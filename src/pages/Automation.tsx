@@ -37,7 +37,7 @@ const AutomationPage: React.FC = () => {
   useEffect(() => {
     void (async () => {
       try {
-        const empResult = await window.electronAPI.employee.list({ status: 'active' })
+        const empResult = await window.electronAPI.employee.list()
         if (Array.isArray(empResult)) setEmployees(empResult as Employee[])
         else if (empResult && Array.isArray((empResult as any).list)) setEmployees((empResult as any).list)
       } catch (err) {
@@ -98,7 +98,7 @@ const AutomationPage: React.FC = () => {
     if (!run.conversation_id || !run.employee_id) return
     // 写入 localStorage 让 useEmployeeChat 自动选中该对话
     localStorage.setItem(`employeeWorkbench:activeConvId:${run.employee_id}`, run.conversation_id)
-    navigate(`/employee/${run.employee_id}`)
+    navigate('/tasks')
   }, [navigate])
 
   const handlePreviewRuns = useCallback(

@@ -4,8 +4,10 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_CREATE: 'employee:create',
   EMPLOYEE_UPDATE: 'employee:update',
   EMPLOYEE_DELETE: 'employee:delete',
+  EMPLOYEE_ON_CHANGED: 'employee:on-changed',
 
   CONVERSATION_LIST: 'conversation:list',
+  CONVERSATION_LIST_ALL: 'conversation:list-all',
   CONVERSATION_GET: 'conversation:get',
   CONVERSATION_CREATE: 'conversation:create',
   CONVERSATION_UPDATE: 'conversation:update',
@@ -41,7 +43,6 @@ export const EMPLOYEE_CHANNELS = {
 } as const
 
 export interface EmployeeListParams {
-  status?: string
 }
 
 export interface EmployeeCreateParams {
@@ -56,7 +57,6 @@ export interface EmployeeUpdateParams {
   name?: string
   description?: string
   profile_json?: string
-  status?: 'draft' | 'active' | 'paused' | 'error'
   default_skill_id?: string
   workspace_path?: string
   avatar_type?: string
@@ -69,7 +69,11 @@ export interface EmployeeDeleteParams {
 }
 
 export interface ConversationListParams {
-  employee_id: string
+  employee_id?: string
+}
+
+export interface ConversationListWithEmployeeParams {
+  employee_ids?: string[]
 }
 
 export interface ConversationCreateParams {

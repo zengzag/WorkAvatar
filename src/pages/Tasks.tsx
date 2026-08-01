@@ -1,0 +1,631 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import 'katex/dist/katex.min.css'
+import { Button, Typography, Spin, Tooltip, theme, App } from 'antd'
+import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons'
+import MessageList from '../components/workbench/MessageList'
+import ChatInput from '../components/workbench/ChatInput'
+import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
+import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
+import { useTranslation } from 'react-i18next'
+import useEmployeeChat from '../hooks/useEmployeeChat'
+import type { AttachedImage, ModelSelection } from '../components/workbench'
+import type { AvailableSkill } from '../components/workbench/ChatInput'
+import type { Employee } from '../types'
+
+const { Paragraph } = Typography
+
+const Tasks: React.FC = () => {
+  const { message } = App.useApp()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const { token } = theme.useToken()
+  const { t } = useTranslation()
+
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [employeesLoaded, setEmployeesLoaded] = useState(false)
+  const [globalTasks, setGlobalTasks] = useState<TaskWithEmployee[]>([])
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  const [selectedModels, setSelectedModels] = useState<ModelSelection[]>([])
+  const [allCollections, setAllCollections] = useState<any[]>([])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [showSidePanel, setShowSidePanel] = useState(true)
+
+  // 任务模式：'new' = 新任务（居中输入框），'chat' = 对话模式
+  const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
+  // 新任务时用户选择的员工
+  const [newTaskEmployeeId, setNewTaskEmployeeId] = useState<string | null>(null)
+  // 当前对话对应的员工ID（传给 useEmployeeChat）
+  const [currentEmployeeId, setCurrentEmployeeId] = useState<string | undefined>(undefined)
+  // 待选择的对话ID（跨员工切换时使用）
+  const pendingSelectConvIdRef = useRef<string | null>(null)
+  // 上一次 employee 加载状态，用于检测初始化完成
+  const prevEmployeeLoadedRef = useRef(false)
+
+  // 搜索与筛选
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterEmployeeId, setFilterEmployeeId] = useState<string | null>(null)
+  // 全文内容搜索匹配的任务 ID 集合（null = 未搜索，Set = 搜索结果）
+  const [contentMatchIds, setContentMatchIds] = useState<Set<string> | null>(null)
+
+  const loadEmployees = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.employee.list()
+      setEmployees(result)
+      setEmployeesLoaded(true)
+    } catch {
+      message.error(t('digitalEmployees.loadEmployeesFailed'))
+      setEmployeesLoaded(true)
+    }
+  }, [message, t])
+
+  const loadGlobalTasks = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.conversation.listAll()
+      setGlobalTasks(Array.isArray(result) ? result : [])
+    } catch {
+      setGlobalTasks([])
+    }
+  }, [])
+
+  const loadAllCollections = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kms.listCollections()
+      setAllCollections(Array.isArray(result) ? result : [])
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    loadEmployees()
+    loadGlobalTasks()
+    loadAllCollections()
+  }, [loadEmployees, loadGlobalTasks, loadAllCollections])
+
+  // 员工列表变更通知（增删改）：刷新列表 & 清理无效选中
+  useEffect(() => {
+    const unsub = window.electronAPI.employee.onChanged(async () => {
+      await loadEmployees()
+      await loadGlobalTasks()
+    })
+    return () => { unsub?.() }
+  }, [loadEmployees, loadGlobalTasks])
+
+  // 清理无效筛选选中态：filterEmployeeId / newTaskEmployeeId / currentEmployeeId  若不在员工列表中则重置
+  useEffect(() => {
+    if (!employeesLoaded) return
+    const ids = new Set(employees.map(e => e.id))
+    if (filterEmployeeId && !ids.has(filterEmployeeId)) {
+      setFilterEmployeeId(null)
+    }
+    if (newTaskEmployeeId && !ids.has(newTaskEmployeeId)) {
+      setNewTaskEmployeeId(null)
+    }
+    if (currentEmployeeId && !ids.has(currentEmployeeId)) {
+      setCurrentEmployeeId(undefined)
+    }
+  }, [employees, employeesLoaded, filterEmployeeId, newTaskEmployeeId, currentEmployeeId])
+
+  // 新任务模式下自动选择第一个员工，避免未选员工时发送消息无效
+  useEffect(() => {
+    if (taskMode === 'new' && employees.length > 0 && !currentEmployeeId) {
+      const firstEmpId = employees[0].id
+      setNewTaskEmployeeId(firstEmpId)
+      setCurrentEmployeeId(firstEmpId)
+      prevEmployeeLoadedRef.current = false
+    }
+  }, [taskMode, employees, currentEmployeeId])
+
+  // 全文内容搜索：防抖 300ms 调用 searchGlobal
+  useEffect(() => {
+    const trimmed = searchQuery.trim()
+    if (!trimmed) {
+      setContentMatchIds(null)
+      return
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const results = await window.electronAPI.conversation.searchGlobal({
+          query: trimmed,
+          limit: 50,
+        })
+        setContentMatchIds(new Set(Array.isArray(results) ? results.map((r: any) => r.conversationId) : []))
+      } catch {
+        setContentMatchIds(new Set())
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // 使用 useEmployeeChat，传入 skipAutoInit 避免自动选择对话
+  const chatHook = useEmployeeChat({ id: currentEmployeeId, message, skipAutoInit: true })
+
+  const {
+    employee,
+    activeConversationId,
+    messages,
+    isStreaming,
+    loadingConversationId,
+    inputDraft,
+    setInputDraft,
+    providers,
+    selectedLlmProviderId,
+    selectedLlmModelId,
+    handleLlmChange,
+    enableThinking,
+    setEnableThinking,
+    selectedCollectionIds,
+    setSelectedCollectionIds,
+    minimalMode,
+    handleToggleMinimalMode,
+    isComparisonMode,
+    handleOpenComparison,
+    messagesEndRef,
+    chatContainerRef,
+    handleScroll,
+    handleSend,
+    handleStop,
+    selectConversation,
+    clearActiveConversation,
+    handleCopy,
+    handleDeleteMessage,
+    handleRegenerate,
+    handleSwitchModelRegenerate,
+    handleEditAndResubmit,
+    handleToggleSegment,
+    handleSwitchBranch,
+    getToolDisplayName,
+    isConversationStreaming,
+    generateConversationTitle,
+  } = chatHook
+
+  // 从数字员工"快速任务"跳转而来：?new=1&employee=<id> → 打开新任务模式并预选员工
+  const appliedQueryRef = useRef<string | null>(null)
+  useEffect(() => {
+    const newParam = searchParams.get('new')
+    const empId = searchParams.get('employee')
+    const key = `${newParam}|${empId}`
+    if (newParam === '1' && empId && key !== appliedQueryRef.current) {
+      if (employees.length > 0 && !employees.some(e => e.id === empId)) {
+        return // 员工尚未加载或不存在，等待下次触发
+      }
+      appliedQueryRef.current = key
+      setNewTaskEmployeeId(empId)
+      setCurrentEmployeeId(empId)
+      setTaskMode('new')
+      prevEmployeeLoadedRef.current = false
+      pendingSelectConvIdRef.current = null
+      clearActiveConversation()
+    }
+  }, [searchParams, employees, clearActiveConversation])
+
+  // 已启用 skills
+  const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([])
+  useEffect(() => {
+    if (!currentEmployeeId) {
+      setAvailableSkills([])
+      return
+    }
+    let cancelled = false
+    window.electronAPI.skillRegistry.getEmployeeSkills({ employee_id: currentEmployeeId })
+      .then((result: any) => {
+        if (cancelled) return
+        const skills: AvailableSkill[] = (result?.enabled || []).map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          description: s.description || '',
+          userInvocable: s.userInvocable !== false,
+        }))
+        setAvailableSkills(skills)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [currentEmployeeId])
+
+  // 检测 employee 加载完成，执行待选择的对话
+  useEffect(() => {
+    if (employee && !prevEmployeeLoadedRef.current && pendingSelectConvIdRef.current) {
+      const convId = pendingSelectConvIdRef.current
+      pendingSelectConvIdRef.current = null
+      selectConversation(convId)
+    }
+    prevEmployeeLoadedRef.current = !!employee
+  }, [employee, selectConversation])
+
+  // 过滤后的任务列表（支持标题/员工名匹配 + 全文内容搜索）
+  const filteredTasks = useMemo(() => {
+    let result = globalTasks
+    if (filterEmployeeId) {
+      result = result.filter(t => t.employee_id === filterEmployeeId)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(t =>
+        (t.title || '').toLowerCase().includes(q) ||
+        (t.employee_name || '').toLowerCase().includes(q) ||
+        (contentMatchIds?.has(t.id) ?? false)
+      )
+    }
+    return result
+  }, [globalTasks, filterEmployeeId, searchQuery, contentMatchIds])
+
+  // 新建任务（保留当前已选员工，清除激活对话避免新消息发到旧对话）
+  const handleNewTask = useCallback(() => {
+    setTaskMode('new')
+    setNewTaskEmployeeId(currentEmployeeId || null)
+    pendingSelectConvIdRef.current = null
+    setAttachedImages([])
+    setSelectedModels([])
+    clearActiveConversation()
+  }, [currentEmployeeId, clearActiveConversation])
+
+  // 选择已有任务
+  const handleSelectTask = useCallback((taskId: string) => {
+    const task = globalTasks.find(t => t.id === taskId)
+    if (!task) return
+
+    setTaskMode('chat')
+    if (task.employee_id === currentEmployeeId) {
+      selectConversation(taskId)
+    } else {
+      pendingSelectConvIdRef.current = taskId
+      prevEmployeeLoadedRef.current = false
+      setCurrentEmployeeId(task.employee_id)
+    }
+  }, [globalTasks, currentEmployeeId, selectConversation])
+
+  // 删除任务
+  const handleDeleteTask = useCallback(async (taskId: string) => {
+    try {
+      await window.electronAPI.conversation.delete(taskId)
+      setGlobalTasks(prev => prev.filter(t => t.id !== taskId))
+      if (taskId === activeConversationId) {
+        handleNewTask()
+      }
+      message.success(t('workbench.deleteSuccess'))
+    } catch {
+      message.error(t('workbench.deleteFailed'))
+    }
+  }, [activeConversationId, handleNewTask, message, t])
+
+  // 批量删除任务
+  const handleDeleteMany = useCallback(async (taskIds: string[]) => {
+    try {
+      for (const taskId of taskIds) {
+        await window.electronAPI.conversation.delete(taskId)
+      }
+      setGlobalTasks(prev => prev.filter(t => !taskIds.includes(t.id)))
+      if (activeConversationId && taskIds.includes(activeConversationId)) {
+        handleNewTask()
+      }
+      message.success(t('workbench.deleteSuccess'))
+    } catch {
+      message.error(t('workbench.deleteFailed'))
+    }
+  }, [activeConversationId, handleNewTask, message, t])
+
+  // 发送消息
+  const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
+    setAttachedImages([])
+    setSelectedModels([])
+    await handleSend(content, images, models, options)
+    // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
+    // useEffect 刷新（此时 sendMessage 已完成持久化，listAll 一定能查到新任务）
+    if (taskMode === 'new') {
+      setTaskMode('chat')
+    }
+  }, [handleSend, taskMode])
+
+  // 选择新任务员工
+  const handleSelectEmployee = useCallback((empId: string) => {
+    setNewTaskEmployeeId(empId)
+    setCurrentEmployeeId(empId)
+    prevEmployeeLoadedRef.current = false
+  }, [])
+
+  // 生成标题（适用于任意任务，不限于当前激活任务）
+  const handleGenerateTitle = useCallback(async (taskId: string) => {
+    try {
+      const fullConv = await window.electronAPI.conversation.get(taskId)
+      if (fullConv?.messages_json) {
+        const msgs = JSON.parse(fullConv.messages_json)
+        const firstUserMsg = msgs.find((m: any) => m.role === 'user')
+        if (firstUserMsg?.content) {
+          generateConversationTitle(taskId, firstUserMsg.content)
+          setTimeout(() => loadGlobalTasks(), 1000)
+        }
+      }
+    } catch {}
+  }, [generateConversationTitle, loadGlobalTasks])
+
+  // 导出对话（适用于任意任务）
+  const handleExport = useCallback(async (taskId: string) => {
+    try {
+      const fullConv = await window.electronAPI.conversation.get(taskId)
+      if (!fullConv?.messages_json) return
+      const msgs = JSON.parse(fullConv.messages_json)
+      if (!Array.isArray(msgs) || msgs.length === 0) return
+      const lines: string[] = []
+      for (const msg of msgs) {
+        const role = msg.role === 'user' ? '👤 User' : '🤖 Assistant'
+        lines.push(`### ${role}\n`)
+        lines.push(msg.content || '')
+        lines.push('')
+      }
+      const content = lines.join('\n')
+      const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `conversation-${taskId}.md`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {}
+  }, [])
+
+  // 重命名任务（TaskSidebar 内联编辑调用）
+  const handleRename = useCallback(async (taskId: string, newTitle: string): Promise<boolean> => {
+    try {
+      await window.electronAPI.conversation.update({ id: taskId, title: newTitle })
+      setGlobalTasks(prev => prev.map(t => t.id === taskId ? { ...t, title: newTitle } : t))
+      message.success(t('workbench.renameSuccess'))
+      return true
+    } catch {
+      message.error(t('workbench.renameFailed'))
+      return false
+    }
+  }, [t, message])
+
+  // 提取记忆
+  const handleExtractMemory = useCallback(async (taskId: string) => {
+    const hide = message.loading(t('workbench.extractingMemory'), 0)
+    try {
+      const result = await window.electronAPI.employee.extractConversationMemories({ conversation_id: taskId })
+      hide()
+      if (result?.success) {
+        message.success(t('workbench.extractMemorySuccess'))
+      } else {
+        message.error(result?.error || t('workbench.extractMemoryFailed'))
+      }
+    } catch {
+      hide()
+      message.error(t('workbench.extractMemoryFailed'))
+    }
+  }, [message, t])
+
+  const workbenchStyle = useMemo(() => `
+    .cursor-blink { animation: blink 1s infinite; }
+    @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+    .workbench-input::placeholder { color: ${token.colorTextQuaternary}; }
+    .workbench-input:focus { outline: none; }
+    .workbench-input { background: transparent !important; }
+    .workbench-input:hover, .workbench-input:focus { background: transparent !important; }
+    .ant-input-textarea-focused { background: transparent !important; }
+    .markdown-content h1, .markdown-content h2, .markdown-content h3,
+    .markdown-content h4, .markdown-content h5, .markdown-content h6 {
+      margin-top: 14px; margin-bottom: 6px; font-weight: 600; line-height: 1.4;
+    }
+    .markdown-content h1 { font-size: 1.35em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 4px; }
+    .markdown-content h2 { font-size: 1.2em; border-bottom: 1px solid ${token.colorBorderSecondary}; padding-bottom: 3px; }
+    .markdown-content h3 { font-size: 1.08em; }
+    .markdown-content p { margin: 0 0 6px; }
+    .markdown-content p:last-child { margin-bottom: 0; }
+    .markdown-content ul, .markdown-content ol { padding-left: 22px; margin: 0 0 6px; }
+    .markdown-content li { margin-bottom: 3px; }
+    .markdown-content code {
+      background: ${token.colorBgTextHover}; padding: 1px 5px; border-radius: 3px;
+      font-size: 0.88em; font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    .markdown-content pre {
+      background: ${token.colorBgTextHover}; padding: 10px 14px; border-radius: 6px;
+      overflow-x: auto; margin: 6px 0; border: 1px solid ${token.colorBorderSecondary};
+    }
+    .markdown-content pre code { background: transparent; padding: 0; border-radius: 0; font-size: 0.85em; line-height: 1.6; }
+    .markdown-content blockquote {
+      border-left: 3px solid ${token.colorPrimary}; margin: 6px 0; padding: 3px 10px;
+      color: ${token.colorTextSecondary}; background: ${token.colorPrimaryBg}; border-radius: 0 4px 4px 0;
+    }
+    .markdown-content table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+    .markdown-content th, .markdown-content td { border: 1px solid ${token.colorBorderSecondary}; padding: 5px 10px; text-align: left; }
+    .markdown-content th { background: ${token.colorBgTextHover}; font-weight: 600; }
+    .markdown-content a { color: ${token.colorPrimary}; text-decoration: none; }
+    .markdown-content a:hover { text-decoration: underline; }
+    .markdown-content hr { border: none; border-top: 1px solid ${token.colorBorderSecondary}; margin: 12px 0; }
+    .markdown-content img { max-width: 100%; border-radius: 4px; }
+  `, [token])
+
+  // 监听 activeConversationId 变化，刷新全局列表
+  useEffect(() => {
+    if (activeConversationId && taskMode === 'chat') {
+      loadGlobalTasks()
+    }
+  }, [activeConversationId, taskMode, loadGlobalTasks])
+
+  // 监听对话标题生成完成，刷新任务列表让新标题立即可见
+  useEffect(() => {
+    const handler = () => loadGlobalTasks()
+    window.addEventListener('conversation-title-updated', handler)
+    return () => window.removeEventListener('conversation-title-updated', handler)
+  }, [loadGlobalTasks])
+
+  if (!employeesLoaded) {
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (employees.length === 0) {
+    return (
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+        <RobotOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />
+        <Paragraph type="secondary" style={{ fontSize: 14 }}>{t('workbench.noEmployeeHint')}</Paragraph>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/wizard')}>
+          {t('workbench.createEmployee')}
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent' }}>
+      {/* 主体 */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {showSidePanel && (
+          <TaskSidebar
+            tasks={filteredTasks}
+            activeTaskId={taskMode === 'new' ? null : activeConversationId}
+            employees={employees}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            filterEmployeeId={filterEmployeeId}
+            onFilterChange={setFilterEmployeeId}
+            onSelect={handleSelectTask}
+            onDelete={handleDeleteTask}
+            onDeleteMany={handleDeleteMany}
+            onNewTask={handleNewTask}
+            onCollapse={() => setShowSidePanel(false)}
+            onExport={handleExport}
+            onGenerateTitle={handleGenerateTitle}
+            onRename={handleRename}
+            onExtractMemory={handleExtractMemory}
+            isTaskStreaming={isConversationStreaming}
+          />
+        )}
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, position: 'relative' }}>
+          {!showSidePanel && (
+            <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 20, display: 'flex', gap: 6 }}>
+              <Tooltip title={t('workbench.historyConv')}>
+                <Button type="text" size="small"
+                  icon={<MenuUnfoldOutlined />}
+                  onClick={() => setShowSidePanel(true)}
+                  style={{ color: token.colorTextSecondary }}
+                />
+              </Tooltip>
+              <Tooltip title={t('tasks.newTask')}>
+                <Button type="text" size="small"
+                  icon={<PlusOutlined />}
+                  onClick={handleNewTask}
+                  style={{ color: token.colorTextSecondary }}
+                />
+              </Tooltip>
+            </div>
+          )}
+          {taskMode === 'new' ? (
+            // 新任务模式：居中输入框
+            <div style={{
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              overflowY: 'auto',
+            }}>
+              <ChatInput
+                onSend={handleSendWithReset}
+                onStop={handleStop}
+                isStreaming={isStreaming}
+                placeholder={t('tasks.inputPlaceholder')}
+                providers={providers}
+                attachedImages={attachedImages}
+                onImagesChange={setAttachedImages}
+                selectedModels={selectedModels}
+                onModelsChange={setSelectedModels}
+                selectedCollectionIds={selectedCollectionIds}
+                onSelectedCollectionIdsChange={setSelectedCollectionIds}
+                allCollections={allCollections}
+                minimalMode={minimalMode}
+                onMinimalModeChange={handleToggleMinimalMode}
+                canToggleMinimalMode={true}
+                value={inputDraft}
+                onChange={setInputDraft}
+                availableSkills={availableSkills}
+                centerMode={true}
+                showEmployeeSelector={true}
+                employees={employees}
+                selectedEmployeeId={newTaskEmployeeId || undefined}
+                onSelectEmployee={handleSelectEmployee}
+                defaultProviderId={selectedLlmProviderId}
+                defaultModelId={selectedLlmModelId}
+                onDefaultModelChange={handleLlmChange}
+                enableThinking={enableThinking}
+                onThinkingChange={setEnableThinking}
+              />
+            </div>
+          ) : (
+            // 对话模式
+            <>
+              {isComparisonMode ? null : (
+                <div ref={chatContainerRef} onScroll={handleScroll}
+                  style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    padding: '16px 3%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                  }}
+                >
+                  <MessageList
+                    messages={messages}
+                    loadingConversationId={loadingConversationId}
+                    activeConversationId={activeConversationId}
+                    chatContainerRef={chatContainerRef as React.RefObject<HTMLDivElement | null>}
+                    onCopy={handleCopy}
+                    onDeleteMessage={handleDeleteMessage}
+                    onRegenerate={handleRegenerate}
+                    onSwitchModelRegenerate={handleSwitchModelRegenerate}
+                    onEditAndResubmit={handleEditAndResubmit}
+                    onToggleSegment={handleToggleSegment}
+                    onSwitchBranch={handleSwitchBranch}
+                    onOpenComparison={handleOpenComparison}
+                    getToolDisplayName={getToolDisplayName}
+                    providers={providers}
+                  />
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+              <ChatInput
+                onSend={handleSendWithReset}
+                onStop={handleStop}
+                isStreaming={isStreaming}
+                placeholder={t('workbench.inputPlaceholder')}
+                providers={providers}
+                attachedImages={attachedImages}
+                onImagesChange={setAttachedImages}
+                selectedModels={selectedModels}
+                onModelsChange={setSelectedModels}
+                selectedCollectionIds={selectedCollectionIds}
+                onSelectedCollectionIdsChange={setSelectedCollectionIds}
+                allCollections={allCollections}
+                minimalMode={minimalMode}
+                onMinimalModeChange={handleToggleMinimalMode}
+                canToggleMinimalMode={messages.length === 0}
+                value={inputDraft}
+                onChange={setInputDraft}
+                availableSkills={availableSkills}
+                defaultProviderId={selectedLlmProviderId}
+                defaultModelId={selectedLlmModelId}
+                onDefaultModelChange={handleLlmChange}
+                enableThinking={enableThinking}
+                onThinkingChange={setEnableThinking}
+              />
+            </>
+          )}
+        </div>
+      </div>
+
+      <style>{workbenchStyle}</style>
+
+      <EmployeeSettingsDrawer
+        open={settingsOpen}
+        employeeId={currentEmployeeId}
+        onClose={() => setSettingsOpen(false)}
+      />
+    </div>
+  )
+}
+
+export default Tasks

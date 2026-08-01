@@ -140,7 +140,6 @@ class DatabaseService {
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
-        status TEXT NOT NULL DEFAULT 'draft',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
         arch_version INTEGER NOT NULL DEFAULT 1,
@@ -215,7 +214,6 @@ class DatabaseService {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
-      CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
       CREATE INDEX IF NOT EXISTS idx_skills_employee ON skills(employee_id);
       CREATE INDEX IF NOT EXISTS idx_conversations_employee ON conversations(employee_id);
       CREATE INDEX IF NOT EXISTS idx_feedbacks_skill ON feedbacks(skill_id);
@@ -445,6 +443,7 @@ class DatabaseService {
     this.addColumnIfNotExists('employees', 'profile_json', "TEXT DEFAULT ''")
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('employees', 'last_active_at', 'INTEGER')
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
@@ -473,6 +472,8 @@ class DatabaseService {
     `)
 
     this.migrateEmployeeAddWorkspacePath()
+    this.migrateEmployeeDropStatus()
+    this.migrateEmployeeLastActiveAt()
 
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS employee_memories_fts USING fts5(
@@ -575,7 +576,6 @@ class DatabaseService {
             name TEXT NOT NULL,
             description TEXT DEFAULT '',
             avatar_type TEXT DEFAULT 'default',
-            status TEXT NOT NULL DEFAULT 'draft',
             default_skill_id TEXT,
             profile_json TEXT DEFAULT '',
             arch_version INTEGER NOT NULL DEFAULT 1,
@@ -585,11 +585,10 @@ class DatabaseService {
             created_at INTEGER NOT NULL DEFAULT (unixepoch()),
             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
           );
-          INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
-            SELECT id, '', name, description, avatar_type, status, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
+          INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
+            SELECT id, '', name, description, avatar_type, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
           DROP TABLE employees;
           ALTER TABLE employees_new RENAME TO employees;
-          CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
         `)
       })
       migrateTx()
@@ -597,11 +596,44 @@ class DatabaseService {
     }
   }
 
+  /** 移除 employees.status 字段及其索引（数字员工不再有"运行中"状态概念） */
+  private migrateEmployeeDropStatus(): void {
+    const tableInfo = this.db.prepare('PRAGMA table_info(employees)').all() as any[]
+    const hasStatus = tableInfo.some((c) => c.name === 'status')
+    if (!hasStatus) return
+    logger.info('Migrating employees: dropping status column...')
+    this.db.exec('DROP INDEX IF EXISTS idx_employees_status')
+    this.dropColumnIfExists('employees', 'status')
+    logger.info('Migration completed: employees.status column dropped')
+  }
+
   private migrateConversationLastMessageAt(): void {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {
       logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
     }
+  }
+
+  private migrateEmployeeLastActiveAt(): void {
+    const staleRows = this.db.prepare(
+      `SELECT e.id AS emp_id, MAX(COALESCE(c.last_message_at, c.created_at)) AS latest
+       FROM employees e
+       LEFT JOIN conversations c ON c.employee_id = e.id
+       WHERE e.last_active_at IS NULL
+       GROUP BY e.id`
+    ).all() as Array<{ emp_id: string; latest: number | null }>
+    if (staleRows.length === 0) return
+    const stmt = this.db.prepare('UPDATE employees SET last_active_at = ? WHERE id = ?')
+    const tx = this.db.transaction((rows: typeof staleRows) => {
+      let applied = 0
+      for (const r of rows) {
+        const val = r.latest ?? null
+        stmt.run(val, r.emp_id)
+        if (val !== null) applied++
+      }
+      logger.info(`Migration: employees.last_active_at initialised for ${rows.length} rows (${applied} have conversations)`)
+    })
+    tx(staleRows)
   }
 
   public getDb(): Database.Database {

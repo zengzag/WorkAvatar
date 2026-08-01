@@ -1,11 +1,11 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
-  EmployeeListParams,
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
   ConversationListParams,
+  ConversationListWithEmployeeParams,
   ConversationCreateParams,
   ConversationSearchParams,
   EmployeeProfileAnalyzeParams,
@@ -39,8 +39,8 @@ export function registerEmployeeHandlers(
   employeeExportService: EmployeeExportService,
   memoryService: EmployeeMemoryService
 ) {
-  safeHandle(IPC_CHANNELS.EMPLOYEE_LIST, (params?: EmployeeListParams) => {
-    return workspaceManager.getEmployeeList(params?.status)
+  safeHandle(IPC_CHANNELS.EMPLOYEE_LIST, () => {
+    return workspaceManager.getEmployeeList()
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_GET, (id: string) => {
@@ -71,7 +71,15 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_LIST, (params: ConversationListParams) => {
-    return workspaceManager.getConversationList(params.employee_id)
+    return workspaceManager.getConversationList(params?.employee_id)
+  })
+
+  safeHandle(IPC_CHANNELS.CONVERSATION_LIST_ALL, (params?: ConversationListWithEmployeeParams) => {
+    const all = workspaceManager.getAllConversationsWithEmployee()
+    if (params?.employee_ids && params.employee_ids.length > 0) {
+      return all.filter(c => params.employee_ids!.includes(c.employee_id))
+    }
+    return all
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_GET, (id: string) => {

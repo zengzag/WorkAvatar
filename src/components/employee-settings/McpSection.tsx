@@ -187,12 +187,17 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
   const [testingForm, setTestingForm] = useState(false)
 
   const loadServers = useCallback(async () => {
+    if (!employeeId) {
+      setServers([])
+      return
+    }
     setLoading(true)
     try {
       const result = await window.electronAPI.mcp.list(employeeId)
-      setServers(result || [])
+      setServers(Array.isArray(result) ? result : [])
     } catch (err: any) {
       message.error(t('employeeSettings.mcpLoadFailed') + (err?.message ? `: ${err.message}` : ''))
+      setServers([])
     } finally {
       setLoading(false)
     }

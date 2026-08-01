@@ -214,7 +214,7 @@ const AutomationTaskForm: React.FC<AutomationTaskFormProps> = ({
               <Select
                 showSearch
                 optionFilterProp="label"
-                options={employees.map((e) => ({ label: `${e.name} (${e.status})`, value: e.id }))}
+                options={employees.map((e) => ({ label: e.name, value: e.id }))}
                 placeholder={t('automation.fieldEmployee')}
               />
             </Form.Item>

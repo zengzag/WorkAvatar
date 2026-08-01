@@ -1,8 +1,9 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, BulbOutlined, BulbFilled } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import type { Employee } from '../../types'
 
 interface AttachedFile {
   id: string
@@ -57,7 +58,17 @@ const ChatInput: React.FC<{
   value: string
   onChange: (value: string) => void
   availableSkills?: AvailableSkill[]
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills }) => {
+  centerMode?: boolean
+  showEmployeeSelector?: boolean
+  employees?: Employee[]
+  selectedEmployeeId?: string
+  onSelectEmployee?: (id: string) => void
+  defaultProviderId?: string
+  defaultModelId?: string
+  onDefaultModelChange?: (providerId: string, modelId: string) => void
+  enableThinking?: boolean
+  onThinkingChange?: (enabled: boolean) => void
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -274,8 +285,6 @@ const ChatInput: React.FC<{
     onImagesChange(attachedImages.filter(img => img.id !== id))
   }, [attachedImages, onImagesChange])
 
-  const charCount = value.length
-
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [modelSearchText, setModelSearchText] = useState('')
   const [showKbPicker, setShowKbPicker] = useState(false)
@@ -440,8 +449,206 @@ const ChatInput: React.FC<{
     </div>
   ), [t, token, selectedCollectionIds, allCollections, onSelectedCollectionIdsChange])
 
+  const [showDefaultModelPicker, setShowDefaultModelPicker] = useState(false)
+  const [defaultModelSearch, setDefaultModelSearch] = useState('')
+  const [employeePickerOpen, setEmployeePickerOpen] = useState(false)
+  const [employeeSearch, setEmployeeSearch] = useState('')
+
+  const defaultModelLabel = useMemo(() => {
+    if (!defaultProviderId || !defaultModelId) return ''
+    const p = providers.find((p: any) => p.id === defaultProviderId)
+    if (!p) return defaultModelId
+    const models = getProviderModels(p)
+    const m = models.find((m: any) => m.model === defaultModelId)
+    return m?.name || defaultModelId
+  }, [defaultProviderId, defaultModelId, providers])
+
+  const filteredDefaultModels = useMemo(() => {
+    const search = defaultModelSearch.toLowerCase()
+    return providers.map((provider: any) => {
+      const models = getProviderModels(provider).filter(m => (m.category || 'chat') === 'chat')
+      const filtered = search
+        ? models.filter(m =>
+            m.name.toLowerCase().includes(search) ||
+            m.model.toLowerCase().includes(search) ||
+            provider.name.toLowerCase().includes(search)
+          )
+        : models
+      return { provider, models: filtered }
+    }).filter(group => group.models.length > 0)
+  }, [providers, defaultModelSearch])
+
+  const defaultModelPickerContent = useMemo(() => (
+    <div style={{ width: 300, maxHeight: 420, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Input
+        placeholder={t('workbench.searchModel')}
+        prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+        value={defaultModelSearch}
+        onChange={(e) => setDefaultModelSearch(e.target.value)}
+        allowClear
+        variant="borderless"
+        size="small"
+        style={{ background: token.colorFillQuaternary, borderRadius: 6 }}
+      />
+      <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {filteredDefaultModels.map(({ provider, models }) => {
+          const isDomestic = DOMESTIC_PROVIDERS.has(provider.provider_type)
+          const isLocal = LOCAL_PROVIDERS.has(provider.provider_type)
+          return (
+            <div key={provider.id}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', fontSize: 11, fontWeight: 600, color: token.colorTextSecondary }}>
+                <RobotOutlined style={{ fontSize: 11 }} />
+                <span>{provider.name}</span>
+                {isDomestic && <Tag color="red" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.domestic')}</Tag>}
+                {isLocal && <Tag color="green" style={{ fontSize: 8, lineHeight: '12px', padding: '0 2px', margin: 0 }}>{t('llmSelector.local')}</Tag>}
+              </div>
+              {models.map((model) => {
+                const selected = defaultProviderId === provider.id && defaultModelId === model.model
+                return (
+                  <div
+                    key={`${provider.id}-${model.model}`}
+                    onClick={() => {
+                      onDefaultModelChange?.(provider.id, model.model)
+                      setShowDefaultModelPicker(false)
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 6px 4px 20px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      background: selected ? token.colorPrimaryBg : 'transparent',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = token.colorBgTextHover }}
+                    onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = selected ? token.colorPrimaryBg : 'transparent' }}
+                  >
+                    {selected ? <CheckOutlined style={{ fontSize: 11, color: token.colorPrimary }} /> : <div style={{ width: 11 }} />}
+                    <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.name}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+        {filteredDefaultModels.length === 0 && (
+          <div style={{ padding: '16px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+            {t('workbench.noMatchingModel')}
+          </div>
+        )}
+      </div>
+    </div>
+  ), [t, token, defaultModelSearch, filteredDefaultModels, defaultProviderId, defaultModelId, onDefaultModelChange])
+
+  const selectedEmployee = useMemo(() => {
+    return employees?.find(e => e.id === selectedEmployeeId)
+  }, [employees, selectedEmployeeId])
+
+  const filteredEmployees = useMemo(() => {
+    if (!employeeSearch.trim()) return employees || []
+    const search = employeeSearch.toLowerCase()
+    return (employees || []).filter(e =>
+      e.name.toLowerCase().includes(search) ||
+      (e.description || '').toLowerCase().includes(search)
+    )
+  }, [employees, employeeSearch])
+
   return (
-    <div style={{ padding: '8px 6% 12px 6%', flexShrink: 0 }}>
+    <div style={centerMode
+      ? { padding: '0 16px', flexShrink: 0, maxWidth: 680, width: '100%', margin: '0 auto' }
+      : { padding: '8px 6% 12px 6%', flexShrink: 0 }
+    }>
+      {showEmployeeSelector && (
+        <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
+          <Popover
+            open={employeePickerOpen}
+            onOpenChange={(o) => {
+              setEmployeePickerOpen(o)
+              if (!o) setEmployeeSearch('')
+            }}
+            content={
+              <div style={{ width: 186, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Input
+                  placeholder={t('workbench.searchEmployee')}
+                  prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  allowClear
+                  size="small"
+                  variant="borderless"
+                  style={{ padding: '2px 8px', marginBottom: 2 }}
+                />
+                <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {filteredEmployees.length === 0 && (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+                      {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+                    </div>
+                  )}
+                  {filteredEmployees.map(emp => (
+                    <div
+                      key={emp.id}
+                      onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        background: emp.id === selectedEmployeeId ? token.colorPrimaryBg : 'transparent',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={(e) => { if (emp.id !== selectedEmployeeId) e.currentTarget.style.background = token.colorBgTextHover }}
+                      onMouseLeave={(e) => { if (emp.id !== selectedEmployeeId) e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 6,
+                        background: `${token.colorPrimary}15`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text strong style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.name}</Text>
+                        {emp.description && (
+                          <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
+                        )}
+                      </div>
+                      {emp.id === selectedEmployeeId && <CheckOutlined style={{ fontSize: 12, color: token.colorPrimary, flexShrink: 0 }} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            }
+            trigger="click"
+            placement="bottomLeft"
+            arrow={false}
+            styles={{ container: { padding: 8 } }}
+          >
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '6px 16px',
+              borderRadius: 20,
+              background: token.colorBgContainer,
+              border: `1px solid ${selectedEmployeeId ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}>
+              <div style={{
+                width: 22, height: 22, borderRadius: 5,
+                background: `${token.colorPrimary}15`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <RobotOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
+              </div>
+              <Text strong style={{ fontSize: 13 }}>
+                {selectedEmployee ? selectedEmployee.name : t('tasks.selectEmployee')}
+              </Text>
+              <DownOutlined style={{ fontSize: 10, color: token.colorTextTertiary }} />
+            </div>
+          </Popover>
+        </div>
+      )}
       {attachedImages.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 6px', flexWrap: 'wrap' }}>
           {attachedImages.map(img => (
@@ -544,7 +751,7 @@ const ChatInput: React.FC<{
             onPressEnter={handleKeyDown}
             onPaste={handlePaste}
             placeholder={placeholder}
-            autoSize={{ minRows: 1, maxRows: 5 }}
+            autoSize={{ minRows: centerMode ? 5 : 2, maxRows: 8 }}
             style={{ background: 'transparent', border: 'none', resize: 'none', fontSize: 13, lineHeight: 1.6, padding: '4px 0', boxShadow: 'none' }}
             className="workbench-input"
           />
@@ -604,18 +811,51 @@ const ChatInput: React.FC<{
                 </Dropdown>
               </Tooltip>
             </div>
-            {charCount > 0 && (
-              <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>{charCount}</Text>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {onDefaultModelChange && (
+                <Popover
+                  content={defaultModelPickerContent}
+                  trigger="click"
+                  placement="topRight"
+                  arrow={false}
+                  styles={{ container: { padding: 8 } }}
+                  onOpenChange={(open) => {
+                    setShowDefaultModelPicker(open)
+                    if (open) setDefaultModelSearch('')
+                  }}
+                  open={showDefaultModelPicker}
+                >
+                  <Button type="text" size="small"
+                    style={{ color: defaultModelLabel ? token.colorPrimary : token.colorTextQuaternary, padding: '0 6px', height: 20, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {defaultModelLabel ? (
+                      <span style={{ fontSize: 11, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{defaultModelLabel}</span>
+                    ) : (
+                      <RobotOutlined style={{ fontSize: 12 }} />
+                    )}
+                  </Button>
+                </Popover>
+              )}
+              {onThinkingChange && (
+                <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+                  <Button type="text" size="small"
+                    icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                    onClick={() => onThinkingChange(!enableThinking)}
+                    style={{
+                      color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
+                      padding: '0 2px', height: 20, minWidth: 20,
+                    }} />
+                </Tooltip>
+              )}
+            </div>
           </div>
         </div>
         <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
         {isStreaming ? (
-          <Button icon={<StopOutlined />} danger onClick={onStop} shape="circle" size="middle" />
+          <Button icon={<StopOutlined />} danger onClick={onStop} size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
             disabled={!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
-            shape="circle" size="middle" style={{ flexShrink: 0 }} />
+            size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>
     </div>

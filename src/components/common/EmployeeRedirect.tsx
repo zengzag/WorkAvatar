@@ -12,29 +12,15 @@ const EmployeeRedirect: React.FC = () => {
   useEffect(() => {
     const resolveTarget = async () => {
       try {
-        const lastId = localStorage.getItem('employeeWorkbench:lastEmployeeId')
-        if (lastId) {
-          try {
-            await window.electronAPI.employee.get(lastId)
-            setTargetPath(`/employee/${lastId}`)
-            setLoading(false)
-            return
-          } catch {
-            localStorage.removeItem('employeeWorkbench:lastEmployeeId')
-          }
-        }
-
         const employees = await window.electronAPI.employee.list()
         if (employees && employees.length > 0) {
-          const firstId = employees[0].id
-          localStorage.setItem('employeeWorkbench:lastEmployeeId', firstId)
-          setTargetPath(`/employee/${firstId}`)
+          setTargetPath('/tasks')
         } else {
-          setTargetPath('/employee/_empty')
+          setTargetPath('/employees')
         }
       } catch {
         message.error(t('digitalEmployees.loadEmployeesFailed'))
-        setTargetPath('/employee/_empty')
+        setTargetPath('/tasks')
       } finally {
         setLoading(false)
       }

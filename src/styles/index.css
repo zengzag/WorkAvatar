@@ -435,6 +435,14 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   user-select: none;
 }
 
+/* 全局导航栏：antd Sider 会在 children 外包一层 .ant-layout-sider-children，
+   需将其转为 flex 容器，才能让 settings 菜单固定贴底 */
+.app-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
 /* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
 @keyframes nav-rec-pulse {
   0% { opacity: 1; transform: scale(1); }

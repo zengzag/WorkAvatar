@@ -69,10 +69,9 @@ const automationListEmployeesTool: ToolDefinition = {
   id: 'automation_list_employees',
   name: 'automation_list_employees',
   title: '列出数字员工',
-  summary: '列出所有可用的数字员工（id、名称、描述、状态）。创建自动化任务前调用此工具获取 employee_id。',
-  description: `列出所有可用的数字员工，返回 id、name、description、status。
+  summary: '列出所有可用的数字员工（id、名称、描述）。创建自动化任务前调用此工具获取 employee_id。',
+  description: `列出所有可用的数字员工，返回 id、name、description。
 - 创建自动化任务时需要指定 employee_id（执行该任务的数字员工）
-- 仅返回 status='active' 的员工
 - 调用此工具后，将所需员工的 id 传入 automation_task_create 的 employee_id 参数`,
   parameters: {
     type: 'object',
@@ -82,12 +81,12 @@ const automationListEmployeesTool: ToolDefinition = {
     try {
       const db = DatabaseService.getInstance().getDb()
       const rows = db.prepare(
-        `SELECT id, name, description, status FROM employees WHERE status = 'active' ORDER BY name`
+        `SELECT id, name, description FROM employees ORDER BY name`
       ).all() as any[]
       if (rows.length === 0) {
         return { success: true, output: '暂无可用数字员工。', employees: [] }
       }
-      const formatted = rows.map((r, i) => `[${i + 1}] ${r.name} (id=${r.id})\n  状态: ${r.status}\n  描述: ${r.description || '无'}`).join('\n')
+      const formatted = rows.map((r, i) => `[${i + 1}] ${r.name} (id=${r.id})\n  描述: ${r.description || '无'}`).join('\n')
       return {
         success: true,
         output: `找到 ${rows.length} 个数字员工：\n${formatted}`,

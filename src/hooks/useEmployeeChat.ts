@@ -23,6 +23,8 @@ import { useStreamListeners, getPersistentListenersCleanup, setPersistentListene
 interface UseEmployeeChatParams {
   id: string | undefined
   message: ReturnType<typeof import('antd').App.useApp>['message']
+  /** 跳过自动选择对话/新建对话，由外部页面控制对话选择（任务页使用） */
+  skipAutoInit?: boolean
 }
 
 // 按 employeeId 分组的消息缓存：切换员工时不再清空旧员工缓存，
@@ -36,8 +38,8 @@ const _persistentStreamStates = new Map<string, ConversationStreamState>()
 const _persistentEmployeeData = new Map<string, any>()
 const _persistentConvList = new Map<string, Conversation[]>()
 
-// 按 employeeId 缓存当前活动对话 ID：主 tab 切换（如 资料库→数字员工）后，
-// EmployeeWorkbench 完全卸载再重新挂载，activeConversationId 状态丢失。
+// 按 employeeId 缓存当前活动对话 ID：主 tab 切换（如 资料库→任务）后，
+// 页面完全卸载再重新挂载，activeConversationId 状态丢失。
 // 有了此缓存，initEmployee 可以直接恢复上次的对话，避免 selectConversation IPC。
 const _persistentActiveConvId = new Map<string, string>()
 
@@ -54,7 +56,7 @@ const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, 
   return cache
 }
 
-const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
+const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
 
   const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
@@ -144,8 +146,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const isStreamingRef = useRef<boolean>(false)
   const initVersionRef = useRef(0)
   const selectConvVersionRef = useRef(0)
-  // 新建对话后延迟发送的 setTimeout 句柄，组件卸载时清理避免 setState-after-unmount（B#7）
-  const pendingSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 新建对话后延迟发送的微任务标记，组件卸载时清理避免 setState-after-unmount（B#7）
+  // 用微任务而非 setTimeout：保证 sendMessage 内消息持久化先于任务列表刷新（IPC 顺序）
+  const pendingSendMicrotaskRef = useRef(false)
 
   useEffect(() => {
     activeConversationIdRef.current = activeConversationId
@@ -197,10 +200,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
         // 重置 pendingMessage 与延迟发送，避免跨员工串扰
         setPendingMessage(null)
         setPendingHighPermission(false)
-        if (pendingSendTimeoutRef.current) {
-          clearTimeout(pendingSendTimeoutRef.current)
-          pendingSendTimeoutRef.current = null
-        }
+        pendingSendMicrotaskRef.current = false
         // 重置 initializedRef，让新员工走完整的 selectConversation/startNewConversation 流程
         initializedRef.current = false
 
@@ -248,6 +248,9 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       if (hasFullCache && !initializedRef.current) {
         // 缓存完整：先设 loading（显示转圈圈），再异步恢复消息
         initializedRef.current = true
+        if (skipAutoInit) {
+          // 任务模式：不自动恢复上次对话，由外部页面控制
+        } else {
         setActiveConversationId(cachedActiveConvId)
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
@@ -279,6 +282,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           // 消息未缓存：走 selectConversation 加载（已有 loading 状态）
           selectConversation(cachedActiveConvId)
         }
+        } // end skipAutoInit else
       }
 
       // 阶段 2：后台静默刷新最新数据
@@ -301,12 +305,16 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       // 首次初始化（无缓存）：选择对话
       if (!hasFullCache && !initializedRef.current) {
         initializedRef.current = true
-        const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
-        if (convList.length > 0) {
-          const targetConv = savedConvId ? convList.find((c: Conversation) => c.id === savedConvId) : null
-          selectConversation(targetConv ? savedConvId! : convList[0].id)
+        if (skipAutoInit) {
+          // 任务模式：由外部页面控制对话选择，不自动选择或新建
         } else {
-          await startNewConversation()
+          const savedConvId = activeConvIdStorageKey ? localStorage.getItem(activeConvIdStorageKey) : null
+          if (convList.length > 0) {
+            const targetConv = savedConvId ? convList.find((c: Conversation) => c.id === savedConvId) : null
+            selectConversation(targetConv ? savedConvId! : convList[0].id)
+          } else {
+            await startNewConversation()
+          }
         }
       }
     } catch {
@@ -323,10 +331,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   useEffect(() => {
     return () => {
       // 清理未执行的延迟发送，避免卸载后触发 setState（B#7）
-      if (pendingSendTimeoutRef.current) {
-        clearTimeout(pendingSendTimeoutRef.current)
-        pendingSendTimeoutRef.current = null
-      }
+      pendingSendMicrotaskRef.current = false
       const entries: [string, MessageWithThought[]][] = []
       for (const entry of conversationMessagesRef.current.entries()) {
         entries.push(entry as [string, MessageWithThought[]])
@@ -401,7 +406,12 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }
 
-  const startNewConversation = async (): Promise<string | null> => {
+  const startNewConversation = async (opts?: {
+    message?: string
+    images?: string[]
+    models?: Array<{ providerId: string; modelId: string }>
+    highPermission?: boolean
+  }): Promise<string | null> => {
     if (isCreatingConversation || !id) return null
     setIsCreatingConversation(true)
     try {
@@ -415,24 +425,28 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
       activeConversationIdRef.current = convId
       setMessages([])
       setConvMessages(convId, [])
-      // 新对话无流式输出，按任务区分 isStreaming，避免沿用上一个任务的状态
       setIsStreaming(false)
       isStreamingRef.current = false
-      // 新对话草稿为空
       setInputDraftState('')
       forceScrollToBottom()
 
       refreshConversationList()
 
-      if (pendingMessage) {
-        const msgContent = pendingMessage
-        const msgHighPermission = pendingHighPermission
+      // 优先使用参数传递的消息（避免 React state 异步更新导致丢失），fallback 到 state（兼容其他场景）
+      const msgContent = opts?.message ?? pendingMessage
+      const msgImages = opts?.images
+      const msgModels = opts?.models
+      const msgHighPermission = opts?.highPermission ?? pendingHighPermission
+
+      if (msgContent || (msgImages && msgImages.length > 0)) {
         setPendingMessage(null)
         setPendingHighPermission(false)
-        pendingSendTimeoutRef.current = setTimeout(() => {
-          pendingSendTimeoutRef.current = null
-          sendMessage(convId, msgContent, undefined, undefined, { highPermission: msgHighPermission })
-        }, 0)
+        pendingSendMicrotaskRef.current = true
+        Promise.resolve().then(() => {
+          if (!pendingSendMicrotaskRef.current) return
+          pendingSendMicrotaskRef.current = false
+          sendMessage(convId, msgContent || '', msgImages, msgModels, { highPermission: msgHighPermission })
+        })
       }
 
       return convId
@@ -711,7 +725,10 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
   const generateConversationTitle = async (conversationId: string, userContent: string) => {
     try {
       const quickModel = await getSceneDefaultModel('quick')
-      const providerId = quickModel?.provider_id || providers.find((p: any) => p.is_default)?.id
+      // 兜底：quick 场景模型 → 默认 provider → 第一个 provider
+      const providerId = quickModel?.provider_id
+        || providers.find((p: any) => p.is_default)?.id
+        || providers[0]?.id
       if (!providerId) return
 
       const modelId = quickModel?.model_id || undefined
@@ -741,27 +758,36 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
           setAllConversations((prev) =>
             prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
           )
+          // 通知外部页面（任务列表）刷新，让新标题立即可见
+          window.dispatchEvent(new CustomEvent('conversation-title-updated', {
+            detail: { conversationId, title },
+          }))
         }
       }
     } catch (e) { console.error('Failed to generate conversation title:', e) }
   }
 
   const handleSend = async (content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
-    if (!content.trim() && (!images || images.length === 0)) return
+    const trimmedContent = content.trim()
+    if (!trimmedContent && (!images || images.length === 0)) return
 
     const currentConvId = activeConversationId
     if (!currentConvId) {
       if (isCreatingConversation) return
-      setPendingMessage(content.trim())
-      setPendingHighPermission(!!options?.highPermission)
-      await startNewConversation()
+      // 直接传参数给 startNewConversation，避免 React state 异步更新导致消息丢失
+      await startNewConversation({
+        message: trimmedContent,
+        images,
+        models,
+        highPermission: !!options?.highPermission,
+      })
       return
     }
 
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === currentConvId && s.isStreaming)
     if (hasActiveStream) return
 
-    sendMessage(currentConvId, content.trim(), images, models, { highPermission: !!options?.highPermission })
+    sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
   }
 
   const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
@@ -795,8 +821,11 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     setConvMessages(targetConvId, [...currentMsgs, userMessage])
 
     const lastMsgTime = Math.floor(Date.now() / 1000)
+    // 立即持久化用户消息（含 message_count），让任务列表能马上看到该对话
     window.electronAPI.conversation.update({
       id: targetConvId,
+      messages_json: JSON.stringify(updatedMessagesRef),
+      message_count: updatedMessagesRef.length,
       last_message_at: lastMsgTime,
     }).catch(() => {})
     updateConvLastMessageAt(targetConvId, lastMsgTime)
@@ -1227,9 +1256,25 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     }
   }, [])
 
+  // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
+  const clearActiveConversation = useCallback(() => {
+    setActiveConversationId(null)
+    activeConversationIdRef.current = null
+    setMessages([])
+    setIsStreaming(false)
+    isStreamingRef.current = false
+    setInputDraftState('')
+    setIsComparisonMode(false)
+    setComparisonMessageIds([])
+  }, [])
+
   const handleToggleMinimalMode = useCallback((enabled: boolean) => {
     const convId = activeConversationIdRef.current
-    if (!convId) return
+    if (!convId) {
+      // 新任务模式（无 activeConversationId）：允许切换，值会在创建新对话时使用
+      setMinimalMode(enabled)
+      return
+    }
     const currentMsgs = conversationMessagesRef.current.get(convId) || []
     if (currentMsgs.length > 0) return
     setMinimalMode(enabled)
@@ -1592,6 +1637,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     handleSend,
     handleStop,
     selectConversation,
+    clearActiveConversation,
     deleteConversation,
     deleteSelectedConversations,
     deleteAllConversations,
@@ -1601,6 +1647,7 @@ const useEmployeeChat = ({ id, message }: UseEmployeeChatParams) => {
     cancelEditTitle,
     handleEditKeyDown,
     startNewConversation,
+    refreshConversationList,
     loadMoreConversations,
     handleConversationListScroll,
     handleCopy,

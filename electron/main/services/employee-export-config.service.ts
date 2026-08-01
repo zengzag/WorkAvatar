@@ -197,8 +197,8 @@ export class EmployeeExportConfigService {
 
     this.db.getDb().transaction(() => {
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, profile_json, status, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, profile_json, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,

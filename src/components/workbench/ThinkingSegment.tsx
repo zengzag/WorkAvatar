@@ -90,8 +90,11 @@ const ThinkingSegmentInner: React.FC<{
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
+  const stepsWrapperRef = useRef<HTMLDivElement>(null)
   const fallbackRef = useRef<number | undefined>(undefined)
   const [contentHeight, setContentHeight] = useState(0)
+  const [stepsExpanded, setStepsExpanded] = useState(false)
+  const [stepsOverflow, setStepsOverflow] = useState(false)
 
   const steps = useMemo(() => {
     if (!seg.content) return []
@@ -121,7 +124,10 @@ const ThinkingSegmentInner: React.FC<{
     if (contentRef.current) {
       setContentHeight(contentRef.current.scrollHeight)
     }
-  }, [steps, seg.collapsed])
+    if (stepsWrapperRef.current) {
+      setStepsOverflow(stepsWrapperRef.current.scrollHeight > 320)
+    }
+  }, [steps, seg.collapsed, stepsExpanded])
 
   const duration = seg.timestamp ? elapsed : 0
   const durationText = duration > 0 ? t('workbench.thoughtFor', { time: duration.toFixed(1) }) : ''
@@ -187,14 +193,41 @@ const ThinkingSegmentInner: React.FC<{
               gap: 10,
             }}
           >
-            {steps.map((step, i) => (
-              <StepBlock
-                key={`${i}-${step.slice(0, 12)}`}
-                stepIndex={i}
-                content={step}
-                token={token}
-              />
-            ))}
+            <div
+              ref={stepsWrapperRef}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                maxHeight: stepsExpanded ? 'none' : 300,
+                overflowY: stepsExpanded ? 'visible' : 'auto',
+                paddingRight: 4,
+              }}
+            >
+              {steps.map((step, i) => (
+                <StepBlock
+                  key={`${i}-${step.slice(0, 12)}`}
+                  stepIndex={i}
+                  content={step}
+                  token={token}
+                />
+              ))}
+            </div>
+            {stepsOverflow && !isStreaming && (
+              <div
+                onClick={() => setStepsExpanded(v => !v)}
+                style={{
+                  textAlign: 'center',
+                  padding: '4px 0',
+                  cursor: 'pointer',
+                  color: token.colorPrimary,
+                  fontSize: 11,
+                  userSelect: 'none',
+                }}
+              >
+                {stepsExpanded ? t('workbench.showLess') : t('workbench.showMore')}
+              </div>
+            )}
           </div>
         </div>
       </div>
