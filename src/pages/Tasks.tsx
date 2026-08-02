@@ -604,10 +604,10 @@ const Tasks: React.FC = () => {
                 />
               </Tooltip>
               <Tooltip title={t('tasks.newTask')}>
-                <Button type="primary" size="small"
+                <Button type="text" size="small"
                   icon={<PlusOutlined style={{ fontSize: 14 }} />}
                   onClick={handleNewTask}
-                  style={{ width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                 />
               </Tooltip>
             </div>

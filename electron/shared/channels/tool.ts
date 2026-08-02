@@ -1,3 +1,6 @@
+/** 工具启用模式：on=常驻（直接进入 LLM tools 数组）/ on_demand=按需（list_available_tools+invoke_tool）/ off=关闭 */
+export type ToolMode = 'on' | 'on_demand' | 'off'
+
 export const TOOL_CHANNELS = {
   TOOL_LIST_BUILTIN: 'tool:list-builtin',
   TOOL_GET_EMPLOYEE_TOOLS: 'tool:get-employee-tools',
@@ -21,12 +24,18 @@ export const TOOL_CHANNELS = {
 export interface ToolAssignParams {
   employee_id: string
   tool_id: string
+  /** 工具模式；缺省时按 is_enabled 兼容推断（is_enabled=false → off，否则按工具默认模式） */
+  mode?: ToolMode
+  /** 向后兼容：旧接口的布尔开关 */
   is_enabled?: boolean
 }
 
 export interface ToolCategoryAssignParams {
   employee_id: string
   category_id: string
+  /** 分类下所有工具的模式；缺省时按 is_enabled 兼容推断 */
+  mode?: ToolMode
+  /** 向后兼容：旧接口的布尔开关 */
   is_enabled?: boolean
 }
 
@@ -42,7 +51,11 @@ export interface ToolCategoryInfo {
     name: string
     title: string
     description: string
+    /** 该工具的启用模式 */
+    mode: ToolMode
   }>
+  /** 分类聚合模式：全部一致时为对应模式，混合时为 'mixed' */
+  mode: ToolMode | 'mixed'
   is_enabled: boolean
   enabled_count: number
   total_count: number

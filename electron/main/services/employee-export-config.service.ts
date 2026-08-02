@@ -33,6 +33,8 @@ export interface EmployeeConfigExport {
   }>
   tools: Array<{
     tool_id: string
+    /** 工具模式：on / on_demand / off */
+    mode: 'on' | 'on_demand' | 'off'
     is_enabled: boolean
     config_json: string
   }>
@@ -59,7 +61,7 @@ export class EmployeeExportConfigService {
     ).all(employeeId) as any[]
 
     const employeeTools = this.db.getDb().prepare(
-      'SELECT tool_id, is_enabled, config_json FROM employee_tools WHERE employee_id = ?'
+      'SELECT tool_id, is_enabled, tool_mode, config_json FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as any[]
 
     const installedSkills = this.db.getDb().prepare(
@@ -94,6 +96,9 @@ export class EmployeeExportConfigService {
       })),
       tools: employeeTools.map(t => ({
         tool_id: t.tool_id,
+        mode: (t.tool_mode === 'on' || t.tool_mode === 'on_demand' || t.tool_mode === 'off')
+          ? t.tool_mode
+          : (t.is_enabled ? 'on' : 'off'),
         is_enabled: !!t.is_enabled,
         config_json: t.config_json || '{}',
       })),
@@ -225,6 +230,9 @@ export class EmployeeExportConfigService {
       }
 
       for (const tool of importData.tools || []) {
+        const mode = (tool.mode === 'on' || tool.mode === 'on_demand' || tool.mode === 'off')
+          ? tool.mode
+          : (tool.is_enabled ? 'on' : 'off')
         const existingTool = this.db.getDb().prepare(
           'SELECT id FROM employee_tools WHERE employee_id = ? AND tool_id = ?'
         ).get(employeeId, tool.tool_id) as any
@@ -232,19 +240,19 @@ export class EmployeeExportConfigService {
         if (existingTool) {
           if (conflictStrategy === 'overwrite') {
             this.db.getDb().prepare(
-              'UPDATE employee_tools SET is_enabled = ?, config_json = ? WHERE employee_id = ? AND tool_id = ?'
-            ).run(tool.is_enabled ? 1 : 0, tool.config_json || '{}', employeeId, tool.tool_id)
+              'UPDATE employee_tools SET tool_mode = ?, is_enabled = ?, config_json = ? WHERE employee_id = ? AND tool_id = ?'
+            ).run(mode, mode !== 'off' ? 1 : 0, tool.config_json || '{}', employeeId, tool.tool_id)
           } else if (conflictStrategy === 'merge') {
             this.db.getDb().prepare(
-              'UPDATE employee_tools SET is_enabled = ? WHERE employee_id = ? AND tool_id = ?'
-            ).run(tool.is_enabled ? 1 : 0, employeeId, tool.tool_id)
+              'UPDATE employee_tools SET tool_mode = ?, is_enabled = ? WHERE employee_id = ? AND tool_id = ?'
+            ).run(mode, mode !== 'off' ? 1 : 0, employeeId, tool.tool_id)
           }
         } else {
           const etId = generateId()
           this.db.getDb().prepare(`
-            INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled, config_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `).run(etId, employeeId, tool.tool_id, tool.is_enabled ? 1 : 0, tool.config_json || '{}', now)
+            INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled, config_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(etId, employeeId, tool.tool_id, mode, mode !== 'off' ? 1 : 0, tool.config_json || '{}', now)
         }
       }
 

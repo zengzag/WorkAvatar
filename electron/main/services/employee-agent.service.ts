@@ -14,6 +14,8 @@ import { createConversationListTool } from './agent/tools/conversation-list.tool
 import type { Message } from './agent/core/types'
 import type { LLMModelConfig } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
+import type { ToolMode } from '../../shared/channels/tool'
+import type { ToolDefinition } from './agent/tools/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
 
@@ -203,18 +205,15 @@ class EmployeeAgentService {
     // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
     // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
-    const enabledToolIds = this.getEnabledBuiltinToolIds(employeeId)
-    const builtinTools = allBuiltinTools.filter(t => enabledToolIds.has(t.id))
-    agent.registerTools(builtinTools)
+    const toolModes = this.getEmployeeToolModes(employeeId)
+    agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
     const collectionIdsRef: SearchScopeRef = { current: { collectionIds: [] } }
-    const kmsTools = createKMSTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
-    agent.registerTools(kmsTools)
-    const kmsCollectionTools = createKMSCollectionTools(collectionIdsRef).filter(t => enabledToolIds.has(t.id))
-    agent.registerTools(kmsCollectionTools)
+    agent.registerTools(this.applyToolModes(createKMSTools(collectionIdsRef), toolModes))
+    agent.registerTools(this.applyToolModes(createKMSCollectionTools(collectionIdsRef), toolModes))
 
-    if (enabledToolIds.has('javascript_exec')) {
-      agent.registerTools([javascriptExecTool])
+    if (toolModes.get('javascript_exec') !== 'off') {
+      agent.registerTools([{ ...javascriptExecTool, onDemand: toolModes.get('javascript_exec') === 'on_demand' }])
     }
 
     // run_skill_script 工具：受全局开关 skills_enable_script_execution 控制（默认禁用）
@@ -223,16 +222,12 @@ class EmployeeAgentService {
       agent.registerTools([runSkillScriptTool])
     }
 
-    if (enabledToolIds.has('search_conversations')) {
-      const convSearchTools = createConversationSearchTool(employeeId)
-      agent.registerTools(convSearchTools)
+    if (toolModes.get('search_conversations') !== 'off') {
+      agent.registerTools(this.applyToolModes(createConversationSearchTool(employeeId), toolModes))
     }
 
-    if (enabledToolIds.has('list_conversations') || enabledToolIds.has('get_conversation_detail')) {
-      const convListTools = createConversationListTool(employeeId).filter(
-        t => enabledToolIds.has(t.id),
-      )
-      agent.registerTools(convListTools)
+    if (toolModes.get('list_conversations') !== 'off' || toolModes.get('get_conversation_detail') !== 'off') {
+      agent.registerTools(this.applyToolModes(createConversationListTool(employeeId), toolModes))
     }
 
     // 注入员工已启用的外部 MCP server 工具（标记为按需工具）
@@ -269,87 +264,45 @@ class EmployeeAgentService {
     return { agent, conversationId: conversationId || null, collectionIdsRef }
   }
 
-  private getEnabledBuiltinToolIds(employeeId: string): Set<string> {
-    const allBuiltinToolIds = new Set(allBuiltinTools.map(t => t.id))
-    const kmsToolIds = [
-      'kms_search',
-      'kms_get_content',
-      'kms_list_collections',
-    ]
-    for (const id of kmsToolIds) {
-      allBuiltinToolIds.add(id)
+  /**
+   * 工具三态（on/on_demand/off）映射：
+   * - 无配置行 → 按工具定义默认模式（onDemand 标志：常驻=on，否则 on_demand）
+   * - 有配置行 → 使用 tool_mode 列值（旧数据 tool_mode 缺失时回退默认）
+   */
+  private getEmployeeToolModes(employeeId: string): Map<string, ToolMode> {
+    const modeMap = new Map<string, ToolMode>()
+    for (const t of allBuiltinTools) {
+      modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
     }
-
-    const scriptingToolIds = [
+    // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
+    const extraOnDemandIds = [
+      'kms_search', 'kms_get_content', 'kms_list_collections',
       'javascript_exec',
+      'search_conversations', 'list_conversations', 'get_conversation_detail',
     ]
-    for (const id of scriptingToolIds) {
-      allBuiltinToolIds.add(id)
+    for (const id of extraOnDemandIds) {
+      modeMap.set(id, 'on_demand')
     }
 
-    const agentToolIds = ['search_conversations', 'list_conversations', 'get_conversation_detail']
-    for (const id of agentToolIds) {
-      allBuiltinToolIds.add(id)
-    }
-
-    const calendarToolIds = [
-      'calendar_event_list',
-      'calendar_event_create',
-      'calendar_event_update',
-      'calendar_event_delete',
-      'calendar_todo_list',
-      'calendar_todo_create',
-      'calendar_todo_update',
-      'calendar_todo_delete',
-      'calendar_todo_complete',
-      'calendar_todo_stats',
-    ]
-    for (const id of calendarToolIds) {
-      allBuiltinToolIds.add(id)
-    }
-
-    const automationToolIds = [
-      'automation_list_employees',
-      'automation_list_providers',
-      'automation_task_list',
-      'automation_task_create',
-      'automation_task_update',
-      'automation_task_delete',
-      'automation_task_toggle',
-      'automation_task_run_now',
-      'automation_task_preview',
-      'automation_run_list',
-    ]
-    for (const id of automationToolIds) {
-      allBuiltinToolIds.add(id)
-    }
-
-    let enabledRows = this.db.getDb().prepare(
-      'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
+    let rows = this.db.getDb().prepare(
+      'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
 
-    enabledRows = enabledRows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
+    rows = rows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
 
-    if (enabledRows.length === 0) {
-      return allBuiltinToolIds
-    }
-
-    const result = new Set<string>()
-    const enabledRowIds = new Set<string>()
-    for (const row of enabledRows) {
-      enabledRowIds.add(row.tool_id)
-      if (allBuiltinToolIds.has(row.tool_id) && row.is_enabled === 1) {
-        result.add(row.tool_id)
+    for (const row of rows) {
+      if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {
+        modeMap.set(row.tool_id, row.tool_mode)
       }
     }
+    return modeMap
+  }
 
-    for (const id of allBuiltinToolIds) {
-      if (!enabledRowIds.has(id)) {
-        result.add(id)
-      }
-    }
-
-    return result
+  /** 按员工工具模式过滤并应用 onDemand 标志（off 移除，on_demand 标记按需，on 常驻） */
+  private applyToolModes(tools: ToolDefinition[], modeMap: Map<string, ToolMode>): ToolDefinition[] {
+    return tools
+      .filter(t => modeMap.get(t.id) !== 'off')
+      .map(t => ({ ...t, onDemand: modeMap.get(t.id) === 'on_demand' }))
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {

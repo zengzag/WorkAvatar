@@ -20,6 +20,8 @@ export interface DBEmployeeTool {
   employee_id: string
   tool_id: string
   is_enabled: number
+  /** 工具启用模式：on / on_demand / off（旧数据可能缺失） */
+  tool_mode?: string
   config_json: string
   created_at: number
 }

@@ -243,7 +243,7 @@ const MessageBubble: React.FC<{
         ref={bubbleRef}
         style={{
           width: '100%',
-          maxWidth: '92%',
+          maxWidth: 'min(92%, 820px)',
           display: 'flex',
           gap: 10,
           flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',

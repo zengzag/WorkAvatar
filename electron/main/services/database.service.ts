@@ -116,12 +116,14 @@ class DatabaseService {
     return DatabaseService.instance
   }
 
-  private addColumnIfNotExists(table: string, column: string, definition: string): void {
+  private addColumnIfNotExists(table: string, column: string, definition: string): boolean {
     const result = this.db.prepare(`PRAGMA table_info(${table})`).all() as any[]
     const columnExists = result.some((c) => c.name === column)
     if (!columnExists) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+      return true
     }
+    return false
   }
 
   private dropColumnIfExists(table: string, column: string): void {
@@ -512,6 +514,69 @@ class DatabaseService {
     this.addColumnIfNotExists('installed_skills', 'disable_model_invocation', "BOOLEAN NOT NULL DEFAULT 0")
     this.addColumnIfNotExists('installed_skills', 'user_invocable', "BOOLEAN NOT NULL DEFAULT 1")
     this.addColumnIfNotExists('installed_skills', 'hooks_json', "TEXT DEFAULT '[]'")
+
+    this.migrateEmployeeToolMode()
+    this.cleanupObsoleteEmployeeTools()
+  }
+
+  /**
+   * 清理 employee_tools 表中已废弃工具的遗留行：
+   * - KMS 系列：kms_knowledge_card / kms_collection_overview / kms_get_toc / kms_get_paragraphs
+   *   （kms_get_content 已通过 view 参数合并 toc/paragraphs，知识卡片/合集摘要已自动附加到 kms_search）
+   * - 旧命名：office_exec（已重命名为 javascript_exec，有兼容映射但仍需清除旧行）
+   * 使用 settings 版本化确保只执行一次。
+   */
+  private cleanupObsoleteEmployeeTools(): void {
+    const CLEANUP_VERSION = 'v1'
+    const versionRow = this.db.prepare("SELECT value FROM settings WHERE key = 'obsolete_employee_tools_cleanup_version'").get() as { value: string } | undefined
+    if (versionRow?.value === CLEANUP_VERSION) return
+
+    const obsoleteIds = [
+      'kms_knowledge_card',
+      'kms_collection_overview',
+      'kms_get_toc',
+      'kms_get_paragraphs',
+      'office_exec',
+    ]
+    const placeholders = obsoleteIds.map(() => '?').join(',')
+    const info = this.db.prepare(`DELETE FROM employee_tools WHERE tool_id IN (${placeholders})`).run(...obsoleteIds)
+    if (info.changes > 0) {
+      logger.info(`Cleaned up ${info.changes} obsolete employee_tools rows: ${obsoleteIds.join(', ')}`)
+    }
+
+    this.db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('obsolete_employee_tools_cleanup_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()"
+    ).run(CLEANUP_VERSION)
+  }
+
+  /**
+   * 工具三态迁移：employee_tools 增加 tool_mode 列（on/on_demand/off），
+   * 历史数据按原 is_enabled 与工具类型回填（常驻工具→on，按需工具→on_demand，关闭→off）
+   */
+  private migrateEmployeeToolMode(): void {
+    const added = this.addColumnIfNotExists('employee_tools', 'tool_mode', "TEXT NOT NULL DEFAULT 'on'")
+    if (!added) return
+
+    const onDemandIds = [
+      'date_time',
+      'file_mkdir', 'file_list', 'file_search', 'file_delete', 'file_move', 'file_copy', 'file_rename', 'file_stat',
+      'kms_search', 'kms_get_content', 'kms_list_collections',
+      'javascript_exec',
+      'calendar_event_list', 'calendar_event_create', 'calendar_event_update', 'calendar_event_delete',
+      'calendar_todo_list', 'calendar_todo_create', 'calendar_todo_update', 'calendar_todo_delete',
+      'calendar_todo_complete', 'calendar_todo_stats',
+      'automation_list_employees', 'automation_list_providers',
+      'automation_task_list', 'automation_task_create', 'automation_task_update', 'automation_task_delete',
+      'automation_task_toggle', 'automation_task_run_now', 'automation_task_preview', 'automation_run_list',
+      'search_conversations', 'list_conversations', 'get_conversation_detail',
+    ]
+    const placeholders = onDemandIds.map(() => '?').join(',')
+    this.db.prepare(
+      `UPDATE employee_tools SET tool_mode = CASE
+         WHEN is_enabled = 0 THEN 'off'
+         WHEN tool_id IN (${placeholders}) THEN 'on_demand'
+         ELSE 'on' END`
+    ).run(...onDemandIds)
   }
 
   private migrateEmployeeMemoriesFTS(): void {

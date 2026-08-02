@@ -53,7 +53,7 @@ const SETTINGS_KEY_LOCALE = 'appearance_locale'
 
 export const useAppearanceStore = create<AppearanceState>()(
   immer((set, get) => ({
-    themeMode: 'light',
+    themeMode: 'dark',
     fontSizeLevel: 'medium',
     locale: 'zh-CN',
     initialized: false,
@@ -92,7 +92,7 @@ export const useAppearanceStore = create<AppearanceState>()(
           window.electronAPI.settings.get({ key: SETTINGS_KEY_LOCALE }),
         ])
 
-        const themeMode = (savedTheme as ThemeMode) || 'light'
+        const themeMode = (savedTheme as ThemeMode) || 'dark'
         const fontSizeLevel = (savedFontSize as FontSizeLevel) || 'medium'
         const locale = (savedLocale as AppLocale) || 'zh-CN'
 
@@ -111,7 +111,7 @@ export const useAppearanceStore = create<AppearanceState>()(
         set((state) => {
           state.initialized = true
         })
-        applyThemeToDOM('light')
+        applyThemeToDOM('dark')
         applyFontSizeToDOM('medium')
         i18n.changeLanguage('zh-CN')
         document.documentElement.setAttribute('data-locale', 'zh-CN')

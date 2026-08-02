@@ -38,6 +38,7 @@ export type {
   ToolAssignParams,
   ToolCategoryAssignParams,
   ToolCategoryInfo,
+  ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
 } from './channels/tool'
