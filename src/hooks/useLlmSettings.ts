@@ -34,6 +34,24 @@ export function useLlmSettings(employeeId: string | undefined) {
     setSelectedLlmModelId(modelId)
   }, [])
 
+  // 当 key 变化（如 employeeId 切换）时，从 localStorage 重新读取对应的值
+  // 避免 useState 初始化只执行一次导致切换员工/重启程序后模型不恢复的问题
+  useEffect(() => {
+    const storedProvider = localStorage.getItem(providerKey)
+    const fallback = getCachedSceneDefaultModel('workbench')
+    if (storedProvider || fallback?.provider_id) {
+      setSelectedLlmProviderId(storedProvider || fallback?.provider_id || '')
+    }
+    const storedModel = localStorage.getItem(modelKey)
+    if (storedModel || fallback?.model_id) {
+      setSelectedLlmModelId(storedModel || fallback?.model_id || '')
+    }
+    const storedThinking = localStorage.getItem(thinkingKey)
+    if (storedThinking !== null) {
+      setEnableThinking(storedThinking === 'true')
+    }
+  }, [providerKey, modelKey, thinkingKey])
+
   useEffect(() => {
     localStorage.setItem(providerKey, selectedLlmProviderId)
   }, [selectedLlmProviderId, providerKey])

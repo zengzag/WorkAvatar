@@ -4,6 +4,8 @@ import { fileTools } from './fs-tools'
 import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
+import { calendarTools } from './calendar.tool'
+import { automationTools } from './automation.tool'
 import type { ToolDefinition } from './types'
 
 export const allBuiltinTools: ToolDefinition[] = [
@@ -13,6 +15,8 @@ export const allBuiltinTools: ToolDefinition[] = [
   webSearchTool,
   webFetchTool,
   askUserTool,
+  ...calendarTools,
+  ...automationTools,
 ]
 
 export * from './javascript-exec.tool'

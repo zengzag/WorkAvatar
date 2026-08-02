@@ -12,7 +12,7 @@ import {
   LoadingOutlined,
   SettingOutlined,
   CloseOutlined,
-  BookOutlined,
+  ScheduleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNotes } from '../hooks/useNotes'
@@ -267,7 +267,7 @@ const NotesPage: React.FC = () => {
 
         {notes.settings.diary_enabled && (
           <Tooltip title={t('notes.openDiary')}>
-            <Button type="text" size="small" icon={<BookOutlined />} onClick={handleOpenDiary} />
+            <Button type="text" size="small" icon={<ScheduleOutlined />} onClick={handleOpenDiary} />
           </Tooltip>
         )}
 

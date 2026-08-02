@@ -33,12 +33,12 @@ export const LOCKED_KEYS: NavItemKey[] = ['settings']
 
 export const DEFAULT_NAV_CONFIG: NavItemConfig[] = [
   { key: 'tasks', visible: true, order: 0 },
-  { key: 'employees', visible: true, order: 1 },
-  { key: 'kms', visible: true, order: 2 },
-  { key: 'voice', visible: true, order: 3 },
-  { key: 'calendar', visible: true, order: 4 },
-  { key: 'notes', visible: true, order: 5 },
-  { key: 'automation', visible: true, order: 6 },
+  { key: 'notes', visible: true, order: 1 },
+  { key: 'calendar', visible: true, order: 2 },
+  { key: 'automation', visible: true, order: 3 },
+  { key: 'kms', visible: true, order: 4 },
+  { key: 'voice', visible: true, order: 5 },
+  { key: 'employees', visible: true, order: 6 },
   { key: 'settings', visible: true, order: 7 },
 ]
 
