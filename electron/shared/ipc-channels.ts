@@ -8,6 +8,7 @@ export type {
   EmployeeUpdateParams,
   EmployeeDeleteParams,
   ConversationListParams,
+  ConversationListWithEmployeeParams,
   ConversationCreateParams,
   ConversationSearchParams,
   ConversationSearchResultItem,
@@ -37,6 +38,7 @@ export type {
   ToolAssignParams,
   ToolCategoryAssignParams,
   ToolCategoryInfo,
+  ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
 } from './channels/tool'
@@ -113,6 +115,7 @@ export type {
   CalendarEvent,
   CalendarEventInstance,
   CalendarTodo,
+  CalendarTodoInstance,
   CalendarTodoStats,
   CalendarSettings,
   ListEventsParams,
@@ -122,6 +125,9 @@ export type {
   CreateTodoInput,
   UpdateTodoInput,
   NotifyPayload,
+  DeleteInstanceMode,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from './channels/calendar'
 export type {
   AutomationTask,

@@ -298,13 +298,6 @@ const CreationWizard: React.FC = () => {
       profile_json: profileJson,
     })
 
-    if (selectedProviderId) {
-      await window.electronAPI.employee.update({
-        id: employee.id,
-        status: 'active',
-      })
-    }
-
     for (const toolId of selectedToolIds) {
       try {
         await window.electronAPI.tool.assignToEmployee({
@@ -321,11 +314,11 @@ const CreationWizard: React.FC = () => {
   const handleQuickCreate = async () => {
     setCreating(true)
     try {
-      const employee = await createEmployeeWithTools(
+      await createEmployeeWithTools(
         t('creationWizard.quickCreateDefaultName'),
         '',
       )
-      navigate(`/employee/${employee.id}`)
+      navigate('/employees')
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
       console.error(error)
@@ -349,8 +342,8 @@ const CreationWizard: React.FC = () => {
       }) : undefined
       const description = profile?.roleDescription || businessDescription || ''
 
-      const employee = await createEmployeeWithTools(employeeName, description, profileJson)
-      navigate(`/employee/${employee.id}`)
+      await createEmployeeWithTools(employeeName, description, profileJson)
+      navigate('/employees')
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
       console.error(error)
@@ -508,7 +501,7 @@ const CreationWizard: React.FC = () => {
   }
 
   const breadcrumbItems = [
-    { title: t('creationWizard.breadcrumbDigitalEmployees'), onClick: () => navigate('/') },
+    { title: t('creationWizard.breadcrumbDigitalEmployees'), onClick: () => navigate('/employees') },
     { title: t('creationWizard.breadcrumbCreate') },
   ]
 
@@ -516,7 +509,7 @@ const CreationWizard: React.FC = () => {
     <div style={{ padding: 16, height: '100%', overflow: 'auto' }}>
       <PageHeader
         title={t('creationWizard.title')}
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/employees')}
         breadcrumb={breadcrumbItems}
       />
 

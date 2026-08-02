@@ -8,7 +8,8 @@ import { useOutlet, useLocation } from 'react-router-dom'
  * - 非缓存路由（如 / 重定向）直接渲染，不进入缓存
  */
 const CACHEABLE_PREFIXES: Array<[string, string]> = [
-  ['/employee', 'employee'],
+  ['/tasks', 'tasks'],
+  ['/employees', 'employees'],
   ['/settings', 'settings'],
   ['/kms', 'kms'],
   ['/voice', 'voice'],
@@ -19,7 +20,7 @@ const CACHEABLE_PREFIXES: Array<[string, string]> = [
 
 function getCacheKey(pathname: string): string | null {
   for (const [prefix, key] of CACHEABLE_PREFIXES) {
-    if (pathname === prefix || pathname.startsWith(prefix + '/') || pathname.startsWith(prefix)) {
+    if (pathname === prefix || pathname.startsWith(prefix + '/')) {
       return key
     }
   }

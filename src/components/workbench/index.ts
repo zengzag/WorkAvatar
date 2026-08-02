@@ -1,4 +1,3 @@
-export { default as ConversationSidebar } from './ConversationSidebar'
 export { default as MessageBubble } from './MessageBubble'
 export { default as ThinkingSegment } from './ThinkingSegment'
 export { default as ToolCallSegment } from './ToolCallSegment'

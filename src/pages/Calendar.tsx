@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Button, Space, Segmented, Tooltip, theme } from 'antd'
+import { Button, Space, Segmented, Tooltip, theme, Modal, message } from 'antd'
 import {
   PlusOutlined,
   SettingOutlined,
@@ -14,7 +14,7 @@ import TodoPanel from '../components/calendar/TodoPanel'
 import EventFormModal, { type EventFormMode } from '../components/calendar/EventFormModal'
 import TodoFormModal, { type TodoFormMode } from '../components/calendar/TodoFormModal'
 import CalendarSettingsDrawer from '../components/calendar/CalendarSettingsDrawer'
-import type { CalendarEventInstance, CalendarTodo, CreateEventInput, UpdateEventInput, CreateTodoInput, UpdateTodoInput } from '../types/calendar'
+import type { DeleteInstanceMode, CalendarEventInstance, CalendarTodo, CalendarTodoInstance, CreateEventInput, UpdateEventInput, CreateTodoInput, UpdateTodoInput } from '../types/calendar'
 
 const DEFAULT_CLICK_DURATION_SEC = 30 * 60
 
@@ -35,6 +35,11 @@ const CalendarPage: React.FC = () => {
   const [editingTodo, setEditingTodo] = useState<CalendarTodo | null>(null)
 
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [recurringDeleteOpen, setRecurringDeleteOpen] = useState(false)
+  const [recurringDeleteArgs, setRecurringDeleteArgs] = useState<{
+    title: string
+    onMode: (mode: DeleteInstanceMode) => Promise<any> | any
+  } | null>(null)
   const calendarWrapRef = useRef<HTMLDivElement | null>(null)
 
   // 周/日视图首次进入时滚动到中间位置；周↔日切换时保留滚动位置
@@ -122,13 +127,63 @@ const CalendarPage: React.FC = () => {
     return await cal.updateEvent(input as UpdateEventInput)
   }, [cal])
 
-  const handleDeleteEvent = useCallback(async (id: string) => {
-    return await cal.deleteEvent(id)
-  }, [cal])
+  const showRecurringDeleteModal = useCallback((args: {
+    title: string
+    onMode: (mode: DeleteInstanceMode) => Promise<any> | any
+  }) => {
+    setRecurringDeleteArgs(args)
+    setRecurringDeleteOpen(true)
+  }, [])
 
-  const handleDeleteTodo = useCallback(async (id: string) => {
-    return await cal.deleteTodo(id)
-  }, [cal])
+  const closeRecurringDeleteModal = useCallback(() => {
+    setRecurringDeleteOpen(false)
+    setTimeout(() => setRecurringDeleteArgs(null), 300)
+  }, [])
+
+  const handleRecurringDeleteMode = useCallback(async (mode: DeleteInstanceMode) => {
+    if (!recurringDeleteArgs) return
+    closeRecurringDeleteModal()
+    await recurringDeleteArgs.onMode(mode)
+  }, [recurringDeleteArgs, closeRecurringDeleteModal])
+
+  const handleDeleteEvent = useCallback(async (ev: CalendarEventInstance) => {
+    if (!ev.recurrence_rule) {
+      return await cal.deleteEvent(ev.id)
+    }
+    const anchorAt = ev.instance_start_at
+    showRecurringDeleteModal({
+      title: ev.title,
+      onMode: async (mode) => {
+        const r = await cal.deleteEventInstance({ id: ev.id, anchor_at: anchorAt, mode })
+        if (r && !r.error) {
+          message.success(t('calendar.deleteEvent'))
+          setEventModalOpen(false)
+        } else if (r?.error) {
+          message.error(r.error)
+        }
+      },
+    })
+  }, [cal, t, showRecurringDeleteModal])
+
+  const handleDeleteTodo = useCallback(async (td: CalendarTodo | CalendarTodoInstance) => {
+    if (!td.recurrence_rule) {
+      return await cal.deleteTodo(td.id)
+    }
+    const inst = td as CalendarTodoInstance & CalendarTodo
+    const anchorAt = inst.instance_due_at ?? (inst.due_at as number)
+    showRecurringDeleteModal({
+      title: td.title,
+      onMode: async (mode) => {
+        const r = await cal.deleteTodoInstance({ id: td.id, anchor_at: anchorAt, mode })
+        if (r && !r.error) {
+          message.success(t('calendar.deleteTodo'))
+          setTodoModalOpen(false)
+        } else if (r?.error) {
+          message.error(r.error)
+        }
+      },
+    })
+  }, [cal, t, showRecurringDeleteModal])
 
   const openCreateTodo = useCallback(() => {
     setEditingTodo(null)
@@ -136,8 +191,8 @@ const CalendarPage: React.FC = () => {
     setTodoModalOpen(true)
   }, [])
 
-  const openEditTodo = useCallback((todo: CalendarTodo) => {
-    setEditingTodo(todo)
+  const openEditTodo = useCallback((todo: CalendarTodo | CalendarTodoInstance) => {
+    setEditingTodo(todo as CalendarTodo)
     setTodoModalMode('edit')
     setTodoModalOpen(true)
   }, [])
@@ -204,7 +259,7 @@ const CalendarPage: React.FC = () => {
             view={cal.view}
             currentDate={cal.currentDate}
             events={cal.events}
-            todos={cal.todos}
+            todos={cal.todoInstances}
             loading={cal.loadingEvents}
             onCreateEvent={openCreateEvent}
             onEditEvent={openEditEvent}
@@ -230,7 +285,7 @@ const CalendarPage: React.FC = () => {
             onEditTodo={openEditTodo}
             onUpdateTodo={cal.updateTodo}
             onCompleteTodo={cal.completeTodo}
-            onDeleteTodo={cal.deleteTodo}
+            onDeleteTodo={handleDeleteTodo}
           />
         </div>
       </div>
@@ -263,6 +318,44 @@ const CalendarPage: React.FC = () => {
         onClose={() => setSettingsOpen(false)}
         onSave={cal.saveSettings}
       />
+
+      <Modal
+        open={recurringDeleteOpen}
+        title={recurringDeleteArgs ? t('calendar.recurringDeleteTitle', { title: recurringDeleteArgs.title }) : ''}
+        onCancel={closeRecurringDeleteModal}
+        footer={null}
+        destroyOnHidden
+        centered
+        width={400}
+        styles={{
+          body: { paddingTop: token.paddingMD },
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Button
+            block
+            size="large"
+            onClick={() => handleRecurringDeleteMode('this')}
+          >
+            {t('calendar.recurringDeleteThis')}
+          </Button>
+          <Button
+            block
+            size="large"
+            onClick={() => handleRecurringDeleteMode('future')}
+          >
+            {t('calendar.recurringDeleteFuture')}
+          </Button>
+          <Button
+            block
+            size="large"
+            danger
+            onClick={() => handleRecurringDeleteMode('all')}
+          >
+            {t('calendar.recurringDeleteAll')}
+          </Button>
+        </Space>
+      </Modal>
     </div>
   )
 }

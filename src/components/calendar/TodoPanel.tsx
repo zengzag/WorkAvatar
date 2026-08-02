@@ -4,7 +4,7 @@ import { FilterOutlined, CaretRightOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import dayjs from 'dayjs'
 import type {
-  CalendarTodo, TodoFilters,
+  CalendarTodo, CalendarTodoInstance, TodoFilters,
   CreateTodoInput, UpdateTodoInput,
 } from '../../types/calendar'
 import QuickAddBar from './QuickAddBar'
@@ -15,15 +15,15 @@ const MS = 1000
 type QuickFilter = 'all' | 'today' | 'overdue' | 'completed'
 
 interface TodoPanelProps {
-  todos: CalendarTodo[]
+  todos: (CalendarTodo | CalendarTodoInstance)[]
   loading: boolean
   filters: TodoFilters
   onFiltersChange: (filters: Partial<TodoFilters>) => void
   onQuickAddTodo: (input: CreateTodoInput) => Promise<any>
-  onEditTodo: (todo: CalendarTodo) => void
+  onEditTodo: (todo: CalendarTodo | CalendarTodoInstance) => void
   onUpdateTodo: (input: UpdateTodoInput) => Promise<any>
-  onCompleteTodo: (id: string, completed: boolean) => void
-  onDeleteTodo: (id: string) => void
+  onCompleteTodo: (id: string, completed: boolean, instance_due_at?: number) => void
+  onDeleteTodo: (todo: CalendarTodo | CalendarTodoInstance) => void
 }
 
 const startOfDayMs = (ms: number): number => {
@@ -260,7 +260,7 @@ const TodoPanel: React.FC<TodoPanelProps> = ({
           <div style={{ borderRadius: 6, padding: '2px 0' }}>
             {g.todos.map(td => (
               <TodoItem
-                key={td.id}
+                key={`${td.id}-${(td as CalendarTodoInstance).instance_due_at ?? td.due_at}`}
                 todo={td}
                 onEdit={onEditTodo}
                 onComplete={onCompleteTodo}

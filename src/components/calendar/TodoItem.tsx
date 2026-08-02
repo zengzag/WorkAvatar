@@ -3,7 +3,7 @@ import { Input, Tag, Checkbox, Tooltip, Popconfirm, Popover, DatePicker, Button,
 import { DeleteOutlined, EditOutlined, ClockCircleOutlined, WarningFilled } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import type { CalendarTodo, TodoPriority, TodoStatus, UpdateTodoInput } from '../../types/calendar'
+import type { CalendarTodo, CalendarTodoInstance, TodoPriority, TodoStatus, UpdateTodoInput } from '../../types/calendar'
 
 const MS = 1000
 
@@ -63,16 +63,18 @@ const formatTimestamp = (sec: number): string => {
 }
 
 interface TodoItemProps {
-  todo: CalendarTodo
-  onEdit: (todo: CalendarTodo) => void
-  onComplete: (id: string, completed: boolean) => void
-  onDelete: (id: string) => void
+  todo: CalendarTodo | CalendarTodoInstance
+  onEdit: (todo: CalendarTodo | CalendarTodoInstance) => void
+  onComplete: (id: string, completed: boolean, instance_due_at?: number) => void
+  onDelete: (todo: CalendarTodo | CalendarTodoInstance) => void
   onUpdate: (input: UpdateTodoInput) => Promise<any>
 }
 
 const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete, onUpdate }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  // 实例锚点：重复 TODO 展开出的条目（已完成实例 / 下一次到期）携带 instance_due_at，用于实例级完成操作
+  const instanceDueAt = (todo as CalendarTodoInstance).instance_due_at
   const [hovered, setHovered] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(todo.title)
@@ -117,18 +119,18 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
 
   /** 三态循环：pending → in_progress → completed → pending
    *  - pending → in_progress：直接 updateTodo
-   *  - in_progress → completed：走 completeTodo（处理重复 TODO 推进）
-   *  - completed → pending：走 completeTodo(false) */
+   *  - in_progress → completed：走 completeTodo（重复 TODO 记录该实例完成并推进）
+   *  - completed → pending：走 completeTodo(false)（重复 TODO 取消该实例的完成标记） */
   const cycleStatus = useCallback(async () => {
     const next = nextStatus(todo.status)
     if (next === 'in_progress') {
       await onUpdate({ id: todo.id, status: 'in_progress' })
     } else if (next === 'completed') {
-      onComplete(todo.id, true)
+      onComplete(todo.id, true, instanceDueAt)
     } else {
-      onComplete(todo.id, false)
+      onComplete(todo.id, false, instanceDueAt)
     }
-  }, [todo.id, todo.status, onUpdate, onComplete])
+  }, [todo.id, todo.status, instanceDueAt, onUpdate, onComplete])
 
   const showActions = hovered || editingTitle || timePopoverOpen
 
@@ -304,16 +306,28 @@ const TodoItem: React.FC<TodoItemProps> = ({ todo, onEdit, onComplete, onDelete,
         <Tooltip title={t('calendar.editDetail')}>
           <Button size="small" type="text" icon={<EditOutlined style={{ fontSize: 12 }} />} onClick={() => onEdit(todo)} />
         </Tooltip>
-        <Popconfirm
-          title={t('calendar.confirmDeleteTodo')}
-          onConfirm={() => onDelete(todo.id)}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-        >
+        {!!todo.recurrence_rule ? (
           <Tooltip title={t('common.delete')}>
-            <Button size="small" type="text" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+            <Button
+              size="small"
+              type="text"
+              danger
+              icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+              onClick={() => onDelete(todo)}
+            />
           </Tooltip>
-        </Popconfirm>
+        ) : (
+          <Popconfirm
+            title={t('calendar.confirmDeleteTodo')}
+            onConfirm={() => onDelete(todo)}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+          >
+            <Tooltip title={t('common.delete')}>
+              <Button size="small" type="text" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+            </Tooltip>
+          </Popconfirm>
+        )}
       </div>
     </div>
   )

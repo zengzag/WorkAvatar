@@ -3,7 +3,7 @@ import { Calendar, Spin, Tooltip, theme } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import type { CalendarEventInstance, CalendarTodo, EventColor } from '../../types/calendar'
+import type { CalendarEventInstance, CalendarTodoInstance, EventColor } from '../../types/calendar'
 import { useDragInteraction, secToY, RESIZE_HANDLE_HEIGHT } from '../../hooks/useDragInteraction'
 import type { DragState } from '../../hooks/useDragInteraction'
 import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
@@ -39,13 +39,13 @@ interface CalendarPanelProps {
   view: 'month' | 'week' | 'day'
   currentDate: number
   events: CalendarEventInstance[]
-  todos: CalendarTodo[]
+  todos: CalendarTodoInstance[]
   loading: boolean
   onCreateEvent: (startAt: number, endAt?: number) => void
   onEditEvent: (event: CalendarEventInstance) => void
   onMoveEvent: (input: { id: string; start_at: number; end_at: number }) => void
   onResizeEvent: (input: { id: string; start_at: number; end_at: number }) => void
-  onEditTodo?: (todo: CalendarTodo) => void
+  onEditTodo?: (todo: CalendarTodoInstance) => void
 }
 
 const startOfDayMs = (ms: number): number => {
@@ -60,10 +60,10 @@ const getEventsForDay = (events: CalendarEventInstance[], dayStartMs: number): C
   ).sort((a, b) => a.instance_start_at - b.instance_start_at)
 }
 
-const getTodosForDay = (todos: CalendarTodo[], dayStartMs: number): CalendarTodo[] => {
+const getTodosForDay = (todos: CalendarTodoInstance[], dayStartMs: number): CalendarTodoInstance[] => {
   const dayEnd = dayStartMs + 86400 * MS - 1
   return todos.filter(
-    td => td.due_at != null && td.due_at * MS >= dayStartMs && td.due_at * MS <= dayEnd,
+    td => td.instance_due_at * MS >= dayStartMs && td.instance_due_at * MS <= dayEnd,
   )
 }
 
@@ -72,6 +72,10 @@ const formatHour = (h: number): string => `${h.toString().padStart(2, '0')}:00`
 const formatEventTime = (sec: number): string => {
   const d = new Date(sec * MS)
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+}
+
+const isEventPast = (ev: CalendarEventInstance): boolean => {
+  return ev.instance_end_at * MS < Date.now()
 }
 
 /** 渲染拖拽创建的预览块 */
@@ -246,6 +250,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
               >
                 {dayEvents.slice(0, 3).map((ev) => {
                   const c = eventColorMap[ev.color] || eventColorMap.default
+                  const past = isEventPast(ev)
                   return (
                     <Tooltip
                       key={`${ev.id}-${ev.instance_start_at}`}
@@ -257,16 +262,19 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                           onEditEvent(ev)
                         }}
                         style={{
-                          background: c.bg,
-                          borderLeft: `3px solid ${c.border}`,
+                          background: past
+                            ? c.bg.replace(/rgba\(([^)]+),\s*[\d.]+\)/, 'rgba($1, 0.08)')
+                            : c.bg,
+                          borderLeft: `3px solid ${past ? c.border + '99' : c.border}`,
                           padding: '1px 4px',
                           margin: '2px 0',
                           fontSize: 11,
                           borderRadius: 3,
-                          color: token.colorText,
+                          color: past ? token.colorTextSecondary : token.colorText,
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
+                          opacity: past ? 0.85 : 1,
                         }}
                       >
                         {ev.all_day ? '🕐 ' : ''}{ev.title}
@@ -283,10 +291,11 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                   <div style={{ display: 'flex', gap: 2, marginTop: 2, flexWrap: 'wrap' }}>
                     {dayTodos.slice(0, 5).map((td) => {
                       const isDone = td.status === 'completed'
+                      const priorityColor = TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none
                       return (
                         <Tooltip
-                          key={td.id}
-                          title={`${t('calendar.todos')}: ${td.title}${td.due_at ? ' · ' + formatEventTime(td.due_at) : ''}`}
+                          key={`${td.id}-${td.instance_due_at}`}
+                          title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}`}
                         >
                           <div
                             onClick={(e) => {
@@ -299,7 +308,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                               borderRadius: '50%',
                               background: isDone
                                 ? token.colorTextQuaternary
-                                : TODO_PRIORITY_COLOR[td.priority] || TODO_PRIORITY_COLOR.none,
+                                : priorityColor,
                               cursor: 'pointer',
                               opacity: isDone ? 0.5 : 1,
                             }}
@@ -395,6 +404,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                 }}>
                   {dayAllDayEvents.slice(0, 3).map((ev) => {
                     const c = eventColorMap[ev.color] || eventColorMap.default
+                    const past = isEventPast(ev)
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
@@ -406,17 +416,20 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             onEditEvent(ev)
                           }}
                           style={{
-                            background: c.bg,
-                            borderLeft: `3px solid ${c.border}`,
+                            background: past
+                              ? c.bg.replace(/rgba\(([^)]+),\s*[\d.]+\)/, 'rgba($1, 0.08)')
+                              : c.bg,
+                            borderLeft: `3px solid ${past ? c.border + '99' : c.border}`,
                             padding: '1px 6px',
                             fontSize: 11,
                             borderRadius: 3,
-                            color: token.colorText,
+                            color: past ? token.colorTextSecondary : token.colorText,
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             cursor: 'pointer',
                             lineHeight: '20px',
+                            opacity: past ? 0.85 : 1,
                           }}
                         >
                           {ev.title}
@@ -540,6 +553,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     const top = (startMins / 60) * HOUR_HEIGHT
                     const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
                     const c = eventColorMap[ev.color] || eventColorMap.default
+                    const past = isEventPast(ev)
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
@@ -553,15 +567,18 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             right: 2,
                             top,
                             height,
-                            background: c.bg,
-                            borderLeft: `3px solid ${c.border}`,
+                            background: past
+                              ? c.bg.replace(/rgba\(([^)]+),\s*[\d.]+\)/, 'rgba($1, 0.08)')
+                              : c.bg,
+                            borderLeft: `3px solid ${past ? c.border + '99' : c.border}`,
                             borderRadius: 4,
                             padding: '2px 6px',
                             fontSize: 11,
                             overflow: 'hidden',
                             cursor: 'grab',
-                            color: token.colorText,
+                            color: past ? token.colorTextSecondary : token.colorText,
                             userSelect: 'none',
+                            opacity: past ? 0.85 : 1,
                           }}
                         >
                           {/* 顶部 resize 手柄 */}
@@ -574,7 +591,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             {ev.title}
                           </div>
                           {height > 32 && (
-                            <div style={{ fontSize: 10, color: token.colorTextSecondary }}>
+                            <div style={{ fontSize: 10, color: past ? token.colorTextTertiary : token.colorTextSecondary }}>
                               {formatEventTime(ev.instance_start_at)} - {formatEventTime(ev.instance_end_at)}
                             </div>
                           )}
@@ -593,10 +610,9 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                   {(() => {
                     const BAR_HEIGHT = 16
                     const SNAP_H = BAR_HEIGHT
-                    const groups: { baseTop: number; todos: CalendarTodo[] }[] = []
+                    const groups: { baseTop: number; todos: CalendarTodoInstance[] }[] = []
                     dayTodos.forEach((td) => {
-                      if (!td.due_at) return
-                      const mins = (td.due_at * MS - dms) / MS / 60
+                      const mins = (td.instance_due_at * MS - dms) / MS / 60
                       if (mins < 0 || mins >= 1440) return
                       const baseTop = (mins / 60) * HOUR_HEIGHT
                       const existing = groups.find(g => Math.abs(g.baseTop - baseTop) < SNAP_H)
@@ -624,8 +640,8 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                           const isDone = td.status === 'completed'
                           return (
                             <Tooltip
-                              key={td.id}
-                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.due_at!)}`}
+                              key={`${td.id}-${td.instance_due_at}`}
+                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}`}
                             >
                               <div
                                 onMouseDown={(e) => {
@@ -640,7 +656,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                                   flex: 1,
                                   height: BAR_HEIGHT,
                                   background: isDone ? token.colorFillQuaternary : c.bg,
-                                  borderLeft: `3px solid ${isDone ? token.colorTextQuaternary : c.border}`,
+                                  borderLeft: `3px solid ${isDone ? token.colorBorderSecondary : c.border}`,
                                   borderRadius: 3,
                                   padding: '0 6px',
                                   fontSize: 10,

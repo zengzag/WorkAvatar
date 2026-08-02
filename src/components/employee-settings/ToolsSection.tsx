@@ -2,7 +2,7 @@ import React, { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
-  Switch,
+  Segmented,
   Space,
   Avatar,
   Tag,
@@ -26,12 +26,15 @@ import {
 
 const { Text } = Typography
 
+export type ToolMode = 'on' | 'on_demand' | 'off'
+
 interface ToolInfo {
   id: string
   name: string
   title: string
   description: string
   category: string
+  mode?: ToolMode
   is_enabled: boolean
   is_assigned: boolean
 }
@@ -41,6 +44,7 @@ interface CategoryTool {
   name: string
   title: string
   description: string
+  mode: ToolMode
 }
 
 export interface ToolCategoryInfo {
@@ -51,6 +55,7 @@ export interface ToolCategoryInfo {
   icon: string
   tool_ids: string[]
   tools: CategoryTool[]
+  mode: ToolMode
   is_enabled: boolean
   enabled_count: number
   total_count: number
@@ -73,26 +78,39 @@ interface ToolsSectionProps {
   employeeTools?: ToolInfo[]
   /** 新的分类聚合工具列表 */
   toolCategories?: ToolCategoryInfo[]
-  /** 切换单个工具（保留用于兼容） */
-  onToggleTool?: (toolId: string, enabled: boolean) => void
-  /** 切换整个分类下的所有工具 */
-  onToggleCategory?: (categoryId: string, enabled: boolean) => void
+  /** 切换单个工具的模式（on / on_demand / off） */
+  onChangeToolMode?: (toolId: string, mode: ToolMode) => void
+  /** 切换整个分类下所有工具的模式 */
+  onChangeCategoryMode?: (categoryId: string, mode: ToolMode) => void
 }
 
 const ToolsSection: React.FC<ToolsSectionProps> = ({
   employeeTools,
   toolCategories,
-  onToggleTool,
-  onToggleCategory,
+  onChangeToolMode,
+  onChangeCategoryMode,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
-  const handleToggleCategory = useCallback(
-    (categoryId: string, enabled: boolean) => {
-      onToggleCategory?.(categoryId, enabled)
+  const modeOptions = [
+    { label: t('employeeSettings.mode_off'), value: 'off' },
+    { label: t('employeeSettings.mode_on_demand'), value: 'on_demand' },
+    { label: t('employeeSettings.mode_on'), value: 'on' },
+  ]
+
+  const handleChangeCategoryMode = useCallback(
+    (categoryId: string, mode: ToolMode) => {
+      onChangeCategoryMode?.(categoryId, mode)
     },
-    [onToggleCategory],
+    [onChangeCategoryMode],
+  )
+
+  const handleChangeToolMode = useCallback(
+    (toolId: string, mode: ToolMode) => {
+      onChangeToolMode?.(toolId, mode)
+    },
+    [onChangeToolMode],
   )
 
   const hasCategories = toolCategories && toolCategories.length > 0
@@ -124,9 +142,9 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
         ) : hasCategories ? (
           <div>
             {toolCategories!.map((cat) => {
-              const isPartiallyOn =
-                cat.enabled_count > 0 && cat.enabled_count < cat.total_count
               const catIcon = CATEGORY_ICON_MAP[cat.icon] || <ToolOutlined />
+              // 分类内工具模式不一致时提示"混合"（分类 Segmented 仍按最高状态显示）
+              const isMixed = new Set(cat.tools.map(t => t.mode)).size > 1
 
               return (
                 <div
@@ -136,7 +154,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                     borderBottom: `1px solid ${token.colorBorderSecondary}`,
                   }}
                 >
-                  {/* 分类级头部：图标 + 名称/描述 + 开关 */}
+                  {/* 分类级头部：图标 + 名称/描述 + 三态模式选择 */}
                   <div
                     style={{
                       display: 'flex',
@@ -156,9 +174,10 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                     >
                       <Avatar
                         style={{
-                          backgroundColor: cat.is_enabled
-                            ? token.colorPrimary
-                            : token.colorBgContainer,
+                          backgroundColor:
+                            cat.mode === 'off'
+                              ? token.colorBgContainer
+                              : token.colorPrimary,
                           flexShrink: 0,
                         }}
                         icon={catIcon}
@@ -189,11 +208,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                           </Tag>
                           <Tag
                             color={
-                              cat.enabled_count === cat.total_count
-                                ? 'green'
-                                : isPartiallyOn
-                                ? 'orange'
-                                : 'default'
+                              cat.mode === 'off' ? 'default' : 'green'
                             }
                             style={{ flexShrink: 0 }}
                           >
@@ -202,6 +217,11 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                               total: cat.total_count,
                             })}
                           </Tag>
+                          {isMixed && (
+                            <Tag color="orange" style={{ flexShrink: 0 }}>
+                              {t('employeeSettings.categoryMixed')}
+                            </Tag>
+                          )}
                         </div>
                         <Text
                           type="secondary"
@@ -215,17 +235,17 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                         </Text>
                       </div>
                     </div>
-                    <Switch
-                      checked={cat.is_enabled}
-                      onChange={(checked) =>
-                        handleToggleCategory(cat.id, checked)
+                    <Segmented
+                      size="small"
+                      options={modeOptions}
+                      value={cat.mode}
+                      onChange={(value) =>
+                        handleChangeCategoryMode(cat.id, value as ToolMode)
                       }
-                      checkedChildren={t('common.enable')}
-                      unCheckedChildren={t('common.disable')}
                     />
                   </div>
 
-                  {/* 分类折叠：工具明细（只读），让用户理解该分类包含哪些能力 */}
+                  {/* 分类折叠：工具明细（可单独设置每个工具的模式） */}
                   <Collapse
                     ghost
                     size="small"
@@ -248,67 +268,56 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                               borderRadius: token.borderRadiusSM,
                             }}
                           >
-                            {cat.tools.map((tool) => {
-                              const toolEnabled =
-                                onToggleTool && employeeTools
-                                  ? employeeTools.find(
-                                      (et) => et.id === tool.id,
-                                    )?.is_enabled ?? true
-                                  : undefined
-                              return (
+                            {cat.tools.map((tool) => (
+                              <div
+                                key={tool.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '6px 0',
+                                }}
+                              >
                                 <div
-                                  key={tool.id}
                                   style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    padding: '6px 0',
+                                    flex: 1,
+                                    minWidth: 0,
+                                    marginRight: 12,
                                   }}
                                 >
-                                  <div
-                                    style={{
-                                      flex: 1,
-                                      minWidth: 0,
-                                      marginRight: 12,
-                                    }}
+                                  <Text
+                                    style={{ fontSize: 13 }}
+                                    ellipsis
                                   >
-                                    <Text
-                                      style={{ fontSize: 13 }}
-                                      ellipsis
-                                      title={
-                                        toolEnabled === undefined
-                                          ? undefined
-                                          : toolEnabled
-                                          ? t('common.on')
-                                          : t('common.off')
-                                      }
-                                    >
-                                      {tool.title || tool.name}
-                                    </Text>
-                                    <Text
-                                      type="secondary"
-                                      style={{
-                                        fontSize: 12,
-                                        display: 'block',
-                                      }}
-                                      ellipsis
-                                    >
-                                      {tool.description ||
-                                        t('employeeSettings.noDesc')}
-                                    </Text>
-                                  </div>
-                                  {onToggleTool && (
-                                    <Switch
-                                      size="small"
-                                      checked={toolEnabled ?? true}
-                                      onChange={(checked) =>
-                                        onToggleTool(tool.id, checked)
-                                      }
-                                    />
-                                  )}
+                                    {tool.title || tool.name}
+                                  </Text>
+                                  <Text
+                                    type="secondary"
+                                    style={{
+                                      fontSize: 12,
+                                      display: 'block',
+                                    }}
+                                    ellipsis
+                                  >
+                                    {tool.description ||
+                                      t('employeeSettings.noDesc')}
+                                  </Text>
                                 </div>
-                              )
-                            })}
+                                {onChangeToolMode && (
+                                  <Segmented
+                                    size="small"
+                                    options={modeOptions}
+                                    value={tool.mode}
+                                    onChange={(value) =>
+                                      handleChangeToolMode(
+                                        tool.id,
+                                        value as ToolMode,
+                                      )
+                                    }
+                                  />
+                                )}
+                              </div>
+                            ))}
                           </div>
                         ),
                       },
@@ -381,11 +390,13 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                     </Text>
                   </div>
                 </div>
-                <Switch
-                  checked={tool.is_enabled}
-                  onChange={(checked) => onToggleTool?.(tool.id, checked)}
-                  checkedChildren={t('common.enable')}
-                  unCheckedChildren={t('common.disable')}
+                <Segmented
+                  size="small"
+                  options={modeOptions}
+                  value={tool.mode || (tool.is_enabled ? 'on' : 'off')}
+                  onChange={(value) =>
+                    handleChangeToolMode(tool.id, value as ToolMode)
+                  }
                 />
               </div>
             ))}

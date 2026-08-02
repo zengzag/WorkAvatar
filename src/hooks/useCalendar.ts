@@ -3,12 +3,15 @@ import { useCalendarStore } from '../stores/calendar.store'
 import type {
   CalendarEventInstance,
   CalendarTodo,
+  CalendarTodoInstance,
   CalendarTodoStats,
   CalendarSettings,
   CreateEventInput,
   UpdateEventInput,
   CreateTodoInput,
   UpdateTodoInput,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from '../types/calendar'
 
 const SECONDS = 1000
@@ -55,10 +58,10 @@ export function getViewRange(view: 'month' | 'week' | 'day', currentDateMs: numb
 
 export function useCalendar() {
   const {
-    events, todos, stats, settings, view, currentDate, filters,
-    loadingEvents, loadingTodos,
-    setEvents, setTodos, setStats, setSettings, setView, setCurrentDate, setFilters,
-    setLoadingEvents, setLoadingTodos,
+    events, todos, todoInstances, stats, settings, view, currentDate, filters,
+    loadingEvents, loadingTodos, loadingTodoInstances,
+    setEvents, setTodos, setTodoInstances, setStats, setSettings, setView, setCurrentDate, setFilters,
+    setLoadingEvents, setLoadingTodos, setLoadingTodoInstances,
   } = useCalendarStore()
 
   const refreshEvents = useCallback(async () => {
@@ -77,7 +80,8 @@ export function useCalendar() {
   const refreshTodos = useCallback(async () => {
     setLoadingTodos(true)
     try {
-      const result = await window.electronAPI.calendar.listTodos({})
+      // 面板模式：重复 TODO 展开为「下一个未完成实例 + 已完成实例」，已完成的不再消失
+      const result = await window.electronAPI.calendar.listTodos({ expand_instances: true })
       if (Array.isArray(result)) setTodos(result as CalendarTodo[])
     } catch (err) {
       console.error('Failed to load todos:', err)
@@ -85,6 +89,19 @@ export function useCalendar() {
       setLoadingTodos(false)
     }
   }, [setTodos, setLoadingTodos])
+
+  const refreshTodoInstances = useCallback(async () => {
+    setLoadingTodoInstances(true)
+    try {
+      const range = getViewRange(view, currentDate)
+      const result = await window.electronAPI.calendar.listTodoInstances(range)
+      if (Array.isArray(result)) setTodoInstances(result as CalendarTodoInstance[])
+    } catch (err) {
+      console.error('Failed to load todo instances:', err)
+    } finally {
+      setLoadingTodoInstances(false)
+    }
+  }, [view, currentDate, setTodoInstances, setLoadingTodoInstances])
 
   const refreshStats = useCallback(async () => {
     try {
@@ -105,18 +122,22 @@ export function useCalendar() {
   }, [setSettings])
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([refreshEvents(), refreshTodos(), refreshStats(), refreshSettings()])
-  }, [refreshEvents, refreshTodos, refreshStats, refreshSettings])
+    await Promise.all([refreshEvents(), refreshTodos(), refreshTodoInstances(), refreshStats(), refreshSettings()])
+  }, [refreshEvents, refreshTodos, refreshTodoInstances, refreshStats, refreshSettings])
 
   // 初次加载
   useEffect(() => {
     refreshAll()
   }, [refreshAll])
 
-  // 视图 / 当前日期变化时刷新事件
+  // 视图 / 当前日期变化时刷新事件和 TODO 实例
   useEffect(() => {
     refreshEvents()
   }, [refreshEvents])
+
+  useEffect(() => {
+    refreshTodoInstances()
+  }, [refreshTodoInstances])
 
   // 监听主进程推送的数据变更事件（含 agent 工具调用产生的变更）
   useEffect(() => {
@@ -124,12 +145,13 @@ export function useCalendar() {
       if (payload.scope === 'event') refreshEvents()
       if (payload.scope === 'todo') {
         refreshTodos()
+        refreshTodoInstances()
         refreshStats()
       }
       if (payload.scope === 'settings') refreshSettings()
     })
     return () => { unsubscribe() }
-  }, [refreshEvents, refreshTodos, refreshStats, refreshSettings])
+  }, [refreshEvents, refreshTodos, refreshTodoInstances, refreshStats, refreshSettings])
 
   // 事件操作
   const createEvent = useCallback(async (input: CreateEventInput) => {
@@ -150,42 +172,62 @@ export function useCalendar() {
     return result
   }, [refreshEvents])
 
+  const deleteEventInstance = useCallback(async (params: DeleteEventInstanceParams) => {
+    const result = await window.electronAPI.calendar.deleteEventInstance(params)
+    if (result && !result.error) await refreshEvents()
+    return result
+  }, [refreshEvents])
+
   // TODO 操作
   const createTodo = useCallback(async (input: CreateTodoInput) => {
     const result = await window.electronAPI.calendar.createTodo(input)
     if (result && !result.error) {
       await refreshTodos()
+      await refreshTodoInstances()
       await refreshStats()
     }
     return result
-  }, [refreshTodos, refreshStats])
+  }, [refreshTodos, refreshTodoInstances, refreshStats])
 
   const updateTodo = useCallback(async (input: UpdateTodoInput) => {
     const result = await window.electronAPI.calendar.updateTodo(input)
     if (result && !result.error) {
       await refreshTodos()
+      await refreshTodoInstances()
       await refreshStats()
     }
     return result
-  }, [refreshTodos, refreshStats])
+  }, [refreshTodos, refreshTodoInstances, refreshStats])
 
   const deleteTodo = useCallback(async (id: string) => {
     const result = await window.electronAPI.calendar.deleteTodo(id)
     if (result && !result.error) {
       await refreshTodos()
+      await refreshTodoInstances()
       await refreshStats()
     }
     return result
-  }, [refreshTodos, refreshStats])
+  }, [refreshTodos, refreshTodoInstances, refreshStats])
 
-  const completeTodo = useCallback(async (id: string, completed: boolean) => {
-    const result = await window.electronAPI.calendar.completeTodo(id, completed)
+  const deleteTodoInstance = useCallback(async (params: DeleteTodoInstanceParams) => {
+    const result = await window.electronAPI.calendar.deleteTodoInstance(params)
     if (result && !result.error) {
       await refreshTodos()
+      await refreshTodoInstances()
       await refreshStats()
     }
     return result
-  }, [refreshTodos, refreshStats])
+  }, [refreshTodos, refreshTodoInstances, refreshStats])
+
+  const completeTodo = useCallback(async (id: string, completed: boolean, instance_due_at?: number) => {
+    const result = await window.electronAPI.calendar.completeTodo(id, completed, instance_due_at)
+    if (result && !result.error) {
+      await refreshTodos()
+      await refreshTodoInstances()
+      await refreshStats()
+    }
+    return result
+  }, [refreshTodos, refreshTodoInstances, refreshStats])
 
   const saveSettings = useCallback(async (partial: Partial<CalendarSettings>) => {
     const result = await window.electronAPI.calendar.setSettings(partial)
@@ -194,11 +236,11 @@ export function useCalendar() {
   }, [setSettings])
 
   return {
-    events, todos, stats, settings, view, currentDate, filters,
-    loadingEvents, loadingTodos,
+    events, todos, todoInstances, stats, settings, view, currentDate, filters,
+    loadingEvents, loadingTodos, loadingTodoInstances,
     setView, setCurrentDate, setFilters,
-    refreshAll, refreshEvents, refreshTodos, refreshStats, refreshSettings,
-    createEvent, updateEvent, deleteEvent,
-    createTodo, updateTodo, deleteTodo, completeTodo, saveSettings,
+    refreshAll, refreshEvents, refreshTodos, refreshTodoInstances, refreshStats, refreshSettings,
+    createEvent, updateEvent, deleteEvent, deleteEventInstance,
+    createTodo, updateTodo, deleteTodo, deleteTodoInstance, completeTodo, saveSettings,
   }
 }

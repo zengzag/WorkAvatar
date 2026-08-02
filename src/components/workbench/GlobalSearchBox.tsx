@@ -96,7 +96,7 @@ const GlobalSearchBox: React.FC<GlobalSearchBoxProps> = ({
     } else {
       // 跨员工：写入激活对话 ID，路由跳转，目标页面初始化时会读取
       localStorage.setItem(`employeeWorkbench:activeConvId:${item.employeeId}`, item.conversationId)
-      navigate(`/employee/${item.employeeId}`)
+      navigate('/tasks')
     }
   }, [currentEmployeeId, onSelectConversation, navigate])
 

@@ -15,6 +15,8 @@ import type {
   CreateTodoInput,
   UpdateTodoInput,
   CalendarSettings,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from '../../shared/ipc-channels'
 import CalendarService from '../services/calendar/calendar.service'
 import { safeHandle } from './_shared'
@@ -64,10 +66,26 @@ export function registerCalendarHandlers(): void {
     return { success: ok }
   })
 
+  safeHandle(IPC_CHANNELS.CALENDAR_DELETE_EVENT_INSTANCE, (params: DeleteEventInstanceParams) => {
+    if (!params?.id || typeof params.anchor_at !== 'number' || !params.mode) {
+      return { error: 'id / anchor_at / mode 必填' }
+    }
+    const ok = service.deleteEventInstance(params)
+    if (ok) broadcastDataChanged('event')
+    return { success: ok }
+  })
+
   // ====== TODO ======
 
   safeHandle(IPC_CHANNELS.CALENDAR_LIST_TODOS, (params?: ListTodosParams) => {
     return service.listTodos(params || {})
+  })
+
+  safeHandle(IPC_CHANNELS.CALENDAR_LIST_TODO_INSTANCES, (params: ListEventsParams) => {
+    if (!params || typeof params.start_at !== 'number' || typeof params.end_at !== 'number') {
+      return { error: '参数 start_at / end_at 必填' }
+    }
+    return service.listTodoInstances(params)
   })
 
   safeHandle(IPC_CHANNELS.CALENDAR_CREATE_TODO, (input: CreateTodoInput) => {
@@ -91,9 +109,18 @@ export function registerCalendarHandlers(): void {
     return { success: ok }
   })
 
-  safeHandle(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, (params: { id: string; completed: boolean }) => {
+  safeHandle(IPC_CHANNELS.CALENDAR_DELETE_TODO_INSTANCE, (params: DeleteTodoInstanceParams) => {
+    if (!params?.id || typeof params.anchor_at !== 'number' || !params.mode) {
+      return { error: 'id / anchor_at / mode 必填' }
+    }
+    const ok = service.deleteTodoInstance(params)
+    if (ok) broadcastDataChanged('todo')
+    return { success: ok }
+  })
+
+  safeHandle(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, (params: { id: string; completed: boolean; instance_due_at?: number }) => {
     if (!params?.id) return { error: 'id 必填' }
-    const todo = service.completeTodo(params.id, params.completed)
+    const todo = service.completeTodo(params.id, params.completed, params.instance_due_at)
     if (todo) broadcastDataChanged('todo')
     return todo
   })

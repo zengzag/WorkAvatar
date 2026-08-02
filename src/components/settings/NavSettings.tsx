@@ -2,7 +2,7 @@ import React, { useMemo } from 'react'
 import { Switch, Button, Space, Typography, Tooltip, theme, Tag } from 'antd'
 import {
   ArrowUpOutlined, ArrowDownOutlined, UndoOutlined, LockOutlined,
-  RobotOutlined, SearchOutlined, AudioOutlined, CalendarOutlined, BookOutlined, FieldTimeOutlined, SettingOutlined,
+  CheckSquareOutlined, RobotOutlined, SearchOutlined, AudioOutlined, CalendarOutlined, BookOutlined, FieldTimeOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import {
@@ -10,7 +10,8 @@ import {
 } from '../../stores/nav.store'
 
 const ICON_MAP: Record<NavItemKey, React.ReactNode> = {
-  'digital-employees': <RobotOutlined />,
+  'tasks': <CheckSquareOutlined />,
+  'employees': <RobotOutlined />,
   'kms': <SearchOutlined />,
   'voice': <AudioOutlined />,
   'calendar': <CalendarOutlined />,
@@ -20,7 +21,8 @@ const ICON_MAP: Record<NavItemKey, React.ReactNode> = {
 }
 
 const LABEL_KEY_MAP: Record<NavItemKey, string> = {
-  'digital-employees': 'nav.digitalEmployees',
+  'tasks': 'nav.tasks',
+  'employees': 'nav.employees',
   'kms': 'nav.kms',
   'voice': 'nav.voice',
   'calendar': 'nav.calendar',

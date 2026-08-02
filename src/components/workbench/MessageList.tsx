@@ -184,8 +184,8 @@ const MessageList: React.FC<MessageListProps> = ({
   )
 }
 
-// 输入框输入时 inputDraft 变化会触发父组件重新渲染，
-// 但回调函数未用 useCallback 稳定化，默认 shallow memo 会失效。
+// 输入框已下沉为内部 state，输入时不再触发父组件重渲染，
+// 但回调函数未用 useCallback 稳定化，默认 shallow memo 仍可能失效。
 // 这些回调均通过 ref 读取最新值，行为稳定，故只对比数据 props 即可安全跳过渲染。
 export default memo(MessageList, (prev, next) => {
   return (

@@ -5,12 +5,12 @@ export interface Employee {
   description: string
   profile_json: string
   avatar_type: string
-  status: 'draft' | 'active' | 'paused' | 'error'
   default_skill_id?: string
   memory_enabled: boolean
   arch_version: number
   total_tasks: number
   total_approvals: number
+  last_active_at?: number | null
   created_at: number
   updated_at: number
 }

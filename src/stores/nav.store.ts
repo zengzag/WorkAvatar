@@ -11,7 +11,8 @@ import { immer } from 'zustand/middleware/immer'
  */
 
 export type NavItemKey =
-  | 'digital-employees'
+  | 'tasks'
+  | 'employees'
   | 'kms'
   | 'voice'
   | 'calendar'
@@ -31,13 +32,14 @@ const SETTINGS_KEY = 'nav_items_config'
 export const LOCKED_KEYS: NavItemKey[] = ['settings']
 
 export const DEFAULT_NAV_CONFIG: NavItemConfig[] = [
-  { key: 'digital-employees', visible: true, order: 0 },
-  { key: 'kms', visible: true, order: 1 },
-  { key: 'voice', visible: true, order: 2 },
-  { key: 'calendar', visible: true, order: 3 },
-  { key: 'notes', visible: true, order: 4 },
-  { key: 'automation', visible: true, order: 5 },
-  { key: 'settings', visible: true, order: 6 },
+  { key: 'tasks', visible: true, order: 0 },
+  { key: 'notes', visible: true, order: 1 },
+  { key: 'calendar', visible: true, order: 2 },
+  { key: 'automation', visible: true, order: 3 },
+  { key: 'kms', visible: true, order: 4 },
+  { key: 'voice', visible: true, order: 5 },
+  { key: 'employees', visible: true, order: 6 },
+  { key: 'settings', visible: true, order: 7 },
 ]
 
 interface NavConfigState {

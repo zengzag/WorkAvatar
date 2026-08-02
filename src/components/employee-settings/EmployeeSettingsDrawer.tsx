@@ -25,6 +25,7 @@ interface ToolInfo {
   title: string
   description: string
   category: string
+  mode?: 'on' | 'on_demand' | 'off'
   is_enabled: boolean
   is_assigned: boolean
 }
@@ -41,7 +42,9 @@ interface ToolCategoryInfo {
     name: string
     title: string
     description: string
+    mode: 'on' | 'on_demand' | 'off'
   }>
+  mode: 'on' | 'on_demand' | 'off'
   is_enabled: boolean
   enabled_count: number
   total_count: number
@@ -68,10 +71,11 @@ interface EmployeeSettingsDrawerProps {
   employeeId: string | undefined
   onClose: () => void
   initialTab?: string
+  onDeleted?: (deletedId: string) => void
 }
 
 const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
-  open, employeeId, onClose, initialTab,
+  open, employeeId, onClose, initialTab, onDeleted,
 }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
@@ -349,12 +353,14 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
+          const deletedId = employeeId
           await window.electronAPI.employee.delete({
             id: employeeId,
             delete_workspace: deleteWorkspace,
           })
           message.success(t('common.deleted'))
           onClose()
+          if (deletedId) onDeleted?.(deletedId)
         } catch {
           message.error(t('common.deleteFailed'))
         }
@@ -362,51 +368,63 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
     })
   }
 
-  const handleToggleTool = async (toolId: string, enabled: boolean) => {
+  const modeLabel = (mode: 'on' | 'on_demand' | 'off') =>
+    t(`employeeSettings.mode_${mode}`)
+
+  const handleChangeToolMode = async (
+    toolId: string,
+    mode: 'on' | 'on_demand' | 'off',
+  ) => {
     if (!employeeId) return
     try {
       await window.electronAPI.tool.assignToEmployee({
         employee_id: employeeId,
         tool_id: toolId,
-        is_enabled: enabled,
+        mode,
       })
-      setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, is_enabled: enabled, is_assigned: true } : t))
+      setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, mode, is_enabled: mode !== 'off', is_assigned: true } : t))
       // 切换单个工具后重新加载分类，保持分类状态同步
       const categoriesResult = await window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId })
       setToolCategories(categoriesResult || [])
-      message.success(enabled ? t('employeeSettings.toolEnabled') : t('employeeSettings.toolDisabled'))
+      message.success(t('employeeSettings.toolModeSet', { name: toolId, mode: modeLabel(mode) }))
     } catch {
       message.error(t('employeeSettings.operationFailed'))
     }
   }
 
-  const handleToggleCategory = async (categoryId: string, enabled: boolean) => {
+  const handleChangeCategoryMode = async (
+    categoryId: string,
+    mode: 'on' | 'on_demand' | 'off',
+  ) => {
     if (!employeeId) return
     try {
       await window.electronAPI.tool.assignCategoryToEmployee({
         employee_id: employeeId,
         category_id: categoryId,
-        is_enabled: enabled,
+        mode,
       })
       // 批量更新前端状态
       setToolCategories(prev => prev.map(cat => {
         if (cat.id !== categoryId) return cat
         return {
           ...cat,
-          is_enabled: enabled,
-          enabled_count: enabled ? cat.total_count : 0,
+          mode,
+          is_enabled: mode !== 'off',
+          enabled_count: mode === 'off' ? 0 : cat.total_count,
+          tools: cat.tools.map(tool => ({ ...tool, mode })),
         }
       }))
       setEmployeeTools(prev => {
         const targetCat = toolCategories.find(c => c.id === categoryId)
         if (!targetCat) return prev
         const affectedIds = new Set(targetCat.tool_ids)
-        return prev.map(t => affectedIds.has(t.id) ? { ...t, is_enabled: enabled, is_assigned: true } : t)
+        return prev.map(t => affectedIds.has(t.id) ? { ...t, mode, is_enabled: mode !== 'off', is_assigned: true } : t)
       })
       message.success(
-        enabled
-          ? t('employeeSettings.toolCategoryEnabled', { name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }) })
-          : t('employeeSettings.toolCategoryDisabled', { name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }) }),
+        t('employeeSettings.categoryModeSet', {
+          name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }),
+          mode: modeLabel(mode),
+        }),
       )
     } catch {
       message.error(t('employeeSettings.operationFailed'))
@@ -442,8 +460,8 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         <ToolsSection
           employeeTools={employeeTools}
           toolCategories={toolCategories}
-          onToggleTool={handleToggleTool}
-          onToggleCategory={handleToggleCategory}
+          onChangeToolMode={handleChangeToolMode}
+          onChangeCategoryMode={handleChangeCategoryMode}
         />
       ),
     },

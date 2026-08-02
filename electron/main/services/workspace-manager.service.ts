@@ -1,10 +1,12 @@
 import fs from 'fs'
 import path from 'path'
+import { BrowserWindow } from 'electron'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import { generateId, generateShortId, extractMessagePreview } from './common-utils'
 import { createLogger } from './logger'
+import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
 const logger = createLogger('WorkspaceManager')
 
@@ -23,18 +25,36 @@ class WorkspaceManagerService {
     return WorkspaceManagerService.instance
   }
 
-  getEmployeeList(status?: string): Employee[] {
-    let query = 'SELECT * FROM employees'
-    const params: any[] = []
+  getEmployeeList(): Employee[] {
+    return this.db.getDb().prepare(
+      'SELECT * FROM employees ORDER BY COALESCE(last_active_at, 0) DESC, updated_at DESC'
+    ).all() as Employee[]
+  }
 
-    if (status) {
-      query += ' WHERE status = ?'
-      params.push(status)
+  /**
+   * 刷新员工最近活跃时间（取该员工下所有对话的最大 last_message_at / created_at）。
+   * 若 timestamp 传入则直接使用（如发送消息场景），否则从 conversations 表聚合。
+   */
+  touchEmployeeLastActive(employeeId: string, timestamp?: number): void {
+    if (timestamp !== undefined) {
+      this.db.getDb().prepare(
+        'UPDATE employees SET last_active_at = MAX(COALESCE(last_active_at, 0), ?) WHERE id = ?'
+      ).run(timestamp, employeeId)
+      return
     }
+    const row = this.db.getDb().prepare(
+      `SELECT MAX(COALESCE(last_message_at, created_at)) AS latest FROM conversations WHERE employee_id = ?`
+    ).get(employeeId) as { latest: number | null } | undefined
+    const val = row?.latest ?? null
+    this.db.getDb().prepare('UPDATE employees SET last_active_at = ? WHERE id = ?').run(val, employeeId)
+  }
 
-    query += ' ORDER BY updated_at DESC'
-
-    return this.db.getDb().prepare(query).all(...params) as Employee[]
+  private broadcastEmployeeChanged(): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try { win.webContents.send(IPC_CHANNELS.EMPLOYEE_ON_CHANGED, { ts: Date.now() }) } catch { /* ignore */ }
+      }
+    }
   }
 
   getEmployee(id: string): Employee | null {
@@ -66,9 +86,11 @@ class WorkspaceManagerService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, workspace_path, name, description, profile_json, status, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'draft', 'default', 1, 0, 0, ?, ?)
+      INSERT INTO employees (id, workspace_path, name, description, profile_json, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'default', 1, 0, 0, ?, ?)
     `).run(employeeId, workspacePath, name, description, profileJson, now, now)
+
+    this.broadcastEmployeeChanged()
 
     return this.getEmployee(employeeId)!
   }
@@ -77,7 +99,6 @@ class WorkspaceManagerService {
     name?: string
     description?: string
     profile_json?: string
-    status?: 'draft' | 'active' | 'paused' | 'error'
     default_skill_id?: string
     workspace_path?: string | null
     memory_enabled?: boolean
@@ -90,7 +111,7 @@ class WorkspaceManagerService {
 
     const ALLOWED_COLUMNS = [
       'name', 'description', 'profile_json',
-      'status', 'default_skill_id',
+      'default_skill_id',
       'memory_enabled', 'workspace_path'
     ]
 
@@ -113,6 +134,8 @@ class WorkspaceManagerService {
       this.db.getDb().prepare(`
         UPDATE employees SET ${updates.join(', ')} WHERE id = ?
       `).run(...values)
+
+      this.broadcastEmployeeChanged()
     }
 
     return this.getEmployee(id)
@@ -137,13 +160,44 @@ class WorkspaceManagerService {
       }
     }
     const result = this.db.getDb().prepare('DELETE FROM employees WHERE id = ?').run(id)
+    if (result.changes > 0) this.broadcastEmployeeChanged()
     return result.changes > 0
   }
 
-  getConversationList(employeeId: string): Conversation[] {
+  getConversationList(employeeId?: string): Conversation[] {
+    if (employeeId) {
+      return this.db.getDb().prepare(
+        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
+      ).all(employeeId) as Conversation[]
+    }
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
-    ).all(employeeId) as Conversation[]
+      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
+    ).all() as Conversation[]
+  }
+
+  /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话，支持分页 */
+  getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at,
+                e.name as employee_name
+         FROM conversations c
+         LEFT JOIN employees e ON c.employee_id = e.id
+         WHERE c.message_count > 0`
+    const values: any[] = []
+    if (params?.employee_ids && params.employee_ids.length > 0) {
+      const placeholders = params.employee_ids.map(() => '?').join(',')
+      sql += ` AND c.employee_id IN (${placeholders})`
+      values.push(...params.employee_ids)
+    }
+    sql += ` ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`
+    if (params?.limit !== undefined) {
+      sql += ` LIMIT ?`
+      values.push(params.limit)
+    }
+    if (params?.offset !== undefined) {
+      sql += ` OFFSET ?`
+      values.push(params.offset)
+    }
+    return this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string }>
   }
 
   getConversation(id: string): Conversation | null {
@@ -165,6 +219,7 @@ class WorkspaceManagerService {
     `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, now, now)
 
     this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
+    this.touchEmployeeLastActive(employeeId, now)
 
     return this.getConversation(conversationId)!
   }
@@ -208,6 +263,16 @@ class WorkspaceManagerService {
     `).run(...values)
 
     if (result.changes === 0) return false
+
+    // 同步员工最近活跃时间：有 last_message_at 传值，或迁移了 employee_id 时更新
+    if (data.last_message_at !== undefined || data.employee_id !== undefined) {
+      const convRow = this.db.getDb().prepare(
+        'SELECT employee_id, COALESCE(last_message_at, created_at) AS ts FROM conversations WHERE id = ?'
+      ).get(id) as { employee_id: string; ts: number } | undefined
+      if (convRow) {
+        this.touchEmployeeLastActive(convRow.employee_id, data.last_message_at ?? convRow.ts)
+      }
+    }
 
     // FTS 同步：在 title / messages_json / employee_id 变化时执行
     // 优化：避免 SELECT * 加载完整 messages_json 大字段，只查必要的小字段

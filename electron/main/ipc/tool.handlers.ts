@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   ToolAssignParams,
   ToolCategoryAssignParams,
+  ToolMode,
   SearchOpenWindowParams,
   SearchCloseWindowParams,
 } from '../../shared/ipc-channels'
@@ -58,11 +59,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     toolIds: [
       'kms_search',
       'kms_get_content',
-      'kms_knowledge_card',
       'kms_list_collections',
-      'kms_collection_overview',
-      'kms_get_toc',
-      'kms_get_paragraphs',
     ],
   },
   {
@@ -147,6 +144,7 @@ function getUnifiedBuiltinToolCatalog() {
     title: t.title,
     description: t.description,
     category: 'agent' as const,
+    onDemand: t.onDemand ?? false,
   }))
 
   // KMS 资料库工具（搜索 + 内容获取）
@@ -156,6 +154,7 @@ function getUnifiedBuiltinToolCatalog() {
     title: t.title,
     description: t.description,
     category: 'kms' as const,
+    onDemand: t.onDemand ?? false,
   }))
 
   // KMS 合集管理工具
@@ -165,6 +164,7 @@ function getUnifiedBuiltinToolCatalog() {
     title: t.title,
     description: t.description,
     category: 'kms_collection' as const,
+    onDemand: t.onDemand ?? false,
   }))
 
   // shell_exec + javascript_exec 工具（category 覆盖 agent 里的默认 'agent'）
@@ -175,6 +175,7 @@ function getUnifiedBuiltinToolCatalog() {
       title: shellExecTool.title,
       description: shellExecTool.description,
       category: 'scripting' as const,
+      onDemand: shellExecTool.onDemand ?? false,
     },
     {
       id: javascriptExecTool.id,
@@ -182,11 +183,12 @@ function getUnifiedBuiltinToolCatalog() {
       title: javascriptExecTool.title,
       description: javascriptExecTool.description,
       category: 'scripting' as const,
+      onDemand: javascriptExecTool.onDemand ?? false,
     },
     ]
 
   // 用 Map 去重：后出现的覆盖先出现的，确保 scriptingTools 的 category='scripting' 覆盖 agentTools 里的 'agent'
-  const idToTool = new Map<string, { id: string; name: string; title: string; description: string; category: string }>()
+  const idToTool = new Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }>()
 
   for (const tool of [...agentTools, ...kmsTools, ...kmsCollectionTools, ...scriptingTools]) {
     idToTool.set(tool.id, tool)
@@ -196,20 +198,36 @@ function getUnifiedBuiltinToolCatalog() {
 }
 
 /** 根据工具ID → 工具详情的查找表（含 category 字段） */
-function getToolLookupMap(): Map<string, { id: string; name: string; title: string; description: string; category: string }> {
+function getToolLookupMap(): Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }> {
   const catalog = getUnifiedBuiltinToolCatalog()
   // 对话记忆工具：补充不在 catalog 但在分类中，需要单独补齐
-  const extra: Array<{ id: string; name: string; title: string; description: string; category: string }> = [
-    { id: 'search_conversations', name: 'search_conversations', title: '搜索历史对话', description: '在该数字员工的历史任务中搜索内容', category: 'conversation' },
-    { id: 'list_conversations', name: 'list_conversations', title: '列出对话', description: '列出该数字员工的任务列表', category: 'conversation' },
-    { id: 'get_conversation_detail', name: 'get_conversation_detail', title: '查看对话详情', description: '获取指定任务的完整消息历史', category: 'conversation' },
+  const extra: Array<{ id: string; name: string; title: string; description: string; category: string; onDemand: boolean }> = [
+    { id: 'search_conversations', name: 'search_conversations', title: '搜索历史对话', description: '在该数字员工的历史任务中搜索内容', category: 'conversation', onDemand: true },
+    { id: 'list_conversations', name: 'list_conversations', title: '列出对话', description: '列出该数字员工的任务列表', category: 'conversation', onDemand: true },
+    { id: 'get_conversation_detail', name: 'get_conversation_detail', title: '查看对话详情', description: '获取指定任务的完整消息历史', category: 'conversation', onDemand: true },
   ]
-  const map = new Map<string, { id: string; name: string; title: string; description: string; category: string }>()
+  const map = new Map<string, { id: string; name: string; title: string; description: string; category: string; onDemand: boolean }>()
   for (const t of catalog) map.set(t.id, t)
   for (const t of extra) {
     if (!map.has(t.id)) map.set(t.id, t)
   }
   return map
+}
+
+/** 工具无显式配置时的默认模式：定义上按需 → on_demand，常驻 → on */
+function resolveDefaultToolMode(toolId: string): ToolMode {
+  return getToolLookupMap().get(toolId)?.onDemand ? 'on_demand' : 'on'
+}
+
+/** 分配参数 → 工具模式：优先 mode；缺失时按 is_enabled 兼容推断 */
+function resolveAssignMode(params: { mode?: ToolMode; is_enabled?: boolean; tool_id?: string }): ToolMode {
+  if (params.mode === 'on' || params.mode === 'on_demand' || params.mode === 'off') return params.mode
+  if (params.is_enabled === false) return 'off'
+  return params.tool_id ? resolveDefaultToolMode(params.tool_id) : 'on'
+}
+
+function isValidToolMode(mode: string | undefined): mode is ToolMode {
+  return mode === 'on' || mode === 'on_demand' || mode === 'off'
 }
 
 export function registerToolHandlers(
@@ -218,10 +236,10 @@ export function registerToolHandlers(
 ) {
   // 缓存 prepared statement，避免每次调用都重新编译 SQL
   const getEmployeeToolsStmt = db.prepare(
-    'SELECT tool_id, is_enabled FROM employee_tools WHERE employee_id = ?'
+    'SELECT tool_id, is_enabled, tool_mode FROM employee_tools WHERE employee_id = ?'
   )
   const assignToolStmt = db.prepare(
-    'INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = ?'
+    'INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled) VALUES (?, ?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode, is_enabled = excluded.is_enabled'
   )
 
   safeHandle(IPC_CHANNELS.TOOL_LIST_BUILTIN, () => {
@@ -233,29 +251,44 @@ export function registerToolHandlers(
 
     const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as any[]
 
-    const enabledMap = new Map<string, boolean>()
+    const rowMap = new Map<string, { is_enabled: number; tool_mode?: string }>()
     for (const row of enabledRows) {
-      enabledMap.set(row.tool_id, row.is_enabled === 1)
+      rowMap.set(row.tool_id, row)
     }
 
-    return catalog.map(tool => ({
-      ...tool,
-      is_enabled: enabledMap.get(tool.id) ?? true,
-      is_assigned: enabledMap.has(tool.id),
-    }))
+    return catalog.map(tool => {
+      const row = rowMap.get(tool.id)
+      const mode: ToolMode = row && isValidToolMode(row.tool_mode)
+        ? row.tool_mode
+        : (tool.onDemand ? 'on_demand' : 'on')
+      return {
+        ...tool,
+        mode,
+        is_enabled: mode !== 'off',
+        is_assigned: !!row,
+      }
+    })
   })
 
   /**
    * 获取按分类聚合的员工工具列表
-   * 返回：每个分类包含总开关 + 分类包含的工具明细
+   * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off/mixed）
    */
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, (params: { employee_id: string }) => {
-    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; is_enabled: number }>
-    const enabledMap = new Map<string, boolean>()
+    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; is_enabled: number; tool_mode?: string }>
+    const rowMap = new Map<string, { is_enabled: number; tool_mode?: string }>()
     for (const row of enabledRows) {
-      enabledMap.set(row.tool_id, row.is_enabled === 1)
+      rowMap.set(row.tool_id, row)
     }
     const toolLookup = getToolLookupMap()
+
+    const resolveMode = (toolId: string): ToolMode => {
+      const row = rowMap.get(toolId)
+      const lookup = toolLookup.get(toolId)
+      return row && isValidToolMode(row.tool_mode)
+        ? row.tool_mode
+        : (lookup?.onDemand ? 'on_demand' : 'on')
+    }
 
     return TOOL_CATEGORY_DEFS.map(categoryDef => {
       const tools = categoryDef.toolIds
@@ -266,19 +299,22 @@ export function registerToolHandlers(
           name: t.name,
           title: t.title,
           description: t.description,
+          mode: resolveMode(t.id),
         }))
 
       let enabledCount = 0
+      let totalCount = 0
+      const modeSet = new Set<ToolMode>()
       for (const tid of categoryDef.toolIds) {
-        const isOn = enabledMap.get(tid) ?? true
-        if (isOn) enabledCount++
+        if (!toolLookup.has(tid)) continue
+        totalCount++
+        const mode = resolveMode(tid)
+        modeSet.add(mode)
+        if (mode !== 'off') enabledCount++
       }
-
-      const totalCount = categoryDef.toolIds.length
-      // 分类开关：只要有一个工具开启就算部分开启，但为了降低用户理解成本，
-      // 分类级别的 is_enabled 采用「全量逻辑：全部工具全开启则开，否则关。
-      // 但为了兼容部分开启的中间态，UI可以用 indeterminate，这里返回全开启才为 true，
-      // 由前端通过 enabled_count / total_count 来表达部分开启
+      // 分类聚合模式：按分类内所有工具的最高状态显示（on > on_demand > off）
+      const mode: ToolMode = modeSet.has('on') ? 'on' : modeSet.has('on_demand') ? 'on_demand' : 'off'
+      // 兼容旧字段：全开启才为 true（前端通过 enabled_count / total_count 表达部分开启）
       const isEnabled = enabledCount === totalCount && totalCount > 0
 
       return {
@@ -289,6 +325,7 @@ export function registerToolHandlers(
         icon: categoryDef.icon,
         tool_ids: categoryDef.toolIds,
         tools,
+        mode,
         is_enabled: isEnabled,
         enabled_count: enabledCount,
         total_count: totalCount,
@@ -297,14 +334,16 @@ export function registerToolHandlers(
   })
 
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {
-    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, params.is_enabled !== false ? 1 : 0, params.is_enabled !== false ? 1 : 0)
+    const mode = resolveAssignMode(params)
+    const isEnabled = mode !== 'off' ? 1 : 0
+    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode, isEnabled)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
   /**
-   * 批量分配/切换某个分类下所有工具的启用状态
-   * 一次性把该分类的工具 ID 全部按传入的 is_enabled 写入
+   * 批量分配/切换某个分类下所有工具的模式
+   * 一次性把该分类的工具 ID 全部按传入的 mode 写入
    */
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE, (params: ToolCategoryAssignParams) => {
     const categoryDef = TOOL_CATEGORY_DEFS.find(c => c.id === params.category_id)
@@ -312,24 +351,26 @@ export function registerToolHandlers(
       return { success: false, error: `未知的工具分类: ${params.category_id}` }
     }
 
-    const enabled = params.is_enabled !== false ? 1 : 0
-    const toolIds = categoryDef.toolIds
+    const rows = categoryDef.toolIds.map(toolId => ({
+      tool_id: toolId,
+      mode: resolveAssignMode({ mode: params.mode, is_enabled: params.is_enabled, tool_id: toolId }),
+    }))
 
     // 批量 SQL 写入：因为预编译语句最多支持 20 组 values，按批处理
-    for (let offset = 0; offset < toolIds.length; offset += 20) {
-      const batch = toolIds.slice(offset, offset + 20)
+    for (let offset = 0; offset < rows.length; offset += 20) {
+      const batch = rows.slice(offset, offset + 20)
       const bindParams: any[] = []
-      for (const tid of batch) {
-        bindParams.push(generateId(), params.employee_id, tid, enabled)
+      for (const r of batch) {
+        bindParams.push(generateId(), params.employee_id, r.tool_id, r.mode, r.mode !== 'off' ? 1 : 0)
       }
       // 动态构造该批次大小的 SQL
-      const placeholders = batch.map(() => '(?, ?, ?, ?)').join(', ')
-      const sql = `INSERT INTO employee_tools (id, employee_id, tool_id, is_enabled) VALUES ${placeholders} ON CONFLICT(employee_id, tool_id) DO UPDATE SET is_enabled = excluded.is_enabled`
+      const placeholders = batch.map(() => '(?, ?, ?, ?, ?)').join(', ')
+      const sql = `INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled) VALUES ${placeholders} ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode, is_enabled = excluded.is_enabled`
       db.prepare(sql).run(...bindParams)
     }
 
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
-    return { success: true, affected_tool_count: toolIds.length }
+    return { success: true, affected_tool_count: rows.length }
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_LIST, () => {

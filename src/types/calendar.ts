@@ -6,6 +6,7 @@ export type {
   CalendarEvent,
   CalendarEventInstance,
   CalendarTodo,
+  CalendarTodoInstance,
   CalendarTodoStats,
   CalendarSettings,
   ListEventsParams,
@@ -15,6 +16,9 @@ export type {
   CreateTodoInput,
   UpdateTodoInput,
   NotifyPayload,
+  DeleteInstanceMode,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from '../../electron/shared/ipc-channels'
 
 import type { TodoStatus, TodoPriority } from '../../electron/shared/ipc-channels'

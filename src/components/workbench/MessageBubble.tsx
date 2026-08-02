@@ -238,31 +238,39 @@ const MessageBubble: React.FC<{
   }, [displayContent, msg.timestamp, generateNoteName, messageApi, t])
 
   return (
-    <div
-      ref={bubbleRef}
-      style={{
-        display: 'flex',
-        gap: 10,
-        flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-        alignItems: 'flex-start',
-      }}
-    >
-      <div style={{
-        width: 30,
-        height: 30,
-        borderRadius: 6,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-        background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
-      }}>
-        {msg.role === 'assistant'
-          ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
-          : <UserOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />}
-      </div>
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
+      <div
+        ref={bubbleRef}
+        style={{
+          width: '100%',
+          maxWidth: 'min(92%, 820px)',
+          display: 'flex',
+          gap: 10,
+          flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
+          alignItems: 'flex-start',
+        }}
+      >
+        <div style={{
+          width: 30,
+          height: 30,
+          borderRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          background: msg.role === 'assistant' ? token.colorPrimaryBg : token.colorInfoBg,
+        }}>
+          {msg.role === 'assistant'
+            ? <RobotOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />
+            : <UserOutlined style={{ color: token.colorPrimary, fontSize: 15 }} />}
+        </div>
 
-      <div style={{ maxWidth: '80%', minWidth: 0, width: isEditing ? '90%' : undefined }}>
+        <div style={{
+          maxWidth: '88%',
+          minWidth: 0,
+          width: isEditing ? '100%' : undefined,
+          ...(msg.role === 'user' ? { marginLeft: -10 } : { marginRight: -10 }),
+        }}>
         {msg.role === 'user' && (
           <div>
             {isEditing ? (
@@ -460,6 +468,7 @@ const MessageBubble: React.FC<{
           </div>
         )}
       </div>
+    </div>
     </div>
   )
 }

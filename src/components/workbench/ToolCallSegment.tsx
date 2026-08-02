@@ -132,8 +132,6 @@ const ToolCallSegmentInner: React.FC<{
   const { message } = App.useApp()
   const { t } = useTranslation()
   const [resultExpanded, setResultExpanded] = useState(false)
-  const [contentHeight, setContentHeight] = useState<number | undefined>(undefined)
-  const contentRef = useRef<HTMLDivElement>(null)
   const isArgsStreaming = !!seg.isToolArgsStreaming
   // toolError 优先级最高：用户停止生成 / LLM 中断 / 工具异常时展示已取消或失败态
   const isToolError = !!seg.toolError
@@ -210,12 +208,6 @@ const ToolCallSegmentInner: React.FC<{
       message.error(t('common.copyFailed'))
     }
   }, [t])
-
-  useEffect(() => {
-    if (isExpanded && contentRef.current) {
-      setContentHeight(contentRef.current.scrollHeight)
-    }
-  }, [isExpanded, argsStr, resultStr, resultExpanded])
 
   // 工具进度步骤的类型颜色/图标，放在 map 外部避免每次迭代重建（A#13）
   const typeColors: Record<string, string> = {
@@ -299,18 +291,8 @@ const ToolCallSegmentInner: React.FC<{
             </div>
           )}
         </div>
-        <div
-          style={{
-            overflow: 'hidden',
-            transition: isExpanded
-              ? 'max-height 0.25s ease-in, opacity 0.2s ease-in'
-              : 'max-height 0.2s ease-out, opacity 0.15s ease-out',
-            maxHeight: isExpanded ? (contentHeight ?? 2000) : 0,
-            opacity: isExpanded ? 1 : 0,
-          }}
-        >
+        {isExpanded && (
           <div
-            ref={contentRef}
             style={{
               borderTop: `1px solid ${token.colorBorderSecondary}`,
               padding: '8px 12px',
@@ -451,7 +433,7 @@ const ToolCallSegmentInner: React.FC<{
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   )

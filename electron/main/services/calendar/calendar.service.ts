@@ -22,6 +22,26 @@ export interface RecurrenceRule {
   count?: number
   /** 重复截止时间 unix 秒 */
   until?: number
+  /** 被跳过（删除）的实例时间戳列表（Unix 秒），命中该实例时不生成 */
+  excluded_dates?: number[]
+  /** 实例级完成记录：instance_due_at → completed_at（Unix 秒）。支持"跳着完成"（下次未完成、下下次已完成） */
+  completed_instances?: Record<string, number>
+}
+
+export type DeleteInstanceMode = 'this' | 'future' | 'all'
+
+export interface DeleteEventInstanceParams {
+  id: string
+  /** 要删除的实例锚点时间（event 的 instance_start_at），Unix 秒 */
+  anchor_at: number
+  mode: DeleteInstanceMode
+}
+
+export interface DeleteTodoInstanceParams {
+  id: string
+  /** 要删除的实例锚点时间（todo 的 instance_due_at），Unix 秒 */
+  anchor_at: number
+  mode: DeleteInstanceMode
 }
 
 export interface CalendarEvent {
@@ -70,6 +90,14 @@ export interface CalendarEventInstance extends CalendarEvent {
   is_recurring: boolean
 }
 
+/** 日历面板上展示的 TODO 实例（重复 TODO 展开后产生） */
+export interface CalendarTodoInstance extends CalendarTodo {
+  /** 实例的实际截止时间（可能与 due_at 不同，重复展开时变化） */
+  instance_due_at: number
+  /** 是否为重复 TODO 产生的实例 */
+  is_recurring: boolean
+}
+
 export interface CalendarTodoStats {
   total: number
   pending: number
@@ -112,6 +140,8 @@ export interface ListTodosParams {
   due_from?: number
   due_to?: number
   limit?: number
+  /** 面板模式：重复 TODO 展开为「下一个未完成实例 + 已完成实例」（供右侧待办列表使用） */
+  expand_instances?: boolean
 }
 
 export interface CreateEventInput {
@@ -162,6 +192,8 @@ export interface UpdateTodoInput {
   status?: TodoStatus
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
+  /** 实例级操作锚点（编辑弹窗对某个具体实例完成/取消完成时携带） */
+  instance_due_at?: number
 }
 
 // ====== 服务实现 ======
@@ -307,6 +339,45 @@ class CalendarService {
     return result.changes > 0
   }
 
+  /**
+   * 删除事件的指定实例（支持三态：仅本次 / 本次及以后 / 全部）。
+   * - 非重复事件：三态都等同于 deleteEvent。
+   * - 重复事件：
+   *   this    → 把 anchor_at 写入 recurrence_rule.excluded_dates（EXDATE）
+   *   future  → 截断 until = anchor_at - 1 秒；若 anchor_at <= start_at，则退化为删除全量
+   *   all     → deleteEvent
+   */
+  deleteEventInstance(params: DeleteEventInstanceParams): boolean {
+    const { id, anchor_at, mode } = params
+    const existing = this.getEvent(id)
+    if (!existing) return false
+    if (!existing.recurrence_rule || mode === 'all') return this.deleteEvent(id)
+
+    const rule = { ...existing.recurrence_rule }
+    const now = Math.floor(Date.now() / 1000)
+
+    if (mode === 'future') {
+      if (anchor_at <= existing.start_at) {
+        // 锚点就是第一次或更早，直接删全量
+        return this.deleteEvent(id)
+      }
+      // until 取「更小的那个」：已有 until 更小就保留，否则截断到 anchor_at - 1
+      const newUntil = anchor_at - 1
+      rule.until = rule.until != null ? Math.min(rule.until, newUntil) : newUntil
+    } else {
+      // this
+      rule.excluded_dates = Array.from(new Set([...(rule.excluded_dates ?? []), anchor_at]))
+    }
+
+    const ruleJson = JSON.stringify(rule)
+    this.db.prepare(
+      `UPDATE calendar_events SET recurrence_rule=?, updated_at=? WHERE id=?`
+    ).run(ruleJson, now, id)
+    const updated = this.getEvent(id)
+    if (updated) this.regenerateEventReminders(updated)
+    return true
+  }
+
   // ====== Todos CRUD ======
 
   listTodos(params: ListTodosParams = {}): CalendarTodo[] {
@@ -368,7 +439,66 @@ class CalendarService {
       args.push(params.limit)
     }
     const rows = this.db.prepare(sql).all(...args) as any[]
-    return rows.map((r) => this.rowToTodo(r))
+    const todos = rows.map((r) => this.rowToTodo(r))
+
+    // 面板模式（expand_instances=true）：重复 TODO 展开为「下一个未完成实例 + 已完成实例」
+    if (params.expand_instances) {
+      const merged: CalendarTodoInstance[] = []
+      for (const td of todos) {
+        if (td.recurrence_rule && td.due_at != null) {
+          const rule = td.recurrence_rule
+          const map = rule.completed_instances ?? {}
+          const hasCompletions = Object.keys(map).length > 0
+          if (hasCompletions || td.status !== 'completed') {
+            // 下一个未完成实例（系列整体完成时不再生成）
+            if (td.status !== 'completed') {
+              merged.push({ ...td, due_at: td.due_at, instance_due_at: td.due_at, is_recurring: true })
+            }
+            // 已完成实例（跳过被 EXDATE / 超出 until 的）
+            for (const [k, v] of Object.entries(map)) {
+              const instDue = Number(k)
+              if (!Number.isFinite(instDue)) continue
+              if (rule.excluded_dates?.includes(instDue)) continue
+              if (rule.until != null && instDue > rule.until) continue
+              merged.push({
+                ...td, due_at: instDue, status: 'completed' as TodoStatus,
+                started_at: null, completed_at: v, instance_due_at: instDue, is_recurring: true,
+              })
+            }
+            continue
+          }
+        }
+        merged.push(td as CalendarTodoInstance)
+      }
+
+      // 对合并结果重新应用筛选（SQL 只过滤了原始行）
+      const now = Math.floor(Date.now() / 1000)
+      const filtered = merged.filter((td) => {
+        if (params.status) {
+          const statuses = Array.isArray(params.status) ? params.status : [params.status]
+          if (!statuses.includes(td.status)) return false
+        }
+        if (params.priority) {
+          const prios = Array.isArray(params.priority) ? params.priority : [params.priority]
+          if (!prios.includes(td.priority)) return false
+        }
+        if (params.overdue_only) {
+          if (td.status === 'completed') return false
+          if (td.due_at == null || td.due_at >= now) return false
+        }
+        if (params.due_today) {
+          const dayStart = this.startOfDay(now)
+          const dayEnd = dayStart + 86400
+          if (td.due_at == null || td.due_at < dayStart || td.due_at >= dayEnd) return false
+        }
+        if (params.due_from !== undefined && (td.due_at == null || td.due_at < params.due_from)) return false
+        if (params.due_to !== undefined && (td.due_at == null || td.due_at > params.due_to)) return false
+        return true
+      })
+      return params.limit ? filtered.slice(0, params.limit) : filtered
+    }
+
+    return todos
   }
 
   getTodo(id: string): CalendarTodo | null {
@@ -410,11 +540,65 @@ class CalendarService {
       ...existing,
       ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)),
     }
-    if (input.recurrence_rule !== undefined) merged.recurrence_rule = input.recurrence_rule
+    if (input.recurrence_rule !== undefined) {
+      // 表单/agent 重建规则时保留 EXDATE 与实例完成记录，避免丢失
+      if (input.recurrence_rule && existing.recurrence_rule) {
+        const nextRule: RecurrenceRule = { ...input.recurrence_rule }
+        if (!nextRule.excluded_dates && existing.recurrence_rule.excluded_dates) {
+          nextRule.excluded_dates = existing.recurrence_rule.excluded_dates
+        }
+        if (!nextRule.completed_instances && existing.recurrence_rule.completed_instances) {
+          nextRule.completed_instances = existing.recurrence_rule.completed_instances
+        }
+        merged.recurrence_rule = nextRule
+      } else {
+        merged.recurrence_rule = input.recurrence_rule
+      }
+    }
     if (input.reminders !== undefined) merged.reminders = input.reminders
 
-    // 状态变更时同步 started_at / completed_at
-    if (input.status && input.status !== existing.status) {
+    // 实例级状态变更：编辑弹窗对某个具体实例执行完成/取消完成
+    // （判断依据是该实例自身的完成记录，而非基础状态；操作均为幂等）
+    if (input.instance_due_at != null && merged.recurrence_rule && input.status) {
+      const rule: RecurrenceRule = { ...merged.recurrence_rule }
+      const map = { ...(rule.completed_instances ?? {}) }
+      const anchor = input.instance_due_at
+      if (input.status === 'completed') {
+        if (map[anchor] == null) map[anchor] = now
+        if (anchor === merged.due_at) {
+          const next = this.nextUncompletedAfter(anchor, rule, map)
+          if (next == null) {
+            merged.status = 'completed'
+            merged.completed_at = now
+            merged.started_at = merged.started_at ?? now
+          } else {
+            merged.due_at = next
+            merged.status = 'pending'
+            merged.started_at = null
+            merged.completed_at = null
+          }
+        }
+      } else {
+        // pending / in_progress：取消该实例的完成标记
+        delete map[anchor]
+        if (merged.status === 'completed') {
+          merged.status = 'pending'
+          merged.completed_at = null
+          merged.started_at = null
+        }
+        if (merged.due_at != null) merged.due_at = Math.min(merged.due_at, anchor)
+        if (input.status === 'in_progress') {
+          merged.status = 'in_progress'
+          merged.started_at = existing.started_at ?? now
+          merged.completed_at = null
+        }
+      }
+      rule.completed_instances = Object.keys(map).length > 0 ? map : undefined
+      merged.recurrence_rule = rule
+    }
+
+    // 状态变更时同步 started_at / completed_at（实例级状态已单独处理，此处仅处理基础状态）
+    if (input.status && input.status !== existing.status && input.instance_due_at == null) {
       if (input.status === 'in_progress') {
         // 进入进行中：首次设置 started_at，清除 completed_at
         if (!existing.started_at) merged.started_at = now
@@ -444,51 +628,14 @@ class CalendarService {
     return updated
   }
 
-  /** 标记 TODO 完成（便捷方法）。重复 TODO 完成时推进到下一次到期而非标记整系列完成 */
-  completeTodo(id: string, completed: boolean): CalendarTodo | null {
+  /** 标记 TODO 完成（便捷方法）。重复 TODO 完成时记录该实例并推进到下一个未完成实例 */
+  completeTodo(id: string, completed: boolean, instance_due_at?: number): CalendarTodo | null {
     const now = Math.floor(Date.now() / 1000)
     const existing = this.getTodo(id)
     if (!existing) return null
 
-    if (completed && existing.recurrence_rule && existing.due_at) {
-      // 重复 TODO：推进 due_at 到下一次到期，保持 pending 状态
-      const rule = existing.recurrence_rule
-      const nextDueAt = this.advanceRecurrence(existing.due_at, rule)
-      if (nextDueAt === existing.due_at) {
-        // 无法推进（规则耗尽），标记整系列完成
-        this.db.prepare(
-          `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
-        ).run('completed', now, now, now, id)
-      } else {
-        // 检查是否超过 until 或 count 上限
-        const until = rule.until ?? Infinity
-        if (nextDueAt > until) {
-          this.db.prepare(
-            `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
-          ).run('completed', now, now, now, id)
-        } else if (rule.count && rule.count > 0) {
-          // 统计已完成的实例数（通过已 fire 的提醒近似）
-          const firedCount = (this.db.prepare(
-            `SELECT COUNT(*) as n FROM calendar_reminders WHERE target_type = ? AND target_id = ? AND fired_at IS NOT NULL`
-          ).get('todo', id) as any).n
-          if (firedCount + 1 >= rule.count) {
-            this.db.prepare(
-              `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), due_at=?, updated_at=? WHERE id=?`
-            ).run('completed', now, now, nextDueAt, now, id)
-          } else {
-            // 重复实例推进：清除 started_at（下一轮重新计时）
-            this.db.prepare(
-              `UPDATE calendar_todos SET due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
-            ).run(nextDueAt, now, id)
-          }
-        } else {
-          this.db.prepare(
-            `UPDATE calendar_todos SET due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
-          ).run(nextDueAt, now, id)
-        }
-      }
-    } else {
-      // 非重复 TODO 或取消完成：直接更新状态
+    if (!existing.recurrence_rule || existing.due_at == null) {
+      // 非重复 TODO：直接更新状态
       if (completed) {
         this.db.prepare(
           `UPDATE calendar_todos SET status=?, completed_at=?, started_at=COALESCE(started_at, ?), updated_at=? WHERE id=?`
@@ -499,6 +646,50 @@ class CalendarService {
           `UPDATE calendar_todos SET status=?, completed_at=NULL, started_at=NULL, updated_at=? WHERE id=?`
         ).run('pending', now, id)
       }
+    } else {
+      // 重复 TODO：实例级完成记录（completed_instances: instance_due_at → completed_at）
+      const rule = { ...existing.recurrence_rule }
+      const map = { ...(rule.completed_instances ?? {}) }
+      const anchor = instance_due_at ?? existing.due_at
+      let dueAt = existing.due_at
+      let status = existing.status
+      let startedAt = existing.started_at
+      let completedAt = existing.completed_at
+
+      if (completed) {
+        map[anchor] = now
+        if (anchor === existing.due_at) {
+          // 完成的是"当前到期"实例：推进 due_at 到下一个未完成实例
+          const next = this.nextUncompletedAfter(anchor, rule, map)
+          if (next == null) {
+            // 系列耗尽：整系列标记完成
+            status = 'completed'
+            completedAt = now
+            startedAt = existing.started_at ?? now
+          } else {
+            dueAt = next
+            status = 'pending'
+            startedAt = null
+            completedAt = null
+          }
+        }
+        // 跳着完成（anchor > due_at）：只记录，due_at 保持最早未完成实例
+      } else {
+        // 取消完成：移除该实例记录，due_at 回退到最早未完成实例
+        delete map[anchor]
+        if (status === 'completed') {
+          // 系列曾整体完成 → 恢复为未完成系列
+          status = 'pending'
+          startedAt = null
+          completedAt = null
+        }
+        dueAt = Math.min(dueAt, anchor)
+      }
+
+      rule.completed_instances = Object.keys(map).length > 0 ? map : undefined
+      this.db.prepare(
+        `UPDATE calendar_todos SET recurrence_rule=?, due_at=?, status=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
+      ).run(JSON.stringify(rule), dueAt, status, startedAt, completedAt, now, id)
     }
 
     const todo = this.getTodo(id)
@@ -516,6 +707,82 @@ class CalendarService {
       this.invalidateTodoStatsCache()
     }
     return result.changes > 0
+  }
+
+  /**
+   * 删除 TODO 的指定实例（支持三态：仅本次 / 本次及以后 / 全部）。
+   * - 非重复 TODO：三态都等同于 deleteTodo。
+   * - 重复 TODO：
+   *   this    → 把 anchor_at 写入 excluded_dates；若此时原始 due_at 命中 EXDATE / 旧截止，则推进 due_at 到下一次有效日期
+   *   future  → 截断 until = anchor_at - 1；若截断后 due_at >= until / 命中 EXDATE，推进 due_at；若 anchor_at <= due_at（首条就删未来）退化为 deleteTodo
+   *   all     → deleteTodo
+   */
+  deleteTodoInstance(params: DeleteTodoInstanceParams): boolean {
+    const { id, anchor_at, mode } = params
+    const existing = this.getTodo(id)
+    if (!existing) return false
+    if (!existing.recurrence_rule || mode === 'all') return this.deleteTodo(id)
+
+    const rule = { ...existing.recurrence_rule }
+    const now = Math.floor(Date.now() / 1000)
+    let truncated = false
+
+    if (mode === 'future') {
+      if (existing.due_at != null && anchor_at <= existing.due_at) {
+        // 锚点就是第一次或更早，直接删全量
+        return this.deleteTodo(id)
+      }
+      const newUntil = anchor_at - 1
+      rule.until = rule.until != null ? Math.min(rule.until, newUntil) : newUntil
+      truncated = true
+    } else {
+      rule.excluded_dates = Array.from(new Set([...(rule.excluded_dates ?? []), anchor_at]))
+      // 同步清理该实例的完成记录，避免已删除实例仍出现在已完成列表中
+      if (rule.completed_instances) {
+        const map = { ...rule.completed_instances }
+        delete map[anchor_at]
+        if (Object.keys(map).length > 0) rule.completed_instances = map
+        else delete rule.completed_instances
+      }
+    }
+
+    // 推进 due_at：保证原始 due_at 落在下一个有效实例（excluded_dates / until 之后）
+    let nextDueAt = existing.due_at
+    if (existing.due_at != null && existing.status !== 'completed') {
+      const until = rule.until ?? Infinity
+      const maxIter = 1000
+      let iter = 0
+      let cursor = existing.due_at
+      // count 不再计数：只是推进 due_at，真正 count 语义交给 expand / regenerate 处理
+      while (iter < maxIter) {
+        iter++
+        const excluded = rule.excluded_dates?.includes(cursor)
+        const pastUntil = cursor > until
+        if (!excluded && !pastUntil) break
+        const nxt = this.advanceRecurrence(cursor, rule)
+        if (nxt === cursor) break
+        cursor = nxt
+        if (cursor > until) break
+      }
+      nextDueAt = cursor
+    }
+
+    const ruleJson = JSON.stringify(rule)
+    if (nextDueAt != null && nextDueAt !== existing.due_at) {
+      this.db.prepare(
+        `UPDATE calendar_todos SET recurrence_rule=?, due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
+      ).run(ruleJson, nextDueAt, now, id)
+    } else if (truncated && nextDueAt != null && existing.status === 'completed') {
+      // 截断后已完成 TODO，不强制改动状态（completed 语义不变），但更新 due_at
+      this.db.prepare(`UPDATE calendar_todos SET recurrence_rule=?, due_at=?, updated_at=? WHERE id=?`).run(ruleJson, nextDueAt, now, id)
+    } else {
+      this.db.prepare(`UPDATE calendar_todos SET recurrence_rule=?, updated_at=? WHERE id=?`).run(ruleJson, now, id)
+    }
+
+    const updated = this.getTodo(id)
+    if (updated) this.regenerateTodoReminders(updated)
+    this.invalidateTodoStatsCache()
+    return true
   }
 
   // ====== Todo stats ======
@@ -639,27 +906,12 @@ class CalendarService {
     const now = Math.floor(Date.now() / 1000)
     const horizon = now + 90 * 86400
 
-    // 重复TODO：展开未来90天内的实例，为每个实例生成提醒
+    // 重复TODO：展开未来90天内的实例，为每个实例生成提醒（复用 expandTodoInstances 的 EXDATE 过滤，跳过已完成实例）
     const dueDates: number[] = []
     if (todo.recurrence_rule) {
-      const rule = todo.recurrence_rule
-      const until = Math.min(rule.until ?? horizon, horizon)
-      let cursor = todo.due_at
-      const maxIter = 1000
-      let iter = 0
-      // count 限制基于从 due_at 起的总实例数（含已过期），而非仅未来实例数
-      let totalOccurrenceCount = 0
-      while (iter < maxIter) {
-        iter++
-        if (cursor > until) break
-        totalOccurrenceCount++
-        if (cursor > now - 86400) {
-          dueDates.push(cursor)
-        }
-        if (rule.count && totalOccurrenceCount >= rule.count) break
-        const next = this.advanceRecurrence(cursor, rule)
-        if (next === cursor) break
-        cursor = next
+      const insts = this.expandTodoInstances(todo, now - 86400, horizon)
+      for (const inst of insts) {
+        if (inst.instance_due_at > now - 86400 && inst.status !== 'completed') dueDates.push(inst.instance_due_at)
       }
     } else {
       if (todo.due_at > now - 86400) {
@@ -725,6 +977,14 @@ class CalendarService {
       iter++
       if (cursor > until) break
       if (cursor > winEnd) break
+      // 跳过被排除的实例（EXDATE）
+      if (rule.excluded_dates?.includes(cursor)) {
+        if (rule.count && iter >= rule.count) break
+        const next = this.advanceRecurrence(cursor, rule)
+        if (next === cursor) break
+        cursor = next
+        continue
+      }
       const instanceEnd = cursor + duration
       if (instanceEnd >= winStart) {
         instances.push({
@@ -741,6 +1001,85 @@ class CalendarService {
       if (next === cursor) break
       cursor = next
     }
+    return instances
+  }
+
+  /** 展开重复 TODO 在 [winStart, winEnd] 区间内的实例（含已完成实例，实例状态由 completed_instances 决定） */
+  private expandTodoInstances(todo: CalendarTodo, winStart: number, winEnd: number): CalendarTodoInstance[] {
+    if (!todo.recurrence_rule || todo.due_at == null) {
+      return [{
+        ...todo,
+        instance_due_at: todo.due_at as number,
+        is_recurring: false,
+      }]
+    }
+    const rule = todo.recurrence_rule
+    const completedMap = rule.completed_instances ?? {}
+    const instances: CalendarTodoInstance[] = []
+    const until = rule.until ?? winEnd + 86400
+    const maxIterations = 10000
+    let iter = 0
+
+    // 从系列最早实例开始，保证窗口内已完成实例也能展开（due_at 可能已推进到未来）
+    const origin = this.getSeriesOrigin(todo)
+    let cursor = this.fastForwardCursor(origin, winStart - 86400, rule)
+    if (rule.count) {
+      const skipped = this.countOccurrencesBetween(origin, cursor, rule)
+      iter = skipped
+    }
+
+    while (iter < maxIterations) {
+      iter++
+      if (cursor > until) break
+      if (cursor > winEnd) break
+      // 跳过被排除的实例（EXDATE）
+      if (rule.excluded_dates?.includes(cursor)) {
+        if (rule.count && iter >= rule.count) break
+        const next = this.advanceRecurrence(cursor, rule)
+        if (next === cursor) break
+        cursor = next
+        continue
+      }
+      if (cursor >= winStart) {
+        const completedAt = completedMap[cursor]
+        instances.push({
+          ...todo,
+          due_at: todo.due_at,
+          instance_due_at: cursor,
+          is_recurring: true,
+          status: completedAt != null ? 'completed' : todo.status,
+          started_at: completedAt != null ? null : todo.started_at,
+          completed_at: completedAt ?? todo.completed_at,
+        })
+      }
+      if (rule.count && iter >= rule.count) break
+      const next = this.advanceRecurrence(cursor, rule)
+      if (next === cursor) break
+      cursor = next
+    }
+    return instances
+  }
+
+  /** 按视图窗口查询 TODO 并展开重复实例（供日历面板渲染使用） */
+  listTodoInstances(params: ListEventsParams): CalendarTodoInstance[] {
+    const winStart = params.start_at
+    const winEnd = params.end_at
+    // 重复 TODO 全部拉出（可能含窗口内的已完成实例，due_at 已推进到未来不能作为过滤条件），展开时按窗口裁剪
+    const rows = this.db.prepare(
+      `SELECT * FROM calendar_todos
+       WHERE (
+         (due_at IS NOT NULL AND due_at >= ? AND due_at <= ?)
+         OR (recurrence_rule IS NOT NULL AND recurrence_rule != '' AND due_at IS NOT NULL)
+       )
+       ORDER BY due_at IS NULL, due_at ASC, created_at DESC`
+    ).all(winStart, winEnd) as any[]
+
+    const instances: CalendarTodoInstance[] = []
+    for (const row of rows) {
+      const todo = this.rowToTodo(row)
+      instances.push(...this.expandTodoInstances(todo, winStart, winEnd))
+    }
+    instances.sort((a, b) => a.instance_due_at - b.instance_due_at)
     return instances
   }
 
@@ -868,6 +1207,63 @@ class CalendarService {
       default:
         return current
     }
+  }
+
+  /** 重复系列的最早实例时间（用于从历史已完成实例开始展开日历窗口） */
+  private getSeriesOrigin(todo: CalendarTodo): number {
+    let origin = todo.due_at ?? 0
+    const rule = todo.recurrence_rule
+    if (!rule) return origin
+    for (const k of Object.keys(rule.completed_instances ?? {})) {
+      const v = Number(k)
+      if (Number.isFinite(v)) origin = Math.min(origin, v)
+    }
+    for (const e of rule.excluded_dates ?? []) origin = Math.min(origin, e)
+    return origin
+  }
+
+  /**
+   * 返回 after 之后首个未完成且未被排除（EXDATE）的实例；系列耗尽返回 null。
+   * - 无 count：从 after 逐次推进，越过已完成 / 被排除实例
+   * - 有 count：从系列起点走序号校验（含被排除占位，语义与 expand 一致），序号超过 count 即耗尽
+   */
+  private nextUncompletedAfter(after: number, rule: RecurrenceRule, map: Record<string, number>): number | null {
+    const until = rule.until ?? Infinity
+    const maxIter = 10000
+    if (!rule.count) {
+      let cursor = after
+      for (let i = 0; i < maxIter; i++) {
+        const next = this.advanceRecurrence(cursor, rule)
+        if (next === cursor) return null
+        cursor = next
+        if (cursor > until) return null
+        if (rule.excluded_dates?.includes(cursor)) continue
+        if (map[cursor] != null) continue
+        return cursor
+      }
+      return null
+    }
+    // count 路径：从系列起点（after 与已完成/被排除实例的最小值）走序号
+    let origin = after
+    for (const k of Object.keys(map)) {
+      const v = Number(k)
+      if (Number.isFinite(v)) origin = Math.min(origin, v)
+    }
+    for (const e of rule.excluded_dates ?? []) origin = Math.min(origin, e)
+    let cursor = origin
+    let idx = 1
+    for (let i = 0; i < maxIter; i++) {
+      if (cursor > after) {
+        if (cursor > until) return null
+        if (idx > rule.count) return null
+        if (!rule.excluded_dates?.includes(cursor) && map[cursor] == null) return cursor
+      }
+      const next = this.advanceRecurrence(cursor, rule)
+      if (next === cursor) return null
+      cursor = next
+      idx++
+    }
+    return null
   }
 
   // ====== 工具方法 ======
