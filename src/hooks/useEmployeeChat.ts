@@ -87,7 +87,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
-  const [inputDraft, setInputDraftState] = useState('')
+  const inputDraftRef = useRef('')
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
@@ -196,7 +196,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isStreamingRef.current = false
         setAllConversations([])
         setLoadingConversationId(null)
-        setInputDraftState('')
+        inputDraftRef.current = ''
         // 重置 pendingMessage 与延迟发送，避免跨员工串扰
         setPendingMessage(null)
         setPendingHighPermission(false)
@@ -255,7 +255,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
         // 恢复该对话的草稿
-        setInputDraftState(_persistentDrafts.get(cachedActiveConvId) || '')
+        inputDraftRef.current = _persistentDrafts.get(cachedActiveConvId) || ''
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
@@ -427,7 +427,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       setConvMessages(convId, [])
       setIsStreaming(false)
       isStreamingRef.current = false
-      setInputDraftState('')
+      inputDraftRef.current = ''
       forceScrollToBottom()
 
       refreshConversationList()
@@ -475,7 +475,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isStreamingRef.current = hasActiveStream
 
     // 切换对话时同步恢复该对话的草稿，避免显示上一个对话的输入内容
-    setInputDraftState(_persistentDrafts.get(convId) || '')
+    inputDraftRef.current = _persistentDrafts.get(convId) || ''
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -590,7 +590,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         activeConversationIdRef.current = null
         setMessages([])
         setIsStreaming(false)
-        setInputDraftState('')
+        inputDraftRef.current = ''
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -614,7 +614,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setActiveConversationId(null)
         setMessages([])
         setIsStreaming(false)
-        setInputDraftState('')
+        inputDraftRef.current = ''
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -638,7 +638,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       activeConversationIdRef.current = null
       setMessages([])
       setIsStreaming(false)
-      setInputDraftState('')
+      inputDraftRef.current = ''
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
@@ -669,7 +669,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         activeConversationIdRef.current = null
         setMessages([])
         setIsStreaming(false)
-        setInputDraftState('')
+        inputDraftRef.current = ''
       }
       message.success(t('workbench.moveConversationSuccess'))
       return true
@@ -1248,13 +1248,16 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   }
 
   // 草稿更新：同步到当前对话的持久化缓存，切回时能恢复
+  // 仅更新 ref，不触发顶层 setState，避免输入时整个页面重渲染
   const setInputDraft = useCallback((value: string) => {
-    setInputDraftState(value)
+    inputDraftRef.current = value
     const convId = activeConversationIdRef.current
     if (convId) {
       _persistentDrafts.set(convId, value)
     }
   }, [])
+
+  const getInputDraft = useCallback(() => inputDraftRef.current, [])
 
   // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
   const clearActiveConversation = useCallback(() => {
@@ -1263,7 +1266,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setMessages([])
     setIsStreaming(false)
     isStreamingRef.current = false
-    setInputDraftState('')
+    inputDraftRef.current = ''
     setIsComparisonMode(false)
     setComparisonMessageIds([])
   }, [])
@@ -1608,7 +1611,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isStreaming,
     isCreatingConversation,
     loadingConversationId,
-    inputDraft,
+    getInputDraft,
     setInputDraft,
     providers,
     selectedLlmProviderId,

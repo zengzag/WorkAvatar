@@ -1,7 +1,7 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
 import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, BulbOutlined, BulbFilled } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useMemo, useRef, useCallback, useState, memo } from 'react'
+import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 import type { Employee } from '../../types'
 
@@ -55,8 +55,9 @@ const ChatInput: React.FC<{
   minimalMode: boolean
   onMinimalModeChange: (enabled: boolean) => void
   canToggleMinimalMode: boolean
-  value: string
-  onChange: (value: string) => void
+  conversationId?: string | null
+  getInitialDraft?: () => string
+  onDraftChange?: (value: string) => void
   availableSkills?: AvailableSkill[]
   centerMode?: boolean
   showEmployeeSelector?: boolean
@@ -68,7 +69,7 @@ const ChatInput: React.FC<{
   onDefaultModelChange?: (providerId: string, modelId: string) => void
   enableThinking?: boolean
   onThinkingChange?: (enabled: boolean) => void
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, value, onChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -76,6 +77,14 @@ const ChatInput: React.FC<{
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [highPermission, setHighPermission] = useState(false)
+  const [internalValue, setInternalValue] = useState(() => getInitialDraft?.() || '')
+
+  // 对话切换时从外部恢复草稿（不触发顶层重渲染，仅在此处同步）
+  useEffect(() => {
+    if (getInitialDraft) {
+      setInternalValue(getInitialDraft())
+    }
+  }, [conversationId, getInitialDraft])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -98,21 +107,23 @@ const ChatInput: React.FC<{
   }, [invocableSkills])
 
   const currentSlashItems = useMemo(() => {
-    if (!value.startsWith('/')) return []
-    const lower = value.toLowerCase()
+    if (!internalValue.startsWith('/')) return []
+    const lower = internalValue.toLowerCase()
     // 精确控制：仅当输入恰好是 / 或 /xxx（无空格）时才提示命令
-    const hasSpace = value.includes(' ')
+    const hasSpace = internalValue.includes(' ')
     if (hasSpace) return []
     return slashCommands.filter(cmd => cmd.key.startsWith(lower))
-  }, [value, slashCommands])
+  }, [internalValue, slashCommands])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
-      if (value.startsWith('/') && !value.includes(' ') && currentSlashItems.length === 1) {
+      if (internalValue.startsWith('/') && !internalValue.includes(' ') && currentSlashItems.length === 1) {
         const skillName = currentSlashItems[0].key.slice(1)
-        onChange(`/${skillName} `)
+        const next = `/${skillName} `
+        setInternalValue(next)
+        onDraftChange?.(next)
         return
       }
       handleSend()
@@ -138,13 +149,15 @@ const ChatInput: React.FC<{
   // 斜杠菜单选中处理：skill 命令填充 `/<name> ` 让用户继续输入参数
   const handleSlashSelect = useCallback((cmd: { key: string }) => {
     const skillName = cmd.key.slice(1)
-    onChange(`/${skillName} `)
-  }, [onChange])
+    const next = `/${skillName} `
+    setInternalValue(next)
+    onDraftChange?.(next)
+  }, [onDraftChange])
 
   const handleSend = useCallback(() => {
-    if (!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
+    if (!internalValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
-    let content = value.trim()
+    let content = internalValue.trim()
     // skill 斜杠命令转换
     if (content.startsWith('/') && invocableSkills.some(s => content.slice(1).startsWith(s.name))) {
       content = convertSkillCommand(content)
@@ -157,10 +170,11 @@ const ChatInput: React.FC<{
     }
     const sendHighPermission = highPermission
     onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
-    onChange('')
+    setInternalValue('')
+    onDraftChange?.('')
     setAttachedFiles([])
     setHighPermission(false)
-  }, [value, attachedImages, attachedFiles, selectedModels, highPermission, onSend, onChange, invocableSkills, convertSkillCommand])
+  }, [internalValue, attachedImages, attachedFiles, selectedModels, highPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -709,7 +723,7 @@ const ChatInput: React.FC<{
           })}
         </div>
       )}
-      {value.startsWith('/') && currentSlashItems.length > 0 && (
+      {internalValue.startsWith('/') && currentSlashItems.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 0', flexWrap: 'wrap' }}>
           {currentSlashItems.map(cmd => (
             <div key={cmd.key} onClick={() => handleSlashSelect(cmd)}
@@ -746,8 +760,12 @@ const ChatInput: React.FC<{
         )}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <Input.TextArea
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+            value={internalValue}
+            onChange={(e) => {
+              const v = e.target.value
+              setInternalValue(v)
+              onDraftChange?.(v)
+            }}
             onPressEnter={handleKeyDown}
             onPaste={handlePaste}
             placeholder={placeholder}
@@ -854,7 +872,7 @@ const ChatInput: React.FC<{
           <Button icon={<StopOutlined />} danger onClick={onStop} size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
-            disabled={!value.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
+            disabled={!internalValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
             size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>

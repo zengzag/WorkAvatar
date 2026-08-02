@@ -214,7 +214,7 @@ const Tasks: React.FC = () => {
     messages,
     isStreaming,
     loadingConversationId,
-    inputDraft,
+    getInputDraft,
     setInputDraft,
     providers,
     selectedLlmProviderId,
@@ -649,8 +649,9 @@ const Tasks: React.FC = () => {
                 minimalMode={minimalMode}
                 onMinimalModeChange={handleToggleMinimalMode}
                 canToggleMinimalMode={true}
-                value={inputDraft}
-                onChange={setInputDraft}
+                conversationId={activeConversationId}
+                getInitialDraft={getInputDraft}
+                onDraftChange={setInputDraft}
                 availableSkills={availableSkills}
                 centerMode={true}
                 showEmployeeSelector={true}
@@ -713,8 +714,9 @@ const Tasks: React.FC = () => {
                 minimalMode={minimalMode}
                 onMinimalModeChange={handleToggleMinimalMode}
                 canToggleMinimalMode={messages.length === 0}
-                value={inputDraft}
-                onChange={setInputDraft}
+                conversationId={activeConversationId}
+                getInitialDraft={getInputDraft}
+                onDraftChange={setInputDraft}
                 availableSkills={availableSkills}
                 defaultProviderId={selectedLlmProviderId}
                 defaultModelId={selectedLlmModelId}

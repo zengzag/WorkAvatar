@@ -89,10 +89,8 @@ const ThinkingSegmentInner: React.FC<{
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
-  const contentRef = useRef<HTMLDivElement>(null)
   const stepsWrapperRef = useRef<HTMLDivElement>(null)
   const fallbackRef = useRef<number | undefined>(undefined)
-  const [contentHeight, setContentHeight] = useState(0)
   const [stepsExpanded, setStepsExpanded] = useState(false)
   const [stepsOverflow, setStepsOverflow] = useState(false)
 
@@ -121,13 +119,10 @@ const ThinkingSegmentInner: React.FC<{
   }, [isStreaming, seg.timestamp, seg.completedAt])
 
   useEffect(() => {
-    if (contentRef.current) {
-      setContentHeight(contentRef.current.scrollHeight)
-    }
     if (stepsWrapperRef.current) {
       setStepsOverflow(stepsWrapperRef.current.scrollHeight > 320)
     }
-  }, [steps, seg.collapsed, stepsExpanded])
+  }, [steps, stepsExpanded])
 
   const duration = seg.timestamp ? elapsed : 0
   const durationText = duration > 0 ? t('workbench.thoughtFor', { time: duration.toFixed(1) }) : ''
@@ -177,15 +172,8 @@ const ThinkingSegmentInner: React.FC<{
             </Text>
           )}
         </div>
-        <div
-          style={{
-            maxHeight: seg.collapsed ? 0 : contentHeight,
-            overflow: 'hidden',
-            transition: 'max-height 0.3s ease-in-out',
-          }}
-        >
+        {!seg.collapsed && (
           <div
-            ref={contentRef}
             style={{
               padding: '0 14px 10px 14px',
               display: 'flex',
@@ -229,7 +217,7 @@ const ThinkingSegmentInner: React.FC<{
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
