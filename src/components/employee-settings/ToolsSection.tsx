@@ -55,7 +55,7 @@ export interface ToolCategoryInfo {
   icon: string
   tool_ids: string[]
   tools: CategoryTool[]
-  mode: ToolMode | 'mixed'
+  mode: ToolMode
   is_enabled: boolean
   enabled_count: number
   total_count: number
@@ -142,8 +142,9 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
         ) : hasCategories ? (
           <div>
             {toolCategories!.map((cat) => {
-              const isMixed = cat.mode === 'mixed'
               const catIcon = CATEGORY_ICON_MAP[cat.icon] || <ToolOutlined />
+              // 分类内工具模式不一致时提示"混合"（分类 Segmented 仍按最高状态显示）
+              const isMixed = new Set(cat.tools.map(t => t.mode)).size > 1
 
               return (
                 <div
@@ -207,11 +208,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                           </Tag>
                           <Tag
                             color={
-                              cat.mode === 'off'
-                                ? 'default'
-                                : isMixed
-                                ? 'orange'
-                                : 'green'
+                              cat.mode === 'off' ? 'default' : 'green'
                             }
                             style={{ flexShrink: 0 }}
                           >
@@ -241,7 +238,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                     <Segmented
                       size="small"
                       options={modeOptions}
-                      value={isMixed ? undefined : cat.mode}
+                      value={cat.mode}
                       onChange={(value) =>
                         handleChangeCategoryMode(cat.id, value as ToolMode)
                       }

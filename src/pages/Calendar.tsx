@@ -197,11 +197,6 @@ const CalendarPage: React.FC = () => {
     setTodoModalOpen(true)
   }, [])
 
-  /** 日历面板复选框：直接完成/取消完成某个 TODO 实例（重复 TODO 支持跳着完成） */
-  const handleCompleteTodoInstance = useCallback((td: CalendarTodoInstance) => {
-    cal.completeTodo(td.id, td.status !== 'completed', td.instance_due_at)
-  }, [cal])
-
   const handleTodoSubmit = useCallback(async (input: CreateTodoInput | UpdateTodoInput) => {
     if (todoModalMode === 'create') {
       return await cal.createTodo(input as CreateTodoInput)
@@ -271,7 +266,6 @@ const CalendarPage: React.FC = () => {
             onMoveEvent={handleMoveEvent}
             onResizeEvent={handleResizeEvent}
             onEditTodo={openEditTodo}
-            onCompleteTodo={handleCompleteTodoInstance}
           />
         </div>
         <div style={{

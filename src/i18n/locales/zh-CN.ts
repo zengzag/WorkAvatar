@@ -1651,7 +1651,6 @@ export default {
     overdue: '已逾期',
     overdueHint: '此待办已逾期',
     clickToCycleStatus: '点击切换状态：待办 → 进行中 → 已完成',
-    toggleComplete: '点击完成/取消完成',
     startedAt: '开始时间',
     completedAt: '完成时间',
     startedAtHint: '进入进行中状态的时间',

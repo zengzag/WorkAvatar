@@ -312,8 +312,8 @@ export function registerToolHandlers(
         modeSet.add(mode)
         if (mode !== 'off') enabledCount++
       }
-      // 分类聚合模式：全部工具一致时为该模式，否则 mixed
-      const mode: ToolMode | 'mixed' = modeSet.size === 1 ? Array.from(modeSet)[0] : 'mixed'
+      // 分类聚合模式：按分类内所有工具的最高状态显示（on > on_demand > off）
+      const mode: ToolMode = modeSet.has('on') ? 'on' : modeSet.has('on_demand') ? 'on_demand' : 'off'
       // 兼容旧字段：全开启才为 true（前端通过 enabled_count / total_count 表达部分开启）
       const isEnabled = enabledCount === totalCount && totalCount > 0
 
@@ -336,7 +336,7 @@ export function registerToolHandlers(
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {
     const mode = resolveAssignMode(params)
     const isEnabled = mode !== 'off' ? 1 : 0
-    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode, isEnabled, mode, isEnabled)
+    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode, isEnabled)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })

@@ -44,7 +44,7 @@ interface ToolCategoryInfo {
     description: string
     mode: 'on' | 'on_demand' | 'off'
   }>
-  mode: 'on' | 'on_demand' | 'off' | 'mixed'
+  mode: 'on' | 'on_demand' | 'off'
   is_enabled: boolean
   enabled_count: number
   total_count: number
@@ -409,7 +409,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         return {
           ...cat,
           mode,
-          is_enabled: mode === 'on',
+          is_enabled: mode !== 'off',
           enabled_count: mode === 'off' ? 0 : cat.total_count,
           tools: cat.tools.map(tool => ({ ...tool, mode })),
         }

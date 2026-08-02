@@ -1634,7 +1634,6 @@ export default {
     overdue: 'Overdue',
     overdueHint: 'This task is overdue',
     clickToCycleStatus: 'Click to cycle: Pending → In Progress → Completed',
-    toggleComplete: 'Click to toggle complete',
     startedAt: 'Started',
     completedAt: 'Completed',
     startedAtHint: 'Time when task moved to in-progress',

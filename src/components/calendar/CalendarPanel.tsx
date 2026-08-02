@@ -46,8 +46,6 @@ interface CalendarPanelProps {
   onMoveEvent: (input: { id: string; start_at: number; end_at: number }) => void
   onResizeEvent: (input: { id: string; start_at: number; end_at: number }) => void
   onEditTodo?: (todo: CalendarTodoInstance) => void
-  /** 直接完成/取消完成某个 TODO 实例（重复 TODO 支持跳着完成） */
-  onCompleteTodo?: (todo: CalendarTodoInstance) => void
 }
 
 const startOfDayMs = (ms: number): number => {
@@ -161,7 +159,7 @@ const DragResizingBlock: React.FC<{ dragState: Extract<DragState, { type: 'resiz
 
 const CalendarPanel: React.FC<CalendarPanelProps> = ({
   view, currentDate, events, todos, loading,
-  onCreateEvent, onEditEvent, onMoveEvent, onResizeEvent, onEditTodo, onCompleteTodo,
+  onCreateEvent, onEditEvent, onMoveEvent, onResizeEvent, onEditTodo,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -643,7 +641,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                           return (
                             <Tooltip
                               key={`${td.id}-${td.instance_due_at}`}
-                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}${onCompleteTodo ? ' · ' + t('calendar.toggleComplete') : ''}`}
+                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}`}
                             >
                               <div
                                 onMouseDown={(e) => {
@@ -657,56 +655,23 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                                 style={{
                                   flex: 1,
                                   height: BAR_HEIGHT,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 3,
                                   background: isDone ? token.colorFillQuaternary : c.bg,
                                   borderLeft: `3px solid ${isDone ? token.colorBorderSecondary : c.border}`,
                                   borderRadius: 3,
                                   padding: '0 6px',
                                   fontSize: 10,
+                                  lineHeight: `${BAR_HEIGHT}px`,
                                   overflow: 'hidden',
+                                  whiteSpace: 'nowrap',
+                                  textOverflow: 'ellipsis',
                                   color: isDone ? token.colorTextTertiary : token.colorText,
+                                  textDecoration: isDone ? 'line-through' : 'none',
                                   cursor: 'pointer',
                                   userSelect: 'none',
                                   opacity: isDone ? 0.6 : 1,
                                 }}
                               >
-                                {onCompleteTodo && (
-                                  <span
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      onCompleteTodo(td)
-                                    }}
-                                    style={{
-                                      flexShrink: 0,
-                                      width: 12,
-                                      height: 12,
-                                      borderRadius: 3,
-                                      border: `1px solid ${isDone ? token.colorPrimary : c.border}`,
-                                      background: isDone ? token.colorPrimary : 'transparent',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      cursor: 'pointer',
-                                      fontSize: 9,
-                                      lineHeight: '10px',
-                                      color: '#fff',
-                                    }}
-                                  >
-                                    {isDone ? '✓' : ''}
-                                  </span>
-                                )}
-                                <span style={{
-                                  flex: 1,
-                                  minWidth: 0,
-                                  overflow: 'hidden',
-                                  whiteSpace: 'nowrap',
-                                  textOverflow: 'ellipsis',
-                                  textDecoration: isDone ? 'line-through' : 'none',
-                                }}>
-                                  {td.title}
-                                </span>
+                                {td.title}
                               </div>
                             </Tooltip>
                           )

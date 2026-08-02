@@ -54,8 +54,8 @@ export interface ToolCategoryInfo {
     /** 该工具的启用模式 */
     mode: ToolMode
   }>
-  /** 分类聚合模式：全部一致时为对应模式，混合时为 'mixed' */
-  mode: ToolMode | 'mixed'
+  /** 分类聚合模式：按分类内所有工具的最高状态（on > on_demand > off） */
+  mode: ToolMode
   is_enabled: boolean
   enabled_count: number
   total_count: number
