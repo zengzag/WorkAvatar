@@ -115,6 +115,7 @@ export type {
   CalendarEvent,
   CalendarEventInstance,
   CalendarTodo,
+  CalendarTodoInstance,
   CalendarTodoStats,
   CalendarSettings,
   ListEventsParams,
@@ -124,6 +125,9 @@ export type {
   CreateTodoInput,
   UpdateTodoInput,
   NotifyPayload,
+  DeleteInstanceMode,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from './channels/calendar'
 export type {
   AutomationTask,

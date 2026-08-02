@@ -70,6 +70,8 @@ import type {
   UpdateTodoInput,
   CalendarSettings,
   NotifyPayload,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
   ListAutomationTasksParams,
   ListAutomationRunsParams,
   CreateAutomationTaskInput,
@@ -112,6 +114,7 @@ export type {
   CalendarEvent,
   CalendarEventInstance,
   CalendarTodo,
+  CalendarTodoInstance,
   CalendarTodoStats,
   CalendarSettings as CalendarSettingsType,
   ListEventsParams as ListEventsParamsType,
@@ -121,6 +124,9 @@ export type {
   CreateTodoInput as CreateTodoInputType,
   UpdateTodoInput as UpdateTodoInputType,
   NotifyPayload as NotifyPayloadType,
+  DeleteInstanceMode,
+  DeleteEventInstanceParams,
+  DeleteTodoInstanceParams,
 } from '../shared/ipc-channels'
 export type {
   AutomationTask,
@@ -357,12 +363,18 @@ const electronAPI = {
     createEvent: (input: CreateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_EVENT, input),
     updateEvent: (input: UpdateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_EVENT, input),
     deleteEvent: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_EVENT, { id }),
+    deleteEventInstance: (params: DeleteEventInstanceParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_EVENT_INSTANCE, params),
     // TODO
     listTodos: (params?: ListTodosParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_TODOS, params || {}),
+    listTodoInstances: (params: ListEventsParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_TODO_INSTANCES, params),
     createTodo: (input: CreateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_TODO, input),
     updateTodo: (input: UpdateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_TODO, input),
     deleteTodo: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_TODO, { id }),
-    completeTodo: (id: string, completed: boolean) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, { id, completed }),
+    deleteTodoInstance: (params: DeleteTodoInstanceParams) =>
+      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_TODO_INSTANCE, params),
+    completeTodo: (id: string, completed: boolean, instance_due_at?: number) =>
+      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, { id, completed, instance_due_at }),
     todoStats: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_TODO_STATS),
     // 设置
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_GET_SETTINGS),

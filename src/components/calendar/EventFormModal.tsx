@@ -23,7 +23,7 @@ interface EventFormModalProps {
   settings?: CalendarSettings | null
   onClose: () => void
   onSubmit: (input: CreateEventInput | UpdateEventInput) => Promise<any>
-  onDelete?: (id: string) => Promise<any>
+  onDelete?: (event: CalendarEventInstance) => Promise<any>
 }
 
 const COLOR_OPTIONS: EventColor[] = ['default', 'blue', 'green', 'orange', 'red', 'purple']
@@ -162,7 +162,7 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
   const handleDelete = async () => {
     if (!event || !onDelete) return
     try {
-      const result = await onDelete(event.id)
+      const result = await onDelete(event)
       if (result && !result.error) {
         message.success(t('calendar.deleteEvent'))
         onClose()
@@ -193,27 +193,37 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
         body: { padding: '4px 16px' },
         footer: { paddingLeft: 16, paddingRight: 16, paddingBottom: 10, paddingTop: 0, marginTop: 0 },
       }}
-      footer={(_, { OkBtn, CancelBtn }) => (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            {isEdit && onDelete && (
-              <Popconfirm
-                title={t('calendar.deleteEventConfirm')}
-                onConfirm={handleDelete}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-                okButtonProps={{ danger: true }}
-              >
-                <Button danger icon={<DeleteOutlined />} size="small">{t('common.delete')}</Button>
-              </Popconfirm>
-            )}
+      footer={(_, { OkBtn, CancelBtn }) => {
+        const isRecurring = isEdit && event && !!event.recurrence_rule
+        const deleteBtn = (
+          <Button danger icon={<DeleteOutlined />} size="small">{t('common.delete')}</Button>
+        )
+        return (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              {isEdit && onDelete && (
+                isRecurring ? (
+                  <span onClick={handleDelete} style={{ cursor: 'pointer' }}>{deleteBtn}</span>
+                ) : (
+                  <Popconfirm
+                    title={t('calendar.deleteEventConfirm')}
+                    onConfirm={handleDelete}
+                    okText={t('common.confirm')}
+                    cancelText={t('common.cancel')}
+                    okButtonProps={{ danger: true }}
+                  >
+                    {deleteBtn}
+                  </Popconfirm>
+                )
+              )}
+            </div>
+            <Space size={8}>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
           </div>
-          <Space size={8}>
-            <CancelBtn />
-            <OkBtn />
-          </Space>
-        </div>
-      )}
+        )
+      }}
     >
       <Form
         form={form}
@@ -343,19 +353,19 @@ const EventFormModal: React.FC<EventFormModalProps> = ({
         {recurrenceFreq && recurrenceFreq !== 'none' && (
           <Row gutter={8} align="middle" style={{ marginBottom: 8 }}>
             <Col flex="0 0 auto" style={inlineLabel}>{t('calendar.repeatInterval')}</Col>
-            <Col flex="0 0 50px">
+            <Col flex="0 0 65px">
               <Form.Item name="recurrenceInterval" style={itemMb}>
                 <InputNumber min={1} max={99} style={{ width: '100%' }} size="middle" />
               </Form.Item>
             </Col>
             <Col flex="0 0 auto" style={inlineLabel}>{t('calendar.repeatCount')}</Col>
-            <Col flex="0 0 50px">
+            <Col flex="0 0 65px">
               <Form.Item name="recurrenceCount" style={itemMb}>
                 <InputNumber min={1} max={365} placeholder="∞" style={{ width: '100%' }} size="middle" />
               </Form.Item>
             </Col>
             <Col flex="0 0 auto" style={inlineLabel}>{t('calendar.repeatUntilShort')}</Col>
-            <Col flex="1 1 auto">
+            <Col flex="1 1 0">
               <Form.Item name="recurrenceUntil" style={itemMb}>
                 <DatePicker style={{ width: '100%' }} size="middle" />
               </Form.Item>
