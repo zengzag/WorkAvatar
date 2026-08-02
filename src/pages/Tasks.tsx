@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
-import { Button, Typography, Spin, Tooltip, theme, App } from 'antd'
-import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons'
+import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
+import type { MenuProps } from 'antd'
+import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
@@ -15,12 +16,22 @@ import type { Employee } from '../types'
 
 const { Paragraph } = Typography
 
+const HorizontalDotsIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }) => (
+  <svg viewBox="0 0 16 16" width="1em" height="1em" fill="currentColor" style={style}>
+    <circle cx="2.5" cy="8" r="1.5" />
+    <circle cx="8" cy="8" r="1.5" />
+    <circle cx="13.5" cy="8" r="1.5" />
+  </svg>
+)
+
 const Tasks: React.FC = () => {
   const { message } = App.useApp()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
   const { t } = useTranslation()
+
+  const PAGE_SIZE = 20
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [employeesLoaded, setEmployeesLoaded] = useState(false)
@@ -30,6 +41,11 @@ const Tasks: React.FC = () => {
   const [allCollections, setAllCollections] = useState<any[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [showSidePanel, setShowSidePanel] = useState(true)
+
+  // 分页相关状态
+  const [loadedCount, setLoadedCount] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   // 任务模式：'new' = 新任务（居中输入框），'chat' = 对话模式
   const [taskMode, setTaskMode] = useState<'new' | 'chat'>('new')
@@ -48,6 +64,9 @@ const Tasks: React.FC = () => {
   // 全文内容搜索匹配的任务 ID 集合（null = 未搜索，Set = 搜索结果）
   const [contentMatchIds, setContentMatchIds] = useState<Set<string> | null>(null)
 
+  // 是否使用全量模式：有搜索或筛选时使用全量加载，否则分页模式下初始加载20条，滚动加载更多
+  const useFullLoad = !!searchQuery.trim() || !!filterEmployeeId || !!contentMatchIds
+
   const loadEmployees = useCallback(async () => {
     try {
       const result = await window.electronAPI.employee.list()
@@ -59,14 +78,64 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  const loadGlobalTasks = useCallback(async () => {
+  // 加载任务列表：支持全量模式和分页模式
+  const loadGlobalTasks = useCallback(async (opts?: { reset?: boolean; forceFull?: boolean }) => {
+    const forceFull = !!opts?.forceFull
     try {
-      const result = await window.electronAPI.conversation.listAll()
-      setGlobalTasks(Array.isArray(result) ? result : [])
+      const full = forceFull || useFullLoad
+      if (full) {
+        // 全量模式：一次加载所有
+        const result = await window.electronAPI.conversation.listAll()
+        const arr = Array.isArray(result) ? result : []
+        setGlobalTasks(arr)
+        setLoadedCount(arr.length)
+        setHasMore(false)
+      } else {
+        // 分页模式：加载 PAGE_SIZE 条
+        const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: 0 })
+        const arr = Array.isArray(result) ? result : []
+        setGlobalTasks(arr)
+        setLoadedCount(arr.length)
+        setHasMore(arr.length === PAGE_SIZE)
+      }
     } catch {
       setGlobalTasks([])
+      setLoadedCount(0)
+      setHasMore(false)
     }
-  }, [])
+  }, [PAGE_SIZE, useFullLoad])
+
+  // 加载更多（仅在分页模式下使用）
+  const loadMoreTasks = useCallback(async () => {
+    if (loadingMore || useFullLoad) return
+    setLoadingMore(true)
+    try {
+      const result = await window.electronAPI.conversation.listAll({ limit: PAGE_SIZE, offset: loadedCount })
+      const arr = Array.isArray(result) ? result : []
+      if (arr.length > 0) {
+        setGlobalTasks(prev => {
+          const existingIds = new Set(prev.map(t => t.id))
+          const newOnes = arr.filter(t => !existingIds.has(t.id))
+          return [...prev, ...newOnes]
+        })
+        setLoadedCount(prev => prev + arr.length)
+      }
+      setHasMore(arr.length === PAGE_SIZE)
+    } catch {
+      setHasMore(false)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [PAGE_SIZE, loadedCount, loadingMore, useFullLoad])
+
+  // 搜索/筛选模式切换时：如果从分页模式切换到全量模式，需要重新全量加载
+  useEffect(() => {
+    if (useFullLoad) {
+      loadGlobalTasks({ forceFull: true, reset: true })
+    }
+    // 仅在 useFullLoad 切换为 true 时触发；切换为 false 时由其他 effect 处理
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useFullLoad])
 
   const loadAllCollections = useCallback(async () => {
     try {
@@ -392,6 +461,34 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
+  // 在系统文件管理器中打开当前员工的工作区目录
+  const handleOpenWorkspace = useCallback(async () => {
+    const workspacePath = employee?.workspace_path
+    if (!workspacePath) {
+      message.warning(t('workbench.workspaceNotSet'))
+      return
+    }
+    try {
+      const res = await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+      if (res && (res as any).error) {
+        message.error(t('workbench.openWorkspaceFailed', { error: (res as any).error }))
+      }
+    } catch (e: any) {
+      message.error(t('workbench.openWorkspaceFailed', { error: e?.message || String(e) }))
+    }
+  }, [employee, message, t])
+
+  const moreMenuItems = useMemo<MenuProps['items']>(() => {
+    return [
+      {
+        key: 'openWorkspace',
+        icon: <FolderOpenOutlined />,
+        label: t('workbench.openWorkspace'),
+        onClick: handleOpenWorkspace,
+      },
+    ]
+  }, [t, handleOpenWorkspace])
+
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }
     @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
@@ -490,6 +587,9 @@ const Tasks: React.FC = () => {
             onRename={handleRename}
             onExtractMemory={handleExtractMemory}
             isTaskStreaming={isConversationStreaming}
+            hasMore={hasMore && !useFullLoad}
+            loadingMore={loadingMore}
+            onLoadMore={loadMoreTasks}
           />
         )}
 
@@ -498,18 +598,28 @@ const Tasks: React.FC = () => {
             <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 20, display: 'flex', gap: 6 }}>
               <Tooltip title={t('workbench.historyConv')}>
                 <Button type="text" size="small"
-                  icon={<MenuUnfoldOutlined />}
+                  icon={<MenuUnfoldOutlined style={{ fontSize: 14 }} />}
                   onClick={() => setShowSidePanel(true)}
-                  style={{ color: token.colorTextSecondary }}
+                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                 />
               </Tooltip>
               <Tooltip title={t('tasks.newTask')}>
-                <Button type="text" size="small"
-                  icon={<PlusOutlined />}
+                <Button type="primary" size="small"
+                  icon={<PlusOutlined style={{ fontSize: 14 }} />}
                   onClick={handleNewTask}
-                  style={{ color: token.colorTextSecondary }}
+                  style={{ width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
                 />
               </Tooltip>
+            </div>
+          )}
+          {taskMode === 'chat' && (
+            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6 }}>
+              <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
+                <Button type="text" size="small"
+                  icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
+                  style={{ color: token.colorTextSecondary, width: 28, height: 28, minWidth: 28, borderRadius: 6 }}
+                />
+              </Dropdown>
             </div>
           )}
           {taskMode === 'new' ? (

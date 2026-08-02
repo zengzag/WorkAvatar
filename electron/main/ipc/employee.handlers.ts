@@ -75,11 +75,7 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_LIST_ALL, (params?: ConversationListWithEmployeeParams) => {
-    const all = workspaceManager.getAllConversationsWithEmployee()
-    if (params?.employee_ids && params.employee_ids.length > 0) {
-      return all.filter(c => params.employee_ids!.includes(c.employee_id))
-    }
-    return all
+    return workspaceManager.getAllConversationsWithEmployee(params)
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_GET, (id: string) => {

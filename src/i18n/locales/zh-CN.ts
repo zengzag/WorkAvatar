@@ -93,6 +93,7 @@ export default {
     multiSelect: '多选',
     selectedCount: '已选 {{count}} 项',
     batchDelete: '批量删除',
+    loadMore: '加载更多',
   },
   digitalEmployees: {
     title: '数字员工',

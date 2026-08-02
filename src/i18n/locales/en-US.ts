@@ -93,6 +93,7 @@ export default {
     multiSelect: 'Multi-Select',
     selectedCount: '{{count}} selected',
     batchDelete: 'Batch Delete',
+    loadMore: 'Load more',
   },
   digitalEmployees: {
     title: 'Digital Employees',

@@ -175,16 +175,29 @@ class WorkspaceManagerService {
     ).all() as Conversation[]
   }
 
-  /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话 */
-  getAllConversationsWithEmployee(): Array<Conversation & { employee_name: string }> {
-    return this.db.getDb().prepare(
-      `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at,
-              e.name as employee_name
-       FROM conversations c
-       LEFT JOIN employees e ON c.employee_id = e.id
-       WHERE c.message_count > 0
-       ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`
-    ).all() as Array<Conversation & { employee_name: string }>
+  /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话，支持分页 */
+  getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at,
+                e.name as employee_name
+         FROM conversations c
+         LEFT JOIN employees e ON c.employee_id = e.id
+         WHERE c.message_count > 0`
+    const values: any[] = []
+    if (params?.employee_ids && params.employee_ids.length > 0) {
+      const placeholders = params.employee_ids.map(() => '?').join(',')
+      sql += ` AND c.employee_id IN (${placeholders})`
+      values.push(...params.employee_ids)
+    }
+    sql += ` ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`
+    if (params?.limit !== undefined) {
+      sql += ` LIMIT ?`
+      values.push(params.limit)
+    }
+    if (params?.offset !== undefined) {
+      sql += ` OFFSET ?`
+      values.push(params.offset)
+    }
+    return this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string }>
   }
 
   getConversation(id: string): Conversation | null {

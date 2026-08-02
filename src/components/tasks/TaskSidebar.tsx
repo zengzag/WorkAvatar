@@ -1,5 +1,5 @@
 import { memo, useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { Input, Button, Typography, Popconfirm, Empty, theme, Dropdown, Tooltip, Checkbox } from 'antd'
+import { Input, Button, Typography, Popconfirm, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
 import type { MenuProps, InputRef } from 'antd'
 import {
   PlusOutlined,
@@ -43,6 +43,10 @@ interface TaskSidebarProps {
   onRename?: (taskId: string, newTitle: string) => Promise<boolean> | boolean
   onExtractMemory?: (taskId: string) => void
   isTaskStreaming?: (taskId: string) => boolean
+  // 增量加载
+  hasMore?: boolean
+  loadingMore?: boolean
+  onLoadMore?: () => void
 }
 
 const formatTime = (timestamp: number | null): string => {
@@ -311,6 +315,9 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   onRename,
   onExtractMemory,
   isTaskStreaming,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -318,6 +325,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
   const [filterEmployeeSearch, setFilterEmployeeSearch] = useState('')
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   // 退出多选时清空选中
   const exitSelectionMode = useCallback(() => {
@@ -360,6 +368,24 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
     return employees.filter(e => e.name.toLowerCase().includes(search))
   }, [employees, filterEmployeeSearch])
 
+  // 滚动监听：接近底部时自动加载更多
+  const handleScroll = useCallback(() => {
+    if (!onLoadMore || !hasMore || loadingMore) return
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (distanceToBottom < 80) {
+      onLoadMore()
+    }
+  }, [onLoadMore, hasMore, loadingMore])
+
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [handleScroll])
+
   return (
     <div style={{
       width: 280,
@@ -370,77 +396,117 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       background: token.colorBgContainer,
       height: '100%',
     }}>
-      {/* 顶部操作区：新建任务 + 搜索 + 筛选 */}
+      {/* 顶部操作区：单行整合 - 关闭面板 | 搜索框(内嵌筛选/多选) | 新建任务 */}
       <div style={{
-        padding: '10px 10px 8px',
+        padding: '8px 10px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: 6,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         flexShrink: 0,
       }}>
-        {selectionMode ? (
-          // 多选模式批量操作条
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Checkbox checked={allSelected} indeterminate={selectedIds.size > 0 && !allSelected} onChange={handleToggleSelectAll} />
-            <span style={{ flex: 1, fontSize: 12, color: token.colorTextSecondary }}>
-              {t('tasks.selectedCount', { count: selectedIds.size })}
-            </span>
-            <Button
-              type="text"
-              size="small"
-              disabled={selectedIds.size === 0 || !onDeleteMany}
-              danger
-              icon={<DeleteOutlined />}
-              onClick={handleBatchDelete}
-              style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary }}
-            >
-              {t('tasks.batchDelete')}
-            </Button>
-            <Tooltip title={t('common.cancel')}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* 最左侧：面板隐藏按钮（弱样式，框架控件） */}
+          {onCollapse && (
+            <Tooltip title={t('workbench.closePanel')}>
               <Button
                 type="text"
                 size="small"
-                icon={<CloseOutlined style={{ fontSize: 12 }} />}
-                onClick={exitSelectionMode}
-                style={{ color: token.colorTextTertiary }}
+                icon={<MenuFoldOutlined style={{ fontSize: 14 }} />}
+                onClick={onCollapse}
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  minWidth: 28,
+                  borderRadius: 6,
+                  color: token.colorTextQuaternary,
+                  opacity: 0.5,
+                  transition: 'opacity 0.15s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = '1' }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5' }}
               />
             </Tooltip>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          )}
+
+          {/* 中间：搜索框（内嵌筛选和多选图标按钮） */}
+          {selectionMode ? (
+            // 多选模式下用批量操作条替换搜索框
+            <div style={{
+              flex: 1,
+              height: 28,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '0 8px',
+              borderRadius: 6,
+              background: token.colorFillQuaternary,
+            }}>
+              <Checkbox checked={allSelected} indeterminate={selectedIds.size > 0 && !allSelected} onChange={handleToggleSelectAll} />
+              <span style={{ flex: 1, fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {t('tasks.selectedCount', { count: selectedIds.size })}
+              </span>
               <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={onNewTask}
-                style={{ flex: 1, height: 28, borderRadius: 6, fontSize: 13 }}
-              >
-                {t('tasks.newTask')}
-              </Button>
-              {onCollapse && (
-                <Tooltip title={t('workbench.closePanel')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<MenuFoldOutlined style={{ fontSize: 14 }} />}
-                    onClick={onCollapse}
-                    style={{ flexShrink: 0, width: 28, height: 28, minWidth: 28, borderRadius: 6, color: token.colorTextTertiary }}
-                  />
-                </Tooltip>
-              )}
+                type="text"
+                size="small"
+                disabled={selectedIds.size === 0 || !onDeleteMany}
+                danger
+                icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                onClick={handleBatchDelete}
+                style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary, padding: 0, width: 22, height: 22, minWidth: 22 }}
+              />
             </div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <Input
+          ) : (
+            <div style={{
+              flex: 1,
+              height: 28,
+              borderRadius: 6,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              background: token.colorBgElevated,
+              display: 'flex',
+              alignItems: 'center',
+              padding: '0 4px 0 8px',
+              transition: 'all 0.15s',
+              minWidth: 0,
+            }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary }}
+            >
+              <SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12, flexShrink: 0 }} />
+              <input
                 placeholder={t('tasks.searchPlaceholder')}
-                prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
                 value={searchQuery}
                 onChange={(e) => onSearchChange(e.target.value)}
-                allowClear
-                size="small"
-                variant="filled"
-                style={{ flex: 1, borderRadius: 6 }}
+                style={{
+                  flex: 1,
+                  height: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  fontSize: 12,
+                  padding: '0 6px',
+                  color: token.colorText,
+                  minWidth: 0,
+                }}
               />
+              {searchQuery && (
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CloseOutlined style={{ fontSize: 10 }} />}
+                  onClick={() => onSearchChange('')}
+                  style={{
+                    flexShrink: 0,
+                    width: 18,
+                    height: 18,
+                    minWidth: 18,
+                    padding: 0,
+                    color: token.colorTextQuaternary,
+                  }}
+                />
+              )}
+              {/* 筛选按钮 - 内嵌搜索框右侧 */}
               <Dropdown
                 open={filterVisible}
                 onOpenChange={(o) => {
@@ -525,35 +591,78 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                   <Button
                     type="text"
                     size="small"
-                    icon={<FilterOutlined style={{ fontSize: 14 }} />}
+                    icon={<FilterOutlined style={{ fontSize: 12 }} />}
                     style={{
                       flexShrink: 0,
-                      width: 28, height: 28, minWidth: 28,
-                      borderRadius: 6,
-                      background: filterEmployeeId ? token.colorPrimaryBg : token.colorFillQuaternary,
+                      width: 22,
+                      height: 22,
+                      minWidth: 22,
+                      padding: 0,
+                      borderRadius: 4,
                       color: filterEmployeeId ? token.colorPrimary : token.colorTextTertiary,
+                      background: filterEmployeeId ? token.colorPrimaryBg : 'transparent',
                     }}
                   />
                 </Tooltip>
               </Dropdown>
+              {/* 多选按钮 - 内嵌搜索框右侧 */}
               <Tooltip title={t('tasks.multiSelect')}>
                 <Button
                   type="text"
                   size="small"
-                  icon={<CheckSquareOutlined style={{ fontSize: 14 }} />}
+                  icon={<CheckSquareOutlined style={{ fontSize: 12 }} />}
                   onClick={() => { setSelectionMode(true); setSelectedIds(new Set()) }}
                   style={{
                     flexShrink: 0,
-                    width: 28, height: 28, minWidth: 28,
-                    borderRadius: 6,
-                    background: token.colorFillQuaternary,
+                    width: 22,
+                    height: 22,
+                    minWidth: 22,
+                    padding: 0,
+                    borderRadius: 4,
                     color: token.colorTextTertiary,
                   }}
                 />
               </Tooltip>
             </div>
-          </>
-        )}
+          )}
+
+          {/* 最右侧：新建任务 / 取消多选 按钮（独立，主题色加号） */}
+          {selectionMode ? (
+            <Tooltip title={t('common.cancel')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined style={{ fontSize: 14 }} />}
+                onClick={exitSelectionMode}
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  minWidth: 28,
+                  borderRadius: 6,
+                  color: token.colorTextTertiary,
+                }}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip title={t('tasks.newTask')}>
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined style={{ fontSize: 14 }} />}
+                onClick={onNewTask}
+                style={{
+                  flexShrink: 0,
+                  width: 28,
+                  height: 28,
+                  minWidth: 28,
+                  borderRadius: 6,
+                  padding: 0,
+                }}
+              />
+            </Tooltip>
+          )}
+        </div>
         {filterEmployeeId && !selectionMode && (
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
@@ -569,6 +678,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
       </div>
 
       <div
+        ref={scrollContainerRef}
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -586,25 +696,50 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
             />
           </div>
         ) : (
-          tasks.map(task => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              active={task.id === activeTaskId}
-              streaming={isTaskStreaming?.(task.id) ?? false}
-              selectionMode={selectionMode}
-              selected={selectedIds.has(task.id)}
-              onToggleSelect={toggleSelect}
-              onSelect={onSelect}
-              onDelete={onDelete}
-              onExport={onExport}
-              onGenerateTitle={onGenerateTitle}
-              onRename={onRename}
-              onExtractMemory={onExtractMemory}
-              t={t}
-              token={token}
-            />
-          ))
+          <>
+            {tasks.map(task => (
+              <TaskItem
+                key={task.id}
+                task={task}
+                active={task.id === activeTaskId}
+                streaming={isTaskStreaming?.(task.id) ?? false}
+                selectionMode={selectionMode}
+                selected={selectedIds.has(task.id)}
+                onToggleSelect={toggleSelect}
+                onSelect={onSelect}
+                onDelete={onDelete}
+                onExport={onExport}
+                onGenerateTitle={onGenerateTitle}
+                onRename={onRename}
+                onExtractMemory={onExtractMemory}
+                t={t}
+                token={token}
+              />
+            ))}
+            {/* 加载更多区域 */}
+            {(hasMore || loadingMore) && (
+              <div style={{
+                padding: '12px 8px',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: 8,
+              }}>
+                {loadingMore ? (
+                  <Spin size="small" />
+                ) : hasMore && onLoadMore ? (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={onLoadMore}
+                    style={{ fontSize: 12, height: 'auto', padding: '2px 8px' }}
+                  >
+                    {t('tasks.loadMore')}
+                  </Button>
+                ) : null}
+              </div>
+            )}
+          </>
         )}
       </div>
 

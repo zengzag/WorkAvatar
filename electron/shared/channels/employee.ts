@@ -74,6 +74,8 @@ export interface ConversationListParams {
 
 export interface ConversationListWithEmployeeParams {
   employee_ids?: string[]
+  limit?: number
+  offset?: number
 }
 
 export interface ConversationCreateParams {
