@@ -5,12 +5,6 @@ import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 import type { Employee } from '../../types'
 
-interface AttachedFile {
-  id: string
-  path: string
-  name: string
-}
-
 const { Text } = Typography
 
 /** 模型选择的最大数量（对比模式上限） */
@@ -37,6 +31,174 @@ export interface AvailableSkill {
   name: string
   description: string
   userInvocable: boolean
+}
+
+/** 文件令牌在 HTML 中的标记类名 */
+const FILE_TOKEN_CLASS = 'chat-input-file-token'
+
+/** 从 File 对象生成唯一 id */
+const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+
+/**
+ * 将包含文件令牌的编辑器内容，转换为最终发送给 LLM 的纯文本（文件令牌替换为绝对路径）
+ *
+ * 采用递归 DFS：
+ *   - 遇到 FILE_TOKEN_CLASS 元素：追加 data-path（不进入 childNodes，避免把关闭按钮"×"写入）
+ *   - 遇到 <br>：追加 '\n'
+ *   - 遇到文本节点：追加 nodeValue
+ *   - 其他元素：继续深入 childNodes
+ */
+const extractContentFromEditor = (editor: HTMLElement): string => {
+  let result = ''
+  const walk = (nodes: NodeListOf<ChildNode> | ArrayLike<ChildNode>) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      if (node.nodeType === Node.TEXT_NODE) {
+        result += node.nodeValue || ''
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement
+        if (el.classList?.contains(FILE_TOKEN_CLASS)) {
+          const path = el.getAttribute('data-path') || ''
+          if (path) result += path
+          // 跳过子节点（图标、文件名、×按钮等内容不参与 prompt 拼接）
+          continue
+        }
+        if (el.tagName === 'BR') {
+          result += '\n'
+          continue
+        }
+        if (el.tagName === 'DIV' || el.tagName === 'P') {
+          if (result && !result.endsWith('\n')) result += '\n'
+        }
+        walk(el.childNodes)
+      }
+    }
+  }
+  walk(editor.childNodes)
+  return result
+}
+
+/**
+ * 从编辑器 HTML 中获取"草稿值"——用于持久化（文本 + 文件令牌占位符序列化）
+ * 文件令牌用 [[file:id|name|path]] 表示，其余保留纯文本；草稿存为简单字符串，恢复时再解析重建。
+ *
+ * 同样递归 DFS，遇到令牌时绝不进入子节点（避免把 "×" 写进草稿字符串）。
+ */
+const serializeEditorDraft = (editor: HTMLElement): string => {
+  let result = ''
+  const walk = (nodes: NodeListOf<ChildNode> | ArrayLike<ChildNode>) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      if (node.nodeType === Node.TEXT_NODE) {
+        result += node.nodeValue || ''
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement
+        if (el.classList?.contains(FILE_TOKEN_CLASS)) {
+          const id = el.getAttribute('data-id') || ''
+          const name = el.getAttribute('data-name') || ''
+          const path = el.getAttribute('data-path') || ''
+          result += `[[file:${id}|${name}|${path}]]`
+          continue
+        }
+        if (el.tagName === 'BR') {
+          result += '\n'
+          continue
+        }
+        if (el.tagName === 'DIV' || el.tagName === 'P') {
+          if (result && !result.endsWith('\n')) result += '\n'
+        }
+        walk(el.childNodes)
+      }
+    }
+  }
+  walk(editor.childNodes)
+  return result
+}
+
+/**
+ * 解析草稿字符串，将 [[file:id|name|path]] 占位符恢复为文件令牌节点
+ */
+const deserializeDraftToEditor = (editor: HTMLElement, draft: string, token: any, removeFileById: (id: string) => void) => {
+  editor.innerHTML = ''
+  const regex = /\[\[file:([^|]*)\|([^|]*)\|([^\]]*)\]\]/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  const insertTextNode = (text: string) => {
+    if (!text) return
+    // 把 \n 转换为 <br>
+    const parts = text.split('\n')
+    parts.forEach((part, i) => {
+      if (part) editor.appendChild(document.createTextNode(part))
+      if (i < parts.length - 1) editor.appendChild(document.createElement('br'))
+    })
+  }
+
+  while ((match = regex.exec(draft))) {
+    insertTextNode(draft.slice(lastIndex, match.index))
+    lastIndex = regex.lastIndex
+
+    const [, id, name, path] = match
+    const tokenEl = createFileTokenElement(id, name, path, token, removeFileById)
+    editor.appendChild(tokenEl)
+  }
+  insertTextNode(draft.slice(lastIndex))
+}
+
+/** 创建文件令牌 DOM 元素 */
+const createFileTokenElement = (
+  id: string,
+  name: string,
+  path: string,
+  token: any,
+  removeFileById: (id: string) => void
+): HTMLElement => {
+  const span = document.createElement('span')
+  span.className = FILE_TOKEN_CLASS
+  span.contentEditable = 'false'
+  span.setAttribute('data-id', id)
+  span.setAttribute('data-name', name)
+  span.setAttribute('data-path', path)
+  span.setAttribute(
+    'style',
+    `display:inline-flex;align-items:center;gap:4px;padding:1px 6px;margin:0 2px;border-radius:6px;` +
+      `background:${token.colorPrimaryBg};border:1px solid ${token.colorPrimaryBorder};` +
+      `color:${token.colorPrimary};font-size:12px;line-height:1.4;cursor:default;user-select:none;`
+  )
+  span.title = path
+
+  // 图标
+  const icon = document.createElement('span')
+  icon.innerHTML = `<svg viewBox="64 64 896 896" width="1em" height="1em" fill="currentColor"><path d="M832 384H576V128H192v768h640V384zm-64 384H256V192h256v256h256v320zM704 672H320v-64h384v64zm0-128H320v-64h384v64z"/></svg>`
+  span.appendChild(icon)
+
+  // 文件名
+  const nameSpan = document.createElement('span')
+  nameSpan.textContent = name
+  nameSpan.style.maxWidth = '180px'
+  nameSpan.style.overflow = 'hidden'
+  nameSpan.style.textOverflow = 'ellipsis'
+  nameSpan.style.whiteSpace = 'nowrap'
+  span.appendChild(nameSpan)
+
+  // 关闭按钮
+  const closeBtn = document.createElement('span')
+  closeBtn.textContent = '×'
+  closeBtn.setAttribute(
+    'style',
+    `margin-left:2px;cursor:pointer;font-size:14px;line-height:1;opacity:0.6;border-radius:50%;` +
+      `width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;`
+  )
+  closeBtn.onmouseenter = () => { closeBtn.style.background = token.colorPrimary; closeBtn.style.color = '#fff'; closeBtn.style.opacity = '1' }
+  closeBtn.onmouseleave = () => { closeBtn.style.background = 'transparent'; closeBtn.style.color = 'inherit'; closeBtn.style.opacity = '0.6' }
+  closeBtn.onclick = (e: MouseEvent) => {
+    e.stopPropagation()
+    span.remove()
+    removeFileById(id)
+  }
+  span.appendChild(closeBtn)
+
+  return span
 }
 
 const ChatInput: React.FC<{
@@ -77,22 +239,93 @@ const ChatInput: React.FC<{
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [highPermission, setHighPermission] = useState(false)
-  const [internalValue, setInternalValue] = useState(() => getInitialDraft?.() || '')
+  const editorRef = useRef<HTMLDivElement>(null)
+  /** 跟踪草稿是否已初始化，避免 effect 反复恢复 */
+  const draftInitializedRef = useRef(false)
+  /** 编辑器内容是否为空（控制 placeholder） */
+  const [editorEmpty, setEditorEmpty] = useState(true)
+
+  /** 同步：内容变化后通知父组件（草稿） */
+  const emitDraftChange = useCallback(() => {
+    if (!editorRef.current || !onDraftChange) return
+    const draftStr = serializeEditorDraft(editorRef.current)
+    onDraftChange(draftStr)
+    // 同步更新空状态
+    setEditorEmpty(!editorRef.current.textContent && editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length === 0)
+  }, [onDraftChange])
+
+  /** 仅用于统计文件令牌数量（供删除回调使用，避免重复状态） */
+  const removeFileById = useCallback((_id: string) => {
+    emitDraftChange()
+  }, [emitDraftChange])
+
+  /** 恢复草稿到 contentEditable 编辑器 */
+  const restoreDraft = useCallback((draftStr: string) => {
+    if (!editorRef.current) return
+    deserializeDraftToEditor(editorRef.current, draftStr || '', token, removeFileById)
+    setEditorEmpty(!draftStr)
+  }, [token, removeFileById])
+
+  /** 在当前光标位置插入文件令牌（如果没有选区，则在末尾追加） */
+  const insertFileTokenAtCursor = useCallback((files: Array<{ id: string; name: string; path: string }>) => {
+    const editor = editorRef.current
+    if (!editor) return
+
+    editor.focus()
+    const sel = window.getSelection()
+    let range: Range | null = null
+    if (sel && sel.rangeCount > 0) {
+      range = sel.getRangeAt(0)
+      // 确保 range 在 editor 内
+      if (!editor.contains(range.startContainer)) {
+        range = null
+      }
+    }
+
+    for (const f of files) {
+      const tokenEl = createFileTokenElement(f.id, f.name, f.path, token, removeFileById)
+      if (range) {
+        range.deleteContents()
+        range.insertNode(tokenEl)
+        // 在令牌后插入一个零宽空格，便于光标继续输入
+        const spaceNode = document.createTextNode('\u200B')
+        tokenEl.after(spaceNode)
+        range.setStartAfter(spaceNode)
+        range.setEndAfter(spaceNode)
+      } else {
+        editor.appendChild(tokenEl)
+        editor.appendChild(document.createTextNode('\u200B'))
+      }
+    }
+    if (range && sel) {
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+    emitDraftChange()
+  }, [token, removeFileById, emitDraftChange])
 
   // 对话切换 / draftResetKey 变化时，从外部恢复草稿（不触发顶层重渲染，仅在此处同步）
   useEffect(() => {
     if (getInitialDraft) {
-      setInternalValue(getInitialDraft())
+      restoreDraft(getInitialDraft())
     }
-  }, [conversationId, getInitialDraft, draftResetKey])
+    // 第一次初始化 / 切换对话时都重置标记
+    draftInitializedRef.current = true
+  }, [conversationId, getInitialDraft, draftResetKey, restoreDraft])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
   const attachedImagesRef = useRef(attachedImages)
   attachedImagesRef.current = attachedImages
+
+  /**
+   * handleSend 最新引用 ref：
+   * 解决 handleKeyDown（定义在前）依赖 handleSend（定义在后）导致的 TS2448/TS2454 前向引用报错，
+   * 同时避免 Enter 键触发时捕获旧闭包丢失 attachedImages。
+   */
+  const handleSendRef = useRef<() => void>(() => {})
 
   // 可通过斜杠菜单触发的 skills：user-invocable 即可
   // skill 激活统一走 activate_skill 工具，不再依赖 skill_<name> 工具注册
@@ -109,29 +342,40 @@ const ChatInput: React.FC<{
     }))
   }, [invocableSkills])
 
+  /** 从 contentEditable 读取纯文本（不包含文件令牌的 name/path，仅提取实际文字和 \n），用于斜杠匹配等逻辑 */
+  const getPlainText = useCallback((): string => {
+    if (!editorRef.current) return ''
+    return serializeEditorDraft(editorRef.current).replace(/\[\[file:[^\]]*\]\]/g, '')
+  }, [])
+
   const currentSlashItems = useMemo(() => {
-    if (!internalValue.startsWith('/')) return []
-    const lower = internalValue.toLowerCase()
+    const plain = getPlainText()
+    if (!plain.startsWith('/')) return []
+    const lower = plain.toLowerCase()
     // 精确控制：仅当输入恰好是 / 或 /xxx（无空格）时才提示命令
-    const hasSpace = internalValue.includes(' ')
+    const hasSpace = plain.includes(' ')
     if (hasSpace) return []
     return slashCommands.filter(cmd => cmd.key.startsWith(lower))
-  }, [internalValue, slashCommands])
+  }, [getPlainText, slashCommands])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      const plain = getPlainText()
       // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
-      if (internalValue.startsWith('/') && !internalValue.includes(' ') && currentSlashItems.length === 1) {
+      if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
         const skillName = currentSlashItems[0].key.slice(1)
-        const next = `/${skillName} `
-        setInternalValue(next)
-        onDraftChange?.(next)
+        // 清空编辑器并写入新值
+        if (editorRef.current) {
+          editorRef.current.innerHTML = ''
+          editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
+        }
+        emitDraftChange()
         return
       }
-      handleSend()
+      handleSendRef.current()
     }
-  }
+  }, [getPlainText, currentSlashItems, emitDraftChange])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
   // skill 激活统一通过 activate_skill 工具
@@ -152,32 +396,48 @@ const ChatInput: React.FC<{
   // 斜杠菜单选中处理：skill 命令填充 `/<name> ` 让用户继续输入参数
   const handleSlashSelect = useCallback((cmd: { key: string }) => {
     const skillName = cmd.key.slice(1)
-    const next = `/${skillName} `
-    setInternalValue(next)
-    onDraftChange?.(next)
-  }, [onDraftChange])
+    if (editorRef.current) {
+      editorRef.current.innerHTML = ''
+      editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
+    }
+    emitDraftChange()
+  }, [emitDraftChange])
+
+  /** 编辑器是否有内容（文字 或 文件令牌） */
+  const hasEditorContent = useCallback((): boolean => {
+    if (!editorRef.current) return false
+    const tokens = editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`)
+    if (tokens.length > 0) return true
+    const text = (editorRef.current.textContent || '').replace(/\u200B/g, '').trim()
+    return text.length > 0
+  }, [])
 
   const handleSend = useCallback(() => {
-    if (!internalValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0) return
+    if (!hasEditorContent() && attachedImages.length === 0) return
     const imageUrls = attachedImages.map(img => img.dataUrl)
-    let content = internalValue.trim()
-    // skill 斜杠命令转换
+    let content = editorRef.current ? extractContentFromEditor(editorRef.current).replace(/\u200B/g, '') : ''
+    content = content.trim()
+    // 斜杠命令转换仅适用于以 / 开头且后跟 skill 名的情况
     if (content.startsWith('/') && invocableSkills.some(s => content.slice(1).startsWith(s.name))) {
       content = convertSkillCommand(content)
     }
-    if (attachedFiles.length > 0) {
-      const filePaths = attachedFiles.map(f => f.path).filter(Boolean).join('\n')
-      if (filePaths) {
-        content = content ? `${content}\n${filePaths}` : filePaths
-      }
-    }
+    // 重要兜底：用户可能只附加了文件令牌没输文字
+    // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
+    // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
+    // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
     const sendHighPermission = highPermission
     onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
-    setInternalValue('')
+    // 清空编辑器
+    if (editorRef.current) editorRef.current.innerHTML = ''
+    emitDraftChange()
     onDraftChange?.('')
-    setAttachedFiles([])
     setHighPermission(false)
-  }, [internalValue, attachedImages, attachedFiles, selectedModels, highPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand])
+  }, [hasEditorContent, attachedImages, selectedModels, highPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+
+  // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
+  //  - 避免 TS2448/TS2454 前向声明报错
+  //  - 确保 handleKeyDown 调用时捕获的是最新闭包（含最新 attachedImages / content）
+  handleSendRef.current = handleSend
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!e.dataTransfer?.types?.includes('Files')) return
@@ -208,19 +468,46 @@ const ChatInput: React.FC<{
     dragDepthRef.current = 0
     setIsDragOver(false)
     const dropped = Array.from(e.dataTransfer.files)
-    const newFiles: AttachedFile[] = dropped.map(f => ({
-      id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
-      name: f.name,
-    }))
-    if (newFiles.length > 0) {
-      setAttachedFiles(prev => [...prev, ...newFiles])
-    }
-  }, [])
+    // 区分图片和非图片：图片继续走 attachedImages 顶部显示；非图片作为令牌插入编辑器
+    const imgFiles = dropped.filter(f => f.type.startsWith('image/'))
+    const otherFiles = dropped.filter(f => !f.type.startsWith('image/'))
 
-  const removeFile = useCallback((id: string) => {
-    setAttachedFiles(prev => prev.filter(f => f.id !== id))
-  }, [])
+    if (imgFiles.length > 0) {
+      const loadedImages: AttachedImage[] = []
+      let loadedCount = 0
+      for (const file of imgFiles) {
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string
+          loadedImages.push({
+            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl,
+            name: file.name || 'pasted-image.png',
+          })
+          loadedCount++
+          if (loadedCount === imgFiles.length) {
+            onImagesChange([...attachedImagesRef.current, ...loadedImages])
+          }
+        }
+        reader.onerror = () => {
+          loadedCount++
+          if (loadedCount === imgFiles.length && loadedImages.length > 0) {
+            onImagesChange([...attachedImagesRef.current, ...loadedImages])
+          }
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+
+    if (otherFiles.length > 0) {
+      const tokens = otherFiles.map(f => ({
+        id: genFileId(),
+        path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+        name: f.name,
+      }))
+      insertFileTokenAtCursor(tokens)
+    }
+  }, [insertFileTokenAtCursor, onImagesChange])
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
@@ -250,53 +537,70 @@ const ChatInput: React.FC<{
     if (files && files.length > 0) {
       e.preventDefault()
       const pasted = Array.from(files)
-      const newFiles: AttachedFile[] = pasted
-        .filter(f => !f.type.startsWith('image/')) // 图片已在上面处理
+      // 过滤非图片文件，作为令牌插入编辑器
+      const nonImgFiles = pasted
+        .filter(f => !f.type.startsWith('image/'))
         .map(f => ({
-          id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          id: genFileId(),
           path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
           name: f.name,
         }))
-      if (newFiles.length > 0) {
-        setAttachedFiles(prev => [...prev, ...newFiles])
+      if (nonImgFiles.length > 0) {
+        insertFileTokenAtCursor(nonImgFiles)
       }
     }
-  }, [onImagesChange])
+  }, [onImagesChange, insertFileTokenAtCursor])
 
+  /** 统一的文件选择（PaperClip 按钮）：同时支持图片与普通文件，按类型自动分流
+   * - image/*：走原图片逻辑（FileReader→dataUrl→顶部缩略图→images 数组发消息）
+   * - 其他类型：作为文件令牌插入编辑器光标位置，发送时替换为绝对路径
+   */
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
-    if (!files) return
-    const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'))
-    if (imageFiles.length === 0) return
+    if (!files || files.length === 0) return
+    const all = Array.from(files)
+    const imageFiles = all.filter(f => f.type.startsWith('image/'))
+    const otherFiles = all.filter(f => !f.type.startsWith('image/'))
 
-    const loadedImages: AttachedImage[] = []
-    let loadedCount = 0
-
-    for (const file of imageFiles) {
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string
-        loadedImages.push({
-          id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          dataUrl,
-          name: file.name,
-        })
+    // 1) 图片：逐个 FileReader → onImagesChange
+    if (imageFiles.length > 0) {
+      const loadedImages: AttachedImage[] = []
+      let loadedCount = 0
+      const total = imageFiles.length
+      const maybeFlush = () => {
         loadedCount++
-        if (loadedCount === imageFiles.length) {
-          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
+        if (loadedCount === total && loadedImages.length > 0) {
           onImagesChange([...attachedImagesRef.current, ...loadedImages])
         }
       }
-      reader.onerror = () => {
-        loadedCount++
-        if (loadedCount === imageFiles.length && loadedImages.length > 0) {
-          onImagesChange([...attachedImagesRef.current, ...loadedImages])
+      for (const file of imageFiles) {
+        const reader = new FileReader()
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string
+          loadedImages.push({
+            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            dataUrl,
+            name: file.name,
+          })
+          maybeFlush()
         }
+        reader.onerror = maybeFlush
+        reader.readAsDataURL(file)
       }
-      reader.readAsDataURL(file)
     }
+
+    // 2) 非图片文件：构造令牌插入光标位置
+    if (otherFiles.length > 0) {
+      const tokens = otherFiles.map(f => ({
+        id: genFileId(),
+        path: window.electronAPI?.getPathForFile?.(f) || (f as any).path || f.name,
+        name: f.name,
+      }))
+      insertFileTokenAtCursor(tokens)
+    }
+
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [onImagesChange])
+  }, [onImagesChange, insertFileTokenAtCursor])
 
   const removeImage = useCallback((id: string) => {
     onImagesChange(attachedImages.filter(img => img.id !== id))
@@ -678,28 +982,6 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      {attachedFiles.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, padding: '4px 0 8px', flexWrap: 'wrap' }}>
-          {attachedFiles.map(f => (
-            <Tooltip title={f.path} key={f.id} mouseEnterDelay={0.4}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '4px 10px',
-                borderRadius: 8,
-                background: token.colorFillQuaternary,
-                border: `1px solid ${token.colorBorderSecondary}`,
-                fontSize: 12,
-                color: token.colorTextSecondary,
-                maxWidth: 360,
-              }}>
-                <FileTextOutlined style={{ fontSize: 14, color: token.colorPrimary, flexShrink: 0 }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                <CloseOutlined style={{ fontSize: 10, cursor: 'pointer', color: token.colorTextTertiary, flexShrink: 0 }} onClick={() => removeFile(f.id)} />
-              </div>
-            </Tooltip>
-          ))}
-        </div>
-      )}
       {modelTags.length > 0 && (
         <div style={{ display: 'flex', gap: 6, padding: '4px 0 8px', flexWrap: 'wrap' }}>
           {modelTags.map(tag => (
@@ -726,7 +1008,7 @@ const ChatInput: React.FC<{
           })}
         </div>
       )}
-      {internalValue.startsWith('/') && currentSlashItems.length > 0 && (
+      {currentSlashItems.length > 0 && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 0', flexWrap: 'wrap' }}>
           {currentSlashItems.map(cmd => (
             <div key={cmd.key} onClick={() => handleSlashSelect(cmd)}
@@ -762,21 +1044,73 @@ const ChatInput: React.FC<{
           </div>
         )}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <Input.TextArea
-            value={internalValue}
-            onChange={(e) => {
-              const v = e.target.value
-              setInternalValue(v)
-              onDraftChange?.(v)
-            }}
-            onPressEnter={handleKeyDown}
+          {/* contentEditable 输入框，支持在光标位置嵌入文件令牌 */}
+          <div
+            ref={editorRef}
+            contentEditable={!isCompacting}
+            suppressContentEditableWarning
+            onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={isCompacting ? t('workbench.compactingPlaceholder', { defaultValue: '正在压缩对话上下文，请稍候...' }) : placeholder}
-            autoSize={{ minRows: centerMode ? 5 : 2, maxRows: 8 }}
-            style={{ background: 'transparent', border: 'none', resize: 'none', fontSize: 13, lineHeight: 1.6, padding: '4px 0', boxShadow: 'none' }}
+            onInput={emitDraftChange}
+            spellCheck={false}
             className="workbench-input"
-            disabled={isCompacting}
+            style={{
+              position: 'relative',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              resize: 'none',
+              fontSize: 13,
+              lineHeight: 1.6,
+              padding: '4px 0',
+              minHeight: centerMode ? (5 * 1.6 * 13) : (2 * 1.6 * 13),
+              maxHeight: 8 * 1.6 * 13,
+              overflowY: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              userSelect: 'text',
+            }}
           />
+          {/* placeholder 覆盖层 */}
+          {editorEmpty && !isCompacting && (
+            <div
+              aria-hidden
+              onClick={() => editorRef.current?.focus()}
+              style={{
+                position: 'absolute',
+                pointerEvents: 'none',
+                color: token.colorTextQuaternary,
+                fontSize: 13,
+                lineHeight: 1.6,
+                padding: '4px 0',
+                left: 12,
+                right: 40,
+                top: 4,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {placeholder}
+            </div>
+          )}
+          {isCompacting && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                pointerEvents: 'none',
+                color: token.colorTextQuaternary,
+                fontSize: 13,
+                lineHeight: 1.6,
+                padding: '4px 0',
+                left: 12,
+                top: 4,
+              }}
+            >
+              {t('workbench.compactingPlaceholder', { defaultValue: '正在压缩对话上下文，请稍候...' })}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
@@ -788,10 +1122,12 @@ const ChatInput: React.FC<{
                     background: highPermission ? token.colorWarningBg : 'transparent',
                   }} />
               </Tooltip>
-              <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
-                onClick={() => fileInputRef.current?.click()}
-                style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
-                title={t('workbench.attachImage')} />
+              {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
+              <Tooltip title={t('workbench.attachFile', { defaultValue: '上传文件' })}>
+                <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+              </Tooltip>
               <Popover
                 content={modelPickerContent}
                 trigger="click"
@@ -871,12 +1207,12 @@ const ChatInput: React.FC<{
             </div>
           </div>
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
+        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
         {isStreaming || isCompacting ? (
           <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
-            disabled={!internalValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0}
+            disabled={!hasEditorContent() && attachedImages.length === 0}
             size="middle" style={{ flexShrink: 0 }} />
         )}
       </div>

@@ -38,6 +38,9 @@ export interface IMemoryManager {
   estimateTokens(messages: Message[]): number
 
   getStats(): MemoryStats | null
+
+  /** LLM 返回真实 prompt tokens 后回写，修正 lastStats */
+  setActualPromptTokens(promptTokens: number): void
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {

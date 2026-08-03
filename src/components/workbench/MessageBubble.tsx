@@ -1,4 +1,4 @@
-import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App } from 'antd'
+import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App, Image } from 'antd'
 import {
   RobotOutlined,
   UserOutlined,
@@ -363,20 +363,24 @@ const MessageBubble: React.FC<{
                 <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                    {msg.images.map((img, i) => (
-                      <img
-                        key={img}
-                        src={img}
-                        alt={`upload-${i}`}
-                        style={{
-                          maxWidth: 180,
-                          maxHeight: 140,
-                          borderRadius: 4,
-                          objectFit: 'cover',
-                          border: `1px solid ${token.colorBorderSecondary}`,
-                        }}
-                      />
-                    ))}
+                    <Image.PreviewGroup items={msg.images}>
+                      {msg.images.map((img, i) => (
+                        <Image
+                          key={img}
+                          src={img}
+                          alt={`upload-${i}`}
+                          style={{
+                            maxWidth: 220,
+                            maxHeight: 160,
+                            borderRadius: 4,
+                            border: `1px solid ${token.colorBorderSecondary}`,
+                            objectFit: 'contain',
+                            background: token.colorBgLayout,
+                          }}
+                          preview={{}}
+                        />
+                      ))}
+                    </Image.PreviewGroup>
                   </div>
                 )}
               </div>

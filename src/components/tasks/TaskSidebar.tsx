@@ -463,12 +463,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           )}
 
           {/* 中间：搜索框（内嵌筛选和多选图标按钮） */}
-          {selectionMode ? (
-            // 多选模式下用批量操作条替换搜索框
+          {/* 搜索框和批量操作条都常驻DOM，通过display切换，避免条件渲染导致的闪烁 */}
+          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+            {/* 多选模式批量操作条 */}
             <div style={{
-              flex: 1,
               height: 28,
-              display: 'flex',
+              display: selectionMode ? 'flex' : 'none',
               alignItems: 'center',
               gap: 6,
               padding: '0 8px',
@@ -489,17 +489,16 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary, padding: 0, width: 22, height: 22, minWidth: 22 }}
               />
             </div>
-          ) : (
+            {/* 搜索框 */}
             <div style={{
-              flex: 1,
               height: 28,
+              display: selectionMode ? 'none' : 'flex',
               borderRadius: 6,
               border: `1px solid ${token.colorBorderSecondary}`,
               background: token.colorBgElevated,
-              display: 'flex',
               alignItems: 'center',
               padding: '0 4px 0 8px',
-              transition: 'all 0.15s',
+              transition: 'border-color 0.15s',
               minWidth: 0,
             }}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
@@ -656,7 +655,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 />
               </Tooltip>
             </div>
-          )}
+          </div>
 
           {/* 最右侧：新建任务 / 取消多选 按钮（独立，主题色加号） */}
           {selectionMode ? (

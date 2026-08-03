@@ -69,10 +69,21 @@ export class MemoryManager implements IMemoryManager {
   estimateTokens(messages: Message[]): number {
     let totalChars = 0
     for (const msg of messages) {
+      // 每条消息的结构开销（role、分隔符、JSON 包装），
+      // OpenAI 系列 chat template 平均每条额外 4-6 token，这里按 5 token ≈ 17 字符估算
+      totalChars += 17
+      totalChars += (msg.role?.length ?? 0)
       totalChars += (msg.content?.length ?? 0)
       totalChars += (msg.reasoning_content?.length ?? 0)
+      if (msg.toolCallId) {
+        totalChars += msg.toolCallId.length + 20 // "tool_call_id":"..." 包装
+      }
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
+          // 工具调用结构开销：id、type、function、name、arguments 包装
+          totalChars += 60
+          totalChars += (tc.id?.length ?? 0)
+          totalChars += (tc.type?.length ?? 0)
           totalChars += (tc.function.name?.length ?? 0)
           totalChars += (tc.function.arguments?.length ?? 0)
         }
@@ -83,6 +94,13 @@ export class MemoryManager implements IMemoryManager {
 
   getStats(): MemoryStats | null {
     return this.lastStats
+  }
+
+  setActualPromptTokens(promptTokens: number): void {
+    if (this.lastStats) {
+      this.lastStats.actualPromptTokens = promptTokens
+      this.lastStats.utilizationPercent = Math.round((promptTokens / this.lastStats.maxTokens) * 100)
+    }
   }
 
   private async compressHistory(history: Message[], tokenBudget: number): Promise<Message[]> {

@@ -46,6 +46,10 @@ const _persistentActiveConvId = new Map<string, string>()
 // 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
 const _persistentDrafts = new Map<string, string>()
 
+// 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
+// 组件重挂载时优先从此缓存恢复，避免 DB 查询竞争条件导致显示 0/0
+const _persistentContextStats = new Map<string, any>()
+
 // 获取或创建指定员工的消息缓存
 const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
   let cache = _persistentMessagesByEmployee.get(employeeId)
@@ -274,6 +278,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
             }
           }
         }
+        // 持久化内存缓存优先级最高（真空期 onDone 更新可能只写入了这里）
+        for (const [cid, s] of _persistentContextStats) {
+          if (s && typeof s === 'object') restoredStatsFromCache[cid] = s
+        }
         if (Object.keys(restoredStatsFromCache).length > 0) {
           setContextStats(prev => ({ ...prev, ...restoredStatsFromCache }))
         }
@@ -346,6 +354,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           }
         }
       }
+      // 持久化内存缓存优先级最高（真空期 onDone 更新可能先于 DB 查询到达）
+      for (const [cid, s] of _persistentContextStats) {
+        if (s && typeof s === 'object') restoredStats[cid] = s
+      }
       if (Object.keys(restoredStats).length > 0) {
         setContextStats(prev => ({ ...prev, ...restoredStats }))
       }
@@ -411,6 +423,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isStreamingRef,
     updateConvLastMessageAt,
     onContextStats: (convId, stats) => {
+      _persistentContextStats.set(convId, stats)
       setContextStats(prev => ({ ...prev, [convId]: stats }))
       window.electronAPI.conversation.update({
         id: convId,
@@ -543,16 +556,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const convData = allConversations.find(c => c.id === convId)
       if (convData) {
         setMinimalMode(!!(convData as any).minimal_mode)
-        // 从 convList 恢复 contextStats
-        try {
-          if ((convData as any).context_stats_json) {
-            const savedStats = JSON.parse((convData as any).context_stats_json)
-            if (savedStats && typeof savedStats === 'object') {
-              setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+        // 从 convList 恢复 contextStats，优先使用持久化内存缓存（真空期数据不丢失）
+        const persistentStats = _persistentContextStats.get(convId)
+        if (persistentStats && typeof persistentStats === 'object') {
+          setContextStats(prev => ({ ...prev, [convId]: persistentStats }))
+        } else {
+          try {
+            if ((convData as any).context_stats_json) {
+              const savedStats = JSON.parse((convData as any).context_stats_json)
+              if (savedStats && typeof savedStats === 'object') {
+                setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+              }
             }
+          } catch {
+            // JSON 解析失败忽略
           }
-        } catch {
-          // JSON 解析失败忽略
         }
       }
       await new Promise<void>(resolve => setTimeout(resolve, 0))
@@ -590,16 +608,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
     if (fullConv) {
       setMinimalMode(!!fullConv.minimal_mode)
-      // 恢复 contextStats
-      try {
-        if (fullConv.context_stats_json) {
-          const savedStats = JSON.parse(fullConv.context_stats_json)
-          if (savedStats && typeof savedStats === 'object') {
-            setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+      // 恢复 contextStats，优先使用持久化内存缓存（真空期数据不丢失）
+      const persistentStats = _persistentContextStats.get(convId)
+      if (persistentStats && typeof persistentStats === 'object') {
+        setContextStats(prev => ({ ...prev, [convId]: persistentStats }))
+      } else {
+        try {
+          if (fullConv.context_stats_json) {
+            const savedStats = JSON.parse(fullConv.context_stats_json)
+            if (savedStats && typeof savedStats === 'object') {
+              setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+            }
           }
+        } catch {
+          // JSON 解析失败忽略
         }
-      } catch {
-        // JSON 解析失败忽略
       }
     }
 
@@ -1751,6 +1774,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       }
 
       if (result?.stats) {
+        _persistentContextStats.set(convId, result.stats)
         setContextStats(prev => ({ ...prev, [convId]: result.stats }))
       }
     } catch (err) {

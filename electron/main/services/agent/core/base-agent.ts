@@ -149,6 +149,9 @@ export abstract class BaseAgent {
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
     try {
+      // 每次 run 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
+      this._lastKnownPromptTokens = undefined
+
       const systemPrompt = this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
@@ -220,6 +223,9 @@ export abstract class BaseAgent {
     this.eventEmitter.emit('run:start', { query: options.query, maxIterations })
 
     try {
+      // 每次 runStream 启动先重置 _lastKnownPromptTokens，避免跨对话（缓存 agent）泄漏旧值
+      this._lastKnownPromptTokens = undefined
+
       const systemPrompt = this.buildSystemPrompt(options)
       const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
@@ -393,6 +399,7 @@ export abstract class BaseAgent {
 
         if (response.usage?.promptTokens) {
           this._lastKnownPromptTokens = response.usage.promptTokens
+          this.memoryManager.setActualPromptTokens(response.usage.promptTokens)
         }
 
         const assistantMessage: Message = {
@@ -523,6 +530,7 @@ export abstract class BaseAgent {
           }
           if (streamResponse.usage.promptTokens) {
             this._lastKnownPromptTokens = streamResponse.usage.promptTokens
+            this.memoryManager.setActualPromptTokens(streamResponse.usage.promptTokens)
           }
         }
         currentMessages.push(assistantMessage)
