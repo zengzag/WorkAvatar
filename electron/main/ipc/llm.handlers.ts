@@ -221,4 +221,26 @@ export function registerLLMHandlers(
 
     return { success: true, sessionId }
   })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, async (params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    messages: any[]
+    conversation_id?: string
+    collection_ids?: string[]
+    enable_thinking?: boolean
+    minimal_mode?: boolean
+  }) => {
+    return employeeAgent.compactConversation(params)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, (params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    enable_thinking?: boolean
+  }) => {
+    return employeeAgent.getContextStats(params)
+  })
 }

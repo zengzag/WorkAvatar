@@ -189,7 +189,7 @@ const TaskItem = memo(({
             onToggleSelect?.(task.id)
             return
           }
-          if (!isEditing) onSelect(task.id)
+          if (!isEditing && !active) onSelect(task.id)
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}

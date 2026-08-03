@@ -453,6 +453,56 @@ class EmployeeAgentService {
     }
   }
 
+  async compactConversation(params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    messages: EmployeeChatStreamParams['messages']
+    conversation_id?: string
+    collection_ids?: string[]
+    enable_thinking?: boolean
+    minimal_mode?: boolean
+  }): Promise<{ summary: string; stats: any }> {
+    const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
+
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
+    const employeeName = employee?.name || 'unknown'
+
+    const logCtx = {
+      employeeId: employee_id,
+      employeeName,
+      conversationId: conversation_id,
+      source: 'compact',
+    }
+
+    return LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const agent = entry.agent
+      entry.collectionIdsRef.current.collectionIds = collection_ids
+
+      const history = this.expandFrontendMessages(messages)
+
+      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+
+      const { summary, stats } = await agent.compactConversation(history)
+
+      return { summary, stats }
+    })
+  }
+
+  getContextStats(params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    enable_thinking?: boolean
+  }): any {
+    const { employee_id, provider_id, model_id, enable_thinking } = params
+    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking ? 'thinking' : 'no-thinking'}`
+    const entry = this.agentEntries.get(cacheKey)
+    if (!entry) return null
+    return entry.agent.getContextStats()
+  }
+
   clearAgentCache(employeeId?: string): void {
     if (employeeId) {
       for (const [key, entry] of this.agentEntries.entries()) {

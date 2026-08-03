@@ -1,7 +1,7 @@
 import { OpenAIProvider } from '../llm/openai-provider'
 import type { ILLMProvider } from '../llm/types'
 import { MemoryManager } from '../memory/memory-manager'
-import type { IMemoryManager, MemoryConfig } from '../memory/types'
+import type { IMemoryManager, MemoryConfig, MemoryStats } from '../memory/types'
 import { ToolRegistry } from '../tools/tool-registry'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
 import { ToolMiddlewareChain, createTimeoutMiddleware, createRetryMiddleware, createLoggingMiddleware, createResultSizeMiddleware } from '../tools/tool-middleware'
@@ -29,6 +29,17 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000
 const DEFAULT_MAX_RESULT_SIZE = 50000
 const DEFAULT_TOOL_MAX_RETRIES = 2
 
+const SUMMARY_SYSTEM_PROMPT = `你是对话摘要助手。请将给定的对话历史压缩为结构化摘要，要求精炼用词但尽量详尽，务必把事情尤其是待办事项和未完成的计划说清楚。
+
+保留以下信息：
+1. 用户的核心请求和目标（包括所有具体的需求细节）
+2. 已完成的关键操作及其结果（包括文件路径、配置值等关键参数）
+3. 进行中的任务和待办事项（标注当前进度和阻塞点）
+4. 重要的决策结论和上下文事实（包括用户偏好、技术选型理由等）
+5. 未解决的问题和下一步计划（包括具体方案和优先级）
+
+删除冗余的工具调用中间过程，但保留结论性信息。摘要长度不超过1万token。`
+
 export interface BaseAgentOptions {
   memoryConfig?: Partial<MemoryConfig>
   toolTimeoutMs?: number
@@ -51,6 +62,7 @@ export abstract class BaseAgent {
   protected agentOptions: BaseAgentOptions
   // 并发保护：同一 Agent 实例不允许并发执行 run/runStream
   private _running: boolean = false
+  private _lastKnownPromptTokens: number | undefined
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
     this.config = this.normalizeConfig(config)
@@ -95,6 +107,10 @@ export abstract class BaseAgent {
     return this.memoryManager
   }
 
+  getContextStats(): MemoryStats | null {
+    return this.memoryManager.getStats()
+  }
+
   getEventEmitter(): AgentEventEmitter {
     return this.eventEmitter
   }
@@ -134,10 +150,11 @@ export abstract class BaseAgent {
 
     try {
       const systemPrompt = this.buildSystemPrompt(options)
-      const { messages, stats } = this.memoryManager.manageContext(
+      const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
-        options.query
+        options.query,
+        { lastKnownPromptTokens: this._lastKnownPromptTokens }
       )
 
       const queryImages = options.metadata?.queryImages as string[] | undefined
@@ -164,6 +181,7 @@ export abstract class BaseAgent {
         metadata: {
           totalLatencyMs: Date.now() - startTime,
           iterations: this.context.getIterationCount(),
+          contextStats: this.memoryManager.getStats() ?? undefined,
         },
       }
     } catch (error: any) {
@@ -203,10 +221,11 @@ export abstract class BaseAgent {
 
     try {
       const systemPrompt = this.buildSystemPrompt(options)
-      const { messages, stats } = this.memoryManager.manageContext(
+      const { messages, stats } = await this.memoryManager.manageContext(
         systemPrompt,
         options.history || [],
-        options.query
+        options.query,
+        { lastKnownPromptTokens: this._lastKnownPromptTokens }
       )
 
       const queryImages = options.metadata?.queryImages as string[] | undefined
@@ -232,6 +251,7 @@ export abstract class BaseAgent {
         totalLatencyMs: Date.now() - startTime,
         iterations: this.context.getIterationCount(),
         tokenUsage: streamMetadata?.tokenUsage,
+        contextStats: this.memoryManager.getStats() ?? undefined,
       })
     } catch (error: any) {
       if (signal?.aborted) {
@@ -277,7 +297,19 @@ export abstract class BaseAgent {
   }
 
   protected createMemoryManager(): IMemoryManager {
-    return new MemoryManager(this.agentOptions.memoryConfig)
+    const config = { ...this.agentOptions.memoryConfig }
+    config.summarizeFn = async (messages: Message[]): Promise<string> => {
+      const llmMessages = [
+        { role: 'system' as const, content: SUMMARY_SYSTEM_PROMPT },
+        { role: 'user' as const, content: this.formatMessagesForSummary(messages) },
+      ]
+      const response = await this.llmProvider.chat(llmMessages, [], {
+        temperature: 0.3,
+        maxTokens: 10000,
+      })
+      return response.content || this.generateFallbackSummary(messages)
+    }
+    return new MemoryManager(config)
   }
 
   protected setupDefaultMiddleware(): void {
@@ -358,6 +390,10 @@ export abstract class BaseAgent {
         this.trimToolResultsIfNeeded(currentMessages)
         const llmMessages = this.convertToLLMMessages(currentMessages)
         const response = await this.llmProvider.chat(llmMessages, tools)
+
+        if (response.usage?.promptTokens) {
+          this._lastKnownPromptTokens = response.usage.promptTokens
+        }
 
         const assistantMessage: Message = {
           role: 'assistant',
@@ -484,6 +520,9 @@ export abstract class BaseAgent {
             completionTokens: (totalTokenUsage.completionTokens || 0) + (streamResponse.usage.completionTokens || 0),
             totalTokens: (totalTokenUsage.totalTokens || 0) + (streamResponse.usage.totalTokens || 0),
             cachedTokens: (totalTokenUsage.cachedTokens || 0) + (streamResponse.usage.cachedTokens || 0),
+          }
+          if (streamResponse.usage.promptTokens) {
+            this._lastKnownPromptTokens = streamResponse.usage.promptTokens
           }
         }
         currentMessages.push(assistantMessage)
@@ -731,5 +770,60 @@ export abstract class BaseAgent {
 
     const fn = (logger as any)[level] ?? logger.info
     fn.call(logger, `[${this.name}:${action}]`, data)
+  }
+
+  private formatMessagesForSummary(messages: Message[]): string {
+    const parts: string[] = []
+    for (const msg of messages) {
+      const roleLabel = msg.role === 'user' ? '用户' : msg.role === 'assistant' ? '助手' : msg.role === 'tool' ? '工具' : '系统'
+      let content = msg.content || ''
+      if (content.length > 2000) {
+        content = content.slice(0, 2000) + '...'
+      }
+      parts.push(`[${roleLabel}] ${content}`)
+    }
+    return parts.join('\n')
+  }
+
+  private generateFallbackSummary(messages: Message[]): string {
+    const userMessages = messages.filter(m => m.role === 'user')
+    const topics = userMessages.map(m => `- ${m.content.substring(0, 80).trim()}`).slice(0, 10)
+    return `讨论了 ${topics.length} 个话题：\n${topics.join('\n')}`
+  }
+
+  async compactConversation(
+    history: Message[]
+  ): Promise<{ summary: string; stats: MemoryStats }> {
+    const summary = await this.summarizeForCompact(history)
+    const stats = this.memoryManager.getStats() ?? {
+      totalMessages: history.length,
+      estimatedTokens: this.memoryManager.estimateTokens(history),
+      maxTokens: this.agentOptions.memoryConfig?.maxTokens ?? 128000,
+      utilizationPercent: 0,
+      strategy: this.agentOptions.memoryConfig?.strategy ?? 'sliding_window',
+      wasCompressed: true,
+    }
+    return { summary, stats }
+  }
+
+  private async summarizeForCompact(history: Message[]): Promise<string> {
+    if (history.length < 2) return ''
+
+    const summaryContent = this.formatMessagesForSummary(history)
+    const llmMessages = [
+      { role: 'system' as const, content: SUMMARY_SYSTEM_PROMPT },
+      { role: 'user' as const, content: summaryContent },
+    ]
+
+    try {
+      const response = await this.llmProvider.chat(llmMessages, [], {
+        temperature: 0.3,
+        maxTokens: 10000,
+        logSource: 'compact_summary',
+      })
+      return response.content || this.generateFallbackSummary(history)
+    } catch (err: any) {
+      return this.generateFallbackSummary(history)
+    }
   }
 }

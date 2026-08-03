@@ -87,6 +87,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  const [contextStats, setContextStats] = useState<Record<string, any>>({})
+  const [isCompacting, setIsCompacting] = useState(false)
   const inputDraftRef = useRef('')
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
@@ -156,6 +158,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   useEffect(() => {
     isStreamingRef.current = isStreaming
   }, [isStreaming])
+
+  const currentContextStats = useMemo(() => {
+    if (!activeConversationId) return undefined
+    const stats = contextStats[activeConversationId]
+    if (!stats) return undefined
+    if ((stats.actualPromptTokens === 0 || stats.actualPromptTokens === undefined) &&
+        (stats.estimatedTokens === 0 || stats.estimatedTokens === undefined) &&
+        (stats.maxTokens === 0 || stats.maxTokens === undefined)) {
+      return undefined
+    }
+    return stats
+  }, [contextStats, activeConversationId])
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
     const prev = conversationMessagesRef.current.get(convId)
@@ -360,6 +374,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setIsStreaming,
     isStreamingRef,
     updateConvLastMessageAt,
+    onContextStats: (convId, stats) => {
+      setContextStats(prev => ({ ...prev, [convId]: stats }))
+    },
   })
 
   const setupGlobalListenersRef = useRef(setupGlobalListeners)
@@ -1602,6 +1619,85 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     return Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
   }, [])
 
+  const handleCompact = useCallback(async () => {
+    const convId = activeConversationIdRef.current
+    if (!convId || !id || isCompacting || isStreaming) return
+
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) return
+
+    setIsCompacting(true)
+    try {
+      const currentMsgs = conversationMessagesRef.current.get(convId) || []
+      // 先去掉旧的分隔符和旧的摘要 assistant 消息（它们本身是 UI 注入的，不应参与新一轮压缩）
+      const compactSepIds = new Set<string>()
+      const compactSummaryIds = new Set<string>()
+      for (let i = 0; i < currentMsgs.length; i++) {
+        const m = currentMsgs[i]
+        if (m.isCompactSummary) {
+          compactSepIds.add(m.id)
+          if (i + 1 < currentMsgs.length && currentMsgs[i + 1].id.startsWith('msg_compact_summary_')) {
+            compactSummaryIds.add(currentMsgs[i + 1].id)
+          }
+        }
+      }
+      const cleanMsgs = currentMsgs.filter(m => !compactSepIds.has(m.id) && !compactSummaryIds.has(m.id))
+      const messageHistory = buildEnrichedHistory(cleanMsgs)
+
+      const result = await window.electronAPI.llm.compactConversation({
+        employee_id: id,
+        provider_id: providerId,
+        model_id: selectedLlmModelId,
+        messages: messageHistory,
+        conversation_id: convId,
+        collection_ids: selectedCollectionIds,
+        enable_thinking: enableThinking,
+        minimal_mode: minimalMode,
+      })
+
+      const summaryContent = (result?.summary || '').trim()
+      if (summaryContent) {
+        const now = Date.now()
+        // UI消息完全保留（cleanMsgs），在末尾追加：分隔符 + 摘要消息
+        const compactedMsgs = [
+          ...cleanMsgs,
+          {
+            id: `msg_compact_sep_${now}`,
+            role: 'system' as const,
+            content: '',
+            timestamp: now,
+            isCompactSummary: true,
+          } as MessageWithThought,
+          {
+            id: `msg_compact_summary_${now}`,
+            role: 'assistant' as const,
+            content: summaryContent,
+            timestamp: now,
+            segments: [{ id: `seg_summary_${now}`, type: 'answer' as const, content: summaryContent }],
+          } as MessageWithThought,
+        ]
+
+        updateConvMessages(convId, () => compactedMsgs)
+        setMessages(compactedMsgs)
+
+        await window.electronAPI.conversation.update({
+          id: convId,
+          messages_json: JSON.stringify(compactedMsgs),
+          message_count: compactedMsgs.length,
+          last_message_at: Math.floor(Date.now() / 1000),
+        }).catch(() => {})
+      }
+
+      if (result?.stats) {
+        setContextStats(prev => ({ ...prev, [convId]: result.stats }))
+      }
+    } catch (err) {
+      console.error('Compact failed:', err)
+    } finally {
+      setIsCompacting(false)
+    }
+  }, [id, isCompacting, isStreaming, selectedLlmProviderId, selectedLlmModelId, providers, selectedCollectionIds, enableThinking, minimalMode, updateConvMessages, conversationMessagesRef, activeConversationIdRef])
+
   return {
     employee,
     conversations,
@@ -1664,6 +1760,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,
+    contextStats: currentContextStats,
+    isCompacting,
+    handleCompact,
   }
 }
 

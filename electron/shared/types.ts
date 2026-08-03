@@ -64,6 +64,7 @@ export interface LLMModelConfig {
   enable_thinking?: boolean
   thinking_budget?: number
   max_retry?: number
+  context_window?: number
   is_default: boolean
 }
 

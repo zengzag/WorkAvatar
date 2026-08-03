@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useLayoutEffect, useRef, useEffect, Fragment, memo } from 'react'
 import { Button, Spin, Typography } from 'antd'
-import { RobotOutlined } from '@ant-design/icons'
+import { RobotOutlined, CompressOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { theme } from 'antd'
 import { MessageBubble } from './index'
@@ -27,6 +27,9 @@ interface MessageListProps {
   onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
+  contextStats?: any
+  isCompacting?: boolean
+  onCompact?: () => void
 }
 
 const MessageList: React.FC<MessageListProps> = ({
@@ -44,6 +47,9 @@ const MessageList: React.FC<MessageListProps> = ({
   onOpenComparison,
   getToolDisplayName,
   providers,
+  contextStats,
+  isCompacting,
+  onCompact,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -153,6 +159,22 @@ const MessageList: React.FC<MessageListProps> = ({
 
         return (
           <Fragment key={msg.id}>
+            {msg.isCompactSummary && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                margin: '12px 0',
+                color: token.colorTextQuaternary,
+                fontSize: 11,
+                userSelect: 'none',
+              }}>
+                <div style={{ flex: 1, height: 1, background: token.colorBorderSecondary }} />
+                <CompressOutlined style={{ fontSize: 12 }} />
+                <span>{t('workbench.compressed', { defaultValue: '已压缩' })}</span>
+                <div style={{ flex: 1, height: 1, background: token.colorBorderSecondary }} />
+              </div>
+            )}
             {showTime && (
               <div style={{
                 textAlign: 'center',
@@ -164,19 +186,35 @@ const MessageList: React.FC<MessageListProps> = ({
                 {formatMessageTime(msg.timestamp, t)}
               </div>
             )}
-            <MessageBubble
-              msg={msg}
-              onCopy={onCopy}
-              onDeleteMessage={onDeleteMessage}
-              onRegenerate={onRegenerate}
-              onSwitchModelRegenerate={onSwitchModelRegenerate}
-              onEditAndResubmit={onEditAndResubmit}
-              onToggleSegment={onToggleSegment}
-              onSwitchBranch={onSwitchBranch}
-              onOpenComparison={onOpenComparison}
-              getToolDisplayName={getToolDisplayName}
-              providers={providers}
-            />
+            {(() => {
+              let nextAssistantIdx = -1
+              for (let j = fullIndex + 1; j < messages.length; j++) {
+                if (!messages[j].isCompactSummary && messages[j].role === 'assistant') {
+                  nextAssistantIdx = j
+                  break
+                }
+              }
+              const isLastAssistantMsg = !msg.isCompactSummary && msg.role === 'assistant' && nextAssistantIdx === -1
+              return !msg.isCompactSummary && (
+                <MessageBubble
+                  msg={msg}
+                  onCopy={onCopy}
+                  onDeleteMessage={onDeleteMessage}
+                  onRegenerate={onRegenerate}
+                  onSwitchModelRegenerate={onSwitchModelRegenerate}
+                  onEditAndResubmit={onEditAndResubmit}
+                  onToggleSegment={onToggleSegment}
+                  onSwitchBranch={onSwitchBranch}
+                  onOpenComparison={onOpenComparison}
+                  getToolDisplayName={getToolDisplayName}
+                  providers={providers}
+                  isLastAssistantMessage={isLastAssistantMsg}
+                  contextStats={isLastAssistantMsg ? contextStats : undefined}
+                  isCompacting={isLastAssistantMsg ? isCompacting : false}
+                  onCompact={isLastAssistantMsg ? onCompact : undefined}
+                />
+              )
+            })()}
           </Fragment>
         )
       })}
@@ -192,6 +230,8 @@ export default memo(MessageList, (prev, next) => {
     prev.messages === next.messages &&
     prev.loadingConversationId === next.loadingConversationId &&
     prev.activeConversationId === next.activeConversationId &&
-    prev.providers === next.providers
+    prev.providers === next.providers &&
+    prev.contextStats === next.contextStats &&
+    prev.isCompacting === next.isCompacting
   )
 })

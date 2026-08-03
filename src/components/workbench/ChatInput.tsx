@@ -1,5 +1,5 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, BulbOutlined, BulbFilled } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, BulbOutlined, BulbFilled, LoadingOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
@@ -69,7 +69,10 @@ const ChatInput: React.FC<{
   onDefaultModelChange?: (providerId: string, modelId: string) => void
   enableThinking?: boolean
   onThinkingChange?: (enabled: boolean) => void
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange }) => {
+  /** 草稿重置 key：当此值变化时强制从 getInitialDraft 重新读取草稿，用于新任务模式下切换员工等场景 */
+  draftResetKey?: string
+  isCompacting?: boolean
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, draftResetKey, isCompacting }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -79,12 +82,12 @@ const ChatInput: React.FC<{
   const [highPermission, setHighPermission] = useState(false)
   const [internalValue, setInternalValue] = useState(() => getInitialDraft?.() || '')
 
-  // 对话切换时从外部恢复草稿（不触发顶层重渲染，仅在此处同步）
+  // 对话切换 / draftResetKey 变化时，从外部恢复草稿（不触发顶层重渲染，仅在此处同步）
   useEffect(() => {
     if (getInitialDraft) {
       setInternalValue(getInitialDraft())
     }
-  }, [conversationId, getInitialDraft])
+  }, [conversationId, getInitialDraft, draftResetKey])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -768,10 +771,11 @@ const ChatInput: React.FC<{
             }}
             onPressEnter={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={placeholder}
+            placeholder={isCompacting ? t('workbench.compactingPlaceholder', { defaultValue: '正在压缩对话上下文，请稍候...' }) : placeholder}
             autoSize={{ minRows: centerMode ? 5 : 2, maxRows: 8 }}
             style={{ background: 'transparent', border: 'none', resize: 'none', fontSize: 13, lineHeight: 1.6, padding: '4px 0', boxShadow: 'none' }}
             className="workbench-input"
+            disabled={isCompacting}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -868,8 +872,8 @@ const ChatInput: React.FC<{
           </div>
         </div>
         <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
-        {isStreaming ? (
-          <Button icon={<StopOutlined />} danger onClick={onStop} size="middle" />
+        {isStreaming || isCompacting ? (
+          <Button icon={isCompacting ? <LoadingOutlined /> : <StopOutlined />} danger={isStreaming} disabled={isCompacting} onClick={onStop} size="middle" />
         ) : (
           <Button icon={<SendOutlined />} type="primary" onClick={handleSend}
             disabled={!internalValue.trim() && attachedImages.length === 0 && attachedFiles.length === 0}

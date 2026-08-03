@@ -263,6 +263,7 @@ const LLMSettings: React.FC = () => {
       frequency_penalty: model.frequency_penalty,
       presence_penalty: model.presence_penalty,
       max_retry: model.max_retry ?? 100,
+      context_window: model.context_window,
       is_default: model.is_default,
     })
     setModelModalVisible(true)
@@ -293,6 +294,7 @@ const LLMSettings: React.FC = () => {
           frequency_penalty: values.frequency_penalty,
           presence_penalty: values.presence_penalty,
           max_retry: values.max_retry,
+          context_window: values.context_window,
         } : {}),
         is_default: category === 'chat' ? values.is_default : false,
       }
@@ -628,6 +630,11 @@ const LLMSettings: React.FC = () => {
                   <span>{t('settings.presencePenalty')} <Tooltip title={t('settings.presencePenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+                </Form.Item>
+                <Form.Item name="context_window" label={
+                  <span>{t('settings.contextWindow')} <Tooltip title={t('settings.contextWindowTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={1024} max={2000000} step={1024} style={{ width: 160 }} />
                 </Form.Item>
               </div>
 
