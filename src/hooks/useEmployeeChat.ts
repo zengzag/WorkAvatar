@@ -260,6 +260,24 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const hasFullCache = cachedEmployee && cachedConvList && cachedActiveConvId
 
       if (hasFullCache && !initializedRef.current) {
+        // 从缓存 convList 恢复所有对话的 contextStats
+        const restoredStatsFromCache: Record<string, any> = {}
+        for (const conv of cachedConvList) {
+          if ((conv as any).context_stats_json) {
+            try {
+              const stats = JSON.parse((conv as any).context_stats_json)
+              if (stats && typeof stats === 'object') {
+                restoredStatsFromCache[conv.id] = stats
+              }
+            } catch {
+              // JSON 解析失败忽略
+            }
+          }
+        }
+        if (Object.keys(restoredStatsFromCache).length > 0) {
+          setContextStats(prev => ({ ...prev, ...restoredStatsFromCache }))
+        }
+
         // 缓存完整：先设 loading（显示转圈圈），再异步恢复消息
         initializedRef.current = true
         if (skipAutoInit) {
@@ -313,6 +331,24 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentConvList.set(id!, convList)
       setEmployee(result)
       setAllConversations(convList)
+
+      // 从 convList 恢复所有对话的 contextStats
+      const restoredStats: Record<string, any> = {}
+      for (const conv of convList) {
+        if ((conv as any).context_stats_json) {
+          try {
+            const stats = JSON.parse((conv as any).context_stats_json)
+            if (stats && typeof stats === 'object') {
+              restoredStats[conv.id] = stats
+            }
+          } catch {
+            // JSON 解析失败忽略
+          }
+        }
+      }
+      if (Object.keys(restoredStats).length > 0) {
+        setContextStats(prev => ({ ...prev, ...restoredStats }))
+      }
 
       loadProviders()
 
@@ -376,6 +412,10 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     updateConvLastMessageAt,
     onContextStats: (convId, stats) => {
       setContextStats(prev => ({ ...prev, [convId]: stats }))
+      window.electronAPI.conversation.update({
+        id: convId,
+        context_stats_json: JSON.stringify(stats),
+      }).catch(() => {})
     },
   })
 
@@ -503,6 +543,17 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const convData = allConversations.find(c => c.id === convId)
       if (convData) {
         setMinimalMode(!!(convData as any).minimal_mode)
+        // 从 convList 恢复 contextStats
+        try {
+          if ((convData as any).context_stats_json) {
+            const savedStats = JSON.parse((convData as any).context_stats_json)
+            if (savedStats && typeof savedStats === 'object') {
+              setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+            }
+          }
+        } catch {
+          // JSON 解析失败忽略
+        }
       }
       await new Promise<void>(resolve => setTimeout(resolve, 0))
       if (version !== selectConvVersionRef.current) return
@@ -539,6 +590,17 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
     if (fullConv) {
       setMinimalMode(!!fullConv.minimal_mode)
+      // 恢复 contextStats
+      try {
+        if (fullConv.context_stats_json) {
+          const savedStats = JSON.parse(fullConv.context_stats_json)
+          if (savedStats && typeof savedStats === 'object') {
+            setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+          }
+        }
+      } catch {
+        // JSON 解析失败忽略
+      }
     }
 
     // 解析 JSON（这一步对长对话是耗时大头）

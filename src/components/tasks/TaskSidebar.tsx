@@ -1,5 +1,5 @@
 import { memo, useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { Input, Button, Typography, Popconfirm, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
+import { Input, Button, Typography, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
 import type { MenuProps, InputRef } from 'antd'
 import {
   PlusOutlined,
@@ -96,6 +96,7 @@ const TaskItem = memo(({
   const [hovered, setHovered] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
   const editInputRef = useRef<InputRef>(null)
 
   useEffect(() => {
@@ -142,9 +143,20 @@ const TaskItem = memo(({
     e.stopPropagation()
   }, [saveEdit, cancelEdit])
 
-  const handleDeleteClick = useCallback(() => {
+  const handleDeleteClick = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setDeleteConfirm(true)
+  }, [])
+
+  const confirmDelete = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
     onDelete(task.id)
+    setDeleteConfirm(false)
   }, [onDelete, task.id])
+
+  const cancelDeleteConfirm = useCallback(() => {
+    setDeleteConfirm(false)
+  }, [])
 
   const contextMenuItems = useMemo<MenuProps['items']>(() => {
     const items: NonNullable<MenuProps['items']>[number][] = [
@@ -192,7 +204,7 @@ const TaskItem = memo(({
           if (!isEditing && !active) onSelect(task.id)
         }}
         onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
           padding: '8px 10px',
@@ -206,6 +218,7 @@ const TaskItem = memo(({
           display: 'flex',
           alignItems: 'flex-start',
           gap: 8,
+          position: 'relative',
         }}
       >
         {selectionMode && (
@@ -217,7 +230,7 @@ const TaskItem = memo(({
             />
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, paddingRight: hovered && !isEditing && !selectionMode ? (deleteConfirm ? 76 : 48) : 0, transition: 'padding-right 0.15s' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
             {streaming && (
               <span style={{
@@ -257,7 +270,9 @@ const TaskItem = memo(({
         </div>
         <div
           style={{
-            flexShrink: 0,
+            position: 'absolute',
+            top: 8,
+            right: 10,
             opacity: hovered && !isEditing && !selectionMode ? 1 : 0,
             pointerEvents: hovered && !isEditing && !selectionMode ? 'auto' : 'none',
             transition: 'opacity 0.15s',
@@ -266,31 +281,48 @@ const TaskItem = memo(({
             gap: 2,
           }}
         >
-          <Button
-            type="text"
-            size="small"
-            icon={<EditOutlined style={{ fontSize: 12 }} />}
-            onClick={(e) => startEdit(e)}
-            title={t('common.rename')}
-            style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
-          />
-          <Popconfirm
-            title={t('workbench.confirmDelete')}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-            okButtonProps={{ danger: true }}
-            trigger="click"
-            onConfirm={(e) => { e?.stopPropagation(); onDelete(task.id) }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
+          {!deleteConfirm && (
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined style={{ fontSize: 12 }} />}
+              onClick={(e) => startEdit(e)}
+              title={t('common.rename')}
+              style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+            />
+          )}
+          {deleteConfirm ? (
+            <>
+              <Button
+                type="text"
+                size="small"
+                onClick={(e) => confirmDelete(e)}
+                title={t('common.confirm')}
+                danger
+                style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
+              >
+                {t('common.confirm')}
+              </Button>
+              <Button
+                type="text"
+                size="small"
+                onClick={() => cancelDeleteConfirm()}
+                title={t('common.cancel')}
+                style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+              >
+                <CloseOutlined style={{ fontSize: 12 }} />
+              </Button>
+            </>
+          ) : (
             <Button
               type="text"
               size="small"
               icon={<DeleteOutlined style={{ fontSize: 12 }} />}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => handleDeleteClick(e)}
+              title={t('common.delete')}
               style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
             />
-          </Popconfirm>
+          )}
         </div>
       </div>
     </Dropdown>
@@ -388,7 +420,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   return (
     <div style={{
-      width: 280,
+      width: 224,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',

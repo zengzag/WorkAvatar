@@ -86,7 +86,7 @@ export function registerEmployeeHandlers(
     return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode)
   })
 
-  safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number }) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string }) => {
     const { id, ...data } = params
     return workspaceManager.updateConversation(id, data)
   })

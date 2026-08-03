@@ -453,6 +453,7 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'memory_extracted_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'memory_extracted_message_count', 'INTEGER NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('conversations', 'context_stats_json', "TEXT DEFAULT '{}'")
 
     this.migrateConversationLastMessageAt()
 

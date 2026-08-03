@@ -167,17 +167,17 @@ class WorkspaceManagerService {
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
-        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
+        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at, context_stats_json FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
       ).all(employeeId) as Conversation[]
     }
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
+      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at, context_stats_json FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
     ).all() as Conversation[]
   }
 
   /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话，支持分页 */
   getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
-    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at,
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json,
                 e.name as employee_name
          FROM conversations c
          LEFT JOIN employees e ON c.employee_id = e.id
@@ -232,10 +232,11 @@ class WorkspaceManagerService {
     ).run(title || '', summary || '', preview, id, employeeId)
   }
 
-  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string }): boolean {
+  updateConversation(id: string, data: { title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string }): boolean {
     const ALLOWED_CONVERSATION_COLUMNS = [
       'title', 'messages_json', 'message_count',
-      'status', 'minimal_mode', 'last_message_at', 'employee_id'
+      'status', 'minimal_mode', 'last_message_at', 'employee_id',
+      'context_stats_json'
     ]
 
     const updates: string[] = []
