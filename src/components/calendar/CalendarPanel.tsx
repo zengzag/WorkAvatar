@@ -78,6 +78,82 @@ const isEventPast = (ev: CalendarEventInstance): boolean => {
   return ev.instance_end_at * MS < Date.now()
 }
 
+type LayoutItem = {
+  kind: 'event' | 'todo'
+  id: string
+  top: number
+  bottom: number
+  col: number
+  cols: number
+  ref: any
+}
+
+/** 为事件+TODO统一做重叠分组与横向列分配，返回 Map<itemKey, {col, cols}> */
+const assignOverlapCols = (items: Omit<LayoutItem, 'col' | 'cols'>[]): Map<string, { col: number; cols: number }> => {
+  const result = new Map<string, { col: number; cols: number }>()
+  if (items.length === 0) return result
+
+  // 按 top 升序，再按 bottom 降序（高的先占位置）
+  const sorted = [...items].sort((a, b) => a.top - b.top || b.bottom - a.bottom)
+  // 分组：找到互相重叠（含邻接）的最大连通分量
+  const groups: number[][] = []
+  const visited = new Set<number>()
+  for (let i = 0; i < sorted.length; i++) {
+    if (visited.has(i)) continue
+    const stack = [i]
+    const group: number[] = []
+    let groupEnd = -Infinity
+    while (stack.length) {
+      const idx = stack.pop()!
+      if (visited.has(idx)) continue
+      visited.add(idx)
+      group.push(idx)
+      const it = sorted[idx]
+      if (it.bottom > groupEnd) groupEnd = it.bottom
+      // 找未访问且与当前组时间范围重叠的元素
+      for (let j = 0; j < sorted.length; j++) {
+        if (visited.has(j)) continue
+        const jt = sorted[j]
+        // 以 group 范围判断是否连通（允许传递重叠：A-B，B-C → 同组）
+        if (jt.top < groupEnd && jt.bottom > sorted[Math.min(...group)].top) {
+          stack.push(j)
+        }
+      }
+    }
+    group.sort((a, b) => a - b)
+    groups.push(group)
+  }
+
+  groups.forEach((groupIdx) => {
+    const groupItems = groupIdx.map((gi) => sorted[gi])
+    // 贪心列分配
+    const colEnds: number[] = []
+    const assigned: number[] = new Array(groupItems.length)
+    for (let i = 0; i < groupItems.length; i++) {
+      const it = groupItems[i]
+      let placed = -1
+      for (let c = 0; c < colEnds.length; c++) {
+        if (colEnds[c] <= it.top) {
+          colEnds[c] = it.bottom
+          assigned[i] = c
+          placed = c
+          break
+        }
+      }
+      if (placed === -1) {
+        colEnds.push(it.bottom)
+        assigned[i] = colEnds.length - 1
+      }
+    }
+    const cols = colEnds.length
+    groupItems.forEach((it, i) => {
+      result.set(it.id, { col: assigned[i], cols })
+    })
+  })
+
+  return result
+}
+
 /** 渲染拖拽创建的预览块 */
 const DragPreviewBlock: React.FC<{ dragState: Extract<DragState, { type: 'creating' }>; dayStartMs: number; token: any; isDark: boolean }> = ({ dragState, dayStartMs, token, isDark }) => {
   if (dragState.dayStartMs !== dayStartMs) return null
@@ -498,6 +574,50 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
               // 全天事件已移至顶部独立区域，时间网格仅渲染非全天事件
               const dayEvents = getEventsForDay(events, dms).filter(e => !e.all_day)
               const dayTodos = getTodosForDay(todos, dms)
+
+              const BAR_HEIGHT = 16
+              const eventLayouts: Record<string, { top: number; height: number }> = {}
+              const todoLayouts: Record<string, { top: number }> = {}
+              const layoutItems: Omit<LayoutItem, 'col' | 'cols'>[] = []
+
+              // 计算每个事件的 top/height 并加入布局池
+              dayEvents.forEach((ev) => {
+                if (ev.id === draggingEventId) return
+                const startMs = Math.max(ev.instance_start_at * MS, dms)
+                const endMs = Math.min(ev.instance_end_at * MS, dms + 86400 * MS - 1)
+                const startMins = (startMs - dms) / MS / 60
+                const durationMins = Math.max(15, (endMs - startMs) / MS / 60)
+                const top = (startMins / 60) * HOUR_HEIGHT
+                const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
+                const key = `ev-${ev.id}-${ev.instance_start_at}`
+                eventLayouts[key] = { top, height }
+                layoutItems.push({ kind: 'event', id: key, top, bottom: top + height, ref: ev })
+              })
+
+              // 计算每个 TODO 的 top 并加入布局池（与事件统一做列分配）
+              const SNAP_H = BAR_HEIGHT
+              const todoGroups: { baseTop: number; todos: CalendarTodoInstance[] }[] = []
+              dayTodos.forEach((td) => {
+                const mins = (td.instance_due_at * MS - dms) / MS / 60
+                if (mins < 0 || mins >= 1440) return
+                const baseTop = (mins / 60) * HOUR_HEIGHT
+                const existing = todoGroups.find(g => Math.abs(g.baseTop - baseTop) < SNAP_H)
+                if (existing) {
+                  existing.todos.push(td)
+                } else {
+                  todoGroups.push({ baseTop, todos: [td] })
+                }
+              })
+              todoGroups.forEach((g) => {
+                g.todos.forEach((td) => {
+                  const key = `td-${td.id}-${td.instance_due_at}`
+                  todoLayouts[key] = { top: g.baseTop }
+                  layoutItems.push({ kind: 'todo', id: key, top: g.baseTop, bottom: g.baseTop + BAR_HEIGHT, ref: td })
+                })
+              })
+
+              const colMap = assignOverlapCols(layoutItems)
+
               return (
                 <div
                   key={dms}
@@ -543,17 +663,16 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
 
                   {/* 事件块 */}
                   {dayEvents.map((ev) => {
-                    // 被拖拽的事件在原列隐藏（移动/调整大小时渲染拖拽块代替）
                     if (ev.id === draggingEventId) return null
-
-                    const startMs = Math.max(ev.instance_start_at * MS, dms)
-                    const endMs = Math.min(ev.instance_end_at * MS, dms + 86400 * MS - 1)
-                    const startMins = (startMs - dms) / MS / 60
-                    const durationMins = Math.max(15, (endMs - startMs) / MS / 60)
-                    const top = (startMins / 60) * HOUR_HEIGHT
-                    const height = Math.max(20, (durationMins / 60) * HOUR_HEIGHT - 2)
+                    const key = `ev-${ev.id}-${ev.instance_start_at}`
+                    const layout = eventLayouts[key]
+                    if (!layout) return null
+                    const colInfo = colMap.get(key) || { col: 0, cols: 1 }
+                    const { top, height } = layout
                     const c = eventColorMap[ev.color] || eventColorMap.default
                     const past = isEventPast(ev)
+                    const colWidthPct = 100 / colInfo.cols
+                    const leftPct = colInfo.col * colWidthPct
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
@@ -563,8 +682,8 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                           onMouseDown={(e) => handleEventMouseDown(e, ev, dms)}
                           style={{
                             position: 'absolute',
-                            left: 2,
-                            right: 2,
+                            left: `calc(${leftPct}% + 1px)`,
+                            width: `calc(${colWidthPct}% - 2px)`,
                             top,
                             height,
                             background: past
@@ -579,6 +698,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                             color: past ? token.colorTextSecondary : token.colorText,
                             userSelect: 'none',
                             opacity: past ? 0.85 : 1,
+                            boxShadow: colInfo.cols > 1 ? '0 1px 2px rgba(0,0,0,0.08)' : undefined,
                           }}
                         >
                           {/* 顶部 resize 手柄 */}
@@ -606,79 +726,61 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     )
                   })}
 
-                  {/* TODO 到期长条（同时间段横向平分宽度） */}
-                  {(() => {
-                    const BAR_HEIGHT = 16
-                    const SNAP_H = BAR_HEIGHT
-                    const groups: { baseTop: number; todos: CalendarTodoInstance[] }[] = []
-                    dayTodos.forEach((td) => {
-                      const mins = (td.instance_due_at * MS - dms) / MS / 60
-                      if (mins < 0 || mins >= 1440) return
-                      const baseTop = (mins / 60) * HOUR_HEIGHT
-                      const existing = groups.find(g => Math.abs(g.baseTop - baseTop) < SNAP_H)
-                      if (existing) {
-                        existing.todos.push(td)
-                      } else {
-                        groups.push({ baseTop, todos: [td] })
-                      }
+                  {/* TODO 到期长条（与事件统一做列分配，避免重叠覆盖） */}
+                  {todoGroups.map((group) => {
+                    return group.todos.map((td) => {
+                      const key = `td-${td.id}-${td.instance_due_at}`
+                      const layout = todoLayouts[key]
+                      if (!layout) return null
+                      const colInfo = colMap.get(key) || { col: 0, cols: 1 }
+                      const colWidthPct = 100 / colInfo.cols
+                      const leftPct = colInfo.col * colWidthPct
+                      const c = todoBarColorMap[td.priority] || todoBarColorMap.none
+                      const isDone = td.status === 'completed'
+                      return (
+                        <Tooltip
+                          key={`${td.id}-${td.instance_due_at}`}
+                          title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}`}
+                        >
+                          <div
+                            onMouseDown={(e) => {
+                              e.stopPropagation()
+                              e.preventDefault()
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onEditTodo?.(td)
+                            }}
+                            style={{
+                              position: 'absolute',
+                              left: `calc(${leftPct}% + 1px)`,
+                              width: `calc(${colWidthPct}% - 2px)`,
+                              top: layout.top,
+                              height: BAR_HEIGHT,
+                              background: isDone ? token.colorFillQuaternary : c.bg,
+                              borderLeft: `3px solid ${isDone ? token.colorBorderSecondary : c.border}`,
+                              borderRadius: 3,
+                              padding: '0 6px',
+                              fontSize: 10,
+                              lineHeight: `${BAR_HEIGHT}px`,
+                              overflow: 'hidden',
+                              whiteSpace: 'nowrap',
+                              textOverflow: 'ellipsis',
+                              color: isDone ? token.colorTextTertiary : token.colorText,
+                              textDecoration: isDone ? 'line-through' : 'none',
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                              opacity: isDone ? 0.6 : 1,
+                              zIndex: 4,
+                              boxShadow: colInfo.cols > 1 ? '0 1px 2px rgba(0,0,0,0.08)' : undefined,
+                            }}
+                          >
+                            {td.title}
+                          </div>
+                        </Tooltip>
+                      )
                     })
-                    return groups.map((group) => (
-                      <div
-                        key={`tg-${group.baseTop}`}
-                        style={{
-                          position: 'absolute',
-                          left: 2,
-                          right: 2,
-                          top: group.baseTop,
-                          display: 'flex',
-                          gap: 2,
-                          zIndex: 4,
-                        }}
-                      >
-                        {group.todos.map((td) => {
-                          const c = todoBarColorMap[td.priority] || todoBarColorMap.none
-                          const isDone = td.status === 'completed'
-                          return (
-                            <Tooltip
-                              key={`${td.id}-${td.instance_due_at}`}
-                              title={`${t('calendar.todos')}: ${td.title} · ${formatEventTime(td.instance_due_at)}`}
-                            >
-                              <div
-                                onMouseDown={(e) => {
-                                  e.stopPropagation()
-                                  e.preventDefault()
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onEditTodo?.(td)
-                                }}
-                                style={{
-                                  flex: 1,
-                                  height: BAR_HEIGHT,
-                                  background: isDone ? token.colorFillQuaternary : c.bg,
-                                  borderLeft: `3px solid ${isDone ? token.colorBorderSecondary : c.border}`,
-                                  borderRadius: 3,
-                                  padding: '0 6px',
-                                  fontSize: 10,
-                                  lineHeight: `${BAR_HEIGHT}px`,
-                                  overflow: 'hidden',
-                                  whiteSpace: 'nowrap',
-                                  textOverflow: 'ellipsis',
-                                  color: isDone ? token.colorTextTertiary : token.colorText,
-                                  textDecoration: isDone ? 'line-through' : 'none',
-                                  cursor: 'pointer',
-                                  userSelect: 'none',
-                                  opacity: isDone ? 0.6 : 1,
-                                }}
-                              >
-                                {td.title}
-                              </div>
-                            </Tooltip>
-                          )
-                        })}
-                      </div>
-                    ))
-                  })()}
+                  })}
 
                   {/* 拖拽预览块 */}
                   {dragState.type === 'creating' && (
