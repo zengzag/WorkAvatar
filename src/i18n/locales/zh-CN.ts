@@ -219,6 +219,7 @@ export default {
       file_copy: '复制文件',
       file_rename: '重命名文件',
       file_stat: '文件信息',
+      ocr_image: '图片识别',
       web_search: '网络搜索',
       web_fetch: '获取网页',
       kms_search: '本地资料检索',

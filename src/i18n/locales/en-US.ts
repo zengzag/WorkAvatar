@@ -219,6 +219,7 @@ export default {
       file_copy: 'Copy File',
       file_rename: 'Rename File',
       file_stat: 'File Info',
+      ocr_image: 'Image OCR',
       web_search: 'Web Search',
       web_fetch: 'Web Fetch',
       kms_search: 'Local Search',

@@ -48,6 +48,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'file_copy',
       'file_rename',
       'file_stat',
+      'ocr_image',
     ],
   },
   {
