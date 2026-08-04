@@ -34,6 +34,15 @@ interface RealtimeSession {
   segmentStartSample: number
 }
 
+/** 流式模型在 reset 后 / 会话刚创建时，需要约 1s 的帧上下文才能开始输出 token。
+ *  若直接喂入真实语音，首块（新句子开头）会被当作 warm-up 吞掉，导致首 token 丢失。
+ *  因此每次 reset 后和会话开始时都回喂一段固定静音，让模型先建立上下文。 */
+const WARMUP_SILENCE_SECONDS = 1.0
+const WARMUP_SILENCE_SAMPLES = Math.round(WARMUP_SILENCE_SECONDS * 16000)
+
+/** 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程 */
+const MAX_DECODE_ITERATIONS = 100000
+
 // sherpa-onnx-node is loaded dynamically to avoid blocking startup when not used
 let sherpaOnnx: any = null
 let recognizer: any = null
@@ -301,7 +310,7 @@ class LocalSTTService {
     // 构建模型配置 - 固定使用 zipformer transducer，CPU 推理
     const modelConfig: any = {
       tokens: resolved.files.tokens,
-      numThreads: 2,
+      numThreads: 4,
       provider: 'cpu',
       debug: 0,
       transducer: {
@@ -581,12 +590,33 @@ class LocalSTTService {
         segmentStartSample: 0,
       }
       this.realtimeSessions.set(taskId, session)
+      // 会话刚创建时模型无上下文，先喂一段固定静音预热，避免首句首 token 被吞掉
+      this.warmUpStream(rec, stream, session.sampleRate)
       logger.info(`Realtime recognition started: taskId=${taskId}`)
       return { ok: true }
     } catch (err: any) {
       logger.error('Failed to start realtime recognition:', err?.message || err)
       return { ok: false, error: String(err?.message || err) }
     }
+  }
+
+  /**
+   * 向流式模型回喂一段固定静音作为预热，让模型在接收真实语音前先建立帧上下文。
+   * 用于会话开始和每次 endpoint reset 后，避免模型吞掉新句子首 token。
+   */
+  private warmUpStream(rec: any, stream: any, sampleRate: number): void {
+    const silence = new Float32Array(WARMUP_SILENCE_SAMPLES)
+    stream.acceptWaveform({ samples: silence, sampleRate })
+    let iters = 0
+    while (rec.isReady(stream)) {
+      rec.decode(stream)
+      if (++iters > MAX_DECODE_ITERATIONS) {
+        logger.warn(`warmUpStream: decode exceeded ${MAX_DECODE_ITERATIONS} iterations, breaking`)
+        break
+      }
+    }
+    // 预热识别结果为空，仅用于构建上下文
+    rec.getResult(stream)
   }
 
   /**
@@ -614,7 +644,6 @@ class LocalSTTService {
     // 持续解码
     // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
     let decodeIterations = 0
-    const MAX_DECODE_ITERATIONS = 100000
     while (rec.isReady(stream)) {
       rec.decode(stream)
       if (++decodeIterations > MAX_DECODE_ITERATIONS) {
@@ -640,6 +669,9 @@ class LocalSTTService {
       }
       // reset 后 stream 开始接收新段落
       rec.reset(stream)
+      // reset 后回喂一段固定静音预热，让模型在接收新句子语音前先建立帧上下文，
+      // 避免流式模型把新句子开头当作 warm-up 吞掉（首 token 丢失）。
+      this.warmUpStream(rec, stream, session.sampleRate)
       session.segmentStartSample = session.totalSamples
     }
 
@@ -668,7 +700,6 @@ class LocalSTTService {
       // 安全阀：限制 decode 迭代次数，防止 native 模块异常导致无限循环卡死主线程
       // 正常情况下 inputFinished() 后 isReady 会很快返回 false
       let decodeIterations = 0
-      const MAX_DECODE_ITERATIONS = 100000
       while (rec.isReady(stream)) {
         rec.decode(stream)
         if (++decodeIterations > MAX_DECODE_ITERATIONS) {
