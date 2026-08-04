@@ -509,6 +509,44 @@ const ChatInput: React.FC<{
     }
   }, [insertFileTokenAtCursor, onImagesChange])
 
+  /** 在当前光标位置插入纯文本（\n 转 <br>），用于去除 Word 等复制的富文本格式 */
+  const insertPlainTextAtCursor = useCallback((text: string) => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.focus()
+    const sel = window.getSelection()
+    let range: Range | null = null
+    if (sel && sel.rangeCount > 0) {
+      range = sel.getRangeAt(0)
+      if (!editor.contains(range.startContainer)) range = null
+    }
+    if (range) {
+      range.deleteContents()
+      const parts = text.split('\n')
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i]) {
+          const node = document.createTextNode(parts[i])
+          range.insertNode(node)
+          range.setStartAfter(node)
+          range.setEndAfter(node)
+        }
+        if (i < parts.length - 1) {
+          const br = document.createElement('br')
+          range.insertNode(br)
+          range.setStartAfter(br)
+          range.setEndAfter(br)
+        }
+      }
+      if (sel) {
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    } else {
+      editor.appendChild(document.createTextNode(text))
+    }
+    emitDraftChange()
+  }, [emitDraftChange])
+
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items
     if (!items) return
@@ -548,8 +586,16 @@ const ChatInput: React.FC<{
       if (nonImgFiles.length > 0) {
         insertFileTokenAtCursor(nonImgFiles)
       }
+      return
     }
-  }, [onImagesChange, insertFileTokenAtCursor])
+
+    // 非图片/文件场景：拦截默认粘贴，仅插入纯文本，去除 Word 等复制的富文本格式
+    const text = e.clipboardData?.getData('text/plain')
+    if (text != null) {
+      e.preventDefault()
+      insertPlainTextAtCursor(text)
+    }
+  }, [onImagesChange, insertFileTokenAtCursor, insertPlainTextAtCursor])
 
   /** 统一的文件选择（PaperClip 按钮）：同时支持图片与普通文件，按类型自动分流
    * - image/*：走原图片逻辑（FileReader→dataUrl→顶部缩略图→images 数组发消息）

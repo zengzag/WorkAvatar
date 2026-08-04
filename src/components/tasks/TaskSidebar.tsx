@@ -420,7 +420,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   return (
     <div style={{
-      width: 224,
+      width: 260,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',

@@ -458,3 +458,10 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
 }
+
+/* 文件预览中的 Markdown：库默认 min-height:100%，内容高于容器时容器随之撑高，
+   导致 overflow:auto 不生效、父级 overflow:hidden 直接裁剪无滚动条。
+   改为固定 100% 高度，让内部滚动生效。 */
+.markdown-viewer {
+  height: 100% !important;
+}

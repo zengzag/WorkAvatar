@@ -18,6 +18,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import dayjs from 'dayjs'
+import { useLocation } from 'react-router-dom'
 import { useVoice, type VoiceTask, type TranscriptSegment } from '../../hooks/useVoice'
 import { pathToAppFileUrl } from '../../utils/file-url'
 import { recordingSession, clearRecordingSession, isRecordingActive } from '../../lib/voice-recording-session'
@@ -165,6 +166,9 @@ interface KMSVoiceViewProps {
 const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  // 语音页面是否处于激活状态（KeepAlive 隐藏时仍保持挂载，需据此暂停前台可视化）
+  const location = useLocation()
+  const isVoiceActive = location.pathname === '/voice' || location.pathname.startsWith('/voice/')
 
   // 检测暗色主题（用于 audio 元素兼容）
   const isDarkMode = useMemo(() => {
@@ -298,6 +302,41 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 页面隐藏时暂停前台可视化（音量动画 + 时长计时器），避免后台录音时 60fps 持续重渲染
+  // 导致渲染进程主线程被占满、切换其他 Tab 卡顿。录音/实时识别本身不受影响（由单例持有）。
+  useEffect(() => {
+    if (!isVoiceActive) {
+      if (recordingSession.durationTimer) {
+        clearInterval(recordingSession.durationTimer)
+        recordingSession.durationTimer = null
+      }
+      if (recordingSession.animationFrame) {
+        cancelAnimationFrame(recordingSession.animationFrame)
+        recordingSession.animationFrame = null
+      }
+      return
+    }
+    // 回到页面：恢复隐藏期间单例累积的实时字幕（隐藏时仅更新单例未触发重渲染）
+    setRealtimeTextBySource(recordingSession.realtimeTextBySource)
+    setRealtimeSegmentsBySource(recordingSession.realtimeSegmentsBySource)
+    // 若正在录音且前台可视化未在运行，则恢复
+    if (isRecording && recordingSession.analyser && !recordingSession.animationFrame) {
+      recordingSession.durationTimer = setInterval(() => {
+        setRecordDuration((Date.now() - recordingSession.recordStartTime - recordingSession.pausedDuration) / 1000)
+      }, 200)
+      const dataArray = new Uint8Array(recordingSession.analyser.frequencyBinCount)
+      const updateLevel = () => {
+        if (recordingSession.analyser) {
+          recordingSession.analyser.getByteFrequencyData(dataArray)
+          const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length
+          setAudioLevel(Math.min(100, (avg / 128) * 100))
+          recordingSession.animationFrame = requestAnimationFrame(updateLevel)
+        }
+      }
+      updateLevel()
+    }
+  }, [isVoiceActive, isRecording])
+
   // 本地状态变化同步到全局 store（导航栏指示器）
   useEffect(() => {
     setRecordingStore(isRecording)
@@ -319,35 +358,34 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
       const activeIds = [recordingSession.realtimeTaskIdMic, recordingSession.realtimeTaskIdSystem, recordingSession.realtimeTaskId]
       if (!activeIds.includes(data.taskId)) return
 
-      if (data.isFinal) {
-        setRealtimeTextBySource(prev => {
-          const next = { ...prev, [source]: data.text }
-          recordingSession.realtimeTextBySource = next
-          return next
-        })
-      } else {
-        setRealtimeTextBySource(prev => {
-          const next = { ...prev, [source]: data.text }
-          recordingSession.realtimeTextBySource = next
-          return next
-        })
-        if (data.segment) {
-          setRealtimeSegmentsBySource(prev => {
-            const next = {
-              ...prev,
-              [source]: [...(prev[source] || []), data.segment!],
-            }
-            recordingSession.realtimeSegmentsBySource = next
-            return next
-          })
+      // 页面隐藏时仅更新单例、不触发 React 重渲染，避免后台长时间录音时累积大量段落导致渲染卡顿。
+      // 单例始终写入最新值，回到页面时再从单例恢复 UI 状态。
+      const updateText = (text: string) => {
+        const next = { ...recordingSession.realtimeTextBySource, [source]: text }
+        recordingSession.realtimeTextBySource = next
+        if (isVoiceActive) setRealtimeTextBySource(next)
+      }
+      const updateSegment = (segment: { start: number; end: number; text: string }) => {
+        const next = {
+          ...recordingSession.realtimeSegmentsBySource,
+          [source]: [...(recordingSession.realtimeSegmentsBySource[source] || []), segment],
         }
+        recordingSession.realtimeSegmentsBySource = next
+        if (isVoiceActive) setRealtimeSegmentsBySource(next)
+      }
+
+      if (data.isFinal) {
+        updateText(data.text)
+      } else {
+        updateText(data.text)
+        if (data.segment) updateSegment(data.segment)
       }
     })
     return () => {
       realtimeUnsubscribeRef.current?.()
       realtimeUnsubscribeRef.current = null
     }
-  }, [onRealtimeResult])
+  }, [onRealtimeResult, isVoiceActive])
 
   // 字幕区自适应滚动：用户向上滚动时暂停自动滚动，重新滚到底部时恢复。
   // scroll 监听器通过回调 ref (setTranscriptScrollRef) 在 DOM 绑定时立即注册，
@@ -460,7 +498,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
         offset += b.length
       }
       realtimeFeed(taskId, merged, 16000, source)
-    }, 300)
+    }, 100)
   }, [realtimeFeed])
 
   const createSourceProcessor = useCallback((audioCtx: AudioContext, stream: MediaStream, source: string) => {
@@ -1942,7 +1980,7 @@ const KMSVoiceView: React.FC<KMSVoiceViewProps> = ({ onOpenSettings }) => {
           </Tooltip>
         </div>
       ) : (
-        <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <Title level={5} style={{ margin: 0 }}>
               <AudioOutlined /> {t('voice.title')}

@@ -1,4 +1,4 @@
-import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App, Image } from 'antd'
+import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App, Image, Tooltip } from 'antd'
 import {
   RobotOutlined,
   UserOutlined,
@@ -134,32 +134,39 @@ const ContextUsageInline: React.FC<{
   const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextTertiary
 
   return (
-    <div style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 8,
-    }}>
-      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-        {t('workbench.contextUsage', { defaultValue: '上下文' })}:
-      </Text>
-      <Text style={{ fontSize: 11, color: percentColor, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-        {formatNum(tokenCount)}
-      </Text>
-      <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-        / {formatNum(maxTokens)} ({percent}%)
-      </Text>
-      <Button
-        type="text"
-        size="small"
-        icon={<CompressOutlined style={{ fontSize: 11 }} />}
-        onClick={onCompact}
-        loading={isCompacting}
-        disabled={isCompacting || !onCompact}
-        style={{ fontSize: 11, height: 20, padding: '0 4px', color: token.colorTextTertiary }}
-      >
-        {t('workbench.compact', { defaultValue: '压缩' })}
-      </Button>
-    </div>
+    <Tooltip
+      title={
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 12, color: token.colorTextTertiary }}>
+            {formatNum(tokenCount)} / {formatNum(maxTokens)}
+          </Text>
+          <Button
+            type="text"
+            size="small"
+            icon={<CompressOutlined style={{ fontSize: 12 }} />}
+            onClick={onCompact}
+            loading={isCompacting}
+            disabled={isCompacting || !onCompact}
+            style={{ fontSize: 12, height: 22, padding: '0 4px', color: token.colorText }}>
+            {t('workbench.compact', { defaultValue: '压缩' })}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        cursor: 'pointer',
+      }}>
+        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+          {t('workbench.contextUsage', { defaultValue: '上下文' })}:
+        </Text>
+        <Text style={{ fontSize: 11, color: percentColor, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+          {percent}%
+        </Text>
+      </div>
+    </Tooltip>
   )
 }
 
