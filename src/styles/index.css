@@ -435,6 +435,47 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   user-select: none;
 }
 
+/* 笔记文档：暗色主题下的渲染配色（编辑器与预览共用）。
+   Vditor 的 .vditor-reset 保留了硬编码的亮色值（引用块/分割线/表格/代码块），
+   在暗色下会显得突兀花哨，这里统一用 antd 暗色 token 覆盖为简洁配色。 */
+html.dark .notes-vditor-container .vditor-reset blockquote,
+html.dark .notes-preview blockquote {
+  color: var(--ant-color-text-secondary);
+  border-left-color: var(--ant-color-border);
+}
+html.dark .notes-vditor-container .vditor-reset hr,
+html.dark .notes-preview hr {
+  background-color: var(--ant-color-border);
+}
+html.dark .notes-vditor-container .vditor-reset table tr,
+html.dark .notes-preview table tr {
+  background-color: transparent;
+  border-top-color: var(--ant-color-border);
+}
+html.dark .notes-vditor-container .vditor-reset table td,
+html.dark .notes-vditor-container .vditor-reset table th,
+html.dark .notes-preview table td,
+html.dark .notes-preview table th {
+  border-color: var(--ant-color-border);
+}
+html.dark .notes-vditor-container .vditor-reset table tbody tr:nth-child(2n),
+html.dark .notes-preview table tbody tr:nth-child(2n) {
+  background-color: var(--ant-color-fill-tertiary);
+}
+html.dark .notes-vditor-container .vditor-reset code:not(.hljs):not(.highlight-chroma),
+html.dark .notes-preview code:not(.hljs):not(.highlight-chroma) {
+  background-color: var(--ant-color-fill-tertiary);
+}
+html.dark .notes-vditor-container .vditor-reset pre > code,
+html.dark .notes-preview pre > code {
+  background-image: none;
+  background-color: var(--ant-color-fill-tertiary);
+}
+html.dark .notes-vditor-container .vditor-reset a,
+html.dark .notes-preview a {
+  color: var(--ant-color-primary);
+}
+
 /* 全局导航栏：antd Sider 会在 children 外包一层 .ant-layout-sider-children，
    需将其转为 flex 容器，才能让 settings 菜单固定贴底 */
 .app-sider .ant-layout-sider-children {

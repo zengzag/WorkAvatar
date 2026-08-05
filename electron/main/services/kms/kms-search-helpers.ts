@@ -24,7 +24,12 @@ export function extractQueryKeywords(query: string): string[] {
 
 export function buildFtsQuery(keywords: string[]): string {
   const escaped = keywords.map(k => {
-    const clean = k.replace(/"/g, '""').replace(/[*()^\-+]/g, '')
+    // 清理 FTS5 查询特殊字符：双引号需转义，其余运算符/语法符号（* ^ - + ( ) : { } [ ]）直接移除，
+    // 避免注入非法查询语法抛错。关键词多来自 jieba 分词，正常仅含中文/字母/数字，此清理为兜底防御。
+    const clean = k
+      .replace(/"/g, '""')
+      .replace(/[*()^\-+:{}\[\]<>~]/g, '')
+      .trim()
     if (!clean) return null
     return `"${clean}"*`
   }).filter(Boolean) as string[]

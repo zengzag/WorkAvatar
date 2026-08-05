@@ -1781,6 +1781,14 @@ export default {
     ctxInlineCode: '行内代码',
     ctxLink: '链接',
     ctxTable: '表格',
+    // 表格行/列操作
+    ctxTableOps: '表格操作',
+    ctxRowAbove: '上方插入行',
+    ctxRowBelow: '下方插入行',
+    ctxColLeft: '左侧插入列',
+    ctxColRight: '右侧插入列',
+    ctxDelRow: '删除行',
+    ctxDelCol: '删除列',
   },
   automation: {
     // Tab

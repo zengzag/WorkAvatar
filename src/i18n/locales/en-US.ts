@@ -1764,6 +1764,14 @@ export default {
     ctxInlineCode: 'Inline Code',
     ctxLink: 'Link',
     ctxTable: 'Table',
+    // Table row/column operations
+    ctxTableOps: 'Table Actions',
+    ctxRowAbove: 'Insert Row Above',
+    ctxRowBelow: 'Insert Row Below',
+    ctxColLeft: 'Insert Column Left',
+    ctxColRight: 'Insert Column Right',
+    ctxDelRow: 'Delete Row',
+    ctxDelCol: 'Delete Column',
   },
   automation: {
     // Tab
