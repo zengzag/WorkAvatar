@@ -43,6 +43,7 @@ export class EmployeeAgent extends BaseAgent {
 
   private memoryPrompt: string | undefined
   private kbContextPrompt: string | undefined
+  private workspaceContextPrompt: string | undefined
   private minimalMode: boolean = false
   private cachedSystemPrompt: string | undefined = undefined
 
@@ -52,6 +53,14 @@ export class EmployeeAgent extends BaseAgent {
 
   getMemoryPrompt(): string | undefined {
     return this.memoryPrompt
+  }
+
+  updateWorkspaceContextPrompt(prompt: string | undefined): void {
+    this.workspaceContextPrompt = prompt
+  }
+
+  getWorkspaceContextPrompt(): string | undefined {
+    return this.workspaceContextPrompt
   }
 
   updateKBContextPrompt(prompt: string | undefined): void {
@@ -124,6 +133,7 @@ export class EmployeeAgent extends BaseAgent {
     const useSkills = options.useSkills !== false && !this.minimalMode
     const contextContent = buildContextMessageContent({
       skillsPrompt: useSkills ? this.skillsPrompt : undefined,
+      workspaceContextPrompt: this.workspaceContextPrompt,
       memoryPrompt: this.memoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
     })

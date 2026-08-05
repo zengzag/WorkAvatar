@@ -92,14 +92,14 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
-    const ok = workspaceManager.deleteConversation(id)
-    if (ok) {
+    const result = workspaceManager.deleteConversation(id)
+    if (result.ok) {
       // 清理该会话的 allowAlways 授权缓存，避免授权残留
       UnifiedInteractionService.getInstance().clearAllowedSources(id)
       // 同步删除自动化执行历史中关联的记录（双向同步：员工对话删除 → 自动化历史删除）
       try { AutomationService.getInstance().deleteRunByConversation(id) } catch { /* ignore */ }
     }
-    return ok
+    return result
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {

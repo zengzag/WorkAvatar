@@ -46,6 +46,8 @@ export interface Conversation {
   updated_at: number
   last_message_at: number | null
   context_stats_json?: string
+  /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
+  workspace_path?: string
 }
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'

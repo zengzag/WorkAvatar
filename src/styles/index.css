@@ -460,7 +460,7 @@ html.dark .notes-preview table th {
 }
 html.dark .notes-vditor-container .vditor-reset table tbody tr:nth-child(2n),
 html.dark .notes-preview table tbody tr:nth-child(2n) {
-  background-color: var(--ant-color-fill-tertiary);
+  background-color: var(--ant-color-fill-quaternary);
 }
 html.dark .notes-vditor-container .vditor-reset code:not(.hljs):not(.highlight-chroma),
 html.dark .notes-preview code:not(.hljs):not(.highlight-chroma) {

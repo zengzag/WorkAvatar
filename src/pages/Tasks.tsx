@@ -25,7 +25,7 @@ const HorizontalDotsIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }
 )
 
 const Tasks: React.FC = () => {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
@@ -354,32 +354,64 @@ const Tasks: React.FC = () => {
   // 删除任务
   const handleDeleteTask = useCallback(async (taskId: string) => {
     try {
-      await window.electronAPI.conversation.delete(taskId)
+      const res: any = await window.electronAPI.conversation.delete(taskId)
       setGlobalTasks(prev => prev.filter(t => t.id !== taskId))
       if (taskId === activeConversationId) {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
+      // 任务目录非空时，询问是否一并删除任务目录
+      if (res?.taskDirNonEmpty && res?.taskDir) {
+        modal.confirm({
+          title: t('workbench.deleteTaskDirTitle'),
+          content: t('workbench.deleteTaskDirContent', { path: res.taskDir }),
+          okText: t('workbench.deleteTaskDirOk'),
+          cancelText: t('common.cancel'),
+          okButtonProps: { danger: true },
+          onOk: async () => {
+            await window.electronAPI.workspace.deleteTaskDir(res.taskDir)
+          },
+        })
+      }
     } catch {
       message.error(t('workbench.deleteFailed'))
     }
-  }, [activeConversationId, handleNewTask, message, t])
+  }, [activeConversationId, handleNewTask, message, modal, t])
 
   // 批量删除任务
   const handleDeleteMany = useCallback(async (taskIds: string[]) => {
     try {
+      const nonEmptyDirs: string[] = []
       for (const taskId of taskIds) {
-        await window.electronAPI.conversation.delete(taskId)
+        const res: any = await window.electronAPI.conversation.delete(taskId)
+        if (res?.taskDirNonEmpty && res?.taskDir) {
+          nonEmptyDirs.push(res.taskDir)
+        }
       }
       setGlobalTasks(prev => prev.filter(t => !taskIds.includes(t.id)))
       if (activeConversationId && taskIds.includes(activeConversationId)) {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
+      // 存在非空任务目录时，询问是否一并删除
+      if (nonEmptyDirs.length > 0) {
+        modal.confirm({
+          title: t('workbench.deleteTaskDirManyTitle'),
+          content: t('workbench.deleteTaskDirManyContent', { count: nonEmptyDirs.length }),
+          okText: t('workbench.deleteTaskDirOk'),
+          cancelText: t('common.cancel'),
+          okButtonProps: { danger: true },
+          onOk: async () => {
+            for (const dir of nonEmptyDirs) {
+              await window.electronAPI.workspace.deleteTaskDir(dir)
+            }
+          },
+        })
+      }
     } catch {
       message.error(t('workbench.deleteFailed'))
     }
-  }, [activeConversationId, handleNewTask, message, t])
+  }, [activeConversationId, handleNewTask, message, modal, t])
 
   // 新任务草稿 localStorage 缓存 key（按员工区分）
   const newTaskDraftKey = newTaskEmployeeId ? `tasks:newTaskDraft:${newTaskEmployeeId}` : null
@@ -576,25 +608,41 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 在系统文件管理器中打开当前员工的工作区目录
-  const handleOpenWorkspace = useCallback(async () => {
-    const workspacePath = employee?.workspace_path
-    if (!workspacePath) {
+  // 在系统文件管理器中打开指定目录
+  const openDirInExplorer = useCallback(async (dirPath?: string) => {
+    if (!dirPath) {
       message.warning(t('workbench.workspaceNotSet'))
       return
     }
     try {
-      const res = await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+      const res = await window.electronAPI.workspace.openInExplorer({ path: dirPath })
       if (res && (res as any).error) {
         message.error(t('workbench.openWorkspaceFailed', { error: (res as any).error }))
       }
     } catch (e: any) {
       message.error(t('workbench.openWorkspaceFailed', { error: e?.message || String(e) }))
     }
-  }, [employee, message, t])
+  }, [message, t])
+
+  // 打开当前员工的工作区目录
+  const handleOpenWorkspace = useCallback(() => {
+    openDirInExplorer(employee?.workspace_path)
+  }, [employee, openDirInExplorer])
+
+  // 打开当前任务的工作区目录
+  const handleOpenTaskWorkspace = useCallback(() => {
+    const activeTask = globalTasks.find(t => t.id === activeConversationId)
+    openDirInExplorer(activeTask?.workspace_path)
+  }, [globalTasks, activeConversationId, openDirInExplorer])
 
   const moreMenuItems = useMemo<MenuProps['items']>(() => {
     return [
+      {
+        key: 'openTaskWorkspace',
+        icon: <FolderOpenOutlined />,
+        label: t('workbench.openTaskWorkspace'),
+        onClick: handleOpenTaskWorkspace,
+      },
       {
         key: 'openWorkspace',
         icon: <FolderOpenOutlined />,
@@ -602,7 +650,7 @@ const Tasks: React.FC = () => {
         onClick: handleOpenWorkspace,
       },
     ]
-  }, [t, handleOpenWorkspace])
+  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }

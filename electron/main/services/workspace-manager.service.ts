@@ -4,7 +4,7 @@ import { BrowserWindow } from 'electron'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
-import { generateId, generateShortId, extractMessagePreview } from './common-utils'
+import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 
@@ -167,17 +167,17 @@ class WorkspaceManagerService {
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
-        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at, context_stats_json FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
+        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, created_at, updated_at, last_message_at, context_stats_json FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
       ).all(employeeId) as Conversation[]
     }
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, created_at, updated_at, last_message_at, context_stats_json FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
+      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, created_at, updated_at, last_message_at, context_stats_json FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
     ).all() as Conversation[]
   }
 
   /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话，支持分页 */
   getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
-    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json,
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json,
                 e.name as employee_name
          FROM conversations c
          LEFT JOIN employees e ON c.employee_id = e.id
@@ -205,7 +205,7 @@ class WorkspaceManagerService {
   }
 
   createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean): Conversation {
-    const employee = this.db.getDb().prepare('SELECT id FROM employees WHERE id = ?').get(employeeId)
+    const employee = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(employeeId) as { id: string; workspace_path: string | null } | undefined
     if (!employee) {
       throw new Error(`Employee not found: ${employeeId}`)
     }
@@ -213,15 +213,39 @@ class WorkspaceManagerService {
     const conversationId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
+    // 每个任务独立的子目录（位于员工工作区下，日期时间命名）；员工未设置工作区则不创建
+    const workspacePath = employee.workspace_path ? this.createTaskWorkspace(employee.workspace_path) : ''
+
     this.db.getDb().prepare(`
-      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?)
-    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, now, now)
+      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, workspace_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?, ?)
+    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, workspacePath, now, now)
 
     this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
     this.touchEmployeeLastActive(employeeId, now)
 
     return this.getConversation(conversationId)!
+  }
+
+  /** 在员工工作区下创建任务独立目录（YYYYMMDD_HHmmss，碰撞时追加序号） */
+  private createTaskWorkspace(employeeWorkspace: string): string {
+    const ts = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const base = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
+    let dir = path.join(employeeWorkspace, base)
+    let i = 1
+    while (fs.existsSync(dir)) {
+      dir = path.join(employeeWorkspace, `${base}_${i}`)
+      i++
+    }
+    fs.mkdirSync(dir, { recursive: true })
+    return dir
+  }
+
+  /** 获取对话的任务工作区目录（未分配返回空字符串） */
+  getConversationWorkspacePath(conversationId: string): string {
+    const row = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(conversationId) as { workspace_path?: string } | undefined
+    return row?.workspace_path || ''
   }
 
   private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
@@ -299,16 +323,66 @@ class WorkspaceManagerService {
     return true
   }
 
-  deleteConversation(id: string): boolean {
+  deleteConversation(id: string): { ok: boolean; taskDir?: string; taskDirNonEmpty?: boolean } {
+    const conv = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(id) as { workspace_path?: string } | undefined
     this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
-    return result.changes > 0
+    const ok = result.changes > 0
+
+    // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除
+    let taskDir: string | undefined
+    let taskDirNonEmpty: boolean | undefined
+    if (ok && conv?.workspace_path && fs.existsSync(conv.workspace_path)) {
+      try {
+        const entries = fs.readdirSync(conv.workspace_path)
+        if (entries.length === 0) {
+          fs.rmdirSync(conv.workspace_path)
+        } else {
+          taskDir = conv.workspace_path
+          taskDirNonEmpty = true
+        }
+      } catch { /* 目录清理失败不影响删除结果 */ }
+    }
+    return { ok, taskDir, taskDirNonEmpty }
   }
 
   deleteAllConversations(employeeId: string): number {
+    const convs = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE employee_id = ?').all(employeeId) as { workspace_path?: string }[]
     this.db.getDb().prepare('DELETE FROM conversations_fts WHERE employee_id = ?').run(employeeId)
     const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
+    // 清理所有已分配任务目录中的空目录（非空目录保留）
+    for (const c of convs) {
+      if (c.workspace_path && fs.existsSync(c.workspace_path)) {
+        try {
+          if (fs.readdirSync(c.workspace_path).length === 0) fs.rmdirSync(c.workspace_path)
+        } catch { /* ignore */ }
+      }
+    }
     return result.changes
+  }
+
+  /**
+   * 删除任务工作区目录（移至回收站）。安全校验：必须位于数据目录 employees/ 下，
+   * 防止 DB 被篡改后通过任意路径递归删除系统目录。
+   */
+  deleteTaskWorkspace(taskDirPath: string): boolean {
+    const basePath = PathService.getInstance().getDataDir()
+    const employeesRoot = path.resolve(basePath, 'employees')
+    const target = path.resolve(taskDirPath)
+    const relative = path.relative(employeesRoot, target)
+    const isWithinEmployees = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+    if (!isWithinEmployees) {
+      logger.warn(`Refused to delete task workspace outside employees root: ${taskDirPath}`)
+      return false
+    }
+    if (!fs.existsSync(target)) return true
+    try {
+      moveToTrash(target)
+      return true
+    } catch (error) {
+      logger.warn('Failed to remove task workspace directory', target, error)
+      return false
+    }
   }
 
   /**

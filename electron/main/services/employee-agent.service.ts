@@ -5,6 +5,7 @@ import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
 import NotesService from './notes/notes.service'
+import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -173,13 +174,14 @@ class EmployeeAgentService {
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
+        // 稳定不变的环境信息（系统环境/笔记库）保留在 system prompt；
+        // 任务工作区信息随任务变化，改由动态上下文 <workspace> 注入（见 buildWorkspaceContextPrompt）
         const platformMap: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
         const osName = platformMap[process.platform] || process.platform
         const osRelease = os.release()
         const osArch = os.arch()
         const parts: string[] = []
         parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        if (emp.workspace_path) parts.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
         const notesRoot = NotesService.getInstance().getVaultRoot()
         parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
         return parts.join('\n')
@@ -255,6 +257,9 @@ class EmployeeAgentService {
       agent.updateMemoryPrompt(memoryPrompt)
     }
 
+    // 注入任务工作区上下文（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
+    agent.updateWorkspaceContextPrompt(this.buildWorkspaceContextPrompt(emp, conversationId))
+
     this.agentEntries.set(cacheKey, {
       agent,
       conversationId: conversationId || null,
@@ -303,6 +308,24 @@ class EmployeeAgentService {
     return tools
       .filter(t => modeMap.get(t.id) !== 'off')
       .map(t => ({ ...t, onDemand: modeMap.get(t.id) === 'on_demand' }))
+  }
+
+  /** 构建任务工作区上下文（随会话稳定，注入 <workspace> 上下文块） */
+  private buildWorkspaceContextPrompt(emp: DBEmployee, conversationId?: string): string | undefined {
+    const taskWorkspace = conversationId
+      ? WorkspaceManagerService.getInstance().getConversationWorkspacePath(conversationId)
+      : ''
+    const lines: string[] = []
+    if (taskWorkspace) {
+      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行）`)
+      if (emp.workspace_path) {
+        lines.push(`数字员工工作区：${emp.workspace_path}（只读默认，增删改需用户确认，仅用于查看其他任务）`)
+      }
+    } else if (emp.workspace_path) {
+      // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
+      lines.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
+    }
+    return lines.length > 0 ? lines.join('\n') : undefined
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {

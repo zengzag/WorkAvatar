@@ -97,11 +97,13 @@ export function buildContextMessageContent(params: {
   skillsPrompt?: string
   memoryPrompt?: string
   kbContextPrompt?: string
+  workspaceContextPrompt?: string
 }): string | undefined {
-  const { skillsPrompt, memoryPrompt, kbContextPrompt } = params
+  const { skillsPrompt, memoryPrompt, kbContextPrompt, workspaceContextPrompt } = params
   const blocks: string[] = []
-  // skills 在前（字节级稳定），memory 次之，kb 范围最后（随 collectionIds 变化，放最后减少前缀变动）
+  // skills 在前（字节级稳定），workspace 次之（任务工作区随会话稳定），memory 次之，kb 范围最后
   if (skillsPrompt) blocks.push(skillsPrompt) // getSkillsXml() 已自带 <skills> 包裹
+  if (workspaceContextPrompt) blocks.push(`<workspace>${workspaceContextPrompt}</workspace>`)
   if (memoryPrompt) blocks.push(`<memory>${memoryPrompt}</memory>`)
   if (kbContextPrompt) blocks.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
   if (blocks.length === 0) return undefined

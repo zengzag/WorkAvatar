@@ -154,6 +154,7 @@ export type {
 const electronAPI = {
   workspace: {
     openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
+    deleteTaskDir: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, path),
   },
 
   employee: {
