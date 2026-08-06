@@ -64,6 +64,12 @@ class KMSSearchEngineService {
    * 完整原文始终由 FTS5 索引（insertFtsRow 传入未截断的 content）。
    * 500→1000：为语义向量提供更长的输入文本，提升长段落的语义召回（存储增量有限）。 */
   private static readonly SEARCH_INDEX_CONTENT_LIMIT = 1000
+  /** content_paragraph 段落最小字符数：低于此值的短块与相邻段落合并，
+   * 避免 Excel/CSV 按行切分产生海量碎片向量；合并后完整文本仍写入 FTS5 全文索引，不丢内容 */
+  private static readonly MIN_CONTENT_PARAGRAPH_CHARS = 300
+  /** 短块合并成段落的长度上限：累积 + 当前块超过该值则截断另起一段，
+   * 防止连续短行（众多表格行）被合并成巨型段落，导致 FTS5 BM25 长段落惩罚与 content 截断 */
+  private static readonly MAX_MERGE_PARAGRAPH_CHARS = 2000
   /**
    * embedding 内存缓存（LRU + 字节上限）
    *
@@ -285,17 +291,43 @@ class KMSSearchEngineService {
     // 原方案对每个段落执行 content.indexOf(para, currentOffset)，大文档（1MB+ 500 段）= 500MB 字符比较
     const paragraphs: Array<{ text: string; startOffset: number; endOffset: number }> = []
     let pos = 0
+    // 短块(<MIN_CONTENT_PARAGRAPH_CHARS)与相邻内容合并成一个段落，减少碎片向量；
+    // 合并后的完整文本仍写入 FTS5，全文检索不丢内容
+    let buffer = ''
+    let bufferStart = -1
+    let bufferEnd = -1
+    const flush = () => {
+      if (buffer.trim().length > 0) {
+        paragraphs.push({ text: buffer, startOffset: bufferStart, endOffset: bufferEnd })
+      }
+      buffer = ''
+      bufferStart = -1
+      bufferEnd = -1
+    }
     while (pos < content.length) {
       const nextBreak = content.indexOf('\n\n', pos)
       const end = nextBreak === -1 ? content.length : nextBreak
       const text = content.substring(pos, end)
-      if (text.trim().length > 20) {
+      const trimmed = text.trim()
+      if (trimmed.length >= KMSSearchEngineService.MIN_CONTENT_PARAGRAPH_CHARS) {
+        flush()
         paragraphs.push({ text, startOffset: pos, endOffset: end })
+      } else if (trimmed.length > 0) {
+        // 短块：累积 + 当前块超过合并上限时，先落库当前累积，再以当前块另起一段
+        if (buffer && buffer.length + text.length > KMSSearchEngineService.MAX_MERGE_PARAGRAPH_CHARS) {
+          flush()
+        }
+        if (bufferStart === -1) bufferStart = pos
+        buffer = buffer ? buffer + '\n' + text : text
+        bufferEnd = end
+      } else {
+        flush()
       }
       // 跳过所有连续换行符（\n\n+ 分隔符）
       pos = end
       while (pos < content.length && content[pos] === '\n') pos++
     }
+    flush()
     if (paragraphs.length === 0) return
 
     // 预计算每行起始偏移，用于段落→行号映射（二分查找替代线性扫描）
