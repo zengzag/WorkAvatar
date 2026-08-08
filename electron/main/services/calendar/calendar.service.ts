@@ -12,20 +12,31 @@ export type TodoPriority = 'none' | 'low' | 'medium' | 'high'
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 export type ReminderTargetType = 'event' | 'todo'
 
+/** 实例覆盖（对应 iCalendar RECURRENCE-ID 例外组件） */
+export interface InstanceOverride {
+  recurrence_id: number
+  status?: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  completed_at?: number | null
+  started_at?: number | null
+  title?: string
+  description?: string
+  start_at?: number
+  end_at?: number
+  due_at?: number
+}
+
 /** 重复规则：不重复时 recurrence_rule 为空串 */
 export interface RecurrenceRule {
-  /** daily / weekdays / weekly / monthly / yearly */
-  freq: 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly'
-  /** 间隔，例如 interval=2 + weekly = 每两周 */
+  freq: 'daily' | 'weekly' | 'monthly' | 'yearly'
   interval: number
-  /** 最多重复次数（与 until 二选一） */
   count?: number
-  /** 重复截止时间 unix 秒 */
   until?: number
-  /** 被跳过（删除）的实例时间戳列表（Unix 秒），命中该实例时不生成 */
-  excluded_dates?: number[]
-  /** 实例级完成记录：instance_due_at → completed_at（Unix 秒）。支持"跳着完成"（下次未完成、下下次已完成） */
-  completed_instances?: Record<string, number>
+  byday?: string[]
+  bymonthday?: number[]
+  bymonth?: number[]
+  bysetpos?: number
+  rdates?: number[]
+  overrides?: InstanceOverride[]
 }
 
 export type DeleteInstanceMode = 'this' | 'future' | 'all'
@@ -52,9 +63,9 @@ export interface CalendarEvent {
   start_at: number
   end_at: number
   all_day: boolean
+  tzid: string
   color: EventColor
   recurrence_rule: RecurrenceRule | null
-  /** 分钟偏移数组，如 [0, -10, -60] */
   reminders: number[]
   employee_id: string | null
   source: 'user' | 'agent'
@@ -67,13 +78,12 @@ export interface CalendarTodo {
   title: string
   description: string
   due_at: number | null
+  tzid: string
   priority: TodoPriority
   status: TodoStatus
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
-  /** 进入"进行中"状态的时间戳 */
   started_at: number | null
-  /** 完成时间戳 */
   completed_at: number | null
   employee_id: string | null
   source: 'user' | 'agent'
@@ -151,6 +161,7 @@ export interface CreateEventInput {
   start_at: number
   end_at?: number
   all_day?: boolean
+  tzid?: string
   color?: EventColor
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
@@ -166,6 +177,7 @@ export interface UpdateEventInput {
   start_at?: number
   end_at?: number
   all_day?: boolean
+  tzid?: string
   color?: EventColor
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
@@ -175,6 +187,7 @@ export interface CreateTodoInput {
   title: string
   description?: string
   due_at?: number | null
+  tzid?: string
   priority?: TodoPriority
   status?: TodoStatus
   recurrence_rule?: RecurrenceRule | null
@@ -188,11 +201,11 @@ export interface UpdateTodoInput {
   title?: string
   description?: string
   due_at?: number | null
+  tzid?: string
   priority?: TodoPriority
   status?: TodoStatus
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
-  /** 实例级操作锚点（编辑弹窗对某个具体实例完成/取消完成时携带） */
   instance_due_at?: number
 }
 
@@ -289,13 +302,14 @@ class CalendarService {
     const endAt = input.end_at ?? (input.all_day ? startAt + 86400 : startAt + 3600)
     const reminders = input.reminders ?? this.getSettings().default_event_reminders
     const ruleJson = input.recurrence_rule ? JSON.stringify(input.recurrence_rule) : ''
+    const tzid = input.tzid || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
 
     this.db.prepare(
-      `INSERT INTO calendar_events (id, title, description, location, start_at, end_at, all_day, color, recurrence_rule, reminders_json, employee_id, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO calendar_events (id, title, description, location, start_at, end_at, all_day, tzid, color, recurrence_rule, reminders_json, employee_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, input.title, input.description || '', input.location || '',
-      startAt, endAt, input.all_day ? 1 : 0, input.color || 'default',
+      startAt, endAt, input.all_day ? 1 : 0, tzid, input.color || 'default',
       ruleJson, JSON.stringify(reminders),
       input.employee_id ?? null, input.source || 'user', now, now
     )
@@ -322,10 +336,10 @@ class CalendarService {
     }
     const ruleJson = merged.recurrence_rule ? JSON.stringify(merged.recurrence_rule) : ''
     this.db.prepare(
-      `UPDATE calendar_events SET title=?, description=?, location=?, start_at=?, end_at=?, all_day=?, color=?, recurrence_rule=?, reminders_json=?, updated_at=? WHERE id=?`
+      `UPDATE calendar_events SET title=?, description=?, location=?, start_at=?, end_at=?, all_day=?, tzid=?, color=?, recurrence_rule=?, reminders_json=?, updated_at=? WHERE id=?`
     ).run(
       merged.title, merged.description, merged.location,
-      merged.start_at, merged.end_at, merged.all_day ? 1 : 0,
+      merged.start_at, merged.end_at, merged.all_day ? 1 : 0, merged.tzid,
       merged.color, ruleJson, JSON.stringify(merged.reminders), now, input.id
     )
     const updated = this.getEvent(input.id)!
@@ -341,11 +355,9 @@ class CalendarService {
 
   /**
    * 删除事件的指定实例（支持三态：仅本次 / 本次及以后 / 全部）。
-   * - 非重复事件：三态都等同于 deleteEvent。
-   * - 重复事件：
-   *   this    → 把 anchor_at 写入 recurrence_rule.excluded_dates（EXDATE）
-   *   future  → 截断 until = anchor_at - 1 秒；若 anchor_at <= start_at，则退化为删除全量
-   *   all     → deleteEvent
+   * - this    → 写入 overrides status=cancelled（等价 EXDATE）
+   * - future  → 截断 until = anchor_at - 1 秒；若 anchor_at <= start_at，则退化为删除全量
+   * - all     → deleteEvent
    */
   deleteEventInstance(params: DeleteEventInstanceParams): boolean {
     const { id, anchor_at, mode } = params
@@ -353,26 +365,24 @@ class CalendarService {
     if (!existing) return false
     if (!existing.recurrence_rule || mode === 'all') return this.deleteEvent(id)
 
-    const rule = { ...existing.recurrence_rule }
+    const rule: RecurrenceRule = { ...existing.recurrence_rule }
     const now = Math.floor(Date.now() / 1000)
 
     if (mode === 'future') {
-      if (anchor_at <= existing.start_at) {
-        // 锚点就是第一次或更早，直接删全量
-        return this.deleteEvent(id)
-      }
-      // until 取「更小的那个」：已有 until 更小就保留，否则截断到 anchor_at - 1
+      if (anchor_at <= existing.start_at) return this.deleteEvent(id)
       const newUntil = anchor_at - 1
       rule.until = rule.until != null ? Math.min(rule.until, newUntil) : newUntil
     } else {
-      // this
-      rule.excluded_dates = Array.from(new Set([...(rule.excluded_dates ?? []), anchor_at]))
+      const overrides = [...(rule.overrides ?? [])]
+      const idx = overrides.findIndex(o => o.recurrence_id === anchor_at)
+      if (idx >= 0) overrides[idx] = { ...overrides[idx], status: 'cancelled' }
+      else overrides.push({ recurrence_id: anchor_at, status: 'cancelled' })
+      rule.overrides = overrides
     }
 
-    const ruleJson = JSON.stringify(rule)
     this.db.prepare(
       `UPDATE calendar_events SET recurrence_rule=?, updated_at=? WHERE id=?`
-    ).run(ruleJson, now, id)
+    ).run(JSON.stringify(rule), now, id)
     const updated = this.getEvent(id)
     if (updated) this.regenerateEventReminders(updated)
     return true
@@ -447,22 +457,18 @@ class CalendarService {
       for (const td of todos) {
         if (td.recurrence_rule && td.due_at != null) {
           const rule = td.recurrence_rule
-          const map = rule.completed_instances ?? {}
-          const hasCompletions = Object.keys(map).length > 0
+          const completedOverrides = (rule.overrides ?? []).filter(o => o.status === 'completed')
+          const hasCompletions = completedOverrides.length > 0
           if (hasCompletions || td.status !== 'completed') {
-            // 下一个未完成实例（系列整体完成时不再生成）
             if (td.status !== 'completed') {
               merged.push({ ...td, due_at: td.due_at, instance_due_at: td.due_at, is_recurring: true })
             }
-            // 已完成实例（跳过被 EXDATE / 超出 until 的）
-            for (const [k, v] of Object.entries(map)) {
-              const instDue = Number(k)
-              if (!Number.isFinite(instDue)) continue
-              if (rule.excluded_dates?.includes(instDue)) continue
+            for (const o of completedOverrides) {
+              const instDue = o.recurrence_id
               if (rule.until != null && instDue > rule.until) continue
               merged.push({
                 ...td, due_at: instDue, status: 'completed' as TodoStatus,
-                started_at: null, completed_at: v, instance_due_at: instDue, is_recurring: true,
+                started_at: null, completed_at: o.completed_at ?? null, instance_due_at: instDue, is_recurring: true,
               })
             }
             continue
@@ -514,12 +520,13 @@ class CalendarService {
     const status = input.status || 'pending'
     const startedAt = status === 'in_progress' ? now : null
     const completedAt = status === 'completed' ? now : null
+    const tzid = input.tzid || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
 
     this.db.prepare(
-      `INSERT INTO calendar_todos (id, title, description, due_at, priority, status, recurrence_rule, reminders_json, started_at, completed_at, employee_id, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO calendar_todos (id, title, description, due_at, tzid, priority, status, recurrence_rule, reminders_json, started_at, completed_at, employee_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      id, input.title, input.description || '', input.due_at ?? null,
+      id, input.title, input.description || '', input.due_at ?? null, tzid,
       input.priority || 'none', status,
       ruleJson, JSON.stringify(reminders),
       startedAt, completedAt, input.employee_id ?? null, input.source || 'user', now, now
@@ -541,14 +548,10 @@ class CalendarService {
       ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)),
     }
     if (input.recurrence_rule !== undefined) {
-      // 表单/agent 重建规则时保留 EXDATE 与实例完成记录，避免丢失
       if (input.recurrence_rule && existing.recurrence_rule) {
         const nextRule: RecurrenceRule = { ...input.recurrence_rule }
-        if (!nextRule.excluded_dates && existing.recurrence_rule.excluded_dates) {
-          nextRule.excluded_dates = existing.recurrence_rule.excluded_dates
-        }
-        if (!nextRule.completed_instances && existing.recurrence_rule.completed_instances) {
-          nextRule.completed_instances = existing.recurrence_rule.completed_instances
+        if (!nextRule.overrides && existing.recurrence_rule.overrides) {
+          nextRule.overrides = existing.recurrence_rule.overrides
         }
         merged.recurrence_rule = nextRule
       } else {
@@ -558,15 +561,16 @@ class CalendarService {
     if (input.reminders !== undefined) merged.reminders = input.reminders
 
     // 实例级状态变更：编辑弹窗对某个具体实例执行完成/取消完成
-    // （判断依据是该实例自身的完成记录，而非基础状态；操作均为幂等）
     if (input.instance_due_at != null && merged.recurrence_rule && input.status) {
       const rule: RecurrenceRule = { ...merged.recurrence_rule }
-      const map = { ...(rule.completed_instances ?? {}) }
+      const overrides = [...(rule.overrides ?? [])]
       const anchor = input.instance_due_at
       if (input.status === 'completed') {
-        if (map[anchor] == null) map[anchor] = now
+        const idx = overrides.findIndex(o => o.recurrence_id === anchor)
+        if (idx >= 0) overrides[idx] = { ...overrides[idx], status: 'completed', completed_at: now }
+        else overrides.push({ recurrence_id: anchor, status: 'completed', completed_at: now })
         if (anchor === merged.due_at) {
-          const next = this.nextUncompletedAfter(anchor, rule, map)
+          const next = this.nextUncompletedAfter(anchor, rule, overrides)
           if (next == null) {
             merged.status = 'completed'
             merged.completed_at = now
@@ -579,8 +583,8 @@ class CalendarService {
           }
         }
       } else {
-        // pending / in_progress：取消该实例的完成标记
-        delete map[anchor]
+        const idx = overrides.findIndex(o => o.recurrence_id === anchor)
+        if (idx >= 0) overrides.splice(idx, 1)
         if (merged.status === 'completed') {
           merged.status = 'pending'
           merged.completed_at = null
@@ -593,7 +597,7 @@ class CalendarService {
           merged.completed_at = null
         }
       }
-      rule.completed_instances = Object.keys(map).length > 0 ? map : undefined
+      rule.overrides = overrides.length > 0 ? overrides : undefined
       merged.recurrence_rule = rule
     }
 
@@ -616,9 +620,9 @@ class CalendarService {
 
     const ruleJson = merged.recurrence_rule ? JSON.stringify(merged.recurrence_rule) : ''
     this.db.prepare(
-      `UPDATE calendar_todos SET title=?, description=?, due_at=?, priority=?, status=?, recurrence_rule=?, reminders_json=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
+      `UPDATE calendar_todos SET title=?, description=?, due_at=?, tzid=?, priority=?, status=?, recurrence_rule=?, reminders_json=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
     ).run(
-      merged.title, merged.description, merged.due_at,
+      merged.title, merged.description, merged.due_at, merged.tzid,
       merged.priority, merged.status,
       ruleJson, JSON.stringify(merged.reminders), merged.started_at, merged.completed_at, now, input.id
     )
@@ -647,9 +651,9 @@ class CalendarService {
         ).run('pending', now, id)
       }
     } else {
-      // 重复 TODO：实例级完成记录（completed_instances: instance_due_at → completed_at）
-      const rule = { ...existing.recurrence_rule }
-      const map = { ...(rule.completed_instances ?? {}) }
+      // 重复 TODO：实例级完成（overrides status=completed，对应 RECURRENCE-ID 例外组件）
+      const rule: RecurrenceRule = { ...existing.recurrence_rule }
+      const overrides = [...(rule.overrides ?? [])]
       const anchor = instance_due_at ?? existing.due_at
       let dueAt = existing.due_at
       let status = existing.status
@@ -657,12 +661,12 @@ class CalendarService {
       let completedAt = existing.completed_at
 
       if (completed) {
-        map[anchor] = now
+        const idx = overrides.findIndex(o => o.recurrence_id === anchor)
+        if (idx >= 0) overrides[idx] = { ...overrides[idx], status: 'completed', completed_at: now }
+        else overrides.push({ recurrence_id: anchor, status: 'completed', completed_at: now })
         if (anchor === existing.due_at) {
-          // 完成的是"当前到期"实例：推进 due_at 到下一个未完成实例
-          const next = this.nextUncompletedAfter(anchor, rule, map)
+          const next = this.nextUncompletedAfter(anchor, rule, overrides)
           if (next == null) {
-            // 系列耗尽：整系列标记完成
             status = 'completed'
             completedAt = now
             startedAt = existing.started_at ?? now
@@ -673,12 +677,10 @@ class CalendarService {
             completedAt = null
           }
         }
-        // 跳着完成（anchor > due_at）：只记录，due_at 保持最早未完成实例
       } else {
-        // 取消完成：移除该实例记录，due_at 回退到最早未完成实例
-        delete map[anchor]
+        const idx = overrides.findIndex(o => o.recurrence_id === anchor)
+        if (idx >= 0) overrides.splice(idx, 1)
         if (status === 'completed') {
-          // 系列曾整体完成 → 恢复为未完成系列
           status = 'pending'
           startedAt = null
           completedAt = null
@@ -686,7 +688,7 @@ class CalendarService {
         dueAt = Math.min(dueAt, anchor)
       }
 
-      rule.completed_instances = Object.keys(map).length > 0 ? map : undefined
+      rule.overrides = overrides.length > 0 ? overrides : undefined
       this.db.prepare(
         `UPDATE calendar_todos SET recurrence_rule=?, due_at=?, status=?, started_at=?, completed_at=?, updated_at=? WHERE id=?`
       ).run(JSON.stringify(rule), dueAt, status, startedAt, completedAt, now, id)
@@ -713,8 +715,8 @@ class CalendarService {
    * 删除 TODO 的指定实例（支持三态：仅本次 / 本次及以后 / 全部）。
    * - 非重复 TODO：三态都等同于 deleteTodo。
    * - 重复 TODO：
-   *   this    → 把 anchor_at 写入 excluded_dates；若此时原始 due_at 命中 EXDATE / 旧截止，则推进 due_at 到下一次有效日期
-   *   future  → 截断 until = anchor_at - 1；若截断后 due_at >= until / 命中 EXDATE，推进 due_at；若 anchor_at <= due_at（首条就删未来）退化为 deleteTodo
+   *   this    → 写入 overrides status=cancelled；若原始 due_at 命中 cancelled / 旧截止，则推进 due_at
+   *   future  → 截断 until = anchor_at - 1；若 anchor_at <= due_at 退化为 deleteTodo
    *   all     → deleteTodo
    */
   deleteTodoInstance(params: DeleteTodoInstanceParams): boolean {
@@ -723,42 +725,36 @@ class CalendarService {
     if (!existing) return false
     if (!existing.recurrence_rule || mode === 'all') return this.deleteTodo(id)
 
-    const rule = { ...existing.recurrence_rule }
+    const rule: RecurrenceRule = { ...existing.recurrence_rule }
     const now = Math.floor(Date.now() / 1000)
     let truncated = false
 
     if (mode === 'future') {
-      if (existing.due_at != null && anchor_at <= existing.due_at) {
-        // 锚点就是第一次或更早，直接删全量
-        return this.deleteTodo(id)
-      }
+      if (existing.due_at != null && anchor_at <= existing.due_at) return this.deleteTodo(id)
       const newUntil = anchor_at - 1
       rule.until = rule.until != null ? Math.min(rule.until, newUntil) : newUntil
       truncated = true
     } else {
-      rule.excluded_dates = Array.from(new Set([...(rule.excluded_dates ?? []), anchor_at]))
-      // 同步清理该实例的完成记录，避免已删除实例仍出现在已完成列表中
-      if (rule.completed_instances) {
-        const map = { ...rule.completed_instances }
-        delete map[anchor_at]
-        if (Object.keys(map).length > 0) rule.completed_instances = map
-        else delete rule.completed_instances
-      }
+      const overrides = [...(rule.overrides ?? [])]
+      const idx = overrides.findIndex(o => o.recurrence_id === anchor_at)
+      if (idx >= 0) overrides[idx] = { ...overrides[idx], status: 'cancelled' }
+      else overrides.push({ recurrence_id: anchor_at, status: 'cancelled' })
+      rule.overrides = overrides
     }
 
-    // 推进 due_at：保证原始 due_at 落在下一个有效实例（excluded_dates / until 之后）
+    // 推进 due_at：保证原始 due_at 落在下一个有效实例（cancelled / until 之后）
     let nextDueAt = existing.due_at
     if (existing.due_at != null && existing.status !== 'completed') {
+      const overridesMap = this.getOverridesMap(rule)
       const until = rule.until ?? Infinity
       const maxIter = 1000
       let iter = 0
       let cursor = existing.due_at
-      // count 不再计数：只是推进 due_at，真正 count 语义交给 expand / regenerate 处理
       while (iter < maxIter) {
         iter++
-        const excluded = rule.excluded_dates?.includes(cursor)
+        const cancelled = overridesMap.get(cursor)?.status === 'cancelled'
         const pastUntil = cursor > until
-        if (!excluded && !pastUntil) break
+        if (!cancelled && !pastUntil) break
         const nxt = this.advanceRecurrence(cursor, rule)
         if (nxt === cursor) break
         cursor = nxt
@@ -773,7 +769,6 @@ class CalendarService {
         `UPDATE calendar_todos SET recurrence_rule=?, due_at=?, started_at=NULL, completed_at=NULL, status='pending', updated_at=? WHERE id=?`
       ).run(ruleJson, nextDueAt, now, id)
     } else if (truncated && nextDueAt != null && existing.status === 'completed') {
-      // 截断后已完成 TODO，不强制改动状态（completed 语义不变），但更新 due_at
       this.db.prepare(`UPDATE calendar_todos SET recurrence_rule=?, due_at=?, updated_at=? WHERE id=?`).run(ruleJson, nextDueAt, now, id)
     } else {
       this.db.prepare(`UPDATE calendar_todos SET recurrence_rule=?, updated_at=? WHERE id=?`).run(ruleJson, now, id)
@@ -958,16 +953,14 @@ class CalendarService {
       }]
     }
     const rule = event.recurrence_rule
+    const overrides = this.getOverridesMap(rule)
     const duration = event.end_at - event.start_at
     const instances: CalendarEventInstance[] = []
     const until = rule.until ?? winEnd + 86400
-    // 提高上限作为安全网；fastForwardCursor 已跳过大量历史迭代
     const maxIterations = 10000
     let iter = 0
 
-    // 跳过窗口之前的历史实例，避免对长期重复事件做无效迭代
     let cursor = this.fastForwardCursor(event.start_at, winStart - 86400, rule)
-    // count 限制基于从 start_at 起的总实例数，需消耗已跳过的迭代
     if (rule.count) {
       const skipped = this.countOccurrencesBetween(event.start_at, cursor, rule)
       iter = skipped
@@ -977,8 +970,8 @@ class CalendarService {
       iter++
       if (cursor > until) break
       if (cursor > winEnd) break
-      // 跳过被排除的实例（EXDATE）
-      if (rule.excluded_dates?.includes(cursor)) {
+      const override = overrides.get(cursor)
+      if (override?.status === 'cancelled') {
         if (rule.count && iter >= rule.count) break
         const next = this.advanceRecurrence(cursor, rule)
         if (next === cursor) break
@@ -989,11 +982,10 @@ class CalendarService {
       if (instanceEnd >= winStart) {
         instances.push({
           ...event,
-          start_at: event.start_at,
-          end_at: event.end_at,
           instance_start_at: cursor,
           instance_end_at: instanceEnd,
           is_recurring: true,
+          ...(override?.title ? { title: override.title } : {}),
         })
       }
       if (rule.count && iter >= rule.count) break
@@ -1001,10 +993,21 @@ class CalendarService {
       if (next === cursor) break
       cursor = next
     }
+
+    for (const rd of rule.rdates ?? []) {
+      if (rd < winStart || rd > winEnd || rd > until) continue
+      if (overrides.get(rd)?.status === 'cancelled') continue
+      instances.push({
+        ...event,
+        instance_start_at: rd,
+        instance_end_at: rd + duration,
+        is_recurring: true,
+      })
+    }
     return instances
   }
 
-  /** 展开重复 TODO 在 [winStart, winEnd] 区间内的实例（含已完成实例，实例状态由 completed_instances 决定） */
+  /** 展开重复 TODO 在 [winStart, winEnd] 区间内的实例（含已完成实例，实例状态由 overrides 决定） */
   private expandTodoInstances(todo: CalendarTodo, winStart: number, winEnd: number): CalendarTodoInstance[] {
     if (!todo.recurrence_rule || todo.due_at == null) {
       return [{
@@ -1014,13 +1017,12 @@ class CalendarService {
       }]
     }
     const rule = todo.recurrence_rule
-    const completedMap = rule.completed_instances ?? {}
+    const overrides = this.getOverridesMap(rule)
     const instances: CalendarTodoInstance[] = []
     const until = rule.until ?? winEnd + 86400
     const maxIterations = 10000
     let iter = 0
 
-    // 从系列最早实例开始，保证窗口内已完成实例也能展开（due_at 可能已推进到未来）
     const origin = this.getSeriesOrigin(todo)
     let cursor = this.fastForwardCursor(origin, winStart - 86400, rule)
     if (rule.count) {
@@ -1032,8 +1034,8 @@ class CalendarService {
       iter++
       if (cursor > until) break
       if (cursor > winEnd) break
-      // 跳过被排除的实例（EXDATE）
-      if (rule.excluded_dates?.includes(cursor)) {
+      const override = overrides.get(cursor)
+      if (override?.status === 'cancelled') {
         if (rule.count && iter >= rule.count) break
         const next = this.advanceRecurrence(cursor, rule)
         if (next === cursor) break
@@ -1041,21 +1043,32 @@ class CalendarService {
         continue
       }
       if (cursor >= winStart) {
-        const completedAt = completedMap[cursor]
         instances.push({
           ...todo,
-          due_at: todo.due_at,
           instance_due_at: cursor,
           is_recurring: true,
-          status: completedAt != null ? 'completed' : todo.status,
-          started_at: completedAt != null ? null : todo.started_at,
-          completed_at: completedAt ?? todo.completed_at,
+          status: override?.status ?? todo.status,
+          started_at: override?.started_at ?? (override?.status === 'completed' ? null : todo.started_at),
+          completed_at: override?.completed_at ?? (override?.status === 'completed' ? override.completed_at ?? null : todo.completed_at),
         })
       }
       if (rule.count && iter >= rule.count) break
       const next = this.advanceRecurrence(cursor, rule)
       if (next === cursor) break
       cursor = next
+    }
+
+    for (const rd of rule.rdates ?? []) {
+      if (rd < winStart || rd > winEnd || rd > until) continue
+      const override = overrides.get(rd)
+      if (override?.status === 'cancelled') continue
+      instances.push({
+        ...todo,
+        instance_due_at: rd,
+        is_recurring: true,
+        status: override?.status ?? todo.status,
+        completed_at: override?.completed_at ?? todo.completed_at,
+      })
     }
     return instances
   }
@@ -1097,14 +1110,7 @@ class CalendarService {
         return eventStart + Math.floor(diffSec / (interval * 86400)) * interval * 86400
       case 'weekly':
         return eventStart + Math.floor(diffSec / (interval * 7 * 86400)) * interval * 7 * 86400
-      case 'weekdays': {
-        // 按周为单位跳进，剩余由迭代补齐
-        const chunkSec = interval * 7 * 86400
-        return eventStart + Math.floor(diffSec / chunkSec) * chunkSec
-      }
       case 'monthly': {
-        // 少跳一个 interval，避免月末钳位导致 cursor 偏离实际序列
-        // expandEventInstances 的 while 循环会逐月修正
         const startDate = new Date(eventStart * 1000)
         const targetDate = new Date(target * 1000)
         const monthsDiff = (targetDate.getFullYear() - startDate.getFullYear()) * 12 + (targetDate.getMonth() - startDate.getMonth())
@@ -1114,7 +1120,6 @@ class CalendarService {
         return Math.floor(skipped.getTime() / 1000)
       }
       case 'yearly': {
-        // 少跳一个 interval，与 monthly 同理
         const startDate = new Date(eventStart * 1000)
         const targetDate = new Date(target * 1000)
         const yearsDiff = targetDate.getFullYear() - startDate.getFullYear()
@@ -1133,17 +1138,16 @@ class CalendarService {
     if (to <= from) return 0
     const interval = Math.max(1, rule.interval)
     const diffSec = to - from
+    const perPeriod = (arr?: any[]) => Math.max(1, arr?.length ?? 1)
     switch (rule.freq) {
       case 'daily':
         return Math.floor(diffSec / (interval * 86400))
       case 'weekly':
-        return Math.floor(diffSec / (interval * 7 * 86400))
-      case 'weekdays':
-        return Math.floor(diffSec / (interval * 7 * 86400)) * 5
+        return Math.floor(diffSec / (interval * 7 * 86400)) * perPeriod(rule.byday)
       case 'monthly':
-        return Math.floor(diffSec / (interval * 30 * 86400))
+        return Math.floor(diffSec / (interval * 30 * 86400)) * perPeriod(rule.bymonthday)
       case 'yearly':
-        return Math.floor(diffSec / (interval * 365 * 86400))
+        return Math.floor(diffSec / (interval * 365 * 86400)) * perPeriod(rule.bymonth)
       default:
         return 0
     }
@@ -1176,31 +1180,56 @@ class CalendarService {
     return result
   }
 
-  /** 根据重复规则推算下一个发生时间 */
+  /** 根据重复规则推算下一个发生时间（支持 BYDAY/BYMONTHDAY/BYMONTH） */
   private advanceRecurrence(current: number, rule: RecurrenceRule): number {
     const interval = Math.max(1, rule.interval)
     const date = new Date(current * 1000)
     switch (rule.freq) {
       case 'daily':
         return current + interval * 86400
-      case 'weekdays': {
-        let next = current + 86400
-        let stepped = 0
-        while (stepped < interval) {
-          const d = new Date(next * 1000)
-          const day = d.getDay()
-          if (day !== 0 && day !== 6) stepped++
-          if (stepped < interval) next += 86400
-        }
-        return next
-      }
       case 'weekly':
+        if (rule.byday && rule.byday.length > 0) {
+          const dayMap: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 }
+          const currentDow = date.getDay()
+          const sortedDows = rule.byday.map(bd => dayMap[bd]).filter(d => d != null).sort((a, b) => a - b)
+          const nextDow = sortedDows.find(d => d > currentDow)
+          if (nextDow != null) return current + (nextDow - currentDow) * 86400
+          const firstDow = sortedDows[0]
+          const daysToNext = (7 - currentDow + firstDow) + (interval - 1) * 7
+          return current + daysToNext * 86400
+        }
         return current + interval * 7 * 86400
       case 'monthly': {
+        if (rule.bymonthday && rule.bymonthday.length > 0) {
+          const currentDay = date.getDate()
+          const sortedDays = [...rule.bymonthday].sort((a, b) => a - b)
+          const nextDay = sortedDays.find(d => d > currentDay)
+          if (nextDay != null) {
+            const dt = new Date(date.getFullYear(), date.getMonth(), nextDay)
+            return Math.floor(dt.getTime() / 1000)
+          }
+          const nextMonth = this.addMonths(date, interval)
+          const daysInNext = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()
+          const firstDay = sortedDays.find(d => d >= 1 && d <= daysInNext)!
+          const dt = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), firstDay)
+          return Math.floor(dt.getTime() / 1000)
+        }
         const d = this.addMonths(date, interval)
         return Math.floor(d.getTime() / 1000)
       }
       case 'yearly': {
+        if (rule.bymonth && rule.bymonth.length > 0) {
+          const currentMonth = date.getMonth()
+          const sortedMonths = [...rule.bymonth].sort((a, b) => a - b)
+          const nextMonthIdx = sortedMonths.map(m => m - 1).find(m => m > currentMonth)
+          if (nextMonthIdx != null) {
+            const dt = new Date(date.getFullYear(), nextMonthIdx, date.getDate())
+            return Math.floor(dt.getTime() / 1000)
+          }
+          const firstMonth = sortedMonths[0] - 1
+          const dt = new Date(date.getFullYear() + interval, firstMonth, date.getDate())
+          return Math.floor(dt.getTime() / 1000)
+        }
         const d = this.addYears(date, interval)
         return Math.floor(d.getTime() / 1000)
       }
@@ -1209,16 +1238,19 @@ class CalendarService {
     }
   }
 
+  /** 构建 overrides 的查找 Map */
+  private getOverridesMap(rule: RecurrenceRule | null): Map<number, InstanceOverride> {
+    if (!rule?.overrides) return new Map()
+    return new Map(rule.overrides.map(o => [o.recurrence_id, o]))
+  }
+
   /** 重复系列的最早实例时间（用于从历史已完成实例开始展开日历窗口） */
   private getSeriesOrigin(todo: CalendarTodo): number {
     let origin = todo.due_at ?? 0
     const rule = todo.recurrence_rule
     if (!rule) return origin
-    for (const k of Object.keys(rule.completed_instances ?? {})) {
-      const v = Number(k)
-      if (Number.isFinite(v)) origin = Math.min(origin, v)
-    }
-    for (const e of rule.excluded_dates ?? []) origin = Math.min(origin, e)
+    for (const o of rule.overrides ?? []) origin = Math.min(origin, o.recurrence_id)
+    for (const rd of rule.rdates ?? []) origin = Math.min(origin, rd)
     return origin
   }
 
@@ -1227,9 +1259,10 @@ class CalendarService {
    * - 无 count：从 after 逐次推进，越过已完成 / 被排除实例
    * - 有 count：从系列起点走序号校验（含被排除占位，语义与 expand 一致），序号超过 count 即耗尽
    */
-  private nextUncompletedAfter(after: number, rule: RecurrenceRule, map: Record<string, number>): number | null {
+  private nextUncompletedAfter(after: number, rule: RecurrenceRule, overrides: InstanceOverride[]): number | null {
     const until = rule.until ?? Infinity
     const maxIter = 10000
+    const overrideMap = new Map(overrides.map(o => [o.recurrence_id, o]))
     if (!rule.count) {
       let cursor = after
       for (let i = 0; i < maxIter; i++) {
@@ -1237,26 +1270,23 @@ class CalendarService {
         if (next === cursor) return null
         cursor = next
         if (cursor > until) return null
-        if (rule.excluded_dates?.includes(cursor)) continue
-        if (map[cursor] != null) continue
+        const ov = overrideMap.get(cursor)
+        if (ov?.status === 'cancelled' || ov?.status === 'completed') continue
         return cursor
       }
       return null
     }
-    // count 路径：从系列起点（after 与已完成/被排除实例的最小值）走序号
+    // count 路径：从系列起点走序号
     let origin = after
-    for (const k of Object.keys(map)) {
-      const v = Number(k)
-      if (Number.isFinite(v)) origin = Math.min(origin, v)
-    }
-    for (const e of rule.excluded_dates ?? []) origin = Math.min(origin, e)
+    for (const o of overrides) origin = Math.min(origin, o.recurrence_id)
     let cursor = origin
     let idx = 1
     for (let i = 0; i < maxIter; i++) {
       if (cursor > after) {
         if (cursor > until) return null
         if (idx > rule.count) return null
-        if (!rule.excluded_dates?.includes(cursor) && map[cursor] == null) return cursor
+        const ov = overrideMap.get(cursor)
+        if (ov?.status !== 'cancelled' && ov?.status !== 'completed') return cursor
       }
       const next = this.advanceRecurrence(cursor, rule)
       if (next === cursor) return null
@@ -1292,6 +1322,7 @@ class CalendarService {
       start_at: row.start_at,
       end_at: row.end_at,
       all_day: !!row.all_day,
+      tzid: row.tzid || '',
       color: row.color,
       recurrence_rule: row.recurrence_rule ? this.safeParseJson(row.recurrence_rule, null) : null,
       reminders: this.safeParseJson(row.reminders_json, []),
@@ -1308,6 +1339,7 @@ class CalendarService {
       title: row.title,
       description: row.description || '',
       due_at: row.due_at ?? null,
+      tzid: row.tzid || '',
       priority: row.priority,
       status: row.status,
       recurrence_rule: row.recurrence_rule ? this.safeParseJson(row.recurrence_rule, null) : null,
