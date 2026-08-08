@@ -129,7 +129,7 @@ const Employees: React.FC = () => {
   }, [navigate])
 
   const handleDeleteEmployee = useCallback((emp: Employee) => {
-    let deleteWorkspace = false
+    let deleteWorkspace = true
     const workspacePath = emp.workspace_path
 
     modal.confirm({
@@ -174,6 +174,7 @@ const Employees: React.FC = () => {
           )}
           {workspacePath && (
             <Checkbox
+              defaultChecked
               onChange={(e) => { deleteWorkspace = e.target.checked }}
               style={{ marginTop: 12 }}
             >
