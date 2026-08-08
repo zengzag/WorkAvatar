@@ -1751,6 +1751,9 @@ export default {
     tabUnsavedIndicator: 'Unsaved',
     selectNoteToEdit: 'Select a note from the sidebar to start editing',
     createNewNote: 'New Note',
+    // External file temporary open
+    externalFileTab: 'External file (temporary)',
+    dropMdToOpen: 'Drop .md file to open temporarily',
     // Editor context menu
     ctxHeadings: 'Headings',
     ctxFormat: 'Text Format',

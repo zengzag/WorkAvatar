@@ -82,6 +82,17 @@ export function createRetryMiddleware(maxRetries: number = 2, baseDelayMs: numbe
   return {
     name: 'retry',
     fn: async (toolName, _args, next) => {
+      // 交互类工具（ask_user/fs 确认）标记 noRetry，超时或取消不重试
+      if (_args._noRetry) {
+        delete _args._noRetry
+        try {
+          const result = await next()
+          return result.success ? result : { success: false, error: result.error, toolName }
+        } catch (error: any) {
+          return { success: false, error: error?.message || String(error), toolName }
+        }
+      }
+
       let lastError: Error | null = null
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {

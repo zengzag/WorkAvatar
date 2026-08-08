@@ -1768,6 +1768,9 @@ export default {
     tabUnsavedIndicator: '未保存',
     selectNoteToEdit: '从左侧选择笔记开始编辑',
     createNewNote: '新建笔记',
+    // 外部文件临时打开
+    externalFileTab: '外部文件（临时打开）',
+    dropMdToOpen: '拖放 .md 文件以临时打开',
     // 编辑器右键菜单
     ctxHeadings: '标题',
     ctxFormat: '文字格式',

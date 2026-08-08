@@ -23,6 +23,8 @@ export const NOTES_CHANNELS = {
   NOTES_IMPORT_EXTERNAL: 'notes:import-external',
   NOTES_SAVE_IMAGE: 'notes:save-image',
   NOTES_OPEN_DIARY: 'notes:open-diary',
+  NOTES_READ_EXTERNAL: 'notes:read-external',
+  NOTES_WRITE_EXTERNAL: 'notes:write-external',
 
   // 事件推送（主进程 → 渲染进程）
   NOTES_DATA_CHANGED: 'notes:data-changed',
@@ -148,6 +150,12 @@ export interface NoteSaveImageParams {
   buffer: ArrayBuffer | Uint8Array
   /** 原始文件名（用于提取扩展名） */
   fileName: string
+}
+
+export interface NoteExternalWriteParams {
+  /** 外部文件的绝对路径（vault 之外） */
+  absPath: string
+  content: string
 }
 
 export interface NotesDataChangedPayload {

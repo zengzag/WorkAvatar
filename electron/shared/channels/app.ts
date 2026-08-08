@@ -20,6 +20,9 @@ export const APP_CHANNELS = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_IS_MAXIMIZED: 'window:is-maximized',
   WINDOW_ON_MAXIMIZED_CHANGE: 'window:on-maximized-change',
+
+  // 系统右键"打开方式"或拖拽到应用图标时，主进程推送待打开的文件绝对路径给渲染进程
+  APP_OPEN_EXTERNAL_FILE: 'app:open-external-file',
 } as const
 
 export interface SettingsGetParams {

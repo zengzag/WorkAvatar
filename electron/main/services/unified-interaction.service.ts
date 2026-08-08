@@ -3,6 +3,9 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
 
+/** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
+export const INTERACTION_TIMEOUT_MS = 300000
+
 export interface InteractionOption {
   label: string
   value: string
@@ -22,6 +25,8 @@ export interface InteractionRequest {
   danger?: boolean
   timeout?: number
   source?: string
+  /** 路径级去重：同一会话内该路径被确认后，后续相同路径自动通过 */
+  pathScope?: string
 }
 
 export interface InteractionResponse {
@@ -31,6 +36,8 @@ export interface InteractionResponse {
   inputValue?: string
   cancelled: boolean
   allowAlways?: boolean
+  /** 超时触发（非用户主动取消） */
+  timedOut?: boolean
 }
 
 interface PendingRequest {
@@ -39,6 +46,8 @@ interface PendingRequest {
   source?: string
   /** allowAlways 授权的缓存 key，优先为 conversationId，降级为 sessionId */
   allowKey?: string
+  /** 路径级去重缓存 key */
+  pathScope?: string
 }
 
 interface SessionInfo {
@@ -64,6 +73,8 @@ class UnifiedInteractionService {
    * 作用：使"本次任务始终允许"覆盖整个会话的后续消息，而非仅当前一条消息。
    */
   private allowedSourcesByKey: Map<string, Set<string>> = new Map()
+  /** 路径级去重缓存，key 为 conversationId（优先）或 sessionId（降级）。用户确认某路径后，同会话内该路径自动通过 */
+  private allowedPathsByKey: Map<string, Set<string>> = new Map()
   private ipcRegistered = false
 
   private constructor() {}
@@ -114,9 +125,18 @@ class UnifiedInteractionService {
       }
     }
 
+    // 路径级去重：同会话内已确认的路径自动通过
+    if (request.pathScope && this.isPathAllowed(allowKey, request.pathScope)) {
+      return {
+        id: '',
+        confirmed: true,
+        cancelled: false,
+      }
+    }
+
     const id = generateId()
     const fullRequest: InteractionRequest = { ...request, id }
-    const timeout = request.timeout || 300000
+    const timeout = request.timeout || INTERACTION_TIMEOUT_MS
 
     // 主窗口未激活时，通过系统通知告知用户有数字员工询问
     // 避免用户错过权限请求；点击通知会聚焦主窗口显示交互弹窗
@@ -125,10 +145,10 @@ class UnifiedInteractionService {
     return new Promise<InteractionResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id)
-        resolve({ id, cancelled: true })
+        resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
-      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey })
+      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey, pathScope: request.pathScope })
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
@@ -161,11 +181,12 @@ class UnifiedInteractionService {
   }
 
   /**
-   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存。
+   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存和路径去重缓存。
    * 应在 conversation 删除时调用，避免内存泄漏与授权残留。
    */
   clearAllowedSources(allowKey: string): void {
     this.allowedSourcesByKey.delete(allowKey)
+    this.allowedPathsByKey.delete(allowKey)
   }
 
   private isSourceAllowed(allowKey: string, source: string): boolean {
@@ -179,6 +200,19 @@ class UnifiedInteractionService {
       this.allowedSourcesByKey.set(allowKey, set)
     }
     set.add(source)
+  }
+
+  private isPathAllowed(allowKey: string, pathScope: string): boolean {
+    return this.allowedPathsByKey.get(allowKey)?.has(pathScope) || false
+  }
+
+  private allowPath(allowKey: string, pathScope: string): void {
+    let set = this.allowedPathsByKey.get(allowKey)
+    if (!set) {
+      set = new Set()
+      this.allowedPathsByKey.set(allowKey, set)
+    }
+    set.add(pathScope)
   }
 
   private createDeniedResponse(request: Omit<InteractionRequest, 'id'>, _reason: string): InteractionResponse {
@@ -202,6 +236,10 @@ class UnifiedInteractionService {
           // 用户点击"本次任务始终允许"时，缓存授权到 conversation 级别
           if (response.allowAlways && pending.source && pending.allowKey) {
             this.allowSource(pending.allowKey, pending.source)
+          }
+          // 用户确认后，缓存路径级去重（同会话内该路径后续操作自动通过）
+          if (response.confirmed && pending.pathScope && pending.allowKey) {
+            this.allowPath(pending.allowKey, pending.pathScope)
           }
           pending.resolve(response)
           return { success: true }

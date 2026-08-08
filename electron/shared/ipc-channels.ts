@@ -112,6 +112,7 @@ export type {
   TodoPriority,
   TodoStatus,
   RecurrenceRule,
+  InstanceOverride,
   CalendarEvent,
   CalendarEventInstance,
   CalendarTodo,
@@ -158,5 +159,6 @@ export type {
   NoteImportExternalParams,
   NoteSearchParams,
   NoteSaveImageParams,
+  NoteExternalWriteParams,
   NotesDataChangedPayload,
 } from './channels/notes'

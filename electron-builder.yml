@@ -2,6 +2,14 @@ appId: com.workavatar.desktop
 productName: WorkAvatar
 copyright: Copyright © 2024 WorkAvatar
 
+# 注册为 .md 文件关联程序，出现在系统右键"打开方式"菜单
+fileAssociations:
+  - ext: md
+    name: Markdown
+    description: Markdown 文件
+    role: Viewer
+    icon: resources/icons/icon.ico
+
 npmRebuild: false
 
 # 顶层压缩：最大化 asar 内文件压缩率

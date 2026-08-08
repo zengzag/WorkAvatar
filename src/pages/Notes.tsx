@@ -20,6 +20,7 @@ import NotesTree from '../components/notes/NotesTree'
 import VditorEditor from '../components/notes/VditorEditor'
 import NoteOutline from '../components/notes/NoteOutline'
 import NotesSettingsDrawer from '../components/notes/NotesSettingsDrawer'
+import { drainPendingExternalFiles, subscribePendingExternalFiles } from '../lib/pending-external-files'
 import type { NoteEditorMode } from '../types/notes'
 
 const SIDEBAR_MIN = 180
@@ -88,9 +89,22 @@ const NotesPage: React.FC = () => {
   const [sidebarWidth, setSidebarWidth] = useState<number>(notes.settings.sidebar_width || 260)
   const [outlineWidth, setOutlineWidth] = useState<number>(notes.settings.outline_width || 260)
   const [selectedCount, setSelectedCount] = useState(0)
+  const [externalDragOver, setExternalDragOver] = useState(false)
 
   useEffect(() => {
     notes.init()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 消费暂存的外部 .md 文件路径（笔记页未挂载时由 App.tsx 入队）
+  useEffect(() => {
+    const pending = drainPendingExternalFiles()
+    if (pending.length > 0) {
+      pending.forEach((p) => notes.openExternal(p))
+    }
+    const unsub = subscribePendingExternalFiles((absPath) => {
+      notes.openExternal(absPath)
+    })
+    return () => { unsub() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -196,15 +210,49 @@ const NotesPage: React.FC = () => {
   const editorMode = notes.settings.editor_mode
 
   useEffect(() => {
-    if (notes.currentRelPath) {
+    if (notes.currentRelPath || notes.currentExternalAbsPath) {
       requestAnimationFrame(() => window.dispatchEvent(new Event('resize')))
     }
-  }, [notes.activeTabId, notes.currentRelPath])
+  }, [notes.activeTabId, notes.currentRelPath, notes.currentExternalAbsPath])
 
   const fileName = useMemo(() => {
+    if (notes.currentExternalAbsPath) {
+      const parts = notes.currentExternalAbsPath.replace(/\\/g, '/').split('/')
+      return parts[parts.length - 1] || notes.currentExternalAbsPath
+    }
     if (!notes.currentRelPath) return ''
     return notes.currentRelPath.split('/').pop() || notes.currentRelPath
-  }, [notes.currentRelPath])
+  }, [notes.currentRelPath, notes.currentExternalAbsPath])
+
+  // 拖拽 .md 文件到编辑区临时打开
+  const handleEditorDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setExternalDragOver(true)
+  }, [])
+
+  const handleEditorDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    const related = e.relatedTarget as HTMLElement | null
+    if (related && e.currentTarget.contains(related)) return
+    setExternalDragOver(false)
+  }, [])
+
+  const handleEditorDrop = useCallback(async (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    e.stopPropagation()
+    setExternalDragOver(false)
+    const files = Array.from(e.dataTransfer.files)
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith('.md')) continue
+      try {
+        const absPath = window.electronAPI.getPathForFile(file)
+        await notes.openExternal(absPath)
+      } catch { /* ignore */ }
+    }
+  }, [notes])
 
   const wordCount = useMemo(() => {
     if (!notes.currentContent) return 0
@@ -236,7 +284,7 @@ const NotesPage: React.FC = () => {
     }
   }, [notes.saveStatus, token, t])
 
-  const hasOpenFile = !!notes.currentRelPath
+  const hasOpenFile = !!notes.currentRelPath || !!notes.currentExternalAbsPath
   const emptyEditor = notes.tabs.length === 0 || !hasOpenFile
 
   return (
@@ -362,11 +410,17 @@ const NotesPage: React.FC = () => {
             >
               {notes.tabs.map((tab) => {
                 const isActive = tab.id === notes.activeTabId
-                const tabFileName = tab.relPath ? (tab.relPath.split('/').pop() || tab.relPath) : t('notes.newTab')
+                const tabPath = tab.externalAbsPath || tab.relPath || ''
+                const tabFileName = tab.externalAbsPath
+                  ? (tab.externalAbsPath.replace(/\\/g, '/').split('/').pop() || tab.externalAbsPath)
+                  : tab.relPath
+                    ? (tab.relPath.split('/').pop() || tab.relPath)
+                    : t('notes.newTab')
+                const isExternal = !!tab.externalAbsPath
                 return (
                   <div
                     key={tab.id}
-                    title={tab.relPath || t('notes.newTab')}
+                    title={tabPath || t('notes.newTab')}
                     onClick={() => notes.switchTab(tab.id)}
                     onAuxClick={(e) => { if (e.button === 1) handleCloseTab(tab.id) }}
                     style={{
@@ -386,6 +440,11 @@ const NotesPage: React.FC = () => {
                       maxWidth: 220,
                     }}
                   >
+                    {isExternal && (
+                      <Tooltip title={t('notes.externalFileTab')}>
+                        <span style={{ fontSize: 10, opacity: 0.6 }}>⬡</span>
+                      </Tooltip>
+                    )}
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tabFileName}</span>
                     <CloseOutlined
                       style={{ fontSize: 11, opacity: 0.45, flexShrink: 0 }}
@@ -408,15 +467,19 @@ const NotesPage: React.FC = () => {
 
           {notes.tabs.map((tab) => {
             const isActive = tab.id === notes.activeTabId
-            const isEditable = !!tab.relPath
+            const isEditable = !!tab.relPath || !!tab.externalAbsPath
             return (
               <div
                 key={tab.id}
+                onDragOver={isActive ? handleEditorDragOver : undefined}
+                onDragLeave={isActive ? handleEditorDragLeave : undefined}
+                onDrop={isActive ? handleEditorDrop : undefined}
                 style={{
                   display: isActive ? 'flex' : 'none',
                   flex: 1,
                   flexDirection: 'column',
                   minHeight: 0,
+                  position: 'relative',
                 }}
               >
                 {isEditable ? (
@@ -455,18 +518,42 @@ const NotesPage: React.FC = () => {
                     </Empty>
                   </div>
                 )}
+                {isActive && externalDragOver && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: `${token.colorPrimaryBg}E6`,
+                      border: `2px dashed ${token.colorPrimary}`,
+                      borderRadius: 8,
+                      zIndex: 100,
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <span style={{ fontSize: 15, color: token.colorPrimary, fontWeight: 500 }}>
+                      {t('notes.dropMdToOpen')}
+                    </span>
+                  </div>
+                )}
               </div>
             )
           })}
 
           {emptyEditor && notes.tabs.length === 0 && (
             <div
+              onDragOver={handleEditorDragOver}
+              onDragLeave={handleEditorDragLeave}
+              onDrop={handleEditorDrop}
               style={{
                 flex: 1,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 background: token.colorBgLayout,
+                position: 'relative',
               }}
             >
               <Empty
@@ -485,11 +572,31 @@ const NotesPage: React.FC = () => {
                   </Button>
                 ) : null}
               </Empty>
+              {externalDragOver && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: `${token.colorPrimaryBg}E6`,
+                    border: `2px dashed ${token.colorPrimary}`,
+                    borderRadius: 8,
+                    zIndex: 100,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <span style={{ fontSize: 15, color: token.colorPrimary, fontWeight: 500 }}>
+                    {t('notes.dropMdToOpen')}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {!outlineCollapsed && notes.currentRelPath && (
+        {!outlineCollapsed && hasOpenFile && (
           <>
             <SidebarResizer onResize={handleOutlineResize} onResizeEnd={handleOutlineResizeEnd} />
             <div
@@ -527,7 +634,7 @@ const NotesPage: React.FC = () => {
           </>
         )}
 
-        {outlineCollapsed && notes.currentRelPath && (
+        {outlineCollapsed && hasOpenFile && (
           <Tooltip title={t('notes.showOutline')} placement="left">
             <Button
               type="text"
@@ -546,7 +653,7 @@ const NotesPage: React.FC = () => {
         )}
       </div>
 
-      {notes.currentRelPath && (
+      {hasOpenFile && (
         <div
           style={{
             display: 'flex',
@@ -559,7 +666,7 @@ const NotesPage: React.FC = () => {
             fontSize: 12,
           }}
         >
-          <Tooltip title={notes.currentRelPath}>
+          <Tooltip title={notes.currentExternalAbsPath || notes.currentRelPath}>
             <span style={{ color: token.colorTextSecondary, maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {fileName}
             </span>
