@@ -73,60 +73,70 @@ export interface EnrichedHistoryMessage {
 }
 
 export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistoryMessage[] => {
-  const result: EnrichedHistoryMessage[] = []
-  for (const m of msgs) {
+  // 找到最近的压缩分隔符（isCompactSummary）及其紧随的压缩摘要 assistant 消息。
+  // 若存在：发给 LLM 的 history = 压缩摘要 + 分隔符之后的消息（分隔符之前的消息对 LLM 不可见）
+  // 若不存在：发给 LLM 的 history = 全部消息
+  let compactSepIndex = -1
+  let compactSummary = ''
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].isCompactSummary) {
+      compactSepIndex = i
+      // 摘要消息紧随分隔符之后，提取内容后跳过它
+      if (i + 1 < msgs.length && msgs[i + 1].id.startsWith('msg_compact_summary_')) {
+        compactSummary = (msgs[i + 1].content || '').trim()
+      }
+      break
+    }
+  }
+
+  // 分隔符和摘要消息本身不参与 LLM history，从摘要消息之后开始
+  const skipCount = compactSepIndex >= 0
+    ? (compactSummary ? 2 : 1)  // 有摘要：跳过分隔符+摘要；无摘要：只跳过分隔符
+    : 0
+  const sourceMsgs = compactSepIndex >= 0 ? msgs.slice(compactSepIndex + skipCount) : msgs
+  const subResult: EnrichedHistoryMessage[] = []
+
+  const pushMsg = (m: MessageWithThought) => {
     const branch = getActiveBranchData(m)
 
     // 非助手消息：直接透传
     if (m.role !== 'assistant') {
-      result.push({
+      subResult.push({
         role: m.role,
         content: branch.content,
         images: m.images,
         reasoning_content: branch.thought,
       })
-      continue
+      return
     }
 
     const segments = branch.segments || []
 
     // 无 segments 或无 tool_call 段：退化为旧的扁平结构（向后兼容）
     if (segments.length === 0 || !segments.some(s => s.type === 'tool_call')) {
-      result.push({
+      subResult.push({
         role: 'assistant',
         content: branch.content,
         images: m.images,
         reasoning_content: branch.thought,
         toolCalls: extractToolCallsFromSegments({ ...m, segments: branch.segments }),
       })
-      continue
+      return
     }
 
-    // 从 segments 重建多轮对话结构。
-    //
-    // 一次 agent turn 可能包含多轮 LLM 调用（thinking → answer → tool_calls），
-    // 每轮 LLM 调用在 OpenAI API 协议中应表达为独立的 assistant 消息，
-    // 后跟 tool 消息。如果把所有轮次的 tool_calls 合并到一条 assistant 消息，
-    // 会破坏对话上下文结构，导致 LLM prompt-cache 命中率下降、
-    // 工具结果与 tool_call_id 错位等问题。
-    //
-    // 分组规则：遇到 thinking/answer 段且当前轮已收集 tool_calls 时，
-    // 说明新的一轮 LLM 调用开始，先输出当前轮 + 其 tool 结果，再开新轮。
     let currentContent = ''
     let currentReasoning = ''
     let currentToolCalls: NonNullable<EnrichedHistoryMessage['toolCalls']> = []
     let hasToolCalls = false
 
     const flushTurn = () => {
-      result.push({
+      subResult.push({
         role: 'assistant',
         content: currentContent,
         images: m.images,
         reasoning_content: currentReasoning || undefined,
         toolCalls: currentToolCalls.length > 0 ? currentToolCalls : undefined,
       })
-      // tool 结果消息由后端 expandFrontendMessages 从 toolCalls 数组展开，
-      // 这里不需要单独输出 tool 角色消息，保持与旧格式兼容。
       currentContent = ''
       currentReasoning = ''
       currentToolCalls = []
@@ -135,14 +145,10 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
 
     for (const seg of segments) {
       if (seg.type === 'thinking') {
-        if (hasToolCalls) {
-          flushTurn()
-        }
+        if (hasToolCalls) flushTurn()
         currentReasoning += (seg.content || '')
       } else if (seg.type === 'answer') {
-        if (hasToolCalls) {
-          flushTurn()
-        }
+        if (hasToolCalls) flushTurn()
         currentContent += (seg.content || '')
       } else if (seg.type === 'tool_call') {
         if (!seg.toolName) continue
@@ -156,11 +162,18 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
         hasToolCalls = true
       }
     }
-
-    // 输出最后一轮（可能没有 tool_calls，即最终回答）
     flushTurn()
   }
-  return result
+
+  for (const m of sourceMsgs) pushMsg(m)
+
+  if (compactSummary) {
+    subResult.unshift({
+      role: 'system',
+      content: `[对话历史摘要]\n${compactSummary}`,
+    })
+  }
+  return subResult
 }
 
 export const calcTotalOutputChars = (segs: any[], content?: string): number => {

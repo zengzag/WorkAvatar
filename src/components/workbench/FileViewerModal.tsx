@@ -143,7 +143,9 @@ const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, open, onClose }
             borderRadius: 8,
             overflow: 'hidden',
             position: 'relative',
-          }}>
+          }}
+          data-viewer-theme={effectiveTheme}
+          >
             {probing ? (
               <div style={{
                 height: '100%',

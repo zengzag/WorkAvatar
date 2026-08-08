@@ -154,6 +154,7 @@ export type {
 const electronAPI = {
   workspace: {
     openInExplorer: (params: WorkspaceOpenInExplorerParams) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_OPEN_IN_EXPLORER, params),
+    deleteTaskDir: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, path),
   },
 
   employee: {
@@ -209,7 +210,7 @@ const electronAPI = {
     listAll: (params?: ConversationListWithEmployeeParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST_ALL, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
-    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string }) =>
+    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
@@ -224,6 +225,8 @@ const electronAPI = {
     testConnection: (params: LLMTestConnectionParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_TEST_CONNECTION, params),
     chat: (params: LLMChatParams) => ipcRenderer.invoke(IPC_CHANNELS.LLM_CHAT, params),
     employeeChatStream: (params: EmployeeChatStreamParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CHAT_STREAM, params),
+    compactConversation: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, params),
+    getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
     onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
       const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)

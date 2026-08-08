@@ -37,6 +37,13 @@ const EMBEDDING_CACHE_MAX_BYTES = 256 * 1024 * 1024
  */
 const RRF_K = 60
 
+/**
+ * 整句短语命中的 RRF 权重倍数。
+ * 文档中连续出现完整查询句（整句命中）表明与搜索意图高度相关，
+ * 权重倍数使其显著高于词级分散命中（词级单来源最高仅 1/(k+rank)）。
+ */
+const PHRASE_RRF_WEIGHT = 3
+
 class KMSSearchEngineService {
   private db: Database.Database
   /**
@@ -54,8 +61,15 @@ class KMSSearchEngineService {
   /** kms_search_index.content 最大字符数：仅用于 content_paragraph source type 的截断，
    * 用于控制大文档段落（可达数万字）在 kms_search_index 中的存储体积。
    * file_title/file_summary/paragraph 三个 source type 不截断，以保证 LIKE fallback 搜索准确性。
-   * 完整原文始终由 FTS5 索引（insertFtsRow 传入未截断的 content）。 */
-  private static readonly SEARCH_INDEX_CONTENT_LIMIT = 500
+   * 完整原文始终由 FTS5 索引（insertFtsRow 传入未截断的 content）。
+   * 500→1000：为语义向量提供更长的输入文本，提升长段落的语义召回（存储增量有限）。 */
+  private static readonly SEARCH_INDEX_CONTENT_LIMIT = 1000
+  /** content_paragraph 段落最小字符数：低于此值的短块与相邻段落合并，
+   * 避免 Excel/CSV 按行切分产生海量碎片向量；合并后完整文本仍写入 FTS5 全文索引，不丢内容 */
+  private static readonly MIN_CONTENT_PARAGRAPH_CHARS = 300
+  /** 短块合并成段落的长度上限：累积 + 当前块超过该值则截断另起一段，
+   * 防止连续短行（众多表格行）被合并成巨型段落，导致 FTS5 BM25 长段落惩罚与 content 截断 */
+  private static readonly MAX_MERGE_PARAGRAPH_CHARS = 2000
   /**
    * embedding 内存缓存（LRU + 字节上限）
    *
@@ -277,17 +291,43 @@ class KMSSearchEngineService {
     // 原方案对每个段落执行 content.indexOf(para, currentOffset)，大文档（1MB+ 500 段）= 500MB 字符比较
     const paragraphs: Array<{ text: string; startOffset: number; endOffset: number }> = []
     let pos = 0
+    // 短块(<MIN_CONTENT_PARAGRAPH_CHARS)与相邻内容合并成一个段落，减少碎片向量；
+    // 合并后的完整文本仍写入 FTS5，全文检索不丢内容
+    let buffer = ''
+    let bufferStart = -1
+    let bufferEnd = -1
+    const flush = () => {
+      if (buffer.trim().length > 0) {
+        paragraphs.push({ text: buffer, startOffset: bufferStart, endOffset: bufferEnd })
+      }
+      buffer = ''
+      bufferStart = -1
+      bufferEnd = -1
+    }
     while (pos < content.length) {
       const nextBreak = content.indexOf('\n\n', pos)
       const end = nextBreak === -1 ? content.length : nextBreak
       const text = content.substring(pos, end)
-      if (text.trim().length > 20) {
+      const trimmed = text.trim()
+      if (trimmed.length >= KMSSearchEngineService.MIN_CONTENT_PARAGRAPH_CHARS) {
+        flush()
         paragraphs.push({ text, startOffset: pos, endOffset: end })
+      } else if (trimmed.length > 0) {
+        // 短块：累积 + 当前块超过合并上限时，先落库当前累积，再以当前块另起一段
+        if (buffer && buffer.length + text.length > KMSSearchEngineService.MAX_MERGE_PARAGRAPH_CHARS) {
+          flush()
+        }
+        if (bufferStart === -1) bufferStart = pos
+        buffer = buffer ? buffer + '\n' + text : text
+        bufferEnd = end
+      } else {
+        flush()
       }
       // 跳过所有连续换行符（\n\n+ 分隔符）
       pos = end
       while (pos < content.length && content[pos] === '\n') pos++
     }
+    flush()
     if (paragraphs.length === 0) return
 
     // 预计算每行起始偏移，用于段落→行号映射（二分查找替代线性扫描）
@@ -332,10 +372,13 @@ class KMSSearchEngineService {
         const truncatedContent = para.length > KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT
           ? para.substring(0, KMSSearchEngineService.SEARCH_INDEX_CONTENT_LIMIT)
           : para
-        insertIndex.run(id, fileId, fileId, pi, fileName, truncatedContent,
+        // source_id 使用段落自身 id（而非 fileId），使每个段落拥有唯一标识，
+        // 向量库按 (source_type, source_id) 唯一存储时才能逐段生成独立向量，
+        // 而非同一文件仅保留第一条段落向量。
+        insertIndex.run(id, fileId, id, pi, fileName, truncatedContent,
           paraStartOffset, paraEndOffset, startLine, endLine)
 
-        this.insertFtsRow(id, fileId, 'content_paragraph', fileId, fileName, para, '')
+        this.insertFtsRow(id, fileId, 'content_paragraph', id, fileName, para, '')
       }
     })
 
@@ -848,6 +891,12 @@ class KMSSearchEngineService {
       let results = this.convertFtsResultsToSearchResults(ftsResults, topK, queryWords)
       logger.info(`ftsSearch "${query}": tokenize=${convertStart - tokenizeStart}ms, fts=${convertStart - ftsStart}ms, convert=${Date.now() - convertStart}ms, results=${results.length}`)
 
+      // 整句短语命中加权：含完整查询句的文档优先排在词级结果之前
+      const phraseResults = this.phraseSearch(query, options, topK)
+      if (phraseResults.length > 0) {
+        results = this.mergePhraseToTop(results, phraseResults, topK)
+      }
+
       // FTS5 无结果时，降级到 LIKE 模糊匹配（参考搜索引擎的容错机制）
       if (results.length === 0) {
         results = this.likeSearch(query, options, topK)
@@ -918,6 +967,61 @@ class KMSSearchEngineService {
     const topResults = scored.slice(0, topK).map(s => s.row)
 
     return this.convertFtsResultsToSearchResults(topResults, topK, queryWords)
+  }
+
+  /**
+   * 整句短语检索：用完整分词序列（保留停用词/标点/顺序，与索引侧一致）构造 FTS5 短语查询，
+   * 精确匹配原文中连续出现的整句。命中即代表"这句原样出现在文档里"，应获得高权重。
+   * 用于在 ftsSearch / hybridSearch 中把整句命中的文档顶到最前。
+   */
+  private phraseSearch(query: string, options?: SearchOptions, topK: number = 10): SearchResult[] {
+    const tokens = kmsTokenizer.segmentForPhrase(query)
+    // 至少 3 个有效内容词才算有意义的整句，避免过短查询整体短语命中所有文档
+    const contentTokens = tokens.filter(t => /[\u4e00-\u9fa5a-z0-9]/i.test(t))
+    if (contentTokens.length < 3) return []
+
+    const ftsQuery = `"${tokens.join(' ').replace(/"/g, '""').replace(/[*()^\-+:{}\[\]<>~:]/g, '')}"`
+    const { whereClause, params } = buildFtsWhereClause(options)
+
+    try {
+      const rows = this.db.prepare(`
+        SELECT si.*, fts.rank
+        FROM kms_fts fts
+        JOIN kms_search_index si ON fts.index_id = si.id
+        JOIN kms_files f ON si.file_id = f.id
+        WHERE kms_fts MATCH ? AND ${whereClause}
+        ORDER BY fts.rank
+        LIMIT ?
+      `).all(ftsQuery, ...params, topK) as any[]
+      if (rows.length === 0) return []
+      return this.convertFtsResultsToSearchResults(rows, topK)
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * 把整句短语命中的结果排在词级结果之前（去重后封顶 topK）。
+   * 整句连续命中 = 强相关信号，应优先展示。
+   */
+  private mergePhraseToTop(wordResults: SearchResult[], phraseResults: SearchResult[], topK: number): SearchResult[] {
+    const seen = new Set<string>()
+    const merged: SearchResult[] = []
+    for (const r of phraseResults) {
+      const k = getResultKey(r)
+      if (seen.has(k)) continue
+      seen.add(k)
+      merged.push(r)
+      if (merged.length >= topK) return merged
+    }
+    for (const r of wordResults) {
+      const k = getResultKey(r)
+      if (seen.has(k)) continue
+      seen.add(k)
+      merged.push(r)
+      if (merged.length >= topK) return merged
+    }
+    return merged
   }
 
   /**
@@ -1367,9 +1471,27 @@ class KMSSearchEngineService {
       }
     }
 
-    // RRF 融合：score = Σ 1/(k + rank_i)，i ∈ {fts, vec, file_name}
+    // 整句短语检索：第 4 个 RRF 来源，命中完整查询句的文档按权重倍数显著加权
+    let phraseResults: SearchResult[] = []
+    try {
+      phraseResults = this.phraseSearch(query, { ...options, topK: topK * 2 })
+    } catch (err: any) {
+      logger.warn('phraseSearch failed in hybridSearch, continuing without phrase results:', err?.message || err)
+    }
+    const phraseRankMap = new Map<string, number>()
+    const phraseResultMap = new Map<string, SearchResult>()
+    for (let i = 0; i < phraseResults.length; i++) {
+      const r = phraseResults[i]
+      const key = getResultKey(r)
+      if (!phraseRankMap.has(key)) {
+        phraseRankMap.set(key, i + 1)
+        phraseResultMap.set(key, r)
+      }
+    }
+
+    // RRF 融合：score = Σ 1/(k + rank_i)，i ∈ {fts, vec, file_name, phrase}
     // 来源缺失的贡献为 0（rank undefined → 跳过）
-    const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys(), ...fileNameRankMap.keys()])
+    const allKeys = new Set([...ftsRankMap.keys(), ...vecRankMap.keys(), ...fileNameRankMap.keys(), ...phraseRankMap.keys()])
     const hybridResults: Array<{ result: SearchResult; sortKey: number }> = []
     const missingEntries: Array<{ key: string; vs: { sourceType: string; sourceId: string }; sortKey: number }> = []
     // 仅文件名来源命中的条目：使用 fileNameResultMap 直接出结果，无需回查 DB
@@ -1401,14 +1523,30 @@ class KMSSearchEngineService {
       if (fileNameRank !== undefined) {
         sortKey += 1 / (RRF_K + fileNameRank)
       }
+      // 整句短语命中：权重倍数显著高于词级分散命中
+      const phraseRank = phraseRankMap.get(key)
+      if (phraseRank !== undefined) {
+        sortKey += PHRASE_RRF_WEIGHT / (RRF_K + phraseRank)
+      }
 
       const ftsResult = ftsResultMap.get(key)
+      const phraseResult = phraseResultMap.get(key)
 
       if (ftsResult) {
         hybridResults.push({
           result: {
             ...ftsResult,
             match_type: (useVector || fileNameRank !== undefined) ? 'hybrid' : ftsResult.match_type,
+            score: sortKey,
+          },
+          sortKey,
+        })
+      } else if (phraseResult) {
+        // 仅整句短语命中（如查询词多为停用词/常用词，词级 FTS 已被过滤）：直接使用短语命中结果
+        hybridResults.push({
+          result: {
+            ...phraseResult,
+            match_type: 'hybrid',
             score: sortKey,
           },
           sortKey,

@@ -25,7 +25,7 @@ const HorizontalDotsIcon: React.FC<{ style?: React.CSSProperties }> = ({ style }
 )
 
 const Tasks: React.FC = () => {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { token } = theme.useToken()
@@ -245,6 +245,9 @@ const Tasks: React.FC = () => {
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,
+    contextStats,
+    isCompacting,
+    handleCompact,
   } = chatHook
 
   // 从数字员工"快速任务"跳转而来：?new=1&employee=<id> → 打开新任务模式并预选员工
@@ -318,13 +321,19 @@ const Tasks: React.FC = () => {
   }, [globalTasks, filterEmployeeId, searchQuery, contentMatchIds])
 
   // 新建任务（保留当前已选员工，清除激活对话避免新消息发到旧对话）
+  // 注意：用户主动点击"新建任务"时，也清空草稿缓存（给用户一个干净的新开始）
   const handleNewTask = useCallback(() => {
     setTaskMode('new')
-    setNewTaskEmployeeId(currentEmployeeId || null)
+    const empId = currentEmployeeId || null
+    setNewTaskEmployeeId(empId)
     pendingSelectConvIdRef.current = null
     setAttachedImages([])
     setSelectedModels([])
     clearActiveConversation()
+    // 清除当前员工的新任务草稿缓存
+    if (empId) {
+      try { localStorage.removeItem(`tasks:newTaskDraft:${empId}`) } catch {}
+    }
   }, [currentEmployeeId, clearActiveConversation])
 
   // 选择已有任务
@@ -345,44 +354,182 @@ const Tasks: React.FC = () => {
   // 删除任务
   const handleDeleteTask = useCallback(async (taskId: string) => {
     try {
-      await window.electronAPI.conversation.delete(taskId)
+      const res: any = await window.electronAPI.conversation.delete(taskId)
       setGlobalTasks(prev => prev.filter(t => t.id !== taskId))
       if (taskId === activeConversationId) {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
+      // 任务目录非空时，询问是否一并删除任务目录
+      if (res?.taskDirNonEmpty && res?.taskDir) {
+        modal.confirm({
+          title: t('workbench.deleteTaskDirTitle'),
+          content: t('workbench.deleteTaskDirContent', { path: res.taskDir }),
+          okText: t('workbench.deleteTaskDirOk'),
+          cancelText: t('common.cancel'),
+          okButtonProps: { danger: true },
+          onOk: async () => {
+            await window.electronAPI.workspace.deleteTaskDir(res.taskDir)
+          },
+        })
+      }
     } catch {
       message.error(t('workbench.deleteFailed'))
     }
-  }, [activeConversationId, handleNewTask, message, t])
+  }, [activeConversationId, handleNewTask, message, modal, t])
 
   // 批量删除任务
   const handleDeleteMany = useCallback(async (taskIds: string[]) => {
     try {
+      const nonEmptyDirs: string[] = []
       for (const taskId of taskIds) {
-        await window.electronAPI.conversation.delete(taskId)
+        const res: any = await window.electronAPI.conversation.delete(taskId)
+        if (res?.taskDirNonEmpty && res?.taskDir) {
+          nonEmptyDirs.push(res.taskDir)
+        }
       }
       setGlobalTasks(prev => prev.filter(t => !taskIds.includes(t.id)))
       if (activeConversationId && taskIds.includes(activeConversationId)) {
         handleNewTask()
       }
       message.success(t('workbench.deleteSuccess'))
+      // 存在非空任务目录时，询问是否一并删除
+      if (nonEmptyDirs.length > 0) {
+        modal.confirm({
+          title: t('workbench.deleteTaskDirManyTitle'),
+          content: t('workbench.deleteTaskDirManyContent', { count: nonEmptyDirs.length }),
+          okText: t('workbench.deleteTaskDirOk'),
+          cancelText: t('common.cancel'),
+          okButtonProps: { danger: true },
+          onOk: async () => {
+            for (const dir of nonEmptyDirs) {
+              await window.electronAPI.workspace.deleteTaskDir(dir)
+            }
+          },
+        })
+      }
     } catch {
       message.error(t('workbench.deleteFailed'))
     }
-  }, [activeConversationId, handleNewTask, message, t])
+  }, [activeConversationId, handleNewTask, message, modal, t])
+
+  // 新任务草稿 localStorage 缓存 key（按员工区分）
+  const newTaskDraftKey = newTaskEmployeeId ? `tasks:newTaskDraft:${newTaskEmployeeId}` : null
+
+  // 清除新任务草稿缓存
+  const clearNewTaskDraft = useCallback(() => {
+    if (newTaskDraftKey) {
+      try { localStorage.removeItem(newTaskDraftKey) } catch {}
+    }
+  }, [newTaskDraftKey])
+
+  // 保存新任务草稿到 localStorage
+  const saveNewTaskDraft = useCallback((patch: Partial<{
+    content: string
+    attachedImages: AttachedImage[]
+    selectedModels: ModelSelection[]
+    selectedCollectionIds: string[]
+  }>) => {
+    if (taskMode !== 'new' || !newTaskDraftKey) return
+    try {
+      const prevRaw = localStorage.getItem(newTaskDraftKey)
+      const prev = prevRaw ? JSON.parse(prevRaw) : {}
+      const next = { ...prev, ...patch }
+      localStorage.setItem(newTaskDraftKey, JSON.stringify(next))
+    } catch {}
+  }, [taskMode, newTaskDraftKey])
+
+  // 组件挂载 & 新任务模式 / 员工切换时，从 localStorage 恢复草稿
+  // 若新员工没有缓存，则清空旧员工残留的图片/模型/知识库，避免内容混淆
+  useEffect(() => {
+    if (taskMode !== 'new' || !newTaskDraftKey) return
+    try {
+      const raw = localStorage.getItem(newTaskDraftKey)
+      if (raw) {
+        const data = JSON.parse(raw)
+        if (typeof data.content === 'string') {
+          setInputDraft(data.content)
+        } else {
+          setInputDraft('')
+        }
+        setAttachedImages(Array.isArray(data.attachedImages) ? data.attachedImages : [])
+        setSelectedModels(Array.isArray(data.selectedModels) ? data.selectedModels : [])
+        setSelectedCollectionIds(Array.isArray(data.selectedCollectionIds) ? data.selectedCollectionIds : [])
+      } else {
+        // 无缓存：全部重置为空
+        setInputDraft('')
+        setAttachedImages([])
+        setSelectedModels([])
+        setSelectedCollectionIds([])
+      }
+    } catch {
+      // 解析失败：安全起见清空
+      setInputDraft('')
+      setAttachedImages([])
+      setSelectedModels([])
+      setSelectedCollectionIds([])
+    }
+    // 仅在切换到新任务模式或切换员工时恢复
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskMode, newTaskDraftKey])
+
+  // 新任务模式下，监听输入内容变化并持久化
+  const handleDraftChangeWithCache = useCallback((value: string) => {
+    setInputDraft(value)
+    saveNewTaskDraft({ content: value })
+  }, [setInputDraft, saveNewTaskDraft])
+
+  // 新任务模式下，监听图片变化并持久化
+  const handleImagesChangeWithCache = useCallback((images: AttachedImage[]) => {
+    setAttachedImages(images)
+    saveNewTaskDraft({ attachedImages: images })
+  }, [setAttachedImages, saveNewTaskDraft])
+
+  // 新任务模式下，监听模型变化并持久化
+  const handleModelsChangeWithCache = useCallback((models: ModelSelection[]) => {
+    setSelectedModels(models)
+    saveNewTaskDraft({ selectedModels: models })
+  }, [setSelectedModels, saveNewTaskDraft])
+
+  // 新任务模式下，监听知识库变化并持久化
+  const handleCollectionIdsChangeWithCache = useCallback((ids: string[]) => {
+    setSelectedCollectionIds(ids)
+    saveNewTaskDraft({ selectedCollectionIds: ids })
+  }, [setSelectedCollectionIds, saveNewTaskDraft])
 
   // 发送消息
   const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
     setAttachedImages([])
     setSelectedModels([])
+    clearNewTaskDraft()
     await handleSend(content, images, models, options)
     // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
     // useEffect 刷新（此时 sendMessage 已完成持久化，listAll 一定能查到新任务）
     if (taskMode === 'new') {
       setTaskMode('chat')
     }
-  }, [handleSend, taskMode])
+  }, [handleSend, taskMode, clearNewTaskDraft])
+
+  // 新建任务时：如果从其他模式切回新任务，也需要让 ChatInput 重新读取草稿
+  // 同时，切换员工时清理旧员工的已加载状态（不清缓存，缓存按员工 key 区分）
+  const prevTaskModeRef = useRef<'new' | 'chat'>('new')
+  useEffect(() => {
+    if (prevTaskModeRef.current === 'chat' && taskMode === 'new') {
+      // 从 chat 切回 new 时，用 localStorage 的草稿覆盖 chat 残留的 inputDraft
+      try {
+        if (newTaskDraftKey) {
+          const raw = localStorage.getItem(newTaskDraftKey)
+          if (raw) {
+            const data = JSON.parse(raw)
+            if (typeof data.content === 'string') setInputDraft(data.content)
+          } else {
+            setInputDraft('')
+          }
+        }
+      } catch {}
+    }
+    prevTaskModeRef.current = taskMode
+  }, [taskMode, newTaskDraftKey, setInputDraft])
 
   // 选择新任务员工
   const handleSelectEmployee = useCallback((empId: string) => {
@@ -461,25 +608,41 @@ const Tasks: React.FC = () => {
     }
   }, [message, t])
 
-  // 在系统文件管理器中打开当前员工的工作区目录
-  const handleOpenWorkspace = useCallback(async () => {
-    const workspacePath = employee?.workspace_path
-    if (!workspacePath) {
+  // 在系统文件管理器中打开指定目录
+  const openDirInExplorer = useCallback(async (dirPath?: string) => {
+    if (!dirPath) {
       message.warning(t('workbench.workspaceNotSet'))
       return
     }
     try {
-      const res = await window.electronAPI.workspace.openInExplorer({ path: workspacePath })
+      const res = await window.electronAPI.workspace.openInExplorer({ path: dirPath })
       if (res && (res as any).error) {
         message.error(t('workbench.openWorkspaceFailed', { error: (res as any).error }))
       }
     } catch (e: any) {
       message.error(t('workbench.openWorkspaceFailed', { error: e?.message || String(e) }))
     }
-  }, [employee, message, t])
+  }, [message, t])
+
+  // 打开当前员工的工作区目录
+  const handleOpenWorkspace = useCallback(() => {
+    openDirInExplorer(employee?.workspace_path)
+  }, [employee, openDirInExplorer])
+
+  // 打开当前任务的工作区目录
+  const handleOpenTaskWorkspace = useCallback(() => {
+    const activeTask = globalTasks.find(t => t.id === activeConversationId)
+    openDirInExplorer(activeTask?.workspace_path)
+  }, [globalTasks, activeConversationId, openDirInExplorer])
 
   const moreMenuItems = useMemo<MenuProps['items']>(() => {
     return [
+      {
+        key: 'openTaskWorkspace',
+        icon: <FolderOpenOutlined />,
+        label: t('workbench.openTaskWorkspace'),
+        onClick: handleOpenTaskWorkspace,
+      },
       {
         key: 'openWorkspace',
         icon: <FolderOpenOutlined />,
@@ -487,7 +650,7 @@ const Tasks: React.FC = () => {
         onClick: handleOpenWorkspace,
       },
     ]
-  }, [t, handleOpenWorkspace])
+  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }
@@ -623,7 +786,7 @@ const Tasks: React.FC = () => {
             </div>
           )}
           {taskMode === 'new' ? (
-            // 新任务模式：居中输入框
+            // 新任务模式：居中输入框（使用带缓存的回调，切换页面回来可恢复）
             <div style={{
               flex: 1,
               display: 'flex',
@@ -640,18 +803,18 @@ const Tasks: React.FC = () => {
                 placeholder={t('tasks.inputPlaceholder')}
                 providers={providers}
                 attachedImages={attachedImages}
-                onImagesChange={setAttachedImages}
+                onImagesChange={handleImagesChangeWithCache}
                 selectedModels={selectedModels}
-                onModelsChange={setSelectedModels}
+                onModelsChange={handleModelsChangeWithCache}
                 selectedCollectionIds={selectedCollectionIds}
-                onSelectedCollectionIdsChange={setSelectedCollectionIds}
+                onSelectedCollectionIdsChange={handleCollectionIdsChangeWithCache}
                 allCollections={allCollections}
                 minimalMode={minimalMode}
                 onMinimalModeChange={handleToggleMinimalMode}
                 canToggleMinimalMode={true}
                 conversationId={activeConversationId}
                 getInitialDraft={getInputDraft}
-                onDraftChange={setInputDraft}
+                onDraftChange={handleDraftChangeWithCache}
                 availableSkills={availableSkills}
                 centerMode={true}
                 showEmployeeSelector={true}
@@ -663,6 +826,8 @@ const Tasks: React.FC = () => {
                 onDefaultModelChange={handleLlmChange}
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
+                draftResetKey={newTaskEmployeeId || undefined}
+                isCompacting={isCompacting}
               />
             </div>
           ) : (
@@ -694,6 +859,9 @@ const Tasks: React.FC = () => {
                     onOpenComparison={handleOpenComparison}
                     getToolDisplayName={getToolDisplayName}
                     providers={providers}
+                    contextStats={contextStats}
+                    isCompacting={isCompacting}
+                    onCompact={handleCompact}
                   />
                   <div ref={messagesEndRef} />
                 </div>
@@ -723,6 +891,7 @@ const Tasks: React.FC = () => {
                 onDefaultModelChange={handleLlmChange}
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
+                isCompacting={isCompacting}
               />
             </>
           )}

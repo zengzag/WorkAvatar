@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useCallback } from 'react'
+import { memo, useEffect, useMemo, useRef, useCallback, useState } from 'react'
 import { theme, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
 import Vditor from 'vditor'
@@ -363,6 +363,8 @@ const VditorEditorInner: React.FC<Props> = ({
 
   // 表格矩形选区状态：拖动 td/th 生成，仅在 IR 模式生效
   const tableSelRef = useRef<{ start: HTMLTableCellElement; end: HTMLTableCellElement } | null>(null)
+  // 右键命中的表格单元格，用于行/列操作
+  const [tableCell, setTableCell] = useState<HTMLTableCellElement | null>(null)
 
   const clearTableSelection = useCallback(() => {
     // 编辑器容器与预览容器都可能存在选中单元格，需同时清理
@@ -449,7 +451,20 @@ const VditorEditorInner: React.FC<Props> = ({
         const table = startCell.closest('table')
         if (table) table.style.userSelect = ''
       }
-      if (!dragStarted) {
+      if (dragStarted) {
+        // 拖拽选区后恢复编辑器焦点与一个折叠光标位，保证后续 Ctrl+C/V 落在编辑器上，
+        // 也避免 Vditor 自身 paste 处理器因 selection 为空而抛 getRangeAt 错误。
+        const editorEl = containerRef.current?.querySelector('.vditor-ir pre.vditor-reset') as HTMLElement | null
+        if (editorEl && startCell) {
+          editorEl.focus()
+          const range = document.createRange()
+          range.setStart(startCell, 0)
+          range.collapse(true)
+          const sel = window.getSelection()
+          sel?.removeAllRanges()
+          sel?.addRange(range)
+        }
+      } else {
         // 单击未拖动：清除选区
         clearTableSelection()
       }
@@ -506,6 +521,101 @@ const VditorEditorInner: React.FC<Props> = ({
     }
     return ok
   }, [])
+
+  // 表格行/列操作：基于右键命中的单元格生成操作上下文，
+  // 若存在同表矩形选区则作用于整个选中区域。
+  const getTableOpContext = useCallback(() => {
+    const cell = tableCell
+    if (!cell || !cell.isConnected) return null
+    const table = cell.closest('table')!
+    const rows = Array.from(table.querySelectorAll<HTMLTableRowElement>('tr'))
+    let startCell = cell
+    let endCell = cell
+    const sel = tableSelRef.current
+    if (sel && sel.start.closest('table') === table) {
+      startCell = sel.start
+      endCell = sel.end
+    }
+    const startRowIdx = rows.indexOf(startCell.closest('tr')!)
+    const endRowIdx = rows.indexOf(endCell.closest('tr')!)
+    if (startRowIdx < 0 || endRowIdx < 0) return null
+    return {
+      table,
+      rows,
+      minRow: Math.min(startRowIdx, endRowIdx),
+      maxRow: Math.max(startRowIdx, endRowIdx),
+      minCol: Math.min(startCell.cellIndex, endCell.cellIndex),
+      maxCol: Math.max(startCell.cellIndex, endCell.cellIndex),
+    }
+  }, [tableCell])
+
+  // 表格 DOM 变更后同步到 Vditor 内容与 store
+  const commitTableChange = useCallback((table: HTMLTableElement) => {
+    table.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertLineBreak' }))
+    clearTableSelection()
+    setTableCell(null)
+    try {
+      const value = vditorRef.current?.getValue() || ''
+      lastInternalContent.current = value
+      if (value !== lastExternalContent.current) {
+        onContentChangeRef.current(value)
+      }
+    } catch { /* ignore */ }
+  }, [clearTableSelection])
+
+  const insertRow = useCallback((where: 'above' | 'below') => {
+    const ctx = getTableOpContext()
+    if (!ctx) return
+    const src = where === 'above' ? ctx.rows[ctx.minRow] : ctx.rows[ctx.maxRow]
+    if (!src) return
+    const newTr = src.cloneNode(true) as HTMLTableRowElement
+    newTr.querySelectorAll('td, th').forEach((c) => { c.textContent = '' })
+    if (where === 'above') {
+      src.before(newTr)
+    } else {
+      src.after(newTr)
+    }
+    commitTableChange(ctx.table)
+  }, [getTableOpContext, commitTableChange])
+
+  const insertColumn = useCallback((where: 'left' | 'right') => {
+    const ctx = getTableOpContext()
+    if (!ctx) return
+    const colIndex = where === 'left' ? ctx.minCol : ctx.maxCol
+    ctx.rows.forEach((tr) => {
+      const refCell = tr.cells[colIndex]
+      if (!refCell) return
+      const newCell = document.createElement(refCell.tagName)
+      if (where === 'left') {
+        refCell.before(newCell)
+      } else {
+        refCell.after(newCell)
+      }
+    })
+    commitTableChange(ctx.table)
+  }, [getTableOpContext, commitTableChange])
+
+  const deleteRow = useCallback(() => {
+    const ctx = getTableOpContext()
+    if (!ctx) return
+    for (let r = ctx.maxRow; r >= ctx.minRow; r--) {
+      ctx.rows[r]?.remove()
+    }
+    if (ctx.table.querySelectorAll('tr').length === 0) ctx.table.remove()
+    commitTableChange(ctx.table)
+  }, [getTableOpContext, commitTableChange])
+
+  const deleteColumn = useCallback(() => {
+    const ctx = getTableOpContext()
+    if (!ctx) return
+    ctx.rows.forEach((tr) => {
+      for (let c = ctx.maxCol; c >= ctx.minCol; c--) {
+        tr.cells[c]?.remove()
+      }
+    })
+    if (ctx.table.querySelectorAll('tr').length === 0) ctx.table.remove()
+    commitTableChange(ctx.table)
+  }, [getTableOpContext, commitTableChange])
 
   const toolbar = useMemo(() => [
     'headings', 'bold', 'italic', 'strike', '|',
@@ -607,62 +717,75 @@ const VditorEditorInner: React.FC<Props> = ({
     }
   }, [])
 
+  // 表格选区内粘贴：将剪贴板 TSV 填充到选区起始位置（Excel 风格"贴入"）。
+  // 返回是否已处理，供 document 级 paste 拦截（拖拽选区后编辑器失焦，需全局兜底）。
+  const pasteTableSelection = useCallback((e: ClipboardEvent): boolean => {
+    const tableSel = tableSelRef.current
+    if (!tableSel) return false
+    const cbd = e.clipboardData
+    if (!cbd) return false
+    const text = cbd.getData('text/plain') || ''
+    if (!text) return false
+    const tsvRows = parseTSV(text)
+    const table = tableSel.start.closest('table')
+    if (!table) return false
+    const rows = Array.from(table.querySelectorAll('tr'))
+    const startRow = tableSel.start.closest('tr')!
+    const startRowIndex = rows.indexOf(startRow)
+    const startCol = tableSel.start.cellIndex
+    let endRowIdx = startRowIndex
+    let endColIdx = startCol
+    for (let r = 0; r < tsvRows.length; r++) {
+      // 行数不足时自动插入新行（Excel 风格"贴入"）
+      let rowIndex = startRowIndex + r
+      if (rowIndex >= rows.length) {
+        const template = rows[rows.length - 1]
+        if (!template) break
+        const newTr = template.cloneNode(true) as HTMLTableRowElement
+        newTr.querySelectorAll('td, th').forEach((c) => { c.textContent = '' })
+        table.appendChild(newTr)
+        rows.push(newTr)
+        rowIndex = rows.length - 1
+      }
+      const rowCells = Array.from(rows[rowIndex].querySelectorAll<HTMLTableCellElement>('td, th'))
+      for (let c = 0; c < tsvRows[r].length; c++) {
+        const colIndex = startCol + c
+        // 列数不足时自动追加单元格
+        let cell = rowCells[colIndex]
+        if (!cell) {
+          cell = document.createElement((rows[rowIndex] as HTMLTableRowElement).cells[0]?.tagName || 'td') as HTMLTableCellElement
+          rows[rowIndex].appendChild(cell)
+          rowCells.push(cell)
+        }
+        cell.textContent = tsvRows[r][c]
+        endRowIdx = rowIndex
+        endColIdx = Math.max(endColIdx, colIndex)
+      }
+    }
+    table.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }))
+    // 更新选区为粘贴范围
+    const newEndRow = rows[endRowIdx]
+    const newEndCells = Array.from(newEndRow.querySelectorAll('td, th'))
+    const newEnd = newEndCells[endColIdx] as HTMLTableCellElement | undefined
+    if (newEnd) {
+      updateTableHighlight(tableSel.start, newEnd)
+      tableSelRef.current = { start: tableSel.start, end: newEnd }
+    }
+    // 同步内容到 store
+    try {
+      const value = vditorRef.current?.getValue() || ''
+      lastInternalContent.current = value
+      if (value !== lastExternalContent.current) {
+        onContentChangeRef.current(value)
+      }
+    } catch { /* ignore */ }
+    return true
+  }, [updateTableHighlight])
+
   const handlePaste = useCallback((e: ClipboardEvent) => {
     if (!vditorRef.current) return
     const cbd = e.clipboardData
     if (!cbd) return
-
-    // 表格选区内粘贴：将 TSV 填充到选区起始位置（Excel 风格"贴入"）
-    const tableSel = tableSelRef.current
-    if (tableSel) {
-      const text = cbd.getData('text/plain') || ''
-      const tsvRows = parseTSV(text)
-      const isMultiCell = tsvRows.length > 1 || (tsvRows[0]?.length || 0) > 1
-      if (isMultiCell) {
-        const table = tableSel.start.closest('table')
-        if (table) {
-          e.preventDefault()
-          e.stopPropagation()
-          const rows = Array.from(table.querySelectorAll('tr'))
-          const startRow = tableSel.start.closest('tr')!
-          const startRowIndex = rows.indexOf(startRow)
-          const startCol = tableSel.start.cellIndex
-          let endRowIdx = startRowIndex
-          let endColIdx = startCol
-          for (let r = 0; r < tsvRows.length; r++) {
-            const rowIndex = startRowIndex + r
-            if (rowIndex >= rows.length) break
-            const rowCells = Array.from(rows[rowIndex].querySelectorAll('td, th'))
-            for (let c = 0; c < tsvRows[r].length; c++) {
-              const colIndex = startCol + c
-              if (colIndex >= rowCells.length) break
-              const cell = rowCells[colIndex] as HTMLTableCellElement
-              cell.textContent = tsvRows[r][c]
-              endRowIdx = rowIndex
-              endColIdx = Math.max(endColIdx, colIndex)
-            }
-          }
-          table.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }))
-          // 更新选区为粘贴范围
-          const newEndRow = rows[endRowIdx]
-          const newEndCells = Array.from(newEndRow.querySelectorAll('td, th'))
-          const newEnd = newEndCells[endColIdx] as HTMLTableCellElement | undefined
-          if (newEnd) {
-            updateTableHighlight(tableSel.start, newEnd)
-            tableSelRef.current = { start: tableSel.start, end: newEnd }
-          }
-          // 同步内容到 store
-          try {
-            const value = vditorRef.current.getValue() || ''
-            lastInternalContent.current = value
-            if (value !== lastExternalContent.current) {
-              onContentChangeRef.current(value)
-            }
-          } catch { /* ignore */ }
-          return
-        }
-      }
-    }
 
     const imageItems = Array.from(cbd.items).filter(
       (item) => item.kind === 'file' && item.type.startsWith('image/')
@@ -728,7 +851,37 @@ const VditorEditorInner: React.FC<Props> = ({
       }
       return
     }
-  }, [insertTextAtCursor, updateTableHighlight])
+  }, [insertTextAtCursor])
+
+  // 表格选区粘贴：拖拽选区后编辑器失焦，编辑器级 paste 监听收不到事件，
+  // 用 document 级 capture 拦截兜底；命中表格选区贴入则阻止默认行为。
+  useEffect(() => {
+    if (isReadOnly || vditorMode === 'sv') return
+    const handler = (e: ClipboardEvent) => {
+      if (pasteTableSelection(e)) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    document.addEventListener('paste', handler, true)
+    return () => document.removeEventListener('paste', handler, true)
+  }, [isReadOnly, vditorMode, pasteTableSelection])
+
+  // 表格选区复制兜底：拖拽选区后若焦点未完全恢复，container 级 keydown 可能收不到，
+  // 用 document 级 capture 拦截 Ctrl/Cmd+C，命中表格选区则主动写入 TSV。
+  useEffect(() => {
+    if (isReadOnly || vditorMode === 'sv') return
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (copyTableSelectionToClipboard()) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      }
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [isReadOnly, vditorMode, copyTableSelectionToClipboard])
 
   useEffect(() => {
     if (isReadOnly || !containerRef.current) return
@@ -990,7 +1143,10 @@ const VditorEditorInner: React.FC<Props> = ({
   }, [locateText, isReadOnly, vditorMode, onLocateHandled])
 
   const savedRangeRef = useRef<Range | null>(null)
-  const handleContextMenu = useCallback(() => {
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement
+    const cell = target.closest('td, th') as HTMLTableCellElement | null
+    setTableCell(cell && cell.closest('table') ? cell : null)
     const sel = window.getSelection()
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0)
@@ -1027,47 +1183,67 @@ const VditorEditorInner: React.FC<Props> = ({
     panelBtn?.click()
   }, [restoreSelection])
 
-  const contextMenuItems: MenuProps['items'] = useMemo(() => [
-    {
-      key: 'headings', label: t('notes.ctxHeadings'), children: [
-        { key: 'h1', label: 'H1', onClick: () => triggerHeading('h1') },
-        { key: 'h2', label: 'H2', onClick: () => triggerHeading('h2') },
-        { key: 'h3', label: 'H3', onClick: () => triggerHeading('h3') },
-        { key: 'h4', label: 'H4', onClick: () => triggerHeading('h4') },
-        { key: 'h5', label: 'H5', onClick: () => triggerHeading('h5') },
-        { key: 'h6', label: 'H6', onClick: () => triggerHeading('h6') },
-      ],
-    },
-    { type: 'divider' },
-    {
-      key: 'format', label: t('notes.ctxFormat'), children: [
-        { key: 'bold', label: t('notes.ctxBold'), onClick: () => triggerToolbarItem('bold') },
-        { key: 'italic', label: t('notes.ctxItalic'), onClick: () => triggerToolbarItem('italic') },
-        { key: 'strike', label: t('notes.ctxStrike'), onClick: () => triggerToolbarItem('strike') },
-      ],
-    },
-    {
-      key: 'list', label: t('notes.ctxListGroup'), children: [
-        { key: 'list', label: t('notes.ctxList'), onClick: () => triggerToolbarItem('list') },
-        { key: 'ordered-list', label: t('notes.ctxOrderedList'), onClick: () => triggerToolbarItem('ordered-list') },
-        { key: 'check', label: t('notes.ctxCheck'), onClick: () => triggerToolbarItem('check') },
+  const contextMenuItems: MenuProps['items'] = useMemo(() => {
+    const tableSection: MenuProps['items'] = tableCell
+      ? [
         { type: 'divider' },
-        { key: 'outdent', label: t('notes.ctxOutdent'), onClick: () => triggerToolbarItem('outdent') },
-        { key: 'indent', label: t('notes.ctxIndent'), onClick: () => triggerToolbarItem('indent') },
-      ],
-    },
-    {
-      key: 'insert', label: t('notes.ctxInsert'), children: [
-        { key: 'quote', label: t('notes.ctxQuote'), onClick: () => triggerToolbarItem('quote') },
-        { key: 'line', label: t('notes.ctxLine'), onClick: () => triggerToolbarItem('line') },
-        { key: 'table', label: t('notes.ctxTable'), onClick: () => triggerToolbarItem('table') },
-        { type: 'divider' },
-        { key: 'code', label: t('notes.ctxCode'), onClick: () => triggerToolbarItem('code') },
-        { key: 'inline-code', label: t('notes.ctxInlineCode'), onClick: () => triggerToolbarItem('inline-code') },
-        { key: 'link', label: t('notes.ctxLink'), onClick: () => triggerToolbarItem('link') },
-      ],
-    },
-  ], [t, triggerToolbarItem, triggerHeading])
+        {
+          key: 'table-ops', label: t('notes.ctxTableOps'), children: [
+            { key: 'row-above', label: t('notes.ctxRowAbove'), onClick: () => insertRow('above') },
+            { key: 'row-below', label: t('notes.ctxRowBelow'), onClick: () => insertRow('below') },
+            { key: 'col-left', label: t('notes.ctxColLeft'), onClick: () => insertColumn('left') },
+            { key: 'col-right', label: t('notes.ctxColRight'), onClick: () => insertColumn('right') },
+            { type: 'divider' },
+            { key: 'del-row', label: t('notes.ctxDelRow'), onClick: () => deleteRow() },
+            { key: 'del-col', label: t('notes.ctxDelCol'), onClick: () => deleteColumn() },
+          ],
+        },
+      ]
+      : []
+    const items: MenuProps['items'] = [
+      ...tableSection,
+      {
+        key: 'headings', label: t('notes.ctxHeadings'), children: [
+          { key: 'h1', label: 'H1', onClick: () => triggerHeading('h1') },
+          { key: 'h2', label: 'H2', onClick: () => triggerHeading('h2') },
+          { key: 'h3', label: 'H3', onClick: () => triggerHeading('h3') },
+          { key: 'h4', label: 'H4', onClick: () => triggerHeading('h4') },
+          { key: 'h5', label: 'H5', onClick: () => triggerHeading('h5') },
+          { key: 'h6', label: 'H6', onClick: () => triggerHeading('h6') },
+        ],
+      },
+      { type: 'divider' },
+      {
+        key: 'format', label: t('notes.ctxFormat'), children: [
+          { key: 'bold', label: t('notes.ctxBold'), onClick: () => triggerToolbarItem('bold') },
+          { key: 'italic', label: t('notes.ctxItalic'), onClick: () => triggerToolbarItem('italic') },
+          { key: 'strike', label: t('notes.ctxStrike'), onClick: () => triggerToolbarItem('strike') },
+        ],
+      },
+      {
+        key: 'list', label: t('notes.ctxListGroup'), children: [
+          { key: 'list', label: t('notes.ctxList'), onClick: () => triggerToolbarItem('list') },
+          { key: 'ordered-list', label: t('notes.ctxOrderedList'), onClick: () => triggerToolbarItem('ordered-list') },
+          { key: 'check', label: t('notes.ctxCheck'), onClick: () => triggerToolbarItem('check') },
+          { type: 'divider' },
+          { key: 'outdent', label: t('notes.ctxOutdent'), onClick: () => triggerToolbarItem('outdent') },
+          { key: 'indent', label: t('notes.ctxIndent'), onClick: () => triggerToolbarItem('indent') },
+        ],
+      },
+      {
+        key: 'insert', label: t('notes.ctxInsert'), children: [
+          { key: 'quote', label: t('notes.ctxQuote'), onClick: () => triggerToolbarItem('quote') },
+          { key: 'line', label: t('notes.ctxLine'), onClick: () => triggerToolbarItem('line') },
+          { key: 'table', label: t('notes.ctxTable'), onClick: () => triggerToolbarItem('table') },
+          { type: 'divider' },
+          { key: 'code', label: t('notes.ctxCode'), onClick: () => triggerToolbarItem('code') },
+          { key: 'inline-code', label: t('notes.ctxInlineCode'), onClick: () => triggerToolbarItem('inline-code') },
+          { key: 'link', label: t('notes.ctxLink'), onClick: () => triggerToolbarItem('link') },
+        ],
+      },
+    ]
+    return items
+  }, [t, triggerToolbarItem, triggerHeading, tableCell, insertRow, insertColumn, deleteRow, deleteColumn])
 
   const editorContent = (
     <div

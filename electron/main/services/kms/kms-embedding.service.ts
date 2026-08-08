@@ -7,6 +7,11 @@ import type { ProgressCallback } from './kms-index-manager.service'
 
 const logger = createLogger('KMS-Embedding')
 
+/** embedding 输入文本长度上限（字符）。
+ * kms_search_index.content 已按 SEARCH_INDEX_CONTENT_LIMIT(1000) 截断，
+ * 此处取整段截断内容作为向量输入，保证向量语义与段落关键词一致。 */
+const EMBEDDING_TEXT_LIMIT = 1000
+
 class KMSEmbeddingService {
   private db: Database.Database
   private vectorDb: Database.Database
@@ -98,13 +103,20 @@ class KMSEmbeddingService {
     let totalProcessed = 0
     let embeddingError: string | undefined
 
-    // 统计唯一 (source_type, source_id) 数：content_paragraph 类型同一文件多段落共享同一 key，
-    // 而 kms_embeddings 按 (source_type, source_id) 唯一存储，因此必须统计唯一 key 数才能准确估算
-    const uniqueRow = this.db.prepare(
-      "SELECT COUNT(*) as cnt FROM (SELECT DISTINCT source_type, source_id FROM kms_search_index WHERE content != '')"
-    ).get() as any
-    const uniqueCandidates = uniqueRow?.cnt ?? 0
-    const totalToProcess = Math.max(0, uniqueCandidates - existingKeys.size)
+    // 统计待生成的唯一 (source_type, source_id) 数。
+    // content_paragraph 每段使用唯一 source_id（段落自身 id），故 DISTINCT 即逐段计数，
+    // 与 generateEmbeddings 实际逐段生成的条目一一对应，进度 current/total 严格协同。
+    // 不能再用 uniqueCandidates - existingKeys.size：existingKeys 可能含已失效旧 key
+    // （如旧版 content_paragraph 共用 fileId 生成的 key），减法会低估 total 导致进度超 100%。
+    const candidateRows = this.db.prepare(
+      "SELECT DISTINCT source_type, source_id FROM kms_search_index WHERE content != ''"
+    ).all() as any[]
+    let totalToProcess = 0
+    for (const row of candidateRows) {
+      if (!existingKeys.has(`${row.source_type}:${row.source_id}`)) {
+        totalToProcess++
+      }
+    }
 
     logger.info(`Embedding generation: ${totalToProcess} entry(s) to process (forceRegenerate=${forceRegenerate}, provider=${providerId})`)
 
@@ -130,8 +142,8 @@ class KMSEmbeddingService {
 
       lastId = candidates[candidates.length - 1].id
 
-      // 应用层过滤：排除向量库中已存在的条目 + 同页内 (source_type, source_id) 去重
-      // content_paragraph 类型同一文件多段落共享同一 key，只取第一条即可
+      // 应用层过滤：排除向量库中已存在的条目 + 同页内 (source_type, source_id) 去重。
+      // content_paragraph 每段 source_id 唯一，此处天然逐段保留，无需特殊处理
       const seenInPage = new Set<string>()
       const unembedded: typeof candidates = []
       for (const c of candidates) {
@@ -152,7 +164,7 @@ class KMSEmbeddingService {
       for (let i = 0; i < unembedded.length; i += batchSize) {
         if (signal?.aborted) break
         const batch = unembedded.slice(i, i + batchSize)
-        const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, 500))
+        const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, EMBEDDING_TEXT_LIMIT))
 
         try {
           const embeddings = await llmClient.createEmbeddings(providerId, texts)
@@ -228,7 +240,8 @@ class KMSEmbeddingService {
         existingKeys.add(`${row.source_type}:${row.source_id}`)
       }
 
-      // 应用层过滤未嵌入条目 + 同文件内 (source_type, source_id) 去重
+      // 应用层过滤未嵌入条目 + 同文件内 (source_type, source_id) 去重。
+      // content_paragraph 每段 source_id 唯一，此处天然逐段保留
       const seen = new Set<string>()
       const unembedded: typeof candidates = []
       for (const c of candidates) {
@@ -244,7 +257,7 @@ class KMSEmbeddingService {
       let firstError: string | undefined
       for (let i = 0; i < unembedded.length; i += batchSize) {
         const batch = unembedded.slice(i, i + batchSize)
-        const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, 500))
+        const texts = batch.map(entry => `${entry.title} ${entry.content}`.substring(0, EMBEDDING_TEXT_LIMIT))
         try {
           const embeddings = await llmClient.createEmbeddings(providerId, texts)
           const batchEntries = []

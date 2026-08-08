@@ -16,6 +16,7 @@ export interface StreamListenerDeps {
   setIsStreaming: (v: boolean) => void
   isStreamingRef: React.MutableRefObject<boolean>
   updateConvLastMessageAt: (convId: string, timestamp: number) => void
+  onContextStats?: (convId: string, stats: any) => void
 }
 
 let _persistentListenersCleanup: (() => void) | null = null
@@ -367,6 +368,10 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           localStorage.removeItem(activeConvIdStorageKey)
         }
         updateConvLastMessageAt(streamState.conversationId, doneLastMsgTime)
+      }
+
+      if (metadata?.contextStats) {
+        depsRef.current.onContextStats?.(streamState.conversationId, metadata.contextStats)
       }
     })
 

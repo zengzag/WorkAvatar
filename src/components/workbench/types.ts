@@ -65,6 +65,7 @@ export interface MessageWithThought extends Message {
   comparisonModelId?: string
   images?: string[]
   _comparisonBranchMsgs?: MessageWithThought[]
+  isCompactSummary?: boolean
 }
 
 export function ensureSegments(msg: MessageWithThought): MessageWithThought {

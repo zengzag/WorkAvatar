@@ -64,6 +64,24 @@ class KMSTokenizerService {
   }
 
   /**
+   * 整句分词（用于短语精确匹配）
+   *
+   * 与索引侧 segment 保持一致：保留停用词、标点与顺序，生成与索引 token 序列完全一致的词序列，
+   * 使 FTS5 短语查询 "tok1 tok2 ..." 能精确命中原文中连续出现的整句。
+   * 不能用 segmentForSearch（会过滤停用词并做子词拆分，破坏短语连续性）。
+   */
+  segmentForPhrase(text: string): string[] {
+    if (!text) return []
+    const words = this.getInstance().cut(text, true)
+    const result: string[] = []
+    for (const w of words) {
+      const t = w.trim()
+      if (t.length > 0) result.push(t)
+    }
+    return result
+  }
+
+  /**
    * 搜索引擎模式分词（用于查询侧）
    *
    * 对长词进一步切分子词以提升召回率（如「管理系统」→「管理」「系统」「管理系统」），

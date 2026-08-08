@@ -169,7 +169,9 @@ class FileParserService {
         if (totalCells > EXCEL_MAX_TOTAL_CELLS) break
       }
 
-      fullText += `\n--- Sheet: ${sheetName} ---\n${csvLines.join('\n')}\n`
+      // 行与行之间用空行(\n\n)分隔，使 indexContentParagraphs 能按 \n\n 把每行切分为独立段落。
+      // 若整表连成单个巨型段落，BM25 会因段落过长而惩罚得分，导致含关键词的行排不进搜索结果前列。
+      fullText += `\n--- Sheet: ${sheetName} ---\n${csvLines.join('\n\n')}\n`
 
       if (tableRows.length > 0) {
         tables.push({

@@ -8,6 +8,11 @@ import AnswerSegment from './AnswerSegment'
 
 const { Text } = Typography
 
+const formatNumber = (n: number | undefined | null): string => {
+  if (n === undefined || n === null) return ''
+  return n.toLocaleString('en-US')
+}
+
 /**
  * 根据 comparisonProviderId + comparisonModelId 解析模型显示名。
  * 兼容 msg 与 branch 两种来源（只要带这两个字段即可）。
@@ -37,7 +42,7 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }>
   if (tokenUsage.totalTokens === undefined && tokenUsage.totalChars !== undefined) {
     return (
       <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-        {t('workbench.outputChars')}: {tokenUsage.totalChars}
+        {t('workbench.outputChars')}: {formatNumber(tokenUsage.totalChars)}
       </Text>
     )
   }
@@ -48,17 +53,17 @@ export const TokenUsageDisplay: React.FC<{ tokenUsage: TokenUsage | undefined }>
     <>
       {tokenUsage.promptTokens !== undefined && (
         <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.promptTokens')}: {tokenUsage.promptTokens}
+          {t('workbench.promptTokens')}: {formatNumber(tokenUsage.promptTokens)}
           {tokenUsage.cachedTokens != null && tokenUsage.cachedTokens > 0 && (
             <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-              {' '}({t('workbench.cachedTokens')}: {tokenUsage.cachedTokens})
+              {' '}({t('workbench.cachedTokens')}: {formatNumber(tokenUsage.cachedTokens)})
             </Text>
           )}
         </Text>
       )}
       {tokenUsage.completionTokens !== undefined && (
         <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-          {t('workbench.completionTokens')}: {tokenUsage.completionTokens}
+          {t('workbench.completionTokens')}: {formatNumber(tokenUsage.completionTokens)}
         </Text>
       )}
     </>

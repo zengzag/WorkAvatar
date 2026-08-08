@@ -17,6 +17,8 @@ export const LLM_CHANNELS = {
   AGENT_TOOL_CALL_DELTA: 'agent:tool-call-delta',
   AGENT_TOOL_RESULT: 'agent:tool-result',
   AGENT_TOOL_PROGRESS: 'agent:tool-progress',
+  EMPLOYEE_COMPACT_CONVERSATION: 'employee:compact-conversation',
+  EMPLOYEE_GET_CONTEXT_STATS: 'employee:get-context-stats',
   INTERACTION_REQUEST: 'interaction:request',
   INTERACTION_RESPONSE: 'interaction:response',
 } as const

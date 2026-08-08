@@ -33,11 +33,17 @@ const ignoreDirs = new Set([
   'out', 'target', 'bin', 'obj'
 ])
 
+/** 当前任务的有效工作区目录：优先任务独立目录，旧对话（无任务目录）回退到员工工作区 */
 export function getWorkspacePath(): string | null {
   try {
     const ctx = interactionContext.getStore()
     if (!ctx || !ctx.employeeId) return null
     const db = DatabaseService.getInstance().getDb()
+    // 优先使用当前对话的任务工作区（沙箱边界）
+    if (ctx.conversationId) {
+      const conv = db.prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(ctx.conversationId) as { workspace_path?: string } | undefined
+      if (conv?.workspace_path) return conv.workspace_path
+    }
     const employee = db.prepare('SELECT workspace_path FROM employees WHERE id = ?').get(ctx.employeeId) as { workspace_path: string | null } | undefined
     return employee?.workspace_path || null
   } catch {

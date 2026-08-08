@@ -3,21 +3,27 @@ import {
   IMemoryManager,
   MemoryConfig,
   MemoryStats,
+  ManageContextOptions,
   DEFAULT_MEMORY_CONFIG,
 } from './types'
+import { createLogger } from '../../logger'
+
+const logger = createLogger('MemoryManager')
 
 export class MemoryManager implements IMemoryManager {
   private config: MemoryConfig
+  private lastStats: MemoryStats | null = null
 
   constructor(config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config }
   }
 
-  manageContext(
+  async manageContext(
     systemPrompt: string,
     history: Message[],
-    currentQuery: string
-  ): { messages: Message[]; stats: MemoryStats } {
+    currentQuery: string,
+    options?: ManageContextOptions
+  ): Promise<{ messages: Message[]; stats: MemoryStats }> {
     const systemMessage: Message = {
       role: 'system',
       content: systemPrompt,
@@ -36,35 +42,48 @@ export class MemoryManager implements IMemoryManager {
     let wasCompressed = false
 
     const historyTokens = this.estimateTokens(managedHistory)
+    const shouldCompress = options?.forceCompress || historyTokens > availableForHistory
 
-    if (historyTokens > availableForHistory) {
+    if (shouldCompress && managedHistory.length > 0) {
       wasCompressed = true
-      managedHistory = this.compressHistory(managedHistory, availableForHistory)
+      managedHistory = await this.compressHistory(managedHistory, availableForHistory)
     }
 
     const finalMessages = [systemMessage, ...managedHistory, userMessage]
     const totalTokens = this.estimateTokens(finalMessages)
 
-    return {
-      messages: finalMessages,
-      stats: {
-        totalMessages: finalMessages.length,
-        estimatedTokens: totalTokens,
-        maxTokens: this.config.maxTokens,
-        utilizationPercent: Math.round((totalTokens / this.config.maxTokens) * 100),
-        strategy: this.config.strategy,
-        wasCompressed,
-      },
+    const stats: MemoryStats = {
+      totalMessages: finalMessages.length,
+      estimatedTokens: totalTokens,
+      actualPromptTokens: options?.lastKnownPromptTokens,
+      maxTokens: this.config.maxTokens,
+      utilizationPercent: Math.round((totalTokens / this.config.maxTokens) * 100),
+      strategy: this.config.strategy,
+      wasCompressed,
     }
+    this.lastStats = stats
+
+    return { messages: finalMessages, stats }
   }
 
   estimateTokens(messages: Message[]): number {
     let totalChars = 0
     for (const msg of messages) {
+      // 每条消息的结构开销（role、分隔符、JSON 包装），
+      // OpenAI 系列 chat template 平均每条额外 4-6 token，这里按 5 token ≈ 17 字符估算
+      totalChars += 17
+      totalChars += (msg.role?.length ?? 0)
       totalChars += (msg.content?.length ?? 0)
       totalChars += (msg.reasoning_content?.length ?? 0)
+      if (msg.toolCallId) {
+        totalChars += msg.toolCallId.length + 20 // "tool_call_id":"..." 包装
+      }
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
+          // 工具调用结构开销：id、type、function、name、arguments 包装
+          totalChars += 60
+          totalChars += (tc.id?.length ?? 0)
+          totalChars += (tc.type?.length ?? 0)
           totalChars += (tc.function.name?.length ?? 0)
           totalChars += (tc.function.arguments?.length ?? 0)
         }
@@ -73,7 +92,18 @@ export class MemoryManager implements IMemoryManager {
     return Math.ceil(totalChars / 3.5)
   }
 
-  private compressHistory(history: Message[], tokenBudget: number): Message[] {
+  getStats(): MemoryStats | null {
+    return this.lastStats
+  }
+
+  setActualPromptTokens(promptTokens: number): void {
+    if (this.lastStats) {
+      this.lastStats.actualPromptTokens = promptTokens
+      this.lastStats.utilizationPercent = Math.round((promptTokens / this.lastStats.maxTokens) * 100)
+    }
+  }
+
+  private async compressHistory(history: Message[], tokenBudget: number): Promise<Message[]> {
     switch (this.config.strategy) {
       case 'sliding_window':
         return this.slidingWindowCompress(history, tokenBudget)
@@ -98,7 +128,7 @@ export class MemoryManager implements IMemoryManager {
     return this.truncateFromStart(recentMessages, tokenBudget)
   }
 
-  private summaryCompress(history: Message[], tokenBudget: number): Message[] {
+  private async summaryCompress(history: Message[], tokenBudget: number): Promise<Message[]> {
     if (history.length <= 4) {
       return this.truncateFromStart(history, tokenBudget)
     }
@@ -106,7 +136,7 @@ export class MemoryManager implements IMemoryManager {
     const olderMessages = history.slice(0, -4)
     const recentMessages = history.slice(-4)
 
-    const summary = this.generateSimpleSummary(olderMessages)
+    const summary = await this.generateSummary(olderMessages)
     const summaryMessage: Message = {
       role: 'system',
       content: `[对话历史摘要]\n${summary}`,
@@ -122,7 +152,7 @@ export class MemoryManager implements IMemoryManager {
     return this.truncateFromStart(recentMessages, tokenBudget)
   }
 
-  private slidingWindowWithSummaryCompress(history: Message[], tokenBudget: number): Message[] {
+  private async slidingWindowWithSummaryCompress(history: Message[], tokenBudget: number): Promise<Message[]> {
     const recentTurns = this.config.recentTurnsToKeep
     const recentMessages = this.getLastNTurns(history, recentTurns)
     const recentTokens = this.estimateTokens(recentMessages)
@@ -130,7 +160,7 @@ export class MemoryManager implements IMemoryManager {
     if (recentTokens <= tokenBudget) {
       const olderMessages = history.slice(0, history.length - recentMessages.length)
       if (olderMessages.length > 0) {
-        const summary = this.generateSimpleSummary(olderMessages)
+        const summary = await this.generateSummary(olderMessages)
         const summaryMessage: Message = {
           role: 'system',
           content: `[对话历史摘要]\n${summary}`,
@@ -172,7 +202,6 @@ export class MemoryManager implements IMemoryManager {
     let keptTokens = 0
     for (let i = messages.length - 1; i >= 0; i--) {
       const msgTokens = this.estimateTokens([messages[i]])
-      // 始终保留最后一条；其余消息仅在累加未超预算时保留
       if (result.length === 0 || keptTokens + msgTokens <= tokenBudget) {
         result.unshift(messages[i])
         keptTokens += msgTokens
@@ -182,6 +211,17 @@ export class MemoryManager implements IMemoryManager {
     }
 
     return result
+  }
+
+  private async generateSummary(messages: Message[]): Promise<string> {
+    if (this.config.summarizeFn) {
+      try {
+        return await this.config.summarizeFn(messages)
+      } catch (err) {
+        logger.warn('LLM摘要失败，回退到简单摘要', err)
+      }
+    }
+    return this.generateSimpleSummary(messages)
   }
 
   private generateSimpleSummary(messages: Message[]): string {

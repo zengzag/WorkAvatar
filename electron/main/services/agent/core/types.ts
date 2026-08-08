@@ -74,6 +74,15 @@ export interface AgentResponseMetadata {
   totalLatencyMs?: number
   iterations?: number
   tokenUsage?: TokenUsage
+  contextStats?: {
+    totalMessages: number
+    estimatedTokens: number
+    actualPromptTokens?: number
+    maxTokens: number
+    utilizationPercent: number
+    strategy: string
+    wasCompressed: boolean
+  }
 }
 
 export interface TokenUsage {

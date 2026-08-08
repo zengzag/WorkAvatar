@@ -1,4 +1,4 @@
-import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App } from 'antd'
+import { Typography, Button, Space, Popconfirm, theme, Input, Popover, Tag, App, Image, Tooltip } from 'antd'
 import {
   RobotOutlined,
   UserOutlined,
@@ -13,6 +13,7 @@ import {
   SwapOutlined,
   SearchOutlined,
   FileTextOutlined,
+  CompressOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -114,6 +115,61 @@ const ModelSwitchPopover: React.FC<{
   )
 }
 
+const formatNum = (n: number | undefined | null): string => {
+  if (n === undefined || n === null) return ''
+  return n.toLocaleString('en-US')
+}
+
+const ContextUsageInline: React.FC<{
+  stats?: any
+  isCompacting: boolean
+  onCompact?: () => void
+}> = ({ stats, isCompacting, onCompact }) => {
+  const { t } = useTranslation()
+  const { token } = theme.useToken()
+  const tokenCount = stats?.actualPromptTokens ?? stats?.estimatedTokens ?? 0
+  const maxTokens = stats?.maxTokens ?? 0
+  const percent = maxTokens > 0 ? Math.round((tokenCount / maxTokens) * 100) : 0
+
+  const percentColor = percent > 80 ? token.colorError : percent > 50 ? token.colorWarning : token.colorTextTertiary
+
+  return (
+    <Tooltip
+      title={
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Text style={{ fontSize: 12, color: token.colorTextTertiary }}>
+            {formatNum(tokenCount)} / {formatNum(maxTokens)}
+          </Text>
+          <Button
+            type="text"
+            size="small"
+            icon={<CompressOutlined style={{ fontSize: 12 }} />}
+            onClick={onCompact}
+            loading={isCompacting}
+            disabled={isCompacting || !onCompact}
+            style={{ fontSize: 12, height: 22, padding: '0 4px', color: token.colorText }}>
+            {t('workbench.compact', { defaultValue: '压缩' })}
+          </Button>
+        </div>
+      }
+    >
+      <div style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        cursor: 'pointer',
+      }}>
+        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+          {t('workbench.contextUsage', { defaultValue: '上下文' })}:
+        </Text>
+        <Text style={{ fontSize: 11, color: percentColor, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+          {percent}%
+        </Text>
+      </div>
+    </Tooltip>
+  )
+}
+
 const MessageBubble: React.FC<{
   msg: MessageWithThought
   onCopy: (content: string) => void
@@ -126,7 +182,11 @@ const MessageBubble: React.FC<{
   onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers }) => {
+  isLastAssistantMessage?: boolean
+  contextStats?: any
+  isCompacting?: boolean
+  onCompact?: () => void
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -310,20 +370,24 @@ const MessageBubble: React.FC<{
                 <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                    {msg.images.map((img, i) => (
-                      <img
-                        key={img}
-                        src={img}
-                        alt={`upload-${i}`}
-                        style={{
-                          maxWidth: 180,
-                          maxHeight: 140,
-                          borderRadius: 4,
-                          objectFit: 'cover',
-                          border: `1px solid ${token.colorBorderSecondary}`,
-                        }}
-                      />
-                    ))}
+                    <Image.PreviewGroup items={msg.images}>
+                      {msg.images.map((img, i) => (
+                        <Image
+                          key={img}
+                          src={img}
+                          alt={`upload-${i}`}
+                          style={{
+                            maxWidth: 220,
+                            maxHeight: 160,
+                            borderRadius: 4,
+                            border: `1px solid ${token.colorBorderSecondary}`,
+                            objectFit: 'contain',
+                            background: token.colorBgLayout,
+                          }}
+                          preview={{}}
+                        />
+                      ))}
+                    </Image.PreviewGroup>
                   </div>
                 )}
               </div>
@@ -459,10 +523,18 @@ const MessageBubble: React.FC<{
                 marginTop: 4,
                 marginLeft: 2,
                 display: 'flex',
-                gap: 8,
+                gap: 16,
                 alignItems: 'center',
+                flexWrap: 'wrap',
               }}>
                 <TokenUsageDisplay tokenUsage={displayTokenUsage} />
+                {isLastAssistantMessage && (
+                  <ContextUsageInline
+                    stats={contextStats}
+                    isCompacting={!!isCompacting}
+                    onCompact={onCompact}
+                  />
+                )}
               </div>
             )}
           </div>
@@ -474,5 +546,10 @@ const MessageBubble: React.FC<{
 }
 
 export default memo(MessageBubble, (prev, next) => {
-  return prev.msg === next.msg && prev.providers === next.providers
+  return prev.msg === next.msg
+    && prev.providers === next.providers
+    && prev.isLastAssistantMessage === next.isLastAssistantMessage
+    && prev.contextStats === next.contextStats
+    && prev.isCompacting === next.isCompacting
+    && prev.onCompact === next.onCompact
 })

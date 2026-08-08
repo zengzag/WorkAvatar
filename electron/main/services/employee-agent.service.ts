@@ -5,6 +5,7 @@ import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
 import NotesService from './notes/notes.service'
+import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -173,13 +174,14 @@ class EmployeeAgentService {
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
+        // 稳定不变的环境信息（系统环境/笔记库）保留在 system prompt；
+        // 任务工作区信息随任务变化，改由动态上下文 <workspace> 注入（见 buildWorkspaceContextPrompt）
         const platformMap: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
         const osName = platformMap[process.platform] || process.platform
         const osRelease = os.release()
         const osArch = os.arch()
         const parts: string[] = []
         parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        if (emp.workspace_path) parts.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
         const notesRoot = NotesService.getInstance().getVaultRoot()
         parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
         return parts.join('\n')
@@ -255,6 +257,9 @@ class EmployeeAgentService {
       agent.updateMemoryPrompt(memoryPrompt)
     }
 
+    // 注入任务工作区上下文（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
+    agent.updateWorkspaceContextPrompt(this.buildWorkspaceContextPrompt(emp, conversationId))
+
     this.agentEntries.set(cacheKey, {
       agent,
       conversationId: conversationId || null,
@@ -303,6 +308,24 @@ class EmployeeAgentService {
     return tools
       .filter(t => modeMap.get(t.id) !== 'off')
       .map(t => ({ ...t, onDemand: modeMap.get(t.id) === 'on_demand' }))
+  }
+
+  /** 构建任务工作区上下文（随会话稳定，注入 <workspace> 上下文块） */
+  private buildWorkspaceContextPrompt(emp: DBEmployee, conversationId?: string): string | undefined {
+    const taskWorkspace = conversationId
+      ? WorkspaceManagerService.getInstance().getConversationWorkspacePath(conversationId)
+      : ''
+    const lines: string[] = []
+    if (taskWorkspace) {
+      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行）`)
+      if (emp.workspace_path) {
+        lines.push(`数字员工工作区：${emp.workspace_path}（只读默认，增删改需用户确认，仅用于查看其他任务）`)
+      }
+    } else if (emp.workspace_path) {
+      // 旧对话无任务目录：回退到员工工作区为读写授权，保持兼容
+      lines.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
+    }
+    return lines.length > 0 ? lines.join('\n') : undefined
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
@@ -451,6 +474,56 @@ class EmployeeAgentService {
         `UPDATE conversations SET system_prompt = ? WHERE id = ?`
       ).run(cachedPrompt, conversationId)
     }
+  }
+
+  async compactConversation(params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    messages: EmployeeChatStreamParams['messages']
+    conversation_id?: string
+    collection_ids?: string[]
+    enable_thinking?: boolean
+    minimal_mode?: boolean
+  }): Promise<{ summary: string; stats: any }> {
+    const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
+
+    const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
+    const employeeName = employee?.name || 'unknown'
+
+    const logCtx = {
+      employeeId: employee_id,
+      employeeName,
+      conversationId: conversation_id,
+      source: 'compact',
+    }
+
+    return LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const agent = entry.agent
+      entry.collectionIdsRef.current.collectionIds = collection_ids
+
+      const history = this.expandFrontendMessages(messages)
+
+      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+
+      const { summary, stats } = await agent.compactConversation(history)
+
+      return { summary, stats }
+    })
+  }
+
+  getContextStats(params: {
+    employee_id: string
+    provider_id: string
+    model_id?: string
+    enable_thinking?: boolean
+  }): any {
+    const { employee_id, provider_id, model_id, enable_thinking } = params
+    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking ? 'thinking' : 'no-thinking'}`
+    const entry = this.agentEntries.get(cacheKey)
+    if (!entry) return null
+    return entry.agent.getContextStats()
   }
 
   clearAgentCache(employeeId?: string): void {

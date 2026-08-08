@@ -623,6 +623,10 @@ ${correctionNote}
   private realtimeTaskIds: Set<string> = new Set()
   /** 双源录音：临时存储各来源的转录结果（taskId → TranscriptResult） */
   private dualSourceTranscripts: Map<string, { text: string; segments: TranscriptSegment[] }> = new Map()
+  /** 待处理的实时音频块队列（taskId → 音频块），避免同步推理阻塞主进程事件循环 */
+  private realtimeQueues: Map<string, { samples: Float32Array; sampleRate: number; source?: string }[]> = new Map()
+  /** 正在异步处理中的任务（避免重复启动处理循环） */
+  private realtimeProcessing: Set<string> = new Set()
 
   /** 开始实时识别 */
   startRealtime(taskId: string, language?: string): { ok: boolean; error?: string } {
@@ -647,14 +651,52 @@ ${correctionNote}
     return result
   }
 
-  /** 喂入音频块，推送实时结果到前端 */
+  /** 喂入音频块：入队并异步处理，推送实时结果到前端 */
   feedRealtimeAudio(taskId: string, samples: Float32Array, sampleRate: number, source?: string): void {
     if (!this.realtimeTaskIds.has(taskId)) return
 
-    const localSTT = LocalSTTService.getInstance()
-    const result = localSTT.feedAudioChunk(taskId, samples, sampleRate)
+    let queue = this.realtimeQueues.get(taskId)
+    if (!queue) {
+      queue = []
+      this.realtimeQueues.set(taskId, queue)
+    }
+    // 安全阀：CPU 处理跟不上时丢弃最旧的音频块，防止队列无限增长导致内存膨胀
+    if (queue.length >= 200) {
+      queue.shift()
+    }
+    queue.push({ samples, sampleRate, source })
 
-    // 推送实时结果到前端
+    this.processRealtimeQueue(taskId)
+  }
+
+  /** 异步处理实时识别队列：每处理一块音频即让出事件循环，避免同步推理阻塞主进程导致 UI/IPC 卡顿 */
+  private processRealtimeQueue(taskId: string): void {
+    if (this.realtimeProcessing.has(taskId)) return
+    this.realtimeProcessing.add(taskId)
+
+    const localSTT = LocalSTTService.getInstance()
+    const run = async () => {
+      try {
+        while (this.realtimeTaskIds.has(taskId)) {
+          const queue = this.realtimeQueues.get(taskId)
+          if (!queue || queue.length === 0) break
+          const item = queue.shift()!
+          const result = localSTT.feedAudioChunk(taskId, item.samples, item.sampleRate)
+          this.pushRealtimeResult(taskId, result, item.source)
+          // 让出事件循环，保证主进程能及时处理导航/IPC 等消息
+          await new Promise<void>((resolve) => setImmediate(resolve))
+        }
+      } catch (err: any) {
+        logger.error(`Realtime feed processing error: ${taskId}`, err?.message || err)
+      } finally {
+        this.realtimeProcessing.delete(taskId)
+      }
+    }
+    run()
+  }
+
+  /** 推送实时识别结果到前端与悬浮字幕窗口 */
+  private pushRealtimeResult(taskId: string, result: { text: string; partialText: string; segment?: { start: number; end: number; text: string }; isEndpoint: boolean }, source?: string): void {
     const realtimeResult = {
       taskId,
       text: result.text,
@@ -681,9 +723,19 @@ ${correctionNote}
     }
 
     this.realtimeTaskIds.delete(taskId)
+    this.realtimeProcessing.delete(taskId)
+
+    // 停止前先同步清空待处理队列，避免末尾音频块未被识别（按顺序喂入保持流连贯）
+    const localSTT = LocalSTTService.getInstance()
+    const pendingQueue = this.realtimeQueues.get(taskId)
+    if (pendingQueue) {
+      for (const item of pendingQueue) {
+        localSTT.feedAudioChunk(taskId, item.samples, item.sampleRate)
+      }
+      this.realtimeQueues.delete(taskId)
+    }
 
     const settings = this.getSettings()
-    const localSTT = LocalSTTService.getInstance()
     const transcript = localSTT.stopRealtimeRecognize(taskId)
 
     // 双源录音：suffixed taskId（__mic / __system）没有对应任务记录，
@@ -809,6 +861,8 @@ ${correctionNote}
   cancelRealtime(taskId: string): void {
     if (!this.realtimeTaskIds.has(taskId)) return
     this.realtimeTaskIds.delete(taskId)
+    this.realtimeProcessing.delete(taskId)
+    this.realtimeQueues.delete(taskId)
     LocalSTTService.getInstance().cancelRealtimeRecognize(taskId)
     this.dualSourceTranscripts.delete(taskId)
     logger.info(`Realtime recognition cancelled: taskId=${taskId}`)

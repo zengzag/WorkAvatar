@@ -1,3 +1,4 @@
+import { Image } from 'antd'
 import CodeBlock from './CodeBlock'
 
 export const markdownComponents = {
@@ -22,6 +23,17 @@ export const markdownComponents = {
       <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
         {children}
       </a>
+    )
+  },
+  img({ src, alt, ...props }: any) {
+    return (
+      <Image
+        src={src}
+        alt={alt || ''}
+        style={{ maxWidth: '100%', borderRadius: 4 }}
+        preview={{}}
+        {...props}
+      />
     )
   },
 }

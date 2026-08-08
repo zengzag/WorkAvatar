@@ -6,6 +6,7 @@ import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
 import { calendarTools } from './calendar.tool'
 import { automationTools } from './automation.tool'
+import { ocrImageTool } from './ocr.tool'
 import type { ToolDefinition } from './types'
 
 export const allBuiltinTools: ToolDefinition[] = [
@@ -17,6 +18,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   askUserTool,
   ...calendarTools,
   ...automationTools,
+  ocrImageTool,
 ]
 
 export * from './javascript-exec.tool'

@@ -1,5 +1,5 @@
 import { memo, useState, useMemo, useCallback, useRef, useEffect } from 'react'
-import { Input, Button, Typography, Popconfirm, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
+import { Input, Button, Typography, Empty, theme, Dropdown, Tooltip, Checkbox, Spin } from 'antd'
 import type { MenuProps, InputRef } from 'antd'
 import {
   PlusOutlined,
@@ -96,6 +96,7 @@ const TaskItem = memo(({
   const [hovered, setHovered] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
   const editInputRef = useRef<InputRef>(null)
 
   useEffect(() => {
@@ -142,9 +143,20 @@ const TaskItem = memo(({
     e.stopPropagation()
   }, [saveEdit, cancelEdit])
 
-  const handleDeleteClick = useCallback(() => {
+  const handleDeleteClick = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setDeleteConfirm(true)
+  }, [])
+
+  const confirmDelete = useCallback((e?: React.MouseEvent) => {
+    e?.stopPropagation()
     onDelete(task.id)
+    setDeleteConfirm(false)
   }, [onDelete, task.id])
+
+  const cancelDeleteConfirm = useCallback(() => {
+    setDeleteConfirm(false)
+  }, [])
 
   const contextMenuItems = useMemo<MenuProps['items']>(() => {
     const items: NonNullable<MenuProps['items']>[number][] = [
@@ -189,10 +201,10 @@ const TaskItem = memo(({
             onToggleSelect?.(task.id)
             return
           }
-          if (!isEditing) onSelect(task.id)
+          if (!isEditing && !active) onSelect(task.id)
         }}
         onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
+        onMouseLeave={() => { setHovered(false); setDeleteConfirm(false) }}
         onDoubleClick={(e) => { if (!selectionMode) startEdit(e) }}
         style={{
           padding: '8px 10px',
@@ -206,6 +218,7 @@ const TaskItem = memo(({
           display: 'flex',
           alignItems: 'flex-start',
           gap: 8,
+          position: 'relative',
         }}
       >
         {selectionMode && (
@@ -217,7 +230,7 @@ const TaskItem = memo(({
             />
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, paddingRight: hovered && !isEditing && !selectionMode ? (deleteConfirm ? 76 : 48) : 0, transition: 'padding-right 0.15s' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
             {streaming && (
               <span style={{
@@ -257,7 +270,9 @@ const TaskItem = memo(({
         </div>
         <div
           style={{
-            flexShrink: 0,
+            position: 'absolute',
+            top: 8,
+            right: 10,
             opacity: hovered && !isEditing && !selectionMode ? 1 : 0,
             pointerEvents: hovered && !isEditing && !selectionMode ? 'auto' : 'none',
             transition: 'opacity 0.15s',
@@ -266,31 +281,48 @@ const TaskItem = memo(({
             gap: 2,
           }}
         >
-          <Button
-            type="text"
-            size="small"
-            icon={<EditOutlined style={{ fontSize: 12 }} />}
-            onClick={(e) => startEdit(e)}
-            title={t('common.rename')}
-            style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
-          />
-          <Popconfirm
-            title={t('workbench.confirmDelete')}
-            okText={t('common.confirm')}
-            cancelText={t('common.cancel')}
-            okButtonProps={{ danger: true }}
-            trigger="click"
-            onConfirm={(e) => { e?.stopPropagation(); onDelete(task.id) }}
-            onCancel={(e) => e?.stopPropagation()}
-          >
+          {!deleteConfirm && (
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined style={{ fontSize: 12 }} />}
+              onClick={(e) => startEdit(e)}
+              title={t('common.rename')}
+              style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+            />
+          )}
+          {deleteConfirm ? (
+            <>
+              <Button
+                type="text"
+                size="small"
+                onClick={(e) => confirmDelete(e)}
+                title={t('common.confirm')}
+                danger
+                style={{ padding: '0 4px', width: 'auto', height: 20, minWidth: 20, fontSize: 12 }}
+              >
+                {t('common.confirm')}
+              </Button>
+              <Button
+                type="text"
+                size="small"
+                onClick={() => cancelDeleteConfirm()}
+                title={t('common.cancel')}
+                style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
+              >
+                <CloseOutlined style={{ fontSize: 12 }} />
+              </Button>
+            </>
+          ) : (
             <Button
               type="text"
               size="small"
               icon={<DeleteOutlined style={{ fontSize: 12 }} />}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => handleDeleteClick(e)}
+              title={t('common.delete')}
               style={{ color: token.colorTextTertiary, padding: 0, width: 20, height: 20, minWidth: 20 }}
             />
-          </Popconfirm>
+          )}
         </div>
       </div>
     </Dropdown>
@@ -388,7 +420,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
 
   return (
     <div style={{
-      width: 280,
+      width: 260,
       flexShrink: 0,
       display: 'flex',
       flexDirection: 'column',
@@ -431,12 +463,12 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
           )}
 
           {/* 中间：搜索框（内嵌筛选和多选图标按钮） */}
-          {selectionMode ? (
-            // 多选模式下用批量操作条替换搜索框
+          {/* 搜索框和批量操作条都常驻DOM，通过display切换，避免条件渲染导致的闪烁 */}
+          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+            {/* 多选模式批量操作条 */}
             <div style={{
-              flex: 1,
               height: 28,
-              display: 'flex',
+              display: selectionMode ? 'flex' : 'none',
               alignItems: 'center',
               gap: 6,
               padding: '0 8px',
@@ -457,17 +489,16 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 style={{ fontSize: 12, color: selectedIds.size > 0 ? token.colorError : token.colorTextQuaternary, padding: 0, width: 22, height: 22, minWidth: 22 }}
               />
             </div>
-          ) : (
+            {/* 搜索框 */}
             <div style={{
-              flex: 1,
               height: 28,
+              display: selectionMode ? 'none' : 'flex',
               borderRadius: 6,
               border: `1px solid ${token.colorBorderSecondary}`,
               background: token.colorBgElevated,
-              display: 'flex',
               alignItems: 'center',
               padding: '0 4px 0 8px',
-              transition: 'all 0.15s',
+              transition: 'border-color 0.15s',
               minWidth: 0,
             }}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimaryBorder }}
@@ -624,7 +655,7 @@ const TaskSidebar: React.FC<TaskSidebarProps> = ({
                 />
               </Tooltip>
             </div>
-          )}
+          </div>
 
           {/* 最右侧：新建任务 / 取消多选 按钮（独立，主题色加号） */}
           {selectionMode ? (

@@ -453,6 +453,9 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'system_prompt', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'memory_extracted_at', 'INTEGER')
     this.addColumnIfNotExists('conversations', 'memory_extracted_message_count', 'INTEGER NOT NULL DEFAULT 0')
+    this.addColumnIfNotExists('conversations', 'context_stats_json', "TEXT DEFAULT '{}'")
+    // 任务工作区目录（每个任务独立子目录），空字符串表示未分配（旧对话回退到员工工作区）
+    this.addColumnIfNotExists('conversations', 'workspace_path', "TEXT DEFAULT ''")
 
     this.migrateConversationLastMessageAt()
 

@@ -46,6 +46,10 @@ const _persistentActiveConvId = new Map<string, string>()
 // 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
 const _persistentDrafts = new Map<string, string>()
 
+// 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
+// 组件重挂载时优先从此缓存恢复，避免 DB 查询竞争条件导致显示 0/0
+const _persistentContextStats = new Map<string, any>()
+
 // 获取或创建指定员工的消息缓存
 const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, MessageWithThought[]> => {
   let cache = _persistentMessagesByEmployee.get(employeeId)
@@ -87,6 +91,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const [pendingHighPermission, setPendingHighPermission] = useState(false)
   const [messages, setMessages] = useState<MessageWithThought[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
+  const [contextStats, setContextStats] = useState<Record<string, any>>({})
+  const [isCompacting, setIsCompacting] = useState(false)
   const inputDraftRef = useRef('')
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
@@ -156,6 +162,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   useEffect(() => {
     isStreamingRef.current = isStreaming
   }, [isStreaming])
+
+  const currentContextStats = useMemo(() => {
+    if (!activeConversationId) return undefined
+    const stats = contextStats[activeConversationId]
+    if (!stats) return undefined
+    if ((stats.actualPromptTokens === 0 || stats.actualPromptTokens === undefined) &&
+        (stats.estimatedTokens === 0 || stats.estimatedTokens === undefined) &&
+        (stats.maxTokens === 0 || stats.maxTokens === undefined)) {
+      return undefined
+    }
+    return stats
+  }, [contextStats, activeConversationId])
 
   const updateConvMessages = (convId: string, updater: (prev: MessageWithThought[]) => MessageWithThought[]) => {
     const prev = conversationMessagesRef.current.get(convId)
@@ -246,6 +264,28 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const hasFullCache = cachedEmployee && cachedConvList && cachedActiveConvId
 
       if (hasFullCache && !initializedRef.current) {
+        // 从缓存 convList 恢复所有对话的 contextStats
+        const restoredStatsFromCache: Record<string, any> = {}
+        for (const conv of cachedConvList) {
+          if ((conv as any).context_stats_json) {
+            try {
+              const stats = JSON.parse((conv as any).context_stats_json)
+              if (stats && typeof stats === 'object') {
+                restoredStatsFromCache[conv.id] = stats
+              }
+            } catch {
+              // JSON 解析失败忽略
+            }
+          }
+        }
+        // 持久化内存缓存优先级最高（真空期 onDone 更新可能只写入了这里）
+        for (const [cid, s] of _persistentContextStats) {
+          if (s && typeof s === 'object') restoredStatsFromCache[cid] = s
+        }
+        if (Object.keys(restoredStatsFromCache).length > 0) {
+          setContextStats(prev => ({ ...prev, ...restoredStatsFromCache }))
+        }
+
         // 缓存完整：先设 loading（显示转圈圈），再异步恢复消息
         initializedRef.current = true
         if (skipAutoInit) {
@@ -299,6 +339,28 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentConvList.set(id!, convList)
       setEmployee(result)
       setAllConversations(convList)
+
+      // 从 convList 恢复所有对话的 contextStats
+      const restoredStats: Record<string, any> = {}
+      for (const conv of convList) {
+        if ((conv as any).context_stats_json) {
+          try {
+            const stats = JSON.parse((conv as any).context_stats_json)
+            if (stats && typeof stats === 'object') {
+              restoredStats[conv.id] = stats
+            }
+          } catch {
+            // JSON 解析失败忽略
+          }
+        }
+      }
+      // 持久化内存缓存优先级最高（真空期 onDone 更新可能先于 DB 查询到达）
+      for (const [cid, s] of _persistentContextStats) {
+        if (s && typeof s === 'object') restoredStats[cid] = s
+      }
+      if (Object.keys(restoredStats).length > 0) {
+        setContextStats(prev => ({ ...prev, ...restoredStats }))
+      }
 
       loadProviders()
 
@@ -360,6 +422,14 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setIsStreaming,
     isStreamingRef,
     updateConvLastMessageAt,
+    onContextStats: (convId, stats) => {
+      _persistentContextStats.set(convId, stats)
+      setContextStats(prev => ({ ...prev, [convId]: stats }))
+      window.electronAPI.conversation.update({
+        id: convId,
+        context_stats_json: JSON.stringify(stats),
+      }).catch(() => {})
+    },
   })
 
   const setupGlobalListenersRef = useRef(setupGlobalListeners)
@@ -486,6 +556,22 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const convData = allConversations.find(c => c.id === convId)
       if (convData) {
         setMinimalMode(!!(convData as any).minimal_mode)
+        // 从 convList 恢复 contextStats，优先使用持久化内存缓存（真空期数据不丢失）
+        const persistentStats = _persistentContextStats.get(convId)
+        if (persistentStats && typeof persistentStats === 'object') {
+          setContextStats(prev => ({ ...prev, [convId]: persistentStats }))
+        } else {
+          try {
+            if ((convData as any).context_stats_json) {
+              const savedStats = JSON.parse((convData as any).context_stats_json)
+              if (savedStats && typeof savedStats === 'object') {
+                setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+              }
+            }
+          } catch {
+            // JSON 解析失败忽略
+          }
+        }
       }
       await new Promise<void>(resolve => setTimeout(resolve, 0))
       if (version !== selectConvVersionRef.current) return
@@ -522,6 +608,22 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
     if (fullConv) {
       setMinimalMode(!!fullConv.minimal_mode)
+      // 恢复 contextStats，优先使用持久化内存缓存（真空期数据不丢失）
+      const persistentStats = _persistentContextStats.get(convId)
+      if (persistentStats && typeof persistentStats === 'object') {
+        setContextStats(prev => ({ ...prev, [convId]: persistentStats }))
+      } else {
+        try {
+          if (fullConv.context_stats_json) {
+            const savedStats = JSON.parse(fullConv.context_stats_json)
+            if (savedStats && typeof savedStats === 'object') {
+              setContextStats(prev => ({ ...prev, [convId]: savedStats }))
+            }
+          }
+        } catch {
+          // JSON 解析失败忽略
+        }
+      }
     }
 
     // 解析 JSON（这一步对长对话是耗时大头）
@@ -1602,6 +1704,86 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     return Array.from(streamStatesRef.current.values()).some(s => s.conversationId === convId && s.isStreaming)
   }, [])
 
+  const handleCompact = useCallback(async () => {
+    const convId = activeConversationIdRef.current
+    if (!convId || !id || isCompacting || isStreaming) return
+
+    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    if (!providerId) return
+
+    setIsCompacting(true)
+    try {
+      const currentMsgs = conversationMessagesRef.current.get(convId) || []
+      // 先去掉旧的分隔符和旧的摘要 assistant 消息（它们本身是 UI 注入的，不应参与新一轮压缩）
+      const compactSepIds = new Set<string>()
+      const compactSummaryIds = new Set<string>()
+      for (let i = 0; i < currentMsgs.length; i++) {
+        const m = currentMsgs[i]
+        if (m.isCompactSummary) {
+          compactSepIds.add(m.id)
+          if (i + 1 < currentMsgs.length && currentMsgs[i + 1].id.startsWith('msg_compact_summary_')) {
+            compactSummaryIds.add(currentMsgs[i + 1].id)
+          }
+        }
+      }
+      const cleanMsgs = currentMsgs.filter(m => !compactSepIds.has(m.id) && !compactSummaryIds.has(m.id))
+      const messageHistory = buildEnrichedHistory(cleanMsgs)
+
+      const result = await window.electronAPI.llm.compactConversation({
+        employee_id: id,
+        provider_id: providerId,
+        model_id: selectedLlmModelId,
+        messages: messageHistory,
+        conversation_id: convId,
+        collection_ids: selectedCollectionIds,
+        enable_thinking: enableThinking,
+        minimal_mode: minimalMode,
+      })
+
+      const summaryContent = (result?.summary || '').trim()
+      if (summaryContent) {
+        const now = Date.now()
+        // UI消息完全保留（cleanMsgs），在末尾追加：分隔符 + 摘要消息
+        const compactedMsgs = [
+          ...cleanMsgs,
+          {
+            id: `msg_compact_sep_${now}`,
+            role: 'system' as const,
+            content: '',
+            timestamp: now,
+            isCompactSummary: true,
+          } as MessageWithThought,
+          {
+            id: `msg_compact_summary_${now}`,
+            role: 'assistant' as const,
+            content: summaryContent,
+            timestamp: now,
+            segments: [{ id: `seg_summary_${now}`, type: 'answer' as const, content: summaryContent }],
+          } as MessageWithThought,
+        ]
+
+        updateConvMessages(convId, () => compactedMsgs)
+        setMessages(compactedMsgs)
+
+        await window.electronAPI.conversation.update({
+          id: convId,
+          messages_json: JSON.stringify(compactedMsgs),
+          message_count: compactedMsgs.length,
+          last_message_at: Math.floor(Date.now() / 1000),
+        }).catch(() => {})
+      }
+
+      if (result?.stats) {
+        _persistentContextStats.set(convId, result.stats)
+        setContextStats(prev => ({ ...prev, [convId]: result.stats }))
+      }
+    } catch (err) {
+      console.error('Compact failed:', err)
+    } finally {
+      setIsCompacting(false)
+    }
+  }, [id, isCompacting, isStreaming, selectedLlmProviderId, selectedLlmModelId, providers, selectedCollectionIds, enableThinking, minimalMode, updateConvMessages, conversationMessagesRef, activeConversationIdRef])
+
   return {
     employee,
     conversations,
@@ -1664,6 +1846,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,
+    contextStats: currentContextStats,
+    isCompacting,
+    handleCompact,
   }
 }
 
