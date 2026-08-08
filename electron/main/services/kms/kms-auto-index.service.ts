@@ -280,7 +280,7 @@ class KMSAutoIndexService {
           KMSCrawlerService.getInstance().updateFileStatus(file.id, 'failed', err.message)
         }
         processed++
-        onProgress?.({ phase: 'parsing', current: processed, total, message: `已处理 ${processed}/${total} 个文件` })
+        onProgress?.({ phase: 'parsing', current: processed, total, message: `已处理 ${processed}/${total} 个文件 - ${file.fileName}` })
         await new Promise((resolve) => setImmediate(resolve))
       }
       logger.info(`Auto-index: index phase took ${(Date.now() - t1) / 1000}s (${processed}/${total})`)

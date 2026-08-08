@@ -14,6 +14,7 @@ const logger = createLogger('FileParser')
 // Excel 解析保护阈值：防止超大/异常 Excel（如单元格散落在 R1048576/XFD 列）导致内存爆炸卡死
 const EXCEL_MAX_SHEETS = 50
 const EXCEL_MAX_ROWS_PER_SHEET = 10000
+const EXCEL_MAX_COLS_PER_SHEET = 256
 const EXCEL_MAX_TOTAL_CELLS = 200000
 const EXCEL_MAX_FULL_TEXT_CHARS = 1_000_000
 
@@ -146,6 +147,28 @@ class FileParserService {
       if (signal?.aborted) throw new DOMException('Parse cancelled', 'AbortError')
       const sheet = workbook.Sheets[sheetName]
       if (!sheet) continue
+
+      // 预检并截断 !ref：当单元格散落在高位行列（如 R1048576/XFD）时，!ref 会横跨百万行/万列，
+      // sheet_to_json(header:1) 会按完整范围展开巨型数组导致内存爆炸卡死（同步执行，abort 信号无法中断）。
+      // 在调用 sheet_to_json 前就地截断 !ref，把范围展开爆炸扼杀在源头。
+      const ref = sheet['!ref']
+      if (ref) {
+        const range = XLSX.utils.decode_range(ref)
+        const rowCount = range.e.r - range.s.r + 1
+        const colCount = range.e.c - range.s.c + 1
+        let truncated = false
+        if (rowCount > EXCEL_MAX_ROWS_PER_SHEET) {
+          range.e.r = range.s.r + EXCEL_MAX_ROWS_PER_SHEET - 1
+          truncated = true
+        }
+        if (colCount > EXCEL_MAX_COLS_PER_SHEET) {
+          range.e.c = range.s.c + EXCEL_MAX_COLS_PER_SHEET - 1
+          truncated = true
+        }
+        if (truncated) {
+          sheet['!ref'] = XLSX.utils.encode_range(range)
+        }
+      }
 
       // 一次遍历同时用于 fullText 和 tables，避免 sheet_to_csv + sheet_to_json 重复遍历
       // raw: false 返回格式化文本（日期/数字按显示格式），避免 Date 对象序列化问题

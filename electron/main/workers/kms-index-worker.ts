@@ -103,7 +103,19 @@ const progressForwarder: ProgressCallback = (progress: IndexProgress) => {
  */
 let promotionAbort: AbortController | null = null
 
-parentPort?.on('message', async (msg: WorkerMessage) => {
+/**
+ * 任务串行化链：确保 Worker 内同一时刻只有一个 start 任务在执行。
+ *
+ * 原实现用 async 消息处理器，当新 start 消息到达时（如自动索引定时器触发），
+ * 若上一个任务仍在 await，新任务会并发执行，导致：
+ * 1. 自动索引与手动索引同时写同一 DB，状态冲突、重复处理；
+ * 2. abortController 被后一个任务覆盖，前一个任务无法取消；
+ * 3. cancel 消息会误杀并发中的另一个任务。
+ * 通过 promise 链串行化 start 任务，cancel/ping 消息仍立即处理。
+ */
+let taskChain: Promise<void> = Promise.resolve()
+
+parentPort?.on('message', (msg: WorkerMessage) => {
   if (!ready) {
     if ((msg as any).type === 'ping') {
       parentPort?.postMessage({ type: 'pong' })
@@ -112,6 +124,7 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
   }
 
   try {
+    // cancel / ping 消息：立即处理，不排队等待正在运行的任务
     if (msg.type === 'ping') {
       parentPort?.postMessage({ type: 'pong' })
       return
@@ -155,67 +168,74 @@ parentPort?.on('message', async (msg: WorkerMessage) => {
 
     if (msg.type === 'start') {
       const { id, task, args } = msg
-      logger.info(`Worker: task "${task}" (id=${id}) starting`)
       const taskT0 = Date.now()
-      try {
-        let result: any
-        switch (task) {
-          case 'buildFull':
-            await KMSIndexManagerService.getInstance().buildFullIndex(
-              args[0], progressForwarder, args[1] ?? true, args[2] ?? false,
-            )
-            result = undefined
-            break
-          case 'incremental':
-            await KMSIndexManagerService.getInstance().incrementalIndex(
-              args[0], progressForwarder, args[1] ?? true,
-            )
-            result = undefined
-            break
-          case 'rebuildDir':
-            await KMSIndexManagerService.getInstance().rebuildDirIndex(
-              args[0], args[1], progressForwarder, args[2] ?? true, args[3] ?? false,
-            )
-            result = undefined
-            break
-          case 'processCollectionDeep':
-            result = await KMSIndexManagerService.getInstance().processCollectionDeep(
-              args[0], progressForwarder, args[1] ?? true,
-            )
-            break
-          case 'processSingleFileDeep':
-            result = await KMSIndexManagerService.getInstance().processSingleFileDeep(
-              args[0], args[1], progressForwarder,
-            )
-            break
-          case 'processPromotedFiles':
-            // 冷数据晋升处理：在 Worker 执行避免 file2md 同步解析阻塞主线程 UI
-            promotionAbort = new AbortController()
-            try {
-              await KMSIndexManagerService.getInstance().processPromotedFilesPublic(
-                args[0], promotionAbort.signal,
+      logger.info(`Worker: task "${task}" (id=${id}) queued`)
+
+      // 串行化：链在前一个任务之后执行，确保同一时刻只有一个任务运行
+      taskChain = taskChain.then(async () => {
+        logger.info(`Worker: task "${task}" (id=${id}) starting`)
+        try {
+          let result: any
+          switch (task) {
+            case 'buildFull':
+              await KMSIndexManagerService.getInstance().buildFullIndex(
+                args[0], progressForwarder, args[1] ?? true, args[2] ?? false,
               )
-            } finally {
-              promotionAbort = null
-            }
-            result = undefined
-            break
-          case 'autoIndexCheck':
-            // 自动索引检查：在 Worker 执行避免爬虫同步 fs + 解析阻塞主线程 UI
-            // 将 Worker 内 auto-index 的进度回调接到 progressForwarder，转发到主线程
-            KMSIndexManagerService.getInstance().setAutoIndexProgressCallback(progressForwarder)
-            result = await KMSAutoIndexService.getInstance().runCheckInternal(args[0] as AutoIndexConfig)
-            break
-          default:
-            throw new Error(`Unknown task: ${task}`)
+              result = undefined
+              break
+            case 'incremental':
+              await KMSIndexManagerService.getInstance().incrementalIndex(
+                args[0], progressForwarder, args[1] ?? true,
+              )
+              result = undefined
+              break
+            case 'rebuildDir':
+              await KMSIndexManagerService.getInstance().rebuildDirIndex(
+                args[0], args[1], progressForwarder, args[2] ?? true, args[3] ?? false,
+              )
+              result = undefined
+              break
+            case 'processCollectionDeep':
+              result = await KMSIndexManagerService.getInstance().processCollectionDeep(
+                args[0], progressForwarder, args[1] ?? true,
+              )
+              break
+            case 'processSingleFileDeep':
+              result = await KMSIndexManagerService.getInstance().processSingleFileDeep(
+                args[0], args[1], progressForwarder,
+              )
+              break
+            case 'processPromotedFiles':
+              // 冷数据晋升处理：在 Worker 执行避免 file2md 同步解析阻塞主线程 UI
+              promotionAbort = new AbortController()
+              try {
+                await KMSIndexManagerService.getInstance().processPromotedFilesPublic(
+                  args[0], promotionAbort.signal,
+                )
+              } finally {
+                promotionAbort = null
+              }
+              result = undefined
+              break
+            case 'autoIndexCheck':
+              // 自动索引检查：在 Worker 执行避免爬虫同步 fs + 解析阻塞主线程 UI
+              // 将 Worker 内 auto-index 的进度回调接到 progressForwarder，转发到主线程
+              KMSIndexManagerService.getInstance().setAutoIndexProgressCallback(progressForwarder)
+              result = await KMSAutoIndexService.getInstance().runCheckInternal(args[0] as AutoIndexConfig)
+              break
+            default:
+              throw new Error(`Unknown task: ${task}`)
+          }
+          logger.info(`Worker: task "${task}" (id=${id}) done in ${(Date.now() - taskT0) / 1000}s`)
+          // 任务完成：通知主线程，并触发主线程缓存失效
+          parentPort?.postMessage({ type: 'done', id, result })
+        } catch (err: any) {
+          logger.error(`Worker task ${task} failed after ${(Date.now() - taskT0) / 1000}s:`, err?.message || err)
+          parentPort?.postMessage({ type: 'done', id, error: err?.message || String(err) })
         }
-        logger.info(`Worker: task "${task}" (id=${id}) done in ${(Date.now() - taskT0) / 1000}s`)
-        // 任务完成：通知主线程，并触发主线程缓存失效
-        parentPort?.postMessage({ type: 'done', id, result })
-      } catch (err: any) {
-        logger.error(`Worker task ${task} failed after ${(Date.now() - taskT0) / 1000}s:`, err?.message || err)
-        parentPort?.postMessage({ type: 'done', id, error: err?.message || String(err) })
-      }
+      })
+      // 防止链中未捕获的 rejection 断裂后续任务（try/catch 已兜底，此处为安全网）
+      taskChain = taskChain.catch(() => {})
       return
     }
   } catch (err: any) {
