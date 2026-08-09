@@ -136,6 +136,16 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'ask_user',
     ],
   },
+  {
+    id: 'collaboration',
+    name: 'collaboration',
+    title: '协作',
+    description: '委托给其他数字员工执行子任务，实现多员工协作',
+    icon: 'team',
+    toolIds: [
+      'delegate_to_employee',
+    ],
+  },
 ]
 
 function getUnifiedBuiltinToolCatalog() {

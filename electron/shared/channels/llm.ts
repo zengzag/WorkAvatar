@@ -17,6 +17,8 @@ export const LLM_CHANNELS = {
   AGENT_TOOL_CALL_DELTA: 'agent:tool-call-delta',
   AGENT_TOOL_RESULT: 'agent:tool-result',
   AGENT_TOOL_PROGRESS: 'agent:tool-progress',
+  /** 委托事件转发：子员工 chatStream 的事件经此通道回传主管前端 */
+  AGENT_DELEGATION_EVENT: 'agent:delegation:event',
   EMPLOYEE_COMPACT_CONVERSATION: 'employee:compact-conversation',
   EMPLOYEE_GET_CONTEXT_STATS: 'employee:get-context-stats',
   INTERACTION_REQUEST: 'interaction:request',

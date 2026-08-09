@@ -92,10 +92,14 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
+    // 删除前先收集所有子会话 ID（含自身），用于清理授权缓存
+    const allConvIds = workspaceManager.getChildConversationIds(id)
     const result = workspaceManager.deleteConversation(id)
     if (result.ok) {
-      // 清理该会话的 allowAlways 授权缓存，避免授权残留
-      UnifiedInteractionService.getInstance().clearAllowedSources(id)
+      // 清理该会话及其所有子会话的 allowAlways 授权缓存，避免授权残留
+      for (const cid of allConvIds) {
+        UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+      }
       // 同步删除自动化执行历史中关联的记录（双向同步：员工对话删除 → 自动化历史删除）
       try { AutomationService.getInstance().deleteRunByConversation(id) } catch { /* ignore */ }
     }
@@ -103,10 +107,13 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
-    // 清理该员工下所有会话的授权缓存和自动化历史关联记录
+    // 收集该员工下所有顶层会话及其子会话，清理授权缓存和自动化历史关联记录
     const conversations = workspaceManager.getConversationList(employeeId)
     for (const conv of conversations) {
-      UnifiedInteractionService.getInstance().clearAllowedSources(conv.id)
+      const allConvIds = workspaceManager.getChildConversationIds(conv.id)
+      for (const cid of allConvIds) {
+        UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+      }
       // 同步删除自动化执行历史中关联的记录（与 CONVERSATION_DELETE 保持一致）
       try { AutomationService.getInstance().deleteRunByConversation(conv.id) } catch { /* ignore */ }
     }

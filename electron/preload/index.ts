@@ -269,6 +269,11 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
     },
+    onDelegationEvent: (callback: (data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => void) => {
+      const handler = (_event: any, data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
+    },
   },
 
   settings: {

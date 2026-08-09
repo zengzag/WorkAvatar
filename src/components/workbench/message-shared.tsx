@@ -5,6 +5,7 @@ import type { MessageSegment, TokenUsage } from './types'
 import ThinkingSegment from './ThinkingSegment'
 import ToolCallSegment from './ToolCallSegment'
 import AnswerSegment from './AnswerSegment'
+import { DelegationSegment } from './DelegationSegment'
 
 const { Text } = Typography
 
@@ -111,6 +112,17 @@ const SegmentListInner: React.FC<{
               key={seg.id}
               seg={seg}
               isError={isError}
+            />
+          )
+        }
+        if (seg.type === 'delegation') {
+          return (
+            <DelegationSegment
+              key={seg.id}
+              seg={seg}
+              msgId={msgId}
+              onToggle={onToggleSegment}
+              getToolDisplayName={getToolDisplayName}
             />
           )
         }

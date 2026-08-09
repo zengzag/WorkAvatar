@@ -46,15 +46,26 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   isComplete?: boolean
 }> | undefined => {
   if (m.role !== 'assistant' || !m.segments) return undefined
-  const toolSegs = m.segments.filter(s => s.type === 'tool_call' && s.toolName)
+  const toolSegs = m.segments.filter(s => (s.type === 'tool_call' && s.toolName) || s.type === 'delegation')
   if (toolSegs.length === 0) return undefined
-  return toolSegs.map(s => ({
-    id: s.toolCallId || s.id,
-    name: s.toolName!,
-    args: s.toolArgs,
-    result: s.toolResult,
-    isComplete: s.isToolComplete,
-  }))
+  return toolSegs.map(s => {
+    if (s.type === 'delegation') {
+      return {
+        id: s.delegationId || s.id,
+        name: 'delegate_to_employee',
+        args: { target_employee_id: s.targetEmployeeId, instruction: s.instruction || '' },
+        result: s.resultSummary,
+        isComplete: s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out',
+      }
+    }
+    return {
+      id: s.toolCallId || s.id,
+      name: s.toolName!,
+      args: s.toolArgs,
+      result: s.toolResult,
+      isComplete: s.isToolComplete,
+    }
+  })
 }
 
 export interface EnrichedHistoryMessage {
@@ -158,6 +169,21 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
           args: seg.toolArgs,
           result: seg.toolResult,
           isComplete: seg.isToolComplete,
+        })
+        hasToolCalls = true
+      } else if (seg.type === 'delegation') {
+        // delegation 段等价于一次 delegate_to_employee 调用 + 结果摘要
+        // 子员工完整过程不进主管 LLM 上下文，仅 resultSummary 作为 tool_result
+        if (hasToolCalls) flushTurn()
+        currentToolCalls.push({
+          id: seg.delegationId || seg.id,
+          name: 'delegate_to_employee',
+          args: {
+            target_employee_id: seg.targetEmployeeId,
+            instruction: seg.instruction || '',
+          },
+          result: seg.resultSummary || '(子员工已完成)',
+          isComplete: seg.delegationStatus === 'completed' || seg.delegationStatus === 'failed' || seg.delegationStatus === 'timed_out',
         })
         hasToolCalls = true
       }

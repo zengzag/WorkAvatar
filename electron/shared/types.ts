@@ -48,6 +48,8 @@ export interface Conversation {
   context_stats_json?: string
   /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
   workspace_path?: string
+  /** 父会话 ID：委托产生的子会话记录其主管会话 ID，空字符串表示顶层会话 */
+  parent_conversation_id?: string
 }
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'

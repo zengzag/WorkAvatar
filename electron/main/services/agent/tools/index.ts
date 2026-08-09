@@ -7,6 +7,7 @@ import { askUserTool } from './ask-user.tool'
 import { calendarTools } from './calendar.tool'
 import { automationTools } from './automation.tool'
 import { ocrImageTool } from './ocr.tool'
+import { delegateTool } from './delegate.tool'
 import type { ToolDefinition } from './types'
 
 export const allBuiltinTools: ToolDefinition[] = [
@@ -19,6 +20,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   ...calendarTools,
   ...automationTools,
   ocrImageTool,
+  delegateTool,
 ]
 
 export * from './javascript-exec.tool'
@@ -31,3 +33,4 @@ export { automationTools } from './automation.tool'
 export { createListAvailableToolsTool, createInvokeToolTool } from './meta-tools'
 export { buildOfficeGuide } from './office-prompts'
 export { runSkillScriptTool } from './run-skill-script.tool'
+export { delegateTool } from './delegate.tool'

@@ -60,6 +60,20 @@ export interface SessionContext {
   employeeId: string
   conversationId?: string
   highPermission?: boolean
+  /** 委托链深度（0=顶层会话），上限 3 */
+  delegationDepth?: number
+  /** 委托链已参与的员工 id 列表，防环 */
+  delegationChain?: string[]
+  /** 主管会话 id，用于子员工事件回传前端 */
+  parentSessionId?: string
+  /** 本次委托 id，前端按此路由子员工事件到对应 delegation segment */
+  delegationId?: string
+  /** 主管会话的 AbortSignal，delegate 工具读取后传给子员工 chatStream 实现 abort 传播 */
+  abortSignal?: AbortSignal
+  /** 主管会话的思考模式设置，委托时传给子员工保持一致 */
+  enableThinking?: boolean
+  /** 子员工 token 用量累计（主管会话级），onDone 时合并到 metadata.tokenUsage */
+  childTokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number }
 }
 
 export const interactionContext = new AsyncLocalStorage<SessionContext>()

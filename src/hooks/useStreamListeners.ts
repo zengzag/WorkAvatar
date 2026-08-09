@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageWithThought } from '../components/workbench'
+import type { MessageSegment } from '../components/workbench/types'
 import type { LRUCache } from '../utils/lru-cache'
 import {
   type ConversationStreamState,
@@ -189,6 +190,41 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
+          // delegate_to_employee 特殊处理：创建 delegation segment 而非普通 tool_call
+          if (name === 'delegate_to_employee') {
+            // 移除 delta 阶段残留的 tool_call segment（通过 toolCallId 或 toolName 匹配）
+            const filteredSegs = segs.filter(s => {
+              if (s.type !== 'tool_call' || !s.isToolArgsStreaming) return true
+              if (toolCallId && s.toolCallId === toolCallId) return false
+              if (s.toolName === name) return false
+              return true
+            })
+
+            // 关闭正在流式输出的 answer/thinking 段
+            const lastSeg = filteredSegs[filteredSegs.length - 1]
+            if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+              filteredSegs[filteredSegs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+            }
+            if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+              filteredSegs[filteredSegs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+            }
+            filteredSegs.push({
+              type: 'delegation',
+              id: `${streamState.assistantMessageId}_del_${streamState.toolCallCounter++}`,
+              toolCallId,
+              toolName: name,
+              toolArgs: args,
+              instruction: args?.instruction,
+              targetEmployeeId: args?.target_employee_id,
+              delegationStatus: 'streaming',
+              subSegments: [],
+              isToolComplete: false,
+              collapsed: false,
+              timestamp: Date.now(),
+            })
+            return { ...m, segments: filteredSegs }
+          }
+
           // 优先复用 delta 阶段已创建的 streaming segment
           let targetIndex = segs.findIndex(s =>
             s.type === 'tool_call' && s.isToolArgsStreaming &&
@@ -231,8 +267,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => {
-      const { sessionId, name, result, generatedFiles } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any }) => {
+      const { sessionId, name, result, rawResult, generatedFiles } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -240,6 +276,36 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
         prev.map((m) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
+
+          // delegate_to_employee 特殊处理：从 rawResult 提取 delegationId/tokenUsage/targetEmployeeName
+          if (name === 'delegate_to_employee') {
+            const delId = rawResult?.delegationId
+            let delIdx = delId
+              ? segs.findIndex(s => s.type === 'delegation' && s.delegationId === delId)
+              : -1
+            if (delIdx === -1) {
+              // fallback：取最后一个 streaming 的 delegation segment
+              delIdx = segs.findIndex(s => s.type === 'delegation' && s.delegationStatus === 'streaming')
+            }
+            if (delIdx === -1) return m
+            const isSuccess = rawResult?.success !== false
+            const targetName = rawResult?.targetEmployeeName || segs[delIdx].targetEmployeeName
+            segs[delIdx] = {
+              ...segs[delIdx],
+              delegationId: delId || segs[delIdx].delegationId,
+              targetEmployeeName: targetName,
+              delegationStatus: isSuccess ? 'completed' : 'failed',
+              resultSummary: typeof result === 'string' ? result : (rawResult?.output || rawResult?.error),
+              toolResult: result,
+              isToolComplete: true,
+              toolError: isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined)),
+              delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
+              collapsed: true,
+              completedAt: Date.now(),
+            }
+            return { ...m, segments: segs }
+          }
+
           const lastIncompleteIndex = [...segs].reverse().findIndex(
             s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete
           )
@@ -249,7 +315,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             ...segs[actualIndex],
             toolResult: result,
             isToolComplete: true,
-            // 清除可能残留的 toolError（如 doneCleanup 标记的中断态），优先展示真实结果
             toolError: undefined,
             collapsed: true,
             completedAt: Date.now(),
@@ -292,6 +357,305 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
+    // ---- 委托事件路由：将子员工 chatStream 事件写入对应 delegation segment 的 subSegments ----
+
+    /** 将子员工事件应用到 delegation segment 的 subSegments 数组（复用主管事件处理逻辑，目标改为 subSegments） */
+    const applyDelegationSubEvent = (
+      subSegs: MessageSegment[],
+      eventType: string,
+      data: any,
+      idPrefix: string
+    ): MessageSegment[] => {
+      const segs = [...subSegs]
+
+      switch (eventType) {
+        case 'start':
+          return segs
+
+        case 'thought': {
+          const thought = typeof data === 'string' ? data : data?.thought
+          if (!thought) return segs
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].isStreaming && segs[i].type !== 'thinking') {
+              segs[i] = { ...segs[i], isStreaming: false, completedAt: Date.now() }
+            }
+          }
+          const last = segs[segs.length - 1]
+          if (last && last.type === 'thinking' && last.isStreaming) {
+            segs[segs.length - 1] = { ...last, content: (last.content || '') + thought }
+          } else {
+            segs.push({
+              type: 'thinking',
+              id: `${idPrefix}_th_${Date.now()}`,
+              content: thought,
+              isStreaming: true,
+              collapsed: false,
+              timestamp: Date.now(),
+            })
+          }
+          return segs
+        }
+
+        case 'chunk': {
+          const chunk = typeof data === 'string' ? data : data?.chunk
+          if (!chunk) return segs
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].isStreaming && segs[i].type === 'thinking') {
+              segs[i] = { ...segs[i], isStreaming: false, collapsed: true, completedAt: Date.now() }
+            }
+          }
+          const last = segs[segs.length - 1]
+          if (last && last.type === 'answer' && last.isStreaming) {
+            segs[segs.length - 1] = { ...last, content: (last.content || '') + chunk }
+          } else {
+            segs.push({
+              type: 'answer',
+              id: `${idPrefix}_an_${Date.now()}`,
+              content: chunk,
+              isStreaming: true,
+              timestamp: Date.now(),
+            })
+          }
+          return segs
+        }
+
+        case 'tool_call_delta': {
+          const deltas: Array<{ index: number; id?: string; name?: string; arguments: string }> =
+            data?.deltas || (Array.isArray(data) ? data : [data])
+          const last = segs[segs.length - 1]
+          if (last && last.type === 'answer' && last.isStreaming) {
+            segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
+          }
+          if (last && last.type === 'thinking' && last.isStreaming) {
+            segs[segs.length - 1] = { ...last, isStreaming: false, collapsed: true, completedAt: Date.now() }
+          }
+          for (const delta of deltas) {
+            const { index, id, name, arguments: argsText } = delta
+            let targetIndex = -1
+            if (id) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.toolCallId === id)
+            }
+            if (targetIndex === -1) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.isToolArgsStreaming && s.toolCallId === `delta_${index}`)
+            }
+            if (targetIndex === -1 && name) {
+              targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.isToolArgsStreaming && s.toolName === name && !s.isToolComplete)
+            }
+            if (targetIndex !== -1) {
+              segs[targetIndex] = {
+                ...segs[targetIndex],
+                toolName: name || segs[targetIndex].toolName,
+                toolCallId: id || segs[targetIndex].toolCallId,
+                toolArgsRaw: argsText,
+              }
+            } else {
+              segs.push({
+                type: 'tool_call',
+                id: `${idPrefix}_tc_${Date.now()}_${index}`,
+                toolName: name || '',
+                toolCallId: id || `delta_${index}`,
+                isToolArgsStreaming: true,
+                toolArgsRaw: argsText,
+                isToolComplete: false,
+                collapsed: false,
+                timestamp: Date.now(),
+              })
+            }
+          }
+          return segs
+        }
+
+        case 'tool_call': {
+          const { id: toolCallId, name, args } = data
+          let targetIndex = segs.findIndex(s =>
+            s.type === 'tool_call' && s.isToolArgsStreaming &&
+            (s.toolCallId === toolCallId || (s.toolName === name && !s.isToolComplete))
+          )
+          if (targetIndex !== -1) {
+            segs[targetIndex] = {
+              ...segs[targetIndex],
+              toolName: name,
+              toolArgs: args,
+              toolArgsRaw: undefined,
+              isToolArgsStreaming: false,
+              toolCallId,
+              isToolComplete: false,
+              collapsed: true,
+            }
+          } else {
+            const last = segs[segs.length - 1]
+            if (last && last.type === 'answer' && last.isStreaming) {
+              segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
+            }
+            if (last && last.type === 'thinking' && last.isStreaming) {
+              segs[segs.length - 1] = { ...last, isStreaming: false, collapsed: true, completedAt: Date.now() }
+            }
+            segs.push({
+              type: 'tool_call',
+              id: `${idPrefix}_tc_${Date.now()}`,
+              toolName: name,
+              toolArgs: args,
+              toolCallId,
+              isToolComplete: false,
+              collapsed: true,
+              timestamp: Date.now(),
+            })
+          }
+          return segs
+        }
+
+        case 'tool_result': {
+          const { name, result } = data
+          const lastIncompleteIndex = [...segs].reverse().findIndex(
+            s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete
+          )
+          if (lastIncompleteIndex === -1) return segs
+          const actualIndex = segs.length - 1 - lastIncompleteIndex
+          segs[actualIndex] = {
+            ...segs[actualIndex],
+            toolResult: result,
+            isToolComplete: true,
+            toolError: undefined,
+            collapsed: true,
+            completedAt: Date.now(),
+          }
+          return segs
+        }
+
+        case 'tool_progress': {
+          const { toolCallId, name, progress } = data
+          let targetIndex = -1
+          if (toolCallId) {
+            targetIndex = segs.findIndex(s => s.type === 'tool_call' && s.toolCallId === toolCallId && !s.isToolComplete)
+          }
+          if (targetIndex === -1) {
+            const lastIncompleteIndex = [...segs].reverse().findIndex(
+              s => s.type === 'tool_call' && s.toolName === name && !s.isToolComplete
+            )
+            if (lastIncompleteIndex !== -1) {
+              targetIndex = segs.length - 1 - lastIncompleteIndex
+            }
+          }
+          if (targetIndex === -1) return segs
+          const existingProgress = segs[targetIndex].toolProgress || []
+          segs[targetIndex] = {
+            ...segs[targetIndex],
+            toolProgress: [...existingProgress, progress],
+          }
+          return segs
+        }
+
+        case 'done': {
+          // 关闭子员工所有流式段
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].isStreaming || segs[i].isToolArgsStreaming) {
+              segs[i] = {
+                ...segs[i],
+                isStreaming: false,
+                isToolArgsStreaming: false,
+                isToolComplete: segs[i].isToolComplete ?? true,
+                completedAt: segs[i].completedAt || Date.now(),
+                ...(segs[i].type === 'thinking' ? { collapsed: true } : {}),
+              }
+            }
+          }
+          return segs
+        }
+
+        case 'error': {
+          const error = typeof data === 'string' ? data : data?.error
+          for (let i = 0; i < segs.length; i++) {
+            if (segs[i].type === 'tool_call' && !segs[i].isToolComplete) {
+              segs[i] = {
+                ...segs[i],
+                isStreaming: false,
+                isToolArgsStreaming: false,
+                isToolComplete: true,
+                toolError: error || tt('workbench.toolFailed'),
+                completedAt: segs[i].completedAt || Date.now(),
+                collapsed: true,
+              }
+            } else if (segs[i].isStreaming) {
+              segs[i] = { ...segs[i], isStreaming: false, completedAt: segs[i].completedAt || Date.now() }
+            }
+          }
+          return segs
+        }
+
+        default:
+          return segs
+      }
+    }
+
+    const delegationCleanup = window.electronAPI.llm.onDelegationEvent((event: {
+      parentSessionId: string
+      delegationId: string
+      eventType: string
+      data: any
+    }) => {
+      const { parentSessionId, delegationId, eventType, data: eventData } = event
+      const streamState = streamStatesRef.current.get(parentSessionId)
+      if (!streamState) return
+
+      updateConvMessages(streamState.conversationId, (prev) =>
+        prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          const segs = [...(m.segments || [])]
+
+          // 定位 delegation segment：优先按 delegationId 匹配，首次事件时关联到 streaming 段
+          let idx = segs.findIndex(s => s.type === 'delegation' && s.delegationId === delegationId)
+          if (idx === -1) {
+            idx = segs.findIndex(s => s.type === 'delegation' && s.delegationStatus === 'streaming' && !s.delegationId)
+            if (idx === -1) return m
+            segs[idx] = {
+              ...segs[idx],
+              delegationId,
+              targetEmployeeName: eventData?.targetEmployeeName || segs[idx].targetEmployeeName,
+              targetAvatarType: eventData?.targetAvatarType || segs[idx].targetAvatarType,
+            }
+          }
+
+          // start 事件仅初始化 target 信息，不操作 subSegments
+          if (eventType === 'start') {
+            segs[idx] = {
+              ...segs[idx],
+              targetEmployeeName: eventData?.targetEmployeeName || segs[idx].targetEmployeeName,
+              targetAvatarType: eventData?.targetAvatarType || segs[idx].targetAvatarType,
+              instruction: eventData?.instruction || segs[idx].instruction,
+            }
+            return { ...m, segments: segs }
+          }
+
+          // done 事件额外更新 tokenUsage
+          if (eventType === 'done') {
+            segs[idx] = {
+              ...segs[idx],
+              delegationTokenUsage: eventData?.tokenUsage || segs[idx].delegationTokenUsage,
+            }
+          }
+
+          // error 事件兜底标记 delegation 失败（最终状态由 onToolResult 确认）
+          if (eventType === 'error') {
+            segs[idx] = {
+              ...segs[idx],
+              delegationStatus: 'failed',
+              toolError: eventData?.error,
+            }
+          }
+
+          // 更新 subSegments
+          const updatedSubSegs = applyDelegationSubEvent(
+            segs[idx].subSegments || [],
+            eventType,
+            eventData,
+            delegationId
+          )
+          segs[idx] = { ...segs[idx], subSegments: updatedSubSegs }
+          return { ...m, segments: segs }
+        })
+      )
+    })
+
     const doneCleanup = window.electronAPI.llm.onDone((data: { sessionId: string; metadata?: any }) => {
       const { sessionId, metadata } = data
       const streamState = streamStatesRef.current.get(sessionId)
@@ -319,6 +683,25 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: tt('workbench.toolCancelled'),
               completedAt,
               collapsed: true,
+            }
+          }
+          // delegation 段兜底：主管会话结束时若委托仍在进行中，标记为失败
+          if (s.type === 'delegation' && s.delegationStatus === 'streaming') {
+            return {
+              ...s,
+              delegationStatus: 'failed' as const,
+              isToolComplete: true,
+              toolError: s.toolError || tt('workbench.toolCancelled'),
+              completedAt,
+              collapsed: true,
+              subSegments: (s.subSegments || []).map(ss => ({
+                ...ss,
+                isStreaming: false,
+                isToolArgsStreaming: false,
+                isToolComplete: ss.isToolComplete ?? true,
+                completedAt: ss.completedAt || completedAt,
+                ...(ss.type === 'thinking' ? { collapsed: true } : {}),
+              })),
             }
           }
           return {
@@ -406,6 +789,25 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                       collapsed: true,
                     }
                   }
+                  // delegation 段兜底：主管出错时若委托仍在进行中，标记为失败
+                  if (s.type === 'delegation' && s.delegationStatus === 'streaming') {
+                    return {
+                      ...s,
+                      delegationStatus: 'failed' as const,
+                      isToolComplete: true,
+                      toolError: s.toolError || tt('workbench.toolFailed'),
+                      completedAt: s.completedAt || Date.now(),
+                      collapsed: true,
+                      subSegments: (s.subSegments || []).map(ss => ({
+                        ...ss,
+                        isStreaming: false,
+                        isToolArgsStreaming: false,
+                        isToolComplete: ss.isToolComplete ?? true,
+                        completedAt: ss.completedAt || Date.now(),
+                        ...(ss.type === 'thinking' ? { collapsed: true } : {}),
+                      })),
+                    }
+                  }
                   return { ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() }
                 }),
               }
@@ -434,6 +836,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       toolCallCleanup()
       toolResultCleanup()
       toolProgressCleanup()
+      delegationCleanup()
       doneCleanup()
       errorCleanup()
     }

@@ -1693,6 +1693,24 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       }
 
       if (!m.segments) return m
+
+      // delegation 子段折叠：segId 格式为 `${delSegId}__sub__${subSegId}`
+      const subMatch = segId.match(/^(.+?)__sub__(.+)$/)
+      if (subMatch) {
+        const delSegId = subMatch[1]
+        const subSegId = subMatch[2]
+        const newSegs = m.segments.map(s => {
+          if (s.type !== 'delegation' || s.id !== delSegId || !s.subSegments) return s
+          return {
+            ...s,
+            subSegments: s.subSegments.map(ss =>
+              ss.id === subSegId ? { ...ss, collapsed: !ss.collapsed } : ss
+            ),
+          }
+        })
+        return { ...m, segments: newSegs }
+      }
+
       const newSegs = m.segments.map(s =>
         s.id === segId ? { ...s, collapsed: !s.collapsed } : s
       )

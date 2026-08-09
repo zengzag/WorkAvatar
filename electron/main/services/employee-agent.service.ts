@@ -162,6 +162,7 @@ class EmployeeAgentService {
       : undefined
 
     const agentConfig: EmployeeAgentConfig = {
+      employeeId: emp.id,
       name: emp.name,
       instructions,
       role,
@@ -288,6 +289,9 @@ class EmployeeAgentService {
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
     }
+
+    // 协作工具（delegate_to_employee）默认关闭，需在员工设置中手动启用
+    modeMap.set('delegate_to_employee', 'off')
 
     let rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'

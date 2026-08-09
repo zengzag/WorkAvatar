@@ -74,6 +74,7 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
             WHERE f.employee_id = ?
               AND conversations_fts MATCH ?
               AND c.status = 'active'
+              AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
             ORDER BY f.rank
             LIMIT ?
           `).all(employeeId, ftsQuery, limit) as any[]
@@ -93,6 +94,7 @@ export function createConversationSearchTool(employeeId: string): ToolDefinition
             FROM conversations c
             WHERE c.employee_id = ?
               AND c.status = 'active'
+              AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
               AND (
                 c.title LIKE ? ESCAPE '\\'
                 OR COALESCE(c.summary, '') LIKE ? ESCAPE '\\'

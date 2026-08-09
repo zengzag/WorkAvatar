@@ -9,7 +9,7 @@ export interface ToolCallInfo {
 }
 
 export interface MessageSegment {
-  type: 'thinking' | 'answer' | 'tool_call'
+  type: 'thinking' | 'answer' | 'tool_call' | 'delegation'
   id: string
   timestamp?: number
   completedAt?: number
@@ -32,6 +32,25 @@ export interface MessageSegment {
   toolProgress?: any[]
   /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */
   generatedFiles?: GeneratedFileInfo[]
+  // ---- delegation 段专用字段 ----
+  /** 委托 id（路由子员工事件用） */
+  delegationId?: string
+  /** 目标员工 id */
+  targetEmployeeId?: string
+  /** 目标员工名 */
+  targetEmployeeName?: string
+  /** 目标员工头像类型 */
+  targetAvatarType?: string
+  /** 委托指令 */
+  instruction?: string
+  /** 委托状态 */
+  delegationStatus?: 'streaming' | 'completed' | 'failed' | 'timed_out'
+  /** 子员工完整执行流（递归渲染） */
+  subSegments?: MessageSegment[]
+  /** 子员工 token 消耗 */
+  delegationTokenUsage?: TokenUsage
+  /** 折叠态展示的结果摘要 */
+  resultSummary?: string
 }
 
 export interface TokenUsage {
@@ -111,6 +130,7 @@ export function ensureSegments(msg: MessageWithThought): MessageWithThought {
 
 function isSegmentComplete(s: MessageSegment): boolean {
   if (s.type === 'tool_call') return !!s.isToolComplete
+  if (s.type === 'delegation') return s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out'
   return s.isStreaming === false
 }
 
