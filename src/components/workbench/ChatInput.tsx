@@ -146,6 +146,64 @@ const deserializeDraftToEditor = (editor: HTMLElement, draft: string, token: any
   insertTextNode(draft.slice(lastIndex))
 }
 
+/**
+ * 选中编辑器中开头第一个斜杠命令 /xxx 的范围（跳过文件令牌内部文本节点，
+ * 避免误选文件名中的 /）。返回是否成功选中。
+ */
+const selectSlashCommandRange = (editor: HTMLElement, fileTokenClass: string): boolean => {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+    acceptNode(node: Node) {
+      let parent: Node | null = node.parentNode
+      while (parent && parent !== editor) {
+        if (parent.nodeType === Node.ELEMENT_NODE && (parent as HTMLElement).classList?.contains(fileTokenClass)) {
+          return NodeFilter.FILTER_REJECT
+        }
+        parent = parent.parentNode
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+  let textNode: Node | null
+  while ((textNode = walker.nextNode())) {
+    const tn = textNode as Text
+    const match = (tn.nodeValue || '').match(/\/[A-Za-z0-9-]*/)
+    if (match && match.index !== undefined && match[0].length > 0) {
+      const sel = window.getSelection()
+      if (!sel) return false
+      const range = document.createRange()
+      range.setStart(tn, match.index)
+      range.setEnd(tn, match.index + match[0].length)
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 插入斜杠命令文本到 contentEditable 编辑器，保留 undo 历史与已有内容（含文件令牌）。
+ * - replaceSlash=true：选中开头已有的 /xxx 并替换为 insertText（斜杠菜单自动补全）
+ * - replaceSlash=false：在编辑器开头插入 insertText，使已有内容作为 skill 参数（下拉按钮触发）
+ * 使用 execCommand('insertText') 以保留 ctrl+z 撤销能力。
+ */
+const insertSlashCommand = (editor: HTMLElement, insertText: string, replaceSlash: boolean, fileTokenClass: string): void => {
+  editor.focus()
+  const sel = window.getSelection()
+  if (!sel) return
+  if (replaceSlash && selectSlashCommandRange(editor, fileTokenClass)) {
+    // 已选中 /xxx 范围，下方 execCommand 会替换选中内容
+  } else {
+    // 在编辑器开头插入
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+  document.execCommand('insertText', false, insertText)
+}
+
 /** 创建文件令牌 DOM 元素 */
 const createFileTokenElement = (
   id: string,
@@ -363,15 +421,13 @@ const ChatInput: React.FC<{
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       const plain = getPlainText()
-      // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
+      // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
         const skillName = currentSlashItems[0].key.slice(1)
-        // 清空编辑器并写入新值
         if (editorRef.current) {
-          editorRef.current.innerHTML = ''
-          editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
+          insertSlashCommand(editorRef.current, `/${skillName} `, true, FILE_TOKEN_CLASS)
+          emitDraftChange()
         }
-        emitDraftChange()
         return
       }
       handleSendRef.current()
@@ -394,15 +450,19 @@ const ChatInput: React.FC<{
     return `用户要求使用 ${skillName} skill 处理。`
   }, [invocableSkills])
 
-  // 斜杠菜单选中处理：skill 命令填充 `/<name> ` 让用户继续输入参数
+  // 斜杠菜单 / 下拉按钮选中处理：插入 `/<name> `，保留已有内容与 undo 历史
   const handleSlashSelect = useCallback((cmd: { key: string }) => {
     const skillName = cmd.key.slice(1)
-    if (editorRef.current) {
-      editorRef.current.innerHTML = ''
-      editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
-    }
+    const editor = editorRef.current
+    if (!editor) return
+    const plain = getPlainText()
+    // 已输入 /xxx 且是所选 skill 的前缀 → 替换（自动补全）；否则在开头插入，已有内容作为 skill 参数
+    const replaceSlash = plain.startsWith('/')
+      && !plain.includes(' ')
+      && cmd.key.toLowerCase().startsWith(plain.toLowerCase())
+    insertSlashCommand(editor, `/${skillName} `, replaceSlash, FILE_TOKEN_CLASS)
     emitDraftChange()
-  }, [emitDraftChange])
+  }, [getPlainText, emitDraftChange])
 
   /** 编辑器是否有内容（文字 或 文件令牌） */
   const hasEditorContent = useCallback((): boolean => {
