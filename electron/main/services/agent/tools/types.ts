@@ -45,6 +45,8 @@ export interface ToolDefinition {
   source: 'builtin' | 'skill' | 'dynamic'
   permission?: ToolPermission
   timeoutMs?: number
+  /** 禁用 retry 中间件：适用于交互类工具（ask_user/fs 确认），超时或取消不应重试 */
+  noRetry?: boolean
   metadata?: Record<string, any>
   /** 按需工具：不加入 LLM API 的 tools 数组，通过 list_available_tools + invoke_tool 发现和调用 */
   onDemand?: boolean

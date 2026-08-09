@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect } from 'react'
 import { Layout, Menu, theme } from 'antd'
 import {
   SettingOutlined,
@@ -19,6 +19,7 @@ import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
 import { useVoiceRecordingStore } from './stores/voice-recording.store'
+import { enqueuePendingExternalFile } from './lib/pending-external-files'
 
 const { Sider, Content } = Layout
 
@@ -37,6 +38,15 @@ const App: React.FC = () => {
   const effectiveTheme = getEffectiveTheme(themeMode)
   const isVoiceRecording = useVoiceRecordingStore((s) => s.isRecording)
   const isVoicePaused = useVoiceRecordingStore((s) => s.isPaused)
+
+  // 监听系统右键"打开方式"或启动参数传入的 .md 文件：导航到笔记页
+  useEffect(() => {
+    const unsub = window.electronAPI.app.onOpenExternalFile((absPath) => {
+      enqueuePendingExternalFile(absPath)
+      navigate('/notes')
+    })
+    return () => { unsub() }
+  }, [navigate])
 
   const getSelectedKey = useCallback(() => {
     const path = location.pathname

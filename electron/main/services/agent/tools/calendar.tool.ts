@@ -44,15 +44,38 @@ function getEmployeeId(): string | null {
   return ctx?.employeeId ?? null
 }
 
+const WEEKDAY_MAP: Record<string, string> = {
+  '1': 'MO', '2': 'TU', '3': 'WE', '4': 'TH', '5': 'FR', '6': 'SA', '0': 'SU',
+  mo: 'MO', tu: 'TU', we: 'WE', th: 'TH', fr: 'FR', sa: 'SA', su: 'SU',
+  monday: 'MO', tuesday: 'TU', wednesday: 'WE', thursday: 'TH', friday: 'FR', saturday: 'SA', sunday: 'SU',
+}
+
 function parseRecurrenceRule(rule: any): RecurrenceRule | null {
   if (!rule || typeof rule !== 'object') return null
-  const freq = rule.freq
-  const validFreqs = ['daily', 'weekdays', 'weekly', 'monthly', 'yearly']
+  let freq = rule.freq
+  // 兼容旧版 'weekdays' → weekly + byday(工作日)
+  if (freq === 'weekdays') freq = 'weekly'
+  const validFreqs = ['daily', 'weekly', 'monthly', 'yearly']
   if (!validFreqs.includes(freq)) return null
   const interval = Math.max(1, Math.floor(Number(rule.interval) || 1))
   const result: RecurrenceRule = { freq, interval } as RecurrenceRule
   if (typeof rule.count === 'number') result.count = Math.max(1, Math.floor(rule.count))
   if (typeof rule.until === 'number') result.until = Math.floor(rule.until)
+  // 兼容旧版 'weekdays' 自动补充工作日 byday
+  if (rule.freq === 'weekdays') result.byday = ['MO', 'TU', 'WE', 'TH', 'FR']
+  if (Array.isArray(rule.byday)) {
+    const days = rule.byday.map((d: any) => WEEKDAY_MAP[String(d).toLowerCase()] ?? (typeof d === 'string' ? d.toUpperCase() : null)).filter(Boolean)
+    if (days.length > 0) result.byday = days
+  }
+  if (Array.isArray(rule.bymonthday)) {
+    const days = rule.bymonthday.map((d: any) => Number(d)).filter((d: number) => d >= 1 && d <= 31)
+    if (days.length > 0) result.bymonthday = days
+  }
+  if (Array.isArray(rule.bymonth)) {
+    const months = rule.bymonth.map((m: any) => Number(m)).filter((m: number) => m >= 1 && m <= 12)
+    if (months.length > 0) result.bymonth = months
+  }
+  if (typeof rule.bysetpos === 'number') result.bysetpos = Math.floor(rule.bysetpos)
   return result
 }
 
@@ -175,7 +198,8 @@ const calendarEventCreateTool: ToolDefinition = {
 - 必填：title、start_time
 - 可选：end_time（默认为开始时间+1小时）、all_day、location、description、color、recurrence_rule、reminders
 
-recurrence_rule 格式：{"freq":"daily|weekdays|weekly|monthly|yearly","interval":数字,"count":可选,"until":可选unix秒}
+recurrence_rule 格式：{"freq":"daily|weekly|monthly|yearly","interval":数字,"count":可选,"until":可选unix秒,"byday":["MO","TU",...],"bymonthday":[15,...],"bymonth":[1,...],"bysetpos":-1}
+- byday：SU/MO/TU/WE/TH/FR/SA，工作日可设 ["MO","TU","WE","TH","FR"]
 reminders：分钟偏移数组，如 [0,-10,-60] 表示事件开始时、前10分钟、前60分钟各提醒一次。
 color：default / blue / green / orange / red / purple。
 ${TIME_HINT}`,
@@ -197,10 +221,14 @@ ${TIME_HINT}`,
         type: 'object',
         description: '重复规则',
         properties: {
-          freq: { type: 'string', enum: ['daily', 'weekdays', 'weekly', 'monthly', 'yearly'] },
+          freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'] },
           interval: { type: 'number', minimum: 1 },
           count: { type: 'number', minimum: 1 },
           until: { type: 'number' },
+          byday: { type: 'array', items: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] }, description: '每周几，如 ["MO","TU","WE","TH","FR"] 表示工作日' },
+          bymonthday: { type: 'array', items: { type: 'number', minimum: 1, maximum: 31 }, description: '月中的日期，如 [15] 表示每月15日' },
+          bymonth: { type: 'array', items: { type: 'number', minimum: 1, maximum: 12 }, description: '月份，如 [1] 表示一月' },
+          bysetpos: { type: 'number', description: '在周期内的位置，如 -1 表示最后一个' },
         },
       },
       reminders: {
@@ -273,10 +301,14 @@ ${TIME_HINT}`,
         type: 'object',
         description: '重复规则',
         properties: {
-          freq: { type: 'string', enum: ['daily', 'weekdays', 'weekly', 'monthly', 'yearly'] },
+          freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'] },
           interval: { type: 'number', minimum: 1 },
           count: { type: 'number', minimum: 1 },
           until: { type: 'number' },
+          byday: { type: 'array', items: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] }, description: '每周几，如 ["MO","TU","WE","TH","FR"] 表示工作日' },
+          bymonthday: { type: 'array', items: { type: 'number', minimum: 1, maximum: 31 }, description: '月中的日期，如 [15] 表示每月15日' },
+          bymonth: { type: 'array', items: { type: 'number', minimum: 1, maximum: 12 }, description: '月份，如 [1] 表示一月' },
+          bysetpos: { type: 'number', description: '在周期内的位置，如 -1 表示最后一个' },
         },
       },
       reminders: {
@@ -438,10 +470,14 @@ ${TIME_HINT}`,
         type: 'object',
         description: '重复规则',
         properties: {
-          freq: { type: 'string', enum: ['daily', 'weekdays', 'weekly', 'monthly', 'yearly'] },
+          freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'] },
           interval: { type: 'number', minimum: 1 },
           count: { type: 'number', minimum: 1 },
           until: { type: 'number' },
+          byday: { type: 'array', items: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] }, description: '每周几，如 ["MO","TU","WE","TH","FR"] 表示工作日' },
+          bymonthday: { type: 'array', items: { type: 'number', minimum: 1, maximum: 31 }, description: '月中的日期，如 [15] 表示每月15日' },
+          bymonth: { type: 'array', items: { type: 'number', minimum: 1, maximum: 12 }, description: '月份，如 [1] 表示一月' },
+          bysetpos: { type: 'number', description: '在周期内的位置，如 -1 表示最后一个' },
         },
       },
       reminders: {
@@ -512,10 +548,14 @@ ${TIME_HINT}`,
         type: 'object',
         description: '重复规则',
         properties: {
-          freq: { type: 'string', enum: ['daily', 'weekdays', 'weekly', 'monthly', 'yearly'] },
+          freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'] },
           interval: { type: 'number', minimum: 1 },
           count: { type: 'number', minimum: 1 },
           until: { type: 'number' },
+          byday: { type: 'array', items: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] }, description: '每周几，如 ["MO","TU","WE","TH","FR"] 表示工作日' },
+          bymonthday: { type: 'array', items: { type: 'number', minimum: 1, maximum: 31 }, description: '月中的日期，如 [15] 表示每月15日' },
+          bymonth: { type: 'array', items: { type: 'number', minimum: 1, maximum: 12 }, description: '月份，如 [1] 表示一月' },
+          bysetpos: { type: 'number', description: '在周期内的位置，如 -1 表示最后一个' },
         },
       },
       reminders: {

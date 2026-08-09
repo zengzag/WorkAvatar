@@ -13,6 +13,8 @@ const generateTabId = () => `tab_${Date.now()}_${++tabIdCounter}`
 export interface NoteTab {
   id: string
   relPath: string | null
+  /** 外部文件绝对路径（vault 之外，临时打开的 .md 文件）；与 relPath 互斥 */
+  externalAbsPath: string | null
   content: string
   savedContent: string
   mtime: number
@@ -37,6 +39,7 @@ interface NotesState {
 
   createEmptyTab: () => string
   openNoteInTab: (tabId: string, relPath: string, content: string, mtime: number) => void
+  openExternalInTab: (tabId: string, absPath: string, content: string, mtime: number) => void
   switchTab: (tabId: string) => void
   closeTab: (tabId: string) => { hasDirty: boolean; nextActiveId: string | null }
   renameTabPath: (oldRelPath: string, newRelPath: string) => void
@@ -76,6 +79,7 @@ export const useNotesStore = create<NotesState>()(
         s.tabs.push({
           id,
           relPath: null,
+          externalAbsPath: null,
           content: '',
           savedContent: '',
           mtime: 0,
@@ -100,6 +104,7 @@ export const useNotesStore = create<NotesState>()(
           s.tabs[idx] = {
             ...s.tabs[idx],
             relPath,
+            externalAbsPath: null,
             content,
             savedContent: content,
             mtime,
@@ -112,6 +117,43 @@ export const useNotesStore = create<NotesState>()(
           s.tabs.push({
             id: newId,
             relPath,
+            externalAbsPath: null,
+            content,
+            savedContent: content,
+            mtime,
+            saveStatus: 'saved',
+            locateText: null,
+          })
+          s.activeTabId = newId
+        }
+      }),
+
+    openExternalInTab: (tabId, absPath, content, mtime) =>
+      set((s) => {
+        const existingIdx = s.tabs.findIndex((t) => t.externalAbsPath === absPath)
+        if (existingIdx >= 0) {
+          s.activeTabId = s.tabs[existingIdx].id
+          return
+        }
+        const idx = s.tabs.findIndex((t) => t.id === tabId)
+        if (idx >= 0) {
+          s.tabs[idx] = {
+            ...s.tabs[idx],
+            relPath: null,
+            externalAbsPath: absPath,
+            content,
+            savedContent: content,
+            mtime,
+            saveStatus: 'saved',
+            locateText: null,
+          }
+          s.activeTabId = tabId
+        } else {
+          const newId = generateTabId()
+          s.tabs.push({
+            id: newId,
+            relPath: null,
+            externalAbsPath: absPath,
             content,
             savedContent: content,
             mtime,

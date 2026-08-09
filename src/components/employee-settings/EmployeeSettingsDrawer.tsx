@@ -289,7 +289,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
 
   const handleDeleteEmployee = async (workspacePath?: string) => {
     if (!employeeId) return
-    let deleteWorkspace = false
+    let deleteWorkspace = true
 
     const { Text } = Typography
     const handleOpenExplorer = (path: string) => {
@@ -340,6 +340,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           )}
           {workspacePath && (
             <Checkbox
+              defaultChecked
               onChange={(e) => { deleteWorkspace = e.target.checked }}
               style={{ marginTop: 12 }}
             >

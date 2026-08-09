@@ -84,7 +84,6 @@ export default {
     newTask: '新建任务',
     newTaskTitle: '开始新任务',
     newTaskHint: '选择数字员工，输入您的需求开始对话',
-    selectEmployee: '选择数字员工',
     searchPlaceholder: '搜索任务...',
     filterByEmployee: '按员工筛选',
     noTasks: '暂无任务',
@@ -208,6 +207,7 @@ export default {
     compressed: '已压缩',
     searchEmployee: '搜索数字员工...',
     noMatchingEmployee: '未找到匹配的数字员工',
+    moreEmployees: '更多数字员工',
     confirmDeleteEmployee: '确认删除该数字员工？',
     deleteEmployee: '删除员工',
     titleGenSystemPrompt: '你是一个任务标题生成器。根据用户发送的第一条消息，生成一个简短的任务标题，不超过10个字。只输出标题本身，不要加引号、标点或其他内容。',
@@ -337,6 +337,7 @@ export default {
     avatarDocument: '文档',
     avatarSettings: '设置',
     descPlaceholder: '描述这个数字员工的职责和能力...',
+    descriptionLabel: '描述（系统提示词）',
     saveBasic: '保存基本信息',
     confirmDeleteEmployee: '确定删除此数字员工？',
     deleteEmployeeDesc: '删除后无法恢复，相关任务记录也将被清除。',
@@ -1768,6 +1769,9 @@ export default {
     tabUnsavedIndicator: '未保存',
     selectNoteToEdit: '从左侧选择笔记开始编辑',
     createNewNote: '新建笔记',
+    // 外部文件临时打开
+    externalFileTab: '外部文件（临时打开）',
+    dropMdToOpen: '拖放 .md 文件以临时打开',
     // 编辑器右键菜单
     ctxHeadings: '标题',
     ctxFormat: '文字格式',

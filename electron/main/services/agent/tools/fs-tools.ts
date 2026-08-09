@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { formatFileSize } from './utils'
 import { moveToTrash } from '../../common-utils'
-import UnifiedInteractionService from '../../unified-interaction.service'
+import UnifiedInteractionService, { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import { interactionContext } from '../../unified-interaction.service'
 import DatabaseService from '../../database.service'
 
@@ -77,10 +77,14 @@ export async function confirmOutsideWorkspace(operation: string, targetPath: str
       message: `即将${operation}工作区外的路径：\n\n${targetPath}\n\n此操作可能影响工作区外的文件，是否确认？`,
       danger: true,
       source: `security:fs_${operation}_outside_workspace`,
+      pathScope: targetPath,
     })
 
     if (response.cancelled || response.confirmed !== true) {
-      return { ok: false, error: `用户取消了${operation}工作区外文件的操作` }
+      const reason = response.timedOut
+        ? `用户在5分钟内未响应${operation}确认，可能不在电脑旁，操作已取消`
+        : `用户取消了${operation}工作区外文件的操作`
+      return { ok: false, error: reason }
     }
     return { ok: true }
   } catch {
@@ -107,10 +111,14 @@ async function confirmDelete(targetPath: string, isDirectory: boolean): Promise<
       message: `即将删除${inWorkspace ? '工作区中的' : '工作区外的'} ${typeLabel}：\n\n${targetPath}\n\n文件将移至回收站，可从回收站找回，是否确认？`,
       danger: true,
       source: 'security:fs_delete',
+      pathScope: targetPath,
     })
 
     if (response.cancelled || response.confirmed !== true) {
-      return { ok: false, error: '用户取消了删除操作' }
+      const reason = response.timedOut
+        ? '用户在5分钟内未响应删除确认，可能不在电脑旁，操作已取消'
+        : '用户取消了删除操作'
+      return { ok: false, error: reason }
     }
     return { ok: true }
   } catch {
@@ -180,6 +188,8 @@ export const fileWriteTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_edit：编辑文件部分内容（replace/insert/delete） ======
@@ -228,6 +238,8 @@ export const fileEditTool: ToolDefinition = {
     }
   },
   source: 'builtin',
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 /** 常驻文件工具：读/写/编辑，对话全程加入 LLM tools 数组 */
@@ -263,6 +275,8 @@ export const fileMkdirTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_list：列出目录内容 ======
@@ -345,6 +359,8 @@ export const fileDeleteTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_move：移动 ======
@@ -372,6 +388,8 @@ export const fileMoveTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_copy：复制 ======
@@ -399,6 +417,8 @@ export const fileCopyTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_rename：重命名 ======
@@ -426,6 +446,8 @@ export const fileRenameTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
 // ====== file_stat：查看文件/目录信息 ======

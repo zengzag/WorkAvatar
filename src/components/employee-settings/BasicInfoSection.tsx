@@ -113,7 +113,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           </Col>
         </Row>
 
-        <Form.Item name="description" label={t('common.description')}>
+        <Form.Item name="description" label={t('employeeSettings.descriptionLabel')}>
           <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
         </Form.Item>
 

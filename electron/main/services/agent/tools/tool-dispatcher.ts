@@ -33,6 +33,9 @@ export class ToolDispatcher {
       if (tool.timeoutMs) {
         middlewareParams._timeoutMs = tool.timeoutMs
       }
+      if (tool.noRetry) {
+        middlewareParams._noRetry = true
+      }
 
       const result = await this.middlewareChain.execute(toolName, middlewareParams, async () => {
         const result = await tool.handler(toolParams, context)

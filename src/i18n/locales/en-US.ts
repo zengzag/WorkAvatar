@@ -84,7 +84,6 @@ export default {
     newTask: 'New Task',
     newTaskTitle: 'Start a New Task',
     newTaskHint: 'Select a digital employee and enter your request to start',
-    selectEmployee: 'Select Employee',
     searchPlaceholder: 'Search tasks...',
     filterByEmployee: 'Filter by employee',
     noTasks: 'No tasks yet',
@@ -208,6 +207,7 @@ export default {
     compressed: 'Compressed',
     searchEmployee: 'Search employees...',
     noMatchingEmployee: 'No matching employees',
+    moreEmployees: 'More employees',
     confirmDeleteEmployee: 'Delete this digital employee?',
     deleteEmployee: 'Delete Employee',
     titleGenSystemPrompt: 'You are a task title generator. Based on the user\'s first message, generate a short task title of no more than 10 characters. Output only the title itself, without quotes, punctuation, or any other content.',
@@ -337,6 +337,7 @@ export default {
     avatarDocument: 'Document',
     avatarSettings: 'Settings',
     descPlaceholder: 'Describe the responsibilities and capabilities of this digital employee...',
+    descriptionLabel: 'Description (System Prompt)',
     saveBasic: 'Save Basic Info',
     confirmDeleteEmployee: 'Delete this digital employee?',
     deleteEmployeeDesc: 'This cannot be undone. Related task records will also be deleted.',
@@ -1751,6 +1752,9 @@ export default {
     tabUnsavedIndicator: 'Unsaved',
     selectNoteToEdit: 'Select a note from the sidebar to start editing',
     createNewNote: 'New Note',
+    // External file temporary open
+    externalFileTab: 'External file (temporary)',
+    dropMdToOpen: 'Drop .md file to open temporarily',
     // Editor context menu
     ctxHeadings: 'Headings',
     ctxFormat: 'Text Format',

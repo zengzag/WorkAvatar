@@ -85,6 +85,7 @@ import type {
   NoteImportExternalParams,
   NoteSearchParams,
   NoteSaveImageParams,
+  NoteExternalWriteParams,
   NotesSettings,
   NotesDataChangedPayload,
 } from '../shared/ipc-channels'
@@ -286,6 +287,12 @@ const electronAPI = {
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) =>
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
+    // 系统右键"打开方式"或启动时传入 .md 文件参数时，主进程推送文件路径
+    onOpenExternalFile: (callback: (absPath: string) => void) => {
+      const handler = (_event: any, absPath: string) => callback(absPath)
+      ipcRenderer.on(IPC_CHANNELS.APP_OPEN_EXTERNAL_FILE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_OPEN_EXTERNAL_FILE, handler)
+    },
   },
 
   window: {
@@ -443,6 +450,8 @@ const electronAPI = {
     importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
     saveImage: (params: NoteSaveImageParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SAVE_IMAGE, params),
     openDiary: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_DIARY),
+    readExternal: (absPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ_EXTERNAL, absPath),
+    writeExternal: (params: NoteExternalWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE_EXTERNAL, params),
     onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
       const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
       ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)

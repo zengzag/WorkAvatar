@@ -399,6 +399,42 @@ class NotesService {
     }
   }
 
+  /** 读取 vault 外部 .md 文件（按绝对路径，用于临时打开） */
+  readExternalFile(absPath: string): NoteContent {
+    if (!absPath || typeof absPath !== 'string') throw new Error('路径不能为空')
+    const resolved = path.resolve(absPath)
+    if (!resolved.toLowerCase().endsWith('.md')) throw new Error('仅支持 .md 文件')
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(resolved)
+    } catch {
+      throw new Error('文件不存在')
+    }
+    if (!stat.isFile()) throw new Error('不是文件')
+    const content = fs.readFileSync(resolved, 'utf-8')
+    return {
+      relPath: resolved,
+      content,
+      mtime: stat.mtimeMs,
+      size: stat.size,
+    }
+  }
+
+  /** 写入 vault 外部 .md 文件（按绝对路径，用于临时编辑保存） */
+  writeExternalFile(absPath: string, content: string): NoteContent {
+    if (!absPath || typeof absPath !== 'string') throw new Error('路径不能为空')
+    const resolved = path.resolve(absPath)
+    if (!resolved.toLowerCase().endsWith('.md')) throw new Error('仅支持 .md 文件')
+    fs.writeFileSync(resolved, content, 'utf-8')
+    const stat = fs.statSync(resolved)
+    return {
+      relPath: resolved,
+      content,
+      mtime: stat.mtimeMs,
+      size: stat.size,
+    }
+  }
+
   /** 删除文件 / 文件夹（移至操作系统回收站，可找回） */
   async deleteItem(relPath: string): Promise<{ success: boolean }> {
     const full = this.resolve(relPath)

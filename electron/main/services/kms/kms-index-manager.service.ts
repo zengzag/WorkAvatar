@@ -253,7 +253,7 @@ class KMSIndexManagerService {
           phase: 'parsing',
           current: processed,
           total,
-          message: `已处理 ${processed}/${total} 个文件`,
+          message: `已处理 ${processed}/${total} 个文件 - ${file.fileName}`,
         })
 
         // 每处理完一个文件主动让出事件循环：
@@ -471,7 +471,7 @@ class KMSIndexManagerService {
           phase: 'parsing',
           current: fileProcessed,
           total,
-          message: `已处理 ${fileProcessed}/${total} 个文件`,
+          message: `已处理 ${fileProcessed}/${total} 个文件 - ${file.file_name}`,
         })
       }
 

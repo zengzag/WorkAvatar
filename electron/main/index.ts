@@ -9,6 +9,7 @@ import NotificationService from './services/notification.service'
 import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
 import AutomationSchedulerService from './services/automation/automation-scheduler.service'
 import { registerIpcHandlers } from './ipc'
+import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { createLogger, LoggerBackend } from './services/logger'
 
 const logger = createLogger('Main')
@@ -41,6 +42,46 @@ const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 }
+
+// ====== 外部 .md 文件打开（系统右键"打开方式" / 拖到应用图标） ======
+
+/** 待发送给渲染进程的 .md 文件路径队列（窗口未就绪时暂存） */
+const pendingOpenFiles: string[] = []
+
+/** 从 argv 中提取 .md 文件绝对路径 */
+function extractMdFilesFromArgv(argv: string[]): string[] {
+  const files: string[] = []
+  for (const arg of argv) {
+    if (!arg || arg.startsWith('-')) continue
+    // 跳过 electron 可执行文件和主脚本
+    if (arg === process.argv0 || arg.endsWith('electron') || arg.endsWith('electron.exe')) continue
+    if (arg.endsWith('.js') || arg.endsWith('.cjs') || arg.endsWith('.mjs')) continue
+    if (arg.toLowerCase().endsWith('.md')) {
+      const resolved = path.resolve(arg)
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        files.push(resolved)
+      }
+    }
+  }
+  return files
+}
+
+/** 把待打开的 .md 文件路径推送给渲染进程（窗口未就绪时暂存到队列） */
+function sendOpenExternalFile(absPath: string): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC_CHANNELS.APP_OPEN_EXTERNAL_FILE, absPath)
+  } else {
+    pendingOpenFiles.push(absPath)
+  }
+}
+
+// macOS: 通过 open-file 事件接收文件（Finder 拖到 Dock 图标 / Spotlight 打开）
+app.on('open-file', (event, filePath) => {
+  if (filePath.toLowerCase().endsWith('.md') && fs.existsSync(filePath)) {
+    event.preventDefault()
+    sendOpenExternalFile(path.resolve(filePath))
+  }
+})
 
 // 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
 app.setName('WorkAvatar')
@@ -305,6 +346,14 @@ async function createWindow() {
     mainWindow.loadFile(getDistPath('dist', 'index.html'))
   }
 
+  // 页面加载完成后，把启动时暂存的待打开 .md 文件推送给渲染进程
+  mainWindow.webContents.once('did-finish-load', () => {
+    while (pendingOpenFiles.length > 0) {
+      const file = pendingOpenFiles.shift()!
+      mainWindow?.webContents.send(IPC_CHANNELS.APP_OPEN_EXTERNAL_FILE, file)
+    }
+  })
+
   DatabaseService.getInstance()
 }
 
@@ -366,6 +415,14 @@ app.whenReady().then(() => {
 
   createWindow()
   createTray()
+
+  // Windows/Linux 首次启动时从 argv 提取 .md 文件（macOS 走 open-file 事件）
+  if (process.platform !== 'darwin') {
+    const mdFiles = extractMdFilesFromArgv(process.argv)
+    for (const file of mdFiles) {
+      sendOpenExternalFile(file)
+    }
+  }
 
   // 启动日历提醒调度器（每 30 秒扫描到期提醒并推送通知）
   try {
@@ -440,10 +497,15 @@ app.on('activate', () => {
   }
 })
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
+  }
+  // Windows/Linux: 第二实例启动时从 argv 提取 .md 文件（系统右键"打开方式"）
+  const mdFiles = extractMdFilesFromArgv(argv)
+  for (const file of mdFiles) {
+    sendOpenExternalFile(file)
   }
 })

@@ -15,6 +15,7 @@ import type {
   NoteImportExternalParams,
   NoteSearchParams,
   NoteSaveImageParams,
+  NoteExternalWriteParams,
   NotesSettings,
 } from '../../shared/ipc-channels'
 import NotesService from '../services/notes/notes.service'
@@ -126,6 +127,26 @@ export function registerNotesHandlers(): void {
       return service.openOrCreateDiary()
     } catch (err: any) {
       return { error: err?.message || '打开日记失败' }
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.NOTES_READ_EXTERNAL, (absPath: string) => {
+    if (!absPath) return { error: 'absPath 必填' }
+    try {
+      return service.readExternalFile(absPath)
+    } catch (err: any) {
+      return { error: err?.message || '打开文件失败' }
+    }
+  })
+
+  safeHandle(IPC_CHANNELS.NOTES_WRITE_EXTERNAL, (params: NoteExternalWriteParams) => {
+    if (!params?.absPath || typeof params.content !== 'string') {
+      return { error: 'absPath 和 content 必填' }
+    }
+    try {
+      return service.writeExternalFile(params.absPath, params.content)
+    } catch (err: any) {
+      return { error: err?.message || '保存失败' }
     }
   })
 }

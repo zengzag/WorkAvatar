@@ -1,5 +1,5 @@
 import type { ToolDefinition } from './types'
-import UnifiedInteractionService from '../../unified-interaction.service'
+import UnifiedInteractionService, { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 
 export const askUserTool: ToolDefinition = {
   id: 'ask_user',
@@ -89,7 +89,10 @@ export const askUserTool: ToolDefinition = {
       const response = await interactionService.request(request)
 
       if (response.cancelled) {
-        return { success: false, error: '用户取消了交互', cancelled: true }
+        const reason = response.timedOut
+          ? '用户在5分钟内未响应，可能不在电脑旁'
+          : '用户取消了交互'
+        return { success: false, error: reason, cancelled: true }
       }
 
       switch (type) {
@@ -118,5 +121,7 @@ export const askUserTool: ToolDefinition = {
       return { success: false, error: `询问用户失败: ${error.message || error}` }
     }
   },
-  source: 'builtin'
+  source: 'builtin',
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }

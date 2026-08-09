@@ -1057,20 +1057,6 @@ const VditorEditorInner: React.FC<Props> = ({
         e.stopPropagation()
         onSaveRef.current()
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-        const vditor = vditorRef.current
-        if (!vditor) return
-        const editorEl = containerRef.current?.querySelector('.vditor-ir pre.vditor-reset, .vditor-sv pre.vditor-reset') as HTMLElement | null
-        if (editorEl && containerRef.current?.contains(document.activeElement)) {
-          e.preventDefault()
-          e.stopPropagation()
-          const range = document.createRange()
-          range.selectNodeContents(editorEl)
-          const sel = window.getSelection()
-          sel?.removeAllRanges()
-          sel?.addRange(range)
-        }
-      }
       // 表格选区清空：Delete/Backspace 清空选中单元格内容（仅多格选区）
       if ((e.key === 'Delete' || e.key === 'Backspace') && vditorMode === 'ir') {
         const sel = tableSelRef.current
@@ -1105,6 +1091,55 @@ const VditorEditorInner: React.FC<Props> = ({
     el?.addEventListener('keydown', handler, true)
     return () => { el?.removeEventListener('keydown', handler, true) }
   }, [isReadOnly, vditorMode, clearTableSelection, copyTableSelectionToClipboard])
+
+  // Ctrl+A 全选：限制在当前编辑/预览容器内，避免选中笔记区域外的内容
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'a') return
+      const activeEl = document.activeElement as HTMLElement | null
+      const isEditableElsewhere = !!activeEl &&
+        (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)
+
+      if (isReadOnly) {
+        const previewEl = previewRef.current
+        if (!previewEl) return
+        if (isEditableElsewhere && !previewEl.contains(activeEl)) return
+        e.preventDefault()
+        e.stopPropagation()
+        const range = document.createRange()
+        range.selectNodeContents(previewEl)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        return
+      }
+
+      const container = containerRef.current
+      if (!container) return
+      if (isEditableElsewhere && !container.contains(activeEl)) return
+
+      if (vditorMode === 'sv') {
+        const textarea = container.querySelector('.vditor-sv textarea') as HTMLTextAreaElement | null
+        if (!textarea) return
+        e.preventDefault()
+        e.stopPropagation()
+        textarea.focus()
+        textarea.select()
+      } else {
+        const editorEl = container.querySelector('.vditor-ir pre.vditor-reset') as HTMLElement | null
+        if (!editorEl) return
+        e.preventDefault()
+        e.stopPropagation()
+        const range = document.createRange()
+        range.selectNodeContents(editorEl)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+      }
+    }
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [isReadOnly, vditorMode])
 
   // 预览模式表格选区复制：预览容器非可编辑元素无 keydown 焦点，
   // 用 document 级别 keydown 监听 Ctrl/Cmd+C，通过 execCommand 主动写入剪贴板。

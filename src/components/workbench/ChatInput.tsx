@@ -1,8 +1,9 @@
 import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, BulbOutlined, BulbFilled, LoadingOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import { isColorDark } from '../../utils/format'
 import type { Employee } from '../../types'
 
 const { Text } = Typography
@@ -143,6 +144,64 @@ const deserializeDraftToEditor = (editor: HTMLElement, draft: string, token: any
     editor.appendChild(tokenEl)
   }
   insertTextNode(draft.slice(lastIndex))
+}
+
+/**
+ * 选中编辑器中开头第一个斜杠命令 /xxx 的范围（跳过文件令牌内部文本节点，
+ * 避免误选文件名中的 /）。返回是否成功选中。
+ */
+const selectSlashCommandRange = (editor: HTMLElement, fileTokenClass: string): boolean => {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, {
+    acceptNode(node: Node) {
+      let parent: Node | null = node.parentNode
+      while (parent && parent !== editor) {
+        if (parent.nodeType === Node.ELEMENT_NODE && (parent as HTMLElement).classList?.contains(fileTokenClass)) {
+          return NodeFilter.FILTER_REJECT
+        }
+        parent = parent.parentNode
+      }
+      return NodeFilter.FILTER_ACCEPT
+    },
+  })
+  let textNode: Node | null
+  while ((textNode = walker.nextNode())) {
+    const tn = textNode as Text
+    const match = (tn.nodeValue || '').match(/\/[A-Za-z0-9-]*/)
+    if (match && match.index !== undefined && match[0].length > 0) {
+      const sel = window.getSelection()
+      if (!sel) return false
+      const range = document.createRange()
+      range.setStart(tn, match.index)
+      range.setEnd(tn, match.index + match[0].length)
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 插入斜杠命令文本到 contentEditable 编辑器，保留 undo 历史与已有内容（含文件令牌）。
+ * - replaceSlash=true：选中开头已有的 /xxx 并替换为 insertText（斜杠菜单自动补全）
+ * - replaceSlash=false：在编辑器开头插入 insertText，使已有内容作为 skill 参数（下拉按钮触发）
+ * 使用 execCommand('insertText') 以保留 ctrl+z 撤销能力。
+ */
+const insertSlashCommand = (editor: HTMLElement, insertText: string, replaceSlash: boolean, fileTokenClass: string): void => {
+  editor.focus()
+  const sel = window.getSelection()
+  if (!sel) return
+  if (replaceSlash && selectSlashCommandRange(editor, fileTokenClass)) {
+    // 已选中 /xxx 范围，下方 execCommand 会替换选中内容
+  } else {
+    // 在编辑器开头插入
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  }
+  document.execCommand('insertText', false, insertText)
 }
 
 /** 创建文件令牌 DOM 元素 */
@@ -362,15 +421,13 @@ const ChatInput: React.FC<{
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       const plain = getPlainText()
-      // skill 命令唯一匹配且无参数：填充 `/<name> ` 让用户继续输入，或直接 Enter 触发
+      // skill 命令唯一匹配且无参数：替换 /xxx 为 `/<name> ` 让用户继续输入参数
       if (plain.startsWith('/') && !plain.includes(' ') && currentSlashItems.length === 1) {
         const skillName = currentSlashItems[0].key.slice(1)
-        // 清空编辑器并写入新值
         if (editorRef.current) {
-          editorRef.current.innerHTML = ''
-          editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
+          insertSlashCommand(editorRef.current, `/${skillName} `, true, FILE_TOKEN_CLASS)
+          emitDraftChange()
         }
-        emitDraftChange()
         return
       }
       handleSendRef.current()
@@ -393,15 +450,19 @@ const ChatInput: React.FC<{
     return `用户要求使用 ${skillName} skill 处理。`
   }, [invocableSkills])
 
-  // 斜杠菜单选中处理：skill 命令填充 `/<name> ` 让用户继续输入参数
+  // 斜杠菜单 / 下拉按钮选中处理：插入 `/<name> `，保留已有内容与 undo 历史
   const handleSlashSelect = useCallback((cmd: { key: string }) => {
     const skillName = cmd.key.slice(1)
-    if (editorRef.current) {
-      editorRef.current.innerHTML = ''
-      editorRef.current.appendChild(document.createTextNode(`/${skillName} `))
-    }
+    const editor = editorRef.current
+    if (!editor) return
+    const plain = getPlainText()
+    // 已输入 /xxx 且是所选 skill 的前缀 → 替换（自动补全）；否则在开头插入，已有内容作为 skill 参数
+    const replaceSlash = plain.startsWith('/')
+      && !plain.includes(' ')
+      && cmd.key.toLowerCase().startsWith(plain.toLowerCase())
+    insertSlashCommand(editor, `/${skillName} `, replaceSlash, FILE_TOKEN_CLASS)
     emitDraftChange()
-  }, [emitDraftChange])
+  }, [getPlainText, emitDraftChange])
 
   /** 编辑器是否有内容（文字 或 文件令牌） */
   const hasEditorContent = useCallback((): boolean => {
@@ -821,6 +882,11 @@ const ChatInput: React.FC<{
   const [employeePickerOpen, setEmployeePickerOpen] = useState(false)
   const [employeeSearch, setEmployeeSearch] = useState('')
 
+  // 滑动高亮指示器状态
+  const pillContainerRef = useRef<HTMLDivElement>(null)
+  const pillItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const [indicatorStyle, setIndicatorStyle] = useState<React.CSSProperties>({ left: 0, width: 0, opacity: 0 })
+
   const defaultModelLabel = useMemo(() => {
     if (!defaultProviderId || !defaultModelId) return ''
     const p = providers.find((p: any) => p.id === defaultProviderId)
@@ -908,112 +974,268 @@ const ChatInput: React.FC<{
     </div>
   ), [t, token, defaultModelSearch, filteredDefaultModels, defaultProviderId, defaultModelId, onDefaultModelChange])
 
-  const selectedEmployee = useMemo(() => {
-    return employees?.find(e => e.id === selectedEmployeeId)
-  }, [employees, selectedEmployeeId])
+  // 常用数字员工：固定前4个是最近使用的（后端按last_active_at倒序）
+  const top4Employees = useMemo(() => {
+    const list = employees || []
+    return list.slice(0, Math.min(4, list.length))
+  }, [employees])
 
-  const filteredEmployees = useMemo(() => {
-    if (!employeeSearch.trim()) return employees || []
+  // 第5个位置：如果当前选中员工不在前4个，则显示选中员工；否则为null（显示更多按钮）
+  const fifthSlotEmployee = useMemo(() => {
+    if (!selectedEmployeeId) return null
+    if (top4Employees.some(e => e.id === selectedEmployeeId)) return null
+    return (employees || []).find(e => e.id === selectedEmployeeId) || null
+  }, [employees, selectedEmployeeId, top4Employees])
+
+  // 需要显示在tab上的员工：前4个 + （如果有）第5个位置的选中员工
+  const visibleEmployees = useMemo(() => {
+    return fifthSlotEmployee ? [...top4Employees, fifthSlotEmployee] : top4Employees
+  }, [top4Employees, fifthSlotEmployee])
+
+  // 下拉菜单中的剩余数字员工：排除所有显示在tab上的员工
+  const dropdownEmployees = useMemo(() => {
+    const visibleIds = new Set(visibleEmployees.map(e => e.id))
+    return (employees || []).filter(e => !visibleIds.has(e.id))
+  }, [employees, visibleEmployees])
+
+  const filteredDropdownEmployees = useMemo(() => {
+    if (!employeeSearch.trim()) return dropdownEmployees
     const search = employeeSearch.toLowerCase()
-    return (employees || []).filter(e =>
+    return dropdownEmployees.filter(e =>
       e.name.toLowerCase().includes(search) ||
       (e.description || '').toLowerCase().includes(search)
     )
-  }, [employees, employeeSearch])
+  }, [dropdownEmployees, employeeSearch])
+
+  // 更新滑动指示器位置
+  const updateIndicator = useCallback(() => {
+    const container = pillContainerRef.current
+    if (!container) return
+    // 确定当前选中项的key
+    let targetKey: string | null = null
+    if (selectedEmployeeId) {
+      if (top4Employees.some(e => e.id === selectedEmployeeId)) {
+        targetKey = selectedEmployeeId
+      } else if (fifthSlotEmployee && fifthSlotEmployee.id === selectedEmployeeId) {
+        targetKey = selectedEmployeeId
+      }
+    }
+    if (!targetKey && dropdownEmployees.length > 0) {
+      // 默认选中更多按钮位置（无选中项时）
+      targetKey = '__more__'
+    }
+    if (!targetKey) {
+      setIndicatorStyle(prev => ({ ...prev, opacity: 0 }))
+      return
+    }
+    // 使用requestAnimationFrame确保DOM已渲染
+    requestAnimationFrame(() => {
+      const targetEl = pillItemRefs.current.get(targetKey!)
+      if (!targetEl || !container) {
+        setIndicatorStyle(prev => ({ ...prev, opacity: 0 }))
+        return
+      }
+      const containerRect = container.getBoundingClientRect()
+      const targetRect = targetEl.getBoundingClientRect()
+      setIndicatorStyle({
+        left: targetRect.left - containerRect.left,
+        width: targetRect.width,
+        opacity: 1,
+      })
+    })
+  }, [selectedEmployeeId, top4Employees, fifthSlotEmployee, dropdownEmployees.length])
+
+  useEffect(() => {
+    updateIndicator()
+  }, [updateIndicator])
+
+  useEffect(() => {
+    const handleResize = () => updateIndicator()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [updateIndicator])
+
+  // 胶囊分段选择器样式
+  const isDark = isColorDark(token.colorBgContainer)
+  const pillContainerStyle: React.CSSProperties = {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    background: token.colorBgElevated,
+    border: `1px solid ${token.colorBorderSecondary}`,
+    borderRadius: 999,
+    padding: 3,
+    gap: 0,
+    boxShadow: isDark
+      ? '0 0 16px rgba(0,0,0,0.25)' 
+      : '0 2px 6px rgba(0,0,0,0.06)',
+  }
+
+  const pillIndicatorStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    borderRadius: 999,
+    background: token.colorPrimary,
+    boxShadow: `0 0 14px ${token.colorPrimary}30, 0 2px 8px ${token.colorPrimary}25`,
+    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+    zIndex: 0,
+    pointerEvents: 'none',
+  }
+
+  const getPillItemStyle = (active: boolean): React.CSSProperties => ({
+    position: 'relative',
+    zIndex: 1,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    padding: '4px 13px',
+    borderRadius: 999,
+    cursor: 'pointer',
+    userSelect: 'none',
+    transition: 'color 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+    background: 'transparent',
+    color: active ? '#fff' : token.colorTextSecondary,
+    fontWeight: active ? 600 : 400,
+    fontSize: 13,
+    whiteSpace: 'nowrap',
+  })
 
   return (
     <div style={centerMode
       ? { padding: '0 16px', flexShrink: 0, maxWidth: 680, width: '100%', margin: '0 auto' }
       : { padding: '8px 6% 12px 6%', flexShrink: 0 }
     }>
-      {showEmployeeSelector && (
-        <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 12 }}>
-          <Popover
-            open={employeePickerOpen}
-            onOpenChange={(o) => {
-              setEmployeePickerOpen(o)
-              if (!o) setEmployeeSearch('')
-            }}
-            content={
-              <div style={{ width: 186, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Input
-                  placeholder={t('workbench.searchEmployee')}
-                  prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
-                  value={employeeSearch}
-                  onChange={(e) => setEmployeeSearch(e.target.value)}
-                  allowClear
-                  size="small"
-                  variant="borderless"
-                  style={{ padding: '2px 8px', marginBottom: 2 }}
-                />
-                <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {filteredEmployees.length === 0 && (
-                    <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
-                      {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
-                    </div>
-                  )}
-                  {filteredEmployees.map(emp => (
-                    <div
-                      key={emp.id}
-                      onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        background: emp.id === selectedEmployeeId ? token.colorPrimaryBg : 'transparent',
-                        transition: 'all 0.15s',
-                      }}
-                      onMouseEnter={(e) => { if (emp.id !== selectedEmployeeId) e.currentTarget.style.background = token.colorBgTextHover }}
-                      onMouseLeave={(e) => { if (emp.id !== selectedEmployeeId) e.currentTarget.style.background = 'transparent' }}
-                    >
-                      <div style={{
-                        width: 28, height: 28, borderRadius: 6,
-                        background: `${token.colorPrimary}15`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        <RobotOutlined style={{ fontSize: 14, color: token.colorPrimary }} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <Text strong style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.name}</Text>
-                        {emp.description && (
-                          <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
-                        )}
-                      </div>
-                      {emp.id === selectedEmployeeId && <CheckOutlined style={{ fontSize: 12, color: token.colorPrimary, flexShrink: 0 }} />}
-                    </div>
-                  ))}
+      {showEmployeeSelector && employees && employees.length > 0 && (
+        <div style={{ paddingTop: 8, paddingBottom: 4, display: 'flex', justifyContent: 'center' }}>
+          <div ref={pillContainerRef} style={pillContainerStyle}>
+            {/* 滑动高亮指示器 */}
+            <div style={{ ...pillIndicatorStyle, ...indicatorStyle }} />
+
+            {/* 前4个固定的常用员工 */}
+            {top4Employees.map((emp) => {
+              const active = emp.id === selectedEmployeeId
+              return (
+                <div
+                  key={emp.id}
+                  ref={(el) => { if (el) pillItemRefs.current.set(emp.id, el); else pillItemRefs.current.delete(emp.id) }}
+                  onClick={() => onSelectEmployee?.(emp.id)}
+                  style={getPillItemStyle(active)}
+                  onMouseEnter={(e) => {
+                    if (active) return
+                    e.currentTarget.style.color = token.colorText
+                  }}
+                  onMouseLeave={(e) => {
+                    if (active) return
+                    e.currentTarget.style.color = token.colorTextSecondary
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{emp.name}</span>
                 </div>
-              </div>
-            }
-            trigger="click"
-            placement="bottomLeft"
-            arrow={false}
-            styles={{ container: { padding: 8 } }}
-          >
-            <div style={{
-              display: 'inline-flex', alignItems: 'center', gap: 8,
-              padding: '6px 16px',
-              borderRadius: 20,
-              background: token.colorBgContainer,
-              border: `1px solid ${selectedEmployeeId ? token.colorPrimaryBorder : token.colorBorderSecondary}`,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}>
-              <div style={{
-                width: 22, height: 22, borderRadius: 5,
-                background: `${token.colorPrimary}15`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <RobotOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
-              </div>
-              <Text strong style={{ fontSize: 13 }}>
-                {selectedEmployee ? selectedEmployee.name : t('tasks.selectEmployee')}
-              </Text>
-              <DownOutlined style={{ fontSize: 10, color: token.colorTextTertiary }} />
-            </div>
-          </Popover>
+              )
+            })}
+
+            {/* 下拉Popover：第4个位置或更多按钮 */}
+            {dropdownEmployees.length > 0 && (
+              <Popover
+                open={employeePickerOpen}
+                onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}
+                content={
+                  <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <Input
+                      placeholder={t('workbench.searchEmployee')}
+                      prefix={<SearchOutlined style={{ color: token.colorTextQuaternary, fontSize: 12 }} />}
+                      value={employeeSearch}
+                      onChange={(e) => setEmployeeSearch(e.target.value)}
+                      allowClear
+                      size="small"
+                      variant="borderless"
+                      style={{ padding: '2px 8px', marginBottom: 2 }}
+                    />
+                    <div style={{ maxHeight: 264, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {filteredDropdownEmployees.length === 0 && (
+                        <div style={{ padding: '24px 0', textAlign: 'center', color: token.colorTextQuaternary, fontSize: 12 }}>
+                          {employeeSearch ? t('workbench.noMatchingEmployee') : t('digitalEmployees.noEmployees')}
+                        </div>
+                      )}
+                      {filteredDropdownEmployees.map(emp => {
+                        const empActive = emp.id === selectedEmployeeId
+                        return (
+                          <div
+                            key={emp.id}
+                            onClick={() => { onSelectEmployee?.(emp.id); setEmployeePickerOpen(false); setEmployeeSearch('') }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                              background: empActive ? token.colorPrimaryBg : 'transparent',
+                              transition: 'background 0.15s',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : token.colorBgTextHover }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = empActive ? token.colorPrimaryBg : 'transparent' }}
+                          >
+                            <div style={{
+                              width: 28, height: 28, borderRadius: '50%',
+                              background: empActive ? token.colorPrimary : `${token.colorPrimary}15`,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                            }}>
+                              <RobotOutlined style={{ fontSize: 14, color: empActive ? '#fff' : token.colorPrimary }} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <Text strong={empActive} style={{ fontSize: 13, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: empActive ? token.colorPrimary : 'inherit' }}>{emp.name}</Text>
+                              {emp.description && (
+                                <Text style={{ fontSize: 11, color: token.colorTextTertiary, display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{emp.description}</Text>
+                              )}
+                            </div>
+                            {empActive && <CheckOutlined style={{ fontSize: 12, color: token.colorPrimary }} />}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                }
+                trigger="click"
+                placement="bottomLeft"
+                arrow={false}
+                styles={{ container: { padding: 8 } }}
+              >
+                {fifthSlotEmployee ? (
+                  <div
+                    ref={(el) => { if (el) pillItemRefs.current.set(fifthSlotEmployee.id, el); else pillItemRefs.current.delete(fifthSlotEmployee.id) }}
+                    style={getPillItemStyle(true)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = 'rgba(255,255,255,0.9)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = '#fff'
+                    }}
+                  >
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{fifthSlotEmployee.name}</span>
+                    <DownOutlined style={{ fontSize: 8 }} />
+                  </div>
+                ) : (
+                  <div
+                    ref={(el) => { if (el) pillItemRefs.current.set('__more__', el); else pillItemRefs.current.delete('__more__') }}
+                    style={{
+                      ...getPillItemStyle(false),
+                      gap: 5,
+                      padding: '4px 10px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = token.colorText
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = token.colorTextSecondary
+                    }}
+                  >
+                    <UnorderedListOutlined style={{ fontSize: 12 }} />
+                    <span style={{ fontSize: 12, fontWeight: 500 }}>{dropdownEmployees.length}</span>
+                    <DownOutlined style={{ fontSize: 8 }} />
+                  </div>
+                )}
+              </Popover>
+            )}
+          </div>
         </div>
       )}
       {attachedImages.length > 0 && (
@@ -1066,7 +1288,7 @@ const ChatInput: React.FC<{
           ))}
         </div>
       )}
-      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 8, padding: '4px 4px 4px 12px', border: `2px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.3s' }}
+      <div style={{ position: 'relative', display: 'flex', gap: 8, alignItems: 'flex-end', background: token.colorBgContainer, borderRadius: 10, padding: '4px 4px 4px 12px', border: `1px solid ${isDragOver ? token.colorPrimary : token.colorBorderSecondary}`, transition: 'border-color 0.2s' }}
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -1076,7 +1298,7 @@ const ChatInput: React.FC<{
         {isDragOver && (
           <div style={{
             position: 'absolute', inset: 0,
-            borderRadius: 8,
+            borderRadius: 9,
             background: token.colorPrimaryBg,
             border: `2px dashed ${token.colorPrimary}`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',

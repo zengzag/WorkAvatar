@@ -41,15 +41,81 @@ export type EventColor = 'default' | 'blue' | 'green' | 'orange' | 'red' | 'purp
 export type TodoPriority = 'none' | 'low' | 'medium' | 'high'
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 
+/** 实例覆盖（对应 iCalendar RECURRENCE-ID 例外组件） */
+export interface InstanceOverride {
+  /** 原实例的 RECURRENCE-ID（Unix 秒） */
+  recurrence_id: number
+  /** 覆盖状态；'cancelled' 表示删除该实例（等价于 EXDATE） */
+  status?: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+  /** 完成时间戳（status=completed 时） */
+  completed_at?: number | null
+  /** 进入进行中时间戳（status=in_progress 时） */
+  started_at?: number | null
+  /** 可覆盖的实例字段 */
+  title?: string
+  description?: string
+  start_at?: number
+  end_at?: number
+  due_at?: number
+}
+
 export interface RecurrenceRule {
-  freq: 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly'
+  /** 不含 weekdays（已迁移为 weekly + byday） */
+  freq: 'daily' | 'weekly' | 'monthly' | 'yearly'
   interval: number
   count?: number
   until?: number
-  /** 被跳过（删除）的实例时间戳列表（Unix 秒），命中该实例时不生成 */
-  excluded_dates?: number[]
-  /** 实例级完成记录：instance_due_at → completed_at（Unix 秒）。支持"跳着完成"（下次未完成、下下次已完成） */
-  completed_instances?: Record<string, number>
+  /** BYDAY：星期几，如 ['MO','TU','WE','TH','FR'] 表示工作日 */
+  byday?: string[]
+  /** BYMONTHDAY：月中的日期，如 [15] 表示每月15日 */
+  bymonthday?: number[]
+  /** BYMONTH：月份，如 [1] 表示一月 */
+  bymonth?: number[]
+  /** BYSETPOS：在周期内的位置，如 -1 表示最后一个 */
+  bysetpos?: number
+  /** RDATE：额外追加的实例时间戳（Unix 秒） */
+  rdates?: number[]
+  /** 实例覆盖列表（替代 excluded_dates / completed_instances） */
+  overrides?: InstanceOverride[]
+}
+
+/** 优先级 ↔ iCalendar PRIORITY(0-9) 映射 */
+export function priorityToICal(p: TodoPriority): number {
+  switch (p) {
+    case 'high': return 1
+    case 'medium': return 5
+    case 'low': return 9
+    default: return 0
+  }
+}
+
+export function priorityFromICal(v: number): TodoPriority {
+  if (v <= 0) return 'none'
+  if (v <= 3) return 'high'
+  if (v <= 7) return 'medium'
+  return 'low'
+}
+
+/** EventColor ↔ iCalendar COLOR(RFC 7986) 映射 */
+export function colorToICal(c: EventColor): string {
+  switch (c) {
+    case 'blue': return '#3498db'
+    case 'green': return '#2ecc71'
+    case 'orange': return '#f39c12'
+    case 'red': return '#e74c3c'
+    case 'purple': return '#9b59b6'
+    default: return ''
+  }
+}
+
+export function colorFromICal(v: string): EventColor {
+  const lower = v.toLowerCase()
+  if (lower.includes('blue') || lower === '#3498db') return 'blue'
+  if (lower.includes('green') || lower === '#2ecc71') return 'green'
+  if (lower.includes('orange') || lower === '#f39c12') return 'orange'
+  if (lower.includes('red') || lower === '#e74c3c') return 'red'
+  if (lower.includes('purple') || lower === '#9b59b6') return 'purple'
+  return 'default'
 }
 
 export interface CalendarEvent {
@@ -60,6 +126,8 @@ export interface CalendarEvent {
   start_at: number
   end_at: number
   all_day: boolean
+  /** 时区标识，如 'Asia/Shanghai'；空串表示系统默认时区 */
+  tzid: string
   color: EventColor
   recurrence_rule: RecurrenceRule | null
   reminders: number[]
@@ -81,6 +149,8 @@ export interface CalendarTodo {
   title: string
   description: string
   due_at: number | null
+  /** 时区标识，如 'Asia/Shanghai'；空串表示系统默认时区 */
+  tzid: string
   priority: TodoPriority
   status: TodoStatus
   recurrence_rule: RecurrenceRule | null
@@ -144,6 +214,7 @@ export interface CreateEventInput {
   start_at: number
   end_at?: number
   all_day?: boolean
+  tzid?: string
   color?: EventColor
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
@@ -159,6 +230,7 @@ export interface UpdateEventInput {
   start_at?: number
   end_at?: number
   all_day?: boolean
+  tzid?: string
   color?: EventColor
   recurrence_rule?: RecurrenceRule | null
   reminders?: number[]
@@ -168,6 +240,7 @@ export interface CreateTodoInput {
   title: string
   description?: string
   due_at?: number | null
+  tzid?: string
   priority?: TodoPriority
   status?: TodoStatus
   recurrence_rule?: RecurrenceRule | null
@@ -181,6 +254,7 @@ export interface UpdateTodoInput {
   title?: string
   description?: string
   due_at?: number | null
+  tzid?: string
   priority?: TodoPriority
   status?: TodoStatus
   recurrence_rule?: RecurrenceRule | null
@@ -191,8 +265,8 @@ export interface UpdateTodoInput {
 
 /**
  * 循环实例级「删除」模式：
- * - this: 仅跳过选中实例（写入 excluded_dates）
- * - future: 从选中实例开始截断（把 until 设为该实例前一周期的结束点，或把之后所有候选写入 excluded_dates）
+ * - this: 仅跳过选中实例（写入 overrides status=cancelled）
+ * - future: 从选中实例开始截断（把 until 设为该实例前一周期的结束点）
  * - all: 删除整条记录（非循环记录唯一可用选项）
  */
 export type DeleteInstanceMode = 'this' | 'future' | 'all'
