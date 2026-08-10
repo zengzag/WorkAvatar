@@ -1,0 +1,34 @@
+# 系统架构图示例：三层架构
+# 用法：d2 architecture.d2 architecture.svg
+direction: right
+
+用户: {
+  shape: person
+}
+
+客户端层: {
+  Web 门户
+  移动端 App
+}
+
+服务层: {
+  网关服务: {
+    shape: rectangle
+  }
+  认证服务
+  业务服务
+}
+
+数据层: {
+  用户数据库: {
+    shape: cylinder
+  }
+  订单数据库: {
+    shape: cylinder
+  }
+}
+
+用户 -> 客户端层: HTTPS
+客户端层 -> 服务层: API 请求
+服务层 -> 数据层: SQL 查询
+客户端层.Web 门户 -> 服务层.认证服务: OAuth 登录

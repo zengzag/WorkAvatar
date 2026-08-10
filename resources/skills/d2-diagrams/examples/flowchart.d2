@@ -1,0 +1,42 @@
+# 业务流程图示例：申请审批流程
+# 用法：d2 flowchart.d2 flowchart.svg
+direction: down
+
+开始: {
+  shape: oval
+  style: {
+    fill: "#e3f2fd"
+  }
+}
+
+填写申请
+提交审核
+
+审核: {
+  shape: diamond
+  label: 审核通过？
+  style: {
+    fill: "#fff3e0"
+  }
+}
+
+批准: {
+  style: {
+    fill: "#c8e6c9"
+  }
+}
+驳回
+结束: {
+  shape: oval
+  style: {
+    fill: "#fce4ec"
+  }
+}
+
+开始 -> 填写申请
+填写申请 -> 提交审核
+提交审核 -> 审核
+审核 -> 批准: 是
+审核 -> 驳回: 否
+批准 -> 结束
+驳回 -> 填写申请: 退回修改
