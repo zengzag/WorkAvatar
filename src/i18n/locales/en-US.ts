@@ -297,6 +297,8 @@ export default {
     closeComparison: 'Close Comparison',
     openComparison: 'View Comparison',
     comparisonView: 'Comparison View',
+    deleteComparisonMessage: 'Delete this response',
+    deleteComparisonConfirm: 'Delete this model\'s response?',
     minimalMode: 'Minimal Mode',
     minimalModeTooltip: 'When enabled, no tools, skills, or collections are used; pure task only',
     minimalModeDisabledTooltip: 'Cannot toggle minimal mode when task has messages',

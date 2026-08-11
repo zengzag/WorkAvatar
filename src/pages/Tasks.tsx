@@ -6,6 +6,7 @@ import type { MenuProps } from 'antd'
 import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
+import MultiChatPanel from '../components/workbench/MultiChatPanel'
 import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { useTranslation } from 'react-i18next'
@@ -227,6 +228,9 @@ const Tasks: React.FC = () => {
     minimalMode,
     handleToggleMinimalMode,
     isComparisonMode,
+    getComparisonMessages,
+    handleCloseComparison,
+    handleDeleteComparisonMessage,
     handleOpenComparison,
     messagesEndRef,
     chatContainerRef,
@@ -833,7 +837,17 @@ const Tasks: React.FC = () => {
           ) : (
             // 对话模式
             <>
-              {isComparisonMode ? null : (
+              {isComparisonMode ? (
+                <MultiChatPanel
+                  comparisonMessages={getComparisonMessages()}
+                  providers={providers}
+                  onClose={handleCloseComparison}
+                  onToggleSegment={handleToggleSegment}
+                  onCopy={handleCopy}
+                  getToolDisplayName={getToolDisplayName}
+                  onDelete={handleDeleteComparisonMessage}
+                />
+              ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
                   style={{
                     flex: 1,

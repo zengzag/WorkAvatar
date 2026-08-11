@@ -1504,6 +1504,122 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setComparisonMessageIds([])
   }
 
+  const handleDeleteComparisonMessage = (msgId: string) => {
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
+
+    // 场景1：临时对比（多个独立消息 id）
+    if (comparisonMessageIds.length > 1) {
+      if (!comparisonMessageIds.includes(msgId) || comparisonMessageIds.length <= 1) return
+      const newIds = comparisonMessageIds.filter(id => id !== msgId)
+      updateConvMessages(convId, (prev) => {
+        const newMessages = prev.filter(m => m.id !== msgId)
+        window.electronAPI.conversation.update({
+          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+        }).catch(() => {})
+        return newMessages
+      })
+      if (newIds.length <= 1) {
+        setIsComparisonMode(false)
+        setComparisonMessageIds([])
+      } else {
+        setComparisonMessageIds(newIds)
+      }
+      return
+    }
+
+    // 场景2：已聚合对比（单 id + _comparisonBranchMsgs）
+    const targetMsgId = comparisonMessageIds[0]
+    if (!targetMsgId) return
+    const targetMsg = currentMsgs.find(m => m.id === targetMsgId)
+    if (!targetMsg?._comparisonBranchMsgs) return
+
+    const branchMsgs = targetMsg._comparisonBranchMsgs
+    if (branchMsgs.length <= 1) return
+
+    const deleteIndex = branchMsgs.findIndex(m => m.id === msgId)
+    if (deleteIndex < 0) return
+
+    const branches = targetMsg.branches || []
+    let newBranches: MessageBranch[]
+    const { _comparisonBranchMsgs: _omit, ...baseMsg } = targetMsg
+
+    if (deleteIndex < branches.length) {
+      newBranches = branches.filter((_, idx) => idx !== deleteIndex)
+      let newActiveIndex = baseMsg.activeBranchIndex ?? branches.length
+      if (newActiveIndex === deleteIndex) {
+        newActiveIndex = newBranches.length
+      } else if (newActiveIndex > deleteIndex) {
+        newActiveIndex -= 1
+      }
+      baseMsg.branches = newBranches
+      baseMsg.activeBranchIndex = newActiveIndex
+    } else {
+      // 删除本体，用最后一个 branch 提升为本体
+      if (branches.length === 0) return
+      const lastBranch = branches[branches.length - 1]
+      newBranches = branches.slice(0, -1)
+      baseMsg.content = lastBranch.content
+      baseMsg.segments = lastBranch.segments
+      baseMsg.thought = lastBranch.thought
+      baseMsg.tokenUsage = lastBranch.tokenUsage
+      baseMsg.isError = lastBranch.isError
+      baseMsg.comparisonProviderId = lastBranch.comparisonProviderId
+      baseMsg.comparisonModelId = lastBranch.comparisonModelId
+      baseMsg.branches = newBranches.length > 0 ? newBranches : undefined
+      baseMsg.activeBranchIndex = newBranches.length
+    }
+
+    // 只剩一个回复（无 branch）→ 关闭对比，保留为本体
+    if (newBranches.length === 0) {
+      const finalMsg: MessageWithThought = { ...baseMsg, branches: undefined, activeBranchIndex: undefined }
+      updateConvMessages(convId, (prev) => {
+        const newMessages = prev.map(m => m.id === targetMsgId ? finalMsg : m)
+        window.electronAPI.conversation.update({
+          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+        }).catch(() => {})
+        return newMessages
+      })
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      return
+    }
+
+    // 重新生成 _comparisonBranchMsgs
+    const newBranchMsgs: MessageWithThought[] = newBranches.map((branch, i) => ({
+      ...baseMsg,
+      id: `${baseMsg.id}_branch_${i}`,
+      content: branch.content,
+      segments: branch.segments,
+      thought: branch.thought,
+      tokenUsage: branch.tokenUsage,
+      isError: branch.isError,
+      comparisonProviderId: branch.comparisonProviderId,
+      comparisonModelId: branch.comparisonModelId,
+      branches: undefined,
+      activeBranchIndex: undefined,
+      isStreaming: false,
+      _comparisonBranchMsgs: undefined,
+    }))
+    newBranchMsgs.push({
+      ...baseMsg,
+      id: `${baseMsg.id}_branch_${newBranches.length}`,
+      branches: undefined,
+      activeBranchIndex: undefined,
+      _comparisonBranchMsgs: undefined,
+    })
+
+    const newTargetMsg: MessageWithThought = { ...baseMsg, _comparisonBranchMsgs: newBranchMsgs }
+    updateConvMessages(convId, (prev) => {
+      const newMessages = prev.map(m => m.id === targetMsgId ? newTargetMsg : m)
+      window.electronAPI.conversation.update({
+        id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+      }).catch(() => {})
+      return newMessages
+    })
+  }
+
   useEffect(() => {
     if (!pendingComparisonAggregation || isStreaming) return
     const ids = pendingComparisonAggregation
@@ -1844,6 +1960,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isComparisonMode,
     comparisonMessageIds,
     handleCloseComparison,
+    handleDeleteComparisonMessage,
     handleOpenComparison,
     getComparisonMessages,
     editingConversationId,

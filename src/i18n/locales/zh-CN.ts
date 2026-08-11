@@ -297,6 +297,8 @@ export default {
     closeComparison: '关闭对比',
     openComparison: '查看对比',
     comparisonView: '对比视图',
+    deleteComparisonMessage: '删除此回复',
+    deleteComparisonConfirm: '确定删除此模型的回复吗？',
     minimalMode: '极简模式',
     minimalModeTooltip: '开启后不使用任何工具、技能和资料库合集，仅进行纯任务',
     minimalModeDisabledTooltip: '任务已有内容，无法切换极简模式',
