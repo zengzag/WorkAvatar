@@ -62,6 +62,8 @@ export abstract class BaseAgent {
   protected agentOptions: BaseAgentOptions
   // 并发保护：同一 Agent 实例不允许并发执行 run/runStream
   private _running: boolean = false
+  /** 当前 runStream 的 AbortSignal，用于检测 stale lock（前端已停止但后端工具未响应 abort） */
+  private _currentSignal?: AbortSignal
   private _lastKnownPromptTokens: number | undefined
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
@@ -137,9 +139,15 @@ export abstract class BaseAgent {
 
   async run(options: AgentRunOptions): Promise<AgentResponse> {
     if (this._running) {
-      throw new Error(`Agent "${this.name}" is already running, cannot start concurrent run`)
+      if (this._currentSignal?.aborted) {
+        logger.warn(`Agent "${this.name}" has stale _running flag (previous signal aborted), force-resetting`)
+        this._running = false
+      } else {
+        throw new Error(`Agent "${this.name}" is already running, cannot start concurrent run`)
+      }
     }
     this._running = true
+    this._currentSignal = undefined
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -201,7 +209,9 @@ export abstract class BaseAgent {
         },
       }
     } finally {
+      // run 不使用 signal，直接清除（run 与 runStream 不会并发，因为 _running 保护）
       this._running = false
+      this._currentSignal = undefined
     }
   }
 
@@ -211,9 +221,20 @@ export abstract class BaseAgent {
     signal?: AbortSignal
   ): Promise<void> {
     if (this._running) {
-      throw new Error(`Agent "${this.name}" is already running, cannot start concurrent runStream`)
+      // stale lock 检测：若前一次 runStream 的 signal 已被 abort（前端已停止/切换），
+      // 说明 _running 是残留状态（工具未响应 abort 导致 finally 未执行），强制恢复
+      if (this._currentSignal?.aborted) {
+        logger.warn(`Agent "${this.name}" has stale _running flag (previous signal aborted), force-resetting`)
+        this._running = false
+      } else {
+        throw new Error(`Agent "${this.name}" is already running, cannot start concurrent runStream`)
+      }
     }
     this._running = true
+    this._currentSignal = signal
+    // 捕获本次 run 的 signal，finally 中仅当 _currentSignal 仍是本次时才清除
+    // 避免旧 run（stale）的 finally 覆盖新 run 的 _running/_currentSignal
+    const runSignal = signal
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -273,7 +294,12 @@ export abstract class BaseAgent {
       this.eventEmitter.emit('run:error', { error: error.message })
       callbacks.onError?.(error.message)
     } finally {
-      this._running = false
+      // 仅当 _currentSignal 仍是本次 run 的 signal 时才清除
+      // 避免被 stale run 的 finally 覆盖新 run 的状态
+      if (this._currentSignal === runSignal) {
+        this._running = false
+        this._currentSignal = undefined
+      }
     }
   }
 

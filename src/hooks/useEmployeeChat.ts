@@ -222,6 +222,15 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         // 重置 initializedRef，让新员工走完整的 selectConversation/startNewConversation 流程
         initializedRef.current = false
 
+        // 先 abort 所有活跃流式会话，确保后端 agent 的 signal 被置为 aborted
+        // 这样切回该员工时 stale lock 检测能自动恢复（否则 _running 残留导致 "already running" 错误）
+        for (const [sessionId, ss] of _persistentStreamStates) {
+          if (ss.isStreaming) {
+            ss.isStreaming = false
+            window.electronAPI.llm.abortChat(sessionId).catch(() => { /* ignore */ })
+          }
+        }
+
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
@@ -675,13 +684,20 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
   }
 
+  /** 中止指定对话的所有活跃流式会话，确保后端 agent signal 被置为 aborted */
+  const abortConvStreams = async (convId: string) => {
+    const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
+    for (const [sessionId, ss] of streamEntries) {
+      ss.isStreaming = false
+      streamStatesRef.current.delete(sessionId)
+      try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
+    }
+  }
+
   const deleteConversation = async (convId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
     try {
-      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-      for (const [sessionId] of streamEntries) {
-        streamStatesRef.current.delete(sessionId)
-      }
+      await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
 
@@ -703,10 +719,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteSelectedConversations = async (convIds: string[]) => {
     try {
       for (const convId of convIds) {
-        const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-        for (const [sessionId] of streamEntries) {
-          streamStatesRef.current.delete(sessionId)
-        }
+        await abortConvStreams(convId)
         deleteConvMessages(convId)
         _persistentDrafts.delete(convId)
         await window.electronAPI.conversation.delete(convId)
@@ -727,6 +740,13 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteAllConversations = async () => {
     if (!id) return
     try {
+      // 中止所有活跃流式会话
+      for (const [sessionId, ss] of streamStatesRef.current) {
+        if (ss.isStreaming) {
+          ss.isStreaming = false
+          try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
+        }
+      }
       streamStatesRef.current.clear()
       conversationMessagesRef.current.clear()
       // 清理当前员工所有对话的草稿
@@ -756,11 +776,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const moveConversation = async (convId: string, targetEmployeeId: string): Promise<boolean> => {
     if (!convId || !targetEmployeeId) return false
     try {
-      // 终止该对话相关的流式会话
-      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-      for (const [sessionId] of streamEntries) {
-        streamStatesRef.current.delete(sessionId)
-      }
+      await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
 
