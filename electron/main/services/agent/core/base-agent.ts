@@ -757,8 +757,16 @@ export abstract class BaseAgent {
         }
         msg.content = contentParts
       }
-      if (m.toolCalls) {
-        msg.tool_calls = m.toolCalls
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        // 防御：确保 arguments 为字符串，避免中断的历史消息缺少该字段导致 LLM 报错
+        msg.tool_calls = m.toolCalls.map(tc => ({
+          id: tc.id,
+          type: tc.type || 'function',
+          function: {
+            name: tc.function?.name || '',
+            arguments: typeof tc.function?.arguments === 'string' ? tc.function.arguments : '{}',
+          },
+        }))
       }
       if (m.toolCallId) {
         msg.tool_call_id = m.toolCallId

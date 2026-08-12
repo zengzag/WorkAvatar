@@ -559,26 +559,29 @@ class EmployeeAgentService {
     const result: Message[] = []
     for (const m of messages) {
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // 仅保留已完成的 tool_call；被中断的（参数未输出完/无 result）会缺少 arguments
+        // 或无对应 tool response，发给 LLM 会报错，需过滤掉
+        const validToolCalls = m.toolCalls.filter(tc => tc.id && tc.name && tc.isComplete !== false)
         const assistantMsg: Message = {
           role: 'assistant',
           content: m.content,
           images: m.images,
           reasoning_content: m.reasoning_content,
-          toolCalls: m.toolCalls
-            .filter(tc => tc.id && tc.name) // 必须有 id 和 name
-            .map(tc => ({
-              id: tc.id,
-              type: 'function' as const,
-              function: {
-                name: tc.name,
-                arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args),
-              },
-            })),
+          toolCalls: validToolCalls.length > 0
+            ? validToolCalls.map(tc => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.name,
+                  arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args ?? {}),
+                },
+              }))
+            : undefined,
         }
         result.push(assistantMsg)
 
-        for (const tc of m.toolCalls) {
-          if (tc.isComplete !== false && tc.result !== undefined && tc.id) {
+        for (const tc of validToolCalls) {
+          if (tc.result !== undefined) {
             result.push({
               role: 'tool',
               toolCallId: tc.id,
