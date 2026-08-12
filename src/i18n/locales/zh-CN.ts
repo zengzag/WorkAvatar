@@ -80,6 +80,15 @@ export default {
     automation: '自动化',
     voiceRecording: '后台录音中',
   },
+  tabWindow: {
+    detach: '独立窗口打开',
+    returnToMain: '回到主窗口',
+    moveUp: '上移',
+    moveDown: '下移',
+    unsavedTitle: '有未保存的笔记',
+    unsavedContent: '当前笔记有未保存的修改，关闭窗口将丢弃这些改动。',
+    closeAnyway: '仍要关闭',
+  },
   tasks: {
     newTask: '新建任务',
     newTaskTitle: '开始新任务',

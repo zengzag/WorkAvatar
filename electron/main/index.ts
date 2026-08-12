@@ -8,6 +8,7 @@ import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
 import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
 import AutomationSchedulerService from './services/automation/automation-scheduler.service'
+import TabWindowService from './services/tab-window.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { createLogger, LoggerBackend } from './services/logger'
@@ -339,6 +340,8 @@ async function createWindow() {
 
   // 注入主窗口引用给通知服务，调度器启动后弹系统通知
   NotificationService.getInstance().setMainWindow(mainWindow)
+  // 注入主窗口引用给 Tab 独立窗口服务，用于推送 detached 状态变化
+  TabWindowService.getInstance().setMainWindow(mainWindow)
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -460,6 +463,12 @@ app.on('before-quit', () => {
   } catch (error) {
     logger.error('Failed to destroy subtitle window:', error)
   }
+  // 关闭所有 Tab 独立窗口
+  try {
+    TabWindowService.getInstance().closeAll()
+  } catch (error) {
+    logger.error('Failed to close tab windows:', error)
+  }
 })
 
 // will-quit 在所有窗口关闭后、进程退出前触发，不可被取消，
@@ -488,6 +497,7 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => {
   mainWindow = null
   NotificationService.getInstance().setMainWindow(null)
+  TabWindowService.getInstance().setMainWindow(null)
 })
 
 app.on('activate', () => {

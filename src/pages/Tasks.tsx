@@ -780,7 +780,7 @@ const Tasks: React.FC = () => {
             </div>
           )}
           {taskMode === 'chat' && (
-            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6 }}>
+            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6, alignItems: 'center' }}>
               <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
                 <Button type="text" size="small"
                   icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}

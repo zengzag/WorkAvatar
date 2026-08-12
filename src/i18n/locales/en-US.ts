@@ -80,6 +80,15 @@ export default {
     automation: 'Automation',
     voiceRecording: 'Recording in background',
   },
+  tabWindow: {
+    detach: 'Open in Standalone Window',
+    returnToMain: 'Back to Main Window',
+    moveUp: 'Move Up',
+    moveDown: 'Move Down',
+    unsavedTitle: 'Unsaved Notes',
+    unsavedContent: 'The current note has unsaved changes. Closing the window will discard them.',
+    closeAnyway: 'Close anyway',
+  },
   tasks: {
     newTask: 'New Task',
     newTaskTitle: 'Start a New Task',

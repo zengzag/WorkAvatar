@@ -314,6 +314,25 @@ const electronAPI = {
     },
   },
 
+  tabWindow: {
+    // 分离 tab 为独立窗口（已存在则聚焦）
+    open: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_OPEN, tabKey),
+    // 关闭 tab 独立窗口（回归主窗口）
+    returnToMain: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_RETURN, tabKey),
+    // 查询当前已分离的 tab 列表
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_LIST),
+    // 聚焦已存在的 tab 独立窗口，返回是否成功
+    focus: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_FOCUS, tabKey),
+    // 独立窗口渲染进程查询自己所属的 tabKey（主窗口渲染进程调用返回 null）
+    getOwnTab: () => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_GET_OWN_TAB),
+    // 主进程 → 主窗口渲染进程：detached tabs 列表变化通知
+    onDetachedChanged: (callback: (tabs: string[]) => void) => {
+      const handler = (_event: any, tabs: string[]) => callback(tabs || [])
+      ipcRenderer.on(IPC_CHANNELS.TAB_WINDOW_DETACHED_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TAB_WINDOW_DETACHED_CHANGED, handler)
+    },
+  },
+
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),

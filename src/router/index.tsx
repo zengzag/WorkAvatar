@@ -2,6 +2,7 @@ import { createHashRouter } from 'react-router-dom'
 import { lazy, Suspense, ReactNode } from 'react'
 import App from '../App'
 import EmployeeRedirect from '../components/common/EmployeeRedirect'
+import TabWindowLayout from '../components/common/TabWindowLayout'
 
 const Tasks = lazy(() => import('../pages/Tasks'))
 const Employees = lazy(() => import('../pages/Employees'))
@@ -64,6 +65,21 @@ const router = createHashRouter([
         path: 'notes',
         element: lazyElement(<NotesPage />),
       },
+    ],
+  },
+  // Tab 独立窗口：裸路由，不挂 App 壳（无侧边栏）
+  // 加载 index.html#/window/:tabKey 时进入此分支
+  {
+    path: '/window',
+    element: <TabWindowLayout />,
+    children: [
+      { path: 'tasks', element: lazyElement(<Tasks />) },
+      { path: 'employees', element: lazyElement(<Employees />) },
+      { path: 'kms', element: lazyElement(<KMSPage />) },
+      { path: 'voice', element: lazyElement(<VoicePage />) },
+      { path: 'calendar', element: lazyElement(<CalendarPage />) },
+      { path: 'automation', element: lazyElement(<AutomationPage />) },
+      { path: 'notes', element: lazyElement(<NotesPage />) },
     ],
   },
 ])
