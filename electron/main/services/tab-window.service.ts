@@ -9,6 +9,17 @@ const logger = createLogger('TabWindow')
 export const DETACHABLE_TABS = ['tasks', 'employees', 'kms', 'voice', 'calendar', 'notes', 'automation'] as const
 export type DetachableTab = typeof DETACHABLE_TABS[number]
 
+/** tabKey → 初始窗口标题（渲染端加载后由 document.title 覆盖为 i18n 标题） */
+const TAB_LABELS: Record<DetachableTab, string> = {
+  tasks: '任务',
+  employees: '数字员工',
+  kms: '资料库',
+  voice: '语音识别',
+  calendar: '日历',
+  notes: '笔记',
+  automation: '自动化',
+}
+
 function isDetachable(tabKey: string): tabKey is DetachableTab {
   return (DETACHABLE_TABS as readonly string[]).includes(tabKey)
 }
@@ -88,7 +99,7 @@ class TabWindowService {
     }
 
     const win = new BrowserWindow({
-      title: 'WorkAvatar',
+      title: TAB_LABELS[tabKey],
       width: 1080,
       height: 720,
       minWidth: 720,

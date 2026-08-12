@@ -89,6 +89,11 @@ const TabWindowLayout: React.FC = () => {
   // tab 标题映射
   const tabTitle = t(`nav.${currentTab}` as any, { defaultValue: 'WorkAvatar' })
 
+  // 同步到 OS 原生窗口标题（任务栏/Alt-Tab 缩略图），跟随 i18n 语言切换
+  useEffect(() => {
+    document.title = tabTitle
+  }, [tabTitle])
+
   const btnStyle: React.CSSProperties = {
     width: 28,
     height: 28,

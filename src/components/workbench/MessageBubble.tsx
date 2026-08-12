@@ -340,7 +340,7 @@ const MessageBubble: React.FC<{
                   onChange={(e) => setEditValue(e.target.value)}
                   autoSize={{ minRows: 3, maxRows: 15 }}
                   style={{
-                    fontSize: 14,
+                    fontSize: 15,
                     lineHeight: 1.6,
                     borderRadius: 8,
                     width: '100%',
@@ -367,7 +367,7 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorText, fontSize: 14 }}>{msg.content}</Text>
+                <Text style={{ color: token.colorText, fontSize: 15 }}>{msg.content}</Text>
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                     <Image.PreviewGroup items={msg.images}>
@@ -418,7 +418,7 @@ const MessageBubble: React.FC<{
                 background: token.colorBgContainer,
                 lineHeight: 1.6,
               }}>
-                <Text style={{ color: token.colorTextQuaternary, fontSize: 14 }}>{t('workbench.thinking')}</Text>
+                <Text style={{ color: token.colorTextQuaternary, fontSize: 15 }}>{t('workbench.thinking')}</Text>
               </div>
             )}
 
@@ -441,7 +441,7 @@ const MessageBubble: React.FC<{
                 wordBreak: 'break-word',
                 border: displayIsError ? `1px solid ${token.colorError}` : 'none',
               }}>
-                <div className="markdown-content" style={{ fontSize: 14, color: token.colorText }}>
+                <div className="markdown-content" style={{ fontSize: 15, color: token.colorText }}>
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
