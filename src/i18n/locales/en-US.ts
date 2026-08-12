@@ -225,6 +225,7 @@ export default {
       file_read: 'Read File',
       file_write: 'Write File',
       file_edit: 'Edit File',
+      report_generated_files: 'Show Generated Files',
       file_mkdir: 'Create Folder',
       file_list: 'List Directory',
       file_search: 'Search Files',

@@ -242,11 +242,95 @@ export const fileEditTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
-/** 常驻文件工具：读/写/编辑，对话全程加入 LLM tools 数组 */
+// ====== report_generated_files：声明需要展示给用户的成品文件 ======
+
+/** 可预览文件扩展名白名单（与前端 GeneratedFilesBar 展示范围一致） */
+const PREVIEWABLE_EXTS = new Set([
+  'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
+  'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
+  'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
+  'pdf', 'ofd',
+  'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
+  'gif', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif', 'png', 'svg', 'webp', 'ico', 'heic',
+])
+
+export const reportGeneratedFilesTool: ToolDefinition = {
+  id: 'report_generated_files',
+  name: 'report_generated_files',
+  title: '展示生成文件',
+  summary: '任务中创建或修改了用户关心的成品文档时，调用此工具声明文件路径，前端会在消息下方展示可预览卡片。',
+  description: `声明本次任务中要让用户看到的成品文件（如 Word/Excel/PPT/PDF/图片等）。
+创建或修改此类文档后，在最终回复前调用一次，传入所有成品文件的绝对路径。
+仅声明用户能直接消费的成品，不要声明临时文件、配置、脚本、中间产物。
+路径需为绝对路径；不存在或扩展名不在白名单的路径会被静默过滤。`,
+  parameters: {
+    type: 'object',
+    properties: {
+      files: {
+        type: 'array',
+        description: '成品文件绝对路径列表',
+        items: { type: 'string' },
+      },
+    },
+    required: ['files'],
+  },
+  handler: async (args: any) => {
+    const input = Array.isArray(args?.files) ? args.files : []
+    if (input.length === 0) {
+      return { success: false, error: '参数 files 不能为空' }
+    }
+    const workspacePath = getWorkspacePath() || process.cwd()
+    const generatedFiles: Array<{ path: string; name: string; ext: string; size: number; mtime: number }> = []
+    const skipped: string[] = []
+    for (const raw of input) {
+      if (typeof raw !== 'string' || !raw.trim()) continue
+      let resolved: string
+      try {
+        resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw)
+      } catch {
+        skipped.push(raw)
+        continue
+      }
+      try {
+        if (!fs.existsSync(resolved)) { skipped.push(resolved); continue }
+        const stat = fs.statSync(resolved)
+        if (!stat.isFile()) { skipped.push(resolved); continue }
+        const ext = path.extname(resolved).slice(1).toLowerCase()
+        if (!PREVIEWABLE_EXTS.has(ext)) { skipped.push(resolved); continue }
+        generatedFiles.push({
+          path: resolved,
+          name: path.basename(resolved),
+          ext,
+          size: stat.size,
+          mtime: stat.mtimeMs,
+        })
+      } catch { /* 忽略单个文件检查失败 */ }
+    }
+    const parts: string[] = [`[report_generated_files] 已声明 ${generatedFiles.length} 个成品文件`]
+    if (generatedFiles.length > 0) {
+      for (const f of generatedFiles) parts.push(`  ✓ ${f.path}`)
+    }
+    if (skipped.length > 0) {
+      parts.push(`已过滤（不存在/非文件/扩展名不在白名单）${skipped.length} 个：`)
+      for (const p of skipped) parts.push(`  ✗ ${p}`)
+    }
+    return {
+      success: true,
+      output: parts.join('\n'),
+      generatedFiles,
+    }
+  },
+  source: 'builtin',
+  permission: 'safe',
+  noRetry: true,
+}
+
+/** 常驻文件工具：读/写/编辑/成品声明，对话全程加入 LLM tools 数组 */
 export const residentFileTools: ToolDefinition[] = [
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  reportGeneratedFilesTool,
 ]
 
 // ====== 按需工具 ======

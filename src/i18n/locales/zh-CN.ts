@@ -225,6 +225,7 @@ export default {
       file_read: '读取文件',
       file_write: '写入文件',
       file_edit: '编辑文件',
+      report_generated_files: '展示生成文件',
       file_mkdir: '创建文件夹',
       file_list: '列出目录',
       file_search: '搜索文件',

@@ -1,5 +1,4 @@
 import type { ToolDefinition } from './types'
-import type { GeneratedFileInfo } from '../../../../shared/types'
 import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -165,55 +164,48 @@ function createSandboxedReadOnlyFs(): any {
 
 /**
  * 创建异步 `file` 对象：沙箱代码用 `await file.save(path, content)` 等异步方法写文件。
- * 内部先 await confirmOutsideWorkspace（统一弹窗），再调用真实 fs，并追踪 writtenFiles。
+ * 内部先 await confirmOutsideWorkspace（统一弹窗），再调用真实 fs。
  */
-function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>, writtenFiles: Set<string>): any {
+function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>): any {
   const workspaceRoot = path.resolve(workspacePath)
 
-  const checkAndTrack = async (operation: string, targetPath: string): Promise<void> => {
+  const checkAndAuthorize = async (operation: string, targetPath: string): Promise<void> => {
     if (typeof targetPath !== 'string') return
     let resolved: string
     try { resolved = path.resolve(targetPath) } catch { return }
     const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
-    if (authorizedPaths.has(resolved.toLowerCase())) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
+    if (isInWorkspace) return
+    if (authorizedPaths.has(resolved.toLowerCase())) return
     const result = await confirmOutsideWorkspace(operation, resolved)
     if (!result.ok) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
     authorizedPaths.add(resolved.toLowerCase())
-    try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
   }
 
   return {
     save: async (filePath: string, content: string | Buffer): Promise<void> => {
-      await checkAndTrack('写入', filePath)
+      await checkAndAuthorize('写入', filePath)
       fs.writeFileSync(filePath, content)
     },
     append: async (filePath: string, content: string | Buffer): Promise<void> => {
-      await checkAndTrack('追加', filePath)
+      await checkAndAuthorize('追加', filePath)
       fs.appendFileSync(filePath, content)
     },
     copy: async (src: string, dest: string): Promise<void> => {
-      await checkAndTrack('复制至', dest)
+      await checkAndAuthorize('复制至', dest)
       fs.copyFileSync(src, dest)
     },
     move: async (src: string, dest: string): Promise<void> => {
-      await checkAndTrack('移动至', dest)
+      await checkAndAuthorize('移动至', dest)
       fs.renameSync(src, dest)
     },
     delete: async (filePath: string): Promise<void> => {
-      await checkAndTrack('删除', filePath)
+      await checkAndAuthorize('删除', filePath)
       await moveToTrash(filePath)
     },
     createFolder: async (folderPath: string): Promise<void> => {
-      await checkAndTrack('创建文件夹于', folderPath)
+      await checkAndAuthorize('创建文件夹于', folderPath)
       fs.mkdirSync(folderPath, { recursive: true })
     },
     exists: (filePath: string): boolean => {
@@ -225,26 +217,20 @@ function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>
 /**
  * 包装 xlsx / pptxgenjs 模块：写函数改为异步，内部先 await confirmOutsideWorkspace。
  */
-function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>, writtenFiles: Set<string>, sandboxFile: any) {
+function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>, sandboxFile: any) {
   let cachedFs: any = null
   let cachedXlsx: any = null
   let cachedPptxgenjs: any = null
 
-  /** 检查路径权限并追踪，工作区外路径异步弹窗确认 */
-  const checkAndTrack = async (operation: string, targetPath: string): Promise<void> => {
+  /** 检查路径权限，工作区外路径异步弹窗确认 */
+  const checkAndAuthorize = async (operation: string, targetPath: string): Promise<void> => {
     if (typeof targetPath !== 'string') return
     let resolved: string
     try { resolved = path.resolve(targetPath) } catch { return }
     const workspaceRoot = path.resolve(workspacePath)
     const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
-    if (authorizedPaths.has(resolved.toLowerCase())) {
-      try { writtenFiles.add(resolved) } catch { /* 忽略 */ }
-      return
-    }
+    if (isInWorkspace) return
+    if (authorizedPaths.has(resolved.toLowerCase())) return
     const result = await confirmOutsideWorkspace(operation, resolved)
     if (!result.ok) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
@@ -261,11 +247,11 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
         const originalWriteFileSync = rawXlsx.writeFileSync || rawXlsx.writeFile
         cachedXlsx = { ...rawXlsx }
         cachedXlsx.writeFile = async (wb: any, filename: string, opts?: any) => {
-          await checkAndTrack('写入', filename)
+          await checkAndAuthorize('写入', filename)
           return originalWriteFile.call(rawXlsx, wb, filename, opts)
         }
         cachedXlsx.writeFileSync = async (wb: any, filename: string, opts?: any) => {
-          await checkAndTrack('写入', filename)
+          await checkAndAuthorize('写入', filename)
           return originalWriteFileSync.call(rawXlsx, wb, filename, opts)
         }
       }
@@ -277,7 +263,7 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
         cachedPptxgenjs = class extends OFFICE_MODULES['pptxgenjs'] {
           writeFile(options: any) {
             const fileName = typeof options === 'string' ? options : options?.fileName
-            return checkAndTrack('写入', fileName).then(() => super.writeFile(options))
+            return checkAndAuthorize('写入', fileName).then(() => super.writeFile(options))
           }
         }
       }
@@ -306,41 +292,11 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
   }
 }
 
-const PREVIEWABLE_EXTS = new Set([
-  'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
-  'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
-  'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
-  'pdf', 'ofd',
-  'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
-  'gif', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif', 'png', 'svg', 'webp', 'ico', 'heic',
-])
-
-function collectGeneratedFiles(writtenFiles: Set<string>): GeneratedFileInfo[] {
-  const result: GeneratedFileInfo[] = []
-  for (const filePath of writtenFiles) {
-    try {
-      if (!fs.existsSync(filePath)) continue
-      const stat = fs.statSync(filePath)
-      if (!stat.isFile()) continue
-      const ext = path.extname(filePath).slice(1).toLowerCase()
-      if (!PREVIEWABLE_EXTS.has(ext)) continue
-      result.push({
-        path: filePath,
-        name: path.basename(filePath),
-        ext,
-        size: stat.size,
-        mtime: stat.mtimeMs,
-      })
-    } catch { /* 忽略 stat 失败的文件 */ }
-  }
-  return result
-}
-
 export const javascriptExecTool: ToolDefinition = {
   id: 'javascript_exec',
   name: 'javascript_exec',
   title: 'JavaScript执行',
-  summary: 'Node.js沙箱中执行JS代码，自动语法预检查、写入路径追踪。纯计算/数据处理/写文件类任务用此，不要用shell_exec调node。',
+  summary: 'Node.js沙箱中执行JS代码，自动语法预检查、工作区外写入确认。纯计算/数据处理/写文件类任务用此，不要用shell_exec调node。',
   description: `在Node.js沙箱中执行JavaScript代码（支持async/await）。
 
 写JS代码用此工具，不要用shell_exec调node。
@@ -430,9 +386,8 @@ export const javascriptExecTool: ToolDefinition = {
       }
     }
 
-    const writtenFiles = new Set<string>()
-    const sandboxFile = createSandboxedFile(workingDir, authorizedPaths, writtenFiles)
-    const sandboxedRequire = createSandboxedRequire(workingDir, authorizedPaths, writtenFiles, sandboxFile)
+    const sandboxFile = createSandboxedFile(workingDir, authorizedPaths)
+    const sandboxedRequire = createSandboxedRequire(workingDir, authorizedPaths, sandboxFile)
 
     // 追踪沙箱内创建的定时器，执行结束后统一清理，避免事件循环无法退出
     const trackedTimers: NodeJS.Timeout[] = []
@@ -560,15 +515,7 @@ export const javascriptExecTool: ToolDefinition = {
           + output.substring(output.length - MAX_CONSOLE_OUTPUT / 2)
       }
 
-      const generatedFiles = collectGeneratedFiles(writtenFiles)
       const parts: string[] = ['[javascript_exec] 执行成功']
-
-      if (generatedFiles.length > 0) {
-        parts.push(`写入文件（共 ${generatedFiles.length} 个）：`)
-        for (const f of generatedFiles) parts.push(`  ✓ ${f.path}`)
-      } else {
-        parts.push('未写入可预览文件（如确实调用了 file.save 但未出现在此列表，可能扩展名不在预览白名单内）')
-      }
 
       if (output) {
         parts.push('--- stdout ---')
@@ -578,7 +525,6 @@ export const javascriptExecTool: ToolDefinition = {
       return {
         success: true,
         output: parts.join('\n'),
-        generatedFiles,
       }
     } catch (error: any) {
       let output = consoleOutput.join('\n')
@@ -600,22 +546,13 @@ export const javascriptExecTool: ToolDefinition = {
         }
       }
 
-      const generatedFiles = collectGeneratedFiles(writtenFiles)
-      const statusLines: string[] = []
-      if (generatedFiles.length > 0) {
-        statusLines.push(`[javascript_exec] 错误前已写入 ${generatedFiles.length} 个文件：`)
-        for (const f of generatedFiles) statusLines.push(`  ✓ ${f.path}`)
-      } else {
-        statusLines.push('[javascript_exec] 错误：未写入任何文件')
-      }
-      const statusBlock = statusLines.join('\n')
+      const statusBlock = '[javascript_exec] 执行失败'
       const finalOutput = [statusBlock, output].filter(Boolean).join('\n')
 
       return {
         success: false,
         error: errorMessage,
         output: finalOutput || undefined,
-        generatedFiles,
       }
     }
   },

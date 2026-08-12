@@ -40,6 +40,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'file_read',
       'file_write',
       'file_edit',
+      'report_generated_files',
       'file_mkdir',
       'file_list',
       'file_search',

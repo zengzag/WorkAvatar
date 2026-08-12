@@ -107,6 +107,7 @@ export class EmployeeAgent extends BaseAgent {
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
       minimalMode: this.minimalMode,
       onDemandToolList: onDemandToolList || undefined,
+      hasReportGeneratedFiles: !!this.toolRegistry.getTool('report_generated_files'),
     })
 
     this.cachedSystemPrompt = prompt

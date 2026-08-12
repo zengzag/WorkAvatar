@@ -1,6 +1,4 @@
 import type { ToolDefinition } from './types'
-import * as fs from 'fs'
-import * as path from 'path'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
 import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
 import {
@@ -11,11 +9,8 @@ import {
   extractAbsolutePaths,
 } from './exec-shared'
 
+// 不可逆系统破坏类：硬拦截，不提供确认机会
 const dangerousPatterns = [
-  // 删除类（含 --recursive/--force 长选项形式）
-  /\brm\s+(-[rf]{1,2}\s+|--recursive\b|--force\b)/i, /\bdel\s+\/f\b/i, /\brmdir\s+\/s\b/i,
-  /\bRemove-Item\b.*-Recurse/i, /\bRemove-Item\b.*-Force/i,
-  // 系统破坏类
   /\bformat\s+[a-z]:/i, /\bdiskpart\b/i, /\bdd\s+if=/i,
   /\bshutdown\b/i, /\breboot\b/i, /:.*?\(\)\s*\{.*?\};\s*:/,
   // 编码/混淆执行（绕过检测）
@@ -25,7 +20,7 @@ const dangerousPatterns = [
   /\bperl\s+-e\b/i,
 ]
 
-// 删除类命令模式
+// 删除类命令模式：走用户确认流程（rm -rf / Remove-Item -Recurse 等均由 isFileDeletionCommand 命中后弹确认框）
 const fileDeletionPatterns = [
   /\brm\s+/i, /\bdel\s+/i, /\brmdir\s+/i, /\berase\s+/i,
   /\bRemove-Item\b/i, /\brd\s+\/s/i, /\brd\s+\/q/i,
@@ -276,34 +271,6 @@ export const shellExecTool: ToolDefinition = {
       sections.unshift(`_${meta.join(', ')}_`)
       sections.unshift('')
 
-      // 收集可预览的生成文件
-      const generatedFiles: any[] = []
-      const PREVIEWABLE_EXTS = new Set([
-        'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
-        'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
-        'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
-        'pdf', 'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
-        'png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp',
-      ])
-      const candidatePaths = extractPathsFromCommand(scriptContentForCheck)
-      for (const p of candidatePaths) {
-        try {
-          const resolved = path.resolve(p)
-          if (!fs.existsSync(resolved)) continue
-          const stat = fs.statSync(resolved)
-          if (!stat.isFile()) continue
-          const ext = path.extname(resolved).slice(1).toLowerCase()
-          if (!PREVIEWABLE_EXTS.has(ext)) continue
-          generatedFiles.push({
-            path: resolved,
-            name: path.basename(resolved),
-            ext,
-            size: stat.size,
-            mtime: stat.mtimeMs,
-          })
-        } catch { /* 忽略单个文件检查失败 */ }
-      }
-
       const output = sections.join('\n')
 
       if (!succeeded) {
@@ -322,11 +289,10 @@ export const shellExecTool: ToolDefinition = {
           output: output + '\n\n' + errorCtx,
           stdout,
           stderr,
-          generatedFiles,
         }
       }
 
-      return { success: true, output, stdout, stderr, generatedFiles }
+      return { success: true, output, stdout, stderr }
     } catch (error: any) {
       return {
         success: false,

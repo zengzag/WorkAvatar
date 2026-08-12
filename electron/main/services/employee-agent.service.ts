@@ -422,6 +422,7 @@ class EmployeeAgentService {
           || cached.includes('## 当前对话可使用的资料库合集')
           || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
           || cached.includes('<skills>')
+          || !cached.includes('report_generated_files')
         if (!isLegacy) {
           agent.setCachedSystemPrompt(cached)
           systemPromptCached = true
