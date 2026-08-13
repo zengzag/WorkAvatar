@@ -33,13 +33,14 @@ const now = () => Date.now()
  * 将现有 providerType 映射为 pi-ai 的 OpenAICompletionsCompat.thinkingFormat。
  * - deepseek: thinking:{type} + reasoning_effort
  * - qwen: enable_thinking: boolean
- * - volcengine/zhipu: 与 deepseek 同为 thinking:{type}，复用 "deepseek" 格式
+ * - volcengine/zhipu/xiaomi: 与 deepseek 同为 thinking:{type}，复用 "deepseek" 格式
  */
 function mapThinkingFormat(providerType?: string): 'deepseek' | 'qwen' | undefined {
   switch (providerType) {
     case 'deepseek':
     case 'volcengine':
     case 'zhipu':
+    case 'xiaomi':
       return 'deepseek'
     case 'qwen':
       return 'qwen'
@@ -91,7 +92,7 @@ function buildPiModel(
       ...(thinkingFormat ? { thinkingFormat } : {}),
       supportsUsageInStreaming: true,
       supportsFinishReason: true,
-      maxTokensField: 'max_tokens' as const,
+      maxTokensField: providerType === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens',
       supportsReasoningEffort: reasoningEffortSupported,
       supportsDeveloperRole,
       ...(isLocalProvider ? { supportsStore: false } : {}),

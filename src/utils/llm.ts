@@ -1,6 +1,6 @@
 import type { LLMModelConfig } from '../types'
 
-export const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'moonshot', 'yi'])
+export const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volcengine', 'xiaomi', 'moonshot', 'yi'])
 export const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
 
 export function getProviderModels(provider: { models_json?: string }): LLMModelConfig[] {

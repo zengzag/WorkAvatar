@@ -44,6 +44,7 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     case 'deepseek':
     case 'volcengine':
     case 'zhipu':
+    case 'xiaomi':
       thinkingFormat = 'deepseek'
       break
     case 'qwen':
@@ -77,7 +78,7 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     compat: {
       supportsUsageInStreaming: true,
       supportsFinishReason: true,
-      maxTokensField: 'max_tokens',
+      maxTokensField: providerType === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens',
       supportsReasoningEffort: reasoningEffortSupported,
       supportsDeveloperRole,
       ...(thinkingFormat ? { thinkingFormat } : {}),

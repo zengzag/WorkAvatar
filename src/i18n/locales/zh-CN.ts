@@ -749,6 +749,7 @@ export default {
     providerQwen: '通义千问 (Qwen)',
     providerZhipu: '智谱 AI (GLM)',
     providerVolcengine: '火山引擎 (豆包)',
+    providerXiaomi: '小米 MiMo',
     providerYi: '零一万物 (Yi)',
     providerOpenaiCompatible: 'OpenAI 兼容接口',
     modelCount: '{{count}} 个模型配置',

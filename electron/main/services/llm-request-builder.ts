@@ -75,7 +75,7 @@ function applyThinkingConfig(
   enableThinking: boolean,
   thinkingBudget?: number,
 ): void {
-  const supportsThinking = ['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu'].includes(providerType)
+  const supportsThinking = ['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu', 'xiaomi'].includes(providerType)
   if (!supportsThinking) return
 
   const thinkingType = enableThinking ? 'enabled' : 'disabled'
@@ -88,7 +88,7 @@ function applyThinkingConfig(
     if (enableThinking && thinkingBudget != null) {
       body.thinking_budget = thinkingBudget
     }
-  } else if (providerType === 'volcengine' || providerType === 'zhipu') {
+  } else if (providerType === 'volcengine' || providerType === 'zhipu' || providerType === 'xiaomi') {
     body.thinking = { type: thinkingType }
   }
 }

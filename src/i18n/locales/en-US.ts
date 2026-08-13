@@ -749,6 +749,7 @@ export default {
     providerQwen: 'Qwen',
     providerZhipu: 'GLM',
     providerVolcengine: 'Volcengine (Doubao)',
+    providerXiaomi: 'Xiaomi MiMo',
     providerYi: 'Yi (01.AI)',
     providerOpenaiCompatible: 'OpenAI Compatible API',
     modelCount: '{{count}} model configs',

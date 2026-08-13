@@ -32,6 +32,7 @@ import {
 } from '@ant-design/icons'
 import type { LLMProvider, LLMModelConfig, LLMModelCategory, LLMProviderType } from '../../types'
 import { useTranslation } from 'react-i18next'
+import { invalidateProvidersCache } from '../../hooks/useLlmSettings'
 
 const { Text, Title } = Typography
 
@@ -47,6 +48,7 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string
   { value: 'qwen', label: '通义千问 (Qwen)', labelKey: 'settings.providerQwen', group: 'domestic' },
   { value: 'zhipu', label: '智谱 AI (GLM)', labelKey: 'settings.providerZhipu', group: 'domestic' },
   { value: 'volcengine', label: '火山引擎 (豆包)', labelKey: 'settings.providerVolcengine', group: 'domestic' },
+  { value: 'xiaomi', label: '小米 MiMo', labelKey: 'settings.providerXiaomi', group: 'domestic' },
   { value: 'moonshot', label: 'Moonshot (Kimi)', group: 'domestic' },
   { value: 'yi', label: '零一万物 (Yi)', labelKey: 'settings.providerYi', group: 'domestic' },
   { value: 'openai-compatible', label: 'OpenAI 兼容接口', labelKey: 'settings.providerOpenaiCompatible', group: 'local' },
@@ -61,6 +63,7 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
   zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
   volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3' },
+  xiaomi: { baseURL: 'https://api.xiaomimimo.com/v1' },
   moonshot: { baseURL: 'https://api.moonshot.cn/v1' },
   yi: { baseURL: 'https://api.lingyiwanwu.com/v1' },
   groq: { baseURL: 'https://api.groq.com/openai/v1' },
@@ -181,6 +184,7 @@ const LLMSettings: React.FC = () => {
       await window.electronAPI.llm.deleteProvider(id)
       message.success(t('settings.deleted'))
       loadProviders()
+      invalidateProvidersCache()
     } catch {
       message.error(t('settings.deleteFailed'))
     }
@@ -213,6 +217,7 @@ const LLMSettings: React.FC = () => {
       }
       setModalVisible(false)
       loadProviders()
+      invalidateProvidersCache()
     } catch (error: any) {
       if (error?.message) {
         message.error(error.message)

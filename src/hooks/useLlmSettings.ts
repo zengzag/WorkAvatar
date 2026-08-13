@@ -7,6 +7,21 @@ let _cachedProviders: any[] | null = null
 let _cachedProvidersTime = 0
 const PROVIDERS_CACHE_TTL = 60000
 
+// 设置页修改 providers 后，通知所有已挂载的 hook 实例强制刷新（无需重启应用）
+type ProvidersListener = () => void
+const _providersListeners = new Set<ProvidersListener>()
+
+export function invalidateProvidersCache() {
+  _cachedProviders = null
+  _cachedProvidersTime = 0
+  _providersListeners.forEach(l => l())
+}
+
+function subscribeProviders(listener: ProvidersListener): () => void {
+  _providersListeners.add(listener)
+  return () => { _providersListeners.delete(listener) }
+}
+
 export function useLlmSettings(employeeId: string | undefined) {
   const providerKey = employeeId ? `employeeWorkbench:selectedProviderId:${employeeId}` : 'employeeWorkbench:selectedProviderId'
   const modelKey = employeeId ? `employeeWorkbench:selectedModelId:${employeeId}` : 'employeeWorkbench:selectedModelId'
@@ -74,6 +89,17 @@ export function useLlmSettings(employeeId: string | undefined) {
       setProviders(result as any[])
     } catch (e) { console.error('Failed to load providers:', e) }
   }
+
+  // 设置页更新 providers 后强制刷新，保证已挂载页面无需重启即可看到新模型
+  useEffect(() => {
+    return subscribeProviders(() => {
+      window.electronAPI.llm.getProviders().then((result: any) => {
+        _cachedProviders = result as any[]
+        _cachedProvidersTime = Date.now()
+        setProviders(result as any[])
+      }).catch(() => {})
+    })
+  }, [])
 
   return {
     providers,
