@@ -159,7 +159,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 ...segs[targetIndex],
                 toolName: name || segs[targetIndex].toolName,
                 toolCallId: id || segs[targetIndex].toolCallId,
-                toolArgsRaw: argsText,
+                // argsText 是 JSON 字符串的增量片段，需累加成完整 JSON 字符串
+                toolArgsRaw: (segs[targetIndex].toolArgsRaw || '') + argsText,
               }
             } else {
               segs.push({
@@ -267,8 +268,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       )
     })
 
-    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any }) => {
-      const { sessionId, name, result, rawResult, generatedFiles } = data
+    const toolResultCleanup = window.electronAPI.llm.onToolResult((data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => {
+      const { sessionId, name, result, rawResult, generatedFiles, success } = data
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
@@ -288,7 +289,9 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delIdx = segs.findIndex(s => s.type === 'delegation' && s.delegationStatus === 'streaming')
             }
             if (delIdx === -1) return m
-            const isSuccess = rawResult?.success !== false
+            // delegate 业务成功判断：优先从 rawResult.success（delegate.tool 返回的业务结果）
+            // 顶层 success 是"工具调用是否成功"（基于 isError），不代表委派业务成功
+            const isSuccess = rawResult?.success !== undefined ? !!rawResult.success : (success !== undefined ? success : true)
             const targetName = rawResult?.targetEmployeeName || segs[delIdx].targetEmployeeName
             segs[delIdx] = {
               ...segs[delIdx],
@@ -311,11 +314,13 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           )
           if (lastIncompleteIndex === -1) return m
           const actualIndex = segs.length - 1 - lastIncompleteIndex
+          // 优先用顶层 success 字段判断工具执行结果，无则默认成功（保持兼容）
+          const toolSuccess = success !== undefined ? success : true
           segs[actualIndex] = {
             ...segs[actualIndex],
             toolResult: result,
             isToolComplete: true,
-            toolError: undefined,
+            toolError: toolSuccess ? undefined : (typeof result === 'string' ? result : (rawResult?.error || undefined)),
             collapsed: true,
             completedAt: Date.now(),
             generatedFiles: generatedFiles && generatedFiles.length > 0 ? generatedFiles : undefined,
@@ -446,7 +451,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 ...segs[targetIndex],
                 toolName: name || segs[targetIndex].toolName,
                 toolCallId: id || segs[targetIndex].toolCallId,
-                toolArgsRaw: argsText,
+                // argsText 是 JSON 字符串的增量片段，需累加成完整 JSON 字符串
+                toolArgsRaw: (segs[targetIndex].toolArgsRaw || '') + argsText,
               }
             } else {
               segs.push({

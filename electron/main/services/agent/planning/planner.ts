@@ -33,8 +33,8 @@ abstract class BasePlanner implements IPlanner {
 
   protected async callPlanningLLM(messages: LLMMessage[]): Promise<string> {
     if (this.options?.model && this.options?.apiKey && this.options?.baseUrl) {
-      const { OpenAIProvider } = await import('../llm/openai-provider')
-      const planningProvider = new OpenAIProvider({
+      const { PiAIProvider } = await import('../llm/pi-ai-provider')
+      const planningProvider = new PiAIProvider({
         model: this.options.model,
         apiKey: this.options.apiKey,
         baseUrl: this.options.baseUrl,

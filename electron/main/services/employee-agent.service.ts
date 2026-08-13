@@ -57,7 +57,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; generatedFiles?: any }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -559,7 +559,8 @@ class EmployeeAgentService {
     const result: Message[] = []
     for (const m of messages) {
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        // 仅保留已完成的 tool_call；被中断的（参数未输出完/无 result）会缺少 arguments
+        // 仅保留已执行完毕的 tool_call（isComplete !== false）；
+        // 被中断的（isComplete=false，参数未输出完或未收到 onToolResult）会缺少 arguments
         // 或无对应 tool response，发给 LLM 会报错，需过滤掉
         const validToolCalls = m.toolCalls.filter(tc => tc.id && tc.name && tc.isComplete !== false)
         const assistantMsg: Message = {
@@ -581,13 +582,16 @@ class EmployeeAgentService {
         result.push(assistantMsg)
 
         for (const tc of validToolCalls) {
-          if (tc.result !== undefined) {
-            result.push({
-              role: 'tool',
-              toolCallId: tc.id,
-              content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result),
-            })
-          }
+          // 工具执行成功但无返回值时，result 可能为 undefined/null/空字符串；
+          // OpenAI 协议要求 tool result content 非空，补一个占位文本
+          const toolContent = tc.result === undefined || tc.result === null
+            ? ''
+            : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result))
+          result.push({
+            role: 'tool',
+            toolCallId: tc.id,
+            content: toolContent || '工具执行完成，无返回值',
+          })
         }
       } else {
         result.push({

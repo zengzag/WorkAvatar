@@ -186,10 +186,10 @@ export function registerLLMHandlers(
                   event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args })
                 }
               },
-              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any }) => {
+              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => {
                 if (abortController.signal.aborted) return
                 if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, generatedFiles: toolResult.generatedFiles })
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, generatedFiles: toolResult.generatedFiles, success: toolResult.success })
                 }
               },
               onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {

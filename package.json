@@ -25,6 +25,8 @@
     "@ant-design/icons": "^6.2.2",
     "@codemirror/lang-markdown": "^6.5.1",
     "@codemirror/language-data": "^6.5.2",
+    "@earendil-works/pi-agent-core": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.1",
     "@file-viewer/react-full": "^2.1.26",
     "@milkdown/kit": "^7.21.3",
     "@milkdown/react": "^7.21.3",

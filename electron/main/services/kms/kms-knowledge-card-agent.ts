@@ -1,4 +1,4 @@
-import { OpenAIProvider } from '../agent/llm/openai-provider'
+import { PiAIProvider } from '../agent/llm/pi-ai-provider'
 import { ToolRegistry } from '../agent/tools/tool-registry'
 import { ToolDispatcher } from '../agent/tools/tool-dispatcher'
 import { createKMSTools, type SearchScopeRef } from '../agent/tools/kms-search.tool'
@@ -124,7 +124,7 @@ export async function runUnifiedAgentLoop(
   const providerConfig = await llmClient.getProviderConfig(llmConfig.providerId)
   if (!providerConfig) return { success: false, error: 'NO_LLM_PROVIDER' }
 
-  const provider = new OpenAIProvider({
+  const provider = new PiAIProvider({
     model: llmConfig.modelId || providerConfig.model,
     apiKey: providerConfig.api_key,
     baseUrl: providerConfig.base_url,
