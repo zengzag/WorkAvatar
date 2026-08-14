@@ -1,5 +1,6 @@
 import LLMClientService from '../llm-client.service'
 import { parseJSON } from './kms-paragraph-processor'
+import type { ThinkingLevel } from '../../../shared/types'
 
 /** callLLMForJSON 调用选项 */
 export interface CallLLMForJSONOptions {
@@ -7,7 +8,7 @@ export interface CallLLMForJSONOptions {
   maxTokens?: number
   signal?: AbortSignal
   logSource?: string
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   /** 失败时抛出异常而不是返回 fallback。默认 false */
   throwOnError?: boolean
   /** 自定义错误信息（仅 throwOnError=true 时使用） */

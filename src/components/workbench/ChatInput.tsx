@@ -2,9 +2,9 @@ import { Input, Button, theme, Dropdown, Typography, Popover, Tag, Checkbox, Too
 import { SendOutlined, StopOutlined, ThunderboltOutlined, PaperClipOutlined, CloseOutlined, SwapOutlined, CheckOutlined, RobotOutlined, SearchOutlined, DatabaseOutlined, CompressOutlined, FileTextOutlined, UnlockOutlined, DownOutlined, UnorderedListOutlined, BulbOutlined, BulbFilled, LoadingOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
-import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { isColorDark } from '../../utils/format'
-import type { Employee } from '../../types'
+import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
 
@@ -288,12 +288,10 @@ const ChatInput: React.FC<{
   defaultProviderId?: string
   defaultModelId?: string
   onDefaultModelChange?: (providerId: string, modelId: string) => void
-  enableThinking?: boolean
-  onThinkingChange?: (enabled: boolean) => void
-  /** 草稿重置 key：当此值变化时强制从 getInitialDraft 重新读取草稿，用于新任务模式下切换员工等场景 */
-  draftResetKey?: string
+  enableThinking?: ThinkingLevel
+  onThinkingChange?: (level: ThinkingLevel) => void
   isCompacting?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, draftResetKey, isCompacting }) => {
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -301,8 +299,6 @@ const ChatInput: React.FC<{
   const [isDragOver, setIsDragOver] = useState(false)
   const [highPermission, setHighPermission] = useState(false)
   const editorRef = useRef<HTMLDivElement>(null)
-  /** 跟踪草稿是否已初始化，避免 effect 反复恢复 */
-  const draftInitializedRef = useRef(false)
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
 
@@ -326,6 +322,13 @@ const ChatInput: React.FC<{
     deserializeDraftToEditor(editorRef.current, draftStr || '', token, removeFileById)
     setEditorEmpty(!draftStr)
   }, [token, removeFileById])
+
+  // restoreDraft / getInitialDraft 的 ref 镜像：useEffect 通过 ref 读取最新实现，
+  // 避免其引用变化（如主题 token 变化、onDraftChange 重建）触发恢复草稿覆盖编辑器内容
+  const restoreDraftRef = useRef(restoreDraft)
+  restoreDraftRef.current = restoreDraft
+  const getInitialDraftRef = useRef(getInitialDraft)
+  getInitialDraftRef.current = getInitialDraft
 
   /** 在当前光标位置插入文件令牌（如果没有选区，则在末尾追加） */
   const insertFileTokenAtCursor = useCallback((files: Array<{ id: string; name: string; path: string }>) => {
@@ -365,14 +368,15 @@ const ChatInput: React.FC<{
     emitDraftChange()
   }, [token, removeFileById, emitDraftChange])
 
-  // 对话切换 / draftResetKey 变化时，从外部恢复草稿（不触发顶层重渲染，仅在此处同步）
+  // 仅在 conversationId 变化（切换对话 / 首次挂载）时恢复草稿；
+  // restoreDraft / getInitialDraft 通过 ref 读取最新实现，避免其引用变化（如主题 token 变化）触发覆盖。
+  // 新任务模式下切换数字员工时 conversationId 不变（始终为 null），编辑器内容原样保留。
   useEffect(() => {
-    if (getInitialDraft) {
-      restoreDraft(getInitialDraft())
+    const getDraft = getInitialDraftRef.current
+    if (getDraft) {
+      restoreDraftRef.current(getDraft())
     }
-    // 第一次初始化 / 切换对话时都重置标记
-    draftInitializedRef.current = true
-  }, [conversationId, getInitialDraft, draftResetKey, restoreDraft])
+  }, [conversationId])
 
   // attachedImages 的 ref 镜像，用于异步回调（FileReader.onload）中读取最新值，
   // 避免闭包捕获旧快照导致用户中途新增的图片被覆盖（M1/M2 修复）
@@ -895,6 +899,23 @@ const ChatInput: React.FC<{
     const m = models.find((m: any) => m.model === defaultModelId)
     return m?.name || defaultModelId
   }, [defaultProviderId, defaultModelId, providers])
+
+  // 当前 provider 的思考能力：决定灯泡按钮是否显示及菜单项
+  const thinkingCapability = useMemo(() => {
+    const p = providers.find((p: any) => p.id === defaultProviderId)
+    const providerType = p?.provider_type as string | undefined
+    const effortSupported = supportsReasoningEffort(providerType)
+    const thinkingSupported = supportsThinking(providerType)
+    if (effortSupported) {
+      // 支持 reasoning_effort：4 级
+      return { visible: true, levels: [false, 'low', 'medium', 'high'] as ThinkingLevel[], effortSupported: true }
+    }
+    if (thinkingSupported) {
+      // 仅支持思考开关：2 级（off / on→'high'）
+      return { visible: true, levels: [false, 'high'] as ThinkingLevel[], effortSupported: false }
+    }
+    return { visible: false, levels: [] as ThinkingLevel[], effortSupported: false }
+  }, [defaultProviderId, providers])
 
   const filteredDefaultModels = useMemo(() => {
     const search = defaultModelSearch.toLowerCase()
@@ -1461,16 +1482,48 @@ const ChatInput: React.FC<{
                   </Button>
                 </Popover>
               )}
-              {onThinkingChange && (
-                <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
-                  <Button type="text" size="small"
-                    icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                    onClick={() => onThinkingChange(!enableThinking)}
-                    style={{
-                      color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
-                      padding: '0 2px', height: 20, minWidth: 20,
-                    }} />
-                </Tooltip>
+              {onThinkingChange && thinkingCapability.visible && (
+                thinkingCapability.effortSupported ? (
+                  <Dropdown trigger={['click']} placement="topRight" menu={{
+                    items: thinkingCapability.levels.map(level => {
+                      const labelKey = level === false
+                        ? 'workbench.thinkingLevelOff'
+                        : level === 'low' ? 'workbench.thinkingLevelLow'
+                        : level === 'medium' ? 'workbench.thinkingLevelMedium'
+                        : 'workbench.thinkingLevelHigh'
+                      return {
+                        key: String(level),
+                        label: <span style={{ fontSize: 12 }}>{t(labelKey)}</span>,
+                        icon: enableThinking === level ? <CheckOutlined style={{ fontSize: 11 }} /> : <span style={{ display: 'inline-block', width: 11 }} />,
+                      }
+                    }),
+                    onClick: ({ key }) => {
+                      const next = key === 'false' ? false : key as ThinkingLevel
+                      onThinkingChange(next)
+                    },
+                    selectable: true,
+                    selectedKeys: [String(enableThinking)],
+                  }}>
+                    <Tooltip title={t('workbench.thinkingLevel')}>
+                      <Button type="text" size="small"
+                        icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                        style={{
+                          color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
+                          padding: '0 2px', height: 20, minWidth: 20,
+                        }} />
+                    </Tooltip>
+                  </Dropdown>
+                ) : (
+                  <Tooltip title={enableThinking ? t('workbench.thinkingEnabled') : t('workbench.thinkingDisabled')}>
+                    <Button type="text" size="small"
+                      icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
+                      onClick={() => onThinkingChange(enableThinking ? false : 'high')}
+                      style={{
+                        color: enableThinking ? token.colorPrimary : token.colorTextQuaternary,
+                        padding: '0 2px', height: 20, minWidth: 20,
+                      }} />
+                  </Tooltip>
+                )
               )}
             </div>
           </div>

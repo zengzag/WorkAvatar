@@ -514,8 +514,8 @@ const Tasks: React.FC = () => {
     }
   }, [handleSend, taskMode, clearNewTaskDraft])
 
-  // 新建任务时：如果从其他模式切回新任务，也需要让 ChatInput 重新读取草稿
-  // 同时，切换员工时清理旧员工的已加载状态（不清缓存，缓存按员工 key 区分）
+  // 从 chat 切回 new 时，用 localStorage 的草稿同步到 inputDraft（供 ChatInput 重新挂载时读取）
+  // 切换员工时不再恢复草稿，保留当前编辑器内容
   const prevTaskModeRef = useRef<'new' | 'chat'>('new')
   useEffect(() => {
     if (prevTaskModeRef.current === 'chat' && taskMode === 'new') {
@@ -830,7 +830,6 @@ const Tasks: React.FC = () => {
                 onDefaultModelChange={handleLlmChange}
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
-                draftResetKey={newTaskEmployeeId || undefined}
                 isCompacting={isCompacting}
               />
             </div>

@@ -13,7 +13,7 @@ import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKM
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { Message } from './agent/core/types'
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
 import type { ToolDefinition } from './agent/tools/types'
@@ -46,7 +46,7 @@ interface EmployeeChatStreamParams {
   }
   use_skills?: boolean
   collection_ids?: string[]
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   conversation_id?: string
   minimal_mode?: boolean
   high_permission?: boolean
@@ -99,11 +99,11 @@ class EmployeeAgentService {
     employeeId: string,
     providerId: string,
     modelId?: string,
-    enableThinking?: boolean,
+    enableThinking?: ThinkingLevel,
     conversationId?: string,
     employee?: DBEmployee
   ): Promise<CachedAgentEntry> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
@@ -171,6 +171,7 @@ class EmployeeAgentService {
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
+      sessionId: conversationId,
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
@@ -488,7 +489,7 @@ class EmployeeAgentService {
     messages: EmployeeChatStreamParams['messages']
     conversation_id?: string
     collection_ids?: string[]
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
     minimal_mode?: boolean
   }): Promise<{ summary: string; stats: any }> {
     const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
@@ -522,10 +523,10 @@ class EmployeeAgentService {
     employee_id: string
     provider_id: string
     model_id?: string
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
   }): any {
     const { employee_id, provider_id, model_id, enable_thinking } = params
-    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking ? 'thinking' : 'no-thinking'}`
+    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}`
     const entry = this.agentEntries.get(cacheKey)
     if (!entry) return null
     return entry.agent.getContextStats()

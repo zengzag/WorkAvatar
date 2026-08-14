@@ -1,4 +1,4 @@
-import type { GeneratedFileInfo } from '../../../../shared/types'
+import type { GeneratedFileInfo, ThinkingLevel } from '../../../../shared/types'
 
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -35,10 +35,12 @@ export interface AgentConfig {
   apiKey?: string
   baseUrl?: string
   providerType?: string
-  enableThinking?: boolean
+  enableThinking?: ThinkingLevel
   maxIterations?: number
   debug?: boolean
   logLevel?: LogLevel
+  /** 会话 ID，用于支持 prompt caching 的 provider 最大化 cache 命中 */
+  sessionId?: string
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'

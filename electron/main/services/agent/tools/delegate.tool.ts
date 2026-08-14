@@ -209,7 +209,7 @@ async function handleDelegate(args: Record<string, any>): Promise<any> {
             messages: subMessages,
             conversation_id: subConv.id,
             minimal_mode: false,
-            enable_thinking: store.enableThinking === true,
+            enable_thinking: store.enableThinking || false,
             use_skills: true,
             high_permission: store.highPermission === true,
           },

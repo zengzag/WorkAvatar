@@ -323,6 +323,7 @@ export abstract class BaseAgent {
       defaultOptions: {
         enableThinking: this.config.enableThinking,
         providerType: this.config.providerType,
+        sessionId: this.config.sessionId,
       },
     })
   }
@@ -391,6 +392,7 @@ export abstract class BaseAgent {
       maxIterations,
       eventEmitter: this.eventEmitter,
       agentContext: this.context,
+      sessionId: this.config.sessionId,
       onToolCallExecuted: async (toolName, args, result) => {
         usedToolCalls.push({
           name: toolName,
@@ -438,6 +440,7 @@ export abstract class BaseAgent {
       eventEmitter: this.eventEmitter,
       agentContext: this.context,
       signal,
+      sessionId: this.config.sessionId,
       onToolCallExecuted: this.onToolCallExecuted.bind(this),
       onPromptTokens: (tokens) => {
         this._lastKnownPromptTokens = tokens

@@ -61,7 +61,7 @@ ${numberedContent}
       { role: 'user', content: userPrompt },
     ],
     { toc: [] },
-    { temperature: 0.7, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking },
+    { temperature: 0.7, signal, logSource: 'knowledge_toc', enable_thinking: enableThinking ? 'high' : false },
   )
   return Array.isArray(parsed.toc) ? parsed.toc : []
 }
@@ -163,7 +163,7 @@ ${paragraphContent.substring(0, 8000)}
       signal,
       logSource: 'knowledge_paragraph_summary',
       throwOnError: true,
-      enable_thinking: enableThinking,
+      enable_thinking: enableThinking ? 'high' : false,
       errorMessage: (err) => `Paragraph summary generation failed (${paragraphTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
     },
   )
@@ -208,7 +208,7 @@ ${summariesText.substring(0, 15000)}
       signal,
       logSource: 'knowledge_document_summary',
       throwOnError: true,
-      enable_thinking: enableThinking,
+      enable_thinking: enableThinking ? 'high' : false,
       errorMessage: (err) => `Document summary generation failed (${documentTitle}): ${err instanceof Error ? err.message : 'Unknown error'}`,
     },
   )
@@ -281,7 +281,7 @@ export async function generateFileSummary(
       { role: 'user', content: summaryPrompt },
     ],
     { summary: '', keywords: [], main_topics: [] },
-    { temperature: 0.7, maxTokens: 500, signal, enable_thinking: enableThinking },
+    { temperature: 0.7, maxTokens: 500, signal, enable_thinking: enableThinking ? 'high' : false },
   )
 
   if (signal?.aborted) return
@@ -358,7 +358,7 @@ ${fileList}
           { role: 'user', content: prompt },
         ],
         { summary: '', keywords: [] },
-        { temperature: 0.7, maxTokens: 400, signal, logSource, enable_thinking: enableThinking },
+        { temperature: 0.7, maxTokens: 400, signal, logSource, enable_thinking: enableThinking ? 'high' : false },
       )
       const summary = parsed.summary || ''
       if (summary) {

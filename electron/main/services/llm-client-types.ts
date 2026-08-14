@@ -1,5 +1,5 @@
 import { isMainThread } from 'worker_threads'
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 
 /** LLM 提供商配置（数据库行映射） */
 export interface LLMProviderConfig {
@@ -65,7 +65,7 @@ export interface ChatOptions {
   temperature?: number
   max_tokens?: number
   model?: string
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   signal?: AbortSignal
   logSource?: string
 }

@@ -7,6 +7,7 @@ import type {
   LLMChatParams,
   EmployeeChatStreamParams,
 } from '../../shared/ipc-channels'
+import type { ThinkingLevel } from '../../shared/types'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
@@ -147,7 +148,7 @@ export function registerLLMHandlers(
         delegationDepth: 0,
         delegationChain: [],
         abortSignal: abortController.signal,
-        enableThinking: params.enable_thinking === true,
+        enableThinking: params.enable_thinking ?? false,
       },
       async () => {
         // 标记 onError 是否已处理过错误，避免 catch 块重复发送 LLM_CHAT_ERROR
@@ -268,7 +269,7 @@ export function registerLLMHandlers(
     messages: any[]
     conversation_id?: string
     collection_ids?: string[]
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
     minimal_mode?: boolean
   }) => {
     return employeeAgent.compactConversation(params)
@@ -278,7 +279,7 @@ export function registerLLMHandlers(
     employee_id: string
     provider_id: string
     model_id?: string
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
   }) => {
     return employeeAgent.getContextStats(params)
   })

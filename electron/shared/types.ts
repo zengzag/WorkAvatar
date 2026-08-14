@@ -54,6 +54,9 @@ export interface Conversation {
 
 export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
 
+/** 思考级别：false=关闭，'low'/'medium'/'high'=开启并指定强度 */
+export type ThinkingLevel = false | 'low' | 'medium' | 'high'
+
 export type LLMModelCategory = 'chat' | 'embedding'
 
 export interface LLMModelConfig {
@@ -66,7 +69,7 @@ export interface LLMModelConfig {
   top_p?: number
   frequency_penalty?: number
   presence_penalty?: number
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   thinking_budget?: number
   max_retry?: number
   context_window?: number

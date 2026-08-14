@@ -8,6 +8,7 @@ export type {
   LLMModelConfig,
   LLMProvider,
   GeneratedFileInfo,
+  ThinkingLevel,
 } from '../../electron/shared/types'
 
 export interface Message {

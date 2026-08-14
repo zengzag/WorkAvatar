@@ -130,7 +130,7 @@ export async function runUnifiedAgentLoop(
     baseUrl: providerConfig.base_url,
     providerType: providerConfig.provider_type,
     defaultOptions: {
-      enableThinking: llmConfig.enableThinking,
+      enableThinking: llmConfig.enableThinking ? 'high' : false,
       providerType: providerConfig.provider_type,
     },
   })
@@ -188,7 +188,7 @@ export async function runUnifiedAgentLoop(
     let response
     try {
       response = await provider.chat(messages, toolsForThisRound, {
-        enableThinking: llmConfig.enableThinking,
+        enableThinking: llmConfig.enableThinking ? 'high' : false,
         providerType: providerConfig.provider_type,
       })
     } catch (err: any) {

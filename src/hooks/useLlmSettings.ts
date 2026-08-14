@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
+import type { ThinkingLevel } from '../types'
 
 // 模块级缓存：providers 是全局数据，不随员工切换变化，避免重复 IPC
 // TTL 确保设置页修改 providers 后不会长时间使用过期缓存
@@ -37,9 +38,13 @@ export function useLlmSettings(employeeId: string | undefined) {
     const stored = localStorage.getItem(modelKey)
     return stored || getCachedSceneDefaultModel('workbench')?.model_id || ''
   })
-  const [enableThinking, setEnableThinking] = useState<boolean>(() => {
+  const [enableThinking, setEnableThinking] = useState<ThinkingLevel>(() => {
     const stored = localStorage.getItem(thinkingKey)
-    return stored === 'true'
+    // 兼容旧版 boolean: 'true' → 'high', 'false' → false
+    if (stored === 'true') return 'high'
+    if (stored === 'false') return false
+    if (stored === 'low' || stored === 'medium' || stored === 'high') return stored
+    return false
   })
   const [selectedCollectionIds, setSelectedCollectionIds] = useState<string[]>([])
   const [minimalMode, setMinimalMode] = useState(false)
@@ -63,7 +68,9 @@ export function useLlmSettings(employeeId: string | undefined) {
     }
     const storedThinking = localStorage.getItem(thinkingKey)
     if (storedThinking !== null) {
-      setEnableThinking(storedThinking === 'true')
+      if (storedThinking === 'true') setEnableThinking('high')
+      else if (storedThinking === 'false') setEnableThinking(false)
+      else if (storedThinking === 'low' || storedThinking === 'medium' || storedThinking === 'high') setEnableThinking(storedThinking)
     }
   }, [providerKey, modelKey, thinkingKey])
 

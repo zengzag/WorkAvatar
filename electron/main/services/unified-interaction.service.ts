@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'async_hooks'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
+import type { ThinkingLevel } from '../../shared/types'
 
 /** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
 export const INTERACTION_TIMEOUT_MS = 300000
@@ -71,7 +72,7 @@ export interface SessionContext {
   /** 主管会话的 AbortSignal，delegate 工具读取后传给子员工 chatStream 实现 abort 传播 */
   abortSignal?: AbortSignal
   /** 主管会话的思考模式设置，委托时传给子员工保持一致 */
-  enableThinking?: boolean
+  enableThinking?: ThinkingLevel
   /** 子员工 token 用量累计（主管会话级），onDone 时合并到 metadata.tokenUsage */
   childTokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number }
 }

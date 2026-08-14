@@ -1,4 +1,4 @@
-import type { LLMProvider } from '../types'
+import type { LLMProvider, ThinkingLevel } from '../types'
 
 export const LLM_CHANNELS = {
   LLM_PROVIDER_LIST: 'llm:provider-list',
@@ -88,7 +88,7 @@ export interface EmployeeChatStreamParams {
   }
   use_skills?: boolean
   collection_ids?: string[]
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   conversation_id?: string
   minimal_mode?: boolean
   high_permission?: boolean
