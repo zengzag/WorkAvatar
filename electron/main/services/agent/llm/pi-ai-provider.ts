@@ -26,57 +26,28 @@ import {
   LLMToolCallDelta,
 } from './types'
 import LLMLoggerService from '../../llm-logger.service'
+import { getProviderCompat } from './provider-compat'
+import type { ThinkingLevel } from '../../../../shared/types'
 
 const now = () => Date.now()
 
 /**
- * 将现有 providerType 映射为 pi-ai 的 OpenAICompletionsCompat.thinkingFormat。
- * - deepseek: thinking:{type} + reasoning_effort
- * - qwen: enable_thinking: boolean
- * - volcengine/zhipu/xiaomi: 与 deepseek 同为 thinking:{type}，复用 "deepseek" 格式
- */
-function mapThinkingFormat(providerType?: string): 'deepseek' | 'qwen' | undefined {
-  switch (providerType) {
-    case 'deepseek':
-    case 'volcengine':
-    case 'zhipu':
-    case 'xiaomi':
-      return 'deepseek'
-    case 'qwen':
-      return 'qwen'
-    default:
-      return undefined
-  }
-}
-
-/** volcengine/zhipu 只接受 thinking 参数，不支持 reasoning_effort */
-function supportsReasoningEffort(providerType?: string): boolean {
-  return providerType === 'deepseek'
-}
-
-/**
  * 构造合成的 pi-ai Model<"openai-completions">。
  * 绕过 pi 的 Provider/Models 体系，直接用 openai-completions stream 函数。
+ * compat 配置由 provider-compat.ts 统一管理。
  */
 function buildPiModel(
   modelId: string,
   baseUrl: string,
   providerType?: string,
-  enableThinking?: boolean,
+  enableThinking?: ThinkingLevel,
 ): Model<'openai-completions'> {
-  const thinkingFormat = mapThinkingFormat(providerType)
-  // LMStudio 等本地 OpenAI 兼容服务不支持 store/prompt_cache_key 等 OpenAI 特有参数
-  const isLocalProvider = providerType === 'lmstudio'
-  // 国产 provider（deepseek/qwen/volcengine/zhipu）均不支持 developer role
-  // pi-ai 在 reasoning=true 且 supportsDeveloperRole=true 时会把 system 转为 developer
-  const supportsDeveloperRole = !thinkingFormat && !isLocalProvider
-  // volcengine/zhipu 只接受 thinking 参数，不支持 reasoning_effort（deepseek 两者都支持）
-  const reasoningEffortSupported = supportsReasoningEffort(providerType)
+  const compat = getProviderCompat(providerType)
   // 关键：对有 thinkingFormat 的 provider，reasoning 必须始终为 true
   // pi-ai 的 thinkingFormat 分支只在 model.reasoning=true 时执行
   // 若为 false，分支不执行 → 不发 thinking 参数 → 豆包等用默认行为（开思考），开关失效
   // 开关由 reasoningEffort 控制：有值→enabled，无值→disabled
-  const reasoning = !!enableThinking || !!thinkingFormat
+  const reasoning = !!enableThinking || !!compat.thinkingFormat
   return {
     id: modelId,
     name: modelId,
@@ -89,21 +60,32 @@ function buildPiModel(
     contextWindow: 128000,
     maxTokens: 8192,
     compat: {
-      ...(thinkingFormat ? { thinkingFormat } : {}),
       supportsUsageInStreaming: true,
       supportsFinishReason: true,
-      maxTokensField: providerType === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens',
-      supportsReasoningEffort: reasoningEffortSupported,
-      supportsDeveloperRole,
-      ...(isLocalProvider ? { supportsStore: false } : {}),
+      maxTokensField: compat.maxTokensField,
+      supportsReasoningEffort: compat.supportsReasoningEffort,
+      supportsDeveloperRole: compat.supportsDeveloperRole,
+      supportsStore: compat.supportsStore,
+      supportsStrictMode: compat.supportsStrictMode,
+      ...(compat.sendSessionAffinityHeaders ? {
+        sendSessionAffinityHeaders: true,
+        sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
+      } : {}),
+      ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
+      ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   }
 }
 
 /** LLMMessage → pi UserMessage | AssistantMessage | ToolResultMessage */
-function toPiMessages(messages: LLMMessage[]): { systemPrompt?: string; piMessages: PiMessage[] } {
+function toPiMessages(
+  messages: LLMMessage[],
+  providerType?: string,
+  modelId?: string,
+): { systemPrompt?: string; piMessages: PiMessage[] } {
   let systemPrompt: string | undefined
   const piMessages: PiMessage[] = []
+  const provider = providerType || 'openai'
 
   for (const m of messages) {
     if (m.role === 'system') {
@@ -123,7 +105,7 @@ function toPiMessages(messages: LLMMessage[]): { systemPrompt?: string; piMessag
       const text = typeof m.content === 'string' ? m.content : ''
       if (text) contentParts.push({ type: 'text', text })
       if (m.reasoning_content) {
-        contentParts.push({ type: 'thinking', thinking: m.reasoning_content })
+        contentParts.push({ type: 'thinking', thinking: m.reasoning_content, thinkingSignature: 'reasoning_content' })
       }
       if (m.tool_calls) {
         for (const tc of m.tool_calls) {
@@ -142,8 +124,8 @@ function toPiMessages(messages: LLMMessage[]): { systemPrompt?: string; piMessag
         role: 'assistant',
         content: contentParts,
         api: 'openai-completions',
-        provider: 'openai',
-        model: '',
+        provider,
+        model: modelId || '',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop',
         timestamp: now(),
@@ -259,7 +241,7 @@ export class PiAIProvider implements ILLMProvider {
   async chat(messages: LLMMessage[], tools?: any[], options?: LLMCallOptions): Promise<LLMResponse> {
     const startTime = Date.now()
     const logSource = options?.logSource || 'agent'
-    const { systemPrompt, piMessages } = toPiMessages(messages)
+    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model)
     const enableThinking = options?.enableThinking ?? this.config.defaultOptions?.enableThinking
     const piModel = buildPiModel(this.config.model, this.config.baseUrl!, this.config.providerType, enableThinking)
 
@@ -275,7 +257,10 @@ export class PiAIProvider implements ILLMProvider {
       ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
       // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
-      ...(enableThinking ? { reasoningEffort: 'high' } : {}),
+      // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
+      ...(enableThinking ? { reasoningEffort: enableThinking } : {}),
+      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     }
 
     try {
@@ -336,7 +321,7 @@ export class PiAIProvider implements ILLMProvider {
   ): Promise<LLMResponse> {
     const startTime = Date.now()
     const logSource = options?.logSource || 'agent'
-    const { systemPrompt, piMessages } = toPiMessages(messages)
+    const { systemPrompt, piMessages } = toPiMessages(messages, this.config.providerType, this.config.model)
     const enableThinking = options?.enableThinking ?? this.config.defaultOptions?.enableThinking
     const piModel = buildPiModel(this.config.model, this.config.baseUrl!, this.config.providerType, enableThinking)
 
@@ -353,7 +338,10 @@ export class PiAIProvider implements ILLMProvider {
       ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
       // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
-      ...(enableThinking ? { reasoningEffort: 'high' } : {}),
+      // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
+      ...(enableThinking ? { reasoningEffort: enableThinking } : {}),
+      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     }
 
     // 累积 toolCall 增量，按 contentIndex 聚合

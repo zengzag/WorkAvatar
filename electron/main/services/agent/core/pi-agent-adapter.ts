@@ -2,9 +2,12 @@ import { agentLoop, agentLoopContinue } from '@earendil-works/pi-agent-core'
 import { stream as openaiCompletionsStream } from '@earendil-works/pi-ai/api/openai-completions'
 import {
   type Model,
+  type Context,
+  type Tool,
   type Message as PiMessage,
   type UserMessage,
   type AssistantMessage as PiAssistantMessage,
+  type AssistantMessageEventStream,
   type ToolResultMessage,
   type TextContent,
   type ThinkingContent,
@@ -32,37 +35,17 @@ import type {
   TokenUsage,
 } from './types'
 import { createLogger } from '../../logger'
+import { getProviderCompat } from '../llm/provider-compat'
+import LLMLoggerService from '../../llm-logger.service'
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
 const logger = createLogger('PiAgentAdapter')
 
-/** 构造 pi-ai 合成 Model<"openai-completions">，复用 PiAIProvider 的 thinkingFormat 映射逻辑 */
+/** 构造 pi-ai 合成 Model<"openai-completions">，compat 配置由 provider-compat.ts 统一管理 */
 function createPiModel(config: AgentConfig): Model<'openai-completions'> {
   const providerType = config.providerType
-  let thinkingFormat: 'deepseek' | 'qwen' | undefined
-  switch (providerType) {
-    case 'deepseek':
-    case 'volcengine':
-    case 'zhipu':
-    case 'xiaomi':
-      thinkingFormat = 'deepseek'
-      break
-    case 'qwen':
-      thinkingFormat = 'qwen'
-      break
-  }
-
-  // LMStudio 等本地服务不支持 store 等 OpenAI 特有参数
-  const isLocalProvider = providerType === 'lmstudio'
-  // 国产 provider（deepseek/qwen/volcengine/zhipu）均不支持 developer role
-  const supportsDeveloperRole = !thinkingFormat && !isLocalProvider
-  // volcengine/zhipu 只接受 thinking 参数，不支持 reasoning_effort（deepseek 两者都支持）
-  const reasoningEffortSupported = providerType === 'deepseek'
-  // 关键：对有 thinkingFormat 的 provider，reasoning 必须始终为 true
-  // pi-ai 的 thinkingFormat 分支只在 model.reasoning=true 时执行
-  // 若为 false，分支不执行 → 不发 thinking 参数 → 豆包等用默认行为（开思考），开关失效
-  // 开关由 reasoningEffort 控制：有值→enabled，无值→disabled
-  const reasoning = !!config.enableThinking || !!thinkingFormat
+  const compat = getProviderCompat(providerType)
+  const reasoning = !!config.enableThinking || !!compat.thinkingFormat
 
   return {
     id: config.model,
@@ -78,11 +61,17 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     compat: {
       supportsUsageInStreaming: true,
       supportsFinishReason: true,
-      maxTokensField: providerType === 'xiaomi' ? 'max_completion_tokens' : 'max_tokens',
-      supportsReasoningEffort: reasoningEffortSupported,
-      supportsDeveloperRole,
-      ...(thinkingFormat ? { thinkingFormat } : {}),
-      ...(isLocalProvider ? { supportsStore: false } : {}),
+      maxTokensField: compat.maxTokensField,
+      supportsReasoningEffort: compat.supportsReasoningEffort,
+      supportsDeveloperRole: compat.supportsDeveloperRole,
+      supportsStore: compat.supportsStore,
+      supportsStrictMode: compat.supportsStrictMode,
+      ...(compat.sendSessionAffinityHeaders ? {
+        sendSessionAffinityHeaders: true,
+        sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
+      } : {}),
+      ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
+      ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   }
 }
@@ -96,12 +85,24 @@ function parseImageDataUrl(url: string): { data: string; mimeType: string } | { 
   return { url }
 }
 
-/** 构造 streamFn，内部委托给 pi-ai openai-completions stream */
+/** 构造 streamFn，内部委托给 pi-ai openai-completions stream。
+ *  包装 eventStream 以窃听事件，在流结束后写入 LLM 日志（与 PiAIProvider 格式一致），
+ *  否则 agent 主流程绕过 PiAIProvider 会导致 .log/llm 缺失原始交互记录。
+ */
 function createStreamFn(config: AgentConfig): StreamFn {
   const piModel = createPiModel(config)
   const apiKey = config.apiKey
   return (_model, context, options) => {
-    return openaiCompletionsStream(piModel, context, {
+    const startTime = Date.now()
+    // 立即快照 context.messages：pi-agent-core 在流式过程中会往 context.messages
+    // push partialMessage / 替换为 finalMessage（agent-loop.js streamAssistantResponse），
+    // 而 convertToLlm 返回同一数组引用，若不快照，日志 request.messages 会混入当次 LLM 回答
+    const contextSnapshot: Context = {
+      systemPrompt: context.systemPrompt,
+      messages: [...context.messages],
+      ...(context.tools ? { tools: context.tools } : {}),
+    }
+    const innerStream = openaiCompletionsStream(piModel, context, {
       apiKey,
       ...(options?.signal ? { signal: options.signal } : {}),
       ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
@@ -109,15 +110,214 @@ function createStreamFn(config: AgentConfig): StreamFn {
       // pi-ai stream 函数通过 reasoningEffort 决定 deepseek/qwen thinkingFormat 的开关
       // pi-agent-core 传的 options.reasoning 是 ThinkingLevel 类型，直接复用
       ...(options?.reasoning ? { reasoningEffort: options.reasoning } : {}),
+      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
     } as any)
+    return wrapStreamWithLogging(innerStream, {
+      model: config.model,
+      providerType: config.providerType,
+      context: contextSnapshot,
+      options,
+      startTime,
+    })
   }
 }
 
+/** pi Context.messages → LLM 日志格式（OpenAI 风格，与 PiAIProvider.sanitizeMessagesForLog 一致） */
+function piContextToLogMessages(context: Context): any[] {
+  const messages: any[] = []
+  if (context.systemPrompt) {
+    messages.push({ role: 'system', content: context.systemPrompt })
+  }
+  for (const m of context.messages) {
+    if (m.role === 'user') {
+      const content = typeof m.content === 'string'
+        ? m.content
+        : m.content.map(c => c.type === 'image'
+          ? { type: 'image_url', image_url: { url: '[image]' } }
+          : c)
+      messages.push({ role: 'user', content })
+    } else if (m.role === 'assistant') {
+      let text = ''
+      let reasoning: string | undefined
+      const toolCalls: any[] = []
+      for (const c of m.content) {
+        if (c.type === 'text') text += c.text
+        else if (c.type === 'thinking') reasoning = (reasoning || '') + c.thinking
+        else if (c.type === 'toolCall') {
+          toolCalls.push({
+            id: c.id,
+            type: 'function',
+            function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+          })
+        }
+      }
+      const msg: any = { role: 'assistant', content: text }
+      if (reasoning) msg.reasoning_content = reasoning
+      if (toolCalls.length > 0) msg.tool_calls = toolCalls
+      messages.push(msg)
+    } else if (m.role === 'toolResult') {
+      const text = m.content.map(c => c.type === 'text' ? c.text : '').join('')
+      messages.push({ role: 'tool', content: text, tool_call_id: m.toolCallId })
+    }
+  }
+  return messages
+}
+
+function piToolsToLogTools(tools?: Tool[]): any[] | undefined {
+  if (!tools || tools.length === 0) return undefined
+  return tools.map(t => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }))
+}
+
+/** pi Usage → LLM 日志 usage 格式（与 PiAIProvider.toLLMUsage 一致：总输入含缓存） */
+function piUsageToLogUsage(usage: PiUsage | undefined): any | undefined {
+  if (!usage) return undefined
+  const totalInput = usage.input + usage.cacheRead
+  return {
+    promptTokens: totalInput,
+    completionTokens: usage.output,
+    totalTokens: usage.totalTokens,
+    ...(usage.cacheRead ? { cachedTokens: usage.cacheRead } : {}),
+  }
+}
+
+/**
+ * 包装 AssistantMessageEventStream，窃听事件累积响应信息，
+ * 在流结束（done/error/消费者退出）后写入 LLM 日志。
+ * 保留 [Symbol.asyncIterator] 与 result() 契约，对 pi-agent-core 透明。
+ */
+function wrapStreamWithLogging(
+  innerStream: AssistantMessageEventStream,
+  logMeta: {
+    model: string
+    providerType?: string
+    context: Context
+    options?: any
+    startTime: number
+  },
+): AssistantMessageEventStream {
+  let content = ''
+  let reasoningContent = ''
+  const toolCalls: any[] = []
+  let usage: PiUsage | undefined
+  let errorMessage: string | undefined
+  let logged = false
+
+  const writeLog = () => {
+    if (logged) return
+    logged = true
+    const latencyMs = Date.now() - logMeta.startTime
+    const request = {
+      messages: piContextToLogMessages(logMeta.context),
+      tools: piToolsToLogTools(logMeta.context.tools),
+      temperature: logMeta.options?.temperature,
+      max_tokens: logMeta.options?.maxTokens,
+      stream: true as const,
+    }
+    if (errorMessage) {
+      LLMLoggerService.getInstance().logCall({
+        type: 'chatStream',
+        source: 'agent',
+        model: logMeta.model,
+        providerType: logMeta.providerType,
+        request,
+        error: errorMessage,
+      })
+    } else {
+      LLMLoggerService.getInstance().logCall({
+        type: 'chatStream',
+        source: 'agent',
+        model: logMeta.model,
+        providerType: logMeta.providerType,
+        request,
+        response: {
+          content,
+          reasoningContent: reasoningContent || undefined,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          usage: piUsageToLogUsage(usage),
+          latencyMs,
+        },
+      })
+    }
+  }
+
+  const wrapped = {
+    async *[Symbol.asyncIterator]() {
+      try {
+        for await (const event of innerStream) {
+          switch (event.type) {
+            case 'text_delta':
+              content += event.delta
+              break
+            case 'thinking_delta':
+              reasoningContent += event.delta
+              break
+            case 'toolcall_end':
+              toolCalls.push({
+                id: event.toolCall.id,
+                type: 'function',
+                function: {
+                  name: event.toolCall.name,
+                  arguments: JSON.stringify(event.toolCall.arguments),
+                },
+              })
+              break
+            case 'done': {
+              // done 携带 finalMessage，从中提取完整 content/usage，比 delta 累积更准确
+              const msg = event.message
+              usage = msg.usage
+              let text = ''
+              let reasoning = ''
+              const tcs: any[] = []
+              for (const c of msg.content) {
+                if (c.type === 'text') text += c.text
+                else if (c.type === 'thinking') reasoning += c.thinking
+                else if (c.type === 'toolCall') {
+                  tcs.push({
+                    id: c.id,
+                    type: 'function',
+                    function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+                  })
+                }
+              }
+              content = text
+              reasoningContent = reasoning
+              if (tcs.length > 0) {
+                toolCalls.length = 0
+                toolCalls.push(...tcs)
+              }
+              break
+            }
+            case 'error':
+              errorMessage = (event.error as PiAssistantMessage)?.errorMessage || 'LLM 流式请求失败'
+              break
+          }
+          yield event
+        }
+      } finally {
+        writeLog()
+      }
+    },
+    result() {
+      return innerStream.result()
+    },
+  }
+  return wrapped as unknown as AssistantMessageEventStream
+}
+
 /** 现有 Message[] → pi Message[] + systemPrompt */
-function toPiMessages(messages: Message[]): { systemPrompt?: string; piMessages: PiMessage[] } {
+function toPiMessages(
+  messages: Message[],
+  providerType?: string,
+  modelId?: string,
+): { systemPrompt?: string; piMessages: PiMessage[] } {
   let systemPrompt: string | undefined
   const piMessages: PiMessage[] = []
   const ts = Date.now()
+  const provider = providerType || 'openai'
 
   for (const m of messages) {
     if (m.role === 'system') {
@@ -151,7 +351,7 @@ function toPiMessages(messages: Message[]): { systemPrompt?: string; piMessages:
       const contentParts: (TextContent | ThinkingContent | PiToolCall)[] = []
       if (m.content) contentParts.push({ type: 'text', text: m.content })
       if (m.reasoning_content) {
-        contentParts.push({ type: 'thinking', thinking: m.reasoning_content })
+        contentParts.push({ type: 'thinking', thinking: m.reasoning_content, thinkingSignature: 'reasoning_content' })
       }
       if (m.toolCalls) {
         for (const tc of m.toolCalls) {
@@ -169,8 +369,8 @@ function toPiMessages(messages: Message[]): { systemPrompt?: string; piMessages:
         role: 'assistant',
         content: contentParts,
         api: 'openai-completions',
-        provider: 'openai',
-        model: '',
+        provider,
+        model: modelId || '',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop',
         timestamp: ts,
@@ -364,6 +564,8 @@ export interface RunPiAgentLoopParams {
   agentContext: AgentContext
   onToolCallExecuted?: (toolName: string, args: any, result: ToolCallResult) => Promise<void>
   onPromptTokens?: (tokens: number) => void
+  /** 会话 ID，传递给 pi-agent-core → streamFn → pi-ai 以启用 prompt cache */
+  sessionId?: string
 }
 
 /**
@@ -385,9 +587,10 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
     agentContext,
     onToolCallExecuted,
     onPromptTokens,
+    sessionId,
   } = params
 
-  const { systemPrompt, piMessages } = toPiMessages(messages)
+  const { systemPrompt, piMessages } = toPiMessages(messages, config.providerType, config.model)
 
   // 拆分：history → context.messages，最后一条 user → prompts
   const lastUserIdx = (() => {
@@ -441,7 +644,9 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
     toolExecution: 'sequential',
     // pi-agent-core 通过 config.reasoning 传给 streamFn 的 options.reasoning
     // createStreamFn 将其映射为 pi-ai 的 reasoningEffort，驱动 deepseek/qwen thinkingFormat 开关
-    ...(config.enableThinking ? { reasoning: 'high' as const } : {}),
+    ...(config.enableThinking ? { reasoning: config.enableThinking } : {}),
+    // sessionId 传递给 streamFn → pi-ai，启用 prompt cache（openai/deepseek/xiaomi 等支持）
+    ...(sessionId ? { sessionId } : {}),
   }
 
   const streamFn = createStreamFn(config)
