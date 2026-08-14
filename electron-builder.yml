@@ -63,7 +63,6 @@ files:
   - "!node_modules/@mlightcad/**"
   - "!node_modules/@flyfish-dev/**"
   - "!node_modules/filesize/**"
-  - "!node_modules/js-yaml/**"
   # ── 排除开发时依赖（不应出现在生产包） ──
   - "!node_modules/.vite/**"
   - "!node_modules/typescript/**"
