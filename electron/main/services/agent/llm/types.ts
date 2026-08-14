@@ -1,11 +1,15 @@
+import type { ThinkingLevel } from '../../../../shared/types'
+
 export interface LLMCallOptions {
   temperature?: number
   maxTokens?: number
   topP?: number
   stopSequences?: string[]
-  enableThinking?: boolean
+  enableThinking?: ThinkingLevel
   providerType?: string
   logSource?: string
+  /** 会话 ID，用于支持 prompt caching 的 provider 最大化 cache 命中 */
+  sessionId?: string
 }
 
 export interface LLMResponse {

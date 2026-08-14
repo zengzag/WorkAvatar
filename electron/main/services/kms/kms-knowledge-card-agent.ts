@@ -1,4 +1,4 @@
-import { OpenAIProvider } from '../agent/llm/openai-provider'
+import { PiAIProvider } from '../agent/llm/pi-ai-provider'
 import { ToolRegistry } from '../agent/tools/tool-registry'
 import { ToolDispatcher } from '../agent/tools/tool-dispatcher'
 import { createKMSTools, type SearchScopeRef } from '../agent/tools/kms-search.tool'
@@ -124,13 +124,13 @@ export async function runUnifiedAgentLoop(
   const providerConfig = await llmClient.getProviderConfig(llmConfig.providerId)
   if (!providerConfig) return { success: false, error: 'NO_LLM_PROVIDER' }
 
-  const provider = new OpenAIProvider({
+  const provider = new PiAIProvider({
     model: llmConfig.modelId || providerConfig.model,
     apiKey: providerConfig.api_key,
     baseUrl: providerConfig.base_url,
     providerType: providerConfig.provider_type,
     defaultOptions: {
-      enableThinking: llmConfig.enableThinking,
+      enableThinking: llmConfig.enableThinking ? 'high' : false,
       providerType: providerConfig.provider_type,
     },
   })
@@ -188,7 +188,7 @@ export async function runUnifiedAgentLoop(
     let response
     try {
       response = await provider.chat(messages, toolsForThisRound, {
-        enableThinking: llmConfig.enableThinking,
+        enableThinking: llmConfig.enableThinking ? 'high' : false,
         providerType: providerConfig.provider_type,
       })
     } catch (err: any) {

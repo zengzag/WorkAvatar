@@ -225,6 +225,7 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
           SELECT COUNT(*) AS n
           FROM conversations c
           WHERE c.status = 'active'
+            AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
             ${empFilterSql}
             ${timeSql}
         `).get(...empParams, ...timeParams) as { n: number }
@@ -254,6 +255,7 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
           FROM conversations c
           LEFT JOIN employees e ON e.id = c.employee_id
           WHERE c.status = 'active'
+            AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
             ${empFilterSql}
             ${timeSql}
           ORDER BY COALESCE(c.last_message_at, c.created_at) DESC

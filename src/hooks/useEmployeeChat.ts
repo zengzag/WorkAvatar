@@ -222,6 +222,15 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         // 重置 initializedRef，让新员工走完整的 selectConversation/startNewConversation 流程
         initializedRef.current = false
 
+        // 先 abort 所有活跃流式会话，确保后端 agent 的 signal 被置为 aborted
+        // 这样切回该员工时 stale lock 检测能自动恢复（否则 _running 残留导致 "already running" 错误）
+        for (const [sessionId, ss] of _persistentStreamStates) {
+          if (ss.isStreaming) {
+            ss.isStreaming = false
+            window.electronAPI.llm.abortChat(sessionId).catch(() => { /* ignore */ })
+          }
+        }
+
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
@@ -675,13 +684,20 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
   }
 
+  /** 中止指定对话的所有活跃流式会话，确保后端 agent signal 被置为 aborted */
+  const abortConvStreams = async (convId: string) => {
+    const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
+    for (const [sessionId, ss] of streamEntries) {
+      ss.isStreaming = false
+      streamStatesRef.current.delete(sessionId)
+      try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
+    }
+  }
+
   const deleteConversation = async (convId: string, e?: React.MouseEvent) => {
     e?.stopPropagation()
     try {
-      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-      for (const [sessionId] of streamEntries) {
-        streamStatesRef.current.delete(sessionId)
-      }
+      await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
 
@@ -703,10 +719,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteSelectedConversations = async (convIds: string[]) => {
     try {
       for (const convId of convIds) {
-        const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-        for (const [sessionId] of streamEntries) {
-          streamStatesRef.current.delete(sessionId)
-        }
+        await abortConvStreams(convId)
         deleteConvMessages(convId)
         _persistentDrafts.delete(convId)
         await window.electronAPI.conversation.delete(convId)
@@ -727,6 +740,13 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteAllConversations = async () => {
     if (!id) return
     try {
+      // 中止所有活跃流式会话
+      for (const [sessionId, ss] of streamStatesRef.current) {
+        if (ss.isStreaming) {
+          ss.isStreaming = false
+          try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
+        }
+      }
       streamStatesRef.current.clear()
       conversationMessagesRef.current.clear()
       // 清理当前员工所有对话的草稿
@@ -756,11 +776,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const moveConversation = async (convId: string, targetEmployeeId: string): Promise<boolean> => {
     if (!convId || !targetEmployeeId) return false
     try {
-      // 终止该对话相关的流式会话
-      const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
-      for (const [sessionId] of streamEntries) {
-        streamStatesRef.current.delete(sessionId)
-      }
+      await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
 
@@ -1488,6 +1504,122 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setComparisonMessageIds([])
   }
 
+  const handleDeleteComparisonMessage = (msgId: string) => {
+    const convId = activeConversationIdRef.current
+    if (!convId) return
+    const currentMsgs = conversationMessagesRef.current.get(convId) || []
+
+    // 场景1：临时对比（多个独立消息 id）
+    if (comparisonMessageIds.length > 1) {
+      if (!comparisonMessageIds.includes(msgId) || comparisonMessageIds.length <= 1) return
+      const newIds = comparisonMessageIds.filter(id => id !== msgId)
+      updateConvMessages(convId, (prev) => {
+        const newMessages = prev.filter(m => m.id !== msgId)
+        window.electronAPI.conversation.update({
+          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+        }).catch(() => {})
+        return newMessages
+      })
+      if (newIds.length <= 1) {
+        setIsComparisonMode(false)
+        setComparisonMessageIds([])
+      } else {
+        setComparisonMessageIds(newIds)
+      }
+      return
+    }
+
+    // 场景2：已聚合对比（单 id + _comparisonBranchMsgs）
+    const targetMsgId = comparisonMessageIds[0]
+    if (!targetMsgId) return
+    const targetMsg = currentMsgs.find(m => m.id === targetMsgId)
+    if (!targetMsg?._comparisonBranchMsgs) return
+
+    const branchMsgs = targetMsg._comparisonBranchMsgs
+    if (branchMsgs.length <= 1) return
+
+    const deleteIndex = branchMsgs.findIndex(m => m.id === msgId)
+    if (deleteIndex < 0) return
+
+    const branches = targetMsg.branches || []
+    let newBranches: MessageBranch[]
+    const { _comparisonBranchMsgs: _omit, ...baseMsg } = targetMsg
+
+    if (deleteIndex < branches.length) {
+      newBranches = branches.filter((_, idx) => idx !== deleteIndex)
+      let newActiveIndex = baseMsg.activeBranchIndex ?? branches.length
+      if (newActiveIndex === deleteIndex) {
+        newActiveIndex = newBranches.length
+      } else if (newActiveIndex > deleteIndex) {
+        newActiveIndex -= 1
+      }
+      baseMsg.branches = newBranches
+      baseMsg.activeBranchIndex = newActiveIndex
+    } else {
+      // 删除本体，用最后一个 branch 提升为本体
+      if (branches.length === 0) return
+      const lastBranch = branches[branches.length - 1]
+      newBranches = branches.slice(0, -1)
+      baseMsg.content = lastBranch.content
+      baseMsg.segments = lastBranch.segments
+      baseMsg.thought = lastBranch.thought
+      baseMsg.tokenUsage = lastBranch.tokenUsage
+      baseMsg.isError = lastBranch.isError
+      baseMsg.comparisonProviderId = lastBranch.comparisonProviderId
+      baseMsg.comparisonModelId = lastBranch.comparisonModelId
+      baseMsg.branches = newBranches.length > 0 ? newBranches : undefined
+      baseMsg.activeBranchIndex = newBranches.length
+    }
+
+    // 只剩一个回复（无 branch）→ 关闭对比，保留为本体
+    if (newBranches.length === 0) {
+      const finalMsg: MessageWithThought = { ...baseMsg, branches: undefined, activeBranchIndex: undefined }
+      updateConvMessages(convId, (prev) => {
+        const newMessages = prev.map(m => m.id === targetMsgId ? finalMsg : m)
+        window.electronAPI.conversation.update({
+          id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+        }).catch(() => {})
+        return newMessages
+      })
+      setIsComparisonMode(false)
+      setComparisonMessageIds([])
+      return
+    }
+
+    // 重新生成 _comparisonBranchMsgs
+    const newBranchMsgs: MessageWithThought[] = newBranches.map((branch, i) => ({
+      ...baseMsg,
+      id: `${baseMsg.id}_branch_${i}`,
+      content: branch.content,
+      segments: branch.segments,
+      thought: branch.thought,
+      tokenUsage: branch.tokenUsage,
+      isError: branch.isError,
+      comparisonProviderId: branch.comparisonProviderId,
+      comparisonModelId: branch.comparisonModelId,
+      branches: undefined,
+      activeBranchIndex: undefined,
+      isStreaming: false,
+      _comparisonBranchMsgs: undefined,
+    }))
+    newBranchMsgs.push({
+      ...baseMsg,
+      id: `${baseMsg.id}_branch_${newBranches.length}`,
+      branches: undefined,
+      activeBranchIndex: undefined,
+      _comparisonBranchMsgs: undefined,
+    })
+
+    const newTargetMsg: MessageWithThought = { ...baseMsg, _comparisonBranchMsgs: newBranchMsgs }
+    updateConvMessages(convId, (prev) => {
+      const newMessages = prev.map(m => m.id === targetMsgId ? newTargetMsg : m)
+      window.electronAPI.conversation.update({
+        id: convId, messages_json: JSON.stringify(newMessages), message_count: newMessages.length,
+      }).catch(() => {})
+      return newMessages
+    })
+  }
+
   useEffect(() => {
     if (!pendingComparisonAggregation || isStreaming) return
     const ids = pendingComparisonAggregation
@@ -1591,8 +1723,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       ([_, s]) => s.conversationId === convId && s.isStreaming
     )
     for (const [sessionId, streamState] of activeStreamEntries) {
+      // 仅标记 isStreaming=false，不删除 streamState，让后端 onDone 接管清理并写入 tokenUsage
       streamState.isStreaming = false
-      streamStatesRef.current.delete(sessionId)
       try {
         await window.electronAPI.llm.abortChat(sessionId)
       } catch (e) { console.error('Failed to abort chat:', e) }
@@ -1613,8 +1745,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
                   // 用户停止生成时，工具调用可能处于两种中间态：
                   // 1) isToolArgsStreaming=true：LLM 仍在生成参数 JSON
                   // 2) isToolArgsStreaming=false, isToolComplete=false：工具正在执行
-                  // 两种情况都需要标记为已取消，避免 UI 永远停留在"生成参数中"/"执行中"
-                  // （handleStop 已删除 streamState，后端 done 事件无法触发 doneCleanup 兜底）
+                  // 两种情况都需要立即标记为已取消，让 UI 即时停止；
+                  // 后端 onDone 到达时 doneCleanup 会写入 tokenUsage（已取消标记不会被覆盖）
                   let parsedArgs = s.toolArgs
                   if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
                     try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整，保留 raw */ }
@@ -1693,6 +1825,24 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       }
 
       if (!m.segments) return m
+
+      // delegation 子段折叠：segId 格式为 `${delSegId}__sub__${subSegId}`
+      const subMatch = segId.match(/^(.+?)__sub__(.+)$/)
+      if (subMatch) {
+        const delSegId = subMatch[1]
+        const subSegId = subMatch[2]
+        const newSegs = m.segments.map(s => {
+          if (s.type !== 'delegation' || s.id !== delSegId || !s.subSegments) return s
+          return {
+            ...s,
+            subSegments: s.subSegments.map(ss =>
+              ss.id === subSegId ? { ...ss, collapsed: !ss.collapsed } : ss
+            ),
+          }
+        })
+        return { ...m, segments: newSegs }
+      }
+
       const newSegs = m.segments.map(s =>
         s.id === segId ? { ...s, collapsed: !s.collapsed } : s
       )
@@ -1810,6 +1960,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isComparisonMode,
     comparisonMessageIds,
     handleCloseComparison,
+    handleDeleteComparisonMessage,
     handleOpenComparison,
     getComparisonMessages,
     editingConversationId,

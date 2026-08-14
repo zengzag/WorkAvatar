@@ -11,6 +11,7 @@ import type {
 import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
 import { LoggerBackend } from '../services/logger'
+import TabWindowService from '../services/tab-window.service'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -177,6 +178,41 @@ export function registerAppHandlers(
     }
     win.on('maximize', sendState)
     win.on('unmaximize', sendState)
+  })
+
+  // === Tab 独立窗口 ===
+
+  // 打开（或聚焦已存在的）tab 独立窗口
+  safeHandle(IPC_CHANNELS.TAB_WINDOW_OPEN, (tabKey: string) => {
+    return TabWindowService.getInstance().openTabWindow(tabKey)
+  })
+
+  // 关闭 tab 独立窗口（回归主窗口）
+  safeHandle(IPC_CHANNELS.TAB_WINDOW_RETURN, (tabKey: string) => {
+    TabWindowService.getInstance().closeTabWindow(tabKey)
+    return { success: true }
+  })
+
+  // 查询当前已分离的 tab 列表
+  safeHandle(IPC_CHANNELS.TAB_WINDOW_LIST, () => {
+    return TabWindowService.getInstance().getDetachedTabs()
+  })
+
+  // 聚焦指定 tab 的独立窗口（若存在），返回是否成功
+  safeHandle(IPC_CHANNELS.TAB_WINDOW_FOCUS, (tabKey: string) => {
+    return TabWindowService.getInstance().focusTabWindow(tabKey)
+  })
+
+  // 独立窗口渲染进程启动时查询自己所属的 tabKey
+  // 通过 URL hash 解析（独立窗口加载的是 #/window/:tabKey），需要 event.sender 所以单独注册
+  ipcMain.handle(IPC_CHANNELS.TAB_WINDOW_GET_OWN_TAB, (event) => {
+    try {
+      const url = event.sender.getURL()
+      const match = url.match(/#\/window\/([a-z]+)/)
+      return match ? match[1] : null
+    } catch {
+      return null
+    }
   })
 
 }

@@ -13,7 +13,7 @@ import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKM
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { Message } from './agent/core/types'
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
 import type { ToolDefinition } from './agent/tools/types'
@@ -46,7 +46,7 @@ interface EmployeeChatStreamParams {
   }
   use_skills?: boolean
   collection_ids?: string[]
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   conversation_id?: string
   minimal_mode?: boolean
   high_permission?: boolean
@@ -57,7 +57,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; generatedFiles?: any }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -99,11 +99,11 @@ class EmployeeAgentService {
     employeeId: string,
     providerId: string,
     modelId?: string,
-    enableThinking?: boolean,
+    enableThinking?: ThinkingLevel,
     conversationId?: string,
     employee?: DBEmployee
   ): Promise<CachedAgentEntry> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking ? 'thinking' : 'no-thinking'}`
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
@@ -162,6 +162,7 @@ class EmployeeAgentService {
       : undefined
 
     const agentConfig: EmployeeAgentConfig = {
+      employeeId: emp.id,
       name: emp.name,
       instructions,
       role,
@@ -170,6 +171,7 @@ class EmployeeAgentService {
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
+      sessionId: conversationId,
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
@@ -288,6 +290,9 @@ class EmployeeAgentService {
     for (const id of extraOnDemandIds) {
       modeMap.set(id, 'on_demand')
     }
+
+    // 协作工具（delegate_to_employee）默认关闭，需在员工设置中手动启用
+    modeMap.set('delegate_to_employee', 'off')
 
     let rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
@@ -418,6 +423,7 @@ class EmployeeAgentService {
           || cached.includes('## 当前对话可使用的资料库合集')
           || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
           || cached.includes('<skills>')
+          || !cached.includes('report_generated_files')
         if (!isLegacy) {
           agent.setCachedSystemPrompt(cached)
           systemPromptCached = true
@@ -483,7 +489,7 @@ class EmployeeAgentService {
     messages: EmployeeChatStreamParams['messages']
     conversation_id?: string
     collection_ids?: string[]
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
     minimal_mode?: boolean
   }): Promise<{ summary: string; stats: any }> {
     const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
@@ -517,10 +523,10 @@ class EmployeeAgentService {
     employee_id: string
     provider_id: string
     model_id?: string
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
   }): any {
     const { employee_id, provider_id, model_id, enable_thinking } = params
-    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking ? 'thinking' : 'no-thinking'}`
+    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}`
     const entry = this.agentEntries.get(cacheKey)
     if (!entry) return null
     return entry.agent.getContextStats()
@@ -554,32 +560,39 @@ class EmployeeAgentService {
     const result: Message[] = []
     for (const m of messages) {
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        // 仅保留已执行完毕的 tool_call（isComplete !== false）；
+        // 被中断的（isComplete=false，参数未输出完或未收到 onToolResult）会缺少 arguments
+        // 或无对应 tool response，发给 LLM 会报错，需过滤掉
+        const validToolCalls = m.toolCalls.filter(tc => tc.id && tc.name && tc.isComplete !== false)
         const assistantMsg: Message = {
           role: 'assistant',
           content: m.content,
           images: m.images,
           reasoning_content: m.reasoning_content,
-          toolCalls: m.toolCalls
-            .filter(tc => tc.id && tc.name) // 必须有 id 和 name
-            .map(tc => ({
-              id: tc.id,
-              type: 'function' as const,
-              function: {
-                name: tc.name,
-                arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args),
-              },
-            })),
+          toolCalls: validToolCalls.length > 0
+            ? validToolCalls.map(tc => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.name,
+                  arguments: typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args ?? {}),
+                },
+              }))
+            : undefined,
         }
         result.push(assistantMsg)
 
-        for (const tc of m.toolCalls) {
-          if (tc.isComplete !== false && tc.result !== undefined && tc.id) {
-            result.push({
-              role: 'tool',
-              toolCallId: tc.id,
-              content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result),
-            })
-          }
+        for (const tc of validToolCalls) {
+          // 工具执行成功但无返回值时，result 可能为 undefined/null/空字符串；
+          // OpenAI 协议要求 tool result content 非空，补一个占位文本
+          const toolContent = tc.result === undefined || tc.result === null
+            ? ''
+            : (typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result))
+          result.push({
+            role: 'tool',
+            toolCallId: tc.id,
+            content: toolContent || '工具执行完成，无返回值',
+          })
         }
       } else {
         result.push({

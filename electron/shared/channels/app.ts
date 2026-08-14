@@ -23,6 +23,16 @@ export const APP_CHANNELS = {
 
   // 系统右键"打开方式"或拖拽到应用图标时，主进程推送待打开的文件绝对路径给渲染进程
   APP_OPEN_EXTERNAL_FILE: 'app:open-external-file',
+
+  // Tab 独立窗口：把主导航 tab 分离为独立窗口 / 回归主窗口 / 查询已分离列表 / 聚焦已存在的独立窗口
+  TAB_WINDOW_OPEN: 'tab-window:open',
+  TAB_WINDOW_RETURN: 'tab-window:return',
+  TAB_WINDOW_LIST: 'tab-window:list',
+  TAB_WINDOW_FOCUS: 'tab-window:focus',
+  // 主进程 → 主窗口渲染进程：detached tabs 列表变化通知
+  TAB_WINDOW_DETACHED_CHANGED: 'tab-window:detached-changed',
+  // 独立窗口 → 主进程：查询当前窗口所属 tabKey（独立窗口渲染进程启动时调用）
+  TAB_WINDOW_GET_OWN_TAB: 'tab-window:get-own-tab',
 } as const
 
 export interface SettingsGetParams {

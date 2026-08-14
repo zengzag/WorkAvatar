@@ -7,32 +7,49 @@ import {
   CloseOutlined,
   SunOutlined,
   MoonOutlined,
+  ExpandAltOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import { useLocation } from 'react-router-dom'
 import { useAppearanceStore } from '../../stores/appearance.store'
+
+/** 可分离为独立窗口的 tab key（与后端 DETACHABLE_TABS 对齐，排除 settings） */
+const DETACHABLE_TABS = ['tasks', 'employees', 'kms', 'voice', 'calendar', 'notes', 'automation']
 
 /**
  * 自定义窗口标题栏：
  * - 左侧可拖拽区域（WebkitAppRegion: drag）
- * - 右侧窗口控制按钮 + 明暗主题切换（no-drag 区域）
+ * - 右侧窗口控制按钮 + 分离当前 tab + 明暗主题切换（no-drag 区域）
  * - 双击标题栏切换最大化
  */
 const TitleBar: React.FC = () => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
+  const location = useLocation()
   const [isMaximized, setIsMaximized] = useState(false)
 
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
   const isDark = themeMode === 'dark'
 
+  // 当前已分离为独立窗口的 tab 列表
+  const [detachedTabs, setDetachedTabs] = useState<string[]>([])
+
   useEffect(() => {
-    // 初始查询最大化状态
     window.electronAPI.window.isMaximized().then(setIsMaximized)
-    // 订阅最大化状态变化
     const dispose = window.electronAPI.window.onMaximizedChange(setIsMaximized)
-    return () => { dispose() }
+    window.electronAPI.tabWindow.list().then((tabs) => setDetachedTabs(tabs))
+    const disposeDetach = window.electronAPI.tabWindow.onDetachedChanged((tabs) => setDetachedTabs(tabs))
+    return () => { dispose(); disposeDetach() }
   }, [])
+
+  // 从当前路由解析 tabKey（如 /tasks/xxx → tasks）
+  const currentTabKey = (() => {
+    const match = location.pathname.match(/^\/([a-z]+)/)
+    return match?.[1] || ''
+  })()
+
+  const canDetach = DETACHABLE_TABS.includes(currentTabKey) && !detachedTabs.includes(currentTabKey)
 
   const handleToggleMaximize = async () => {
     const next = await window.electronAPI.window.toggleMaximize()
@@ -41,6 +58,12 @@ const TitleBar: React.FC = () => {
 
   const toggleTheme = () => {
     setThemeMode(isDark ? 'light' : 'dark')
+  }
+
+  const handleDetach = async () => {
+    if (canDetach) {
+      await window.electronAPI.tabWindow.open(currentTabKey)
+    }
   }
 
   const btnStyle: React.CSSProperties = {
@@ -87,7 +110,7 @@ const TitleBar: React.FC = () => {
         <span>WorkAvatar</span>
       </div>
 
-      {/* 右侧：主题切换 + 窗口控制（no-drag 区域）*/}
+      {/* 右侧：分离当前 tab + 主题切换 + 窗口控制（no-drag 区域）*/}
       <div
         style={{
           display: 'flex',
@@ -96,6 +119,17 @@ const TitleBar: React.FC = () => {
           ...({ WebkitAppRegion: 'no-drag' } as React.CSSProperties),
         }}
       >
+        {canDetach && (
+          <Tooltip title={t('tabWindow.detach')} placement="bottom">
+            <Button
+              type="text"
+              size="small"
+              icon={<ExpandAltOutlined />}
+              onClick={handleDetach}
+              style={btnStyle}
+            />
+          </Tooltip>
+        )}
         <Tooltip title={isDark ? t('settings.light') : t('settings.dark')} placement="bottom">
           <Button
             type="text"

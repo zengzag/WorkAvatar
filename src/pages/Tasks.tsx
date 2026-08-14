@@ -6,6 +6,7 @@ import type { MenuProps } from 'antd'
 import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
+import MultiChatPanel from '../components/workbench/MultiChatPanel'
 import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSidebar'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { useTranslation } from 'react-i18next'
@@ -227,6 +228,9 @@ const Tasks: React.FC = () => {
     minimalMode,
     handleToggleMinimalMode,
     isComparisonMode,
+    getComparisonMessages,
+    handleCloseComparison,
+    handleDeleteComparisonMessage,
     handleOpenComparison,
     messagesEndRef,
     chatContainerRef,
@@ -510,8 +514,8 @@ const Tasks: React.FC = () => {
     }
   }, [handleSend, taskMode, clearNewTaskDraft])
 
-  // 新建任务时：如果从其他模式切回新任务，也需要让 ChatInput 重新读取草稿
-  // 同时，切换员工时清理旧员工的已加载状态（不清缓存，缓存按员工 key 区分）
+  // 从 chat 切回 new 时，用 localStorage 的草稿同步到 inputDraft（供 ChatInput 重新挂载时读取）
+  // 切换员工时不再恢复草稿，保留当前编辑器内容
   const prevTaskModeRef = useRef<'new' | 'chat'>('new')
   useEffect(() => {
     if (prevTaskModeRef.current === 'chat' && taskMode === 'new') {
@@ -776,7 +780,7 @@ const Tasks: React.FC = () => {
             </div>
           )}
           {taskMode === 'chat' && (
-            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6 }}>
+            <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6, alignItems: 'center' }}>
               <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
                 <Button type="text" size="small"
                   icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}
@@ -826,14 +830,23 @@ const Tasks: React.FC = () => {
                 onDefaultModelChange={handleLlmChange}
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
-                draftResetKey={newTaskEmployeeId || undefined}
                 isCompacting={isCompacting}
               />
             </div>
           ) : (
             // 对话模式
             <>
-              {isComparisonMode ? null : (
+              {isComparisonMode ? (
+                <MultiChatPanel
+                  comparisonMessages={getComparisonMessages()}
+                  providers={providers}
+                  onClose={handleCloseComparison}
+                  onToggleSegment={handleToggleSegment}
+                  onCopy={handleCopy}
+                  getToolDisplayName={getToolDisplayName}
+                  onDelete={handleDeleteComparisonMessage}
+                />
+              ) : (
                 <div ref={chatContainerRef} onScroll={handleScroll}
                   style={{
                     flex: 1,

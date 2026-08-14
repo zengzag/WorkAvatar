@@ -37,7 +37,7 @@ const TOOL_CATEGORIES: Array<{
     id: 'file_operations',
     icon: <FileOutlined />,
     toolIds: [
-      'file_read', 'file_write', 'file_edit',
+      'file_read', 'file_write', 'file_edit', 'report_generated_files',
       'file_mkdir', 'file_list', 'file_search',
       'file_delete', 'file_move', 'file_copy',
       'file_rename', 'file_stat', 'ocr_image',

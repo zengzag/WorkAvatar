@@ -167,21 +167,27 @@ class WorkspaceManagerService {
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
-        'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, created_at, updated_at, last_message_at, context_stats_json FROM conversations WHERE employee_id = ? ORDER BY COALESCE(last_message_at, created_at) DESC'
+        `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json
+         FROM conversations
+         WHERE employee_id = ? AND (parent_conversation_id = '' OR parent_conversation_id IS NULL)
+         ORDER BY COALESCE(last_message_at, created_at) DESC`
       ).all(employeeId) as Conversation[]
     }
     return this.db.getDb().prepare(
-      'SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, created_at, updated_at, last_message_at, context_stats_json FROM conversations ORDER BY COALESCE(last_message_at, created_at) DESC'
+      `SELECT id, employee_id, skill_id, title, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at, last_message_at, context_stats_json
+       FROM conversations
+       WHERE parent_conversation_id = '' OR parent_conversation_id IS NULL
+       ORDER BY COALESCE(last_message_at, created_at) DESC`
     ).all() as Conversation[]
   }
 
-  /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的对话，支持分页 */
+  /** 获取所有对话（跨员工），附带员工名称，仅返回有消息的顶层对话，支持分页 */
   getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): Array<Conversation & { employee_name: string }> {
-    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json,
+    let sql = `SELECT c.id, c.employee_id, c.skill_id, c.title, c.message_count, c.minimal_mode, c.status, c.workspace_path, c.parent_conversation_id, c.created_at, c.updated_at, c.last_message_at, c.context_stats_json,
                 e.name as employee_name
          FROM conversations c
          LEFT JOIN employees e ON c.employee_id = e.id
-         WHERE c.message_count > 0`
+         WHERE c.message_count > 0 AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)`
     const values: any[] = []
     if (params?.employee_ids && params.employee_ids.length > 0) {
       const placeholders = params.employee_ids.map(() => '?').join(',')
@@ -204,7 +210,7 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation || null
   }
 
-  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean): Conversation {
+  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string): Conversation {
     const employee = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(employeeId) as { id: string; workspace_path: string | null } | undefined
     if (!employee) {
       throw new Error(`Employee not found: ${employeeId}`)
@@ -213,15 +219,27 @@ class WorkspaceManagerService {
     const conversationId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
-    // 每个任务独立的子目录（位于员工工作区下，日期时间命名）；员工未设置工作区则不创建
-    const workspacePath = employee.workspace_path ? this.createTaskWorkspace(employee.workspace_path) : ''
+    // 任务工作区目录策略：
+    // - 有 parentConversationId（委托子会话）：在主管会话的工作区目录下创建子目录
+    // - 无 parentConversationId（顶层会话）：在员工工作区下创建独立目录
+    let workspacePath = ''
+    if (parentConversationId) {
+      const parent = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string } | undefined
+      const parentWs = parent?.workspace_path || ''
+      workspacePath = parentWs ? this.createTaskWorkspace(parentWs) : ''
+    } else {
+      workspacePath = employee.workspace_path ? this.createTaskWorkspace(employee.workspace_path) : ''
+    }
 
     this.db.getDb().prepare(`
-      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, workspace_path, created_at, updated_at)
-      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?, ?)
-    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, workspacePath, now, now)
+      INSERT INTO conversations (id, employee_id, skill_id, title, messages_json, message_count, minimal_mode, status, workspace_path, parent_conversation_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, '[]', 0, ?, 'active', ?, ?, ?, ?)
+    `).run(conversationId, employeeId, skillId || null, title, minimalMode ? 1 : 0, workspacePath, parentConversationId || '', now, now)
 
-    this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
+    // 子会话（有 parentConversationId）不写入 FTS 索引，避免污染检索结果
+    if (!parentConversationId) {
+      this.syncConversationFTS(conversationId, employeeId, title, '', '[]')
+    }
     this.touchEmployeeLastActive(employeeId, now)
 
     return this.getConversation(conversationId)!
@@ -324,12 +342,32 @@ class WorkspaceManagerService {
   }
 
   deleteConversation(id: string): { ok: boolean; taskDir?: string; taskDirNonEmpty?: boolean } {
+    // 递归收集所有子会话（含自身），用于级联删除
+    const toDelete: string[] = []
+    const collectChildren = (parentId: string) => {
+      toDelete.push(parentId)
+      const children = this.db.getDb().prepare(
+        'SELECT id FROM conversations WHERE parent_conversation_id = ?'
+      ).all(parentId) as { id: string }[]
+      for (const child of children) {
+        collectChildren(child.id)
+      }
+    }
+    collectChildren(id)
+
     const conv = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(id) as { workspace_path?: string } | undefined
-    this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
-    const result = this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
-    const ok = result.changes > 0
+
+    const delTx = this.db.getDb().transaction(() => {
+      for (const cid of toDelete) {
+        this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(cid)
+        this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(cid)
+      }
+    })
+    delTx()
+    const ok = toDelete.length > 0
 
     // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除
+    // 子会话的工作区目录位于主会话目录下，删除主会话目录时会一并清理子目录
     let taskDir: string | undefined
     let taskDirNonEmpty: boolean | undefined
     if (ok && conv?.workspace_path && fs.existsSync(conv.workspace_path)) {
@@ -346,19 +384,32 @@ class WorkspaceManagerService {
     return { ok, taskDir, taskDirNonEmpty }
   }
 
-  deleteAllConversations(employeeId: string): number {
-    const convs = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE employee_id = ?').all(employeeId) as { workspace_path?: string }[]
-    this.db.getDb().prepare('DELETE FROM conversations_fts WHERE employee_id = ?').run(employeeId)
-    const result = this.db.getDb().prepare('DELETE FROM conversations WHERE employee_id = ?').run(employeeId)
-    // 清理所有已分配任务目录中的空目录（非空目录保留）
-    for (const c of convs) {
-      if (c.workspace_path && fs.existsSync(c.workspace_path)) {
-        try {
-          if (fs.readdirSync(c.workspace_path).length === 0) fs.rmdirSync(c.workspace_path)
-        } catch { /* ignore */ }
+  /** 获取指定会话的所有子会话 ID（递归，含自身） */
+  getChildConversationIds(conversationId: string): string[] {
+    const ids: string[] = []
+    const collect = (parentId: string) => {
+      ids.push(parentId)
+      const children = this.db.getDb().prepare(
+        'SELECT id FROM conversations WHERE parent_conversation_id = ?'
+      ).all(parentId) as { id: string }[]
+      for (const child of children) {
+        collect(child.id)
       }
     }
-    return result.changes
+    collect(conversationId)
+    return ids
+  }
+
+  deleteAllConversations(employeeId: string): number {
+    // 查出该员工的所有顶层会话，逐个级联删除（含子会话）
+    const topConvs = this.db.getDb().prepare(
+      `SELECT id FROM conversations WHERE employee_id = ? AND (parent_conversation_id = '' OR parent_conversation_id IS NULL)`
+    ).all(employeeId) as { id: string }[]
+    let deleted = 0
+    for (const c of topConvs) {
+      if (this.deleteConversation(c.id).ok) deleted++
+    }
+    return deleted
   }
 
   /**
@@ -444,6 +495,7 @@ class WorkspaceManagerService {
         JOIN employees e ON e.id = c.employee_id
         WHERE conversations_fts MATCH ?
           AND c.status = 'active'
+          AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
           ${employeePlaceholders}
         ORDER BY title_score DESC, f.rank ASC
         LIMIT ?
@@ -483,6 +535,7 @@ class WorkspaceManagerService {
           FROM conversations c
           JOIN employees e ON e.id = c.employee_id
           WHERE c.status = 'active'
+            AND (c.parent_conversation_id = '' OR c.parent_conversation_id IS NULL)
             ${employeePlaceholders}
             AND (${andClause})
           ORDER BY title_score DESC, content_hits DESC, COALESCE(c.last_message_at, c.created_at) DESC

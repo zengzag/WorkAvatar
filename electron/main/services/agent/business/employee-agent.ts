@@ -4,8 +4,11 @@ import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
 import type { ToolDefinition } from '../tools/types'
 import { buildEmployeeSystemPrompt, buildContextMessageContent } from './prompts'
+import { buildDelegateDescription } from '../tools/delegate.tool'
+import DatabaseService from '../../database.service'
 
 export interface EmployeeAgentConfig extends AgentConfig {
+  employeeId?: string
   allowedSkillPaths?: string[]
   autoDiscoverSkills?: boolean
   workspaceGuidance?: string
@@ -104,6 +107,7 @@ export class EmployeeAgent extends BaseAgent {
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
       minimalMode: this.minimalMode,
       onDemandToolList: onDemandToolList || undefined,
+      hasReportGeneratedFiles: !!this.toolRegistry.getTool('report_generated_files'),
     })
 
     this.cachedSystemPrompt = prompt
@@ -114,7 +118,30 @@ export class EmployeeAgent extends BaseAgent {
     if (this.minimalMode) {
       return []
     }
-    return super.resolveActiveTools(runtimeToolNames)
+    const schemas = await super.resolveActiveTools(runtimeToolNames)
+    // 动态注入可委托员工列表到 delegate_to_employee 的 description
+    const delegateIdx = schemas.findIndex(s => s.function?.name === 'delegate_to_employee')
+    if (delegateIdx !== -1) {
+      try {
+        const db = DatabaseService.getInstance().getDb()
+        const rows = db.prepare(
+          'SELECT id, name, description, profile_json FROM employees ORDER BY name'
+        ).all() as Array<{ id: string; name: string; description?: string; profile_json?: string }>
+        const employees = rows.map(r => {
+          let role: string | undefined
+          try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
+          return { id: r.id, name: r.name, description: r.description, role }
+        })
+        schemas[delegateIdx] = {
+          ...schemas[delegateIdx],
+          function: {
+            ...schemas[delegateIdx].function,
+            description: buildDelegateDescription(this.employeeConfig.employeeId || '', employees),
+          },
+        }
+      } catch { /* 查询失败时保留静态 description */ }
+    }
+    return schemas
   }
 
   /**

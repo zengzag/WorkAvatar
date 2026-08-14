@@ -1,10 +1,11 @@
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type {
   LLMProviderConfig,
   ChatMessage,
   ChatCompletionRequest,
 } from './llm-client-types'
 import { createLogger } from './logger'
+import { getProviderCompat } from './agent/llm/provider-compat'
 
 const logger = createLogger('LLM-ReqBuilder')
 
@@ -31,15 +32,17 @@ export function buildRequestBody(
   modelName: string,
   messages: ChatMessage[],
   stream: boolean,
-  overrides?: { temperature?: number; max_tokens?: number; enable_thinking?: boolean },
+  overrides?: { temperature?: number; max_tokens?: number; enable_thinking?: ThinkingLevel },
 ): ChatCompletionRequest {
   const modelConfig = getModelConfig(config, modelName)
   const enableThinking = overrides?.enable_thinking ?? modelConfig?.enable_thinking ?? false
+  const compat = getProviderCompat(config.provider_type)
+  const maxTokensValue = overrides?.max_tokens ?? modelConfig?.max_tokens ?? config.max_tokens
   const body: ChatCompletionRequest = {
     model: modelName,
     messages,
     temperature: overrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
-    max_tokens: overrides?.max_tokens ?? modelConfig?.max_tokens ?? config.max_tokens,
+    [compat.maxTokensField]: maxTokensValue,
     stream,
     ...(stream ? { stream_options: { include_usage: true } } : {}),
   }
@@ -72,23 +75,25 @@ export function buildRequestBody(
 function applyThinkingConfig(
   body: ChatCompletionRequest,
   providerType: string,
-  enableThinking: boolean,
+  enableThinking: ThinkingLevel,
   thinkingBudget?: number,
 ): void {
-  const supportsThinking = ['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu'].includes(providerType)
+  const supportsThinking = ['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu', 'xiaomi'].includes(providerType)
   if (!supportsThinking) return
 
   const thinkingType = enableThinking ? 'enabled' : 'disabled'
 
   if (providerType === 'deepseek') {
     body.thinking = { type: thinkingType }
-    if (enableThinking) body.reasoning_effort = 'high'
+    if (enableThinking) body.reasoning_effort = enableThinking
   } else if (providerType === 'qwen' || providerType === 'lmstudio') {
-    body.enable_thinking = enableThinking
+    body.enable_thinking = !!enableThinking
     if (enableThinking && thinkingBudget != null) {
       body.thinking_budget = thinkingBudget
     }
   } else if (providerType === 'volcengine' || providerType === 'zhipu') {
+    body.thinking = { type: thinkingType }
+  } else if (providerType === 'xiaomi') {
     body.thinking = { type: thinkingType }
   }
 }

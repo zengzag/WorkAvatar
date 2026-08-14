@@ -7,11 +7,30 @@ import type {
   LLMChatParams,
   EmployeeChatStreamParams,
 } from '../../shared/ipc-channels'
+import type { ThinkingLevel } from '../../shared/types'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { safeHandle } from './_shared'
+
+/** 主管会话 → webContents 映射，供 delegate 工具转发子员工事件到主管前端 */
+const sessionWebContents: Map<string, Electron.WebContents> = new Map()
+
+/**
+ * 委托事件转发：delegate 工具调用此函数把子员工 chatStream 的事件推给主管前端。
+ * 由 delegate.tool.ts 引用，避免工具 handler 内重复持有 IPC 上下文。
+ */
+export function forwardDelegationEvent(
+  parentSessionId: string,
+  delegationId: string,
+  eventType: string,
+  data: any
+): void {
+  const wc = sessionWebContents.get(parentSessionId)
+  if (!wc || wc.isDestroyed()) return
+  wc.send(IPC_CHANNELS.AGENT_DELEGATION_EVENT, { parentSessionId, delegationId, eventType, data })
+}
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -76,6 +95,7 @@ export function registerLLMHandlers(
     const abortController = new AbortController()
     const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
+    sessionWebContents.set(sessionId, event.sender)
 
     interactionService.registerSession(sessionId, event.sender)
 
@@ -125,6 +145,10 @@ export function registerLLMHandlers(
         employeeId: params.employee_id,
         conversationId: params.conversation_id,
         highPermission: params.high_permission === true,
+        delegationDepth: 0,
+        delegationChain: [],
+        abortSignal: abortController.signal,
+        enableThinking: params.enable_thinking ?? false,
       },
       async () => {
         // 标记 onError 是否已处理过错误，避免 catch 块重复发送 LLM_CHAT_ERROR
@@ -163,11 +187,10 @@ export function registerLLMHandlers(
                   event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL, { sessionId, id: toolCall.id, name: toolCall.name, args: toolCall.args })
                 }
               },
-              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any }) => {
+              onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => {
                 if (abortController.signal.aborted) return
-                const { rawResult: _rawResult, ...safeResult } = toolResult
                 if (!event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, ...safeResult })
+                  event.sender.send(IPC_CHANNELS.AGENT_TOOL_RESULT, { sessionId, name: toolResult.name, result: toolResult.result, rawResult: toolResult.rawResult, generatedFiles: toolResult.generatedFiles, success: toolResult.success })
                 }
               },
               onToolProgress: (progress: { toolCallId: string; name: string; progress: any }) => {
@@ -179,10 +202,25 @@ export function registerLLMHandlers(
               onDone: (metadata?: any) => {
                 flushChunks() // 确保缓冲区中的 token 不丢失
                 flushToolCallDeltas()
-                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
-                  event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: metadata || {} })
+                // abort 时也发送 metadata（含 tokenUsage/contextStats），让前端能显示用量
+                if (!event.sender.isDestroyed()) {
+                  // 合并子员工 token 用量到主管会话 metadata
+                  const ctx = interactionContext.getStore()
+                  const childUsage = ctx?.childTokenUsage
+                  const mergedMetadata = { ...(metadata || {}) }
+                  if (childUsage && (childUsage.totalTokens || childUsage.completionTokens || childUsage.promptTokens)) {
+                    const base = metadata?.tokenUsage || {}
+                    mergedMetadata.tokenUsage = {
+                      promptTokens: (base.promptTokens || 0) + (childUsage.promptTokens || 0),
+                      completionTokens: (base.completionTokens || 0) + (childUsage.completionTokens || 0),
+                      totalTokens: (base.totalTokens || 0) + (childUsage.totalTokens || 0),
+                      cachedTokens: base.cachedTokens || childUsage.cachedTokens,
+                    }
+                  }
+                  event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: mergedMetadata })
                 }
                 activeSessions.delete(sessionId)
+                sessionWebContents.delete(sessionId)
               },
               onError: (error: string) => {
                 flushChunks()
@@ -192,6 +230,7 @@ export function registerLLMHandlers(
                   sentError = true
                 }
                 activeSessions.delete(sessionId)
+                sessionWebContents.delete(sessionId)
               },
             },
             abortController.signal
@@ -204,6 +243,7 @@ export function registerLLMHandlers(
               event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
             }
             activeSessions.delete(sessionId)
+            sessionWebContents.delete(sessionId)
             return
           }
           // 避免与 onError 回调重复发送错误，仅当 onError 未处理时发送
@@ -211,6 +251,7 @@ export function registerLLMHandlers(
             event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error?.message || String(error) })
           }
           activeSessions.delete(sessionId)
+          sessionWebContents.delete(sessionId)
         } finally {
           interactionService.unregisterSession(sessionId)
         }
@@ -229,7 +270,7 @@ export function registerLLMHandlers(
     messages: any[]
     conversation_id?: string
     collection_ids?: string[]
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
     minimal_mode?: boolean
   }) => {
     return employeeAgent.compactConversation(params)
@@ -239,7 +280,7 @@ export function registerLLMHandlers(
     employee_id: string
     provider_id: string
     model_id?: string
-    enable_thinking?: boolean
+    enable_thinking?: ThinkingLevel
   }) => {
     return employeeAgent.getContextStats(params)
   })

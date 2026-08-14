@@ -167,13 +167,15 @@ const KMSPage: React.FC = () => {
             },
           ]}
         />
-        <Button
-          type="text"
-          icon={<SettingOutlined />}
-          onClick={() => setSettingsOpen(true)}
-        >
-          {t('kms.settings')}
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button
+            type="text"
+            icon={<SettingOutlined />}
+            onClick={() => setSettingsOpen(true)}
+          >
+            {t('kms.settings')}
+          </Button>
+        </div>
       </div>
 
       {/* 主体内容区 */}

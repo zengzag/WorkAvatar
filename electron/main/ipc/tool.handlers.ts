@@ -40,6 +40,7 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'file_read',
       'file_write',
       'file_edit',
+      'report_generated_files',
       'file_mkdir',
       'file_list',
       'file_search',
@@ -134,6 +135,16 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     toolIds: [
       'date_time',
       'ask_user',
+    ],
+  },
+  {
+    id: 'collaboration',
+    name: 'collaboration',
+    title: '协作',
+    description: '委托给其他数字员工执行子任务，实现多员工协作',
+    icon: 'team',
+    toolIds: [
+      'delegate_to_employee',
     ],
   },
 ]

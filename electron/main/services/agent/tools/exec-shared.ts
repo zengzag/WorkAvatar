@@ -338,39 +338,3 @@ export function extractAbsolutePaths(text: string): string[] {
   while ((m = unquotedRe.exec(text)) !== null) paths.push(m[1])
   return [...new Set(paths)]
 }
-
-/** 收集可预览的生成文件 */
-export function collectPreviewableFiles(paths: Iterable<string>): Array<{
-  path: string
-  name: string
-  ext: string
-  size: number
-  mtime: number
-}> {
-  const PREVIEWABLE_EXTS = new Set([
-    'docx', 'docm', 'dotx', 'dotm', 'doc', 'rtf', 'odt',
-    'xlsx', 'xltx', 'xlsm', 'xlsb', 'xls', 'csv', 'ods',
-    'pptx', 'pptm', 'potx', 'ppsx', 'ppsm', 'odp',
-    'pdf', 'ofd',
-    'txt', 'md', 'json', 'xml', 'html', 'htm', 'yaml', 'yml',
-    'gif', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif', 'png', 'svg', 'webp', 'ico', 'heic',
-  ])
-  const result: Array<{ path: string; name: string; ext: string; size: number; mtime: number }> = []
-  for (const p of paths) {
-    try {
-      if (!fs.existsSync(p)) continue
-      const stat = fs.statSync(p)
-      if (!stat.isFile()) continue
-      const ext = path.extname(p).slice(1).toLowerCase()
-      if (!PREVIEWABLE_EXTS.has(ext)) continue
-      result.push({
-        path: p,
-        name: path.basename(p),
-        ext,
-        size: stat.size,
-        mtime: stat.mtimeMs,
-      })
-    } catch { /* 忽略 */ }
-  }
-  return result
-}

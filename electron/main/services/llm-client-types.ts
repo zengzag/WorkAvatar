@@ -1,5 +1,5 @@
 import { isMainThread } from 'worker_threads'
-import type { LLMModelConfig } from '../../shared/types'
+import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 
 /** LLM 提供商配置（数据库行映射） */
 export interface LLMProviderConfig {
@@ -49,6 +49,7 @@ export const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: 
   qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', defaultModel: 'qwen-plus', defaultEmbeddingModel: 'text-embedding-v3' },
   zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4', defaultModel: 'glm-4-flash', defaultEmbeddingModel: 'embedding-3' },
   volcengine: { baseURL: 'https://ark.cn-beijing.volces.com/api/v3', defaultModel: 'doubao-1-5-pro-32k', defaultEmbeddingModel: 'text-embedding-v3' },
+  xiaomi: { baseURL: 'https://api.xiaomimimo.com/v1', defaultModel: 'mimo-v2.5-pro', defaultEmbeddingModel: 'text-embedding-3-small' },
   moonshot: { baseURL: 'https://api.moonshot.cn/v1', defaultModel: 'moonshot-v1-8k', defaultEmbeddingModel: 'text-embedding-3-small' },
   yi: { baseURL: 'https://api.lingyiwanwu.com/v1', defaultModel: 'yi-lightning', defaultEmbeddingModel: 'text-embedding-3-small' },
   groq: { baseURL: 'https://api.groq.com/openai/v1', defaultModel: 'llama-3.3-70b-versatile', defaultEmbeddingModel: 'text-embedding-3-small' },
@@ -64,7 +65,7 @@ export interface ChatOptions {
   temperature?: number
   max_tokens?: number
   model?: string
-  enable_thinking?: boolean
+  enable_thinking?: ThinkingLevel
   signal?: AbortSignal
   logSource?: string
 }

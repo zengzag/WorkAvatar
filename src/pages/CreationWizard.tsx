@@ -10,7 +10,6 @@ import {
   Input,
   Alert,
   Collapse,
-  Tooltip,
   Modal,
   theme,
   App,
@@ -21,8 +20,6 @@ import {
   ArrowLeftOutlined,
   ArrowRightOutlined,
   CheckOutlined,
-  BulbOutlined,
-  BulbFilled,
   UserOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
@@ -65,9 +62,6 @@ const CreationWizard: React.FC = () => {
   const [selectedModelId, setSelectedModelId] = useState<string>(() => {
     return localStorage.getItem('creationWizard:selectedModelId') || getCachedSceneDefaultModel('creation')?.model_id || ''
   })
-  const [enableThinking, setEnableThinking] = useState<boolean>(() => {
-    return localStorage.getItem('creationWizard:enableThinking') === 'true'
-  })
   const [businessDescription, setBusinessDescription] = useState<string>('')
   const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
   const [refineModalOpen, setRefineModalOpen] = useState(false)
@@ -84,9 +78,6 @@ const CreationWizard: React.FC = () => {
     localStorage.setItem('creationWizard:selectedProviderId', selectedProviderId)
     localStorage.setItem('creationWizard:selectedModelId', selectedModelId)
   }, [selectedProviderId, selectedModelId])
-  useEffect(() => {
-    localStorage.setItem('creationWizard:enableThinking', String(enableThinking))
-  }, [enableThinking])
 
   const [analyzeStage, setAnalyzeStage] = useState<string>('')
   const [analyzeDetail, setAnalyzeDetail] = useState<string>('')
@@ -386,15 +377,6 @@ const CreationWizard: React.FC = () => {
                   modelId={selectedModelId}
                   onChange={handleLlmChange}
                 />
-                <Tooltip title={enableThinking ? t('llmSelector.thinkingEnabled') : t('llmSelector.thinkingDisabled')}>
-                  <Button
-                    type={enableThinking ? 'primary' : 'text'}
-                    icon={enableThinking ? <BulbFilled /> : <BulbOutlined />}
-                    size="small"
-                    onClick={() => setEnableThinking(!enableThinking)}
-                    style={enableThinking ? {} : { color: token.colorTextSecondary }}
-                  />
-                </Tooltip>
               </Space>
             </div>
           </div>

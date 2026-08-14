@@ -259,8 +259,8 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, handler)
     },
-    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; generatedFiles?: any }) => void) => {
-      const handler = (_event: any, data: { sessionId: string; name: string; result: any }) => callback(data)
+    onToolResult: (callback: (data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void) => {
+      const handler = (_event: any, data: { sessionId: string; name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_RESULT, handler)
     },
@@ -268,6 +268,11 @@ const electronAPI = {
       const handler = (_event: any, data: { sessionId: string; toolCallId: string; name: string; progress: any }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
+    },
+    onDelegationEvent: (callback: (data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => void) => {
+      const handler = (_event: any, data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
     },
   },
 
@@ -306,6 +311,25 @@ const electronAPI = {
       const handler = (_event: any, isMaximized: boolean) => callback(isMaximized)
       ipcRenderer.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, handler)
+    },
+  },
+
+  tabWindow: {
+    // 分离 tab 为独立窗口（已存在则聚焦）
+    open: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_OPEN, tabKey),
+    // 关闭 tab 独立窗口（回归主窗口）
+    returnToMain: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_RETURN, tabKey),
+    // 查询当前已分离的 tab 列表
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_LIST),
+    // 聚焦已存在的 tab 独立窗口，返回是否成功
+    focus: (tabKey: string) => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_FOCUS, tabKey),
+    // 独立窗口渲染进程查询自己所属的 tabKey（主窗口渲染进程调用返回 null）
+    getOwnTab: () => ipcRenderer.invoke(IPC_CHANNELS.TAB_WINDOW_GET_OWN_TAB),
+    // 主进程 → 主窗口渲染进程：detached tabs 列表变化通知
+    onDetachedChanged: (callback: (tabs: string[]) => void) => {
+      const handler = (_event: any, tabs: string[]) => callback(tabs || [])
+      ipcRenderer.on(IPC_CHANNELS.TAB_WINDOW_DETACHED_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.TAB_WINDOW_DETACHED_CHANGED, handler)
     },
   },
 

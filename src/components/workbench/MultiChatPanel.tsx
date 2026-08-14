@@ -1,5 +1,5 @@
-import { Typography, Button, Tag, theme, Tooltip } from 'antd'
-import { CloseOutlined, CopyOutlined, RobotOutlined, ColumnWidthOutlined } from '@ant-design/icons'
+import { Typography, Button, Tag, theme, Tooltip, Popconfirm } from 'antd'
+import { CloseOutlined, CopyOutlined, RobotOutlined, ColumnWidthOutlined, DeleteOutlined } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -37,6 +37,7 @@ interface ComparisonColumnProps {
   onToggleSegment: (msgId: string, segId: string) => void
   onCopy: (content: string) => void
   getToolDisplayName: (name: string) => string
+  onDelete: (msgId: string) => void
 }
 
 const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
@@ -46,6 +47,7 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
   onToggleSegment,
   onCopy,
   getToolDisplayName,
+  onDelete,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -101,6 +103,24 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
               style={{ color: token.colorTextQuaternary }}
             />
           </Tooltip>
+        )}
+        {!msg.isStreaming && (
+          <Popconfirm
+            title={t('workbench.deleteComparisonConfirm')}
+            onConfirm={() => onDelete(msg.id)}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+            okButtonProps={{ danger: true }}
+          >
+            <Tooltip title={t('workbench.deleteComparisonMessage')}>
+              <Button
+                type="text"
+                size="small"
+                icon={<DeleteOutlined style={{ fontSize: 12 }} />}
+                style={{ color: token.colorTextQuaternary }}
+              />
+            </Tooltip>
+          </Popconfirm>
         )}
         {msg.isStreaming && (
           <Tag color={color.tag} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
@@ -185,6 +205,7 @@ interface MultiChatPanelProps {
   onToggleSegment: (msgId: string, segId: string) => void
   onCopy: (content: string) => void
   getToolDisplayName: (name: string) => string
+  onDelete: (msgId: string) => void
 }
 
 const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
@@ -194,6 +215,7 @@ const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
   onToggleSegment,
   onCopy,
   getToolDisplayName,
+  onDelete,
 }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
@@ -250,6 +272,7 @@ const MultiChatPanel: React.FC<MultiChatPanelProps> = ({
             onToggleSegment={onToggleSegment}
             onCopy={onCopy}
             getToolDisplayName={getToolDisplayName}
+            onDelete={onDelete}
           />
         ))}
       </div>

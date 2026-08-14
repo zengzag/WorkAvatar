@@ -59,7 +59,8 @@ class DatabaseService {
       const cutoff = now - 30 * 86400
       const emptyConvos = this.db.prepare(
         `SELECT id FROM conversations
-         WHERE message_count = 0 AND messages_json = '[]' AND created_at < ?`
+         WHERE message_count = 0 AND messages_json = '[]' AND created_at < ?
+           AND (parent_conversation_id = '' OR parent_conversation_id IS NULL)`
       ).all(cutoff) as any[]
       if (emptyConvos.length > 0) {
         const delTx = this.db.transaction(() => {
@@ -317,6 +318,16 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_employee ON employee_mcp_servers(employee_id);
       CREATE INDEX IF NOT EXISTS idx_employee_mcp_servers_enabled ON employee_mcp_servers(employee_id, is_enabled);
 
+      -- 员工委托权限白名单：supervisor 可委托给 target，默认无记录=禁止
+      CREATE TABLE IF NOT EXISTS employee_delegate_permissions (
+        id TEXT PRIMARY KEY,
+        supervisor_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        target_id TEXT NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_delegate_perm_unique ON employee_delegate_permissions(supervisor_id, target_id);
+      CREATE INDEX IF NOT EXISTS idx_delegate_perm_supervisor ON employee_delegate_permissions(supervisor_id);
+
       -- 日历日程表：用户与智能体创建的日程事件
       CREATE TABLE IF NOT EXISTS calendar_events (
         id TEXT PRIMARY KEY,
@@ -456,6 +467,9 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'context_stats_json', "TEXT DEFAULT '{}'")
     // 任务工作区目录（每个任务独立子目录），空字符串表示未分配（旧对话回退到员工工作区）
     this.addColumnIfNotExists('conversations', 'workspace_path', "TEXT DEFAULT ''")
+    // 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
+    this.addColumnIfNotExists('conversations', 'parent_conversation_id', "TEXT DEFAULT ''")
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id)`)
 
     this.migrateConversationLastMessageAt()
 

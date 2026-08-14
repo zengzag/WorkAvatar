@@ -1,5 +1,6 @@
-import { useMemo, useCallback, useEffect } from 'react'
-import { Layout, Menu, theme } from 'antd'
+import { useMemo, useCallback, useEffect, useState } from 'react'
+import { Layout, Menu, Dropdown, theme } from 'antd'
+import type { MenuProps } from 'antd'
 import {
   SettingOutlined,
   SearchOutlined,
@@ -9,6 +10,10 @@ import {
   FieldTimeOutlined,
   MessageOutlined,
   TeamOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+  ExpandAltOutlined,
+  HomeOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -39,14 +44,27 @@ const App: React.FC = () => {
   const isVoiceRecording = useVoiceRecordingStore((s) => s.isRecording)
   const isVoicePaused = useVoiceRecordingStore((s) => s.isPaused)
 
+  // 当前已分离为独立窗口的 tab key 列表（主进程推送 + 主动查询）
+  const [detachedTabs, setDetachedTabs] = useState<string[]>([])
+  useEffect(() => {
+    window.electronAPI.tabWindow.list().then((tabs) => setDetachedTabs(tabs))
+    const dispose = window.electronAPI.tabWindow.onDetachedChanged((tabs) => setDetachedTabs(tabs))
+    return () => { dispose() }
+  }, [])
+
   // 监听系统右键"打开方式"或启动参数传入的 .md 文件：导航到笔记页
   useEffect(() => {
     const unsub = window.electronAPI.app.onOpenExternalFile((absPath) => {
       enqueuePendingExternalFile(absPath)
-      navigate('/notes')
+      // 若笔记已分离为独立窗口，聚焦笔记窗口；否则在主窗口导航到笔记页
+      if (detachedTabs.includes('notes')) {
+        window.electronAPI.tabWindow.focus('notes')
+      } else {
+        navigate('/notes')
+      }
     })
     return () => { unsub() }
-  }, [navigate])
+  }, [navigate, detachedTabs])
 
   const getSelectedKey = useCallback(() => {
     const path = location.pathname
@@ -61,11 +79,28 @@ const App: React.FC = () => {
     return 'tasks'
   }, [location.pathname])
 
-  // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
-  useCalendarNotify((payload) => {
-    if (payload.clickTarget === 'automation' && payload.clickId) {
+  // 若主窗口当前路由对应的 tab 被分离了，自动跳转到第一个未分离的 tab（避免主窗口与独立窗口同时渲染同一 tab）
+  useEffect(() => {
+    const currentKey = getSelectedKey()
+    if (!detachedTabs.includes(currentKey)) return
+    // 按默认顺序找第一个未分离、可见的 tab（排除 settings，它不适合作为回退目标）
+    const fallbackOrder: NavItemKey[] = ['tasks', 'notes', 'calendar', 'automation', 'kms', 'voice', 'employees']
+    const fallback = fallbackOrder.find((k) => !detachedTabs.includes(k))
+    if (fallback) {
+      navigate(`/${fallback}`)
+    }
+  }, [detachedTabs, navigate, getSelectedKey])
+
+  /**
+   * 通知点击跳转：按来源功能进入对应页面。
+   * - automation：携带 conversationId+employeeId 时跳到 /tasks 并定位会话
+   * - ask_user：不跳转，主窗口聚焦后 UnifiedInteractionModal 会自动弹出
+   * - 其他（calendar/event/todo）：默认进日历页
+   */
+  const handleNotifyClick = useCallback((target?: string, id?: string) => {
+    if (target === 'automation' && id) {
       try {
-        const { conversationId, employeeId } = JSON.parse(payload.clickId)
+        const { conversationId, employeeId } = JSON.parse(id)
         if (employeeId && conversationId) {
           localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
           navigate('/tasks')
@@ -73,69 +108,79 @@ const App: React.FC = () => {
         }
       } catch { /* ignore parse error */ }
     }
+    if (target === 'ask_user') return
     navigate('/calendar')
+  }, [navigate])
+
+  // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
+  useCalendarNotify((payload) => {
+    handleNotifyClick(payload.clickTarget, payload.clickId)
   })
   // 系统通知点击后由主进程推送 → 按目标跳转
   useCalendarNotifyClick((payload) => {
-    if (payload.target === 'automation' && payload.id) {
-      try {
-        const { conversationId, employeeId } = JSON.parse(payload.id)
-        if (employeeId && conversationId) {
-          localStorage.setItem(`employeeWorkbench:activeConvId:${employeeId}`, conversationId)
-          navigate('/tasks')
-          return
-        }
-      } catch { /* ignore parse error */ }
-    }
-    navigate('/calendar')
+    handleNotifyClick(payload.target, payload.id)
   })
 
   // 导航菜单配置（从 nav.store 读取显隐与排序）
   const navConfig = useNavConfigStore((s) => s.config)
+  const moveUp = useNavConfigStore((s) => s.moveUp)
+  const moveDown = useNavConfigStore((s) => s.moveDown)
 
-  // 所有导航项的定义（icon + label + onClick）
-  const navItemDefs = useMemo(() => ({
-    'tasks': {
-      icon: <MessageOutlined />,
-      label: t('nav.tasks'),
-      onClick: () => navigate('/tasks'),
-    },
-    'employees': {
-      icon: <TeamOutlined />,
-      label: t('nav.employees'),
-      onClick: () => navigate('/employees'),
-    },
-    'kms': {
-      icon: <SearchOutlined />,
-      label: t('nav.kms'),
-      onClick: () => navigate('/kms'),
-    },
-    'voice': {
-      icon: <VoiceNavIcon recording={isVoiceRecording} paused={isVoicePaused} />,
-      label: isVoiceRecording ? t('nav.voiceRecording') : t('nav.voice'),
-      onClick: () => navigate('/voice'),
-    },
-    'calendar': {
-      icon: <CalendarOutlined />,
-      label: t('nav.calendar'),
-      onClick: () => navigate('/calendar'),
-    },
-    'notes': {
-      icon: <BookOutlined />,
-      label: t('nav.notes'),
-      onClick: () => navigate('/notes'),
-    },
-    'automation': {
-      icon: <FieldTimeOutlined />,
-      label: t('nav.automation'),
-      onClick: () => navigate('/automation'),
-    },
-    'settings': {
-      icon: <SettingOutlined />,
-      label: t('nav.settings'),
-      onClick: () => navigate('/settings'),
-    },
-  }), [t, navigate, isVoiceRecording, isVoicePaused])
+  // 已分离 tab 的图标用半透明 + 右上角小圆点标记，提示用户"已弹窗，点击聚焦"
+  // label 保持纯文本，让 antd collapsed Menu 自动生成 tooltip
+  const wrapDetachedIcon = (icon: React.ReactNode, detached: boolean): React.ReactNode => {
+    if (!detached) return icon
+    return (
+      <span style={{ position: 'relative', display: 'inline-flex', opacity: 0.5 }}>
+        {icon}
+        <span
+          style={{
+            position: 'absolute',
+            top: -2,
+            right: -4,
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: '#52c41a',
+            border: '1px solid var(--ant-color-bg-container, #fff)',
+          }}
+        />
+      </span>
+    )
+  }
+
+  // 点击导航项：若该 tab 已分离为独立窗口，则聚焦独立窗口；否则在主窗口内导航
+  const handleNavClick = useCallback((key: NavItemKey) => {
+    if (detachedTabs.includes(key)) {
+      window.electronAPI.tabWindow.focus(key)
+      return
+    }
+    navigate(`/${key}`)
+  }, [navigate, detachedTabs])
+
+  // 所有导航项的定义（icon + label + onClick）；已分离的 tab 图标视觉降级
+  // icon 外层包 data-nav-key，供侧边栏右键菜单识别目标 tab
+  const navItemDefs = useMemo(() => {
+    const build = (key: NavItemKey, icon: React.ReactNode, label: string) => ({
+      icon: <span data-nav-key={key}>{wrapDetachedIcon(icon, detachedTabs.includes(key))}</span>,
+      label,
+      onClick: () => handleNavClick(key),
+    })
+    return {
+      'tasks': build('tasks', <MessageOutlined />, t('nav.tasks')),
+      'employees': build('employees', <TeamOutlined />, t('nav.employees')),
+      'kms': build('kms', <SearchOutlined />, t('nav.kms')),
+      'voice': build('voice', <VoiceNavIcon recording={isVoiceRecording} paused={isVoicePaused} />, isVoiceRecording ? t('nav.voiceRecording') : t('nav.voice')),
+      'calendar': build('calendar', <CalendarOutlined />, t('nav.calendar')),
+      'notes': build('notes', <BookOutlined />, t('nav.notes')),
+      'automation': build('automation', <FieldTimeOutlined />, t('nav.automation')),
+      'settings': {
+        icon: <span data-nav-key="settings"><SettingOutlined /></span>,
+        label: t('nav.settings'),
+        onClick: () => navigate('/settings'),
+      },
+    }
+  }, [t, navigate, isVoiceRecording, isVoicePaused, handleNavClick, detachedTabs])
 
   // 按配置过滤+排序后的菜单项
   const menuItems = useMemo(() => {
@@ -148,6 +193,81 @@ const App: React.FC = () => {
   // 分离 settings 到最底部，其余保持原顺序
   const mainMenuItems = useMemo(() => menuItems.filter(item => item.key !== 'settings'), [menuItems])
   const settingsMenuItem = useMemo(() => menuItems.filter(item => item.key === 'settings'), [menuItems])
+
+  // 侧边栏右键菜单：独立窗口打开/回到主窗口 + 上移/下移 tab 顺序
+  const [navContextMenu, setNavContextMenu] = useState<{ x: number; y: number; key: NavItemKey } | null>(null)
+
+  const handleNavContextMenu = useCallback((e: React.MouseEvent) => {
+    const target = (e.target as HTMLElement).closest('[data-nav-key]') as HTMLElement | null
+    const navKey = target?.getAttribute('data-nav-key') as NavItemKey | null
+    if (!navKey) return
+    e.preventDefault()
+    setNavContextMenu({ x: e.clientX, y: e.clientY, key: navKey })
+  }, [])
+
+  // 菜单打开时，任意点击/滚轮/再次右键都关闭菜单（trigger={[]} 受控模式下 Dropdown 不会自动关闭）
+  useEffect(() => {
+    if (!navContextMenu) return
+    const close = () => setNavContextMenu(null)
+    const opts = { capture: true } as AddEventListenerOptions
+    document.addEventListener('click', close, opts)
+    document.addEventListener('contextmenu', close, opts)
+    document.addEventListener('wheel', close, opts)
+    return () => {
+      document.removeEventListener('click', close, opts)
+      document.removeEventListener('contextmenu', close, opts)
+      document.removeEventListener('wheel', close, opts)
+    }
+  }, [navContextMenu])
+
+  // 排序后的可见 nav key（用于判断上移/下移是否可用，与 NavSettings 逻辑一致）
+  const sortedVisibleKeys = useMemo(
+    () => getVisibleNavItems(navConfig).map((c) => c.key),
+    [navConfig],
+  )
+
+  const navContextItems = useMemo<MenuProps['items']>(() => {
+    if (!navContextMenu) return []
+    const key = navContextMenu.key
+    const idx = sortedVisibleKeys.indexOf(key)
+    const isFirst = idx <= 0
+    const isLast = idx < 0 || idx >= sortedVisibleKeys.length - 1
+    const isDetached = detachedTabs.includes(key)
+    // settings 不可分离（无独立窗口）
+    const canDetach = key !== 'settings' && !isDetached
+    const items: NonNullable<MenuProps['items']>[number][] = []
+    if (canDetach) {
+      items.push({
+        key: 'detach',
+        icon: <ExpandAltOutlined />,
+        label: t('tabWindow.detach'),
+        onClick: () => { window.electronAPI.tabWindow.open(key); setNavContextMenu(null) },
+      })
+    } else if (isDetached) {
+      items.push({
+        key: 'return',
+        icon: <HomeOutlined />,
+        label: t('tabWindow.returnToMain'),
+        onClick: () => { window.electronAPI.tabWindow.focus(key); setNavContextMenu(null) },
+      })
+    }
+    if (items.length > 0) items.push({ type: 'divider' })
+    items.push({
+      key: 'moveUp',
+      icon: <ArrowUpOutlined />,
+      label: t('tabWindow.moveUp'),
+      disabled: isFirst,
+      onClick: () => { moveUp(key); setNavContextMenu(null) },
+    })
+    items.push({
+      key: 'moveDown',
+      icon: <ArrowDownOutlined />,
+      label: t('tabWindow.moveDown'),
+      disabled: isLast,
+      onClick: () => { moveDown(key); setNavContextMenu(null) },
+    })
+    return items
+  }, [navContextMenu, sortedVisibleKeys, detachedTabs, t, moveUp, moveDown])
 
   const siderBg = effectiveTheme === 'dark' ? '#1a1a1a' : '#ffffff'
 
@@ -174,6 +294,7 @@ const App: React.FC = () => {
               selectedKeys={[getSelectedKey()]}
               items={mainMenuItems}
               inlineCollapsed={true}
+              onContextMenu={handleNavContextMenu}
               style={{
                 borderRight: 'none',
                 marginTop: 4,
@@ -188,6 +309,7 @@ const App: React.FC = () => {
                 selectedKeys={[getSelectedKey()]}
                 items={settingsMenuItem}
                 inlineCollapsed={true}
+                onContextMenu={handleNavContextMenu}
                 style={{
                   borderRight: 'none',
                   marginBottom: 10,
@@ -204,11 +326,27 @@ const App: React.FC = () => {
               overflow: 'hidden',
             }}
           >
-            <KeepAliveOutlet />
+            <KeepAliveOutlet clearKeys={detachedTabs} />
           </Content>
         </Layout>
       </Layout>
       <UnifiedInteractionModal />
+      {/* 侧边栏右键菜单浮层：1x1 定位点 + Dropdown 受控 */}
+      <Dropdown
+        menu={{ items: navContextItems ?? [] }}
+        open={!!navContextMenu}
+        onOpenChange={(open) => { if (!open) setNavContextMenu(null) }}
+        trigger={[]}
+      >
+        <div style={{
+          position: 'fixed',
+          left: navContextMenu?.x ?? -100,
+          top: navContextMenu?.y ?? -100,
+          width: 1,
+          height: 1,
+          pointerEvents: 'none',
+        }} />
+      </Dropdown>
     </Layout>
   )
 }
