@@ -1723,8 +1723,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       ([_, s]) => s.conversationId === convId && s.isStreaming
     )
     for (const [sessionId, streamState] of activeStreamEntries) {
+      // 仅标记 isStreaming=false，不删除 streamState，让后端 onDone 接管清理并写入 tokenUsage
       streamState.isStreaming = false
-      streamStatesRef.current.delete(sessionId)
       try {
         await window.electronAPI.llm.abortChat(sessionId)
       } catch (e) { console.error('Failed to abort chat:', e) }
@@ -1745,8 +1745,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
                   // 用户停止生成时，工具调用可能处于两种中间态：
                   // 1) isToolArgsStreaming=true：LLM 仍在生成参数 JSON
                   // 2) isToolArgsStreaming=false, isToolComplete=false：工具正在执行
-                  // 两种情况都需要标记为已取消，避免 UI 永远停留在"生成参数中"/"执行中"
-                  // （handleStop 已删除 streamState，后端 done 事件无法触发 doneCleanup 兜底）
+                  // 两种情况都需要立即标记为已取消，让 UI 即时停止；
+                  // 后端 onDone 到达时 doneCleanup 会写入 tokenUsage（已取消标记不会被覆盖）
                   let parsedArgs = s.toolArgs
                   if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
                     try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整，保留 raw */ }

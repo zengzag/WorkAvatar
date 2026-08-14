@@ -202,7 +202,8 @@ export function registerLLMHandlers(
               onDone: (metadata?: any) => {
                 flushChunks() // 确保缓冲区中的 token 不丢失
                 flushToolCallDeltas()
-                if (!abortController.signal.aborted && !event.sender.isDestroyed()) {
+                // abort 时也发送 metadata（含 tokenUsage/contextStats），让前端能显示用量
+                if (!event.sender.isDestroyed()) {
                   // 合并子员工 token 用量到主管会话 metadata
                   const ctx = interactionContext.getStore()
                   const childUsage = ctx?.childTokenUsage

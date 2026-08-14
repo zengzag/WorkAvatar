@@ -270,7 +270,8 @@ export abstract class BaseAgent {
 
       const streamMetadata = await this.executeLoopStream(messages, activeTools, maxIterations, callbacks, signal)
 
-      this.context.setState('completed')
+      // aborted 走正常返回路径（pi-agent-adapter 已捕获 AbortError），仍透传 tokenUsage/contextStats
+      this.context.setState(streamMetadata?.aborted ? 'aborted' : 'completed')
       this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
 
       callbacks.onDone?.({
@@ -282,9 +283,12 @@ export abstract class BaseAgent {
     } catch (error: any) {
       if (signal?.aborted) {
         this.context.setState('aborted')
+        this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
+        // catch 兜底：底层异常路径下无法拿到 tokenUsage，但仍刷新 contextStats
         callbacks.onDone?.({
           totalLatencyMs: Date.now() - startTime,
           iterations: this.context.getIterationCount(),
+          contextStats: this.memoryManager.getStats() ?? undefined,
         })
         return
       }
@@ -427,10 +431,10 @@ export abstract class BaseAgent {
     maxIterations: number,
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal
-  ): Promise<AgentResponseMetadata> {
+  ): Promise<AgentResponseMetadata & { aborted?: boolean }> {
     this.context.setState('running')
 
-    const { tokenUsage } = await runPiAgentLoop({
+    const { tokenUsage, aborted } = await runPiAgentLoop({
       config: this.config,
       messages,
       toolDefinitions: tools,
@@ -460,7 +464,7 @@ export abstract class BaseAgent {
       },
     })
 
-    return { tokenUsage }
+    return { tokenUsage, aborted }
   }
 
   private normalizeConfig(config: AgentConfig): AgentConfig {

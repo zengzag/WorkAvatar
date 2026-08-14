@@ -573,7 +573,7 @@ export interface RunPiAgentLoopParams {
  * 内部完成：Message 转换、AgentTool 包装、事件转换、上下文截断、token 统计。
  * 保留现有 AgentRunStreamCallbacks + AgentEventEmitter 契约，前端零改动。
  */
-export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ tokenUsage: TokenUsage }> {
+export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ tokenUsage?: TokenUsage; aborted?: boolean }> {
   const {
     config,
     messages,
@@ -658,21 +658,38 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
 
   // 订阅事件并转换
   // 注意：run:start/run:end 由 base-agent 统一 emit，这里不重复
-  for await (const event of eventStream) {
-    if (signal?.aborted) break
-    handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
-      totalTokenUsage = {
-        promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
-        completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
-        totalTokens: (totalTokenUsage.totalTokens || 0) + (usage.totalTokens || 0),
-        ...(totalTokenUsage.cachedTokens || usage.cachedTokens
-          ? { cachedTokens: (totalTokenUsage.cachedTokens || 0) + (usage.cachedTokens || 0) }
-          : {}),
-      }
-    })
+  // 中止时（signal.aborted 或底层 fetch 抛 AbortError）不抛出，保留已累计的 tokenUsage 返回，
+  // 让 base-agent 走 aborted 分支并把 tokenUsage/contextStats 透传给前端
+  let aborted = false
+  try {
+    for await (const event of eventStream) {
+      if (signal?.aborted) { aborted = true; break }
+      handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
+        totalTokenUsage = {
+          promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
+          completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
+          totalTokens: (totalTokenUsage.totalTokens || 0) + (usage.totalTokens || 0),
+          ...(totalTokenUsage.cachedTokens || usage.cachedTokens
+            ? { cachedTokens: (totalTokenUsage.cachedTokens || 0) + (usage.cachedTokens || 0) }
+            : {}),
+        }
+      })
+    }
+  } catch (err) {
+    // signal.aborted 视为正常中止，保留 tokenUsage 返回；其他异常继续上抛
+    if (signal?.aborted) {
+      aborted = true
+    } else {
+      throw err
+    }
   }
 
-  return { tokenUsage: totalTokenUsage }
+  // 若未累计到任何 token（abort 过早或 LLM 未返回 usage），返回 undefined 让前端回退到字符数
+  const hasUsage = totalTokenUsage.promptTokens !== undefined
+    || totalTokenUsage.completionTokens !== undefined
+    || totalTokenUsage.totalTokens !== undefined
+    || totalTokenUsage.cachedTokens !== undefined
+  return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted }
 }
 
 function handleAgentEvent(
