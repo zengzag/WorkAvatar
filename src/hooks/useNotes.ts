@@ -146,7 +146,10 @@ export function useNotes() {
         return
       }
       const currentSt = useNotesStore.getState()
-      const targetTabId = currentSt.activeTabId || currentSt.createEmptyTab()
+      const currentActive = currentSt.tabs.find((t) => t.id === currentSt.activeTabId)
+      // 当前激活 Tab 为空白新标签时复用，否则新建标签打开外部 md 文件
+      const isEmptyNewTab = !!currentActive && !currentActive.relPath && !currentActive.externalAbsPath && currentActive.content === ''
+      const targetTabId = isEmptyNewTab ? currentActive!.id : currentSt.createEmptyTab()
       openExternalInTab(targetTabId, absPath, (note as any).content, (note as any).mtime)
     } catch (err: any) {
       message.error(err?.message || t('notes.openFailed'))
