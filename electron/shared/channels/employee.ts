@@ -107,6 +107,7 @@ export interface EmployeeProfileAnalyzeParams {
   provider_id?: string
   model_id?: string
   additional_context?: string
+  context_file?: { name: string; content: string }
 }
 
 export interface EmployeeProfileRefineParams {

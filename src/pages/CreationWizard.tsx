@@ -29,6 +29,7 @@ import type { LLMProvider } from '../types'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import {
   CollectionSelector,
+  PromptFileSelector,
   AnalysisProgress,
   AnalysisStreaming,
   ProfileDisplay,
@@ -63,6 +64,7 @@ const CreationWizard: React.FC = () => {
     return localStorage.getItem('creationWizard:selectedModelId') || getCachedSceneDefaultModel('creation')?.model_id || ''
   })
   const [businessDescription, setBusinessDescription] = useState<string>('')
+  const [contextFile, setContextFile] = useState<{ name: string; content: string } | null>(null)
   const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
   const [refineModalOpen, setRefineModalOpen] = useState(false)
   const [refineFeedback, setRefineFeedback] = useState('')
@@ -211,6 +213,7 @@ const CreationWizard: React.FC = () => {
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: businessDescription || undefined,
+        context_file: contextFile || undefined,
       })
 
       if (handleAnalysisResult(result)) {
@@ -367,6 +370,8 @@ const CreationWizard: React.FC = () => {
             selectedIds={selectedCollectionIds}
             onChange={setSelectedCollectionIds}
           />
+
+          <PromptFileSelector value={contextFile} onChange={setContextFile} />
 
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

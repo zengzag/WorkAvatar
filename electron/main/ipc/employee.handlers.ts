@@ -137,6 +137,7 @@ export function registerEmployeeHandlers(
         params.provider_id,
         params.model_id,
         params.additional_context,
+        params.context_file,
         (data) => {
           event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
         }

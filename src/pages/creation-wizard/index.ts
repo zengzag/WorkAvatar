@@ -1,4 +1,5 @@
 export { default as CollectionSelector } from './CollectionSelector'
+export { default as PromptFileSelector } from './PromptFileSelector'
 export { AnalysisProgress, AnalysisStreaming } from './AnalysisProgress'
 export { default as ProfileDisplay } from './ProfileDisplay'
 export { default as ToolCheckboxes } from './ToolCheckboxes'
