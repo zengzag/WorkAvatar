@@ -26,6 +26,14 @@ export const CALENDAR_CHANNELS = {
   CALENDAR_GET_SETTINGS: 'calendar:get-settings',
   CALENDAR_SET_SETTINGS: 'calendar:set-settings',
 
+  // Outlook 同步
+  CALENDAR_OUTLOOK_LOGIN: 'calendar:outlook-login',
+  CALENDAR_OUTLOOK_LOGOUT: 'calendar:outlook-logout',
+  CALENDAR_OUTLOOK_STATUS: 'calendar:outlook-status',
+  CALENDAR_OUTLOOK_SET_CONFIG: 'calendar:outlook-set-config',
+  CALENDAR_OUTLOOK_SYNC_NOW: 'calendar:outlook-sync-now',
+  CALENDAR_OUTLOOK_SYNC_CHANGED: 'calendar:outlook-sync-changed',
+
   // 事件推送（主进程 → 渲染进程）
   CALENDAR_NOTIFY: 'calendar:notify',
   CALENDAR_NOTIFY_CLICK: 'calendar:notify-click',
@@ -188,6 +196,43 @@ export interface CalendarSettings {
   default_event_reminders: number[]
   default_todo_reminders: number[]
   enable_system_notification: boolean
+}
+
+// ====== Outlook 同步 ======
+
+export interface OutlookAccount {
+  id: string
+  email: string
+  display_name: string
+}
+
+export interface OutlookSyncConfig {
+  /** 同步总开关 */
+  enabled: boolean
+  /** 数据变更后自动推送 */
+  auto_sync: boolean
+  /** 同步日程事件到 Outlook 日历 */
+  sync_events: boolean
+  /** 同步待办到 Microsoft To Do */
+  sync_todos: boolean
+}
+
+export interface OutlookSyncResult {
+  created: number
+  updated: number
+  deleted: number
+  failed: number
+  errors: string[]
+  synced_at: number
+}
+
+export interface OutlookSyncStatus {
+  signed_in: boolean
+  account: OutlookAccount | null
+  config: OutlookSyncConfig
+  syncing: boolean
+  last_result: OutlookSyncResult | null
+  last_error: string | null
 }
 
 export interface ListEventsParams {

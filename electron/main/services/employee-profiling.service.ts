@@ -608,6 +608,28 @@ ${toolsSection}`
     }
   }
 
+  /** 解析描述生成用 LLM：creation 场景默认模型 > 默认提供商 > 任意可用提供商 */
+  private resolveDescriptionLLM(): { provider_id: string; model_id?: string } | null {
+    const db = this.db.getDb()
+    const setting = db.prepare(
+      "SELECT value FROM settings WHERE key = 'default_model_creation'"
+    ).get() as { value: string } | undefined
+    if (setting?.value) {
+      try {
+        const parsed = JSON.parse(setting.value) as { provider_id?: string; model_id?: string }
+        const exists = parsed.provider_id
+          && db.prepare('SELECT 1 FROM llm_providers WHERE id = ?').get(parsed.provider_id)
+        if (parsed.provider_id && exists) {
+          return { provider_id: parsed.provider_id, model_id: parsed.model_id?.trim() || undefined }
+        }
+      } catch { /* ignore invalid JSON */ }
+    }
+    const row = db.prepare(
+      'SELECT id FROM llm_providers ORDER BY is_default DESC LIMIT 1'
+    ).get() as { id: string } | undefined
+    return row?.id ? { provider_id: row.id } : null
+  }
+
   /**
    * 根据员工名称、规则（系统提示词）、可用工具与技能，用 LLM 生成简短描述（≤150字）。
    * 生成结果不直接落库，由前端填入表单供用户确认后保存。
@@ -629,10 +651,12 @@ ${toolsSection}`
         return { success: false, error: '员工不存在' }
       }
 
-      const providerId = params.provider_id || this.getDefaultProviderId()
+      const resolved = this.resolveDescriptionLLM()
+      const providerId = params.provider_id || resolved?.provider_id
       if (!providerId) {
         return { success: false, error: 'NO_LLM_PROVIDER' }
       }
+      const modelId = params.model_id || resolved?.model_id
 
       const name = params.name?.trim() || emp.name
 
@@ -688,7 +712,7 @@ ${promptText ? `规则/系统提示词：\n${truncatedPrompt}` : '（暂无规�
           { role: 'system', content: '你是数字员工描述生成器，根据员工信息生成简短、客观、准确的能力描述。' },
           { role: 'user', content: prompt },
         ],
-        params.model_id,
+        modelId,
         'employee_description_gen'
       )
 

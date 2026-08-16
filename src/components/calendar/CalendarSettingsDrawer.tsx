@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import {
-  Drawer, Tabs, Switch, Select, Card, Divider, theme, App,
+  Drawer, Tabs, Switch, Select, Card, Divider, theme, App, Button, Space, Tag, Tooltip,
 } from 'antd'
 import {
-  BellOutlined, NotificationOutlined,
+  BellOutlined, NotificationOutlined, CloudSyncOutlined, LoginOutlined, LogoutOutlined, SyncOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import SettingsItem from '../common/SettingsItem'
-import type { CalendarSettings } from '../../types/calendar'
+import type { CalendarSettings, OutlookSyncStatus } from '../../types/calendar'
 
 interface CalendarSettingsDrawerProps {
   open: boolean
@@ -21,6 +21,12 @@ const REMINDER_OPTIONS = [0, 5, 15, 30, 60, 120, 1440, 2880]
 const toDisplay = (v: number) => Math.abs(v)
 const toStore = (v: number) => -v
 
+const formatTime = (unixSec: number): string => {
+  const d = new Date(unixSec * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} `
+    + `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 const CalendarSettingsDrawer: React.FC<CalendarSettingsDrawerProps> = ({
   open, settings, onClose, onSave,
 }) => {
@@ -33,13 +39,85 @@ const CalendarSettingsDrawer: React.FC<CalendarSettingsDrawerProps> = ({
   const [todoReminders, setTodoReminders] = useState<number[]>(() => (settings?.default_todo_reminders || []).map(toDisplay))
   const [saving, setSaving] = useState(false)
 
+  // Outlook 同步状态
+  const [outlook, setOutlook] = useState<OutlookSyncStatus | null>(null)
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [syncLoading, setSyncLoading] = useState(false)
+
   useEffect(() => {
     if (open) {
       setEnableSystemNotification(settings?.enable_system_notification ?? true)
       setEventReminders((settings?.default_event_reminders || []).map(toDisplay))
       setTodoReminders((settings?.default_todo_reminders || []).map(toDisplay))
+      window.electronAPI.calendar.outlook.status().then(result => {
+        if (result && !result.error) setOutlook(result as OutlookSyncStatus)
+      }).catch(() => { /* ignore */ })
     }
   }, [open, settings])
+
+  // 同步状态推送（同步开始/结束/登出）
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.calendar.outlook.onSyncChanged((status) => {
+      setOutlook(status)
+      setSyncLoading(false)
+    })
+    return () => { unsubscribe() }
+  }, [])
+
+  const handleLogin = useCallback(async () => {
+    setLoginLoading(true)
+    try {
+      const result = await window.electronAPI.calendar.outlook.login()
+      if (result?.error) {
+        message.error(result.error)
+      } else if (result) {
+        setOutlook(result as OutlookSyncStatus)
+        message.success(t('calendar.outlookLoginSuccess'))
+      }
+    } catch (err: any) {
+      message.error(err?.message || t('calendar.outlookLoginFailed'))
+    } finally {
+      setLoginLoading(false)
+    }
+  }, [message, t])
+
+  const handleLogout = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.calendar.outlook.logout()
+      if (result && !result.error) setOutlook(result as OutlookSyncStatus)
+    } catch (err: any) {
+      message.error(err?.message || 'Failed to log out')
+    }
+  }, [message])
+
+  const handleConfigChange = useCallback(async (partial: Partial<OutlookSyncStatus['config']>) => {
+    try {
+      const result = await window.electronAPI.calendar.outlook.setConfig(partial)
+      if (result?.error) message.error(result.error)
+      else if (result) setOutlook(result as OutlookSyncStatus)
+    } catch (err: any) {
+      message.error(err?.message || 'Failed to save')
+    }
+  }, [message])
+
+  const handleSyncNow = useCallback(async () => {
+    setSyncLoading(true)
+    try {
+      const result = await window.electronAPI.calendar.outlook.syncNow()
+      if (result?.error) {
+        message.error(result.error)
+        setSyncLoading(false)
+      } else if (result) {
+        setOutlook(result as OutlookSyncStatus)
+        const r = (result as OutlookSyncStatus).last_result
+        if (r) message.success(t('calendar.outlookSyncDone', { created: r.created, updated: r.updated, deleted: r.deleted, failed: r.failed }))
+        setSyncLoading(false)
+      }
+    } catch (err: any) {
+      message.error(err?.message || t('calendar.outlookSyncFailed'))
+      setSyncLoading(false)
+    }
+  }, [message, t])
 
   const reminderLabel = useCallback((m: number): string => {
     if (m === 0) return t('calendar.atStart')
@@ -143,6 +221,133 @@ const CalendarSettingsDrawer: React.FC<CalendarSettingsDrawerProps> = ({
     </div>
   )
 
+  const renderOutlookTab = () => {
+    const signedIn = !!outlook?.signed_in
+    const cfg = outlook?.config
+    const syncing = outlook?.syncing || syncLoading
+    const lastResult = outlook?.last_result ?? null
+
+    const statusText = (() => {
+      if (syncing) return <Tag color="processing" icon={<SyncOutlined spin />}>{t('calendar.outlookSyncing')}</Tag>
+      if (outlook?.last_error) return <Tag color="error">{outlook.last_error}</Tag>
+      if (lastResult) return <Tag color={lastResult.failed > 0 ? 'warning' : 'success'}>
+        {t('calendar.outlookSyncResult', {
+          created: lastResult.created, updated: lastResult.updated,
+          deleted: lastResult.deleted, failed: lastResult.failed,
+        })}
+      </Tag>
+      return <Tag>{t('calendar.outlookNeverSynced')}</Tag>
+    })()
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Card size="small" style={cardStyle}>
+          <SettingsItem
+            title={t('calendar.outlookAccount')}
+            description={signedIn
+              ? (outlook?.account?.email || outlook?.account?.display_name || '-')
+              : t('calendar.outlookAccountHint')}
+            extra={
+              signedIn ? (
+                <Button size="small" icon={<LogoutOutlined />} onClick={handleLogout}>
+                  {t('calendar.outlookSignOut')}
+                </Button>
+              ) : (
+                <Button type="primary" size="small" icon={<LoginOutlined />} loading={loginLoading} onClick={handleLogin}>
+                  {t('calendar.outlookSignIn')}
+                </Button>
+              )
+            }
+          />
+        </Card>
+
+        <Card size="small" style={cardStyle}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <SettingsItem
+              title={t('calendar.outlookSyncEnable')}
+              description={t('calendar.outlookSyncEnableHint')}
+              extra={
+                <Switch
+                  disabled={!signedIn}
+                  checked={!!cfg?.enabled}
+                  onChange={(checked) => handleConfigChange({ enabled: checked })}
+                />
+              }
+            />
+            <Divider style={{ margin: '4px 0' }} />
+            <SettingsItem
+              title={t('calendar.outlookAutoSync')}
+              description={t('calendar.outlookAutoSyncHint')}
+              extra={
+                <Switch
+                  disabled={!signedIn || !cfg?.enabled}
+                  checked={!!cfg?.auto_sync}
+                  onChange={(checked) => handleConfigChange({ auto_sync: checked })}
+                />
+              }
+            />
+            <Divider style={{ margin: '4px 0' }} />
+            <SettingsItem
+              title={t('calendar.outlookSyncEvents')}
+              description={t('calendar.outlookSyncEventsHint')}
+              extra={
+                <Switch
+                  disabled={!signedIn || !cfg?.enabled}
+                  checked={!!cfg?.sync_events}
+                  onChange={(checked) => handleConfigChange({ sync_events: checked })}
+                />
+              }
+            />
+            <Divider style={{ margin: '4px 0' }} />
+            <SettingsItem
+              title={t('calendar.outlookSyncTodos')}
+              description={t('calendar.outlookSyncTodosHint')}
+              extra={
+                <Switch
+                  disabled={!signedIn || !cfg?.enabled}
+                  checked={!!cfg?.sync_todos}
+                  onChange={(checked) => handleConfigChange({ sync_todos: checked })}
+                />
+              }
+            />
+          </div>
+        </Card>
+
+        <Card size="small" style={cardStyle}>
+          <SettingsItem
+            title={t('calendar.outlookSyncNow')}
+            description={
+              <Space direction="vertical" size={2}>
+                <span>{t('calendar.outlookSyncNowHint')}</span>
+                {statusText}
+                {lastResult && (
+                  <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                    {t('calendar.outlookLastSyncAt')}: {formatTime(lastResult.synced_at)}
+                  </span>
+                )}
+              </Space>
+            }
+            extra={
+              <Tooltip title={!signedIn ? t('calendar.outlookSignInFirst') : ''}>
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  icon={<CloudSyncOutlined />}
+                  disabled={!signedIn}
+                  loading={syncing}
+                  onClick={handleSyncNow}
+                >
+                  {t('calendar.outlookSyncNowButton')}
+                </Button>
+              </Tooltip>
+            }
+          />
+        </Card>
+      </div>
+    )
+  }
+
   const tabItems = [
     {
       key: 'notification',
@@ -153,6 +358,11 @@ const CalendarSettingsDrawer: React.FC<CalendarSettingsDrawerProps> = ({
       key: 'reminders',
       label: <span><BellOutlined style={{ marginRight: 4 }} />{t('calendar.settingsTabReminders')}</span>,
       children: renderRemindersTab(),
+    },
+    {
+      key: 'outlook',
+      label: <span><CloudSyncOutlined style={{ marginRight: 4 }} />{t('calendar.settingsTabOutlook')}</span>,
+      children: renderOutlookTab(),
     },
   ]
 

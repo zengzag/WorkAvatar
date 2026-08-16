@@ -400,6 +400,23 @@ class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_calendar_reminders_trigger ON calendar_reminders(trigger_at, fired_at);
       CREATE INDEX IF NOT EXISTS idx_calendar_reminders_target ON calendar_reminders(target_type, target_id);
 
+      -- 日历外部同步映射表：本地记录与远端（如 Outlook）对象的对应关系
+      CREATE TABLE IF NOT EXISTS calendar_sync_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        -- 同步目标：outlook
+        target TEXT NOT NULL,
+        -- event / todo
+        local_type TEXT NOT NULL,
+        local_id TEXT NOT NULL,
+        -- 远端对象 id（Outlook event id / todoTask id）
+        remote_id TEXT NOT NULL,
+        -- 最近一次成功同步的本地 updated_at，用于增量判断
+        synced_updated_at INTEGER NOT NULL,
+        synced_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_sync_map_unique ON calendar_sync_map(target, local_type, local_id);
+
       -- 自动化任务表：定时调度数字员工执行提示词任务
       CREATE TABLE IF NOT EXISTS automation_tasks (
         id TEXT PRIMARY KEY,

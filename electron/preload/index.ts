@@ -70,6 +70,8 @@ import type {
   CreateTodoInput,
   UpdateTodoInput,
   CalendarSettings,
+  OutlookSyncConfig,
+  OutlookSyncStatus,
   NotifyPayload,
   DeleteEventInstanceParams,
   DeleteTodoInstanceParams,
@@ -415,6 +417,19 @@ const electronAPI = {
     // 设置
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_GET_SETTINGS),
     setSettings: (params: Partial<CalendarSettings>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_SET_SETTINGS, params),
+    // Outlook 同步
+    outlook: {
+      login: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGIN),
+      logout: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGOUT),
+      status: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_STATUS),
+      setConfig: (params: Partial<OutlookSyncConfig>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SET_CONFIG, params),
+      syncNow: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_NOW),
+      onSyncChanged: (callback: (status: OutlookSyncStatus) => void) => {
+        const handler = (_event: any, status: OutlookSyncStatus) => callback(status)
+        ipcRenderer.on(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
+        return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
+      },
+    },
     // 通知事件订阅
     onNotify: (callback: (payload: NotifyPayload) => void) => {
       const handler = (_event: any, payload: NotifyPayload) => callback(payload)
