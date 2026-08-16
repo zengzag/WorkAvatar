@@ -33,6 +33,7 @@ import {
 import type { LLMProvider, LLMModelConfig, LLMModelCategory, LLMProviderType } from '../../types'
 import { useTranslation } from 'react-i18next'
 import { invalidateProvidersCache } from '../../hooks/useLlmSettings'
+import { computeModelRenames, syncModelRenamesInStorage } from '../../utils/llm'
 
 const { Text, Title } = Typography
 
@@ -210,6 +211,11 @@ const LLMSettings: React.FC = () => {
       }
       if (editingProvider) {
         await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
+        // 模型ID变更后同步 localStorage 中的引用（主进程已级联更新 settings/automation 表）
+        syncModelRenamesInStorage(
+          editingProvider.id,
+          computeModelRenames(parseModelsJson(editingProvider.models_json), models),
+        )
         message.success(t('settings.updated'))
       } else {
         await window.electronAPI.llm.createProvider(providerData)

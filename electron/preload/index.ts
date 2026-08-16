@@ -21,6 +21,7 @@ import type {
   SettingsSetParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
+  EmployeeGenerateDescriptionParams,
   ToolAssignParams,
   ToolCategoryAssignParams,
   ToolCategoryInfo,
@@ -171,6 +172,7 @@ const electronAPI = {
     },
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
+    generateDescription: (params: EmployeeGenerateDescriptionParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GENERATE_DESCRIPTION, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
       const handler = (_event: any, data: { stage: string; detail?: string; chunk?: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, handler)

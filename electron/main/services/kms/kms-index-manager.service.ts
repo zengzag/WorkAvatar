@@ -995,19 +995,19 @@ class KMSIndexManagerService {
       const modelId = await this.resolveHotFileModelId(providerId, llmClient, kmsModelId)
 
       const { paragraphs, savedParagraphs } = await this.splitAndIndexParagraphs(
-        fileId, fullText, fileName, providerId, modelId, llmClient, searchEngine,
+        fileId, fullText, fileName, providerId, modelId, searchEngine,
         signal, onProgress, progressBase, enableThinking,
       )
       if (signal?.aborted) return
 
       const paragraphSummaries = await this.generateParagraphSummaries(
-        fileId, fileName, paragraphs, savedParagraphs, providerId, modelId, llmClient, searchEngine,
+        fileId, fileName, paragraphs, savedParagraphs, providerId, modelId, searchEngine,
         signal, onProgress, enableThinking,
       )
       if (signal?.aborted) return
 
       await this.generateDocSummary(
-        fileId, fullText, fileName, paragraphSummaries, providerId, modelId, llmClient, searchEngine,
+        fileId, fullText, fileName, paragraphSummaries, providerId, modelId, searchEngine,
         signal, onProgress, progressBase, enableThinking,
       )
     } catch (err) {
@@ -1061,7 +1061,6 @@ class KMSIndexManagerService {
     fileName: string,
     providerId: string,
     modelId: string | undefined,
-    llmClient: LLMClientService,
     searchEngine: KMSSearchEngineService,
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
@@ -1095,7 +1094,7 @@ class KMSIndexManagerService {
 
       try {
         const restoredToc = await restoreTocWithLLM(
-          fullText, providerId, modelId, llmClient, onProgress, signal, enableThinking
+          fullText, providerId, modelId, onProgress, signal, enableThinking
         )
 
         if (!signal?.aborted && restoredToc.length > 0) {
@@ -1174,7 +1173,6 @@ class KMSIndexManagerService {
     savedParagraphs: Array<{ id: string; paragraphIndex: number }>,
     providerId: string,
     modelId: string | undefined,
-    llmClient: LLMClientService,
     searchEngine: KMSSearchEngineService,
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
@@ -1217,7 +1215,7 @@ class KMSIndexManagerService {
 
       try {
         const summary = await generateParagraphSummary(
-          p.content, p.title || fileName, providerId, modelId, llmClient, signal, enableThinking
+          p.content, p.title || fileName, providerId, modelId, signal, enableThinking
         )
         paragraphSummaries.push(summary)
       } catch (err: any) {
@@ -1254,7 +1252,6 @@ class KMSIndexManagerService {
     paragraphSummaries: Array<{ title: string; summary: string; keywords: string[] }>,
     providerId: string,
     modelId: string | undefined,
-    llmClient: LLMClientService,
     searchEngine: KMSSearchEngineService,
     signal?: AbortSignal,
     onProgress?: ProgressCallback,
@@ -1276,7 +1273,7 @@ class KMSIndexManagerService {
 
       try {
         const docSummary = await generateDocumentSummaryFromParagraphs(
-          paragraphSummaries, fileName, providerId, modelId, llmClient, signal, enableThinking
+          paragraphSummaries, fileName, providerId, modelId, signal, enableThinking
         )
         this.saveFileSummary(fileId, docSummary.summary, docSummary.keywords, docSummary.mainTopics)
         searchEngine.indexFileSummary(fileId, docSummary.summary, docSummary.keywords)
@@ -1294,7 +1291,7 @@ class KMSIndexManagerService {
         fileName,
         startedAt: Math.floor(Date.now() / 1000),
       })
-      await generateFileSummaryViaLLM(fileId, fullText, providerId, modelId, llmClient, searchEngine, signal, enableThinking, (fid, summary, keywords, mainTopics) => this.saveFileSummary(fid, summary, keywords, mainTopics))
+      await generateFileSummaryViaLLM(fileId, fullText, providerId, modelId, searchEngine, signal, enableThinking, (fid, summary, keywords, mainTopics) => this.saveFileSummary(fid, summary, keywords, mainTopics))
     }
   }
 
@@ -1402,7 +1399,7 @@ class KMSIndexManagerService {
           if (files.length === 0) continue
 
           const { summary: dirSummary, keywords } = await generateDirSummaryViaLLM(
-            dir.dir_path, files, providerId, modelId, llmClient, signal, enableThinking,
+            dir.dir_path, files, providerId, modelId, signal, enableThinking,
           )
 
           this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)
@@ -1459,7 +1456,7 @@ class KMSIndexManagerService {
       }
 
       const { summary: dirSummary, keywords } = await generateDirSummaryViaLLM(
-        dir.dir_path, files, llmConfig?.providerId, modelId, llmClient, undefined, llmConfig?.enableThinking, 'kms_dir_summary_manual',
+        dir.dir_path, files, llmConfig?.providerId, modelId, undefined, llmConfig?.enableThinking, 'kms_dir_summary_manual',
       )
 
       this.saveDirSummary(dir.id, dir.dir_path, dirSummary, files.length, keywords)

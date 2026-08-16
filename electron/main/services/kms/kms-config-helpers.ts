@@ -112,7 +112,7 @@ export function getKmsEmbeddingConfig(): KmsEmbeddingConfig | null {
       if (kmsEmb.model_id && provider.models_json) {
         try {
           const models = JSON.parse(provider.models_json)
-          const model = models.find((m: any) => m.id === kmsEmb.model_id)
+          const model = models.find((m: any) => m.id === kmsEmb.model_id || m.model === kmsEmb.model_id)
           if (model) {
             modelName = model.model
           }

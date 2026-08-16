@@ -10,6 +10,8 @@ export interface LLMCallOptions {
   logSource?: string
   /** 会话 ID，用于支持 prompt caching 的 provider 最大化 cache 命中 */
   sessionId?: string
+  /** 取消信号（chat 非流式调用同样支持取消） */
+  signal?: AbortSignal
 }
 
 export interface LLMResponse {

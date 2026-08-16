@@ -3,7 +3,7 @@ import { generateId } from './common-utils'
 import fs from 'fs'
 import DatabaseService from './database.service'
 
-export const EXPORT_CONFIG_VERSION = '1.0.0'
+export const EXPORT_CONFIG_VERSION = '1.1.0'
 
 export interface EmployeeConfigExport {
   version: string
@@ -13,6 +13,8 @@ export interface EmployeeConfigExport {
   employee: {
     name: string
     description: string
+    /** 规则（系统提示词）；1.1.0 起导出，旧版文件无此字段 */
+    rules?: string
     avatar_type: string
     profile_json: string
     memory_enabled: boolean
@@ -76,6 +78,7 @@ export class EmployeeExportConfigService {
       employee: {
         name: employee.name,
         description: employee.description,
+        rules: employee.rules || '',
         avatar_type: employee.avatar_type,
         profile_json: employee.profile_json || '',
         memory_enabled: !!employee.memory_enabled,
@@ -201,13 +204,18 @@ export class EmployeeExportConfigService {
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().transaction(() => {
+      // 旧版（<1.1.0）文件无 rules 字段：description 兼作系统提示词，导入时回填到 rules
+      const rulesValue = importData.employee.rules !== undefined
+        ? importData.employee.rules
+        : (importData.employee.description || '')
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, profile_json, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
         importData.employee.description || '',
+        rulesValue,
         importData.employee.profile_json || '',
         importData.employee.avatar_type || 'default',
         importData.employee.memory_enabled ? 1 : 0,

@@ -1,5 +1,5 @@
 import { isMainThread } from 'worker_threads'
-import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
+import type { LLMModelConfig } from '../../shared/types'
 
 /** LLM 提供商配置（数据库行映射） */
 export interface LLMProviderConfig {
@@ -16,28 +16,6 @@ export interface LLMProviderConfig {
   extra_headers_json?: string
   extra_body_json?: string
   models_json?: string
-}
-
-export interface ChatMessage {
-  role: string
-  content: string
-}
-
-export interface ChatCompletionRequest {
-  model: string
-  messages: ChatMessage[]
-  temperature?: number
-  max_tokens?: number
-  top_p?: number
-  frequency_penalty?: number
-  presence_penalty?: number
-  stream?: boolean
-  [key: string]: any
-}
-
-export interface ProcessThinkChunkResult {
-  thought?: string
-  content?: string
 }
 
 /** 各 provider 类型的默认 baseURL 和模型 */
@@ -58,16 +36,6 @@ export const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: 
   vertex: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
   bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
   xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
-}
-
-/** chat/chatStream 方法选项 */
-export interface ChatOptions {
-  temperature?: number
-  max_tokens?: number
-  model?: string
-  enable_thinking?: ThinkingLevel
-  signal?: AbortSignal
-  logSource?: string
 }
 
 export type { LLMModelConfig }

@@ -1,4 +1,3 @@
-import type LLMClientService from '../llm-client.service'
 import type KMSSearchEngineService from './kms-search-engine.service'
 import { callLLMForJSON } from './kms-llm-helpers'
 import {
@@ -21,7 +20,6 @@ export async function callLLMForToc(
   numberedContent: string,
   providerId: string,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   existingTocContext?: string,
   signal?: AbortSignal,
   enableThinking?: boolean,
@@ -53,7 +51,6 @@ ${numberedContent}
 {"toc":[{"title":"标题文字","level":1,"lineNumber":5}]}`
 
   const parsed = await callLLMForJSON<{ toc: LLMTocEntry[] }>(
-    llmClient,
     providerId,
     modelId,
     [
@@ -71,7 +68,6 @@ export async function restoreTocWithLLM(
   text: string,
   providerId: string,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   onProgress?: ProgressCallback,
   signal?: AbortSignal,
   enableThinking?: boolean,
@@ -80,7 +76,7 @@ export async function restoreTocWithLLM(
 
   if (lines.length <= TOC_CHUNK_LINES) {
     const numberedContent = addLineNumbers(text)
-    const entries = await callLLMForToc(numberedContent, providerId, modelId, llmClient, undefined, signal, enableThinking)
+    const entries = await callLLMForToc(numberedContent, providerId, modelId, undefined, signal, enableThinking)
     return validateTocEntries(text, entries)
   }
 
@@ -116,7 +112,7 @@ export async function restoreTocWithLLM(
       startedAt: Math.floor(Date.now() / 1000),
     })
 
-    const entries = await callLLMForToc(numberedContent, providerId, modelId, llmClient, existingTocContext, signal, enableThinking)
+    const entries = await callLLMForToc(numberedContent, providerId, modelId, existingTocContext, signal, enableThinking)
     allEntries.push(...entries)
 
     chunkIndex++
@@ -134,7 +130,6 @@ export async function generateParagraphSummary(
   paragraphTitle: string,
   providerId: string,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<{ title: string; summary: string; keywords: string[] }> {
@@ -151,7 +146,6 @@ ${paragraphContent.substring(0, 8000)}
 只返回JSON。`
 
   return callLLMForJSON<{ title: string; summary: string; keywords: string[] }>(
-    llmClient,
     providerId,
     modelId,
     [
@@ -175,7 +169,6 @@ export async function generateDocumentSummaryFromParagraphs(
   documentTitle: string,
   providerId: string,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   signal?: AbortSignal,
   enableThinking?: boolean,
 ): Promise<{ summary: string; keywords: string[]; mainTopics: string[] }> {
@@ -196,7 +189,6 @@ ${summariesText.substring(0, 15000)}
 只返回JSON。`
 
   return callLLMForJSON<{ summary: string; keywords: string[]; mainTopics: string[] }>(
-    llmClient,
     providerId,
     modelId,
     [
@@ -258,7 +250,6 @@ export async function generateFileSummary(
   fullText: string,
   providerId: string,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   searchEngine: KMSSearchEngineService,
   signal: AbortSignal | undefined,
   enableThinking: boolean | undefined,
@@ -273,7 +264,6 @@ export async function generateFileSummary(
   if (signal?.aborted) return
 
   const parsed = await callLLMForJSON<{ summary: string; keywords: string[]; main_topics: string[] }>(
-    llmClient,
     providerId,
     modelId,
     [
@@ -331,7 +321,6 @@ export async function generateDirSummaryViaLLM(
   files: any[],
   providerId: string | undefined,
   modelId: string | undefined,
-  llmClient: LLMClientService,
   signal?: AbortSignal,
   enableThinking?: boolean,
   logSource = 'kms_dir_summary',
@@ -350,7 +339,6 @@ ${fileList}
 
     try {
       const parsed = await callLLMForJSON<{ summary: string; keywords: string[] }>(
-        llmClient,
         providerId,
         modelId,
         [

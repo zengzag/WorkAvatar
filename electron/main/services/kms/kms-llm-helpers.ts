@@ -1,4 +1,4 @@
-import LLMClientService from '../llm-client.service'
+import { createPiProvider } from '../agent/llm/pi-provider-factory'
 import { parseJSON } from './kms-paragraph-processor'
 import type { ThinkingLevel } from '../../../shared/types'
 
@@ -26,7 +26,6 @@ export interface CallLLMForJSONOptions {
  * 调用方负责在必要时检查 signal.aborted 与业务字段合法性。
  */
 export async function callLLMForJSON<T>(
-  llmClient: LLMClientService,
   providerId: string,
   modelId: string | undefined,
   messages: Array<{ role: 'system' | 'user'; content: string }>,
@@ -34,15 +33,16 @@ export async function callLLMForJSON<T>(
   options: CallLLMForJSONOptions = {},
 ): Promise<T> {
   try {
-    const result = await llmClient.chat(providerId, messages, {
+    const provider = await createPiProvider(providerId, modelId)
+    if (!provider) throw new Error('LLM Provider not found')
+    const result = await provider.chat(messages, [], {
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
-      ...(modelId ? { model: modelId } : {}),
+      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.logSource ? { logSource: options.logSource } : {}),
-      ...(options.enable_thinking !== undefined ? { enable_thinking: options.enable_thinking } : {}),
+      ...(options.enable_thinking !== undefined ? { enableThinking: options.enable_thinking } : {}),
     })
-    return parseJSON<T>(result, fallback)
+    return parseJSON<T>(result.content, fallback)
   } catch (err) {
     if (options.throwOnError) {
       throw new Error(

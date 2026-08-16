@@ -2,7 +2,8 @@ import fs from 'fs'
 import path from 'path'
 import DatabaseService from '../database.service'
 import KMSDatabaseService from '../kms/kms-database.service'
-import LLMClientService from '../llm-client.service'
+import { createPiProvider } from '../agent/llm/pi-provider-factory'
+import type { LLMMessage } from '../agent/llm/types'
 import PathService from '../path.service'
 import { generateId } from '../common-utils'
 import { createLogger } from '../logger'
@@ -408,9 +409,8 @@ class VoiceService {
     }
 
     const llmConfig = settings.minutesModel
-    const llmClient = LLMClientService.getInstance()
-    const providerConfig = await llmClient.getProviderConfig(llmConfig.provider_id)
-    if (!providerConfig) {
+    const provider = await createPiProvider(llmConfig.provider_id, llmConfig.model_id)
+    if (!provider) {
       throw new Error('LLM Provider not found')
     }
 
@@ -432,37 +432,32 @@ class VoiceService {
 
       // 流式生成：每收到一个 chunk 即推送进度，progress 在 30~90 之间渐进
       let accumulated = ''
-      await llmClient.chatStream(
-        llmConfig.provider_id,
-        messages as any,
-        (chunk) => {
-          accumulated += chunk
-          // 进度估算：基于累积字符数渐进推进，上限 90（剩余 10% 留给整理与入库）
-          const estimated = Math.min(90, 30 + accumulated.length / 50)
-          this.notifyProgress(
-            taskId,
-            'generating_minutes',
-            '正在生成纪要内容...',
-            Math.round(estimated),
-            chunk,
-            accumulated,
-          )
-        },
-        () => {
-          // onDone：流式结束，标记进度 95 等待最终入库
-          this.notifyProgress(taskId, 'generating_minutes', '正在整理纪要内容...', 95, undefined, accumulated)
-        },
-        (error) => {
-          throw error
-        },
+      await provider.chatStream(
+        messages as LLMMessage[],
+        [],
         {
-          model: llmConfig.model_id || providerConfig.model,
-          temperature: 0.3,
-          max_tokens: 4096,
-          logSource: 'voice-minutes',
+          onChunk: (chunk: string) => {
+            accumulated += chunk
+            // 进度估算：基于累积字符数渐进推进，上限 90（剩余 10% 留给整理与入库）
+            const estimated = Math.min(90, 30 + accumulated.length / 50)
+            this.notifyProgress(
+              taskId,
+              'generating_minutes',
+              '正在生成纪要内容...',
+              Math.round(estimated),
+              chunk,
+              accumulated,
+            )
+          },
+          onThought: () => { /* 纪要生成不展示思考过程 */ },
+          onToolCall: () => { /* 纪要生成不使用工具 */ },
         },
         controller.signal,
+        { temperature: 0.3, maxTokens: 4096, logSource: 'voice-minutes' },
       )
+
+      // 流式结束，标记进度 95 等待最终入库
+      this.notifyProgress(taskId, 'generating_minutes', '正在整理纪要内容...', 95, undefined, accumulated)
 
       const finalText = accumulated.trim()
       if (!finalText) {

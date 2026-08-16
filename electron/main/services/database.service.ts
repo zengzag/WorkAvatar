@@ -142,6 +142,7 @@ class DatabaseService {
         workspace_path TEXT DEFAULT '',
         name TEXT NOT NULL,
         description TEXT DEFAULT '',
+        rules TEXT DEFAULT '',
         avatar_type TEXT DEFAULT 'default',
         default_skill_id TEXT,
         profile_json TEXT DEFAULT '',
@@ -454,6 +455,11 @@ class DatabaseService {
     this.addColumnIfNotExists('llm_providers', 'models_json', 'TEXT DEFAULT \'[]\'')
     this.addColumnIfNotExists('llm_providers', 'extra_body_json', 'TEXT')
     this.addColumnIfNotExists('employees', 'profile_json', "TEXT DEFAULT ''")
+
+    // 规则（系统提示词）：旧版 description 兼作系统提示词，新增列时一次性回填迁移
+    if (this.addColumnIfNotExists('employees', 'rules', "TEXT DEFAULT ''")) {
+      this.migrateEmployeeRules()
+    }
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
     this.addColumnIfNotExists('employees', 'last_active_at', 'INTEGER')
@@ -770,6 +776,40 @@ class DatabaseService {
     const result = this.db.prepare('UPDATE conversations SET last_message_at = updated_at WHERE last_message_at IS NULL').run()
     if (result.changes > 0) {
       logger.info(`Migration: set last_message_at for ${result.changes} conversations`)
+    }
+  }
+
+  /**
+   * rules 列回填迁移：旧版系统提示词来源为 profile_json.roleDescription（优先）或 description，
+   * 迁移后 description 转为纯描述用途（旧内容保留，可由用户重新生成简短描述）。
+   */
+  private migrateEmployeeRules(): void {
+    try {
+      const rows = this.db.prepare(
+        "SELECT id, description, profile_json FROM employees WHERE rules IS NULL OR rules = ''"
+      ).all() as Array<{ id: string; description?: string | null; profile_json?: string | null }>
+      if (rows.length === 0) return
+
+      const stmt = this.db.prepare('UPDATE employees SET rules = ? WHERE id = ?')
+      const tx = this.db.transaction(() => {
+        let applied = 0
+        for (const r of rows) {
+          let source = ''
+          try {
+            const profile = r.profile_json ? JSON.parse(r.profile_json) : null
+            source = profile?.roleDescription || ''
+          } catch { /* ignore invalid JSON */ }
+          if (!source) source = (r.description || '').trim()
+          if (source) {
+            stmt.run(source, r.id)
+            applied++
+          }
+        }
+        logger.info(`Migration: employees.rules backfilled for ${applied}/${rows.length} rows`)
+      })
+      tx()
+    } catch (err: any) {
+      logger.warn('Migration: employees.rules backfill failed:', err?.message || err)
     }
   }
 

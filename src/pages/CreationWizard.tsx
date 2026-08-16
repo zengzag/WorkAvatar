@@ -261,6 +261,7 @@ const CreationWizard: React.FC = () => {
         previous_profile: {
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
+          description: profile.description,
           suggestedTools: profile.suggestedTools,
         },
         feedback: refineFeedback,
@@ -285,10 +286,11 @@ const CreationWizard: React.FC = () => {
   }
 
   /** 创建员工并分配工具 */
-  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string) => {
+  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string, rules?: string) => {
     const employee = await window.electronAPI.employee.create({
       name,
       description,
+      rules,
       profile_json: profileJson,
     })
 
@@ -334,9 +336,11 @@ const CreationWizard: React.FC = () => {
         roleDescription: profile.roleDescription,
         suggestedTools: profile.suggestedTools,
       }) : undefined
-      const description = profile?.roleDescription || businessDescription || ''
+      // 规则（系统提示词）取画像 roleDescription；描述为画像生成的简短描述
+      const rules = profile?.roleDescription || businessDescription || ''
+      const description = profile?.description || ''
 
-      await createEmployeeWithTools(employeeName, description, profileJson)
+      await createEmployeeWithTools(employeeName, description, profileJson, rules)
       navigate('/employees')
     } catch (error) {
       message.error(t('creationWizard.createFailed'))

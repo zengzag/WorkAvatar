@@ -14,6 +14,7 @@ export type {
   ConversationSearchResultItem,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
+  EmployeeGenerateDescriptionParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,

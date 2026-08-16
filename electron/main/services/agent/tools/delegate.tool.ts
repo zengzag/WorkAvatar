@@ -71,8 +71,9 @@ export function buildDelegateDescription(employeeId: string, employees: Array<{ 
   const others = employees.filter(e => e.id !== employeeId)
   const listText = others.length > 0
     ? others.map(e => {
-        const role = e.role || e.description?.trim()
-        return `- ${e.name} (id=${e.id})${role ? `：${role.slice(0, 80)}` : ''}`
+        // 描述优先（供其他数字员工了解该员工能力），旧数据回退到角色名
+        const desc = e.description?.trim() || e.role
+        return `- ${e.name} (id=${e.id})${desc ? `：${desc.slice(0, 80)}` : ''}`
       }).join('\n')
     : '（暂无其他数字员工）'
   return `${delegateTool.description}

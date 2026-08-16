@@ -105,6 +105,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       form.setFieldsValue({
         name: employee.name,
         description: employee.description,
+        rules: employee.rules,
         avatar_type: employee.avatar_type,
       })
     }

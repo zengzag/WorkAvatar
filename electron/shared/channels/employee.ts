@@ -18,6 +18,7 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_PROFILE_ANALYZE: 'employee:profile-analyze',
   EMPLOYEE_PROFILE_PROGRESS: 'employee:profile-progress',
   EMPLOYEE_PROFILE_REFINE: 'employee:profile-refine',
+  EMPLOYEE_GENERATE_DESCRIPTION: 'employee:generate-description',
 
   EMPLOYEE_EXPORT_CONFIG: 'employee:export-config',
   EMPLOYEE_IMPORT_CONFIG: 'employee:import-config',
@@ -48,6 +49,7 @@ export interface EmployeeListParams {
 export interface EmployeeCreateParams {
   name: string
   description?: string
+  rules?: string
   profile_json?: string
   workspace_path?: string
 }
@@ -56,6 +58,7 @@ export interface EmployeeUpdateParams {
   id: string
   name?: string
   description?: string
+  rules?: string
   profile_json?: string
   default_skill_id?: string
   workspace_path?: string
@@ -115,11 +118,21 @@ export interface EmployeeProfileRefineParams {
   previous_profile: {
     roleName: string
     roleDescription: string
+    description?: string
     suggestedTools: string[]
   }
   feedback: string
   provider_id: string
   model_id?: string
+}
+
+export interface EmployeeGenerateDescriptionParams {
+  employee_id: string
+  provider_id?: string
+  model_id?: string
+  /** 未保存的表单值优先于 DB（用于设置界面即时生成） */
+  name?: string
+  rules?: string
 }
 
 export interface EmployeeExportConfigParams {

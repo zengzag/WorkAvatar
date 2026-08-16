@@ -2,6 +2,8 @@
 export interface EmployeeProfile {
   roleName: string
   roleDescription: string
+  /** 简短描述（≤150字）：供用户和其他数字员工了解该员工能做什么 */
+  description: string
   suggestedTools: string[]
 }
 

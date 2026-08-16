@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3'
-import LLMClientService from '../llm-client.service'
 import { generateId } from '../common-utils'
 import { callLLMForJSON } from './kms-llm-helpers'
 import { createLogger } from '../logger'
@@ -75,9 +74,7 @@ ${fileSummaries.join('\n')}
 只返回 JSON：{"summary":"...","keyTopics":["..."]}`
 
   try {
-    const llmClient = LLMClientService.getInstance()
     const parsed = await callLLMForJSON<{ summary: string; keyTopics: string[] }>(
-      llmClient,
       llmConfig.providerId,
       llmConfig.modelId,
       [

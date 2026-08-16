@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Card,
@@ -22,6 +22,7 @@ import {
   SettingOutlined,
   FolderOpenOutlined,
   DeleteOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 
 const { TextArea } = Input
@@ -46,6 +47,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   const { t } = useTranslation()
   const { message } = App.useApp()
   const { token } = theme.useToken()
+  const [generating, setGenerating] = useState(false)
 
   // 头像样式配置，颜色使用主题语义 token 以适配明暗主题
   const avatarOptions = useMemo(() => [
@@ -54,6 +56,32 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
     { value: 'document', icon: <FileTextOutlined />, color: token.colorWarning, label: t('employeeSettings.avatarDocument') },
     { value: 'settings', icon: <SettingOutlined />, color: token.colorInfo, label: t('employeeSettings.avatarSettings') },
   ], [token, t])
+
+  /** 用 LLM 根据名称、规则、工具与技能生成简短描述，填入表单（未保存的表单值优先） */
+  const handleGenerateDescription = useCallback(async () => {
+    if (!employeeId || generating) return
+    setGenerating(true)
+    try {
+      const { name, rules } = form.getFieldsValue() as { name?: string; rules?: string }
+      const result = await window.electronAPI.employee.generateDescription({
+        employee_id: employeeId,
+        name,
+        rules,
+      })
+      if (result?.success && result.description) {
+        form.setFieldValue('description', result.description)
+        message.success(t('employeeSettings.generateDescSuccess'))
+      } else if (result?.error === 'NO_LLM_PROVIDER') {
+        message.warning(t('employeeSettings.noProviderForGenerate'))
+      } else {
+        message.error(result?.error || t('employeeSettings.generateDescFailed'))
+      }
+    } catch {
+      message.error(t('employeeSettings.generateDescFailed'))
+    } finally {
+      setGenerating(false)
+    }
+  }, [employeeId, form, generating, message, t])
 
   const handleChangeWorkspacePath = useCallback(async () => {
     try {
@@ -113,8 +141,30 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           </Col>
         </Row>
 
-        <Form.Item name="description" label={t('employeeSettings.descriptionLabel')}>
+        <Form.Item
+          name="description"
+          label={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {t('employeeSettings.descriptionLabel')}
+              <Button
+                type="link"
+                size="small"
+                htmlType="button"
+                icon={<ThunderboltOutlined />}
+                loading={generating}
+                onClick={handleGenerateDescription}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                {t('employeeSettings.autoGenerate')}
+              </Button>
+            </span>
+          }
+        >
           <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
+        </Form.Item>
+
+        <Form.Item name="rules" label={t('employeeSettings.rulesLabel')}>
+          <TextArea rows={8} placeholder={t('employeeSettings.rulesPlaceholder')} />
         </Form.Item>
 
         <Form.Item label={t('employeeSettings.workspacePath')}>

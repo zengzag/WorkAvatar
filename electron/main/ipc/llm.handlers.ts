@@ -10,6 +10,7 @@ import type {
 import type { ThinkingLevel } from '../../shared/types'
 import type LLMClientService from '../services/llm-client.service'
 import type EmployeeAgentService from '../services/employee-agent.service'
+import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { safeHandle } from './_shared'
@@ -79,12 +80,16 @@ export function registerLLMHandlers(
   // 业务语义错误返回 { success: false, error }，保留原 try-catch
   ipcMain.handle(IPC_CHANNELS.LLM_CHAT, async (_, params: LLMChatParams) => {
     try {
-      const result = await llmClient.chat(
-        params.provider_id,
-        params.messages,
-        params.model_id ? { ...params.options, model: params.model_id } : params.options
-      )
-      return { success: true, content: result }
+      const provider = await createPiProvider(params.provider_id, params.model_id)
+      if (!provider) {
+        return { success: false, error: 'LLM Provider not found' }
+      }
+      const response = await provider.chat(params.messages as any, [], {
+        temperature: params.options?.temperature,
+        maxTokens: params.options?.max_tokens,
+        logSource: 'llm_chat',
+      })
+      return { success: true, content: response.content }
     } catch (error: any) {
       return { success: false, error: error.message || String(error) }
     }

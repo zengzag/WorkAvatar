@@ -1,5 +1,5 @@
 import DatabaseService from './database.service'
-import LLMClientService from './llm-client.service'
+import { createPiProvider } from './agent/llm/pi-provider-factory'
 import { generateId } from './common-utils'
 import { createLogger } from './logger'
 import {
@@ -47,13 +47,11 @@ function clampContent(text: string, max: number = MEMORY_CONTENT_MAX_CHARS): str
 
 class EmployeeMemoryService {
   private db: DatabaseService
-  private llmClient: LLMClientService
   private static instance: EmployeeMemoryService
   private lastConsolidationAt: Map<string, number> = new Map()
 
   private constructor() {
     this.db = DatabaseService.getInstance()
-    this.llmClient = LLMClientService.getInstance()
   }
 
   static getInstance(): EmployeeMemoryService {
@@ -61,6 +59,23 @@ class EmployeeMemoryService {
       EmployeeMemoryService.instance = new EmployeeMemoryService()
     }
     return EmployeeMemoryService.instance
+  }
+
+  /** 统一 LLM 调用入口（提取/整合/摘要共用） */
+  private async llmChat(
+    providerId: string,
+    modelId: string | undefined,
+    prompt: string,
+    options: { maxTokens: number; logSource: string },
+  ): Promise<string> {
+    const provider = await createPiProvider(providerId, modelId)
+    if (!provider) throw new Error('LLM Provider not found')
+    const response = await provider.chat(
+      [{ role: 'user', content: prompt }],
+      [],
+      { temperature: 0.7, maxTokens: options.maxTokens, logSource: options.logSource },
+    )
+    return response.content
   }
 
   listMemories(employeeId: string): EmployeeMemory[] {
@@ -291,16 +306,7 @@ class EmployeeMemoryService {
     const prompt = buildExtractionPrompt(contextParts)
 
     try {
-      const response = await this.llmClient.chat(
-        providerId,
-        [{ role: 'user', content: prompt }],
-        {
-          temperature: 0.7,
-          max_tokens: 800,
-          model: modelId,
-          logSource: 'memory_extract',
-        }
-      )
+      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 800, logSource: 'memory_extract' })
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return []
@@ -413,16 +419,7 @@ class EmployeeMemoryService {
     const prompt = buildConsolidationPrompt(memoriesText)
 
     try {
-      const response = await this.llmClient.chat(
-        providerId,
-        [{ role: 'user', content: prompt }],
-        {
-          temperature: 0.7,
-          max_tokens: 1200,
-          model: modelId,
-          logSource: 'memory_consolidate',
-        }
-      )
+      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 1200, logSource: 'memory_consolidate' })
 
       const jsonMatch = response.match(/\{[\s\S]*\}/)
       if (!jsonMatch) return { deleted: 0, merged: 0, simplified: 0 }
@@ -597,16 +594,7 @@ class EmployeeMemoryService {
     const prompt = buildSummaryPrompt(conversationText)
 
     try {
-      const response = await this.llmClient.chat(
-        providerId,
-        [{ role: 'user', content: prompt }],
-        {
-          temperature: 0.7,
-          max_tokens: 1000,
-          model: modelId,
-          logSource: 'memory_summary',
-        }
-      )
+      const response = await this.llmChat(providerId, modelId, prompt, { maxTokens: 1000, logSource: 'memory_summary' })
 
       return response || generateFallbackSummary(messages)
     } catch (error: any) {

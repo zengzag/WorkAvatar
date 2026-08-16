@@ -18,7 +18,7 @@ export function invalidateProvidersCache() {
   _providersListeners.forEach(l => l())
 }
 
-function subscribeProviders(listener: ProvidersListener): () => void {
+export function subscribeProviders(listener: ProvidersListener): () => void {
   _providersListeners.add(listener)
   return () => { _providersListeners.delete(listener) }
 }

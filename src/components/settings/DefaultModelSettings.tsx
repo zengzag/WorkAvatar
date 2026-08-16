@@ -4,6 +4,7 @@ import { RobotOutlined, UserOutlined, ThunderboltOutlined, BugOutlined, CloudSer
 import { useTranslation } from 'react-i18next'
 import LLMSelector from '../llm/LLMSelector'
 import { getAllSceneDefaultModels, setSceneDefaultModel } from '../../utils/default-model'
+import { subscribeProviders } from '../../hooks/useLlmSettings'
 import type { SceneKey, SceneDefaultModel } from '../../utils/default-model'
 import type { LLMProvider } from '../../types'
 
@@ -46,6 +47,14 @@ const DefaultModelSettings: React.FC = () => {
   useEffect(() => {
     loadProviders()
     loadConfigs()
+  }, [loadProviders, loadConfigs])
+
+  // 模型设置修改模型ID后会级联更新场景默认模型，providers 变更时重新加载
+  useEffect(() => {
+    return subscribeProviders(() => {
+      loadProviders()
+      loadConfigs()
+    })
   }, [loadProviders, loadConfigs])
 
   const scenes: SceneConfig[] = useMemo(() => [

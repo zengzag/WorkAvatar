@@ -3,6 +3,7 @@ export interface DBEmployee {
   workspace_path: string | null
   name: string
   description: string
+  rules: string
   avatar_type: string
   status: string
   default_skill_id: string | null

@@ -119,7 +119,13 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron/main',
             rollupOptions: {
-              external: nativeExternals
+              external: nativeExternals,
+              output: {
+                // 主进程是 Electron 直接加载的单文件 CJS 入口，分割无收益；
+                // 且 rolldown 对 CJS 多 chunk 的跨模块符号提升在循环依赖下会产出
+                // 悬空引用（init_models is not defined），必须禁用分割
+                codeSplitting: false,
+              }
             }
           }
         }
