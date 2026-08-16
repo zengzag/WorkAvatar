@@ -61,7 +61,7 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(id) as Employee || null
   }
 
-  createEmployee(name: string, description: string = '', profileJson: string = ''): Employee {
+  createEmployee(name: string, description: string = '', profileJson: string = '', rules: string = ''): Employee {
     const employeeId = generateId()
     const now = Math.floor(Date.now() / 1000)
 
@@ -86,9 +86,9 @@ class WorkspaceManagerService {
     }
 
     this.db.getDb().prepare(`
-      INSERT INTO employees (id, workspace_path, name, description, profile_json, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'default', 1, 0, 0, ?, ?)
-    `).run(employeeId, workspacePath, name, description, profileJson, now, now)
+      INSERT INTO employees (id, workspace_path, name, description, rules, profile_json, avatar_type, arch_version, total_tasks, total_approvals, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'default', 1, 0, 0, ?, ?)
+    `).run(employeeId, workspacePath, name, description, rules, profileJson, now, now)
 
     this.broadcastEmployeeChanged()
 
@@ -98,6 +98,7 @@ class WorkspaceManagerService {
   updateEmployee(id: string, data: {
     name?: string
     description?: string
+    rules?: string
     profile_json?: string
     default_skill_id?: string
     workspace_path?: string | null
@@ -110,7 +111,7 @@ class WorkspaceManagerService {
     const values: any[] = []
 
     const ALLOWED_COLUMNS = [
-      'name', 'description', 'profile_json',
+      'name', 'description', 'rules', 'profile_json',
       'default_skill_id',
       'memory_enabled', 'workspace_path'
     ]

@@ -29,6 +29,7 @@ import type { LLMProvider } from '../types'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import {
   CollectionSelector,
+  PromptFileSelector,
   AnalysisProgress,
   AnalysisStreaming,
   ProfileDisplay,
@@ -63,6 +64,7 @@ const CreationWizard: React.FC = () => {
     return localStorage.getItem('creationWizard:selectedModelId') || getCachedSceneDefaultModel('creation')?.model_id || ''
   })
   const [businessDescription, setBusinessDescription] = useState<string>('')
+  const [contextFile, setContextFile] = useState<{ name: string; content: string } | null>(null)
   const [analysisMessages, setAnalysisMessages] = useState<Array<{ role: string; content: string }>>([])
   const [refineModalOpen, setRefineModalOpen] = useState(false)
   const [refineFeedback, setRefineFeedback] = useState('')
@@ -211,6 +213,7 @@ const CreationWizard: React.FC = () => {
         provider_id: selectedProviderId || undefined,
         model_id: selectedModelId || undefined,
         additional_context: businessDescription || undefined,
+        context_file: contextFile || undefined,
       })
 
       if (handleAnalysisResult(result)) {
@@ -258,6 +261,7 @@ const CreationWizard: React.FC = () => {
         previous_profile: {
           roleName: profile.roleName,
           roleDescription: profile.roleDescription,
+          description: profile.description,
           suggestedTools: profile.suggestedTools,
         },
         feedback: refineFeedback,
@@ -282,10 +286,11 @@ const CreationWizard: React.FC = () => {
   }
 
   /** 创建员工并分配工具 */
-  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string) => {
+  const createEmployeeWithTools = async (name: string, description: string, profileJson?: string, rules?: string) => {
     const employee = await window.electronAPI.employee.create({
       name,
       description,
+      rules,
       profile_json: profileJson,
     })
 
@@ -331,9 +336,11 @@ const CreationWizard: React.FC = () => {
         roleDescription: profile.roleDescription,
         suggestedTools: profile.suggestedTools,
       }) : undefined
-      const description = profile?.roleDescription || businessDescription || ''
+      // 规则（系统提示词）取画像 roleDescription；描述为画像生成的简短描述
+      const rules = profile?.roleDescription || businessDescription || ''
+      const description = profile?.description || ''
 
-      await createEmployeeWithTools(employeeName, description, profileJson)
+      await createEmployeeWithTools(employeeName, description, profileJson, rules)
       navigate('/employees')
     } catch (error) {
       message.error(t('creationWizard.createFailed'))
@@ -367,6 +374,8 @@ const CreationWizard: React.FC = () => {
             selectedIds={selectedCollectionIds}
             onChange={setSelectedCollectionIds}
           />
+
+          <PromptFileSelector value={contextFile} onChange={setContextFile} />
 
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>

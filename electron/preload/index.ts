@@ -21,6 +21,7 @@ import type {
   SettingsSetParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
+  EmployeeGenerateDescriptionParams,
   ToolAssignParams,
   ToolCategoryAssignParams,
   ToolCategoryInfo,
@@ -69,6 +70,8 @@ import type {
   CreateTodoInput,
   UpdateTodoInput,
   CalendarSettings,
+  OutlookSyncConfig,
+  OutlookSyncStatus,
   NotifyPayload,
   DeleteEventInstanceParams,
   DeleteTodoInstanceParams,
@@ -171,6 +174,7 @@ const electronAPI = {
     },
     analyzeProfile: (params: EmployeeProfileAnalyzeParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_ANALYZE, params),
     refineProfile: (params: EmployeeProfileRefineParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_PROFILE_REFINE, params),
+    generateDescription: (params: EmployeeGenerateDescriptionParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GENERATE_DESCRIPTION, params),
     onProfileProgress: (callback: (data: { stage: string; detail?: string; chunk?: string }) => void) => {
       const handler = (_event: any, data: { stage: string; detail?: string; chunk?: string }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, handler)
@@ -413,6 +417,19 @@ const electronAPI = {
     // 设置
     getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_GET_SETTINGS),
     setSettings: (params: Partial<CalendarSettings>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_SET_SETTINGS, params),
+    // Outlook 同步
+    outlook: {
+      login: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGIN),
+      logout: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGOUT),
+      status: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_STATUS),
+      setConfig: (params: Partial<OutlookSyncConfig>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SET_CONFIG, params),
+      syncNow: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_NOW),
+      onSyncChanged: (callback: (status: OutlookSyncStatus) => void) => {
+        const handler = (_event: any, status: OutlookSyncStatus) => callback(status)
+        ipcRenderer.on(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
+        return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
+      },
+    },
     // 通知事件订阅
     onNotify: (callback: (payload: NotifyPayload) => void) => {
       const handler = (_event: any, payload: NotifyPayload) => callback(payload)

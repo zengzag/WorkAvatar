@@ -3,6 +3,7 @@ export interface Employee {
   workspace_path?: string
   name: string
   description: string
+  rules: string
   profile_json: string
   avatar_type: string
   default_skill_id?: string

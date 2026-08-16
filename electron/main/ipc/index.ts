@@ -9,6 +9,7 @@ import { registerVoiceHandlers } from './voice.handlers'
 import { registerRuntimeEnvHandlers } from './runtime-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
 import { registerCalendarHandlers } from './calendar.handlers'
+import { registerOutlookSyncHandlers } from './outlook-sync.handlers'
 import { registerAutomationHandlers } from './automation.handlers'
 import { registerNotesHandlers } from './notes.handlers'
 import KMSService from '../services/kms/kms.service'
@@ -23,6 +24,7 @@ import EmployeeMemoryService from '../services/employee-memory.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import McpRegistryService from '../services/mcp-registry.service'
 import NotesService from '../services/notes/notes.service'
+import OutlookSyncService from '../services/calendar/outlook-sync.service'
 
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
@@ -44,11 +46,15 @@ export function registerIpcHandlers() {
   registerRuntimeEnvHandlers()
   registerMcpHandlers()
   registerCalendarHandlers()
+  registerOutlookSyncHandlers()
   registerAutomationHandlers()
   registerNotesHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
+
+  // 启动 Outlook 日历同步调度（已登录且开启自动同步时生效）
+  OutlookSyncService.getInstance().start()
 
   // 启动定时记忆精炼服务（空闲对话的记忆提取）
   MemoryRefinementService.getInstance().start()

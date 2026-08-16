@@ -1,6 +1,8 @@
 import DatabaseService from './database.service'
 import KMSDatabaseService from './kms/kms-database.service'
-import LLMClientService from './llm-client.service'
+import { createPiProvider } from './agent/llm/pi-provider-factory'
+import type { LLMMessage } from './agent/llm/types'
+import SkillRegistryService from './skill-registry.service'
 import { getDefaultProviderId } from './common-utils'
 import { allBuiltinTools } from './agent/tools'
 import { createLogger } from './logger'
@@ -10,6 +12,8 @@ const logger = createLogger('EmployeeProfiling')
 export interface EmployeeProfile {
   roleName: string
   roleDescription: string
+  /** 简短描述（≤150字）：供用户和其他数字员工了解该员工能做什么 */
+  description: string
   suggestedSkills: SuggestedSkill[]
   suggestedTools: string[]
 }
@@ -51,16 +55,19 @@ interface CollectionContent {
   }>
 }
 
+export interface ContextFile {
+  name: string
+  content: string
+}
+
 class EmployeeProfilingService {
   private kmsDb: KMSDatabaseService
   private db: DatabaseService
-  private llmClient: LLMClientService
   private static instance: EmployeeProfilingService
 
   private constructor() {
     this.kmsDb = KMSDatabaseService.getInstance()
     this.db = DatabaseService.getInstance()
-    this.llmClient = LLMClientService.getInstance()
   }
 
   static getInstance(): EmployeeProfilingService {
@@ -76,12 +83,16 @@ class EmployeeProfilingService {
     providerId?: string,
     modelId?: string,
     additionalContext?: string,
+    contextFile?: ContextFile,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<{ profile: EmployeeProfile; analysisMethod: 'llm' | 'heuristic' | 'default'; error?: string; messages?: Array<{ role: string; content: string }> }> {
     const collectionContents = this.loadCollectionContents(collectionIds)
     const defaultProvider = providerId || this.getDefaultProviderId()
 
     if (!defaultProvider) {
+      if (contextFile) {
+        return { profile: this.getFileHeuristicProfile(contextFile), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
+      }
       if (collectionContents.length > 0) {
         return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: '未配置 LLM 提供商，请先在设置中配置 LLM 提供商' }
       }
@@ -89,14 +100,22 @@ class EmployeeProfilingService {
     }
 
     try {
-      onProgress?.({ stage: 'preparing', detail: collectionContents.length > 0 ? `准备分析 ${collectionContents.length} 个合集...` : '准备分析业务描述...' })
-      const { profile, messages } = await this.analyzeWithLLM(collectionContents, defaultProvider, modelId, additionalContext, onProgress)
+      const prepareDetail = contextFile
+        ? `准备分析提示词文件 ${contextFile.name}...`
+        : collectionContents.length > 0
+          ? `准备分析 ${collectionContents.length} 个合集...`
+          : '准备分析业务描述...'
+      onProgress?.({ stage: 'preparing', detail: prepareDetail })
+      const { profile, messages } = await this.analyzeWithLLM(collectionContents, defaultProvider, modelId, additionalContext, contextFile, onProgress)
       onProgress?.({ stage: 'done', detail: '分析完成' })
       return { profile, analysisMethod: 'llm', messages }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
       logger.error('LLM profiling failed, falling back to heuristic:', error)
       onProgress?.({ stage: 'error', detail: `LLM 调用失败: ${errorMsg}` })
+      if (contextFile) {
+        return { profile: this.getFileHeuristicProfile(contextFile), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
+      }
       if (collectionContents.length > 0) {
         return { profile: this.getHeuristicProfile(collectionContents), analysisMethod: 'heuristic', error: `LLM 调用失败: ${errorMsg}` }
       }
@@ -116,6 +135,7 @@ class EmployeeProfilingService {
       const profileJson = JSON.stringify({
         roleName: previousProfile.roleName,
         roleDescription: previousProfile.roleDescription,
+        description: previousProfile.description,
         suggestedTools: previousProfile.suggestedTools,
       }, null, 2)
 
@@ -134,7 +154,8 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
 
 输出字段（只输出JSON）：
 - roleName: 角色名称
-- roleDescription: 角色描述（包含职责、注意事项和工作流程等完整描述）
+- roleDescription: 角色规则（包含职责、注意事项和工作流程等完整规则，作为系统提示词使用）
+- description: 简短描述（不超过150字，说明该员工能做什么，供其他数字员工了解其能力）
 - suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取`
 
       onProgress?.({ stage: 'llm_calling', detail: '正在调用 LLM 优化分析结果...' })
@@ -164,6 +185,7 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
       const profile: EmployeeProfile = {
         roleName: result.roleName || previousProfile.roleName,
         roleDescription: result.roleDescription || previousProfile.roleDescription,
+        description: result.description || previousProfile.description || '',
         suggestedSkills: previousProfile.suggestedSkills,
         suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : previousProfile.suggestedTools,
       }
@@ -261,9 +283,11 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     providerId: string,
     modelId?: string,
     additionalContext?: string,
+    contextFile?: ContextFile,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<{ profile: EmployeeProfile; messages: Array<{ role: string; content: string }> }> {
     const hasCollection = collectionContents.length > 0
+    const hasFile = !!contextFile
     const combinedText = hasCollection ? this.buildCombinedCollectionDocument(collectionContents) : ''
     const maxLength = 12000
     const truncatedText = combinedText.length > maxLength
@@ -278,8 +302,24 @@ ${this.getSystemToolsList().map(t => `- ${t.name}：${t.title}`).join('\n')}
     const toolsListText = allTools.map(t => `- ${t.name}：${t.title}（${t.description}）`).join('\n')
 
     let prompt: string
-    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色描述（需融合职责说明、注意事项和工作流程）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"file"、"date_time"等）`
-    if (hasCollection) {
+    const toolsSection = `\n可用的系统工具列表（suggestedTools 必须从以下列表中选取，使用 name 字段的值）：\n${toolsListText}\n\n输出字段（只输出JSON）：\n- roleName: 角色名称（简洁明了）\n- roleDescription: 角色规则（需融合职责说明、注意事项和工作流程，作为系统提示词使用）\n- description: 简短描述（不超过150字，客观说明该员工能做什么、擅长什么，供用户和其他数字员工快速了解其能力，不要使用列表格式）\n- suggestedTools: 建议启用的工具名称列表，必须从上述工具列表的 name 字段中选取（如"file"、"date_time"等）`
+    if (hasFile && contextFile) {
+      const fileMaxLength = 20000
+      const fileContent = contextFile.content.length > fileMaxLength
+        ? contextFile.content.substring(0, fileMaxLength) + '\n...[内容已截断，共' + contextFile.content.length + '字符]'
+        : contextFile.content
+      prompt = `根据提供的提示词文件内容，设计数字员工角色，JSON格式输出。
+
+提示词文件（${contextFile.name}）内容：
+${fileContent}${userGuidance}
+
+分析要求：
+1. 该文件是已经编写好的数字员工提示词/规则说明（例如 AGENTS.md、CLAUDE.md 等）
+2. 请直接、完整地将文件中的规则、职责、工作流程、注意事项、约束等内容提炼到 roleDescription 中，尽量不丢失任何内容。roleDescription 应尽可能详尽地保留原文件中的规则与要求
+3. 根据文件内容确定数字员工的角色名称（根据实际内容给出恰当的员工角色名称）
+4. 文件中的工具使用要求、输出格式、交互规范等内容也应一并保留到 roleDescription
+${toolsSection}`
+    } else if (hasCollection) {
       prompt = `分析资料库合集内容，设计数字员工角色，JSON格式输出。
 
 资料库合集资料：
@@ -309,7 +349,9 @@ ${toolsSection}`
     const llmMessages: Array<{ role: string; content: string }> = [
       {
         role: 'system',
-        content: '根据资料库合集内容或业务描述分析设计数字员工角色，输出JSON格式结果。suggestedTools 必须从提供的工具列表中选取。'
+        content: hasFile
+          ? '根据提示词文件内容设计数字员工角色，输出JSON格式结果。roleDescription 需完整保留文件中的规则与要求，尽量不丢失内容；description 为不超过150字的简短能力描述。suggestedTools 必须从提供的工具列表中选取。'
+          : '根据资料库合集内容或业务描述分析设计数字员工角色，输出JSON格式结果。roleDescription 为完整角色规则；description 为不超过150字的简短能力描述。suggestedTools 必须从提供的工具列表中选取。'
       },
       { role: 'user', content: prompt },
     ]
@@ -332,7 +374,8 @@ ${toolsSection}`
 
     const profile: EmployeeProfile = {
       roleName: result.roleName || '数字员工',
-      roleDescription: result.roleDescription || (hasCollection ? '基于资料库合集自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
+      roleDescription: result.roleDescription || (hasFile ? '基于提示词文件自动创建的数字员工' : hasCollection ? '基于资料库合集自动创建的数字员工' : '基于业务描述自动创建的数字员工'),
+      description: typeof result.description === 'string' ? result.description.trim() : '',
       suggestedSkills: [],
       suggestedTools: Array.isArray(result.suggestedTools) ? result.suggestedTools : [],
     }
@@ -360,28 +403,28 @@ ${toolsSection}`
     logSource: string,
     onProgress?: (data: { stage: string; detail?: string; chunk?: string }) => void
   ): Promise<string> {
-    let fullResponse = ''
-    let streamDone = false
-    let streamError: Error | null = null
+    const provider = await createPiProvider(providerId, modelId)
+    if (!provider) throw new Error('LLM Provider not found')
 
-    await this.llmClient.chatStream(
-      providerId,
-      messages,
-      (chunk: string) => {
-        fullResponse += chunk
-        onProgress?.({ stage: 'streaming', chunk })
+    const response = await provider.chatStream(
+      messages as LLMMessage[],
+      [],
+      {
+        onChunk: (chunk: string) => {
+          onProgress?.({ stage: 'streaming', chunk })
+        },
+        onThought: (thoughtChunk: string) => {
+          onProgress?.({ stage: 'thinking', chunk: thoughtChunk })
+        },
+        onToolCall: () => { /* 画像分析不使用工具 */ },
       },
-      () => { streamDone = true },
-      (error: Error) => { streamError = error },
-      { temperature: 0.7, max_tokens: 8192, ...(modelId ? { model: modelId } : {}), logSource },
       undefined,
-      (thoughtChunk: string) => { onProgress?.({ stage: 'thinking', chunk: thoughtChunk }) }
+      { temperature: 0.7, maxTokens: 8192, logSource },
     )
 
-    if (streamError) throw streamError
-    if (!streamDone) throw new Error('LLM 流式响应未正常完成')
+    if (!response.content) throw new Error('LLM 流式响应未正常完成')
 
-    return fullResponse
+    return response.content
   }
 
   private buildCombinedCollectionDocument(collectionContents: CollectionContent[]): string {
@@ -528,6 +571,7 @@ ${toolsSection}`
     return {
       roleName: '数字员工',
       roleDescription: '基于资料库合集自动创建的数字员工，提供专业知识服务。负责回答用户咨询、处理业务请求、提供专业建议。专业耐心，风格严谨细致。',
+      description: '基于资料库合集提供专业知识服务的数字员工，可解答咨询、处理业务请求并提供专业建议。',
       suggestedSkills: skills,
       suggestedTools: [],
     }
@@ -537,6 +581,7 @@ ${toolsSection}`
     return {
       roleName: '通用数字员工',
       roleDescription: '一个通用的数字员工，可以回答各类问题和提供信息查询。友好专业，准确回答用户问题。',
+      description: '通用数字员工，可回答各类问题并提供信息查询。',
       suggestedSkills: [{
         type: 'qa',
         name: '通用问答',
@@ -548,6 +593,143 @@ ${toolsSection}`
         enabled: true,
       }],
       suggestedTools: [],
+    }
+  }
+
+  /** 无 LLM 时基于提示词文件直接生成画像：完整保留文件内容到描述，避免丢失规则 */
+  private getFileHeuristicProfile(contextFile: ContextFile): EmployeeProfile {
+    const name = (contextFile.name || '').replace(/\.(md|markdown|txt)$/i, '')
+    return {
+      roleName: name || '数字员工',
+      roleDescription: contextFile.content.trim() || '基于提示词文件自动创建的数字员工',
+      description: `基于提示词文件「${name || contextFile.name}」创建的数字员工。`,
+      suggestedSkills: [],
+      suggestedTools: [],
+    }
+  }
+
+  /** 解析描述生成用 LLM：creation 场景默认模型 > 默认提供商 > 任意可用提供商 */
+  private resolveDescriptionLLM(): { provider_id: string; model_id?: string } | null {
+    const db = this.db.getDb()
+    const setting = db.prepare(
+      "SELECT value FROM settings WHERE key = 'default_model_creation'"
+    ).get() as { value: string } | undefined
+    if (setting?.value) {
+      try {
+        const parsed = JSON.parse(setting.value) as { provider_id?: string; model_id?: string }
+        const exists = parsed.provider_id
+          && db.prepare('SELECT 1 FROM llm_providers WHERE id = ?').get(parsed.provider_id)
+        if (parsed.provider_id && exists) {
+          return { provider_id: parsed.provider_id, model_id: parsed.model_id?.trim() || undefined }
+        }
+      } catch { /* ignore invalid JSON */ }
+    }
+    const row = db.prepare(
+      'SELECT id FROM llm_providers ORDER BY is_default DESC LIMIT 1'
+    ).get() as { id: string } | undefined
+    return row?.id ? { provider_id: row.id } : null
+  }
+
+  /**
+   * 根据员工名称、规则（系统提示词）、可用工具与技能，用 LLM 生成简短描述（≤150字）。
+   * 生成结果不直接落库，由前端填入表单供用户确认后保存。
+   */
+  async generateEmployeeDescription(params: {
+    employee_id: string
+    provider_id?: string
+    model_id?: string
+    /** 未保存的表单值优先于 DB */
+    name?: string
+    rules?: string
+  }): Promise<{ success: boolean; description?: string; error?: string }> {
+    try {
+      const db = this.db.getDb()
+      const emp = db.prepare('SELECT id, name, rules, profile_json FROM employees WHERE id = ?').get(params.employee_id) as
+        | { id: string; name: string; rules?: string | null; profile_json?: string | null }
+        | undefined
+      if (!emp) {
+        return { success: false, error: '员工不存在' }
+      }
+
+      const resolved = this.resolveDescriptionLLM()
+      const providerId = params.provider_id || resolved?.provider_id
+      if (!providerId) {
+        return { success: false, error: 'NO_LLM_PROVIDER' }
+      }
+      const modelId = params.model_id || resolved?.model_id
+
+      const name = params.name?.trim() || emp.name
+
+      // 提示词来源：表单 rules > DB rules > profile_json.roleDescription
+      let promptText = params.rules?.trim() || emp.rules?.trim() || ''
+      if (!promptText && emp.profile_json) {
+        try {
+          const profile = JSON.parse(emp.profile_json)
+          promptText = profile?.roleDescription || ''
+        } catch { /* ignore */ }
+      }
+      const truncatedPrompt = promptText.length > 4000
+        ? promptText.substring(0, 4000) + '\n...[已截断]'
+        : promptText
+
+      // 已启用工具（title）：未显式关闭的内置工具视为可用（与 agent 默认行为一致）
+      const toolRows = db.prepare(
+        'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
+      ).all(params.employee_id) as Array<{ tool_id: string; tool_mode?: string }>
+      const modeMap = new Map<string, string>()
+      for (const r of toolRows) {
+        if (r.tool_mode === 'on' || r.tool_mode === 'on_demand' || r.tool_mode === 'off') {
+          modeMap.set(r.tool_id, r.tool_mode)
+        }
+      }
+      const enabledTools = allBuiltinTools
+        .filter(t => modeMap.get(t.id) !== 'off')
+        .map(t => t.title)
+
+      // 已启用技能
+      let enabledSkills: string[] = []
+      try {
+        enabledSkills = SkillRegistryService.getInstance()
+          .getEmployeeSkills(params.employee_id)
+          .enabled.map(s => s.name)
+      } catch { /* ignore */ }
+
+      const prompt = `请为以下数字员工生成一段简短的能力描述。
+
+数字员工名称：${name}
+${promptText ? `规则/系统提示词：\n${truncatedPrompt}` : '（暂无规则，按通用数字员工理解）'}
+可用工具：${enabledTools.join('、') || '（无）'}
+可用技能：${enabledSkills.join('、') || '（无）'}
+
+要求：
+1. 描述用于让用户和其他数字员工快速了解该员工能做什么、擅长什么，便于判断是否委托任务给他
+2. 不超过150字，一段纯文本，不要使用列表、标题或 Markdown 格式
+3. 直接输出描述内容本身，不要任何前缀、引号或解释`
+
+      const fullResponse = await this.streamLLMWithProgress(
+        providerId,
+        [
+          { role: 'system', content: '你是数字员工描述生成器，根据员工信息生成简短、客观、准确的能力描述。' },
+          { role: 'user', content: prompt },
+        ],
+        modelId,
+        'employee_description_gen'
+      )
+
+      const description = fullResponse
+        .trim()
+        .replace(/^["'「『]+/, '')
+        .replace(/["'」』]+$/, '')
+        .trim()
+        .slice(0, 300)
+      if (!description) {
+        return { success: false, error: '生成结果为空' }
+      }
+      return { success: true, description }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'LLM 调用失败'
+      logger.error('Generate employee description failed:', error)
+      return { success: false, error: errorMsg }
     }
   }
 }

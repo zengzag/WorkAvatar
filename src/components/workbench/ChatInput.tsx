@@ -439,19 +439,13 @@ const ChatInput: React.FC<{
   }, [getPlainText, currentSlashItems, emitDraftChange])
 
   // 把 `/<skill-name> <args>` 转换为对 LLM 的明确工具调用指令
-  // skill 激活统一通过 activate_skill 工具
+  // skill 激活统一通过 activate_skill 工具；一条消息内可含多个技能命令，逐个转换
   const convertSkillCommand = useCallback((raw: string): string => {
-    const match = raw.match(/^\/([a-z0-9-]+)(?:\s+(.*))?$/i)
-    if (!match) return raw
-    const skillName = match[1]
-    const args = (match[2] || '').trim()
-    // 校验该 name 是否属于已启用 skill
-    const skill = invocableSkills.find(s => s.name === skillName)
-    if (!skill) return raw
-    if (args) {
-      return `用户要求使用 ${skillName} skill 处理：\n${args}`
-    }
-    return `用户要求使用 ${skillName} skill 处理。`
+    const validSkillNames = new Set(invocableSkills.map(s => s.name))
+    return raw.replace(/(^|\s)\/([a-z0-9-]+)/g, (m, pre, name) => {
+      if (!validSkillNames.has(name)) return m
+      return `${pre}使用 ${name} 技能`
+    })
   }, [invocableSkills])
 
   // 斜杠菜单 / 下拉按钮选中处理：插入 `/<name> `，保留已有内容与 undo 历史

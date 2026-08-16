@@ -71,13 +71,14 @@ export function buildDelegateDescription(employeeId: string, employees: Array<{ 
   const others = employees.filter(e => e.id !== employeeId)
   const listText = others.length > 0
     ? others.map(e => {
-        const role = e.role || e.description?.trim()
-        return `- ${e.name} (id=${e.id})${role ? `：${role.slice(0, 80)}` : ''}`
+        // 能力描述（≤150 字，纯描述）供主管 LLM 判断是否委托；旧数据回退到角色名
+        const desc = e.description?.trim() || e.role?.trim()
+        return `- ${e.name} (id=${e.id})${desc ? `：${desc}` : ''}`
       }).join('\n')
     : '（暂无其他数字员工）'
   return `${delegateTool.description}
 
-可委托员工列表：
+可委托员工列表（依据各员工的能力描述判断是否适合委托，选择最匹配任务的员工）：
 ${listText}`
 }
 

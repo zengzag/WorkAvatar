@@ -252,9 +252,14 @@ export class PiAIProvider implements ILLMProvider {
     }
 
     const streamOptions: any = {
-      apiKey: this.config.apiKey,
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+      apiKey: this.resolveApiKey(),
+      ...(options?.signal ? { signal: options.signal } : {}),
+      ...((options?.temperature ?? this.config.defaultOptions?.temperature) !== undefined
+        ? { temperature: options?.temperature ?? this.config.defaultOptions?.temperature }
+        : {}),
+      ...((options?.maxTokens ?? this.config.defaultOptions?.maxTokens) !== undefined
+        ? { maxTokens: options?.maxTokens ?? this.config.defaultOptions?.maxTokens }
+        : {}),
       ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
       // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
       // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
@@ -332,10 +337,14 @@ export class PiAIProvider implements ILLMProvider {
     }
 
     const streamOptions: any = {
-      apiKey: this.config.apiKey,
+      apiKey: this.resolveApiKey(),
       ...(signal ? { signal } : {}),
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+      ...((options?.temperature ?? this.config.defaultOptions?.temperature) !== undefined
+        ? { temperature: options?.temperature ?? this.config.defaultOptions?.temperature }
+        : {}),
+      ...((options?.maxTokens ?? this.config.defaultOptions?.maxTokens) !== undefined
+        ? { maxTokens: options?.maxTokens ?? this.config.defaultOptions?.maxTokens }
+        : {}),
       ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
       // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
       // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
@@ -503,6 +512,11 @@ export class PiAIProvider implements ILLMProvider {
       default:
         break
     }
+  }
+
+  private resolveApiKey(): string {
+    // 本地服务（LM Studio 等）无需 API key；pi-ai 对空 key 直接抛错，用占位符跳过校验，服务端会忽略该请求头
+    return this.config.apiKey || 'unused'
   }
 
   private toPiTools(tools: any[]): any[] {

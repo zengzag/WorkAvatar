@@ -10,6 +10,7 @@ import type {
   ConversationSearchParams,
   EmployeeProfileAnalyzeParams,
   EmployeeProfileRefineParams,
+  EmployeeGenerateDescriptionParams,
   EmployeeExportConfigParams,
   EmployeeImportConfigParams,
   EmployeeExportPackageParams,
@@ -48,7 +49,7 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_CREATE, (params: EmployeeCreateParams) => {
-    return workspaceManager.createEmployee(params.name, params.description, params.profile_json)
+    return workspaceManager.createEmployee(params.name, params.description, params.profile_json, params.rules)
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_UPDATE, (params: EmployeeUpdateParams) => {
@@ -137,6 +138,7 @@ export function registerEmployeeHandlers(
         params.provider_id,
         params.model_id,
         params.additional_context,
+        params.context_file,
         (data) => {
           event.sender.send(IPC_CHANNELS.EMPLOYEE_PROFILE_PROGRESS, data)
         }
@@ -163,6 +165,18 @@ export function registerEmployeeHandlers(
         }
       )
       return { success: true, profile: result.profile, messages: result.messages, warning: result.error }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
+  })
+
+  // 用 LLM 根据名称、规则、工具与技能生成简短描述（结果由前端填入表单确认）
+  ipcMain.handle(IPC_CHANNELS.EMPLOYEE_GENERATE_DESCRIPTION, async (_, params: EmployeeGenerateDescriptionParams) => {
+    try {
+      return await profilingService.generateEmployeeDescription(params)
     } catch (error) {
       return {
         success: false,

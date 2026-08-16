@@ -50,6 +50,11 @@ const ProfileDisplay: React.FC<ProfileDisplayProps> = ({
               <Typography.Text strong>{profile.roleName}</Typography.Text>
             </Space>
           </Descriptions.Item>
+          {profile.description && (
+            <Descriptions.Item label={t('creationWizard.profileDescription')}>
+              {profile.description}
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label={t('creationWizard.roleDesc')}>{profile.roleDescription}</Descriptions.Item>
           {profile.suggestedTools.length > 0 && (
             <Descriptions.Item label={t('creationWizard.suggestedTools')}>

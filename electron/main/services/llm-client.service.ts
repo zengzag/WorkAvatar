@@ -1,15 +1,11 @@
 import DatabaseService from './database.service'
 import { generateId } from './common-utils'
-import LLMLoggerService from './llm-logger.service'
 import { createLogger } from './logger'
 import {
   type LLMProviderConfig,
-  type ChatMessage,
-  type ChatOptions,
   PROVIDER_DEFAULTS,
 } from './llm-client-types'
-import { createThinkProcessor } from './llm-think-processor'
-import { buildRequestBody, resolveModelName, buildHeaders } from './llm-request-builder'
+import { buildHeaders } from './llm-request-builder'
 import { SecureKeyStorage } from './secure-key-storage'
 
 const logger = createLogger('LLMClient')
@@ -117,296 +113,6 @@ class LLMClientService {
     }
   }
 
-  async chat(
-    providerId: string,
-    messages: ChatMessage[],
-    options?: ChatOptions,
-  ): Promise<string> {
-    const config = await this.getProviderConfig(providerId)
-    if (!config) {
-      throw new Error('LLM Provider not found')
-    }
-
-    const baseURL = this.getBaseURL(config)
-    const headers = buildHeaders(config)
-    const modelIdentifier = options?.model || config.model
-    if (!modelIdentifier?.trim()) {
-      throw new Error(`Model name is empty for provider "${config.name}" (${config.id}). Please configure a default model.`)
-    }
-    const modelName = resolveModelName(config, modelIdentifier)
-    const body = buildRequestBody(config, modelName, messages, false, options)
-    const logSource = options?.logSource || 'unknown'
-    const startTime = Date.now()
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), config.timeout_ms || 60000)
-    if (options?.signal) {
-      if (options.signal.aborted) {
-        controller.abort()
-      } else {
-        options.signal.addEventListener('abort', () => controller.abort(), { once: true })
-      }
-    }
-
-    const requestLog = {
-      messages,
-      temperature: body.temperature,
-      max_tokens: body.max_tokens,
-      stream: false as const,
-    }
-
-    try {
-      const response = await fetch(`${baseURL}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-      clearTimeout(timeout)
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        LLMLoggerService.getInstance().logCall({
-          type: 'chat',
-          source: logSource,
-          model: modelName,
-          providerType: config.provider_type,
-          request: requestLog,
-          error: `${response.status} - ${errorText}`,
-        })
-        throw new Error(`LLM API error (${response.status}): ${errorText}`)
-      }
-
-      const data = await response.json()
-      const fullContent = data.choices?.[0]?.message?.content || ''
-      const result = fullContent.replace(/<think[\s\S]*?<\/think>/gi, '').trim()
-      const latencyMs = Date.now() - startTime
-
-      LLMLoggerService.getInstance().logCall({
-        type: 'chat',
-        source: logSource,
-        model: modelName,
-        providerType: config.provider_type,
-        request: requestLog,
-        response: {
-          content: result,
-          usage: data.usage,
-          latencyMs,
-        },
-      })
-
-      return result
-    } catch (error: any) {
-      clearTimeout(timeout)
-      if (error.name === 'AbortError' && !options?.signal?.aborted) {
-        error.message = 'LLM API request timed out'
-      }
-      logger.error(`chat failed (provider=${providerId}, model=${modelName}):`, error?.message || error)
-      if (!error.message?.includes('LLM API error')) {
-        LLMLoggerService.getInstance().logCall({
-          type: 'chat',
-          source: logSource,
-          model: modelName,
-          providerType: config.provider_type,
-          request: requestLog,
-          error: error.message,
-        })
-      }
-      throw error
-    }
-  }
-
-  async chatStream(
-    providerId: string,
-    messages: ChatMessage[],
-    onChunk: (chunk: string) => void,
-    onDone: () => void,
-    onError: (error: Error) => void,
-    options?: Omit<ChatOptions, 'signal'>,
-    signal?: AbortSignal,
-    onThought?: (thoughtChunk: string) => void,
-  ): Promise<void> {
-    const config = await this.getProviderConfig(providerId)
-    if (!config) {
-      onError(new Error('LLM Provider not found'))
-      return
-    }
-
-    const baseURL = this.getBaseURL(config)
-    const headers = buildHeaders(config)
-    const modelIdentifier = options?.model || config.model
-    if (!modelIdentifier?.trim()) {
-      onError(new Error(`Model name is empty for provider "${config.name}" (${config.id}). Please configure a default model.`))
-      return
-    }
-    const modelName = resolveModelName(config, modelIdentifier)
-    const body = buildRequestBody(config, modelName, messages, true, options)
-    const logSource = options?.logSource || 'unknown'
-    const startTime = Date.now()
-
-    const controller = new AbortController()
-    // 流式调用使用双重超时：
-    // 1. 总超时：config.timeout_ms（默认 600s/10min），长文档生成可能持续数分钟
-    // 2. 空闲超时：30s 无数据则中止，防止服务端发完 header 后卡住流不结束
-    const totalTimeoutMs = config.timeout_ms || 600_000
-    const STREAM_IDLE_TIMEOUT_MS = 30_000
-    let idleTimer: NodeJS.Timeout | null = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
-    const totalTimer = setTimeout(() => controller.abort(), totalTimeoutMs)
-    if (signal) {
-      if (signal.aborted) {
-        controller.abort()
-      } else {
-        signal.addEventListener('abort', () => controller.abort(), { once: true })
-      }
-    }
-
-    const requestLog = {
-      messages,
-      temperature: body.temperature,
-      max_tokens: body.max_tokens,
-      stream: true as const,
-    }
-
-    try {
-      const thinkProcessor = createThinkProcessor()
-      const response = await fetch(`${baseURL}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      })
-      // header 已收到，清除空闲超时（流循环内会重新设置）
-      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
-
-      if (!response.ok) {
-        const errorText = await response.text()
-        LLMLoggerService.getInstance().logCall({
-          type: 'chatStream',
-          source: logSource,
-          model: modelName,
-          providerType: config.provider_type,
-          request: requestLog,
-          error: `${response.status} - ${errorText}`,
-        })
-        throw new Error(`LLM API error (${response.status}): ${errorText}`)
-      }
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        throw new Error('No response body')
-      }
-
-      try {
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let fullContent = ''
-        let fullThought = ''
-
-        const logSuccess = () => {
-          LLMLoggerService.getInstance().logCall({
-            type: 'chatStream',
-            source: logSource,
-            model: modelName,
-            providerType: config.provider_type,
-            request: requestLog,
-            response: {
-              content: fullContent,
-              reasoningContent: fullThought || undefined,
-              latencyMs: Date.now() - startTime,
-            },
-          })
-        }
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          // 每收到数据重置空闲超时，防止服务端中途卡住
-          if (idleTimer) clearTimeout(idleTimer)
-          idleTimer = setTimeout(() => controller.abort(), STREAM_IDLE_TIMEOUT_MS)
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
-          for (const line of lines) {
-            const trimmed = line.trim()
-            if (!trimmed || !trimmed.startsWith('data: ')) continue
-
-            const data = trimmed.slice(6)
-            if (data === '[DONE]') {
-              logSuccess()
-              onDone()
-              return
-            }
-
-            try {
-              const parsed = JSON.parse(data)
-              const delta = parsed.choices?.[0]?.delta
-
-              if (delta?.reasoning_content && onThought) {
-                fullThought += delta.reasoning_content
-                onThought(delta.reasoning_content)
-              }
-
-              const content = delta?.content
-              if (content) {
-                const result = thinkProcessor.processChunk(content)
-                if (result.thought && onThought) {
-                  fullThought += result.thought
-                  onThought(result.thought)
-                }
-                if (result.content) {
-                  fullContent += result.content
-                  onChunk(result.content)
-                }
-              }
-            } catch (e) {
-              logger.debug('Failed to parse stream chunk', e)
-            }
-          }
-        }
-
-        const finalResult = thinkProcessor.finalize()
-        if (finalResult.thought && onThought) {
-          fullThought += finalResult.thought
-          onThought(finalResult.thought)
-        }
-        if (finalResult.content) {
-          fullContent += finalResult.content
-          onChunk(finalResult.content)
-        }
-
-        // 流正常结束，清除所有定时器
-        if (idleTimer) clearTimeout(idleTimer)
-        clearTimeout(totalTimer)
-        logSuccess()
-        onDone()
-      } finally {
-        // 确保释放 reader，避免流中断时连接泄漏
-        try { await reader.cancel() } catch { /* reader 已释放或流已结束 */ }
-      }
-    } catch (err: any) {
-      if (idleTimer) clearTimeout(idleTimer)
-      clearTimeout(totalTimer)
-      if (err.name === 'AbortError' && !signal?.aborted) {
-        err.message = 'LLM API request timed out'
-      }
-      logger.error(`chatStream failed (provider=${providerId}, model=${modelName}):`, err?.message || err)
-      if (!err.message?.includes('LLM API error')) {
-        LLMLoggerService.getInstance().logCall({
-          type: 'chatStream',
-          source: logSource,
-          model: modelName,
-          providerType: config.provider_type,
-          request: requestLog,
-          error: err.message,
-        })
-      }
-      onError(err)
-    }
-  }
-
   getProviderList() {
     return this.db.getDb().prepare(
       'SELECT * FROM llm_providers ORDER BY is_default DESC, created_at DESC'
@@ -473,6 +179,10 @@ class LLMClientService {
     const provider = this.getProvider(id) as any
     if (!provider) return null
 
+    if (params.models_json !== undefined) {
+      this.syncModelReferences(id, provider.models_json, params.models_json)
+    }
+
     if (params.api_key !== undefined) {
       if (params.api_key) {
         await this.keyStorage.saveApiKey(id, params.api_key)
@@ -510,6 +220,73 @@ class LLMClientService {
     }
 
     return this.getProvider(id)
+  }
+
+  /** 模型ID变更后级联更新所有引用处（settings 表场景默认模型/KMS/语音、自动化任务） */
+  private syncModelReferences(providerId: string, oldModelsJson: string | undefined, newModelsJson: string | undefined): void {
+    try {
+      const oldModels: any[] = oldModelsJson ? JSON.parse(oldModelsJson) : []
+      const newModels: any[] = newModelsJson ? JSON.parse(newModelsJson) : []
+
+      const renames = new Map<string, string>()
+      for (const next of newModels) {
+        if (!next?.id || !next?.model) continue
+        const prev = oldModels.find(m => m?.id === next.id)
+        if (prev?.model && prev.model !== next.model) {
+          renames.set(prev.model, next.model)
+        }
+      }
+      if (renames.size === 0) return
+
+      const db = this.db.getDb()
+
+      // settings 表中 {provider_id, model_id} 结构的配置
+      const settingKeys = [
+        'default_model_creation', 'default_model_workbench', 'default_model_knowledge',
+        'default_model_quick', 'default_model_embedding', 'default_model_memory',
+        'kms_model', 'kms_embedding_model', 'kms_summary_model',
+      ]
+      const updateSetting = (key: string, value: any) => {
+        db.prepare('UPDATE settings SET value = ?, updated_at = unixepoch() WHERE key = ?')
+          .run(JSON.stringify(value), key)
+      }
+      for (const key of settingKeys) {
+        const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any
+        if (!row?.value) continue
+        try {
+          const config = JSON.parse(row.value)
+          if (config?.provider_id === providerId && typeof config.model_id === 'string' && renames.has(config.model_id)) {
+            config.model_id = renames.get(config.model_id)
+            updateSetting(key, config)
+          }
+        } catch { /* 忽略非法 JSON */ }
+      }
+
+      // 语音纪要模型（嵌套在 voice_settings.minutesModel）
+      const voiceRow = db.prepare("SELECT value FROM settings WHERE key = 'voice_settings'").get() as any
+      if (voiceRow?.value) {
+        try {
+          const voiceSettings = JSON.parse(voiceRow.value)
+          const mm = voiceSettings?.minutesModel
+          if (mm?.provider_id === providerId && typeof mm.model_id === 'string' && renames.has(mm.model_id)) {
+            mm.model_id = renames.get(mm.model_id)
+            updateSetting('voice_settings', voiceSettings)
+          }
+        } catch { /* 忽略非法 JSON */ }
+      }
+
+      // 自动化任务与执行历史
+      for (const [oldModel, newModel] of renames) {
+        db.prepare('UPDATE automation_tasks SET model_id = ?, updated_at = unixepoch() WHERE provider_id = ? AND model_id = ?')
+          .run(newModel, providerId, oldModel)
+        db.prepare('UPDATE automation_runs SET model_id = ? WHERE provider_id = ? AND model_id = ?')
+          .run(newModel, providerId, oldModel)
+      }
+
+      logger.info(`Synced model renames for provider ${providerId}:`, Object.fromEntries(renames))
+    } catch (err: any) {
+      logger.warn('Failed to sync model references:', err?.message || err)
+    }
   }
 
   async deleteProvider(id: string): Promise<boolean> {
@@ -614,7 +391,7 @@ class LLMClientService {
       let modelName = ''
       if (config.model_id && provider.models_json) {
         const models = JSON.parse(provider.models_json)
-        const model = models.find((m: any) => m.id === config.model_id)
+        const model = models.find((m: any) => m.id === config.model_id || m.model === config.model_id)
         if (model) {
           modelName = model.model
         }

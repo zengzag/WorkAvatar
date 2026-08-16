@@ -388,6 +388,18 @@ class CalendarService {
     return true
   }
 
+  /** 全量事件（Outlook 同步引擎用，不展开重复实例） */
+  listAllEvents(): CalendarEvent[] {
+    const rows = this.db.prepare('SELECT * FROM calendar_events ORDER BY created_at ASC').all() as any[]
+    return rows.map(r => this.rowToEvent(r))
+  }
+
+  /** 全量 TODO（Outlook 同步引擎用，不展开重复实例） */
+  listAllTodos(): CalendarTodo[] {
+    const rows = this.db.prepare('SELECT * FROM calendar_todos ORDER BY created_at ASC').all() as any[]
+    return rows.map(r => this.rowToTodo(r))
+  }
+
   // ====== Todos CRUD ======
 
   listTodos(params: ListTodosParams = {}): CalendarTodo[] {

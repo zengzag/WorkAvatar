@@ -133,16 +133,22 @@ class EmployeeAgentService {
     if (emp.profile_json) {
       try {
         const profile = JSON.parse(emp.profile_json)
-        if (profile.roleDescription) {
-          instructions = profile.roleDescription
-        }
         if (profile.roleName) {
           role = profile.roleName
+        }
+        // 旧数据兼容：无 rules 时回退到画像中的 roleDescription
+        if (!emp.rules?.trim() && profile.roleDescription) {
+          instructions = profile.roleDescription
         }
       } catch (error) {
         logger.warn('Failed to parse employee profile_json, using default instructions', error)
       }
-    } else if (emp.description) {
+    }
+    if (emp.rules?.trim()) {
+      // 规则（系统提示词）：唯一权威来源
+      instructions = emp.rules
+    } else if (!emp.profile_json && emp.description) {
+      // 兼容未迁移的旧数据（description 曾兼作系统提示词）
       instructions = emp.description
     }
 
