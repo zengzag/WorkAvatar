@@ -275,7 +275,7 @@ class OutlookSyncService extends ScheduledTaskBase {
 
     for (const todo of items) {
       const mapping = mapByLocal.get(todo.id)
-      const body = this.todoToGraphBody(todo)
+      const body = this.todoToGraphBody(todo, !mapping)
       try {
         if (!mapping) {
           const created = await this.graph(token, 'POST', `/me/todo/lists/${this.todoListId}/tasks`, body)
@@ -445,7 +445,7 @@ class OutlookSyncService extends ScheduledTaskBase {
     return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10)
   }
 
-  private todoToGraphBody(todo: CalendarTodo): any {
+  private todoToGraphBody(todo: CalendarTodo, isCreate = true): any {
     const tz = todo.tzid
     const importance = todo.priority === 'high' ? 'high' : todo.priority === 'low' ? 'low' : 'normal'
     const status = todo.status === 'completed' ? 'completed' : todo.status === 'in_progress' ? 'inProgress' : 'notStarted'
@@ -472,7 +472,15 @@ class OutlookSyncService extends ScheduledTaskBase {
     const recurrence = todo.recurrence_rule && todo.due_at
       ? this.ruleToGraphRecurrence(todo.recurrence_rule, todo.due_at, tz)
       : undefined
-    if (recurrence) body.recurrence = recurrence
+    if (recurrence) {
+      if (isCreate) {
+        body.recurrence = recurrence
+      } else {
+        // To-Do 服务端 bug：PATCH 携带 range.startDate 纯日期会报 Edm.Date 转换错误。
+        // 规避：仅同步 pattern，range 置空由服务端重建（社区验证的 workaround）
+        body.recurrence = { pattern: recurrence.pattern, range: {} }
+      }
+    }
     return body
   }
 }
