@@ -1,11 +1,31 @@
+/**
+ * notes 插件 useNotes hook：封装 store 状态与数据操作（经插件桥 IPC）。
+ * 由宿主 hook（src/hooks/useNotes.ts）迁移而来，仅替换数据访问层。
+ */
 import { useCallback, useEffect, useRef } from 'react'
 import { App } from 'antd'
-import { useTranslation } from 'react-i18next'
-import { useNotesStore } from '../stores/notes.store'
-import type { NoteNode, NotesSettings } from '../types/notes'
+import {
+  useNotesStore,
+  hostT,
+  listTree,
+  readNote,
+  readExternal,
+  writeNote,
+  writeExternal,
+  getSettings,
+  setSettings as persistSettings,
+  createNote as createNoteApi,
+  createFolder as createFolderApi,
+  renameNote as renameNoteApi,
+  moveNote as moveNoteApi,
+  copyNote as copyNoteApi,
+  deleteNote as deleteNoteApi,
+  openDiary,
+  onDataChanged,
+} from './store'
+import type { NoteNode, NotesSettings } from './types'
 
 export function useNotes() {
-  const { t } = useTranslation()
   const { message } = App.useApp()
   const {
     tree, treeLoading, tabs, activeTabId, settings, settingsLoading,
@@ -27,19 +47,19 @@ export function useNotes() {
   const refreshTree = useCallback(async () => {
     setTreeLoading(true)
     try {
-      const result = await window.electronAPI.notes.listTree()
+      const result = await listTree()
       if (Array.isArray(result)) setTree(result as NoteNode[])
     } catch (err: any) {
-      message.error(err?.message || t('notes.loadTreeFailed'))
+      message.error(err?.message || hostT('loadTreeFailed'))
     } finally {
       setTreeLoading(false)
     }
-  }, [setTree, setTreeLoading, t])
+  }, [setTree, setTreeLoading, message])
 
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true)
     try {
-      const s = await window.electronAPI.notes.getSettings()
+      const s = await getSettings()
       if (s) setSettings(s as NotesSettings)
     } catch { /* ignore */ } finally {
       setSettingsLoading(false)
@@ -57,7 +77,7 @@ export function useNotes() {
       : null
     // 激活的若是外部标签页，保持上一次持久化的激活路径不变（避免把 null 写入覆盖）
     const activeRelPath = activeTab?.relPath || null
-    await window.electronAPI.notes.setSettings({
+    await persistSettings({
       open_tabs: tabPaths,
       active_tab: activeRelPath,
       last_opened: activeRelPath,
@@ -80,9 +100,9 @@ export function useNotes() {
     try {
       let res: any
       if (tab.externalAbsPath) {
-        res = await window.electronAPI.notes.writeExternal({ absPath: tab.externalAbsPath, content: tab.content })
+        res = await writeExternal(tab.externalAbsPath, tab.content)
       } else {
-        res = await window.electronAPI.notes.write({ relPath: tab.relPath!, content: tab.content })
+        res = await writeNote(tab.relPath!, tab.content)
       }
       if (res && (res as any).error) {
         message.error((res as any).error)
@@ -95,14 +115,14 @@ export function useNotes() {
       setTabSaved(tabId, tab.content, (res as any)?.mtime ?? tab.mtime)
       return true
     } catch (err: any) {
-      message.error(err?.message || t('notes.saveFailed'))
+      message.error(err?.message || hostT('saveFailed'))
       useNotesStore.setState((s) => {
         const t = s.tabs.find((x) => x.id === tabId)
         if (t) t.saveStatus = 'dirty'
       })
       return false
     }
-  }, [setTabSaving, setTabSaved, t])
+  }, [setTabSaving, setTabSaved, message])
 
   const saveCurrent = useCallback(async (): Promise<boolean> => {
     if (!activeTabId) return false
@@ -117,7 +137,7 @@ export function useNotes() {
       if ((active?.relPath || active?.externalAbsPath) && active.relPath !== relPath && active.saveStatus === 'dirty') {
         await saveTabContent(active.id)
       }
-      const note = await window.electronAPI.notes.read(relPath)
+      const note = await readNote(relPath)
       if (note && (note as any).error) {
         message.error((note as any).error)
         return
@@ -128,9 +148,9 @@ export function useNotes() {
       openNoteInTab(targetTabId, relPath, (note as any).content, (note as any).mtime)
       await persistTabs()
     } catch (err: any) {
-      message.error(err?.message || t('notes.openFailed'))
+      message.error(err?.message || hostT('openFailed'))
     }
-  }, [saveTabContent, openNoteInTab, persistTabs, t])
+  }, [saveTabContent, openNoteInTab, persistTabs, message])
 
   const openExternal = useCallback(async (absPath: string) => {
     try {
@@ -140,7 +160,7 @@ export function useNotes() {
       if (active?.relPath && active.saveStatus === 'dirty') {
         await saveTabContent(active.id)
       }
-      const note = await window.electronAPI.notes.readExternal(absPath)
+      const note = await readExternal(absPath)
       if (note && (note as any).error) {
         message.error((note as any).error)
         return
@@ -152,9 +172,9 @@ export function useNotes() {
       const targetTabId = isEmptyNewTab ? currentActive!.id : currentSt.createEmptyTab()
       openExternalInTab(targetTabId, absPath, (note as any).content, (note as any).mtime)
     } catch (err: any) {
-      message.error(err?.message || t('notes.openFailed'))
+      message.error(err?.message || hostT('openFailed'))
     }
-  }, [saveTabContent, openExternalInTab, t])
+  }, [saveTabContent, openExternalInTab, message])
 
   const init = useCallback(async () => {
     if (initedRef.current) return
@@ -170,7 +190,7 @@ export function useNotes() {
     if (savedTabs.length > 0) {
       for (const relPath of savedTabs) {
         try {
-          const note = await window.electronAPI.notes.read(relPath)
+          const note = await readNote(relPath)
           if (note && !(note as any).error) {
             const state = useNotesStore.getState()
             const existingTab = state.tabs.find((t) => t.relPath === relPath)
@@ -193,7 +213,7 @@ export function useNotes() {
 
   const createNote = useCallback(async (parentRelPath: string, name: string) => {
     try {
-      const res = await window.electronAPI.notes.createNote({ parentRelPath, name })
+      const res = await createNoteApi(parentRelPath, name)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return null
@@ -201,14 +221,14 @@ export function useNotes() {
       await refreshTree()
       return res as NoteNode | null
     } catch (err: any) {
-      message.error(err?.message || t('notes.createFailed'))
+      message.error(err?.message || hostT('createFailed'))
       return null
     }
-  }, [refreshTree, t])
+  }, [refreshTree, message])
 
   const createFolder = useCallback(async (parentRelPath: string, name: string) => {
     try {
-      const res = await window.electronAPI.notes.createFolder({ parentRelPath, name })
+      const res = await createFolderApi(parentRelPath, name)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return null
@@ -216,14 +236,14 @@ export function useNotes() {
       await refreshTree()
       return res as NoteNode | null
     } catch (err: any) {
-      message.error(err?.message || t('notes.createFailed'))
+      message.error(err?.message || hostT('createFailed'))
       return null
     }
-  }, [refreshTree, t])
+  }, [refreshTree, message])
 
   const renameItem = useCallback(async (relPath: string, newName: string) => {
     try {
-      const res = await window.electronAPI.notes.rename({ relPath, newName })
+      const res = await renameNoteApi(relPath, newName)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return null
@@ -236,14 +256,14 @@ export function useNotes() {
       await refreshTree()
       return newRel ?? null
     } catch (err: any) {
-      message.error(err?.message || t('notes.renameFailed'))
+      message.error(err?.message || hostT('renameFailed'))
       return null
     }
-  }, [renameTabPath, persistTabs, refreshTree, t])
+  }, [renameTabPath, persistTabs, refreshTree, message])
 
   const moveItem = useCallback(async (srcRelPath: string, destParentRelPath: string) => {
     try {
-      const res = await window.electronAPI.notes.move({ srcRelPath, destParentRelPath })
+      const res = await moveNoteApi(srcRelPath, destParentRelPath)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return false
@@ -256,14 +276,14 @@ export function useNotes() {
       await refreshTree()
       return true
     } catch (err: any) {
-      message.error(err?.message || t('notes.moveFailed'))
+      message.error(err?.message || hostT('moveFailed'))
       return false
     }
-  }, [renameTabPath, persistTabs, refreshTree, t])
+  }, [renameTabPath, persistTabs, refreshTree, message])
 
   const copyItem = useCallback(async (srcRelPath: string, destParentRelPath: string) => {
     try {
-      const res = await window.electronAPI.notes.copy({ srcRelPath, destParentRelPath })
+      const res = await copyNoteApi(srcRelPath, destParentRelPath)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return false
@@ -271,14 +291,14 @@ export function useNotes() {
       await refreshTree()
       return true
     } catch (err: any) {
-      message.error(err?.message || t('notes.copyFailed'))
+      message.error(err?.message || hostT('copyFailed'))
       return false
     }
-  }, [refreshTree, t])
+  }, [refreshTree, message])
 
   const deleteItem = useCallback(async (relPath: string) => {
     try {
-      const res = await window.electronAPI.notes.delete(relPath)
+      const res = await deleteNoteApi(relPath)
       if (res && (res as any).error) {
         message.error((res as any).error)
         return false
@@ -292,17 +312,17 @@ export function useNotes() {
       await refreshTree()
       return true
     } catch (err: any) {
-      message.error(err?.message || t('notes.deleteFailed'))
+      message.error(err?.message || hostT('deleteFailed'))
       return false
     }
-  }, [persistTabs, refreshTree, t])
+  }, [persistTabs, refreshTree, message])
 
   const updateSettings = useCallback(async (patch: Partial<NotesSettings>) => {
     try {
-      const next = await window.electronAPI.notes.setSettings(patch)
+      const next = await persistSettings(patch)
       if (next && !(next as any).error) setSettings(next as NotesSettings)
     } catch { /* ignore */ }
-  }, [setSettings])
+  }, [setSettings, persistSettings])
 
   const handleSwitchTab = useCallback(async (tabId: string) => {
     // 切换 Tab 前先保存当前激活 Tab 的脏内容，避免自动保存未触发导致编辑丢失
@@ -350,13 +370,13 @@ export function useNotes() {
   useEffect(() => { saveStatusRef.current = saveStatus }, [saveStatus])
 
   useEffect(() => {
-    const unsub = window.electronAPI.notes.onDataChanged((payload) => {
+    const unsub = onDataChanged((payload) => {
       if (payload.scope === 'tree') {
         refreshTree()
         const relPath = currentRelPathRef.current
         const status = saveStatusRef.current
         if (!payload.self && relPath && status !== 'dirty') {
-          window.electronAPI.notes.read(relPath).then((note: any) => {
+          readNote(relPath).then((note: any) => {
             if (note && !note.error && note.relPath === relPath) {
               const state = useNotesStore.getState()
               const tab = state.tabs.find((t) => t.id === state.activeTabId)

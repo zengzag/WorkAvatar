@@ -1,0 +1,14 @@
+{
+  "name": "@workavatar/plugin-sdk",
+  "version": "0.1.0",
+  "description": "WorkAvatar 插件协议类型与共享契约（宿主与插件共同依赖的单一事实源）",
+  "types": "./src/index.ts",
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}

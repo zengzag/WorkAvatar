@@ -1,7 +1,7 @@
 import { memo, useMemo } from 'react'
 import { theme, Empty } from 'antd'
-import { useTranslation } from 'react-i18next'
-import type { NoteOutlineItem } from '../../types/notes'
+import { hostT } from '../store'
+import type { NoteOutlineItem } from '../types'
 
 interface Props {
   content: string
@@ -29,14 +29,13 @@ export function parseOutline(content: string): NoteOutlineItem[] {
 }
 
 const NoteOutlineInner: React.FC<Props> = ({ content, onJump }) => {
-  const { t } = useTranslation()
   const { token } = theme.useToken()
   const items = useMemo(() => parseOutline(content), [content])
 
   if (items.length === 0) {
     return (
       <div style={{ padding: '12px 8px' }}>
-        <Empty description={t('notes.noOutline')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        <Empty description={hostT('noOutline')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
       </div>
     )
   }

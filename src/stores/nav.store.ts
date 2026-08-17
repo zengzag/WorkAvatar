@@ -16,14 +16,24 @@ export type NavItemKey =
   | 'kms'
   | 'voice'
   | 'calendar'
-  | 'notes'
   | 'automation'
   | 'settings'
 
 export interface NavItemConfig {
-  key: NavItemKey
+  key: string
   visible: boolean
   order: number
+}
+
+/** 插件导航项：随插件启停由启动加载器注入；排序/显隐随 config 持久化 */
+export interface PluginNavItem {
+  key: string
+  /** 文案或 i18n key（以插件 namespace 解析） */
+  label: string
+  icon?: string
+  /** manifest 默认 order（首次出现时的初始顺序） */
+  order: number
+  detachable: boolean
 }
 
 const SETTINGS_KEY = 'nav_items_config'
@@ -33,22 +43,23 @@ export const LOCKED_KEYS: NavItemKey[] = ['settings']
 
 export const DEFAULT_NAV_CONFIG: NavItemConfig[] = [
   { key: 'tasks', visible: true, order: 0 },
-  { key: 'notes', visible: true, order: 1 },
-  { key: 'calendar', visible: true, order: 2 },
-  { key: 'automation', visible: true, order: 3 },
-  { key: 'kms', visible: true, order: 4 },
-  { key: 'voice', visible: true, order: 5 },
-  { key: 'employees', visible: true, order: 6 },
-  { key: 'settings', visible: true, order: 7 },
+  { key: 'calendar', visible: true, order: 1 },
+  { key: 'automation', visible: true, order: 2 },
+  { key: 'kms', visible: true, order: 3 },
+  { key: 'voice', visible: true, order: 4 },
+  { key: 'employees', visible: true, order: 5 },
+  { key: 'settings', visible: true, order: 6 },
 ]
 
 interface NavConfigState {
   config: NavItemConfig[]
+  pluginItems: PluginNavItem[]
   initialized: boolean
   setConfig: (config: NavItemConfig[]) => void
-  toggleVisible: (key: NavItemKey) => void
-  moveUp: (key: NavItemKey) => void
-  moveDown: (key: NavItemKey) => void
+  setPlugins: (items: PluginNavItem[]) => void
+  toggleVisible: (key: string) => void
+  moveUp: (key: string) => void
+  moveDown: (key: string) => void
   reset: () => void
   initialize: () => Promise<void>
 }
@@ -66,9 +77,23 @@ function reindex(config: NavItemConfig[]): NavItemConfig[] {
     .map((item, idx) => ({ ...item, order: idx }))
 }
 
+/** 合并插件项到 config：保留已保存的排序/显隐，新增插件按 manifest order 插入 */
+function mergePluginsIntoConfig(config: NavItemConfig[], plugins: PluginNavItem[]): NavItemConfig[] {
+  const pluginKeys = new Set(plugins.map((p) => p.key))
+  // 保留已持久化的 config（含插件项），移除已卸载的插件项
+  const merged = config.filter((c) => !pluginKeys.has(c.key) || plugins.some((p) => p.key === c.key))
+  for (const p of plugins) {
+    if (!merged.some((c) => c.key === p.key)) {
+      merged.push({ key: p.key, visible: true, order: p.order })
+    }
+  }
+  return reindex(merged)
+}
+
 export const useNavConfigStore = create<NavConfigState>()(
   immer((set, get) => ({
     config: DEFAULT_NAV_CONFIG,
+    pluginItems: [],
     initialized: false,
 
     setConfig: (config) => {
@@ -77,8 +102,17 @@ export const useNavConfigStore = create<NavConfigState>()(
       persist(reindexed)
     },
 
+    setPlugins: (items) => {
+      set((state) => {
+        state.pluginItems = items.slice().sort((a, b) => a.order - b.order)
+        // 合并插件项到 config 持久化列表
+        state.config = mergePluginsIntoConfig(state.config, items)
+      })
+      persist(get().config)
+    },
+
     toggleVisible: (key) => {
-      if (LOCKED_KEYS.includes(key)) return
+      if (LOCKED_KEYS.includes(key as NavItemKey)) return
       set((state) => {
         const item = state.config.find((c) => c.key === key)
         if (item) item.visible = !item.visible
@@ -113,7 +147,12 @@ export const useNavConfigStore = create<NavConfigState>()(
     },
 
     reset: () => {
-      set((state) => { state.config = DEFAULT_NAV_CONFIG.map((c, i) => ({ ...c, order: i })) })
+      set((state) => {
+        // 仅重置内置项，插件项保留
+        const builtin = DEFAULT_NAV_CONFIG.map((c, i) => ({ ...c, order: i }))
+        const pluginOnly = state.config.filter((c) => !DEFAULT_NAV_CONFIG.some((d) => d.key === c.key))
+        state.config = reindex([...builtin, ...pluginOnly])
+      })
       persist(get().config)
     },
 
@@ -128,16 +167,19 @@ export const useNavConfigStore = create<NavConfigState>()(
           try { parsed = JSON.parse(saved) } catch { /* ignore */ }
         }
         if (Array.isArray(parsed)) {
-          // 合并：保留已保存项，补充新增的默认项（如新版本加的导航）
+          // 合并已保存（含插件项）、补充新增内置项
           const merged: NavItemConfig[] = DEFAULT_NAV_CONFIG.map((d) => {
             const s = parsed!.find((c) => c.key === d.key)
             return s ? { ...s } : { ...d }
           })
-          // 过滤已废弃的旧 key
-          const validKeys = DEFAULT_NAV_CONFIG.map((d) => d.key)
-          const filtered = merged.filter((c) => validKeys.includes(c.key))
+          // 补充已保存的插件项（插件加载后 setPlugins 会再次合并，但过早读取时已有）
+          for (const s of parsed) {
+            if (!merged.some((c) => c.key === s.key)) {
+              merged.push({ ...s })
+            }
+          }
           set((state) => {
-            state.config = reindex(filtered)
+            state.config = reindex(merged)
             state.initialized = true
           })
         } else {
@@ -156,7 +198,7 @@ export const useNavConfigStore = create<NavConfigState>()(
   }))
 )
 
-/** 获取排序后的可见导航项（供 App.tsx 构建菜单使用） */
+/** 获取排序后的可见导航项（内置 + 插件，供 App.tsx 构建菜单使用） */
 export function getVisibleNavItems(config: NavItemConfig[]): NavItemConfig[] {
   return config.slice().sort((a, b) => a.order - b.order).filter((c) => c.visible)
 }

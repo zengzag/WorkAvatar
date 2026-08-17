@@ -14,14 +14,13 @@ import {
   CloseOutlined,
   ScheduleOutlined,
 } from '@ant-design/icons'
-import { useTranslation } from 'react-i18next'
-import { useNotes } from '../hooks/useNotes'
-import NotesTree from '../components/notes/NotesTree'
-import VditorEditor from '../components/notes/VditorEditor'
-import NoteOutline from '../components/notes/NoteOutline'
-import NotesSettingsDrawer from '../components/notes/NotesSettingsDrawer'
-import { drainPendingExternalFiles, subscribePendingExternalFiles } from '../lib/pending-external-files'
-import type { NoteEditorMode } from '../types/notes'
+import { useNotes } from './useNotes'
+import { useNotesStore, hostT, openVault, openDiary, getPathForFile, subscribeExternalFiles, registerCloseGuard } from './store'
+import NotesTree from './components/NotesTree'
+import VditorEditor from './components/VditorEditor'
+import NoteOutline from './components/NoteOutline'
+import NotesSettingsDrawer from './components/NotesSettingsDrawer'
+import type { NoteEditorMode } from './types'
 
 const SIDEBAR_MIN = 180
 const SIDEBAR_MAX = 480
@@ -80,7 +79,7 @@ const SidebarResizer: React.FC<{ onResize: (deltaX: number) => void; onResizeEnd
 }
 
 const NotesPage: React.FC = () => {
-  const { t } = useTranslation()
+  const t = hostT
   const { token } = theme.useToken()
   const { message } = App.useApp()
   const notes = useNotes()
@@ -95,17 +94,20 @@ const NotesPage: React.FC = () => {
     notes.init()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 消费暂存的外部 .md 文件路径（笔记页未挂载时由 App.tsx 入队）
+  // 订阅宿主"打开方式"传入的外部 .md 文件（能力未注入时为 no-op）
   useEffect(() => {
-    const pending = drainPendingExternalFiles()
-    if (pending.length > 0) {
-      pending.forEach((p) => notes.openExternal(p))
-    }
-    const unsub = subscribePendingExternalFiles((absPath) => {
+    return subscribeExternalFiles((absPath) => {
       notes.openExternal(absPath)
     })
-    return () => { unsub() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 注册关闭守卫：当前 tab 窗口有脏内容时宿主弹确认框
+  useEffect(() => {
+    return registerCloseGuard(() => {
+      const state = useNotesStore.getState()
+      return state.tabs.some((tab) => tab.saveStatus === 'dirty')
+    })
+  }, [])
 
   useEffect(() => {
     if (notes.settings.sidebar_width) setSidebarWidth(notes.settings.sidebar_width)
@@ -123,7 +125,7 @@ const NotesPage: React.FC = () => {
     if (!notes.activeTabId) {
       await notes.newTab()
     }
-    const defaultName = t('notes.untitledNote')
+    const defaultName = t('untitledNote')
     const node = await notes.createNote('', defaultName)
     if (node) {
       await notes.openNote((node as any).relPath, notes.activeTabId || undefined)
@@ -132,16 +134,13 @@ const NotesPage: React.FC = () => {
 
   const handleOpenVault = useCallback(async () => {
     try {
-      const dataDir = await window.electronAPI.app.getDataDir?.()
-      if (dataDir) {
-        await window.electronAPI.workspace.openInExplorer({ path: `${dataDir}/notes` })
-      }
+      await openVault()
     } catch { /* ignore */ }
   }, [])
 
   const handleOpenDiary = useCallback(async () => {
     try {
-      const res = await window.electronAPI.notes.openDiary()
+      const res = await openDiary()
       if (res && (res as any).error) {
         message.error((res as any).error)
         return
@@ -152,7 +151,7 @@ const NotesPage: React.FC = () => {
         await notes.openNote(relPath)
       }
     } catch (err: any) {
-      message.error(err?.message || t('notes.openFailed'))
+      message.error(err?.message || t('openFailed'))
     }
   }, [notes, message, t])
 
@@ -248,7 +247,7 @@ const NotesPage: React.FC = () => {
     for (const file of files) {
       if (!file.name.toLowerCase().endsWith('.md')) continue
       try {
-        const absPath = window.electronAPI.getPathForFile(file)
+        const absPath = getPathForFile(file)
         await notes.openExternal(absPath)
       } catch { /* ignore */ }
     }
@@ -266,19 +265,19 @@ const NotesPage: React.FC = () => {
       case 'saving':
         return (
           <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>
-            <LoadingOutlined style={{ marginRight: 4 }} />{t('notes.saving')}
+            <LoadingOutlined style={{ marginRight: 4 }} />{t('saving')}
           </span>
         )
       case 'dirty':
         return (
           <span style={{ color: token.colorWarning, fontSize: 12 }}>
-            {t('notes.unsaved')}
+            {t('unsaved')}
           </span>
         )
       default:
         return (
           <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>
-            <CheckOutlined style={{ marginRight: 4, color: token.colorSuccess }} />{t('notes.saved')}
+            <CheckOutlined style={{ marginRight: 4, color: token.colorSuccess }} />{t('saved')}
           </span>
         )
     }
@@ -300,7 +299,7 @@ const NotesPage: React.FC = () => {
           flexShrink: 0,
         }}
       >
-        <Tooltip title={sidebarCollapsed ? t('notes.showSidebar') : t('notes.hideSidebar')}>
+        <Tooltip title={sidebarCollapsed ? t('showSidebar') : t('hideSidebar')}>
           <Button
             type="text"
             size="small"
@@ -309,12 +308,12 @@ const NotesPage: React.FC = () => {
           />
         </Tooltip>
 
-        <Tooltip title={t('notes.openVault')}>
+        <Tooltip title={t('openVault')}>
           <Button type="text" size="small" icon={<FolderOpenOutlined />} onClick={handleOpenVault} />
         </Tooltip>
 
         {notes.settings.diary_enabled && (
-          <Tooltip title={t('notes.openDiary')}>
+          <Tooltip title={t('openDiary')}>
             <Button type="text" size="small" icon={<ScheduleOutlined />} onClick={handleOpenDiary} />
           </Tooltip>
         )}
@@ -326,15 +325,15 @@ const NotesPage: React.FC = () => {
           value={editorMode}
           onChange={(v) => handleModeChange(v as NoteEditorMode)}
           options={[
-            { value: 'edit', icon: <EditOutlined />, label: t('notes.modeLive') },
-            { value: 'split', icon: <ColumnHeightOutlined />, label: t('notes.modeSplit') },
-            { value: 'preview', icon: <EyeOutlined />, label: t('notes.modeRead') },
+            { value: 'edit', icon: <EditOutlined />, label: t('modeLive') },
+            { value: 'split', icon: <ColumnHeightOutlined />, label: t('modeSplit') },
+            { value: 'preview', icon: <EyeOutlined />, label: t('modeRead') },
           ]}
         />
 
         <div style={{ flex: 1 }} />
 
-        <Tooltip title={t('notes.settings')}>
+        <Tooltip title={t('settings')}>
           <Button type="text" size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} />
         </Tooltip>
       </div>
@@ -415,12 +414,12 @@ const NotesPage: React.FC = () => {
                   ? (tab.externalAbsPath.replace(/\\/g, '/').split('/').pop() || tab.externalAbsPath)
                   : tab.relPath
                     ? (tab.relPath.split('/').pop() || tab.relPath)
-                    : t('notes.newTab')
+                    : t('newTab')
                 const isExternal = !!tab.externalAbsPath
                 return (
                   <div
                     key={tab.id}
-                    title={tabPath || t('notes.newTab')}
+                    title={tabPath || t('newTab')}
                     onClick={() => notes.switchTab(tab.id)}
                     onAuxClick={(e) => { if (e.button === 1) handleCloseTab(tab.id) }}
                     style={{
@@ -441,7 +440,7 @@ const NotesPage: React.FC = () => {
                     }}
                   >
                     {isExternal && (
-                      <Tooltip title={t('notes.externalFileTab')}>
+                      <Tooltip title={t('externalFileTab')}>
                         <span style={{ fontSize: 10, opacity: 0.6 }}>⬡</span>
                       </Tooltip>
                     )}
@@ -453,7 +452,7 @@ const NotesPage: React.FC = () => {
                   </div>
                 )
               })}
-              <Tooltip title={t('notes.newTab')}>
+              <Tooltip title={t('newTab')}>
                 <Button
                   type="text"
                   size="small"
@@ -508,12 +507,12 @@ const NotesPage: React.FC = () => {
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
                       description={
                         <span style={{ color: token.colorTextSecondary }}>
-                          {t('notes.selectNoteToEdit')}
+                          {t('selectNoteToEdit')}
                         </span>
                       }
                     >
                       <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateNoteAtRoot}>
-                        {t('notes.createNewNote')}
+                        {t('createNewNote')}
                       </Button>
                     </Empty>
                   </div>
@@ -534,7 +533,7 @@ const NotesPage: React.FC = () => {
                     }}
                   >
                     <span style={{ fontSize: 15, color: token.colorPrimary, fontWeight: 500 }}>
-                      {t('notes.dropMdToOpen')}
+                      {t('dropMdToOpen')}
                     </span>
                   </div>
                 )}
@@ -561,14 +560,14 @@ const NotesPage: React.FC = () => {
                 description={
                   <span style={{ color: token.colorTextSecondary }}>
                     {notes.tree.length === 0
-                      ? t('notes.emptyVaultDesc')
-                      : t('notes.emptyEditorDesc')}
+                      ? t('emptyVaultDesc')
+                      : t('emptyEditorDesc')}
                   </span>
                 }
               >
                 {notes.tree.length === 0 ? (
                   <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateNoteAtRoot}>
-                    {t('notes.createFirstNote')}
+                    {t('createFirstNote')}
                   </Button>
                 ) : null}
               </Empty>
@@ -588,7 +587,7 @@ const NotesPage: React.FC = () => {
                   }}
                 >
                   <span style={{ fontSize: 15, color: token.colorPrimary, fontWeight: 500 }}>
-                    {t('notes.dropMdToOpen')}
+                    {t('dropMdToOpen')}
                   </span>
                 </div>
               )}
@@ -622,8 +621,8 @@ const NotesPage: React.FC = () => {
                 justifyContent: 'space-between',
               }}
             >
-              <span>{t('notes.outline')}</span>
-              <Tooltip title={t('notes.hideOutline')}>
+              <span>{t('outline')}</span>
+              <Tooltip title={t('hideOutline')}>
                 <Button type="text" size="small" icon={<MenuUnfoldOutlined />} onClick={handleToggleOutline} />
               </Tooltip>
             </div>
@@ -635,7 +634,7 @@ const NotesPage: React.FC = () => {
         )}
 
         {outlineCollapsed && hasOpenFile && (
-          <Tooltip title={t('notes.showOutline')} placement="left">
+          <Tooltip title={t('showOutline')} placement="left">
             <Button
               type="text"
               size="small"
@@ -673,11 +672,11 @@ const NotesPage: React.FC = () => {
           </Tooltip>
           {saveStatusNode}
           <span style={{ color: token.colorTextQuaternary }}>
-            {t('notes.wordCount', { count: wordCount })}
+            {t('wordCount', { count: wordCount })}
           </span>
           {selectedCount > 0 && (
             <span style={{ color: token.colorTextQuaternary }}>
-              {t('notes.selectedCount', { count: selectedCount })}
+              {t('selectedCount', { count: selectedCount })}
             </span>
           )}
         </div>

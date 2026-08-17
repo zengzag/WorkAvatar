@@ -1,11 +1,12 @@
 import os from 'os'
+import path from 'path'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
-import NotesService from './notes/notes.service'
 import WorkspaceManagerService from './workspace-manager.service'
+import PathService from './path.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
@@ -190,7 +191,8 @@ class EmployeeAgentService {
         const osArch = os.arch()
         const parts: string[] = []
         parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        const notesRoot = NotesService.getInstance().getVaultRoot()
+        // 笔记库：与 notes 插件约定一致，vault = {dataDir}/notes（插件迁移不搬迁文件）
+        const notesRoot = path.join(PathService.getInstance().getDataDir(), 'notes')
         parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
         return parts.join('\n')
       })(),

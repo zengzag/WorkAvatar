@@ -3,9 +3,8 @@ import { theme, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
 import Vditor from 'vditor'
 import 'vditor/dist/index.css'
-import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
-import { useTranslation } from 'react-i18next'
-import type { NoteEditorMode } from '../../types/notes'
+import { useAppearance, hostT, saveImage } from '../store'
+import type { NoteEditorMode } from '../types'
 
 interface Props {
   tabId: string
@@ -340,11 +339,8 @@ const VditorEditorInner: React.FC<Props> = ({
   onContentChange, onSave, onLocateHandled, onSelectionChange,
 }) => {
   const { token } = theme.useToken()
-  const { t } = useTranslation()
-  const themeMode = useAppearanceStore((s) => s.themeMode)
-  const locale = useAppearanceStore((s) => s.locale)
-  const effectiveTheme = getEffectiveTheme(themeMode)
-  const isDark = effectiveTheme === 'dark'
+  const t = hostT
+  const { isDark, locale } = useAppearance()
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef<HTMLDivElement | null>(null)
@@ -799,15 +795,7 @@ const VditorEditorInner: React.FC<Props> = ({
           // 保存图片到 vault/attachments，避免 data URL 导致文件体积膨胀
           blob.arrayBuffer().then(async (arrayBuffer) => {
             try {
-              const res = await window.electronAPI.notes.saveImage({
-                buffer: arrayBuffer,
-                fileName: blob.name || 'pasted-image.png',
-              })
-              if (res && (res as any).error) {
-                console.error('Save image failed:', (res as any).error)
-                return
-              }
-              const relPath = (res as any)?.relPath as string
+              const relPath = await saveImage(arrayBuffer, blob.name || 'pasted-image.png')
               if (relPath) {
                 insertTextAtCursor(`![${blob.name?.replace(/\.[^.]+$/, '') || '图片'}](${relPath})\n`)
               }
@@ -911,7 +899,7 @@ const VditorEditorInner: React.FC<Props> = ({
         toolbar,
         height: '100%',
         minHeight: 200,
-        placeholder: t('notes.placeholder'),
+        placeholder: t('placeholder'),
         cache: { enable: false },
         counter: { enable: false },
         toolbarConfig: { pin: true },
@@ -924,15 +912,7 @@ const VditorEditorInner: React.FC<Props> = ({
             for (const file of files) {
               file.arrayBuffer().then(async (arrayBuffer) => {
                 try {
-                  const res = await window.electronAPI.notes.saveImage({
-                    buffer: arrayBuffer,
-                    fileName: file.name || 'upload-image.png',
-                  })
-                  if (res && (res as any).error) {
-                    console.error('Save image failed:', (res as any).error)
-                    return
-                  }
-                  const relPath = (res as any)?.relPath as string
+                  const relPath = await saveImage(arrayBuffer, file.name || 'upload-image.png')
                   if (relPath) {
                     insertTextAtCursor(`![${file.name.replace(/\.[^.]+$/, '')}](${relPath})\n`)
                   }
@@ -1223,14 +1203,14 @@ const VditorEditorInner: React.FC<Props> = ({
       ? [
         { type: 'divider' },
         {
-          key: 'table-ops', label: t('notes.ctxTableOps'), children: [
-            { key: 'row-above', label: t('notes.ctxRowAbove'), onClick: () => insertRow('above') },
-            { key: 'row-below', label: t('notes.ctxRowBelow'), onClick: () => insertRow('below') },
-            { key: 'col-left', label: t('notes.ctxColLeft'), onClick: () => insertColumn('left') },
-            { key: 'col-right', label: t('notes.ctxColRight'), onClick: () => insertColumn('right') },
+          key: 'table-ops', label: t('ctxTableOps'), children: [
+            { key: 'row-above', label: t('ctxRowAbove'), onClick: () => insertRow('above') },
+            { key: 'row-below', label: t('ctxRowBelow'), onClick: () => insertRow('below') },
+            { key: 'col-left', label: t('ctxColLeft'), onClick: () => insertColumn('left') },
+            { key: 'col-right', label: t('ctxColRight'), onClick: () => insertColumn('right') },
             { type: 'divider' },
-            { key: 'del-row', label: t('notes.ctxDelRow'), onClick: () => deleteRow() },
-            { key: 'del-col', label: t('notes.ctxDelCol'), onClick: () => deleteColumn() },
+            { key: 'del-row', label: t('ctxDelRow'), onClick: () => deleteRow() },
+            { key: 'del-col', label: t('ctxDelCol'), onClick: () => deleteColumn() },
           ],
         },
       ]
@@ -1238,7 +1218,7 @@ const VditorEditorInner: React.FC<Props> = ({
     const items: MenuProps['items'] = [
       ...tableSection,
       {
-        key: 'headings', label: t('notes.ctxHeadings'), children: [
+        key: 'headings', label: t('ctxHeadings'), children: [
           { key: 'h1', label: 'H1', onClick: () => triggerHeading('h1') },
           { key: 'h2', label: 'H2', onClick: () => triggerHeading('h2') },
           { key: 'h3', label: 'H3', onClick: () => triggerHeading('h3') },
@@ -1249,31 +1229,31 @@ const VditorEditorInner: React.FC<Props> = ({
       },
       { type: 'divider' },
       {
-        key: 'format', label: t('notes.ctxFormat'), children: [
-          { key: 'bold', label: t('notes.ctxBold'), onClick: () => triggerToolbarItem('bold') },
-          { key: 'italic', label: t('notes.ctxItalic'), onClick: () => triggerToolbarItem('italic') },
-          { key: 'strike', label: t('notes.ctxStrike'), onClick: () => triggerToolbarItem('strike') },
+        key: 'format', label: t('ctxFormat'), children: [
+          { key: 'bold', label: t('ctxBold'), onClick: () => triggerToolbarItem('bold') },
+          { key: 'italic', label: t('ctxItalic'), onClick: () => triggerToolbarItem('italic') },
+          { key: 'strike', label: t('ctxStrike'), onClick: () => triggerToolbarItem('strike') },
         ],
       },
       {
-        key: 'list', label: t('notes.ctxListGroup'), children: [
-          { key: 'list', label: t('notes.ctxList'), onClick: () => triggerToolbarItem('list') },
-          { key: 'ordered-list', label: t('notes.ctxOrderedList'), onClick: () => triggerToolbarItem('ordered-list') },
-          { key: 'check', label: t('notes.ctxCheck'), onClick: () => triggerToolbarItem('check') },
+        key: 'list', label: t('ctxListGroup'), children: [
+          { key: 'list', label: t('ctxList'), onClick: () => triggerToolbarItem('list') },
+          { key: 'ordered-list', label: t('ctxOrderedList'), onClick: () => triggerToolbarItem('ordered-list') },
+          { key: 'check', label: t('ctxCheck'), onClick: () => triggerToolbarItem('check') },
           { type: 'divider' },
-          { key: 'outdent', label: t('notes.ctxOutdent'), onClick: () => triggerToolbarItem('outdent') },
-          { key: 'indent', label: t('notes.ctxIndent'), onClick: () => triggerToolbarItem('indent') },
+          { key: 'outdent', label: t('ctxOutdent'), onClick: () => triggerToolbarItem('outdent') },
+          { key: 'indent', label: t('ctxIndent'), onClick: () => triggerToolbarItem('indent') },
         ],
       },
       {
-        key: 'insert', label: t('notes.ctxInsert'), children: [
-          { key: 'quote', label: t('notes.ctxQuote'), onClick: () => triggerToolbarItem('quote') },
-          { key: 'line', label: t('notes.ctxLine'), onClick: () => triggerToolbarItem('line') },
-          { key: 'table', label: t('notes.ctxTable'), onClick: () => triggerToolbarItem('table') },
+        key: 'insert', label: t('ctxInsert'), children: [
+          { key: 'quote', label: t('ctxQuote'), onClick: () => triggerToolbarItem('quote') },
+          { key: 'line', label: t('ctxLine'), onClick: () => triggerToolbarItem('line') },
+          { key: 'table', label: t('ctxTable'), onClick: () => triggerToolbarItem('table') },
           { type: 'divider' },
-          { key: 'code', label: t('notes.ctxCode'), onClick: () => triggerToolbarItem('code') },
-          { key: 'inline-code', label: t('notes.ctxInlineCode'), onClick: () => triggerToolbarItem('inline-code') },
-          { key: 'link', label: t('notes.ctxLink'), onClick: () => triggerToolbarItem('link') },
+          { key: 'code', label: t('ctxCode'), onClick: () => triggerToolbarItem('code') },
+          { key: 'inline-code', label: t('ctxInlineCode'), onClick: () => triggerToolbarItem('inline-code') },
+          { key: 'link', label: t('ctxLink'), onClick: () => triggerToolbarItem('link') },
         ],
       },
     ]

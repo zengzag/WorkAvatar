@@ -16,7 +16,7 @@ const CACHEABLE_PREFIXES: Array<[string, string]> = [
   ['/voice', 'voice'],
   ['/calendar', 'calendar'],
   ['/automation', 'automation'],
-  ['/notes', 'notes'],
+  ['/plugin/notes', 'notes'],
 ]
 
 function getCacheKey(pathname: string): string | null {

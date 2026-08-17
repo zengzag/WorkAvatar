@@ -7,9 +7,9 @@ import type { TreeDataNode } from 'antd'
 import {
   EditOutlined, BookOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
-import { useTranslation } from 'react-i18next'
-import SettingsItem from '../common/SettingsItem'
-import type { NotesSettings, NoteNode } from '../../types/notes'
+import { hostT } from '../store'
+import SettingsItem from './SettingsItem'
+import type { NotesSettings, NoteNode } from '../types'
 
 interface NotesSettingsDrawerProps {
   open: boolean
@@ -67,7 +67,7 @@ const FolderPickerModal: React.FC<{
   onCancel: () => void
   onOk: (relPath: string) => void
 }> = ({ open, tree, selected, onCancel, onOk }) => {
-  const { t } = useTranslation()
+  const t = hostT
   const [inner, setInner] = useState('')
   useEffect(() => { if (open) setInner(selected) }, [open, selected])
   const folders = useMemo(() => collectFolders(tree), [tree])
@@ -75,7 +75,7 @@ const FolderPickerModal: React.FC<{
   const selectedKey = inner === '' ? '__root__' : inner
   return (
     <Modal
-      title={t('notes.settingsDiaryRootPickerTitle')}
+      title={t('settingsDiaryRootPickerTitle')}
       open={open}
       onOk={() => onOk(inner)}
       onCancel={onCancel}
@@ -96,7 +96,7 @@ const FolderPickerModal: React.FC<{
           }}
           treeData={[{
             key: '__root__',
-            title: t('notes.vaultRoot'),
+            title: t('vaultRoot'),
             icon: <FolderOpenOutlined />,
             children: treeData,
           }]}
@@ -109,7 +109,7 @@ const FolderPickerModal: React.FC<{
 const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
   open, onClose, settings, tree, onSave,
 }) => {
-  const { t } = useTranslation()
+  const t = hostT
   const { token } = theme.useToken()
 
   const [editorMaxWidth, setEditorMaxWidth] = useState<number>(settings.editor_max_width ?? 820)
@@ -162,15 +162,15 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
 
   const cardStyle: React.CSSProperties = { borderColor: token.colorBorderSecondary }
 
-  const diaryRootDisplay = diaryRoot && diaryRoot.trim() ? diaryRoot.trim() : t('notes.vaultRoot')
+  const diaryRootDisplay = diaryRoot && diaryRoot.trim() ? diaryRoot.trim() : t('vaultRoot')
 
   const renderEditorTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card size="small" style={cardStyle}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <SettingsItem
-            title={t('notes.settingsEditorMaxWidth')}
-            description={t('notes.settingsEditorMaxWidthTip')}
+            title={t('settingsEditorMaxWidth')}
+            description={t('settingsEditorMaxWidthTip')}
             extra={
               <InputNumber
                 min={0} max={2000} step={20}
@@ -183,7 +183,7 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
           />
           <Divider style={{ margin: '4px 0' }} />
           <SettingsItem
-            title={t('notes.settingsEditorFontSize')}
+            title={t('settingsEditorFontSize')}
             extra={
               <InputNumber
                 min={12} max={24} step={1}
@@ -196,7 +196,7 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
           />
           <Divider style={{ margin: '4px 0' }} />
           <SettingsItem
-            title={t('notes.settingsEditorLineHeight')}
+            title={t('settingsEditorLineHeight')}
             extra={
               <InputNumber
                 min={1} max={2.5} step={0.1}
@@ -212,7 +212,7 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
       <Card size="small" style={cardStyle}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <SettingsItem
-            title={t('notes.settingsSidebarWidth')}
+            title={t('settingsSidebarWidth')}
             extra={
               <InputNumber
                 min={180} max={480} step={10}
@@ -225,7 +225,7 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
           />
           <Divider style={{ margin: '4px 0' }} />
           <SettingsItem
-            title={t('notes.settingsOutlineWidth')}
+            title={t('settingsOutlineWidth')}
             extra={
               <InputNumber
                 min={160} max={480} step={10}
@@ -245,8 +245,8 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card size="small" style={cardStyle}>
         <SettingsItem
-          title={t('notes.settingsDiaryEnabled')}
-          description={t('notes.settingsDiaryEnabledTip')}
+          title={t('settingsDiaryEnabled')}
+          description={t('settingsDiaryEnabledTip')}
           extra={
             <Switch
               checked={diaryEnabled}
@@ -259,8 +259,8 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
       {diaryEnabled && (
         <Card size="small" style={cardStyle}>
           <SettingsItem
-            title={t('notes.settingsDiaryRoot')}
-            description={t('notes.settingsDiaryRootTip')}
+            title={t('settingsDiaryRoot')}
+            description={t('settingsDiaryRootTip')}
             extra={
               <Button
                 type="text"
@@ -282,7 +282,7 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
               suffix={<FolderOpenOutlined style={{ color: token.colorTextTertiary }} />}
             />
             <div style={{ fontSize: 12, color: token.colorTextTertiary, marginTop: 6 }}>
-              {t('notes.settingsDiaryRootCurrent', { path: diaryRootDisplay })}
+              {t('settingsDiaryRootCurrent', { path: diaryRootDisplay })}
             </div>
           </div>
         </Card>
@@ -293,19 +293,19 @@ const NotesSettingsDrawer: React.FC<NotesSettingsDrawerProps> = ({
   const tabItems = [
     {
       key: 'editor',
-      label: <span><EditOutlined style={{ marginRight: 4 }} />{t('notes.settingsTabEditor')}</span>,
+      label: <span><EditOutlined style={{ marginRight: 4 }} />{t('settingsTabEditor')}</span>,
       children: renderEditorTab(),
     },
     {
       key: 'diary',
-      label: <span><BookOutlined style={{ marginRight: 4 }} />{t('notes.settingsTabDiary')}</span>,
+      label: <span><BookOutlined style={{ marginRight: 4 }} />{t('settingsTabDiary')}</span>,
       children: renderDiaryTab(),
     },
   ]
 
   return (
     <Drawer
-      title={t('notes.settings')}
+      title={t('settings')}
       open={open}
       onClose={onClose}
       size={640}

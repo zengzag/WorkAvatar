@@ -20,7 +20,6 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'web_search_engine',
   'web_search_result_count',
   'calendar_settings',
-  'notes_settings',
 ])
 
 // 需要清空的用户数据表（按依赖顺序，受外键约束）
@@ -204,11 +203,12 @@ export function registerAppHandlers(
   })
 
   // 独立窗口渲染进程启动时查询自己所属的 tabKey
-  // 通过 URL hash 解析（独立窗口加载的是 #/window/:tabKey），需要 event.sender 所以单独注册
+  // 通过 URL hash 解析：内置页 #/window/tasks → tasks；插件页 #/window/plugin/notes → notes
+  // 需要 event.sender 所以单独注册
   ipcMain.handle(IPC_CHANNELS.TAB_WINDOW_GET_OWN_TAB, (event) => {
     try {
       const url = event.sender.getURL()
-      const match = url.match(/#\/window\/([a-z]+)/)
+      const match = url.match(/#\/window\/(?:plugin\/)?([a-z][a-z0-9-]*)/)
       return match ? match[1] : null
     } catch {
       return null

@@ -9,7 +9,7 @@ import { RUNTIME_ENV_CHANNELS } from './runtime-env'
 import { MCP_CHANNELS } from './mcp'
 import { CALENDAR_CHANNELS } from './calendar'
 import { AUTOMATION_CHANNELS } from './automation'
-import { NOTES_CHANNELS } from './notes'
+import { PLUGIN_CHANNELS } from './plugin'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -23,7 +23,7 @@ export const IPC_CHANNELS = {
   ...MCP_CHANNELS,
   ...CALENDAR_CHANNELS,
   ...AUTOMATION_CHANNELS,
-  ...NOTES_CHANNELS,
+  ...PLUGIN_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -37,4 +37,4 @@ export * from './runtime-env'
 export * from './mcp'
 export * from './calendar'
 export * from './automation'
-export * from './notes'
+export * from './plugin'

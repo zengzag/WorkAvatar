@@ -1,30 +1,83 @@
+/**
+ * notes 内置插件主进程入口。
+ * 由宿主 NotesService 迁移而来（保持全部功能）：
+ * - vault 仍为宿主 dataDir/notes（用户自定义数据目录不变，笔记文件零搬迁）
+ * - settings 从内核主库 settings 表一次性迁入插件分库（plugin_kv）
+ * - IPC 经 ctx.ipc.handle 注册，广播经 ctx.ipc.broadcast 推送到主窗口 + tab 独立窗口
+ */
+import { app, shell } from 'electron'
 import fs from 'fs'
 import path from 'path'
-import { BrowserWindow, shell } from 'electron'
-import PathService from '../path.service'
-import { createLogger } from '../logger'
-import { moveToTrash } from '../common-utils'
-import {
-  DEFAULT_NOTES_SETTINGS,
-  NOTES_CHANNELS,
-  type NoteNodeType,
-  type NoteNode,
-  type NoteContent,
-  type NoteSearchHit,
-  type NoteSearchSnippet,
-  type NotesSettings,
-} from '../../../shared/channels/notes'
+import type { PluginContext, PluginMigrationContext, PluginDatabase } from '../../../plugin-sdk/src'
 
-const logger = createLogger('Notes')
+// ====== 类型（从宿主 shared/channels/notes 迁入，插件不依赖宿主内部） ======
 
-// 类型从 shared 复用，避免重复定义
-export type {
-  NoteNodeType,
-  NoteNode,
-  NoteContent,
-  NoteSearchHit,
-  NoteSearchSnippet,
-  NotesSettings,
+export type NoteNodeType = 'folder' | 'file'
+
+export interface NoteNode {
+  name: string
+  relPath: string
+  type: NoteNodeType
+  mtime: number
+  size: number
+  children?: NoteNode[]
+}
+
+export interface NoteContent {
+  relPath: string
+  content: string
+  mtime: number
+  size: number
+}
+
+export interface NoteSearchSnippet {
+  line: number
+  text: string
+}
+
+export interface NoteSearchHit {
+  relPath: string
+  snippets: NoteSearchSnippet[]
+}
+
+export interface NotesSettings {
+  editor_mode: 'edit' | 'split' | 'preview'
+  last_opened: string | null
+  open_tabs: string[]
+  active_tab: string | null
+  sidebar_collapsed: boolean
+  outline_collapsed: boolean
+  sidebar_width: number
+  outline_width: number
+  editor_max_width: number
+  editor_font_size: number
+  editor_line_height: number
+  expanded_folders: string[]
+  diary_enabled: boolean
+  diary_root: string
+}
+
+export const DEFAULT_NOTES_SETTINGS: NotesSettings = {
+  editor_mode: 'edit',
+  last_opened: null,
+  open_tabs: [],
+  active_tab: null,
+  sidebar_collapsed: false,
+  outline_collapsed: false,
+  sidebar_width: 260,
+  outline_width: 260,
+  editor_max_width: 820,
+  editor_font_size: 15,
+  editor_line_height: 1.7,
+  expanded_folders: [],
+  diary_enabled: false,
+  diary_root: 'diary',
+}
+
+export interface NotesDataChangedPayload {
+  scope: 'tree' | 'settings'
+  ts: number
+  self?: boolean
 }
 
 const SETTINGS_KEY = 'notes_settings'
@@ -32,51 +85,48 @@ const SETTINGS_KEY = 'notes_settings'
 // ====== 服务 ======
 
 class NotesService {
-  private static instance: NotesService
   private vaultRoot: string
   private watcher: fs.FSWatcher | null = null
-  /** 自身写操作触发的变更事件忽略窗口，避免刷新打断编辑器光标 */
   private selfWritePaths = new Set<string>()
   private selfWriteTimer: NodeJS.Timeout | null = null
   private settingsCache: NotesSettings | null = null
   private debouncedBroadcastTimer: NodeJS.Timeout | null = null
   private treeCache: { tree: NoteNode[]; mtime: number } | null = null
+  private kvDb: PluginDatabase | null = null
 
-  private constructor() {
-    const dataDir = PathService.getInstance().getDataDir()
+  constructor(private ctx: PluginContext) {
+    const dataDir = ctx.services.host.getDataDir()
     this.vaultRoot = path.join(dataDir, 'notes')
     this.ensureDir(this.vaultRoot)
-  }
-
-  static getInstance(): NotesService {
-    if (!NotesService.instance) {
-      NotesService.instance = new NotesService()
-    }
-    return NotesService.instance
   }
 
   getVaultRoot(): string {
     return this.vaultRoot
   }
 
-  private invalidateTreeCache(): void {
-    this.treeCache = null
+  /** settings 存插件分库 plugin_kv 表（与宿主 ctx.storage 同一 index.db）；先确保表存在 */
+  private getKvDb(): PluginDatabase {
+    if (!this.kvDb) {
+      this.kvDb = this.ctx.storage.openSqlite('index')
+      this.kvDb.exec('CREATE TABLE IF NOT EXISTS plugin_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+    }
+    return this.kvDb
   }
 
-  /** 启动文件监听（应用启动时调用一次） */
+  // ====== watcher ======
+
   startWatcher(): void {
     if (this.watcher) return
     try {
-      // Windows / macOS 支持 recursive；Linux 不支持，回退监听单目录（子目录变更需重建）
       this.watcher = fs.watch(this.vaultRoot, { recursive: true }, (_eventType, filename) => {
         if (!filename) return
         this.scheduleBroadcast(filename)
       })
       this.watcher.on('error', (err) => {
-        logger.warn('notes watcher error:', (err as Error)?.message || err)
+        this.ctx.services.logger.warn('notes watcher error:', (err as Error)?.message || err)
       })
     } catch (err: any) {
-      logger.warn('notes watcher start failed:', err?.message || err)
+      this.ctx.services.logger.warn('notes watcher start failed:', err?.message || err)
     }
   }
 
@@ -89,7 +139,6 @@ class NotesService {
 
   // ====== 路径安全 ======
 
-  /** 把 relPath 解析为 vault 内绝对路径，越界抛错 */
   private resolve(relPath: string): string {
     if (!relPath || typeof relPath !== 'string') {
       throw new Error('路径不能为空')
@@ -141,13 +190,11 @@ class NotesService {
     }
     const nodes: NoteNode[] = []
     for (const entry of entries) {
-      // 跳过隐藏文件 / 文件夹（. 开头）
       if (entry.name.startsWith('.')) continue
       const childRel = relDir ? `${relDir}/${entry.name}` : entry.name
       const childAbs = path.join(absDir, entry.name)
       if (entry.isDirectory()) {
         const children = this.readDir(childAbs, childRel)
-        // 空文件夹也保留，便于展示
         let stat: fs.Stats | null = null
         try { stat = fs.statSync(childAbs) } catch { /* ignore */ }
         nodes.push({
@@ -170,7 +217,6 @@ class NotesService {
         })
       }
     }
-    // 文件夹优先，各自按名称升序
     nodes.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
       return a.name.localeCompare(b.name, 'zh-CN')
@@ -200,7 +246,6 @@ class NotesService {
     }
   }
 
-  /** 写入笔记（创建或覆盖）。relPath 可指向已存在文件或新文件 */
   writeNote(relPath: string, content: string): NoteContent {
     const full = this.resolve(relPath)
     const parent = path.dirname(full)
@@ -216,7 +261,6 @@ class NotesService {
     }
   }
 
-  /** 在指定父文件夹下创建空笔记，返回 relPath。重名自动加序号 */
   createNote(parentRelPath: string, name: string): NoteNode {
     const parentAbs = parentRelPath ? this.resolve(parentRelPath) : this.vaultRoot
     if (!fs.existsSync(parentAbs) || !fs.statSync(parentAbs).isDirectory()) {
@@ -241,7 +285,6 @@ class NotesService {
     }
   }
 
-  /** 在指定父文件夹下创建文件夹 */
   createFolder(parentRelPath: string, name: string): NoteNode {
     const parentAbs = parentRelPath ? this.resolve(parentRelPath) : this.vaultRoot
     if (!fs.existsSync(parentAbs) || !fs.statSync(parentAbs).isDirectory()) {
@@ -266,7 +309,6 @@ class NotesService {
     }
   }
 
-  /** 重命名文件 / 文件夹。返回新的 relPath */
   renameItem(relPath: string, newName: string): { relPath: string } {
     const full = this.resolve(relPath)
     if (!fs.existsSync(full)) throw new Error('目标不存在')
@@ -276,7 +318,6 @@ class NotesService {
     if (isFile) {
       finalName = this.ensureMdExt(finalName)
     } else {
-      // 文件夹不允许带扩展名歧义，保留原样（去除末尾点）
       finalName = finalName.replace(/[.]+$/, '')
       if (!finalName) throw new Error('名称无效')
     }
@@ -294,7 +335,6 @@ class NotesService {
     return { relPath: this.toPosix(newRel) }
   }
 
-  /** 移动文件 / 文件夹到目标父文件夹 */
   moveItem(srcRelPath: string, destParentRelPath: string): { relPath: string } {
     const srcFull = this.resolve(srcRelPath)
     if (!fs.existsSync(srcFull)) throw new Error('源不存在')
@@ -308,7 +348,6 @@ class NotesService {
       return { relPath: this.toPosix(srcRelPath) }
     }
     if (fs.existsSync(destFull)) throw new Error('目标已存在同名项')
-    // 防止把文件夹移入自身
     if (fs.statSync(srcFull).isDirectory() && destFull.startsWith(srcFull + path.sep)) {
       throw new Error('不能移入自身子目录')
     }
@@ -321,7 +360,6 @@ class NotesService {
     return { relPath: newRel }
   }
 
-  /** 复制文件 / 文件夹到目标父文件夹（重名自动加序号）。返回新的 relPath */
   async copyItem(srcRelPath: string, destParentRelPath: string): Promise<{ relPath: string }> {
     const srcFull = this.resolve(srcRelPath)
     if (!fs.existsSync(srcFull)) throw new Error('源不存在')
@@ -334,7 +372,6 @@ class NotesService {
     const stem = isFolder ? baseName : baseName.replace(/\.md$/i, '')
     const finalName = this.uniqueName(destParentAbs, stem, isFolder)
     const destFull = path.join(destParentAbs, finalName)
-    // 防止把文件夹复制到自身子目录
     if (isFolder && destFull.startsWith(srcFull + path.sep)) {
       throw new Error('不能复制到自身子目录')
     }
@@ -360,7 +397,6 @@ class NotesService {
     }
   }
 
-  /** 从 vault 外部导入文件 / 文件夹（重名自动加序号） */
   async importExternal(srcAbsPath: string, destParentRelPath: string): Promise<{ relPath: string }> {
     if (!srcAbsPath || !fs.existsSync(srcAbsPath)) throw new Error('源文件不存在')
     const destParentAbs = destParentRelPath ? this.resolve(destParentRelPath) : this.vaultRoot
@@ -382,12 +418,10 @@ class NotesService {
     return { relPath: newRel }
   }
 
-  /** 获取笔记 / 文件夹的绝对路径（用于复制路径、资源管理器打开等） */
   getAbsolutePath(relPath: string): string {
     return this.resolve(relPath)
   }
 
-  /** 在系统资源管理器中打开：文件高亮定位，文件夹直接打开 */
   openInExplorer(relPath: string): void {
     const full = this.resolve(relPath)
     if (!fs.existsSync(full)) throw new Error('目标不存在')
@@ -399,7 +433,6 @@ class NotesService {
     }
   }
 
-  /** 读取 vault 外部 .md 文件（按绝对路径，用于临时打开） */
   readExternalFile(absPath: string): NoteContent {
     if (!absPath || typeof absPath !== 'string') throw new Error('路径不能为空')
     const resolved = path.resolve(absPath)
@@ -420,7 +453,6 @@ class NotesService {
     }
   }
 
-  /** 写入 vault 外部 .md 文件（按绝对路径，用于临时编辑保存） */
   writeExternalFile(absPath: string, content: string): NoteContent {
     if (!absPath || typeof absPath !== 'string') throw new Error('路径不能为空')
     const resolved = path.resolve(absPath)
@@ -435,13 +467,23 @@ class NotesService {
     }
   }
 
-  /** 删除文件 / 文件夹（移至操作系统回收站，可找回） */
   async deleteItem(relPath: string): Promise<{ success: boolean }> {
     const full = this.resolve(relPath)
     if (!fs.existsSync(full)) return { success: true }
     this.markSelfWrite(relPath)
-    await moveToTrash(full)
+    await this.moveToTrash(full)
     return { success: true }
+  }
+
+  private async moveToTrash(filePath: string): Promise<void> {
+    try {
+      await shell.trashItem(filePath)
+    } catch {
+      // 回收站不可用（如某些 Linux 环境）时回退到永久删除
+      if (fs.existsSync(filePath)) {
+        fs.rmSync(filePath, { recursive: true, force: true })
+      }
+    }
   }
 
   // ====== 搜索 ======
@@ -469,7 +511,6 @@ class NotesService {
           if (snippets.length >= 3) break
         }
       }
-      // 文件名命中也算一条
       const nameHit = file.toLowerCase().includes(lowerQ) && snippets.length === 0
       if (snippets.length > 0 || nameHit) {
         hits.push({ relPath: this.toPosix(file), snippets })
@@ -508,7 +549,6 @@ class NotesService {
     return (start > 0 ? '…' : '') + trimmed.slice(start, end) + (end < trimmed.length ? '…' : '')
   }
 
-  /** 保存粘贴/上传的图片到 vault 的 attachments 目录，返回 markdown 相对路径 */
   saveImage(buffer: Buffer, fileName: string): string {
     const attachmentsDir = path.join(this.vaultRoot, 'attachments')
     if (!fs.existsSync(attachmentsDir)) {
@@ -524,13 +564,12 @@ class NotesService {
     return `attachments/${uniqueName}`
   }
 
-  // ====== 设置 ======
+  // ====== 设置（插件分库 plugin_kv） ======
 
   getSettings(): NotesSettings {
     if (this.settingsCache) return this.settingsCache
     try {
-      const db = this.getSettingsDb()
-      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(SETTINGS_KEY) as any
+      const row = this.getKvDb().prepare('SELECT value FROM plugin_kv WHERE key = ?').get(SETTINGS_KEY) as { value: string } | undefined
       if (row?.value) {
         const parsed = JSON.parse(row.value)
         this.settingsCache = { ...DEFAULT_NOTES_SETTINGS, ...parsed }
@@ -548,19 +587,17 @@ class NotesService {
     const next: NotesSettings = { ...current, ...patch }
     this.settingsCache = next
     try {
-      const db = this.getSettingsDb()
-      db.prepare(
-        'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+      this.getKvDb().prepare(
+        'INSERT INTO plugin_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
       ).run(SETTINGS_KEY, JSON.stringify(next))
     } catch (err: any) {
-      logger.warn('set notes settings failed:', err?.message || err)
+      this.ctx.services.logger.warn('set notes settings failed:', err?.message || err)
     }
     return next
   }
 
   // ====== 日记 ======
 
-  /** 打开今日日记：在 diary_root 下创建/打开以 YYYY.MM.DD.md 命名的文件 */
   openOrCreateDiary(): { relPath: string; created: boolean } {
     const settings = this.getSettings()
     if (!settings.diary_enabled) throw new Error('日记功能未启用')
@@ -617,7 +654,6 @@ class NotesService {
   private markSelfWrite(relPath: string): void {
     this.selfWritePaths.add(this.toPosix(relPath))
     if (this.selfWriteTimer) clearTimeout(this.selfWriteTimer)
-    // 1.5s 内的连续自写合并，之后清空
     this.selfWriteTimer = setTimeout(() => {
       this.selfWritePaths.clear()
       this.selfWriteTimer = null
@@ -626,33 +662,212 @@ class NotesService {
 
   private scheduleBroadcast(filename: string): void {
     const relPath = this.toPosix(filename).replace(/^\//, '')
-    // 自身写触发的变更：仅静默刷新树，不强制重载当前编辑器内容
     const isSelf = this.selfWritePaths.has(relPath)
     this.invalidateTreeCache()
     if (this.debouncedBroadcastTimer) clearTimeout(this.debouncedBroadcastTimer)
     this.debouncedBroadcastTimer = setTimeout(() => {
       this.debouncedBroadcastTimer = null
-      this.broadcast({ scope: 'tree', ts: Date.now(), self: isSelf })
+      const payload: NotesDataChangedPayload = { scope: 'tree', ts: Date.now(), self: isSelf }
+      this.ctx.ipc.broadcast('data-changed', payload)
     }, 200)
   }
 
-  private broadcast(payload: { scope: 'tree' | 'settings'; ts: number; self?: boolean }): void {
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        try {
-          win.webContents.send(NOTES_CHANNELS.NOTES_DATA_CHANGED, payload)
-        } catch { /* ignore */ }
-      }
-    }
-  }
-
-  private settingsDb: any = null
-  private getSettingsDb(): any {
-    if (this.settingsDb) return this.settingsDb
-    // 复用主库连接
-    this.settingsDb = require('../database.service').default.getInstance().getDb()
-    return this.settingsDb
+  private invalidateTreeCache(): void {
+    this.treeCache = null
   }
 }
 
-export default NotesService
+// ====== 迁移：把内核主库 notes_settings 迁入插件分库 ======
+
+const _migrations = [
+  {
+    version: '1-migrate-settings',
+    description: '迁移笔记设置从内核主库 settings 表到插件分库',
+    async run(mig: PluginMigrationContext) {
+      if (!mig.legacy) return
+      try {
+        const raw = mig.legacy.getSetting(SETTINGS_KEY) as string | undefined
+        if (raw) {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+          await mig.storage.set(SETTINGS_KEY, parsed)
+          mig.logger.info('notes settings 已从内核主库迁移到插件分库')
+        }
+      } catch (err: any) {
+        mig.logger.warn('notes settings 迁移失败（忽略，使用默认设置）:', err?.message || err)
+      }
+    },
+  },
+  {
+    version: '2-migrate-settings-legacy',
+    description: '补迁笔记设置（v1 因当时缺 legacyMigration 权限未执行；manifest 已补充权限）',
+    async run(mig: PluginMigrationContext) {
+      if (!mig.legacy) return
+      try {
+        const raw = mig.legacy.getSetting(SETTINGS_KEY) as string | undefined
+        if (raw) {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+          await mig.storage.set(SETTINGS_KEY, parsed)
+          mig.logger.info('notes settings 已补迁到插件分库（展开状态/日记/编辑偏好恢复）')
+        }
+      } catch (err: any) {
+        mig.logger.warn('notes settings 补迁失败（忽略，使用默认设置）:', err?.message || err)
+      }
+    },
+  },
+]
+
+// ====== 激活 ======
+
+let service: NotesService | null = null
+
+export const migrations = _migrations
+
+export function activate(ctx: PluginContext): void {
+  service = new NotesService(ctx)
+  registerIpc(ctx)
+  service.startWatcher()
+  ctx.services.logger.info(`notes 插件激活完成，vault=${service.getVaultRoot()}`)
+}
+
+export function deactivate(): void {
+  if (service) {
+    service.stopWatcher()
+    service = null
+  }
+}
+
+function registerIpc(ctx: PluginContext): void {
+  if (!service) return
+  const s = service
+
+  ctx.ipc.handle('list-tree', () => s.listTree())
+
+  ctx.ipc.handle('read', (relPath: string) => {
+    if (!relPath) return { error: 'relPath 必填' }
+    return s.readNote(relPath)
+  })
+
+  ctx.ipc.handle('write', (params: { relPath: string; content: string }) => {
+    if (!params?.relPath || typeof params.content !== 'string') {
+      return { error: 'relPath 和 content 必填' }
+    }
+    return s.writeNote(params.relPath, params.content)
+  })
+
+  ctx.ipc.handle('create-note', (params: { parentRelPath: string; name: string }) => {
+    if (!params?.name) return { error: 'name 必填' }
+    return s.createNote(params.parentRelPath || '', params.name)
+  })
+
+  ctx.ipc.handle('create-folder', (params: { parentRelPath: string; name: string }) => {
+    if (!params?.name) return { error: 'name 必填' }
+    return s.createFolder(params.parentRelPath || '', params.name)
+  })
+
+  ctx.ipc.handle('rename', (params: { relPath: string; newName: string }) => {
+    if (!params?.relPath || !params.newName) return { error: 'relPath 和 newName 必填' }
+    return s.renameItem(params.relPath, params.newName)
+  })
+
+  ctx.ipc.handle('move', (params: { srcRelPath: string; destParentRelPath: string }) => {
+    if (!params?.srcRelPath) return { error: 'srcRelPath 必填' }
+    return s.moveItem(params.srcRelPath, params.destParentRelPath || '')
+  })
+
+  ctx.ipc.handle('copy', async (params: { srcRelPath: string; destParentRelPath: string }) => {
+    if (!params?.srcRelPath) return { error: 'srcRelPath 必填' }
+    return await s.copyItem(params.srcRelPath, params.destParentRelPath || '')
+  })
+
+  ctx.ipc.handle('delete', async (relPath: string) => {
+    if (!relPath) return { error: 'relPath 必填' }
+    return await s.deleteItem(relPath)
+  })
+
+  ctx.ipc.handle('search', async (params: { query: string; maxResults?: number }) => {
+    if (!params?.query) return []
+    return await s.search(params.query, params.maxResults)
+  })
+
+  ctx.ipc.handle('get-settings', () => s.getSettings())
+
+  ctx.ipc.handle('set-settings', (params: Partial<NotesSettings>) => {
+    return s.setSettings(params || {})
+  })
+
+  ctx.ipc.handle('get-abs-path', (relPath: string) => {
+    if (!relPath) return { error: 'relPath 必填' }
+    try {
+      return { absPath: s.getAbsolutePath(relPath) }
+    } catch (err: any) {
+      return { error: err?.message || '获取路径失败' }
+    }
+  })
+
+  ctx.ipc.handle('open-in-explorer', (relPath: string) => {
+    if (!relPath) return { error: 'relPath 必填' }
+    try {
+      s.openInExplorer(relPath)
+      return { success: true }
+    } catch (err: any) {
+      return { error: err?.message || '打开失败' }
+    }
+  })
+
+  ctx.ipc.handle('open-vault', () => {
+    try {
+      shell.openPath(s.getVaultRoot())
+      return { success: true }
+    } catch (err: any) {
+      return { error: err?.message || '打开失败' }
+    }
+  })
+
+  ctx.ipc.handle('import-external', async (params: { srcAbsPath: string; destParentRelPath: string }) => {
+    if (!params?.srcAbsPath) return { error: 'srcAbsPath 必填' }
+    try {
+      return await s.importExternal(params.srcAbsPath, params.destParentRelPath || '')
+    } catch (err: any) {
+      return { error: err?.message || '导入失败' }
+    }
+  })
+
+  ctx.ipc.handle('save-image', (params: { buffer: ArrayBuffer; fileName: string }) => {
+    if (!params?.buffer) return { error: 'buffer 必填' }
+    try {
+      const buffer = Buffer.from(params.buffer as ArrayBuffer)
+      const relPath = s.saveImage(buffer, params.fileName || 'image.png')
+      return { relPath }
+    } catch (err: any) {
+      return { error: err?.message || '保存图片失败' }
+    }
+  })
+
+  ctx.ipc.handle('open-diary', () => {
+    try {
+      return s.openOrCreateDiary()
+    } catch (err: any) {
+      return { error: err?.message || '打开日记失败' }
+    }
+  })
+
+  ctx.ipc.handle('read-external', (absPath: string) => {
+    if (!absPath) return { error: 'absPath 必填' }
+    try {
+      return s.readExternalFile(absPath)
+    } catch (err: any) {
+      return { error: err?.message || '打开文件失败' }
+    }
+  })
+
+  ctx.ipc.handle('write-external', (params: { absPath: string; content: string }) => {
+    if (!params?.absPath || typeof params.content !== 'string') {
+      return { error: 'absPath 和 content 必填' }
+    }
+    try {
+      return s.writeExternalFile(params.absPath, params.content)
+    } catch (err: any) {
+      return { error: err?.message || '保存失败' }
+    }
+  })
+}

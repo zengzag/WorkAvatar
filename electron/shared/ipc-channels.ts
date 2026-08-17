@@ -150,20 +150,11 @@ export type {
   AutomationDataChangedPayload,
 } from './channels/automation'
 export type {
-  NoteNodeType,
-  NoteNode,
-  NoteContent,
-  NoteSearchSnippet,
-  NoteSearchHit,
-  NotesSettings,
-  NoteWriteParams,
-  NoteCreateParams,
-  NoteRenameParams,
-  NoteMoveParams,
-  NoteCopyParams,
-  NoteImportExternalParams,
-  NoteSearchParams,
-  NoteSaveImageParams,
-  NoteExternalWriteParams,
-  NotesDataChangedPayload,
-} from './channels/notes'
+  PluginNavItemInfo,
+  PluginInfo,
+  PluginRendererInfo,
+  PluginInvokeParams,
+  PluginEventPayload,
+  PluginSetEnabledParams,
+  PluginDeleteParams,
+} from './channels/plugin'

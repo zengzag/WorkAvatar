@@ -11,7 +11,7 @@ import { registerMcpHandlers } from './mcp.handlers'
 import { registerCalendarHandlers } from './calendar.handlers'
 import { registerOutlookSyncHandlers } from './outlook-sync.handlers'
 import { registerAutomationHandlers } from './automation.handlers'
-import { registerNotesHandlers } from './notes.handlers'
+import { registerPluginHandlers } from './plugin.handlers'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
@@ -23,7 +23,6 @@ import EmployeeExportService from '../services/employee-export.service'
 import EmployeeMemoryService from '../services/employee-memory.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import McpRegistryService from '../services/mcp-registry.service'
-import NotesService from '../services/notes/notes.service'
 import OutlookSyncService from '../services/calendar/outlook-sync.service'
 
 export function registerIpcHandlers() {
@@ -48,7 +47,7 @@ export function registerIpcHandlers() {
   registerCalendarHandlers()
   registerOutlookSyncHandlers()
   registerAutomationHandlers()
-  registerNotesHandlers()
+  registerPluginHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
@@ -59,12 +58,8 @@ export function registerIpcHandlers() {
   // 启动定时记忆精炼服务（空闲对话的记忆提取）
   MemoryRefinementService.getInstance().start()
 
-  // 启动笔记 vault 文件监听，外部变更广播到前端
-  NotesService.getInstance().startWatcher()
-
   // 应用退出前清理所有活跃 MCP client
   app.on('before-quit', () => {
     McpRegistryService.getInstance().shutdownAll().catch(() => { /* ignore */ })
-    NotesService.getInstance().stopWatcher()
   })
 }

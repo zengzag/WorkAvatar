@@ -118,6 +118,15 @@ extraResources:
     to: resources/
     filter:
       - '**/*'
+  # 内置插件：仅打包运行时必需文件（manifest/dist/locale/resources）
+  # plugin-sdk 为开发期类型源码（主进程 bundle 时已内联），不进生产包
+  - from: plugins/
+    to: plugins/
+    filter:
+      - '*/manifest.json'
+      - '*/dist/**'
+      - '*/locale/**'
+      - '*/resources/**'
 
 asarUnpack:
   - '**/*.node'

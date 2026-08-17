@@ -80,17 +80,9 @@ import type {
   CreateAutomationTaskInput,
   UpdateAutomationTaskInput,
   PreviewRunsParams,
-  NoteWriteParams,
-  NoteCreateParams,
-  NoteRenameParams,
-  NoteMoveParams,
-  NoteCopyParams,
-  NoteImportExternalParams,
-  NoteSearchParams,
-  NoteSaveImageParams,
-  NoteExternalWriteParams,
-  NotesSettings,
-  NotesDataChangedPayload,
+  PluginInfo,
+  PluginRendererInfo,
+  PluginEventPayload,
 } from '../shared/ipc-channels'
 import type {
   VoiceCreateTaskParams,
@@ -144,15 +136,6 @@ export type {
   ListAutomationTasksParams as ListAutomationTasksParamsType,
   ListAutomationRunsParams as ListAutomationRunsParamsType,
   PreviewRunsParams as PreviewRunsParamsType,
-} from '../shared/ipc-channels'
-export type {
-  NoteNodeType,
-  NoteNode,
-  NoteContent,
-  NoteSearchSnippet,
-  NoteSearchHit,
-  NotesSettings as NotesSettingsType,
-  NotesDataChangedPayload as NotesDataChangedPayloadType,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -473,33 +456,6 @@ const electronAPI = {
     },
   },
 
-  notes: {
-    listTree: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST_TREE),
-    read: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ, relPath),
-    write: (params: NoteWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE, params),
-    createNote: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_NOTE, params),
-    createFolder: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_FOLDER, params),
-    rename: (params: NoteRenameParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_RENAME, params),
-    move: (params: NoteMoveParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_MOVE, params),
-    copy: (params: NoteCopyParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_COPY, params),
-    delete: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, relPath),
-    search: (params: NoteSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
-    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_SETTINGS),
-    setSettings: (params: Partial<NotesSettings>) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SET_SETTINGS, params),
-    getAbsolutePath: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_ABS_PATH, relPath),
-    openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
-    importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
-    saveImage: (params: NoteSaveImageParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SAVE_IMAGE, params),
-    openDiary: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_DIARY),
-    readExternal: (absPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ_EXTERNAL, absPath),
-    writeExternal: (params: NoteExternalWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE_EXTERNAL, params),
-    onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
-      const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
-    },
-  },
-
   kms: {
     listDirs: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_DIRS),
     addDir: (params: KMSAddDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_DIR, params),
@@ -668,6 +624,28 @@ const electronAPI = {
     },
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
+  },
+
+  // 插件通用桥：preload 不随插件膨胀，所有插件调用经 invoke(pluginId, channel) 路由
+  plugin: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST) as Promise<{
+      plugins: PluginInfo[]
+      rendererPlugins: PluginRendererInfo[]
+    }>,
+    invoke: <T = unknown,>(pluginId: string, channel: string, payload?: unknown) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_INVOKE, { pluginId, channel, payload }) as Promise<T>,
+    // 主进程插件事件推送（ctx.ipc.broadcast），按 pluginId 过滤
+    onEvent: (pluginId: string, callback: (payload: unknown) => void) => {
+      const handler = (_event: any, message: PluginEventPayload) => {
+        if (message?.pluginId === pluginId) callback(message.payload)
+      }
+      ipcRenderer.on(IPC_CHANNELS.PLUGIN_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.PLUGIN_EVENT, handler)
+    },
+    setEnabled: (pluginId: string, enabled: boolean) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_SET_ENABLED, { pluginId, enabled }),
+    remove: (pluginId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DELETE, { pluginId }),
+    openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 }
 

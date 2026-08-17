@@ -276,7 +276,7 @@ const MessageBubble: React.FC<{
     if (!displayContent) return
     const name = generateNoteName(displayContent, msg.timestamp)
     try {
-      const createRes = await window.electronAPI.notes.createNote({ parentRelPath: '', name })
+      const createRes = await window.electronAPI.plugin.invoke('notes', 'create-note', { parentRelPath: '', name })
       if (createRes && (createRes as any).error) {
         messageApi.error((createRes as any).error)
         return
@@ -286,7 +286,7 @@ const MessageBubble: React.FC<{
         messageApi.error(t('workbench.saveToNoteFailed'))
         return
       }
-      const writeRes = await window.electronAPI.notes.write({ relPath, content: displayContent })
+      const writeRes = await window.electronAPI.plugin.invoke('notes', 'write', { relPath, content: displayContent })
       if (writeRes && (writeRes as any).error) {
         messageApi.error((writeRes as any).error)
         return

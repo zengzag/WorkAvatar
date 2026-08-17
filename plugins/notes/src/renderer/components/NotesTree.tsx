@@ -18,8 +18,8 @@ import {
   SnippetsOutlined,
   LinkOutlined,
 } from '@ant-design/icons'
-import { useTranslation } from 'react-i18next'
-import type { NoteNode } from '../../types/notes'
+import { hostT, getPathForFile, importExternal, openInExplorer, getAbsolutePath } from '../store'
+import type { NoteNode } from '../types'
 
 interface Props {
   tree: NoteNode[]
@@ -171,7 +171,7 @@ const NotesTree: React.FC<Props> = ({
   tree, loading, currentRelPath, expandedFolders, settingsLoading, onExpandedFoldersChange,
   onOpen, onRefresh, onCreateNote, onCreateFolder, onRename, onDelete, onMove, onCopy,
 }) => {
-  const { t } = useTranslation()
+  const t = hostT
   const { token } = theme.useToken()
   const { modal, message } = App.useApp()
   const [filter, setFilter] = useState('')
@@ -331,7 +331,7 @@ const NotesTree: React.FC<Props> = ({
     setEditing(null)
     const trimmed = editingName.trim()
     const fallback = current.mode === 'create'
-      ? (current.type === 'note' ? t('notes.untitledNote') : t('notes.newFolder'))
+      ? (current.type === 'note' ? t('untitledNote') : t('newFolder'))
       : ''
     const finalName = trimmed || fallback
     try {
@@ -683,12 +683,12 @@ const NotesTree: React.FC<Props> = ({
     let imported = 0
     for (const file of files) {
       try {
-        const srcAbsPath = window.electronAPI.getPathForFile(file)
-        const res = await window.electronAPI.notes.importExternal({ srcAbsPath, destParentRelPath: destFolder })
-        if (res && !(res as any).error) imported++
+        const srcAbsPath = getPathForFile(file)
+        const ok = await importExternal(srcAbsPath, destFolder)
+        if (ok) imported++
       } catch { /* ignore */ }
     }
-    if (imported > 0) message.success(t('notes.importSuccess', { count: imported }))
+    if (imported > 0) message.success(t('importSuccess', { count: imported }))
   }, [t, message, getParentRelPath])
 
   // 容器级外部拖入放置：导入到根目录
@@ -708,12 +708,12 @@ const NotesTree: React.FC<Props> = ({
     let imported = 0
     for (const file of files) {
       try {
-        const srcAbsPath = window.electronAPI.getPathForFile(file)
-        const res = await window.electronAPI.notes.importExternal({ srcAbsPath, destParentRelPath: '' })
-        if (res && !(res as any).error) imported++
+        const srcAbsPath = getPathForFile(file)
+        const ok = await importExternal(srcAbsPath, '')
+        if (ok) imported++
       } catch { /* ignore */ }
     }
-    if (imported > 0) message.success(t('notes.importSuccess', { count: imported }))
+    if (imported > 0) message.success(t('importSuccess', { count: imported }))
   }, [t, message])
 
   const showRootDropZone = !!dragSrcKey && dragSrcKey.includes('/')
@@ -737,7 +737,7 @@ const NotesTree: React.FC<Props> = ({
         if (ok) anyOk = true
       } catch { /* ignore */ }
     }
-    if (anyOk) message.success(t('notes.moveSuccess'))
+    if (anyOk) message.success(t('moveSuccess'))
     setTreeSelectedKeys([])
   }, [dragSrcKey, onMove, t, treeSelectedKeys])
 
@@ -745,43 +745,39 @@ const NotesTree: React.FC<Props> = ({
   const handleCreateCopy = useCallback(async (node: NoteNode) => {
     const parentRelPath = getParentRelPath(node.relPath)
     const ok = await onCopy(node.relPath, parentRelPath)
-    if (ok) message.success(t('notes.pasteSuccess'))
+    if (ok) message.success(t('pasteSuccess'))
   }, [onCopy, getParentRelPath, t, message])
 
   // 粘贴：将剪贴板中的节点复制到目标父文件夹
   const handlePaste = useCallback(async (destParentRelPath: string) => {
     if (!clipboardRelPath) {
-      message.warning(t('notes.nothingToPaste'))
+      message.warning(t('nothingToPaste'))
       return
     }
     const ok = await onCopy(clipboardRelPath, destParentRelPath)
-    if (ok) message.success(t('notes.pasteSuccess'))
+    if (ok) message.success(t('pasteSuccess'))
   }, [clipboardRelPath, onCopy, t, message])
 
   // 在资源管理器中打开
   const handleOpenInExplorer = useCallback(async (relPath: string) => {
     try {
-      const res = await window.electronAPI.notes.openInExplorer(relPath)
-      if (res && (res as any).error) message.error((res as any).error)
-    } catch { /* ignore */ }
-  }, [message])
+      await openInExplorer(relPath)
+    } catch (err: any) {
+      message.error(err?.message || t('openFailed'))
+    }
+  }, [t, message])
 
   // 复制路径到剪贴板
   const handleCopyPath = useCallback(async (relPath: string, type: 'relative' | 'absolute') => {
     try {
       let pathValue = relPath
       if (type === 'absolute') {
-        const res = await window.electronAPI.notes.getAbsolutePath(relPath)
-        if (res && (res as any).error) {
-          message.error((res as any).error)
-          return
-        }
-        pathValue = (res as any).absPath || relPath
+        pathValue = await getAbsolutePath(relPath)
       }
       await navigator.clipboard.writeText(pathValue)
-      message.success(t('notes.pathCopied'))
+      message.success(t('pathCopied'))
     } catch {
-      message.error(t('notes.copyFailed'))
+      message.error(t('copyFailed'))
     }
   }, [t, message])
 
@@ -789,8 +785,8 @@ const NotesTree: React.FC<Props> = ({
   const handleBatchDelete = useCallback((relPaths: string[]) => {
     if (relPaths.length === 0) return
     modal.confirm({
-      title: t('notes.confirmBatchDelete'),
-      content: t('notes.batchDeleteDesc', { count: relPaths.length }),
+      title: t('confirmBatchDelete'),
+      content: t('batchDeleteDesc', { count: relPaths.length }),
       okType: 'danger',
       okText: t('common.delete'),
       cancelText: t('common.cancel'),
@@ -838,9 +834,9 @@ const NotesTree: React.FC<Props> = ({
         if (selectedPaths.length > 1) {
           handleBatchDelete(selectedPaths)
         } else {
-          const desc = selectedNode.type === 'folder' ? t('notes.deleteFolderDesc') : t('notes.deleteFileDesc')
+          const desc = selectedNode.type === 'folder' ? t('deleteFolderDesc') : t('deleteFileDesc')
           modal.confirm({
-            title: t('notes.confirmDelete'),
+            title: t('confirmDelete'),
             content: `${selectedNode.relPath}\n\n${desc}`,
             okType: 'danger',
             okText: t('common.delete'),
@@ -877,13 +873,13 @@ const NotesTree: React.FC<Props> = ({
     const isMulti = selectedPaths.length > 1 && selectedPaths.includes(contextNode.relPath)
     if (isMulti) {
       const items: MenuProps['items'] = [
-        { key: 'batch-move', icon: <FolderOutlined />, label: t('notes.batchMoveTo'), onClick: () => { closeContextMenu(); handleBatchMove(selectedPaths) } },
+        { key: 'batch-move', icon: <FolderOutlined />, label: t('batchMoveTo'), onClick: () => { closeContextMenu(); handleBatchMove(selectedPaths) } },
         { type: 'divider' },
         {
           key: 'batch-delete',
           icon: <DeleteOutlined />,
           danger: true,
-          label: t('notes.batchDelete'),
+          label: t('batchDelete'),
           onClick: () => { closeContextMenu(); handleBatchDelete(selectedPaths) },
         },
       ]
@@ -891,28 +887,28 @@ const NotesTree: React.FC<Props> = ({
     }
     const items: MenuProps['items'] = []
     if (contextNode.type === 'folder') {
-      items.push({ key: 'new-note', icon: <FileAddOutlined />, label: t('notes.newNote'), onClick: () => { closeContextMenu(); startCreate(contextNode.relPath, 'note') } })
-      items.push({ key: 'new-folder', icon: <FolderAddOutlined />, label: t('notes.newFolder'), onClick: () => { closeContextMenu(); startCreate(contextNode.relPath, 'folder') } })
+      items.push({ key: 'new-note', icon: <FileAddOutlined />, label: t('newNote'), onClick: () => { closeContextMenu(); startCreate(contextNode.relPath, 'note') } })
+      items.push({ key: 'new-folder', icon: <FolderAddOutlined />, label: t('newFolder'), onClick: () => { closeContextMenu(); startCreate(contextNode.relPath, 'folder') } })
       items.push({ type: 'divider' })
     } else {
       items.push({ key: 'open', icon: <FormOutlined />, label: t('common.view'), onClick: () => { closeContextMenu(); onOpen(contextNode.relPath) } })
     }
-    items.push({ key: 'create-copy', icon: <CopyOutlined />, label: t('notes.createCopy'), onClick: () => { closeContextMenu(); handleCreateCopy(contextNode) } })
-    items.push({ key: 'copy', icon: <CopyOutlined />, label: t('notes.copy'), onClick: () => { closeContextMenu(); setClipboardRelPath(contextNode.relPath) } })
+    items.push({ key: 'create-copy', icon: <CopyOutlined />, label: t('createCopy'), onClick: () => { closeContextMenu(); handleCreateCopy(contextNode) } })
+    items.push({ key: 'copy', icon: <CopyOutlined />, label: t('copy'), onClick: () => { closeContextMenu(); setClipboardRelPath(contextNode.relPath) } })
     if (contextNode.type === 'folder' && clipboardRelPath) {
-      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('notes.paste'), onClick: () => { closeContextMenu(); handlePaste(contextNode.relPath) } })
+      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('paste'), onClick: () => { closeContextMenu(); handlePaste(contextNode.relPath) } })
     }
     items.push({ key: 'rename', icon: <FormOutlined />, label: t('common.rename'), onClick: () => { closeContextMenu(); startRename(contextNode) } })
-    items.push({ key: 'move', icon: <FolderOutlined />, label: t('notes.moveTo'), onClick: () => { closeContextMenu(); setMoveModal({ srcRelPaths: [contextNode.relPath] }) } })
+    items.push({ key: 'move', icon: <FolderOutlined />, label: t('moveTo'), onClick: () => { closeContextMenu(); setMoveModal({ srcRelPaths: [contextNode.relPath] }) } })
     items.push({ type: 'divider' })
-    items.push({ key: 'open-in-explorer', icon: <FolderOpenOutlined />, label: t('notes.openInExplorer'), onClick: () => { closeContextMenu(); handleOpenInExplorer(contextNode.relPath) } })
+    items.push({ key: 'open-in-explorer', icon: <FolderOpenOutlined />, label: t('openInExplorer'), onClick: () => { closeContextMenu(); handleOpenInExplorer(contextNode.relPath) } })
     items.push({
       key: 'copy-path',
       icon: <LinkOutlined />,
-      label: t('notes.copyPath'),
+      label: t('copyPath'),
       children: [
-        { key: 'copy-relative', label: t('notes.copyRelativePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'relative') } },
-        { key: 'copy-absolute', label: t('notes.copyAbsolutePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'absolute') } },
+        { key: 'copy-relative', label: t('copyRelativePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'relative') } },
+        { key: 'copy-absolute', label: t('copyAbsolutePath'), onClick: () => { closeContextMenu(); handleCopyPath(contextNode.relPath, 'absolute') } },
       ],
     })
     items.push({ type: 'divider' })
@@ -923,9 +919,9 @@ const NotesTree: React.FC<Props> = ({
       label: t('common.delete'),
       onClick: () => {
         closeContextMenu()
-        const desc = contextNode.type === 'folder' ? t('notes.deleteFolderDesc') : t('notes.deleteFileDesc')
+        const desc = contextNode.type === 'folder' ? t('deleteFolderDesc') : t('deleteFileDesc')
         modal.confirm({
-          title: t('notes.confirmDelete'),
+          title: t('confirmDelete'),
           content: `${contextNode.relPath}\n\n${desc}`,
           okType: 'danger',
           okText: t('common.delete'),
@@ -939,12 +935,12 @@ const NotesTree: React.FC<Props> = ({
 
   const rootContextMenu: MenuProps = useMemo(() => {
     const items: MenuProps['items'] = [
-      { key: 'new-note', icon: <FileAddOutlined />, label: t('notes.newNote'), onClick: () => { closeContextMenu(); startCreate('', 'note') } },
-      { key: 'new-folder', icon: <FolderAddOutlined />, label: t('notes.newFolder'), onClick: () => { closeContextMenu(); startCreate('', 'folder') } },
+      { key: 'new-note', icon: <FileAddOutlined />, label: t('newNote'), onClick: () => { closeContextMenu(); startCreate('', 'note') } },
+      { key: 'new-folder', icon: <FolderAddOutlined />, label: t('newFolder'), onClick: () => { closeContextMenu(); startCreate('', 'folder') } },
     ]
     if (clipboardRelPath) {
       items.push({ type: 'divider' })
-      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('notes.paste'), onClick: () => { closeContextMenu(); handlePaste('') } })
+      items.push({ key: 'paste', icon: <SnippetsOutlined />, label: t('paste'), onClick: () => { closeContextMenu(); handlePaste('') } })
     }
     return { items }
   }, [t, startCreate, closeContextMenu, clipboardRelPath, handlePaste])
@@ -1011,15 +1007,15 @@ const NotesTree: React.FC<Props> = ({
           size="small"
           allowClear
           prefix={<SearchOutlined style={{ color: token.colorTextQuaternary }} />}
-          placeholder={t('notes.searchPlaceholder')}
+          placeholder={t('searchPlaceholder')}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           style={{ flex: 1 }}
         />
-        <Tooltip title={t('notes.newNote')}>
+        <Tooltip title={t('newNote')}>
           <Button size="small" type="text" icon={<FileAddOutlined />} onClick={() => startCreate('', 'note')} />
         </Tooltip>
-        <Tooltip title={t('notes.newFolder')}>
+        <Tooltip title={t('newFolder')}>
           <Button size="small" type="text" icon={<FolderAddOutlined />} onClick={() => startCreate('', 'folder')} />
         </Tooltip>
         <Tooltip title={t('common.refresh')}>
@@ -1041,12 +1037,12 @@ const NotesTree: React.FC<Props> = ({
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={
               <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>
-                {t('notes.emptyVaultDesc')}
+                {t('emptyVaultDesc')}
               </span>
             }
           >
             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => startCreate('', 'note')}>
-              {t('notes.createFirstNote')}
+              {t('createFirstNote')}
             </Button>
           </Empty>
         ) : (
@@ -1087,7 +1083,7 @@ const NotesTree: React.FC<Props> = ({
                     transition: 'all 0.15s',
                   }}
                 >
-                  {t('notes.dropToRoot')}
+                  {t('dropToRoot')}
                 </div>
               )}
             </div>
@@ -1108,7 +1104,7 @@ const NotesTree: React.FC<Props> = ({
                 if (ok) anyOk = true
               } catch { /* ignore */ }
             }
-            if (anyOk) message.success(t('notes.moveSuccess'))
+            if (anyOk) message.success(t('moveSuccess'))
             setTreeSelectedKeys([])
           }
           setMoveModal(null)
@@ -1134,15 +1130,15 @@ const MoveModal: React.FC<{
   onCancel: () => void
   onOk: (destParent: string) => void
 }> = ({ open, folders, srcCount, onCancel, onOk }) => {
-  const { t } = useTranslation()
+  const t = hostT
   const [selected, setSelected] = useState('')
   const options = useMemo(() => [
-    { label: t('notes.vaultRoot'), value: '' },
+    { label: t('vaultRoot'), value: '' },
     ...folders,
   ], [folders, t])
   const title = srcCount && srcCount > 1
-    ? `${t('notes.batchMoveTo')} (${srcCount})`
-    : t('notes.moveTo')
+    ? `${t('batchMoveTo')} (${srcCount})`
+    : t('moveTo')
   return (
     <Modal
       title={title}
@@ -1162,7 +1158,7 @@ const MoveModal: React.FC<{
           onSelect={(keys) => setSelected(String(keys[0] === '__root__' ? '' : keys[0] || ''))}
           treeData={[{
             key: '__root__',
-            title: t('notes.vaultRoot'),
+            title: t('vaultRoot'),
             icon: <FolderOutlined />,
             children: toTreeData(toNoteNodes(options.filter((o) => o.value !== ''))),
           }]}

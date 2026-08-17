@@ -21,6 +21,7 @@ import {
   KMSMCPSettings,
   NavSettings,
   RuntimeEnvSection,
+  PluginsSection,
 } from '../components/settings'
 
 const Settings: React.FC = () => {
@@ -91,6 +92,15 @@ const Settings: React.FC = () => {
       children: contentWrap(<NavSettings />),
     },
     {
+      key: 'plugins',
+      label: (
+        <span>
+          <ApiOutlined /> {t('settings.tabPlugins')}
+        </span>
+      ),
+      children: contentWrap(<PluginsSection />),
+    },
+    {
       key: 'runtime',
       label: (
         <span>
@@ -115,7 +125,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'runtime', 'internetSearch', 'about']
+  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (

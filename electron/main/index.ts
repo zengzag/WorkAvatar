@@ -9,6 +9,7 @@ import NotificationService from './services/notification.service'
 import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
 import AutomationSchedulerService from './services/automation/automation-scheduler.service'
 import TabWindowService from './services/tab-window.service'
+import PluginHostService from './services/plugin/plugin-host.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { createLogger, LoggerBackend } from './services/logger'
@@ -91,9 +92,20 @@ app.setAppUserModelId('com.workavatar.desktop')
 const isDev = !app.isPackaged
 
 // 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
+// 注册 plugin:// 特权协议，供渲染端动态 import 插件 ESM 入口（CORS 放行跨源模块加载）
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: 'plugin',
     privileges: {
       standard: true,
       secure: true,
@@ -342,6 +354,8 @@ async function createWindow() {
   NotificationService.getInstance().setMainWindow(mainWindow)
   // 注入主窗口引用给 Tab 独立窗口服务，用于推送 detached 状态变化
   TabWindowService.getInstance().setMainWindow(mainWindow)
+  // 主窗口纳入插件广播目标（插件 ctx.ipc.broadcast 推送范围）
+  PluginHostService.getInstance().addTarget(mainWindow)
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -398,6 +412,20 @@ function createTray() {
 
 app.whenReady().then(() => {
   logger.info('App ready, registering IPC handlers and creating window')
+
+  // 插件协议：plugin://<id>/<相对路径> → 插件目录内文件（宿主校验启停与路径越权）
+  protocol.handle('plugin', (request) => {
+    return PluginHostService.getInstance().servePluginFile(request.url)
+  })
+
+  // 插件加载必须先于内核 agent 服务初始化（registerIpcHandlers 内创建 EmployeeAgentService），
+  // 保证插件注册的 agent 工具/贡献点在内核服务装配前就位
+  try {
+    PluginHostService.getInstance().init()
+  } catch (err: any) {
+    logger.error('PluginHost init failed:', err?.message || err)
+  }
+
   registerAppFileProtocol()
   registerIpcHandlers()
 
@@ -445,6 +473,12 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   isQuitting = true
   logger.info('Application quitting, cleaning up resources')
+  // 插件退出清理：deactivate + 注销插件注册的全局快捷键
+  try {
+    PluginHostService.getInstance().shutdown()
+  } catch (error) {
+    logger.error('Failed to shutdown PluginHost:', error)
+  }
   // 停止日历提醒调度器
   try {
     CalendarSchedulerService.getInstance().stop()
