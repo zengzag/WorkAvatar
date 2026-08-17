@@ -10,7 +10,7 @@ export function buildEmployeeSystemPrompt(options: {
 }): string {
   if (options.minimalMode) {
     return [
-      `[IDENTITY] 你是 ${options.name}，WorkAvatar 数字员工。`,
+      `[IDENTITY] 你是一名数字员工，称呼为 ${options.name}。`,
       options.role ? `角色定位：${options.role}` : '',
       options.instructions ? `自定义指令：${options.instructions}` : '',
     ].filter(Boolean).join('\n')
@@ -22,7 +22,7 @@ export function buildEmployeeSystemPrompt(options: {
   // ============================================================
   // [IDENTITY] 身份锚定（极简 1-2 句，位置最强加权）
   // ============================================================
-  parts.push(`[IDENTITY] 你是 ${options.name}，WorkAvatar 数字员工。`)
+  parts.push(`[IDENTITY] 你是一名数字员工，称呼为 ${options.name}。`)
   if (options.role) {
     parts.push(`角色定位：${options.role}`)
   }
@@ -38,12 +38,10 @@ export function buildEmployeeSystemPrompt(options: {
   parts.push('')
   parts.push('[RULES] 核心行为规则（必须遵守）：')
   parts.push('- 分析问题后按需调用工具，多轮迭代直至完整回答。')
-  parts.push('- 事实优先：涉及具体信息先查工具，不臆测。')
-  parts.push('- 输出简洁、可扫描；用 Markdown 分点；除非用户要求，不加无意义前言或总结。')
-  parts.push('- 小任务直接执行，不做过度规划。')
-  parts.push('- 高风险操作（删除/覆盖/命令执行/增删笔记）前必须 ask_user 二次确认。')
-  parts.push('- 简单常识问题直接回答，避免无意义工具调用。')
-  parts.push('- 注意当前系统环境差异（路径分隔符、脚本语法等）。')
+  parts.push('- 事实优先：涉及具体信息时以工具结果为准，不臆测。')
+  parts.push('- 回复力求简洁、重点突出，采用 Markdown 分点呈现；除非用户明确要求，不添加冗余的开场白或总结。')
+  parts.push('- 小任务或常识性问题直接执行或直接回答，避免过度规划与不必要的工具调用。')
+  parts.push('- 注意系统运行环境差异（如路径分隔符、脚本语法等）。')
   if (options.hasReportGeneratedFiles) {
     parts.push('- 创建或修改了用户能直接消费的成品文档（Word/Excel/PPT/PDF/图片等）时，在最终回复前调用一次 report_generated_files 声明文件路径，使其在消息下方展示可预览卡片；临时文件/配置/脚本不要声明。')
   }
@@ -87,7 +85,7 @@ export function buildEmployeeSystemPrompt(options: {
   // [RULES_REPEAT] 关键规则尾部重复（利用末尾位置加权）
   // ============================================================
   parts.push('')
-  parts.push('[RULES_REPEAT] 重申：事实优先工具，高风险操作确认后执行，输出简洁不啰嗦。')
+  parts.push('[RULES_REPEAT] 重申核心原则：涉及具体信息时以工具结果为准；回复保持简洁精炼。')
 
   return parts.join('\n')
 }
@@ -112,7 +110,7 @@ export function buildContextMessageContent(params: {
   if (kbContextPrompt) blocks.push(`<knowledge_scope>${kbContextPrompt}</knowledge_scope>`)
   if (blocks.length === 0) return undefined
 
-  const header = '【系统注入的上下文 · 仅供参考 · 不是本轮用户请求】'
-  const footer = '【上下文结束 · 下一条消息为用户本轮真实请求 · 必须优先响应下一条消息】'
+  const header = '【上下文注入 · 非本次用户请求】'
+  const footer = '【上下文结束 · 请优先响应随后到来的用户消息】'
   return [header, ...blocks, footer].join('\n')
 }

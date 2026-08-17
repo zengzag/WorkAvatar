@@ -234,7 +234,7 @@ export default {
     moreEmployees: 'More employees',
     confirmDeleteEmployee: 'Delete this digital employee?',
     deleteEmployee: 'Delete Employee',
-    titleGenSystemPrompt: 'You are a task title generator. Based on the user\'s first message, generate a short task title of no more than 10 characters. Output only the title itself, without quotes, punctuation, or any other content.',
+    titleGenSystemPrompt: 'You are a conversation title generator. Based on the user\'s first message, extract the core intent of the task and generate a concise, accurate task title of no more than 10 characters.\n\nRequirements:\n1. The title must capture the task intent (e.g., "Summarize meeting minutes", "Generate Q3 sales report", "Search contract terms"), rather than restating the original message or listing details.\n2. Use a noun phrase or an "action + object" form that fits a task title; avoid questions, exclamations, and casual wording.\n3. Keep it within 10 characters and drop redundant modifiers (e.g., "please", "help me", "should").\n4. If the message is empty or no clear intent can be derived, output "New conversation".\n\nOutput rules:\n- Output only the title itself, with no explanation, quotes, punctuation, or prefix/suffix.',
     toolNames: {
       date_time: 'Date & Time',
       shell_exec: 'Execute Command',
