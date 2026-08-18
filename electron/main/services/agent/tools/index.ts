@@ -1,6 +1,6 @@
 import { dateTimeTool } from './date-time.tool'
 import { shellExecTool } from './shell-exec.tool'
-import { fileTools } from './fs-tools'
+import { residentFileTools } from './fs-tools'
 import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
@@ -12,7 +12,7 @@ import type { ToolDefinition } from './types'
 export const allBuiltinTools: ToolDefinition[] = [
   dateTimeTool,
   shellExecTool,
-  ...fileTools,
+  ...residentFileTools,
   webSearchTool,
   webFetchTool,
   askUserTool,

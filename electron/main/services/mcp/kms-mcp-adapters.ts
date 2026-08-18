@@ -271,9 +271,6 @@ export const kmsAdapterTools: ToolDefinition[] = [
 const EXCLUDED_MCP_TOOL_IDS = new Set<string>([
   // files（文件管理）
   'file_read', 'file_write', 'file_edit',
-  'file_mkdir', 'file_list', 'file_search',
-  'file_delete', 'file_move', 'file_copy',
-  'file_rename', 'file_stat',
   // scripting（代码执行）
   'javascript_exec',
   // shell（命令行执行）

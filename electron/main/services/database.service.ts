@@ -606,7 +606,6 @@ class DatabaseService {
 
     const onDemandIds = [
       'date_time',
-      'file_mkdir', 'file_list', 'file_search', 'file_delete', 'file_move', 'file_copy', 'file_rename', 'file_stat',
       'kms_search', 'kms_get_content', 'kms_list_collections',
       'javascript_exec',
       'calendar_event_list', 'calendar_event_create', 'calendar_event_update', 'calendar_event_delete',
