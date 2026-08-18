@@ -191,6 +191,56 @@ export interface PluginHostPathsService {
   getDataDir(): string
 }
 
+// ====== KMS 数据访问层（services.kms，需 capabilities.kms 授权） ======
+
+/** KMS 数据查询服务：只读查询资料库，不触发索引/晋升等副作用 */
+export interface PluginKmsService {
+  /**
+   * 检索资料库（关键字混合检索）
+   * @returns SearchResult[]：{ file_id, file_name, file_path, text, match_type, score?, modified_time }
+   */
+  search<T = unknown>(
+    query: string,
+    options?: { limit?: number; collectionIds?: string[]; fileExtensions?: string[] }
+  ): Promise<T[]>
+  /** 列出资料库合集 */
+  listCollections(): Promise<Array<{ id: string; name: string; description: string; file_count: number }>>
+  /**
+   * 读取文件内容（文本抽取）
+   * @param options.paragraphId 指定段落；options.maxChars 截断长度
+   */
+  getContent<T = unknown>(fileId: string, options?: { paragraphId?: string; maxChars?: number }): Promise<T>
+}
+
+// ====== 插件协作层（services.shared / bus，需 capabilities.collaboration 授权） ======
+
+/** 跨插件共享 KV：写仅限本插件命名空间；读本插件 + 受权读其他插件 */
+export interface PluginSharedStore {
+  /** 写入本插件命名空间下的 key（host 自动加 pluginId 前缀），同 key 覆盖 */
+  set(key: string, value: unknown): Promise<void>
+  /** 读取本插件命名空间下的 key */
+  get<T = unknown>(key: string, defaultValue?: T): Promise<T | undefined>
+  /** 读取指定插件的共享数据（需 collaboration.shared.read 能力） */
+  getFrom<T = unknown>(pluginId: string, key: string, defaultValue?: T): Promise<T | undefined>
+  /** 删除本插件命名空间下的 key */
+  delete(key: string): Promise<void>
+  /** 列出本插件命名空间所有 key */
+  keys(): Promise<string[]>
+  /** 列出所有插件命名空间的 key（需 collaboration.shared.read 能力） */
+  keysAll(): Promise<string[]>
+}
+
+/** 跨插件 RPC：方法名统一为 '目标插件id:方法名'，host 路由到目标插件注册的 responder */
+export interface PluginBusService {
+  /** 注册可被其他插件调用的方法（host 自动加本插件 id 前缀），返回取消注册函数 */
+  respond(method: string, handler: (payload: unknown) => unknown | Promise<unknown>): () => void
+  /**
+   * 调用目标插件方法（需 collaboration.call 白名单包含 '目标插件id:方法名'）。
+   * 目标未注册该方法返回 rejected promise。
+   */
+  call<T = unknown>(targetMethod: string, payload?: unknown): Promise<T>
+}
+
 /**
  * 宿主注入的共享服务聚合。
  * 未在 manifest capabilities 中声明的服务为 undefined（访问即报错便于发现）。
@@ -201,10 +251,15 @@ export interface PluginServices {
   host: PluginHostPathsService
   /** 通用数据访问（需 capabilities.data 授权） */
   data?: PluginDataService
+  /** KMS 数据查询（需 capabilities.kms 授权） */
+  kms?: PluginKmsService
   /** 统一执行入口（需 capabilities.execute 授权） */
   execute?: PluginExecuteService
   /** 事件总线（需 capabilities.events 授权） */
   events?: PluginEventService
+  /** 插件协作：共享 KV + 跨插件 RPC（需 capabilities.collaboration 授权） */
+  shared?: PluginSharedStore
+  bus?: PluginBusService
   notification?: PluginNotificationService
   scheduler?: PluginSchedulerService
   windows?: PluginWindowService

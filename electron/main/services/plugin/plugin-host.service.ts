@@ -32,6 +32,10 @@ import {
   getCapability,
   canRegisterView,
   hasSystemFeature,
+  canQueryKms,
+  hasCollaboration,
+  getSharedCapability,
+  canCallPlugin,
   validateCapabilities,
 } from './plugin-capability'
 import { createDataAccessService } from './plugin-data-access'
@@ -131,6 +135,10 @@ class PluginHostService {
   private pendingImportZip = ''
   /** 插件注册的对话消息快捷操作（pluginId → actions，供前端清单查询与 IPC 路由） */
   private messageActions = new Map<string, PluginMessageAction[]>()
+  /** 跨插件 RPC 的响应式方法（fully-qualified 'pluginId:method' → handler） */
+  private busResponders = new Map<string, (payload: unknown) => unknown | Promise<unknown>>()
+  /** 跨插件共享 KV 宿主库（dataDir/plugin-shared.db，惰性打开） */
+  private sharedDb: Database.Database | null = null
   /** 订阅内核事件的插件监听器（ctx.services.events.subscribe 注册）：event → Set<callback> */
   private kernelEventListeners = new Map<string, Set<(payload: unknown) => void>>()
   /** 插件注册的 UI 视图注入（pluginId:view → contribution，供渲染端查询） */
@@ -271,11 +279,47 @@ class PluginHostService {
       if (r.status === 'invalid') logger.warn(`插件无效 ${id}: ${r.statusMessage ?? ''}`)
     }
 
-    for (const record of this.records.values()) {
-      if (!record.enabled) continue
-      if (record.status === 'invalid') continue
-      this.activateRecord(record)
+    // 依赖满足性校验 + 拓扑顺序激活
+    const candidates = Array.from(this.records.values()).filter(r => r.enabled && r.status !== 'invalid')
+    for (const r of candidates) {
+      const reason = this.checkDependencies(r)
+      if (reason) {
+        r.status = 'invalid'
+        r.statusMessage = reason
+        r.enabled = false
+      }
     }
+    const remaining = candidates.filter(r => r.status !== 'invalid')
+    const activated = new Set<string>()
+    let progressed = true
+    while (remaining.length > 0 && progressed) {
+      progressed = false
+      for (const r of [...remaining]) {
+        const deps = Object.keys(r.manifest.dependencies ?? {})
+        if (deps.every(d => activated.has(d))) {
+          this.activateRecord(r)
+          if (r.status === 'active') activated.add(r.manifest.id)
+          const idx = remaining.indexOf(r)
+          if (idx >= 0) remaining.splice(idx, 1)
+          progressed = true
+        }
+      }
+    }
+  }
+
+  /** 校验某插件的依赖是否满足（缺失/未启用/无效/版本不满足均返回错误文案） */
+  private checkDependencies(r: PluginRecord): string | undefined {
+    const deps = r.manifest.dependencies ?? {}
+    for (const [depId, range] of Object.entries(deps)) {
+      const dep = this.records.get(depId)
+      if (!dep) return `缺少依赖插件 ${depId}`
+      if (!dep.enabled) return `依赖插件 ${depId} 未启用`
+      if (dep.status === 'invalid') return `依赖插件 ${depId} 无效（${dep.statusMessage ?? ''}）`
+      if (dep.manifest.version && !engineSatisfies(range, dep.manifest.version)) {
+        return `依赖插件 ${depId} 版本不满足 ${range}（当前 ${dep.manifest.version}）`
+      }
+    }
+    return undefined
   }
 
   /**
@@ -306,6 +350,7 @@ class PluginHostService {
     this.kernelEventListeners.clear()
     this.viewContributions.clear()
     this.commands.clear()
+    this.busResponders.clear()
     this.schedulerJobs.clear()
     for (const accelerator of this.registeredShortcuts) {
       try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
@@ -438,6 +483,31 @@ class PluginHostService {
     return db
   }
 
+  /** 跨插件共享 KV 宿主库（惰性打开，跨插件/跨热重载持久） */
+  private getSharedDb(): Database.Database {
+    if (!this.sharedDb) {
+      this.sharedDb = new Database(path.join(this.dataDir, 'plugin-shared.db'))
+      this.sharedDb.pragma('journal_mode = WAL')
+      this.sharedDb.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_shared (
+          namespace TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (namespace, key)
+        )
+      `)
+    }
+    return this.sharedDb
+  }
+
+  /** 校验共享 KV key 与插件方法名的简单命名规则（防冲突与路径穿越语义混淆） */
+  private assertSimpleName(name: string, what: string): void {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(name)) {
+      throw new Error(`${what} 非法: ${name}（仅允许字母/数字/._-，≤128）`)
+    }
+  }
+
   private buildContext(record: PluginRecord): PluginContext {
     const { manifest } = record
     const pluginLogger = createLogger(`Plugin:${manifest.id}`)
@@ -462,6 +532,16 @@ class PluginHostService {
         workspace: {
           getAllConversationsWithEmployee: (p) => WorkspaceManagerService.getInstance().getAllConversationsWithEmployee(p),
           getConversation: (id) => WorkspaceManagerService.getInstance().getConversation(id),
+          getConversationMessages: (id) => {
+            const conv = WorkspaceManagerService.getInstance().getConversation(id) as { messages_json?: string } | null
+            if (!conv) return []
+            try {
+              const arr = JSON.parse(conv.messages_json ?? '[]')
+              return Array.isArray(arr) ? arr : []
+            } catch {
+              return []
+            }
+          },
           createConversation: (e, s, t, m, p) => WorkspaceManagerService.getInstance().createConversation(e, s, t, m, p),
           updateConversation: (id, data) => WorkspaceManagerService.getInstance().updateConversation(id, data),
           deleteConversation: (id) => WorkspaceManagerService.getInstance().deleteConversation(id),
@@ -616,6 +696,102 @@ class PluginHostService {
     // ====== 系统集成层（services.events，需 capabilities.events 授权） ======
     if (getCapability(record.manifest.capabilities, 'events')) {
       services.events = createEventBus(this.kernelEventListeners, manifest.id, pluginLogger)
+    }
+
+    // ====== KMS 数据查询层（services.kms，需 capabilities.kms 授权） ======
+    if (getCapability(record.manifest.capabilities, 'kms')) {
+      const { default: KMSService } = require('../kms/kms.service')
+      const kms = KMSService.getInstance()
+      const guard = (kind: 'search' | 'content' | 'collections') => {
+        const check = canQueryKms(record.manifest.capabilities, kind)
+        if (!check.ok) throw new Error(check.reason)
+      }
+      services.kms = {
+        search: async (query, options) => {
+          guard('search')
+          if (typeof query !== 'string' || !query.trim()) throw new Error('kms.search 需要 query')
+          return kms.search(query, {
+            collectionIds: options?.collectionIds,
+            fileExtensions: options?.fileExtensions,
+            topK: options?.limit,
+          })
+        },
+        listCollections: async () => {
+          guard('collections')
+          return (kms.listCollections() as Array<{ id: string; name: string; description: string; file_count: number }>)
+            .map((c) => ({ id: c.id, name: c.name, description: c.description ?? '', file_count: c.file_count ?? 0 }))
+        },
+        getContent: async (fileId, options) => {
+          guard('content')
+          if (typeof fileId !== 'string' || !fileId) throw new Error('kms.getContent 需要 fileId')
+          return kms.getFileContent(fileId, {
+            paragraphId: options?.paragraphId,
+            maxChars: options?.maxChars,
+          })
+        },
+      }
+    }
+
+    // ====== 插件协作层（services.shared / bus，需 capabilities.collaboration 授权） ======
+    if (hasCollaboration(record.manifest.capabilities)) {
+      const pluginId = manifest.id
+      const sharedCap = getSharedCapability(record.manifest.capabilities)
+      if (sharedCap) {
+        const db = this.getSharedDb()
+        const readAll = !!sharedCap.read
+        const sharedGet = <T,>(namespace: string, key: string, def?: T): Promise<T | undefined> => {
+          const row = db.prepare('SELECT value FROM plugin_shared WHERE namespace = ? AND key = ?').get(namespace, key) as { value: string } | undefined
+          return Promise.resolve(row ? JSON.parse(row.value) as T : def)
+        }
+        services.shared = {
+          set: (key, value) => {
+            this.assertSimpleName(key, '共享 key')
+            db.prepare(
+              'INSERT INTO plugin_shared (namespace, key, value, updated_at) VALUES (?, ?, ?, ?) ' +
+              'ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+            ).run(pluginId, key, JSON.stringify(value), Date.now())
+            return Promise.resolve()
+          },
+          get: (key, def) => {
+            this.assertSimpleName(key, '共享 key')
+            return sharedGet(pluginId, key, def)
+          },
+          getFrom: (target, key, def) => {
+            this.assertSimpleName(target, '插件 id'); this.assertSimpleName(key, '共享 key')
+            if (target !== pluginId && !readAll) throw new Error('跨插件读共享数据需要 collaboration.shared.read 能力')
+            return sharedGet(target, key, def)
+          },
+          delete: (key) => {
+            this.assertSimpleName(key, '共享 key')
+            db.prepare('DELETE FROM plugin_shared WHERE namespace = ? AND key = ?').run(pluginId, key)
+            return Promise.resolve()
+          },
+          keys: () => {
+            const rows = db.prepare('SELECT key FROM plugin_shared WHERE namespace = ?').all(pluginId) as { key: string }[]
+            return Promise.resolve(rows.map(r => r.key))
+          },
+          keysAll: () => {
+            if (!readAll) return Promise.reject(new Error('列出全部共享 key 需要 collaboration.shared.read 能力'))
+            const rows = db.prepare('SELECT namespace, key FROM plugin_shared').all() as { namespace: string; key: string }[]
+            return Promise.resolve(rows.map(r => `${r.namespace}:${r.key}`))
+          },
+        }
+      }
+      services.bus = {
+        respond: (method, handler) => {
+          this.assertSimpleName(method, '方法名')
+          const full = `${pluginId}:${method}`
+          this.busResponders.set(full, handler)
+          return () => { if (this.busResponders.get(full) === handler) this.busResponders.delete(full) }
+        },
+        call: <T,>(targetMethod: string, payload?: unknown): Promise<T> => {
+          const check = canCallPlugin(record.manifest.capabilities, targetMethod)
+          if (!check.ok) return Promise.reject(new Error(check.reason))
+          const handler = this.busResponders.get(targetMethod)
+          if (!handler) return Promise.reject(new Error(`跨插件方法未注册: ${targetMethod}`))
+          return Promise.resolve().then(() => handler(payload)) as Promise<T>
+        },
+      }
     }
 
     if (this.hasSystemFeature(record, 'notification')) {
@@ -950,6 +1126,7 @@ class PluginHostService {
       enabled: r.enabled,
       status: r.status,
       statusMessage: r.statusMessage,
+      dependencies: r.manifest.dependencies,
       nav: r.manifest.nav ? {
         label: r.manifest.nav.label,
         icon: r.manifest.nav.icon,
@@ -1276,11 +1453,17 @@ class PluginHostService {
       try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
     }
     this.registeredShortcuts.clear()
+    this.busResponders.clear()
     // 清理插件注册的定时任务
     for (const [, dispose] of this.schedulerJobs) {
       try { dispose() } catch { /* ignore */ }
     }
     this.schedulerJobs.clear()
+    // 关闭跨插件共享库
+    if (this.sharedDb) {
+      try { this.sharedDb.close() } catch { /* ignore */ }
+      this.sharedDb = null
+    }
     // 清理插件创建的窗口
     for (const win of this.pluginWindows) {
       if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }

@@ -6,6 +6,7 @@ function makeDeps(overrides: Partial<DataAccessDeps> = {}): DataAccessDeps {
     workspace: {
       getAllConversationsWithEmployee: vi.fn(() => [{ id: 'c1', title: '对话1' }]),
       getConversation: vi.fn(() => ({ id: 'c1' })),
+      getConversationMessages: vi.fn(() => [{ role: 'user', content: '你好' }]),
       createConversation: vi.fn(() => ({ id: 'new-conv' })),
       updateConversation: vi.fn(() => true),
       deleteConversation: vi.fn(() => ({ ok: true })),
@@ -318,5 +319,34 @@ describe('data-access 边界 case', () => {
     const deps = makeDeps()
     const svc = createDataAccessService(deps)
     await expect(svc.mutate('unknown' as never, 'create', {})).rejects.toThrow('未知数据实体')
+  })
+})
+
+describe('messages 实体（只读）', () => {
+  it('query 按 conversationId 取消息', async () => {
+    const deps = makeDeps()
+    const svc = createDataAccessService(deps)
+    const rows = await svc.query('messages', { filter: { conversationId: 'c1' } })
+    expect(rows).toEqual([{ role: 'user', content: '你好' }])
+    expect(deps.workspace.getConversationMessages).toHaveBeenCalledWith('c1')
+  })
+
+  it('query 支持 conversation_id 别名', async () => {
+    const deps = makeDeps()
+    const svc = createDataAccessService(deps)
+    await svc.query('messages', { filter: { conversation_id: 'c1' } })
+    expect(deps.workspace.getConversationMessages).toHaveBeenCalledWith('c1')
+  })
+
+  it('query 缺 conversationId 拒绝', async () => {
+    const deps = makeDeps()
+    const svc = createDataAccessService(deps)
+    await expect(svc.query('messages', {})).rejects.toThrow('conversationId')
+  })
+
+  it('mutate 一律拒绝（只读）', async () => {
+    const deps = makeDeps()
+    const svc = createDataAccessService(deps)
+    await expect(svc.mutate('messages', 'create', {})).rejects.toThrow('messages 为只读实体')
   })
 })

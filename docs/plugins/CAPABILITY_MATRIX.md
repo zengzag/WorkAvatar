@@ -8,10 +8,12 @@
 | 能力域 | 入口 | 说明 | 授权粒度 |
 |---|---|---|---|
 | `data` | `services.data.query/mutate` | 通用数据访问 | 实体 + 读写 |
+| `kms` | `services.kms.*` | 资料库只读查询（检索/读内容/列合集） | 查询类型 |
 | `execute` | `services.execute.execute` | 统一执行入口 | 执行类型 kind |
 | `events` | `services.events.subscribe/publish` | 事件总线 | 订阅白名单 + 发布开关 |
 | `ui` | 渲染端 `views` + `contributions.registerView` | UI 注入 | 注入点 |
 | `system` | `services.notification/scheduler/windows/native` | 系统能力 | 特性 feature |
+| `collaboration` | `services.shared` + `services.bus` | 插件协作（共享 KV + 跨插件 RPC） | shared.{read,write} + call 白名单 |
 
 ---
 
@@ -24,6 +26,7 @@
 | `llmProviders` | ✅ | create/update/delete | 高 | 模型供应商，api_key 自动剥离 |
 | `memories` | ✅ | create/update/delete | 中 | 员工记忆，软删除语义由宿主处理 |
 | `settings` | ✅ | ❌ 只读 | 高 | 全局配置只读，插件私有配置用自身 KV |
+| `messages` | ✅ | ❌ 只读 | 中 | 某对话全部消息（`filter.conversationId`） |
 
 **安全规则**：
 - 实体必须在 `capabilities.data.entities` 白名单内，否则拒绝。
@@ -52,8 +55,27 @@
 | `subscribe` | 订阅宿主事件或其他插件事件 | 低（白名单） |
 | `publish` | 发布事件（强制 `plugin:<id>:` 前缀） | 低 |
 
-**宿主事件**：`conversation:deleted`、`model:renamed`。
+**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`。
 **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅。
+
+---
+
+## 资料库查询层（services.kms）
+
+| 能力 | 说明 | 授权粒度 |
+|---|---|---|
+| `search` | 混合检索资料库 | query 白名单 |
+| `content` | 读取文件/段落文本 | query 白名单 |
+| `collections` | 列出资料库合集 | query 白名单 |
+
+## 插件协作层（services.shared / bus）
+
+| 能力 | 说明 | 授权粒度 |
+|---|---|---|
+| `shared.write` | 写本插件命名空间共享 KV | collaboration.shared.write |
+| `shared.read` | 读所有插件命名空间共享 KV | collaboration.shared.read |
+| `bus.respond` | 注册可被其他插件调用的方法 | collaboration |
+| `bus.call` | 调用其他插件方法 | collaboration.call 白名单 |
 
 ---
 
@@ -62,9 +84,12 @@
 | 注入点 | 位置 | 说明 | 安全级别 |
 |---|---|---|---|
 | `chat.toolbar` | 对话输入框工具栏 | 插件在输入框旁加按钮/组件 | 低 |
-| `sidebar.footer` | 侧边栏底部 | 插件在导航底部加状态/入口 | 低 |
-| `settings.tab` | 设置页 Tab | 插件在设置页加配置 Tab | 低 |
+| `chat.quick` | 输入框上方 | 插件加快捷建议 chips | 低 |
+| `chat.header` | 任务对话页头部 | 插件加头部操作 | 低 |
+| `sidebar.footer` | 底部导航栏底部 | 插件加状态/入口 | 低 |
+| `settings.tab` | 设置页聚合 Tab | 插件加配置面板 | 低 |
 | `message.menu` | 对话消息操作菜单 | 插件在消息上加快捷操作 | 低 |
+| `message.bubble` | 消息气泡操作区 | 插件在消息上加快捷按钮（context 含 {role,content,messageId}） | 低 |
 
 **其他贡献点**：`registerAgentTools` / `registerMcpTools` / `registerFileAssociations` / `registerGlobalShortcuts` / `registerCommand`。
 

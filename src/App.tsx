@@ -1,6 +1,7 @@
 import { useMemo, useCallback, useEffect, useState } from 'react'
 import { Layout, Menu, Dropdown, theme } from 'antd'
 import type { MenuProps } from 'antd'
+import { PluginViewSlot } from './plugins/view-slot'
 import {
   SettingOutlined,
   SearchOutlined,
@@ -334,6 +335,8 @@ const App: React.FC = () => {
                 theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
               />
             )}
+            {/* 插件视图注入点：底部导航栏底部 */}
+            <PluginViewSlot view="sidebar.footer" />
           </div>
         </Sider>
         <Layout>

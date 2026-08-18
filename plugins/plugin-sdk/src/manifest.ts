@@ -11,6 +11,7 @@ export type PluginDataEntity =
   | 'llmProviders' // 模型供应商
   | 'memories' // 员工记忆
   | 'settings' // 宿主设置（仅只读）
+  | 'messages' // 对话消息（仅只读，filter.conversationId 获取某对话全部消息）
 
 /** 数据访问权限：read 只读 / write 读写 */
 export type PluginDataAccess = 'read' | 'write'
@@ -30,20 +31,35 @@ export type PluginSystemFeature =
   | 'native' // 租借宿主原生模块
   | 'globalShortcuts' // 全局快捷键
 
+/** KMS 数据查询类型（services.kms.query 白名单） */
+export type PluginKmsQueryType = 'search' | 'content' | 'collections'
+
 /** UI 注入点（capabilities.ui.views） */
 export type PluginViewPoint =
   | 'chat.toolbar' // 对话输入框工具栏
-  | 'sidebar.footer' // 侧边栏底部
+  | 'chat.quick' // 对话输入框上方快捷建议区（chips）
+  | 'chat.header' // 任务对话页头部操作区
+  | 'message.menu' // 对话消息操作菜单（Popover 菜单项）
+  | 'message.bubble' // 对话消息气泡内操作区（与复制/删除同排）
+  | 'sidebar.footer' // 底部导航栏底部
   | 'settings.tab' // 设置页 Tab
-  | 'message.menu' // 对话消息操作菜单
 
 /** 能力域声明（manifest.capabilities 数组元素） */
 export type PluginCapability =
   | { domain: 'data'; entities: PluginDataEntity[]; access: PluginDataAccess }
   | { domain: 'execute'; kinds: PluginExecuteKind[] }
+  | { domain: 'kms'; query: PluginKmsQueryType[] }
   | { domain: 'events'; subscribe?: string[]; publish?: boolean }
   | { domain: 'ui'; views: PluginViewPoint[] }
   | { domain: 'system'; features: PluginSystemFeature[] }
+  | {
+      // 插件协作：共享 KV + 跨插件 RPC
+      domain: 'collaboration'
+      /** 共享数据：write 写本插件命名空间；read 可选读取所有插件命名空间 */
+      shared?: { read?: boolean; write: boolean }
+      /** 允许调用的目标插件方法白名单（形如 '目标插件id:方法名'），空则不授予调用能力 */
+      call?: string[]
+    }
 
 export interface PluginNavContribution {
   /** 导航标签文案或 i18n key（由插件 locale 提供） */
@@ -76,6 +92,11 @@ export interface PluginManifest {
   ipc?: string[]
   /** 能力域授权声明（v2，取代 v1 permissions 的多数能力） */
   capabilities?: PluginCapability[]
+  /**
+   * 插件依赖（pluginId → semver range）。宿主激活前校验：
+   * 依赖必须已安装、已启用、版本满足，并按拓扑顺序先激活依赖方。
+   */
+  dependencies?: Record<string, string>
   /** 迁移专用权限（v2 仅保留 legacyMigration，用于数据迁出场景） */
   permissions?: Array<'legacyMigration'>
   nav?: PluginNavContribution

@@ -5,6 +5,7 @@ export type {
   PluginDataEntity,
   PluginDataAccess,
   PluginExecuteKind,
+  PluginKmsQueryType,
   PluginSystemFeature,
   PluginViewPoint,
 } from './manifest'
@@ -27,6 +28,9 @@ export type {
   PluginDataService,
   PluginDataQueryParams,
   PluginDataOp,
+  PluginKmsService,
+  PluginSharedStore,
+  PluginBusService,
   PluginExecuteService,
   PluginExecuteRequest,
   PluginExecuteCallbacks,
@@ -59,6 +63,7 @@ export type {
   PluginRouteDefinition,
   PluginViewDefinition,
   PluginBridge,
+  PluginHostCapabilities,
   PluginRendererHost,
   PluginRendererEntry,
 } from './renderer'

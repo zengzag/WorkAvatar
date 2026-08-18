@@ -47,6 +47,8 @@ export interface PluginInfo {
   /** manifest/engine 校验与激活结果；pending = 已安装未重启激活 */
   status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
+  /** 插件依赖（pluginId → semver range），用于设置页展示缺失/不满足原因 */
+  dependencies?: Record<string, string>
   nav?: PluginNavItemInfo
   hasRenderer: boolean
 }

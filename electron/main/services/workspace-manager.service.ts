@@ -25,6 +25,14 @@ class WorkspaceManagerService {
     return WorkspaceManagerService.instance
   }
 
+  /** 向订阅插件广播宿主事件（插件宿主不可用/未初始化时静默忽略） */
+  private notifyPluginEvent(event: string, payload: unknown): void {
+    try {
+      const { default: PluginHostService } = require('./plugin/plugin-host.service')
+      PluginHostService.getInstance().notifyKernelEvent(event, payload)
+    } catch { /* ignore */ }
+  }
+
   getEmployeeList(): Employee[] {
     return this.db.getDb().prepare(
       'SELECT * FROM employees ORDER BY COALESCE(last_active_at, 0) DESC, updated_at DESC'
@@ -92,6 +100,7 @@ class WorkspaceManagerService {
 
     this.broadcastEmployeeChanged()
 
+    this.notifyPluginEvent('employee:created', { id: employeeId, name })
     return this.getEmployee(employeeId)!
   }
 
@@ -139,6 +148,7 @@ class WorkspaceManagerService {
       this.broadcastEmployeeChanged()
     }
 
+    this.notifyPluginEvent('employee:updated', { id, data })
     return this.getEmployee(id)
   }
 
@@ -161,7 +171,10 @@ class WorkspaceManagerService {
       }
     }
     const result = this.db.getDb().prepare('DELETE FROM employees WHERE id = ?').run(id)
-    if (result.changes > 0) this.broadcastEmployeeChanged()
+    if (result.changes > 0) {
+      this.broadcastEmployeeChanged()
+      this.notifyPluginEvent('employee:deleted', { id })
+    }
     return result.changes > 0
   }
 
@@ -243,7 +256,9 @@ class WorkspaceManagerService {
     }
     this.touchEmployeeLastActive(employeeId, now)
 
-    return this.getConversation(conversationId)!
+    const conv = this.getConversation(conversationId)!
+    this.notifyPluginEvent('conversation:created', { id: conv.id, employeeId, title, parentConversationId })
+    return conv
   }
 
   /** 在员工工作区下创建任务独立目录（YYYYMMDD_HHmmss，碰撞时追加序号） */
@@ -339,6 +354,7 @@ class WorkspaceManagerService {
       }
     }
 
+    this.notifyPluginEvent('conversation:updated', { id, data })
     return true
   }
 

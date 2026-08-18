@@ -14,6 +14,8 @@ export interface DataAccessDeps {
   workspace: {
     getAllConversationsWithEmployee(params?: { limit?: number; offset?: number; employee_ids?: string[] }): unknown[]
     getConversation(id: string): unknown
+    /** 返回某对话的全部消息（解析 messages_json 为数组；无则返回 []） */
+    getConversationMessages(conversationId: string): unknown[]
     createConversation(employeeId: string, skillId?: string, title?: string, minimalMode?: boolean, parentConversationId?: string): unknown
     updateConversation(id: string, data: Record<string, unknown>): boolean
     deleteConversation(id: string): unknown
@@ -110,6 +112,13 @@ export function createDataAccessService(deps: DataAccessDeps) {
           if (typeof key !== 'string') throw new Error('settings 查询需要 filter.key')
           const value = deps.settings.get(key)
           return [{ key, value }] as T[]
+        }
+        case 'messages': {
+          const conversationId = filter?.conversationId ?? filter?.conversation_id
+          if (typeof conversationId !== 'string' || !conversationId) {
+            throw new Error('messages 查询需要 filter.conversationId')
+          }
+          return deps.workspace.getConversationMessages(conversationId) as T[]
         }
         default:
           throw new Error(`未知数据实体: ${entity}`)
@@ -215,6 +224,8 @@ export function createDataAccessService(deps: DataAccessDeps) {
         }
         case 'settings':
           throw new Error('settings 为只读实体，不支持写操作')
+        case 'messages':
+          throw new Error('messages 为只读实体，不支持写操作')
         default:
           throw new Error(`未知数据实体: ${entity}`)
       }

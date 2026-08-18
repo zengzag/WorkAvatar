@@ -31,23 +31,43 @@ export interface PluginBridge {
   onEvent(event: string, callback: (payload: unknown) => void): () => void
 }
 
+/**
+ * 渲染端宿主能力（可选）：插件页面/视图可用的通用宿主能力。
+ * 宿主按能力提供；无此能力时字段为 undefined。
+ */
+export interface PluginHostCapabilities {
+  /** 订阅宿主外部文件打开事件（绝对路径，系统"打开方式"传入），返回取消订阅函数 */
+  subscribeExternalFiles(callback: (absPath: string) => void): () => void
+  /**
+   * 注册"关闭守卫"：tab 独立窗口点击关闭时，任一守卫返回 true 则弹"未保存"确认框；
+   * 返回取消注册函数。
+   */
+  registerCloseGuard(check: () => boolean): () => void
+  /** 打开文件选择框，返回选中路径数组（取消返回空数组） */
+  showOpenDialog(options?: { filters?: Array<{ name: string; extensions: string[] }> }): Promise<string[]>
+  /** 打开文件保存框，返回目标路径（取消返回空字符串） */
+  showSaveDialog(options?: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string>
+  /** 剪贴板文本读写（基于 navigator.clipboard） */
+  clipboard: {
+    readText(): Promise<string>
+    writeText(text: string): Promise<void>
+  }
+  /** 读取当前明文/暗色主题（'light' | 'dark'） */
+  getTheme(): 'light' | 'dark'
+  /** 订阅主题变化，返回取消订阅函数 */
+  onThemeChange(callback: (isDark: boolean) => void): () => void
+  /** 读取当前语言（'zh-CN' | 'en-US' 等） */
+  getLocale(): string
+  /** 订阅语言切换，返回取消订阅函数 */
+  onLocaleChange(callback: (locale: string) => void): () => void
+}
+
 export interface PluginRendererHost {
   bridge: PluginBridge
   /** 宿主 i18n 受控封装（插件 locale 文件已由宿主代为注册） */
   i18n: { t(key: string, options?: Record<string, unknown>): string }
-  /**
-   * 宿主能力（可选）：外部文件打开订阅（如系统"打开方式"传入的 .md 文件）。
-   * 宿主当前只对"打开方式"文件提供；插件无此能力时该字段为 undefined。
-   */
-  hostCapabilities?: {
-    /** 订阅宿主外部文件打开事件（绝对路径），返回取消订阅函数 */
-    subscribeExternalFiles(callback: (absPath: string) => void): () => void
-    /**
-     * 注册"关闭守卫"：tab 独立窗口点击关闭时，任一守卫返回 true 则弹"未保存"确认框；
-     * 返回取消注册函数。
-     */
-    registerCloseGuard(check: () => boolean): () => void
-  }
+  /** 宿主通用能力（可选字段按需提供） */
+  hostCapabilities?: PluginHostCapabilities
 }
 
 /** 渲染端入口 default export 契约 */

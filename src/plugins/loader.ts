@@ -6,6 +6,7 @@ import * as icons from '@ant-design/icons'
 import * as reactI18n from 'react-i18next'
 import i18n from '../i18n'
 import { useNavConfigStore } from '../stores/nav.store'
+import { useAppearanceStore, getEffectiveTheme } from '../stores/appearance.store'
 import { registerPluginViews } from './view-slot'
 import type {
   PluginBridge,
@@ -133,10 +134,42 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
       const def = entry.default
       if (!def || !Array.isArray(def.routes)) continue
 
-      // 提供宿主能力：外部文件打开订阅（.md 等文件关联需要）+ 关闭守卫（未保存内容确认）
+      // 提供宿主通用能力：外部文件打开 / 关闭守卫 / 文件对话框 / 剪贴板 / 主题与语言
       const hostCapabilities: PluginRendererHost['hostCapabilities'] = {
         subscribeExternalFiles,
         registerCloseGuard,
+        showOpenDialog: async (options) => {
+          const res = await window.electronAPI.app.showOpenDialog({
+            properties: ['openFile', 'multiSelections'],
+            filters: options?.filters ?? [],
+          })
+          return res?.filePaths ?? []
+        },
+        showSaveDialog: async (options) => {
+          const res = await window.electronAPI.app.showSaveDialog(options ?? {})
+          return res?.filePath ?? ''
+        },
+        clipboard: {
+          readText: async () => {
+            try { return await navigator.clipboard.readText() } catch { return '' }
+          },
+          writeText: async (text) => {
+            try { await navigator.clipboard.writeText(text) } catch { /* ignore */ }
+          },
+        },
+        getTheme: () => getEffectiveTheme(useAppearanceStore.getState().themeMode),
+        onThemeChange: (callback) =>
+          useAppearanceStore.subscribe((state) => callback(getEffectiveTheme(state.themeMode) === 'dark')),
+        getLocale: () => useAppearanceStore.getState().locale,
+        onLocaleChange: (callback) => {
+          let prev = useAppearanceStore.getState().locale
+          return useAppearanceStore.subscribe((state) => {
+            if (state.locale !== prev) {
+              prev = state.locale
+              callback(state.locale)
+            }
+          })
+        },
       }
 
       const host: PluginRendererHost = {

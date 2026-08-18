@@ -6,17 +6,23 @@ import {
   canPublishEvent,
   canRegisterView,
   hasSystemFeature,
+  canQueryKms,
+  hasCollaboration,
+  getSharedCapability,
+  canCallPlugin,
   validateCapabilities,
   getCapability,
 } from '../../../electron/main/services/plugin/plugin-capability'
 import type { PluginCapability } from '../../../plugins/plugin-sdk/src'
 
 const fullCaps: PluginCapability[] = [
-  { domain: 'data', entities: ['conversations', 'employees'], access: 'write' },
+  { domain: 'data', entities: ['conversations', 'employees', 'messages'], access: 'write' },
   { domain: 'execute', kinds: ['agent-task', 'llm-stream'] },
+  { domain: 'kms', query: ['search', 'content', 'collections'] },
   { domain: 'events', subscribe: ['conversation:deleted'], publish: true },
-  { domain: 'ui', views: ['chat.toolbar'] },
+  { domain: 'ui', views: ['chat.toolbar', 'chat.quick', 'message.bubble'] },
   { domain: 'system', features: ['notification', 'scheduler'] },
+  { domain: 'collaboration', shared: { read: true, write: true }, call: ['other:helper'] },
 ]
 
 describe('validateCapabilities', () => {
@@ -261,5 +267,92 @@ describe('capability 边界 case', () => {
   it('validateCapabilities 合法 ui（空 views）通过', () => {
     const caps = [{ domain: 'ui', views: [] }] as PluginCapability[]
     expect(validateCapabilities(caps).ok).toBe(true)
+  })
+})
+
+describe('canQueryKms', () => {
+  it('白名单内查询类型通过', () => {
+    expect(canQueryKms(fullCaps, 'search').ok).toBe(true)
+  })
+
+  it('白名单外查询类型拒绝', () => {
+    const caps: PluginCapability[] = [{ domain: 'kms', query: ['search'] }]
+    const r = canQueryKms(caps, 'content')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toContain('content')
+  })
+
+  it('未声明 kms 能力域拒绝', () => {
+    expect(canQueryKms(undefined, 'search').ok).toBe(false)
+  })
+})
+
+describe('hasCollaboration / getSharedCapability / canCallPlugin', () => {
+  it('声明 collaboration 返回 true', () => {
+    expect(hasCollaboration(fullCaps)).toBe(true)
+  })
+
+  it('未声明返回 false', () => {
+    expect(hasCollaboration(undefined)).toBe(false)
+  })
+
+  it('读取 shared 声明', () => {
+    expect(getSharedCapability(fullCaps)).toEqual({ read: true, write: true })
+  })
+
+  it('未声明 shared 返回 undefined', () => {
+    const caps: PluginCapability[] = [{ domain: 'collaboration', call: ['other:x'] }]
+    expect(getSharedCapability(caps)).toBeUndefined()
+  })
+
+  it('call 白名单内方法通过', () => {
+    expect(canCallPlugin(fullCaps, 'other:helper').ok).toBe(true)
+  })
+
+  it('call 白名单外方法拒绝', () => {
+    const r = canCallPlugin(fullCaps, 'other:unlisted')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toContain('other:unlisted')
+  })
+
+  it('未声明 collaboration 调用拒绝', () => {
+    expect(canCallPlugin(undefined, 'other:helper').ok).toBe(false)
+  })
+})
+
+describe('validateCapabilities 新能力域', () => {
+  it('合法 kms 通过', () => {
+    const caps: PluginCapability[] = [{ domain: 'kms', query: ['search'] }]
+    expect(validateCapabilities(caps).ok).toBe(true)
+  })
+
+  it('kms 空 query 拒绝', () => {
+    const caps = [{ domain: 'kms', query: [] }] as unknown as PluginCapability[]
+    expect(validateCapabilities(caps).ok).toBe(false)
+  })
+
+  it('kms 非法查询类型拒绝', () => {
+    const caps = [{ domain: 'kms', query: ['hack'] }] as unknown as PluginCapability[]
+    expect(validateCapabilities(caps).ok).toBe(false)
+  })
+
+  it('合法 collaboration（仅 shared）通过', () => {
+    const caps: PluginCapability[] = [{ domain: 'collaboration', shared: { write: true } }]
+    expect(validateCapabilities(caps).ok).toBe(true)
+  })
+
+  it('collaboration 空 call 通过', () => {
+    const caps: PluginCapability[] = [{ domain: 'collaboration', call: [] }]
+    expect(validateCapabilities(caps).ok).toBe(true)
+  })
+
+  it('collaboration shared.read 非布尔拒绝', () => {
+    const caps = [{ domain: 'collaboration', shared: { read: 'yes' } }] as unknown as PluginCapability[]
+    expect(validateCapabilities(caps).ok).toBe(false)
+  })
+
+  it('collaboration call 非数组拒绝', () => {
+    const caps = [{ domain: 'collaboration', call: 'other:x' }] as unknown as PluginCapability[]
+    expect(validateCapabilities(caps).ok).toBe(false)
   })
 })

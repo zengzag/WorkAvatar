@@ -7,6 +7,7 @@ import type {
   PluginCapability,
   PluginDataEntity,
   PluginExecuteKind,
+  PluginKmsQueryType,
   PluginSystemFeature,
   PluginViewPoint,
 } from '../../../../plugins/plugin-sdk/src'
@@ -114,6 +115,54 @@ export function hasSystemFeature(
   return cap.features.includes(feature)
 }
 
+/** 校验 KMS 查询类型：kind 是否在 kms 白名单 */
+export function canQueryKms(
+  capabilities: PluginCapability[] | undefined,
+  kind: PluginKmsQueryType
+): CapabilityCheck {
+  const cap = getCapability(capabilities, 'kms')
+  if (!cap || cap.domain !== 'kms') {
+    return { ok: false, reason: '未声明 kms 能力域' }
+  }
+  if (!cap.query.includes(kind)) {
+    return { ok: false, reason: `KMS 查询类型 "${kind}" 未在 kms 能力域白名单内` }
+  }
+  return { ok: true }
+}
+
+/** 是否声明 collaboration 协作能力域 */
+export function hasCollaboration(
+  capabilities: PluginCapability[] | undefined
+): boolean {
+  const cap = getCapability(capabilities, 'collaboration')
+  return !!cap && cap.domain === 'collaboration'
+}
+
+/** 读取 collaboration.shared 声明（未声明返回 undefined） */
+export function getSharedCapability(
+  capabilities: PluginCapability[] | undefined
+): { read?: boolean; write: boolean } | undefined {
+  const cap = getCapability(capabilities, 'collaboration')
+  if (!cap || cap.domain !== 'collaboration' || !cap.shared) return undefined
+  return cap.shared
+}
+
+/** 校验跨插件调用：目标方法是否在 collaboration.call 白名单 */
+export function canCallPlugin(
+  capabilities: PluginCapability[] | undefined,
+  targetMethod: string
+): CapabilityCheck {
+  const cap = getCapability(capabilities, 'collaboration')
+  if (!cap || cap.domain !== 'collaboration') {
+    return { ok: false, reason: '未声明 collaboration 能力域' }
+  }
+  const call = cap.call ?? []
+  if (!call.includes(targetMethod)) {
+    return { ok: false, reason: `跨插件方法 "${targetMethod}" 未在 collaboration.call 白名单内` }
+  }
+  return { ok: true }
+}
+
 /** 校验 manifest 的 capabilities 结构合法性（schema 校验） */
 export function validateCapabilities(
   capabilities: PluginCapability[] | undefined
@@ -171,6 +220,36 @@ export function validateCapabilities(
         const c = cap as { features?: unknown }
         if (!Array.isArray(c.features)) {
           return { ok: false, reason: 'system 能力域必须声明 features 数组' }
+        }
+        break
+      }
+      case 'kms': {
+        const c = cap as { query?: unknown }
+        if (!Array.isArray(c.query) || c.query.length === 0) {
+          return { ok: false, reason: 'kms 能力域必须声明非空 query 数组' }
+        }
+        const allowed = ['search', 'content', 'collections']
+        if (c.query.some((q: unknown) => typeof q !== 'string' || !allowed.includes(q))) {
+          return { ok: false, reason: 'kms 能力域 query 含非法类型' }
+        }
+        break
+      }
+      case 'collaboration': {
+        const c = cap as { shared?: unknown; call?: unknown }
+        if (c.shared !== undefined) {
+          const s = c.shared as { read?: unknown; write?: unknown }
+          if (typeof s !== 'object' || s === null) {
+            return { ok: false, reason: 'collaboration.shared 必须是对象' }
+          }
+          if (s.read !== undefined && typeof s.read !== 'boolean') {
+            return { ok: false, reason: 'collaboration.shared.read 必须是布尔值' }
+          }
+          if (s.write !== undefined && typeof s.write !== 'boolean') {
+            return { ok: false, reason: 'collaboration.shared.write 必须是布尔值' }
+          }
+        }
+        if (c.call !== undefined && !Array.isArray(c.call)) {
+          return { ok: false, reason: 'collaboration.call 必须是数组' }
         }
         break
       }

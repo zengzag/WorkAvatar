@@ -1395,6 +1395,8 @@ const ChatInput: React.FC<{
               {t('workbench.compactingPlaceholder', { defaultValue: '正在压缩对话上下文，请稍候...' })}
             </div>
           )}
+          {/* 插件视图注入点：对话输入框上方快捷建议区 */}
+          <PluginViewSlot view="chat.quick" />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>

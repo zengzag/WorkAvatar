@@ -27,6 +27,7 @@ import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-sha
 import GeneratedFilesBar from './GeneratedFilesBar'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 import type { PluginMessageActionInfo } from '../../../electron/shared/channels/plugin'
+import { PluginViewSlot } from '../../plugins/view-slot'
 
 const { Text } = Typography
 
@@ -491,6 +492,8 @@ const MessageBubble: React.FC<{
                       onClick={() => runMessageAction(action)}
                     />
                   ))}
+                {/* 插件视图注入点：消息气泡操作区 */}
+                <PluginViewSlot view="message.bubble" context={{ role: msg.role, content: displayContent, messageId: msg.id }} />
                 <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
                   onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />
                 <ModelSwitchPopover

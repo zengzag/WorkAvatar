@@ -32,6 +32,7 @@
 | `capabilities` | | 能力域授权声明（见 §4） |
 | `permissions` | | 迁移专用权限（仅保留 `legacyMigration`） |
 | `nav` | | 导航项：`label`（文案或 i18n key）、`icon`（SVG 字符串）、`order`（默认 100）、`detachable` |
+| `dependencies` | | 插件依赖（pluginId → semver range）。缺失/未启用/无效/版本不满足都会标记 invalid 并提示，激活按拓扑顺序先激活依赖方 |
 
 ## 3. 生命周期
 
@@ -60,15 +61,17 @@ manifest `capabilities` 数组声明插件可访问的能力域，宿主在服�
 | 能力域 | 声明 | 注入服务 | 用途 |
 |---|---|---|---|
 | `data` | `{ domain:'data', entities:[...], access:'read'\|'write' }` | `services.data.query/mutate` | 通用数据访问（实体白名单 + 读写分离） |
+| `kms` | `{ domain:'kms', query:['search'\|'content'\|'collections'] }` | `services.kms.*` | 只读资料库查询（检索/读内容/列合集） |
 | `execute` | `{ domain:'execute', kinds:[...] }` | `services.execute.execute` | 统一执行入口（agent-task/agent-chat/llm-chat/llm-stream） |
 | `events` | `{ domain:'events', subscribe?:[...], publish?:boolean }` | `services.events.subscribe/publish` | 事件总线（订阅白名单 + 发布开关） |
 | `ui` | `{ domain:'ui', views:[...] }` | 渲染端 `views` + `contributions.registerView` | UI 注入（注入点白名单） |
 | `system` | `{ domain:'system', features:[...] }` | `services.notification/scheduler/windows/native` | 系统能力（特性白名单） |
+| `collaboration` | `{ domain:'collaboration', shared?:{read?,write}, call?:[...] }` | `services.shared` + `services.bus` | 插件协作：共享 KV + 跨插件 RPC |
 
-**数据实体**：`conversations` / `employees` / `llmProviders` / `memories` / `settings`（只读）。
+**数据实体**：`conversations` / `employees` / `llmProviders` / `memories` / `settings`（只读）/ `messages`（只读，`filter.conversationId` 读某对话全部消息）。
 **执行类型**：`agent-task` / `agent-chat` / `llm-chat` / `llm-stream`。
 **系统特性**：`notification` / `scheduler` / `windows` / `native` / `globalShortcuts`。
-**UI 注入点**：`chat.toolbar` / `sidebar.footer` / `settings.tab` / `message.menu`。
+**UI 注入点**：`chat.toolbar` / `chat.quick` / `chat.header` / `sidebar.footer` / `settings.tab` / `message.menu` / `message.bubble`。
 
 **基础能力**（无需声明）：`logger` / `host` / `ipc` / `storage` / `contributions` / `paths`。
 
@@ -82,6 +85,7 @@ services.data.mutate(entity, op, payload)                          // 写操作�
 - 实体必须在 `capabilities.data.entities` 白名单内，否则拒绝。
 - `access=read` 的实体调用 `mutate` 拒绝。
 - `llmProviders` 返回前剥离 `api_key`。
+- `messages` 为只读实体：`query('messages', { filter: { conversationId } })` 返回某对话全部分析后的消息数组。
 
 ## 6. 宿主能力层（services.execute）
 
@@ -99,8 +103,28 @@ services.events.subscribe(event, callback)   // 订阅（白名单），返回�
 services.events.publish(event, payload)      // 发布（需 publish 能力），强制 plugin:<id>: 前缀
 ```
 
-- **宿主事件**：`conversation:deleted`、`model:renamed`。
+- **宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`。
 - **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅（需在 subscribe 白名单声明）。
+
+## 7.5 插件协作层（services.shared / services.bus）
+
+需 `capabilities.collaboration` 授权。
+
+```ts
+services.shared.set(key, value)                     // 写本插件命名空间
+services.shared.get(key, defaultValue?)             // 读本插件命名空间
+services.shared.getFrom(pluginId, key, defaultValue?) // 读其他插件命名空间（需 shared.read）
+services.shared.delete(key) / keys() / keysAll()     // keysAll 需 shared.read
+services.bus.respond('method', handler)              // 注册可被调用的方法（自动加本插件 id 前缀），返回取消注册函数
+await services.bus.call('目标插件id:方法名', payload)  // 调用其他插件方法（需 call 白名单含该方法）
+```
+
+- `shared` 数据存宿主级共享库 `plugin-data/plugin-shared.db`，跨插件/热重载持久；写入强制以本插件命名空间隔离，杜绝覆盖他人数据。
+- `bus` 目标方法名固定 `目标插件id:方法名`，host 路由到目标插件注册的 responder；目标未注册返回 rejected promise。
+
+## 8. 插件依赖
+
+manifest `dependencies`（pluginId → semver range）。宿主激活前校验依赖（缺失 / 未启用 / 无效 / 版本不满足任一），不满足则本插件标记 invalid 并给出原因；激活按拓扑顺序先激活依赖方。
 
 ## 8. UI 扩展层
 

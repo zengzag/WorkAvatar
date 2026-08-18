@@ -49,7 +49,8 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 | `ipc` | | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀 |
 | `capabilities` | | 能力域授权声明（见 §5） |
 | `permissions` | | 迁移专用权限（仅保留 `legacyMigration`） |
-| `nav` | | 导航项：`label`（文案或 i18n key）、`icon`（16×16 SVG 字符串）、`order`（默认 100）、`detachable` |
+| `nav` | | 导航项：`label`、`icon`、`order`、`detachable` |
+| `dependencies` | | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活 |
 
 参考真实示例：[notes/manifest.json](../../plugins/notes/manifest.json)、[calendar/manifest.json](../../plugins/calendar/manifest.json)、[voice/manifest.json](../../plugins/voice/manifest.json)、[automation/manifest.json](../../plugins/automation/manifest.json)、[hello-world/manifest.json](../../plugins/examples/hello-world/manifest.json)。
 
@@ -111,7 +112,7 @@ services.data.query<T>(entity, { filter?, sort?, limit?, offset? }): Promise<T[]
 services.data.mutate<T>(entity, op, payload): Promise<T>
 ```
 
-**实体**：`conversations` / `employees` / `llmProviders` / `memories` / `settings`（只读）。
+**实体**：`conversations` / `employees` / `llmProviders` / `memories` / `settings`（只读）/ `messages`（只读，`filter.conversationId` 读某对话全部消息）。
 **操作**：`create` / `update` / `delete`。
 
 **安全**：
@@ -172,6 +173,26 @@ const text = await ctx.services.execute!.execute({
 })
 ```
 
+## 7.5 资料库查询层（services.kms）
+
+需 `capabilities.kms` 授权，只读查询资料库，不触发索引/晋升副作用。
+
+```ts
+services.kms.search(query, { limit?, collectionIds?, fileExtensions? })   // 混合检索，返回 SearchResult[]
+services.kms.listCollections()                                            // 列合集 [{id,name,description,file_count}]
+services.kms.getContent(fileId, { paragraphId?, maxChars? })              // 读文件文本
+```
+
+## 7.6 插件协作层（services.shared / services.bus）
+
+需 `capabilities.collaboration` 授权，实现跨插件共享数据 + 跨插件 RPC。
+
+```ts
+services.shared.set/get/getFrom/delete/keys/keysAll   // 跨插件共享 KV（写限本插件命名空间，读全部需 shared.read）
+services.bus.respond('method', handler)               // 注册可被调用的方法，返回取消注册函数
+await services.bus.call('目标插件id:方法名', payload)   // 调用其他插件方法（需 call 白名单）
+```
+
 ## 8. 系统集成层（services.events）
 
 需 `capabilities.events` 授权。
@@ -181,7 +202,7 @@ services.events.subscribe(event, callback): () => void   // 订阅，返回取�
 services.events.publish(event, payload): void            // 发布，强制 plugin:<id>: 前缀
 ```
 
-**宿主事件**：`conversation:deleted`、`model:renamed`。
+**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`。
 **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅（需在 subscribe 白名单声明）。
 
 **示例**：
@@ -236,9 +257,9 @@ export default {
 }
 ```
 
-`PluginRendererHost` 提供 `bridge.invoke/onEvent`、`i18n.t`（插件 locale 已由宿主代注册，namespace = 插件 id）与 `hostCapabilities`（`subscribeExternalFiles` 订阅外部文件、`registerCloseGuard` 注册"未保存"守卫）。
+`PluginRendererHost` 提供 `bridge.invoke/onEvent`、`i18n.t`（插件 locale 已由宿主代注册，namespace = 插件 id）与 `hostCapabilities`：`subscribeExternalFiles`、`registerCloseGuard`、`showOpenDialog`、`showSaveDialog`、`clipboard{readText,writeText}`、`getTheme`+`onThemeChange`、`getLocale`+`onLocaleChange`。
 
-**UI 注入点**：`chat.toolbar`（对话输入框工具栏）/ `sidebar.footer`（侧边栏底部）/ `settings.tab`（设置页 Tab）/ `message.menu`（对话消息操作菜单）。
+**UI 注入点**：`chat.toolbar`（输入框工具栏）/ `chat.quick`（输入框上方快捷建议区）/ `chat.header`（任务对话页头部）/ `sidebar.footer`（底部导航栏底部）/ `settings.tab`（设置页聚合 Tab）/ `message.menu`（消息操作菜单）/ `message.bubble`（消息气泡操作区，context 含 {role,content,messageId}）。
 
 ## 12. 渲染端集成（__WA_HOST__ / plugin:// 协议）
 
