@@ -72,6 +72,8 @@ import type {
   PluginInfo,
   PluginRendererInfo,
   PluginEventPayload,
+  PluginImportResult,
+  PluginMessageActionInfo,
 } from '../shared/ipc-channels'
 export type {
   AutomationTask,
@@ -503,6 +505,10 @@ const electronAPI = {
     setEnabled: (pluginId: string, enabled: boolean) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_SET_ENABLED, { pluginId, enabled }),
     remove: (pluginId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DELETE, { pluginId }),
+    import: (overwrite?: boolean) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
+    listMessageActions: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 }

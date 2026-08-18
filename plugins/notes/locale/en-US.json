@@ -1,5 +1,8 @@
 {
   "navLabel": "Notes",
+  "saveToNote": "Save to Notes",
+  "saveToNoteSuccess": "Saved to notes",
+  "saveToNoteFailed": "Failed to save to notes",
   "vaultRoot": "Notes Vault",
   "newNote": "New Note",
   "newFolder": "New Folder",

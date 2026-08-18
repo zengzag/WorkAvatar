@@ -88,6 +88,15 @@ if ($LASTEXITCODE -ne 0) {
 Write-Success "  Vite build completed"
 Write-Host ""
 
+# Step 5.5: 构建插件 + 产出全部插件分发包（release/plugins/<id>-v<ver>.zip）
+Write-Step "5/6" "Building plugins and packaging plugin zips..."
+node scripts/build-plugins.mjs --zip
+if ($LASTEXITCODE -ne 0) {
+    Write-Error-Msg "Plugin build failed"
+    exit 1
+}
+Write-Host ""
+
 # Step 6: Electron Builder packaging (NSIS installer)
 Write-Step "6/6" "Electron Builder packaging (NSIS installer)..."
 Write-Host "  Generating NSIS installer..."

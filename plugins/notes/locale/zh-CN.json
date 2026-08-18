@@ -1,5 +1,8 @@
 {
   "navLabel": "笔记",
+  "saveToNote": "保存到笔记",
+  "saveToNoteSuccess": "已保存到笔记",
+  "saveToNoteFailed": "保存到笔记失败",
   "vaultRoot": "笔记仓库",
   "newNote": "新建笔记",
   "newFolder": "新建文件夹",

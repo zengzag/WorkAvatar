@@ -1,4 +1,5 @@
 {
+  "navLabel": "Voice",
   "common": {
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -17,7 +18,6 @@
     "inputModel": "Enter model name"
   },
   "voice": {
-    "navLabel": "Voice",
     "title": "Voice Recognition",
     "subtitle": "Meeting recording and speech recognition, auto-generate transcripts and meeting minutes",
     "newRecording": "New Recording",

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-0.6.0-blue)
+![Version](https://img.shields.io/badge/version-0.7.0-blue)
 ![Electron](https://img.shields.io/badge/Electron-35-green)
 ![React](https://img.shields.io/badge/React-19-blue)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-blue)
@@ -152,6 +152,13 @@
 定时调度数字员工以固定提示词执行任务。配置首次运行时间与重复规则（每日/工作日/每周/每月等），支持失败重试与完成通知。
 
 任务面板与执行历史双视角管理，点击历史记录可直接跳转对应对话。
+
+### 插件
+
+日历、笔记、语音等导航页功能均以**插件**形式交付：开发期由宿主直接加载项目 `plugins/`（优先于用户目录，不拷贝不覆盖用户安装），发布期独立打包为 `.zip`，用户可在「设置 → 插件」里导入、启停、删除与覆盖升级。所有插件统一走第三方插件逻辑，二次开发可独立于主程序进行。
+
+- 插件协议与 API：[docs/plugins/PLUGIN_API.md](docs/plugins/PLUGIN_API.md)
+- 插件开发与打包教程（面向外部开发者）：[docs/plugins/PLUGIN_DEVELOPMENT.md](docs/plugins/PLUGIN_DEVELOPMENT.md)
 
 ### MCP 服务
 

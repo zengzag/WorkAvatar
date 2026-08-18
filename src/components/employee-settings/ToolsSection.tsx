@@ -22,6 +22,7 @@ import {
   FileTextOutlined,
   MessageOutlined,
   BulbOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -53,6 +54,8 @@ export interface ToolCategoryInfo {
   title: string
   description: string
   icon: string
+  /** 插件贡献的分类（来自某插件，仅插件加载时存在） */
+  is_plugin?: boolean
   tool_ids: string[]
   tools: CategoryTool[]
   mode: ToolMode
@@ -71,6 +74,7 @@ const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
   'file-document': <FileTextOutlined />,
   message: <MessageOutlined />,
   tool: <BulbOutlined />,
+  plugin: <AppstoreOutlined />,
 }
 
 interface ToolsSectionProps {
@@ -199,13 +203,21 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                             ellipsis
                             style={{ display: 'inline-block' }}
                           >
-                            {t(`employeeSettings.toolCategory_${cat.id}`, {
-                              defaultValue: cat.title,
-                            })}
+                            {cat.is_plugin
+                              ? cat.title
+                              : t(`employeeSettings.toolCategory_${cat.id}`, {
+                                  defaultValue: cat.title,
+                                })}
                           </Text>
-                          <Tag color="blue" style={{ flexShrink: 0 }}>
-                            {t('employeeSettings.builtin')}
-                          </Tag>
+                          {cat.is_plugin ? (
+                            <Tag color="purple" style={{ flexShrink: 0 }}>
+                              {t('employeeSettings.plugin')}
+                            </Tag>
+                          ) : (
+                            <Tag color="blue" style={{ flexShrink: 0 }}>
+                              {t('employeeSettings.builtin')}
+                            </Tag>
+                          )}
                           <Tag
                             color={
                               cat.mode === 'off' ? 'default' : 'green'

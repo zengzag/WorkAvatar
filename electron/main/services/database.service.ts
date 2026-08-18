@@ -3,6 +3,11 @@ import fs from 'fs'
 import PathService from './path.service'
 import { createLogger } from './logger'
 import { extractMessagePreview } from './common-utils'
+// 【LEGACY】日历/语音迁出遗留兼容（见 services/plugin/legacy，可整体移除）
+import {
+  migrateCalendarLegacyColumns,
+  migrateCalendarRecurrenceRule as legacyMigrateCalendarRecurrence,
+} from './plugin/legacy'
 
 const logger = createLogger('DB')
 
@@ -500,15 +505,11 @@ class DatabaseService {
     this.addColumnIfNotExists('employee_memories', 'importance', "TEXT NOT NULL DEFAULT 'normal'")
     this.addColumnIfNotExists('employee_memories', 'deleted_at', 'INTEGER')
 
-    // TODO 进入"进行中"状态的时间戳
-    this.addColumnIfNotExists('calendar_todos', 'started_at', 'INTEGER')
-
-    // CalDAV 兼容：时区标识列（空串表示系统默认时区）
-    this.addColumnIfNotExists('calendar_events', 'tzid', "TEXT NOT NULL DEFAULT ''")
-    this.addColumnIfNotExists('calendar_todos', 'tzid', "TEXT NOT NULL DEFAULT ''")
-
-    // 标签功能已移除，删除遗留的 tags_json 列
-    this.dropColumnIfExists('calendar_todos', 'tags_json')
+    // 【LEGACY】日历/语音迁出遗留：旧库列兼容（可整体移除，见 plugin/legacy）
+    migrateCalendarLegacyColumns(
+      (t, c, d) => this.addColumnIfNotExists(t, c, d),
+      (t, c) => this.dropColumnIfExists(t, c),
+    )
 
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_conversations_emp_lastmsg ON conversations(employee_id, last_message_at);
@@ -561,79 +562,8 @@ class DatabaseService {
 
     this.migrateEmployeeToolMode()
     this.cleanupObsoleteEmployeeTools()
-    this.migrateCalendarRecurrenceRule()
-  }
-
-  /**
-   * CalDAV 兼容迁移：将旧版 recurrence_rule JSON 转换为新数据模型。
-   * - freq: 'weekdays' → freq: 'weekly' + byday: ['MO','TU','WE','TH','FR']
-   * - excluded_dates[] → overrides[] status='cancelled'
-   * - completed_instances[] → overrides[] status='completed'
-   * - 移除 weekdays / excluded_dates / completed_instances 字段
-   * 版本化确保只执行一次。
-   */
-  private migrateCalendarRecurrenceRule(): void {
-    const MIGRATION_VERSION = 'caldav_v1'
-    const versionRow = this.db.prepare("SELECT value FROM settings WHERE key = 'calendar_recurrence_migration_version'").get() as { value: string } | undefined
-    if (versionRow?.value === MIGRATION_VERSION) return
-
-    const tables = ['calendar_events', 'calendar_todos'] as const
-    let migrated = 0
-
-    for (const table of tables) {
-      const rows = this.db.prepare(`SELECT id, recurrence_rule FROM ${table} WHERE recurrence_rule IS NOT NULL AND recurrence_rule != ''`).all() as Array<{ id: string; recurrence_rule: string }>
-      if (rows.length === 0) continue
-
-      const updateStmt = this.db.prepare(`UPDATE ${table} SET recurrence_rule = ? WHERE id = ?`)
-      const tx = this.db.transaction((items: typeof rows) => {
-        for (const r of items) {
-          try {
-            const rule = JSON.parse(r.recurrence_rule)
-            if (!rule || typeof rule !== 'object') continue
-            let changed = false
-
-            // weekdays → weekly + byday
-            if (rule.freq === 'weekdays') {
-              rule.freq = 'weekly'
-              rule.byday = ['MO', 'TU', 'WE', 'TH', 'FR']
-              changed = true
-            }
-
-            // excluded_dates + completed_instances → overrides
-            const excluded: number[] = Array.isArray(rule.excluded_dates) ? rule.excluded_dates : []
-            const completed: number[] = Array.isArray(rule.completed_instances) ? rule.completed_instances : []
-            if (excluded.length > 0 || completed.length > 0) {
-              const existingOverrides = Array.isArray(rule.overrides) ? rule.overrides : []
-              const overrideMap = new Map(existingOverrides.map((o: any) => [o.recurrence_id, o]))
-              for (const ts of excluded) {
-                overrideMap.set(ts, { ...(overrideMap.get(ts) ?? {}), recurrence_id: ts, status: 'cancelled' })
-              }
-              for (const ts of completed) {
-                overrideMap.set(ts, { ...(overrideMap.get(ts) ?? {}), recurrence_id: ts, status: 'completed' })
-              }
-              rule.overrides = Array.from(overrideMap.values())
-              delete rule.excluded_dates
-              delete rule.completed_instances
-              changed = true
-            }
-
-            if (changed) {
-              updateStmt.run(JSON.stringify(rule), r.id)
-              migrated++
-            }
-          } catch { /* skip invalid JSON */ }
-        }
-      })
-      tx(rows)
-    }
-
-    this.db.prepare(
-      "INSERT INTO settings (key, value) VALUES ('calendar_recurrence_migration_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = unixepoch()"
-    ).run(MIGRATION_VERSION)
-
-    if (migrated > 0) {
-      logger.info(`CalDAV migration: converted ${migrated} calendar recurrence_rule records to overrides model`)
-    }
+    // 【LEGACY】日历迁出遗留：旧库 recurrence_rule 数据模型迁移（可整体移除，见 plugin/legacy）
+    legacyMigrateCalendarRecurrence(this.db)
   }
 
   /**

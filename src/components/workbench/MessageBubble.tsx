@@ -12,7 +12,6 @@ import {
   RightOutlined,
   SwapOutlined,
   SearchOutlined,
-  FileTextOutlined,
   CompressOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
@@ -27,6 +26,7 @@ import { markdownComponents } from './markdown-components'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
+import type { PluginMessageActionInfo } from '../../../electron/shared/channels/plugin'
 
 const { Text } = Typography
 
@@ -251,51 +251,28 @@ const MessageBubble: React.FC<{
       : msg
   , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
 
-  // 从回答内容生成笔记标题：优先首个标题，其次首行非空文本，最后时间戳兜底
-  const generateNoteName = useCallback((content: string, timestamp: number): string => {
-    const headingMatch = content.match(/^#+\s+(.+)$/m)
-    if (headingMatch) {
-      const title = headingMatch[1].replace(/[*_`~\[\]]/g, '').trim().slice(0, 40)
-      if (title) return title
-    }
-    const firstLine = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || ''
-    const cleaned = firstLine
-      .replace(/^#+\s+/, '')
-      .replace(/[*_`~\[\]()]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 40)
-    if (cleaned) return cleaned
-    const d = new Date(timestamp || Date.now())
-    const pad = (n: number) => n.toString().padStart(2, '0')
-    return `AI回复-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  // 插件贡献的对话消息快捷操作（通用插件能力，如笔记插件"保存到笔记"）
+  const [messageActions, setMessageActions] = useState<PluginMessageActionInfo[]>([])
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.plugin.listMessageActions()
+      .then(list => { if (!cancelled) setMessageActions(list) })
+      .catch(() => { if (!cancelled) setMessageActions([]) })
+    return () => { cancelled = true }
   }, [])
 
-  // 将 AI 回答保存为 .md 笔记到 vault 根目录
-  const handleSaveToNote = useCallback(async () => {
+  const runMessageAction = useCallback(async (action: PluginMessageActionInfo) => {
     if (!displayContent) return
-    const name = generateNoteName(displayContent, msg.timestamp)
+    const resolveText = (text: string) => t(text, { ns: action.pluginId, defaultValue: text })
     try {
-      const createRes = await window.electronAPI.plugin.invoke('notes', 'create-note', { parentRelPath: '', name })
-      if (createRes && (createRes as any).error) {
-        messageApi.error((createRes as any).error)
-        return
-      }
-      const relPath = (createRes as any)?.relPath as string
-      if (!relPath) {
-        messageApi.error(t('workbench.saveToNoteFailed'))
-        return
-      }
-      const writeRes = await window.electronAPI.plugin.invoke('notes', 'write', { relPath, content: displayContent })
-      if (writeRes && (writeRes as any).error) {
-        messageApi.error((writeRes as any).error)
-        return
-      }
-      messageApi.success(t('workbench.saveToNoteSuccess', { name: (createRes as any)?.name || name }))
+      const res = await window.electronAPI.plugin.invoke<{ success?: string; error?: string }>(
+        action.pluginId, `message-action:${action.id}`, { content: displayContent, messageId: msg.id })
+      if (res?.error) messageApi.error(resolveText(res.error))
+      else if (res?.success) messageApi.success(resolveText(res.success))
     } catch (err: any) {
-      messageApi.error(err?.message || t('workbench.saveToNoteFailed'))
+      messageApi.error(err?.message || String(err))
     }
-  }, [displayContent, msg.timestamp, generateNoteName, messageApi, t])
+  }, [displayContent, msg.id, messageApi, t])
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -502,10 +479,18 @@ const MessageBubble: React.FC<{
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     onClick={() => onCopy(displayContent)} />
                 )}
-                {displayContent && !displayIsError && (
-                  <Button type="text" size="small" icon={<FileTextOutlined style={{ fontSize: 12 }} />}
-                    onClick={handleSaveToNote} title={t('workbench.saveToNote')} />
-                )}
+                {displayContent && !displayIsError && messageActions
+                  .filter(a => (a.target ?? 'assistant') === msg.role || a.target === 'all')
+                  .map(action => (
+                    <Button
+                      key={`${action.pluginId}:${action.id}`}
+                      type="text"
+                      size="small"
+                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: action.icon }} style={{ display: 'inline-flex' }} /> : undefined}
+                      title={t(action.title, { ns: action.pluginId, defaultValue: action.title })}
+                      onClick={() => runMessageAction(action)}
+                    />
+                  ))}
                 <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
                   onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />
                 <ModelSwitchPopover

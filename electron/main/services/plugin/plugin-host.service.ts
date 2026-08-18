@@ -1,4 +1,5 @@
-import { app, BrowserWindow, globalShortcut, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, shell } from 'electron'
+import AdmZip from 'adm-zip'
 import { createRequire } from 'module'
 import path from 'path'
 import fs from 'fs'
@@ -9,6 +10,7 @@ import { IPC_CHANNELS } from '../../../shared/ipc-channels'
 import type {
   PluginEventPayload,
   PluginInfo,
+  PluginImportResult,
   PluginNavItemInfo,
   PluginRendererInfo,
 } from '../../../shared/channels/plugin'
@@ -24,6 +26,8 @@ import type {
   PluginLlmChatStreamRequest,
   PluginLlmStreamCallbacks,
   PluginNotificationPayload,
+  PluginMessageAction,
+  PluginMessageActionResult,
 } from '../../../../plugins/plugin-sdk/src'
 
 const logger = createLogger('PluginHost')
@@ -73,12 +77,13 @@ function engineSatisfies(engine: string, host: string): boolean {
 
 interface PluginRecord {
   manifest: PluginManifest
-  source: 'builtin' | 'user'
+  /** 统一为用户来源；项目/dev 插件与导入插件落地后不再区分内置特权 */
+  source: 'user'
   rootDir: string
   enabled: boolean
   engineOk: boolean
-  /** active: activate 成功；error: 激活抛错；invalid: manifest/engine 校验失败 */
-  status: 'active' | 'disabled' | 'invalid' | 'error'
+  /** active: activate 成功；error: 激活抛错；invalid: manifest/engine 校验失败；pending: 已安装未重启激活 */
+  status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
   /** activate 成功后的主进程模块（含 deactivate） */
   module?: { deactivate?: () => void | Promise<void> }
@@ -94,7 +99,7 @@ const SETTINGS_KEY = 'plugins.config'
 
 /**
  * 插件宿主：
- * - 双目录扫描（resources/plugins 内置 + userData/plugins 用户），同一套加载器
+ * - 加载：dev 额外扫描项目 plugins/（开发源），release 仅扫 userData/plugins；双源撞 id 时 dev 优先，不拷贝不覆盖用户安装
  * - manifest 校验 → 启停过滤 → migrations → activate(ctx)，单插件异常隔离
  * - 通用 IPC 桥（plugin-host:invoke 按前缀路由到插件 handler）
  * - 贡献点收集（agent 工具 / MCP 工具 / 文件关联 / 全局快捷键）
@@ -114,6 +119,10 @@ class PluginHostService {
   private pluginWindows = new Set<BrowserWindow>()
   /** 插件经 ctx.services.scheduler 注册的定时任务清理函数（pluginId:id → dispose） */
   private schedulerJobs = new Map<string, () => void>()
+  /** 最近一次待导入的 zip 路径（已装同 id 插件引导覆盖时复用，避免二次弹文件选择） */
+  private pendingImportZip = ''
+  /** 插件注册的对话消息快捷操作（pluginId → actions，供前端清单查询与 IPC 路由） */
+  private messageActions = new Map<string, PluginMessageAction[]>()
   private dataDir = ''
   private initialized = false
 
@@ -128,15 +137,12 @@ class PluginHostService {
 
   // ====== 目录 ======
 
-  private getBuiltinDir(): string {
-    // 打包模式：plugins 随 extraResources 复制到 resources/plugins（app.asar 之外）
-    // 未打包（dev / electron .）：主进程位于 <root>/dist-electron/main，插件在 <root>/plugins
-    // 按存在性择优，避免仅依赖 app.isPackaged（electron . 在部分环境下判定异常）
-    const candidates = [
-      path.join(process.resourcesPath, 'plugins'),
-      path.join(__dirname, '..', '..', 'plugins'),
-    ]
-    return candidates.find(p => fs.existsSync(p)) ?? candidates[app.isPackaged ? 0 : 1]
+  /**
+   * 开发期插件源目录：项目根 plugins/（predev 已由 build-plugins 生成 dist）。
+   * 仅非打包时作为额外扫描目录；release 不加载该目录。
+   */
+  private getDevPluginSourceDir(): string {
+    return path.join(process.cwd(), 'plugins')
   }
 
   private getUserDir(): string {
@@ -218,11 +224,19 @@ class PluginHostService {
     }
 
     const disabled = this.readDisabledList()
-    const builtinDir = this.getBuiltinDir()
     const userDir = this.getUserDir()
-    logger.info(`插件扫描: isPackaged=${app.isPackaged} appPath=${app.getAppPath()} resourcesPath=${process.resourcesPath}`)
-    logger.info(`插件扫描: builtin=${builtinDir} (存在=${fs.existsSync(builtinDir)}) | user=${userDir} (存在=${fs.existsSync(userDir)})`)
-    for (const [source, dir] of [['builtin', builtinDir], ['user', userDir]] as const) {
+    // 扫描目录（顺序 = 优先级，同 id 只保留先发现的）：
+    //   dev：项目 plugins/ 作为开发插件源，仅非打包时扫描；release 不加载
+    //   user：用户安装目录 userData/plugins
+    // dev 在前 → 用户目录与 dev 插件目录撞 id 时优先加载 dev 插件（不拷贝、不覆盖用户已安装包，避免开发误伤 release 安装）
+    const scanDirs: Array<{ label: string; dir: string }> = []
+    if (!app.isPackaged) {
+      const devDir = this.getDevPluginSourceDir()
+      if (fs.existsSync(devDir)) scanDirs.push({ label: 'dev', dir: devDir })
+    }
+    scanDirs.push({ label: 'user', dir: userDir })
+    logger.info(`插件扫描: isPackaged=${app.isPackaged} ${scanDirs.map(d => `${d.label}=${d.dir} (存在=${fs.existsSync(d.dir)})`).join(' | ')}`)
+    for (const { dir } of scanDirs) {
       let entries: string[] = []
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -230,7 +244,7 @@ class PluginHostService {
           .map(e => e.name)
       } catch { /* 目录不存在则跳过 */ }
       for (const name of entries) {
-        this.scanPlugin(path.join(dir, name), source, disabled)
+        this.scanPlugin(path.join(dir, name), disabled)
       }
     }
     logger.info(`插件扫描完成: 共 ${this.records.size} 个插件，${Array.from(this.records.values()).filter(r => r.status === 'invalid').length} 个无效`)
@@ -245,11 +259,11 @@ class PluginHostService {
     }
   }
 
-  private scanPlugin(rootDir: string, source: 'builtin' | 'user', disabled: Set<string>): void {
+  private scanPlugin(rootDir: string, disabled: Set<string>): void {
     const fail = (message: string) => {
       this.records.set(rootDir, {
         manifest: { id: path.basename(rootDir), name: path.basename(rootDir), version: '0.0.0', engine: '*', main: '' },
-        source, rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
+        source: 'user', rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
       })
     }
     const manifestPath = path.join(rootDir, 'manifest.json')
@@ -273,7 +287,7 @@ class PluginHostService {
     }
     const enabled = !disabled.has(manifest.id)
     this.records.set(manifest.id, {
-      manifest, source, rootDir, enabled, engineOk,
+      manifest, source: 'user', rootDir, enabled, engineOk,
       status: enabled ? 'error' : 'disabled',
       statusMessage: enabled ? '尚未激活' : undefined,
     })
@@ -692,6 +706,21 @@ class PluginHostService {
             this.registeredShortcuts.add(accelerator)
           }
         },
+        registerMessageActions: (actions) => {
+          for (const action of actions) {
+            const channel = `message-action:${action.id}`
+            this.handlers.set(`plugin:${manifest.id}:${channel}`, async (payload: any) => {
+              try {
+                const result: PluginMessageActionResult | undefined | void =
+                  await action.handler({ content: payload?.content ?? '', messageId: payload?.messageId })
+                return result || {}
+              } catch (err: any) {
+                return { error: err?.message || String(err) } as PluginMessageActionResult
+              }
+            })
+          }
+          this.messageActions.set(manifest.id, actions)
+        },
       },
     }
   }
@@ -831,10 +860,122 @@ class PluginHostService {
   deletePlugin(pluginId: string): void {
     const record = this.records.get(pluginId)
     if (!record) throw new Error(`插件不存在: ${pluginId}`)
-    if (record.source !== 'user') throw new Error('内置插件不可删除，可改为禁用')
     fs.rmSync(record.rootDir, { recursive: true, force: true })
     this.records.delete(pluginId)
-    logger.info(`插件已删除: ${pluginId}`)
+    logger.info(`插件已删除: ${pluginId}（重启生效）`)
+  }
+
+  // ====== 插件包导入 ======
+
+  /** 从 zip 包解压到目标目录；防空路径穿越、拒绝自带原生模块 */
+  private extractPluginZip(zip: AdmZip, destDir: string): void {
+    fs.mkdirSync(destDir, { recursive: true })
+    const root = path.resolve(destDir)
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory) continue
+      const entryName = entry.entryName.replace(/\\/g, '/')
+      if (/\.node$/i.test(entryName)) throw new Error('插件禁止自带原生模块（.node），请改用宿主 native 服务租借')
+      const target = path.resolve(destDir, entryName)
+      if (target !== root && !target.startsWith(root + path.sep)) {
+        throw new Error(`非法路径: ${entryName}`)
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, entry.getData())
+    }
+  }
+
+  /**
+   * 导入插件 zip 包：选择文件 → 读取 manifest 校验 → 解压到 userData/plugins/<id>。
+   * 已安装相同 id 插件且未指定 overwrite 时返回 needsUpgradeConfirm（前端二次确认），
+   * 确认后再以 overwrite=true 重装（复用上次 zip 路径，不再弹选择框）。
+   */
+  async importPlugin(overwrite?: boolean): Promise<PluginImportResult> {
+    let zipPath = overwrite ? this.pendingImportZip : ''
+    if (!zipPath || !fs.existsSync(zipPath)) {
+      const res = await dialog.showOpenDialog({
+        title: '导入 WorkAvatar 插件',
+        properties: ['openFile'],
+        filters: [{ name: 'WorkAvatar 插件包', extensions: ['zip'] }],
+      })
+      if (res.canceled || !res.filePaths[0]) return { ok: false, message: 'cancelled' }
+      zipPath = res.filePaths[0]
+      this.pendingImportZip = zipPath
+    }
+
+    let zip: AdmZip
+    try {
+      zip = new AdmZip(zipPath)
+    } catch (err: any) {
+      this.pendingImportZip = ''
+      return { ok: false, message: `无法读取插件包: ${err?.message || err}` }
+    }
+
+    const manifestEntry = zip.getEntries().find(e =>
+      e.entryName.replace(/\\/g, '/').toLowerCase() === 'manifest.json'
+    )
+    if (!manifestEntry) {
+      this.pendingImportZip = ''
+      return { ok: false, message: '插件包缺少 manifest.json' }
+    }
+    let manifest: PluginManifest
+    try {
+      manifest = JSON.parse(manifestEntry.getData().toString('utf-8'))
+    } catch {
+      this.pendingImportZip = ''
+      return { ok: false, message: 'manifest.json 解析失败' }
+    }
+    if (!manifest.id || !manifest.main || !manifest.version) {
+      this.pendingImportZip = ''
+      return { ok: false, message: 'manifest 缺少 id/main/version 字段' }
+    }
+
+    const existing = this.records.get(manifest.id)
+    const destDir = path.join(this.getUserDir(), manifest.id)
+    // 已安装且未显式覆盖 → 引导二次确认（升级/重装）
+    if (fs.existsSync(destDir) && !overwrite) {
+      return {
+        ok: false,
+        needsUpgradeConfirm: {
+          existingVersion: existing?.manifest.version ?? this.readLocalManifestVersion(destDir),
+          newVersion: manifest.version,
+        },
+      }
+    }
+
+    try {
+      if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true })
+      this.extractPluginZip(zip, destDir)
+      const mainEntry = path.join(destDir, manifest.main)
+      if (!fs.existsSync(mainEntry)) {
+        throw new Error(`解压后主进程入口不存在: ${manifest.main}`)
+      }
+    } catch (err: any) {
+      this.pendingImportZip = ''
+      return { ok: false, message: `导入失败: ${err?.message || err}` }
+    }
+
+    // 纳入记录（若此前是 invalid 状态也一并重建），供列表即时展示；激活需重启生效
+    this.records.delete(manifest.id)
+    this.scanPlugin(destDir, this.readDisabledList())
+    const installed = this.records.get(manifest.id)
+    if (installed && installed.status === 'error') {
+      // 已安装但尚未重启激活 → 用独立状态 pending（前端展示"待重启生效"，避免误显失败）
+      installed.enabled = true
+      installed.status = 'pending'
+      installed.statusMessage = undefined
+    }
+    logger.info(`插件已导入: ${manifest.id} v${manifest.version}`)
+    return { ok: true, id: manifest.id, version: manifest.version }
+  }
+
+  /** 读取已安装插件目录下的版本（manifest 不在内存记录时的兜底） */
+  private readLocalManifestVersion(dir: string): string | undefined {
+    try {
+      const raw = fs.readFileSync(path.join(dir, 'manifest.json'), 'utf-8')
+      return JSON.parse(raw)?.version
+    } catch {
+      return undefined
+    }
   }
 
   openUserPluginsDir(): void {
@@ -869,6 +1010,31 @@ class PluginHostService {
     const tools: unknown[] = []
     for (const c of this.contributions.values()) tools.push(...c.agentTools)
     return tools
+  }
+
+  /** 按插件分组的 agent 工具（仅激活成功且贡献了工具的插件），供工具分类按插件聚合 */
+  getPluginAgentToolGroups(): Array<{ pluginId: string; pluginName: string; tools: unknown[] }> {
+    const result: Array<{ pluginId: string; pluginName: string; tools: unknown[] }> = []
+    for (const [pluginId, c] of this.contributions) {
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      if (c.agentTools.length === 0) continue
+      result.push({ pluginId, pluginName: record.manifest.name, tools: c.agentTools })
+    }
+    return result
+  }
+
+  /** 插件贡献的对话消息快捷操作清单（仅激活成功插件，供前端渲染按钮） */
+  getMessageActions(): Array<{ pluginId: string; id: string; title: string; icon?: string; target?: string }> {
+    const result: Array<{ pluginId: string; id: string; title: string; icon?: string; target?: string }> = []
+    for (const [pluginId, actions] of this.messageActions) {
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      for (const a of actions) {
+        result.push({ pluginId, id: a.id, title: a.title, icon: a.icon, target: a.target })
+      }
+    }
+    return result
   }
 
   getFileAssociationOwner(extension: string): string | undefined {

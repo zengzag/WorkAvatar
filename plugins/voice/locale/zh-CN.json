@@ -1,4 +1,5 @@
 {
+  "navLabel": "语音识别",
   "common": {
     "confirm": "确定",
     "cancel": "取消",
@@ -17,7 +18,6 @@
     "inputModel": "输入模型名称"
   },
   "voice": {
-    "navLabel": "语音识别",
     "title": "语音识别",
     "subtitle": "会议录音与语音识别，自动生成转录文本与会议纪要",
     "newRecording": "新建录音",

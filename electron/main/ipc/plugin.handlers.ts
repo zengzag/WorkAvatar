@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   PluginDeleteParams,
+  PluginImportParams,
   PluginInvokeParams,
   PluginSetEnabledParams,
 } from '../../shared/channels/plugin'
@@ -28,6 +29,14 @@ export function registerPluginHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.PLUGIN_DELETE, (_event, params: PluginDeleteParams) => {
     host.deletePlugin(params.pluginId)
     return { success: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_IMPORT, (_event, params: PluginImportParams) => {
+    return host.importPlugin(params?.overwrite)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS, () => {
+    return host.getMessageActions()
   })
 
   ipcMain.handle(IPC_CHANNELS.PLUGIN_OPEN_DIR, () => {

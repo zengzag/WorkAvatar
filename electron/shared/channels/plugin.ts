@@ -7,8 +7,12 @@ export const PLUGIN_CHANNELS = {
   PLUGIN_EVENT: 'plugin-host:event',
   /** 启用/禁用插件（重启生效） */
   PLUGIN_SET_ENABLED: 'plugin-host:set-enabled',
-  /** 删除用户插件（内置插件不可删） */
+  /** 删除插件 */
   PLUGIN_DELETE: 'plugin-host:delete',
+  /** 导入插件包（zip，含文件选择 + 已安装覆盖/升级处理） */
+  PLUGIN_IMPORT: 'plugin-host:import',
+  /** 查询插件贡献的对话消息快捷操作清单（供前端渲染按钮） */
+  PLUGIN_LIST_MESSAGE_ACTIONS: 'plugin-host:list-message-actions',
   /** 打开用户插件目录 */
   PLUGIN_OPEN_DIR: 'plugin-host:open-dir',
 } as const
@@ -31,11 +35,11 @@ export interface PluginInfo {
   version: string
   description?: string
   author?: string
-  source: 'builtin' | 'user'
-  /** builtin: 只读随包分发；user: 可删除 */
+  /** 统一为用户来源（dev 自动安装与导入插件落地后均视为用户插件，可删除） */
+  source: 'user'
   enabled: boolean
-  /** manifest/engine 校验与激活结果 */
-  status: 'active' | 'disabled' | 'invalid' | 'error'
+  /** manifest/engine 校验与激活结果；pending = 已安装未重启激活 */
+  status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
   nav?: PluginNavItemInfo
   hasRenderer: boolean
@@ -71,4 +75,32 @@ export interface PluginSetEnabledParams {
 
 export interface PluginDeleteParams {
   pluginId: string
+}
+
+export interface PluginImportParams {
+  /** 覆盖已安装的相同 id 插件（删除旧目录后重装/升级），默认 false */
+  overwrite?: boolean
+}
+
+export interface PluginImportResult {
+  ok: boolean
+  /** 导入/重装成功的插件 id */
+  id?: string
+  /** 本次导入的插件版本 */
+  version?: string
+  /** 检测到已安装相同 id 插件且未携带 overwrite：需要前端二次确认是否覆盖 */
+  needsUpgradeConfirm?: {
+    existingVersion?: string
+    newVersion?: string
+  }
+  message?: string
+}
+
+/** 插件贡献的对话消息快捷操作（前端据此渲染按钮） */
+export interface PluginMessageActionInfo {
+  pluginId: string
+  id: string
+  title: string
+  icon?: string
+  target?: string
 }

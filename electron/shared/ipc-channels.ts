@@ -111,6 +111,9 @@ export type {
   PluginEventPayload,
   PluginSetEnabledParams,
   PluginDeleteParams,
+  PluginImportParams,
+  PluginImportResult,
+  PluginMessageActionInfo,
 } from './channels/plugin'
 export type {
   NotifyPayload,

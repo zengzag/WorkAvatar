@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { App, Button, List, Popconfirm, Switch, Tag, Tooltip } from 'antd'
-import { DeleteOutlined, FolderOpenOutlined, ReloadOutlined } from '@ant-design/icons'
+import { App, Button, Card, List, Popconfirm, Space, Switch, Tag, Tooltip } from 'antd'
+import { DeleteOutlined, FolderOpenOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { PluginInfo } from '../../../electron/shared/channels/plugin'
 
@@ -9,15 +9,16 @@ const STATUS_COLOR: Record<PluginInfo['status'], string> = {
   disabled: 'default',
   invalid: 'error',
   error: 'error',
+  pending: 'processing',
 }
 
 /**
- * 插件管理：双目录（resources/plugins 内置 + userData/plugins 用户）同一套加载器。
- * 启停重启生效；仅用户插件可删除。
+ * 插件管理：全部插件统一为用户来源（dev 自动安装 / zip 导入 / 手动放入目录），同一套加载器。
+ * 启停、删除、覆盖升级均重启生效。
  */
 const PluginsSection: React.FC = () => {
   const { t } = useTranslation()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [restartHint, setRestartHint] = useState(false)
@@ -63,20 +64,63 @@ const PluginsSection: React.FC = () => {
     }
   }
 
+  const afterImport = (r: { ok: boolean; id?: string; version?: string; message?: string }) => {
+    if (r.ok) {
+      setRestartHint(true)
+      message.success(t('settings.plugins.importSuccess'))
+      load()
+    } else if (r.message && r.message !== 'cancelled') {
+      message.error(r.message || t('settings.plugins.importFailed'))
+    }
+  }
+
+  const handleImport = async () => {
+    const res = await window.electronAPI.plugin.import(false)
+    if (res.needsUpgradeConfirm) {
+      const { existingVersion, newVersion } = res.needsUpgradeConfirm
+      modal.confirm({
+        title: t('settings.plugins.upgradeTitle'),
+        content: `${t('settings.plugins.upgradeConfirm')}\n${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
+        okText: t('common.confirm'),
+        cancelText: t('common.cancel'),
+        onOk: async () => {
+          const res2 = await window.electronAPI.plugin.import(true)
+          if (res2.ok) {
+            setRestartHint(true)
+            message.success(t('settings.plugins.upgraded'))
+            load()
+          } else if (res2.message && res2.message !== 'cancelled') {
+            message.error(res2.message || t('settings.plugins.importFailed'))
+          }
+        },
+      })
+    } else {
+      afterImport(res)
+    }
+  }
+
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: 'var(--ant-color-text-secondary, rgba(0,0,0,0.65))', fontSize: 13 }}>
-          {t('settings.plugins.hint')}
-        </span>
-        <div>
-          <Button size="small" icon={<FolderOpenOutlined />} onClick={() => window.electronAPI.plugin.openPluginsDir()} style={{ marginRight: 8 }}>
+    <Card
+      style={{ maxWidth: 760 }}
+      title={t('settings.tabPlugins')}
+      extra={
+        <Space>
+          <Button size="small" icon={<FolderOpenOutlined />} onClick={() => window.electronAPI.plugin.openPluginsDir()}>
             {t('settings.plugins.openDir')}
           </Button>
           <Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading}>
             {t('settings.plugins.refresh')}
           </Button>
-        </div>
+          <Button size="small" type="primary" icon={<UploadOutlined />} onClick={() => handleImport()}>
+            {t('settings.plugins.import')}
+          </Button>
+        </Space>
+      }
+    >
+      <div style={{ marginBottom: 12 }}>
+        <span style={{ color: 'var(--ant-color-text-secondary, rgba(0,0,0,0.65))', fontSize: 13 }}>
+          {t('settings.plugins.hint')}
+        </span>
       </div>
       {restartHint && (
         <div style={{ marginBottom: 12, fontSize: 13 }}>
@@ -96,36 +140,30 @@ const PluginsSection: React.FC = () => {
                 checked={plugin.enabled}
                 onChange={(checked) => handleToggle(plugin, checked)}
               />,
-              ...(plugin.source === 'user'
-                ? [
-                    <Popconfirm
-                      key="delete"
-                      title={t('settings.plugins.deleteConfirm')}
-                      onConfirm={() => handleDelete(plugin)}
-                    >
-                      <Button size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>,
-                  ]
-                : []),
+              <Popconfirm
+                key="delete"
+                title={t('settings.plugins.deleteConfirm')}
+                onConfirm={() => handleDelete(plugin)}
+              >
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Popconfirm>,
             ]}
           >
             <List.Item.Meta
               title={
                 <span>
                   {plugin.name}
-                  <Tag style={{ marginLeft: 8 }} color={plugin.source === 'builtin' ? 'blue' : 'purple'}>
-                    {plugin.source === 'builtin' ? t('settings.plugins.builtin') : t('settings.plugins.user')}
-                  </Tag>
-                  <Tag color={STATUS_COLOR[plugin.status]}>
+                  <Tag style={{ marginLeft: 8 }} color={STATUS_COLOR[plugin.status]}>
                     {t(`settings.plugins.status_${plugin.status}`)}
                   </Tag>
-                  <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.6 }}>v{plugin.version}</span>
+                  <Tag style={{ marginLeft: 4 }}>{`v${plugin.version}`}</Tag>
                 </span>
               }
               description={
                 <span style={{ fontSize: 12 }}>
-                  {plugin.description || plugin.id}
-                  {plugin.statusMessage && plugin.status !== 'active' && plugin.status !== 'disabled' && (
+                  <span style={{ opacity: 0.6 }}>{plugin.id}</span>
+                  {plugin.description ? ` · ${plugin.description}` : ''}
+                  {plugin.statusMessage && plugin.status === 'error' && (
                     <Tooltip title={plugin.statusMessage}>
                       <span style={{ marginLeft: 8, color: 'var(--ant-color-error, #ff4d4f)' }}>
                         {plugin.statusMessage.slice(0, 60)}
@@ -139,7 +177,7 @@ const PluginsSection: React.FC = () => {
           </List.Item>
         )}
       />
-    </div>
+    </Card>
   )
 }
 

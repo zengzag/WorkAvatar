@@ -7,7 +7,9 @@
 // - 渲染端入口（manifest.renderer）→ ESM → dist/renderer/index.js（platform=browser, target=es2020, jsx=automatic）
 // - 渲染端共享库经 __WA_HOST__ 单例注入：react/antd 等以 esbuild 虚拟模块 shim 内联，读取 globalThis.__WA_HOST__.*
 //
-// 用法：node scripts/build-plugins.mjs [pluginId]（不传则构建全部）
+// 用法：
+//   node scripts/build-plugins.mjs [pluginId]      # 构建全部或指定插件到 dist/
+//   node scripts/build-plugins.mjs [pluginId] --zip # 构建并存放独立分发包 release/plugins/<id>-v<ver>.zip
 import esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -176,8 +178,33 @@ function formatError(err) {
   return err?.message || String(err)
 }
 
+/**
+ * 生成插件分发包 zip：仅含运行时必需文件（manifest/dist/locale/resources）。
+ * zip 根即为插件内容（解压后顶层是 manifest.json），供应用内直接导入。
+ */
+function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
+  const zip = new AdmZip()
+  const addPath = (rel) => {
+    const full = path.join(pluginDir, rel)
+    if (fs.existsSync(full)) {
+      if (fs.statSync(full).isDirectory()) zip.addLocalFolder(full, rel)
+      else zip.addLocalFile(full)
+    }
+  }
+  addPath('manifest.json')
+  addPath('dist')
+  addPath('locale')
+  addPath('resources')
+  fs.mkdirSync(outDir, { recursive: true })
+  const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.zip`)
+  zip.writeZip(outPath)
+  return outPath
+}
+
 async function main() {
-  const onlyId = process.argv[2]
+  const args = process.argv.slice(2)
+  const zipMode = args.includes('--zip')
+  const onlyId = args.find(a => !a.startsWith('--'))
   const dirs = fs.readdirSync(pluginsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== 'plugin-sdk')
     .map((e) => e.name)
@@ -200,6 +227,8 @@ async function main() {
 
   let built = 0
   let failed = 0
+  /** 构建成功的插件（zip 模式使用） */
+  const builtPlugins = []
 
   for (const id of targets) {
     const pluginDir = path.join(pluginsRoot, id)
@@ -245,6 +274,7 @@ async function main() {
 
     if (errors.length === 0) {
       built++
+      builtPlugins.push({ pluginDir, manifest })
       const parts = outputs.map(({ file, label }) => {
         const size = fs.existsSync(file) ? fs.statSync(file).size : 0
         return `${label} → ${path.relative(pluginDir, file)} (${formatSize(size)})`
@@ -257,6 +287,25 @@ async function main() {
   }
 
   console.log(`[build-plugins] 完成：${built} 成功，${failed} 失败`)
+
+  // zip 模式：为成功构建的插件产出独立分发包 release/plugins/<id>-v<version>.zip
+  if (zipMode && builtPlugins.length > 0) {
+    const outDir = path.join(projectRoot, 'release', 'plugins')
+    const AdmZip = require('adm-zip')
+    let zipped = 0
+    for (const { pluginDir, manifest } of builtPlugins) {
+      try {
+        const outPath = packPluginZip(pluginDir, manifest, outDir, AdmZip)
+        const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0
+        console.log(`[build-plugins]   📦 ${path.relative(projectRoot, outPath)} (${formatSize(size)})`)
+        zipped++
+      } catch (err) {
+        console.error(`[build-plugins]   ✗ 打包 zip 失败 ${manifest.id}: ${formatError(err)}`)
+      }
+    }
+    console.log(`[build-plugins] zip 打包完成：${zipped}/${builtPlugins.length}，产物目录：${outDir}`)
+  }
+
   process.exitCode = failed > 0 ? 1 : 0
 }
 

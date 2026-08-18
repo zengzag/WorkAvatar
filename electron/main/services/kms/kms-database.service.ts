@@ -5,6 +5,8 @@ import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
 import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
+// 【LEGACY】日历/语音迁出遗留兼容（见 services/plugin/legacy，可整体移除）
+import { cleanupVoiceLegacy, ensureVoiceLegacyColumns } from '../plugin/legacy'
 
 const logger = createLogger('KMS-DB')
 
@@ -180,48 +182,8 @@ class KMSDatabaseService {
       logger.warn('启动自动清理 keyword_stats 失败:', err?.message || err)
     }
 
-    // 4. kms_voice_tasks：渐进式清理
-    //    4a. 30 天前已完成/失败任务：清空 transcript/minutes 等大文本字段（释放空间，保留元数据）
-    try {
-      const cutoff30 = now - 30 * 86400
-      const result = this.db.prepare(`
-        UPDATE kms_voice_tasks
-        SET transcript = '', transcript_segments_json = '[]', minutes = ''
-        WHERE status IN ('completed', 'error') AND updated_at < ?
-          AND (transcript != '' OR minutes != '')
-      `).run(cutoff30)
-      if (result.changes > 0) {
-        logger.info(`启动自动清理：清空 ${result.changes} 条旧语音任务的大文本字段`)
-      }
-    } catch (err: any) {
-      logger.warn('启动自动清理 voice_tasks 大文本失败:', err?.message || err)
-    }
-
-    //    4b. 180 天前的已完成/失败任务：整条删除（含关联音频文件）
-    try {
-      const cutoff180 = now - 180 * 86400
-      const oldTasks = this.db.prepare(
-        `SELECT id, audio_path, secondary_audio_path FROM kms_voice_tasks
-         WHERE status IN ('completed', 'error') AND updated_at < ?`
-      ).all(cutoff180) as any[]
-      if (oldTasks.length > 0) {
-        // 删除关联音频文件
-        for (const t of oldTasks) {
-          if (t.audio_path) { try { fs.unlinkSync(t.audio_path) } catch { /* ignore */ } }
-          if (t.secondary_audio_path) { try { fs.unlinkSync(t.secondary_audio_path) } catch { /* ignore */ } }
-        }
-        // 批量删除记录
-        const ids = oldTasks.map(t => t.id)
-        for (let i = 0; i < ids.length; i += 500) {
-          const batch = ids.slice(i, i + 500)
-          const placeholders = batch.map(() => '?').join(',')
-          this.db.prepare(`DELETE FROM kms_voice_tasks WHERE id IN (${placeholders})`).run(...batch)
-        }
-        logger.info(`启动自动清理：删除 ${oldTasks.length} 条 180 天前语音任务`)
-      }
-    } catch (err: any) {
-      logger.warn('启动自动清理 voice_tasks 失败:', err?.message || err)
-    }
+    // 4. kms_voice_tasks：渐进式清理（语音迁出遗留，见 plugin/legacy）
+    cleanupVoiceLegacy(this.db, now)
   }
 
   /**
@@ -705,16 +667,8 @@ class KMSDatabaseService {
 
     this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
 
-    // kms_voice_tasks: 添加 secondary_audio_path 列（双源录音时存储系统音频路径）
-    const voiceCols = this.db.prepare("PRAGMA table_info(kms_voice_tasks)").all() as any[]
-    const voiceColNames = voiceCols.map(c => c.name)
-    if (!voiceColNames.includes('secondary_audio_path')) {
-      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN secondary_audio_path TEXT")
-    }
-    // kms_voice_tasks: 添加 notes 列（用户手动记录的会议纪要）
-    if (!voiceColNames.includes('notes')) {
-      this.db.exec("ALTER TABLE kms_voice_tasks ADD COLUMN notes TEXT DEFAULT ''")
-    }
+    // kms_voice_tasks 列兼容（语音迁出遗留，见 plugin/legacy）
+    ensureVoiceLegacyColumns(this.db)
   }
 
   private enforceUniqueFileHash(): void {

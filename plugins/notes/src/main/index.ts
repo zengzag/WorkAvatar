@@ -722,9 +722,39 @@ let service: NotesService | null = null
 
 export const migrations = _migrations
 
+/** 由消息内容生成笔记标题：优先首个标题，其次首行非空文本，最后时间戳兜底 */
+function buildNoteName(content: string): string {
+  const headingMatch = content.match(/^#+\s+(.+)$/m)
+  if (headingMatch) {
+    const t = headingMatch[1].replace(/[*_`~\[\]]/g, '').trim().slice(0, 40)
+    if (t) return t
+  }
+  const firstLine = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || ''
+  const cleaned = firstLine.replace(/^#+\s+/, '').replace(/[*_`~\[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (cleaned) return cleaned
+  return `AI回复-${Date.now()}`
+}
+
 export function activate(ctx: PluginContext): void {
   service = new NotesService(ctx)
   registerIpc(ctx)
+  // 通用插件能力：注册对话消息快捷操作 →"保存到笔记"（由宿主在任务对话中渲染按钮）
+  ctx.contributions.registerMessageActions([{
+    id: 'save-to-note',
+    title: 'saveToNote',
+    icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 1.5h6L13 5v9.5h-9.5z"/><path d="M9.5 1.5V5H13"/><path d="M6 8.5h4M6 11h4"/></svg>',
+    target: 'assistant',
+    handler: async ({ content }) => {
+      if (!service || !content) return { error: 'saveToNoteFailed' }
+      try {
+        const created = service.createNote('', buildNoteName(content))
+        service.writeNote(created.relPath, content)
+        return { success: 'saveToNoteSuccess' }
+      } catch {
+        return { error: 'saveToNoteFailed' }
+      }
+    },
+  }])
   service.startWatcher()
   ctx.services.logger.info(`notes 插件激活完成，vault=${service.getVaultRoot()}`)
 }

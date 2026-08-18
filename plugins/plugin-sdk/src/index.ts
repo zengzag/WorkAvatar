@@ -40,6 +40,9 @@ export type {
   PluginContributionsApi,
   PluginFileAssociation,
   PluginGlobalShortcut,
+  PluginMessageAction,
+  PluginMessageActionContext,
+  PluginMessageActionResult,
 } from './contributions'
 export type {
   PluginContext,
