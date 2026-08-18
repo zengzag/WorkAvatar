@@ -118,6 +118,9 @@ extraResources:
     to: resources/
     filter:
       - '**/*'
+  # 说明：插件不再随主程序打包。开发期由宿主从项目 plugins/ 自动安装到用户目录；
+  # 发布期插件经 `node scripts/build-plugins.mjs --zip` 独立打包成 zip，用户在应用内导入。
+  # plugin-sdk 为开发期类型源码（主进程 bundle 时已内联），不进生产包。
 
 asarUnpack:
   - '**/*.node'

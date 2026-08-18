@@ -12,6 +12,7 @@ import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
 import { LoggerBackend } from '../services/logger'
 import TabWindowService from '../services/tab-window.service'
+import PluginHostService from '../services/plugin/plugin-host.service'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -20,7 +21,6 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'web_search_engine',
   'web_search_result_count',
   'calendar_settings',
-  'notes_settings',
 ])
 
 // 需要清空的用户数据表（按依赖顺序，受外键约束）
@@ -139,6 +139,24 @@ export function registerAppHandlers(
     return { success: true }
   })
 
+  // 重启应用：插件启停/导入/删除等变更后一键生效。
+  // 采用插件热重载（PluginHostService.reload）而非 app.relaunch()：
+  // dev 模式下 relaunch 会杀掉 vite 启动的 electron 后端导致白屏，热重载在进程内重建插件并刷新渲染端。
+  safeHandle(IPC_CHANNELS.APP_RESTART, () => {
+    // 1. 热重载插件（deactivate → 清缓存 → 重新扫描激活）
+    PluginHostService.getInstance().reload()
+    // 2. 插件贡献的 agent 工具已变化，清空员工 agent 缓存使下次对话重建工具列表
+    try {
+      const { default: EmployeeAgentService } = require('../services/employee-agent.service')
+      EmployeeAgentService.getInstance().clearAgentCache()
+    } catch { /* ignore */ }
+    // 3. 刷新渲染端：重建插件路由/导航/locale
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.reload()
+    }
+    return { success: true }
+  })
+
   // === 窗口控制（自定义标题栏）===
   // safeHandle 会拦截 ipcMain.handle 的 _event，仅透传用户参数，
   // 因此这里通过 BrowserWindow.getFocusedWindow() 获取当前窗口。
@@ -204,11 +222,12 @@ export function registerAppHandlers(
   })
 
   // 独立窗口渲染进程启动时查询自己所属的 tabKey
-  // 通过 URL hash 解析（独立窗口加载的是 #/window/:tabKey），需要 event.sender 所以单独注册
+  // 通过 URL hash 解析：内置页 #/window/tasks → tasks；插件页 #/window/plugin/notes → notes
+  // 需要 event.sender 所以单独注册
   ipcMain.handle(IPC_CHANNELS.TAB_WINDOW_GET_OWN_TAB, (event) => {
     try {
       const url = event.sender.getURL()
-      const match = url.match(/#\/window\/([a-z]+)/)
+      const match = url.match(/#\/window\/(?:plugin\/)?([a-z][a-z0-9-]*)/)
       return match ? match[1] : null
     } catch {
       return null

@@ -11,6 +11,7 @@ import {
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
+import { getPluginViews } from '../plugins/view-slot'
 import {
   LLMSettings,
   AppearanceSettings,
@@ -21,7 +22,9 @@ import {
   KMSMCPSettings,
   NavSettings,
   RuntimeEnvSection,
+  PluginsSection,
 } from '../components/settings'
+import { PluginViewSlot } from '../plugins/view-slot'
 
 const Settings: React.FC = () => {
   const { t } = useTranslation()
@@ -91,6 +94,15 @@ const Settings: React.FC = () => {
       children: contentWrap(<NavSettings />),
     },
     {
+      key: 'plugins',
+      label: (
+        <span>
+          <ApiOutlined /> {t('settings.tabPlugins')}
+        </span>
+      ),
+      children: contentWrap(<PluginsSection />),
+    },
+    {
       key: 'runtime',
       label: (
         <span>
@@ -115,14 +127,32 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'runtime', 'internetSearch', 'about']
+  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
+
+  // 插件设置注入点：至少一个插件注册 settings.tab 视野时，追加聚合 Tab
+  const pluginSettingsViews = getPluginViews('settings.tab')
+  const finalItems = pluginSettingsViews.length > 0 && !tabItems.some(i => i.key === 'plugins-config')
+    ? [
+        ...tabItems,
+        {
+          key: 'plugins-config',
+          label: (
+            <span>
+              <ToolOutlined /> {t('settings.tabPlugins')}
+            </span>
+          ),
+          children: contentWrap(<PluginViewSlot view="settings.tab" />),
+        },
+      ]
+    : tabItems
+
   const defaultActiveKey = tabParam && validTabs.includes(tabParam) ? tabParam : 'llm'
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Tabs
         defaultActiveKey={defaultActiveKey}
-        items={tabItems}
+        items={finalItems}
         tabPlacement="start"
         style={{ flex: 1, minHeight: 0, height: '100%' }}
         tabBarStyle={{

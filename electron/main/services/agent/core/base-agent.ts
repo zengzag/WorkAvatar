@@ -28,7 +28,7 @@ const DEFAULT_TOOL_TIMEOUT_MS = 30000
 const DEFAULT_MAX_RESULT_SIZE = 50000
 const DEFAULT_TOOL_MAX_RETRIES = 2
 
-const SUMMARY_SYSTEM_PROMPT = `你是对话摘要助手。请将给定的对话历史压缩为结构化摘要，要求精炼用词但尽量详尽，务必把事情尤其是待办事项和未完成的计划说清楚。
+const SUMMARY_SYSTEM_PROMPT = `你是对话摘要助手。请将给定的对话历史压缩为结构化摘要，用词精炼而内容完整，重点保留待办事项与尚未完成的计划。
 
 保留以下信息：
 1. 用户的核心请求和目标（包括所有具体的需求细节）

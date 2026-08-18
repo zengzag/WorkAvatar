@@ -12,9 +12,10 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router-dom'
 import { useAppearanceStore } from '../../stores/appearance.store'
+import { useNavConfigStore } from '../../stores/nav.store'
 
-/** 可分离为独立窗口的 tab key（与后端 DETACHABLE_TABS 对齐，排除 settings） */
-const DETACHABLE_TABS = ['tasks', 'employees', 'kms', 'voice', 'calendar', 'notes', 'automation']
+/** 可分离为独立窗口的内置 tab key（与后端 DETACHABLE_TABS 对齐，排除 settings；插件 tab 走 nav.store 的 detachable） */
+const DETACHABLE_TABS = ['tasks', 'employees', 'kms']
 
 /**
  * 自定义窗口标题栏：
@@ -43,13 +44,19 @@ const TitleBar: React.FC = () => {
     return () => { dispose(); disposeDetach() }
   }, [])
 
-  // 从当前路由解析 tabKey（如 /tasks/xxx → tasks）
+  // 从当前路由解析 tabKey：内置页 /tasks → tasks；插件页 /plugin/notes → notes
+  const isPluginTab = location.pathname.startsWith('/plugin/')
   const currentTabKey = (() => {
-    const match = location.pathname.match(/^\/([a-z]+)/)
-    return match?.[1] || ''
+    const m = location.pathname.match(/^\/(?:plugin\/([a-z][a-z0-9-]*)|([a-z]+))/)
+    return m ? (m[1] || m[2]) : ''
   })()
 
-  const canDetach = DETACHABLE_TABS.includes(currentTabKey) && !detachedTabs.includes(currentTabKey)
+  // 插件 tab 的可分离性由插件 manifest.nav.detachable 决定（nav.store 启动时注入）
+  const pluginItems = useNavConfigStore((s) => s.pluginItems)
+  const canDetach = (isPluginTab
+    ? pluginItems.some((p) => p.key === currentTabKey && p.detachable)
+    : DETACHABLE_TABS.includes(currentTabKey))
+    && !detachedTabs.includes(currentTabKey)
 
   const handleToggleMaximize = async () => {
     const next = await window.electronAPI.window.toggleMaximize()

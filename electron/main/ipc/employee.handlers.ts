@@ -30,7 +30,7 @@ import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
-import AutomationService from '../services/automation/automation.service'
+import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import { safeHandle } from './_shared'
 
@@ -101,8 +101,8 @@ export function registerEmployeeHandlers(
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
       }
-      // 同步删除自动化执行历史中关联的记录（双向同步：员工对话删除 → 自动化历史删除）
-      try { AutomationService.getInstance().deleteRunByConversation(id) } catch { /* ignore */ }
+      // 同步通知插件清理关联数据（如自动化执行历史：conversation 删除 → run 记录删除）
+      try { PluginHostService.getInstance().notifyConversationDeleted(id) } catch { /* ignore */ }
     }
     return result
   })
@@ -115,8 +115,8 @@ export function registerEmployeeHandlers(
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
       }
-      // 同步删除自动化执行历史中关联的记录（与 CONVERSATION_DELETE 保持一致）
-      try { AutomationService.getInstance().deleteRunByConversation(conv.id) } catch { /* ignore */ }
+      // 同步通知插件清理关联数据（与 CONVERSATION_DELETE 保持一致）
+      try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
     }
     return workspaceManager.deleteAllConversations(employeeId)
   })

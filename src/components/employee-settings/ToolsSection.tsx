@@ -22,6 +22,8 @@ import {
   FileTextOutlined,
   MessageOutlined,
   BulbOutlined,
+  AppstoreOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -53,6 +55,10 @@ export interface ToolCategoryInfo {
   title: string
   description: string
   icon: string
+  /** 插件贡献的分类（来自某插件，仅插件加载时存在） */
+  is_plugin?: boolean
+  /** 插件分类对应的插件 id（用于以插件命名空间解析 title 的 i18n key） */
+  plugin_id?: string
   tool_ids: string[]
   tools: CategoryTool[]
   mode: ToolMode
@@ -71,6 +77,8 @@ const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
   'file-document': <FileTextOutlined />,
   message: <MessageOutlined />,
   tool: <BulbOutlined />,
+  plugin: <AppstoreOutlined />,
+  team: <TeamOutlined />,
 }
 
 interface ToolsSectionProps {
@@ -199,13 +207,21 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                             ellipsis
                             style={{ display: 'inline-block' }}
                           >
-                            {t(`employeeSettings.toolCategory_${cat.id}`, {
-                              defaultValue: cat.title,
-                            })}
+                            {cat.is_plugin
+                              ? t(cat.title, { ns: cat.plugin_id, defaultValue: cat.title })
+                              : t(`employeeSettings.toolCategory_${cat.id}`, {
+                                  defaultValue: cat.title,
+                                })}
                           </Text>
-                          <Tag color="blue" style={{ flexShrink: 0 }}>
-                            {t('employeeSettings.builtin')}
-                          </Tag>
+                          {cat.is_plugin ? (
+                            <Tag color="purple" style={{ flexShrink: 0 }}>
+                              {t('employeeSettings.plugin')}
+                            </Tag>
+                          ) : (
+                            <Tag color="blue" style={{ flexShrink: 0 }}>
+                              {t('employeeSettings.builtin')}
+                            </Tag>
+                          )}
                           <Tag
                             color={
                               cat.mode === 'off' ? 'default' : 'green'

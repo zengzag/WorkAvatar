@@ -4,7 +4,6 @@ import LLMClientService from './llm-client.service'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
-import NotesService from './notes/notes.service'
 import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
@@ -19,6 +18,8 @@ import type { ToolMode } from '../../shared/channels/tool'
 import type { ToolDefinition } from './agent/tools/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
+import PluginHostService from './plugin/plugin-host.service'
+import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
 
@@ -182,7 +183,7 @@ class EmployeeAgentService {
       autoDiscoverSkills: true,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
-        // 稳定不变的环境信息（系统环境/笔记库）保留在 system prompt；
+        // 稳定不变的环境信息（系统环境）保留在 system prompt；
         // 任务工作区信息随任务变化，改由动态上下文 <workspace> 注入（见 buildWorkspaceContextPrompt）
         const platformMap: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
         const osName = platformMap[process.platform] || process.platform
@@ -190,8 +191,6 @@ class EmployeeAgentService {
         const osArch = os.arch()
         const parts: string[] = []
         parts.push(`系统环境：${osName} ${osRelease}（${osArch}）`)
-        const notesRoot = NotesService.getInstance().getVaultRoot()
-        parts.push(`笔记库：${notesRoot}（.md 格式；只读默认，增删改需用户确认）`)
         return parts.join('\n')
       })(),
     }
@@ -217,6 +216,12 @@ class EmployeeAgentService {
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
     const toolModes = this.getEmployeeToolModes(employeeId)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
+
+    // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置
+    const pluginAgentTools = this.getPluginAgentTools()
+    if (pluginAgentTools.length > 0) {
+      agent.registerTools(this.applyToolModes(pluginAgentTools, toolModes))
+    }
 
     const collectionIdsRef: SearchScopeRef = { current: { collectionIds: [] } }
     agent.registerTools(this.applyToolModes(createKMSTools(collectionIdsRef), toolModes))
@@ -287,6 +292,10 @@ class EmployeeAgentService {
     for (const t of allBuiltinTools) {
       modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
     }
+    // 插件贡献工具的默认模式（定义 onDemand → on_demand，否则 on）
+    for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
+      modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
+    }
     // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
@@ -304,7 +313,13 @@ class EmployeeAgentService {
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
 
-    rows = rows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
+    rows = rows.map(row => ({
+      ...row,
+      tool_id: row.tool_id === 'office_exec' ? 'javascript_exec'
+        : row.tool_id === 'automation_list_employees' ? 'list_employees'
+        : row.tool_id === 'automation_list_providers' ? 'list_providers'
+        : row.tool_id,
+    }))
 
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {
@@ -319,6 +334,27 @@ class EmployeeAgentService {
     return tools
       .filter(t => modeMap.get(t.id) !== 'off')
       .map(t => ({ ...t, onDemand: modeMap.get(t.id) === 'on_demand' }))
+  }
+
+  /**
+   * 插件贡献的 agent 工具：注入 employeeId 上下文（与内置工具经 interactionContext 读取保持一致）。
+   * 插件 handler 仅感知 { onProgress, employeeId }，宿主在注册时补齐运行时上下文。
+   */
+  private getPluginAgentTools(): ToolDefinition[] {
+    const tools = PluginHostService.getInstance().getAgentTools() as Array<{
+      id: string; name: string; title: string; description: string; summary?: string
+      parameters: any; handler: (args: any, context?: any) => any; onDemand?: boolean
+      permission?: string; timeoutMs?: number; noRetry?: boolean; metadata?: any
+    }>
+    return tools.map(t => ({
+      ...t,
+      source: 'plugin' as const,
+      permission: t.permission as ToolDefinition['permission'],
+      handler: (args: any, context: any) => t.handler(args, {
+        ...(context || {}),
+        employeeId: interactionContext.getStore()?.employeeId ?? null,
+      }),
+    }))
   }
 
   /** 构建任务工作区上下文（随会话稳定，注入 <workspace> 上下文块） */

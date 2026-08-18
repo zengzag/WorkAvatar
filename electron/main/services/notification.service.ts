@@ -1,19 +1,30 @@
 import { BrowserWindow, Notification, ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { createLogger } from './logger'
+import PluginHostService from './plugin/plugin-host.service'
 
 const logger = createLogger('Notification')
 
 export interface NotifyPayload {
   title: string
   body: string
-  /** 点击通知后前端跳转目标 */
-  clickTarget?: 'event' | 'todo' | 'calendar' | 'ask_user' | 'automation'
+  /** 点击通知后前端跳转目标（内核语义：automation/ask_user；命中插件 id 时跳插件页） */
+  clickTarget?: string
   clickId?: string
   /** 静默：不弹 antd notification，仅写日志（如批量提醒去重时） */
   silent?: boolean
-  /** 来源标记 */
+  /** 来源标记：`plugin:<id>` 表示插件通知（渲染端经插件桥路由），其余为宿主通知 */
   source?: string
+  /** 渲染端可用 t() 本地化的文案键与参数（插件通知透传） */
+  i18nKey?: string
+  i18nParams?: Record<string, string | number>
+}
+
+/** 从 source 解析插件 id：`plugin:<id>` → id，否则 null */
+function pluginIdFromSource(source?: string): string | null {
+  if (!source || !source.startsWith('plugin:')) return null
+  const id = source.slice('plugin:'.length)
+  return id || null
 }
 
 /**
@@ -54,13 +65,14 @@ class NotificationService {
   /**
    * 发送通知。返回是否实际发出。
    * - 主窗口未激活：弹系统通知
-   * - 主窗口激活：仅推 IPC 事件给渲染进程
+   * - 主窗口激活：仅推事件给渲染进程（宿主通知走 CALENDAR_NOTIFY；插件通知经插件桥广播 'notify'）
    * - 启用系统通知被关闭时，仍走 IPC 通道（前端弹 antd notification）
    */
   notify(payload: NotifyPayload): boolean {
     if (!payload || !payload.title) return false
     this.ensureIpcRegistered()
 
+    const pluginId = pluginIdFromSource(payload.source)
     const inactive = this.isMainWindowInactive()
     const shouldUseSystem = inactive && Notification.isSupported()
 
@@ -85,7 +97,10 @@ class NotificationService {
 
     // 推送给渲染进程（主窗口激活或系统通知失败时）
     try {
-      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      if (pluginId) {
+        // 插件通知：经插件桥广播到插件渲染端（主窗口 + 独立窗口），由插件渲染端展示 antd notification
+        PluginHostService.getInstance().broadcast(pluginId, 'notify', payload)
+      } else if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.webContents.send(IPC_CHANNELS.CALENDAR_NOTIFY, payload)
       }
     } catch (err: any) {
@@ -104,11 +119,14 @@ class NotificationService {
 
   private broadcastClick(payload: NotifyPayload): void {
     try {
+      const pluginId = pluginIdFromSource(payload.source)
+      const clickData = { target: payload.clickTarget, id: payload.clickId }
+      if (pluginId) {
+        PluginHostService.getInstance().broadcast(pluginId, 'notify-click', clickData)
+        return
+      }
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, {
-          target: payload.clickTarget,
-          id: payload.clickId,
-        })
+        this.mainWindow.webContents.send(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, clickData)
       }
     } catch (err: any) {
       logger.warn('Broadcast click failed:', err?.message || err)

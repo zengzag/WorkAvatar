@@ -63,96 +63,12 @@ import type {
   RuntimeEnvInstallProgress,
   McpSaveParams,
   McpTestParams,
-  ListEventsParams,
-  ListTodosParams,
-  CreateEventInput,
-  UpdateEventInput,
-  CreateTodoInput,
-  UpdateTodoInput,
-  CalendarSettings,
-  OutlookSyncConfig,
-  OutlookSyncStatus,
   NotifyPayload,
-  DeleteEventInstanceParams,
-  DeleteTodoInstanceParams,
-  ListAutomationTasksParams,
-  ListAutomationRunsParams,
-  CreateAutomationTaskInput,
-  UpdateAutomationTaskInput,
-  PreviewRunsParams,
-  NoteWriteParams,
-  NoteCreateParams,
-  NoteRenameParams,
-  NoteMoveParams,
-  NoteCopyParams,
-  NoteImportExternalParams,
-  NoteSearchParams,
-  NoteSaveImageParams,
-  NoteExternalWriteParams,
-  NotesSettings,
-  NotesDataChangedPayload,
-} from '../shared/ipc-channels'
-import type {
-  VoiceCreateTaskParams,
-  VoiceUpdateTaskParams,
-  VoiceSaveAudioParams,
-  VoiceTranscribeParams,
-  VoiceGenerateMinutesParams,
-  VoiceSettings,
-  VoiceSubtitleConfig,
-} from '../shared/ipc-channels'
-export type {
-  VoiceCreateTaskParams,
-  VoiceUpdateTaskParams,
-  VoiceSaveAudioParams,
-  VoiceTranscribeParams,
-  VoiceGenerateMinutesParams,
-  VoiceSettings,
-  VoiceSubtitleConfig,
-} from '../shared/ipc-channels'
-export type {
-  EventColor,
-  TodoPriority,
-  TodoStatus,
-  RecurrenceRule,
-  CalendarEvent,
-  CalendarEventInstance,
-  CalendarTodo,
-  CalendarTodoInstance,
-  CalendarTodoStats,
-  CalendarSettings as CalendarSettingsType,
-  ListEventsParams as ListEventsParamsType,
-  ListTodosParams as ListTodosParamsType,
-  CreateEventInput as CreateEventInputType,
-  UpdateEventInput as UpdateEventInputType,
-  CreateTodoInput as CreateTodoInputType,
-  UpdateTodoInput as UpdateTodoInputType,
-  NotifyPayload as NotifyPayloadType,
-  DeleteInstanceMode,
-  DeleteEventInstanceParams,
-  DeleteTodoInstanceParams,
-} from '../shared/ipc-channels'
-export type {
-  AutomationTask,
-  AutomationRun,
-  AutomationTaskStatus,
-  AutomationRunStatus,
-  AutomationTriggeredBy,
-  AutomationRecurrenceRule,
-  CreateAutomationTaskInput as CreateAutomationTaskInputType,
-  UpdateAutomationTaskInput as UpdateAutomationTaskInputType,
-  ListAutomationTasksParams as ListAutomationTasksParamsType,
-  ListAutomationRunsParams as ListAutomationRunsParamsType,
-  PreviewRunsParams as PreviewRunsParamsType,
-} from '../shared/ipc-channels'
-export type {
-  NoteNodeType,
-  NoteNode,
-  NoteContent,
-  NoteSearchSnippet,
-  NoteSearchHit,
-  NotesSettings as NotesSettingsType,
-  NotesDataChangedPayload as NotesDataChangedPayloadType,
+  PluginInfo,
+  PluginRendererInfo,
+  PluginEventPayload,
+  PluginImportResult,
+  PluginMessageActionInfo,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -293,6 +209,7 @@ const electronAPI = {
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
+    restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) =>
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
@@ -339,6 +256,7 @@ const electronAPI = {
 
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
+    getCategories: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_CATEGORIES),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
     getEmployeeToolCategories: (params: { employee_id: string }) =>
@@ -393,111 +311,6 @@ const electronAPI = {
     test: (params: McpTestParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TEST, params),
     // 刷新指定 server 的工具缓存（主动重新连接并 listTools）
     refreshTools: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_REFRESH_TOOLS, params),
-  },
-
-  calendar: {
-    // 事件
-    listEvents: (params: ListEventsParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_EVENTS, params),
-    createEvent: (input: CreateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_EVENT, input),
-    updateEvent: (input: UpdateEventInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_EVENT, input),
-    deleteEvent: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_EVENT, { id }),
-    deleteEventInstance: (params: DeleteEventInstanceParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_EVENT_INSTANCE, params),
-    // TODO
-    listTodos: (params?: ListTodosParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_TODOS, params || {}),
-    listTodoInstances: (params: ListEventsParams) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_LIST_TODO_INSTANCES, params),
-    createTodo: (input: CreateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_CREATE_TODO, input),
-    updateTodo: (input: UpdateTodoInput) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_UPDATE_TODO, input),
-    deleteTodo: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_TODO, { id }),
-    deleteTodoInstance: (params: DeleteTodoInstanceParams) =>
-      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_DELETE_TODO_INSTANCE, params),
-    completeTodo: (id: string, completed: boolean, instance_due_at?: number) =>
-      ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_COMPLETE_TODO, { id, completed, instance_due_at }),
-    todoStats: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_TODO_STATS),
-    // 设置
-    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_GET_SETTINGS),
-    setSettings: (params: Partial<CalendarSettings>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_SET_SETTINGS, params),
-    // Outlook 同步
-    outlook: {
-      login: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGIN),
-      logout: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_LOGOUT),
-      status: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_STATUS),
-      setConfig: (params: Partial<OutlookSyncConfig>) => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SET_CONFIG, params),
-      syncNow: () => ipcRenderer.invoke(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_NOW),
-      onSyncChanged: (callback: (status: OutlookSyncStatus) => void) => {
-        const handler = (_event: any, status: OutlookSyncStatus) => callback(status)
-        ipcRenderer.on(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
-        return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_OUTLOOK_SYNC_CHANGED, handler)
-      },
-    },
-    // 通知事件订阅
-    onNotify: (callback: (payload: NotifyPayload) => void) => {
-      const handler = (_event: any, payload: NotifyPayload) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
-    },
-    onNotifyClick: (callback: (payload: { target?: string; id?: string }) => void) => {
-      const handler = (_event: any, payload: { target?: string; id?: string }) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
-    },
-    onDataChanged: (callback: (payload: { scope: 'event' | 'todo' | 'settings'; ts: number }) => void) => {
-      const handler = (_event: any, payload: { scope: 'event' | 'todo' | 'settings'; ts: number }) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.CALENDAR_DATA_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_DATA_CHANGED, handler)
-    },
-    // 渲染进程主动请求系统通知
-    sendNotification: (payload: NotifyPayload) => ipcRenderer.invoke(IPC_CHANNELS.NOTIFY_SEND, payload),
-  },
-
-  automation: {
-    // 任务 CRUD
-    listTasks: (params?: ListAutomationTasksParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_TASKS, params),
-    getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_GET_TASK, id),
-    createTask: (input: CreateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CREATE_TASK, input),
-    updateTask: (input: UpdateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_UPDATE_TASK, input),
-    deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_TASK, { id }),
-    toggleTask: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_TOGGLE_TASK, { id, enabled }),
-    // 执行
-    runNow: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_RUN_NOW, { id }),
-    previewRuns: (params: PreviewRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_PREVIEW_RUNS, params),
-    // 执行历史 CRUD
-    listRuns: (params?: ListAutomationRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_RUNS, params),
-    deleteRun: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_RUN, { id }),
-    clearRuns: (params?: { task_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CLEAR_RUNS, params),
-    // 数据变更事件订阅
-    onDataChanged: (callback: (payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => void) => {
-      const handler = (_event: any, payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
-    },
-  },
-
-  notes: {
-    listTree: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST_TREE),
-    read: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ, relPath),
-    write: (params: NoteWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE, params),
-    createNote: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_NOTE, params),
-    createFolder: (params: NoteCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE_FOLDER, params),
-    rename: (params: NoteRenameParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_RENAME, params),
-    move: (params: NoteMoveParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_MOVE, params),
-    copy: (params: NoteCopyParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_COPY, params),
-    delete: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_DELETE, relPath),
-    search: (params: NoteSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SEARCH, params),
-    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_SETTINGS),
-    setSettings: (params: Partial<NotesSettings>) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SET_SETTINGS, params),
-    getAbsolutePath: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_GET_ABS_PATH, relPath),
-    openInExplorer: (relPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_IN_EXPLORER, relPath),
-    importExternal: (params: NoteImportExternalParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_IMPORT_EXTERNAL, params),
-    saveImage: (params: NoteSaveImageParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_SAVE_IMAGE, params),
-    openDiary: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_OPEN_DIARY),
-    readExternal: (absPath: string) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_READ_EXTERNAL, absPath),
-    writeExternal: (params: NoteExternalWriteParams) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_WRITE_EXTERNAL, params),
-    onDataChanged: (callback: (payload: NotesDataChangedPayload) => void) => {
-      const handler = (_event: any, payload: NotesDataChangedPayload) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTES_DATA_CHANGED, handler)
-    },
   },
 
   kms: {
@@ -608,58 +421,6 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.KMS_MCP_LIST_EXPOSED_TOOLS, params) as Promise<KMSMCPExposedTool[]>,
   },
 
-  voice: {
-    listTasks: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_LIST_TASKS),
-    getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_TASK, id),
-    createTask: (params: VoiceCreateTaskParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CREATE_TASK, params),
-    updateTask: (params: VoiceUpdateTaskParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_UPDATE_TASK, params),
-    deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_DELETE_TASK, id),
-    saveAudio: (params: VoiceSaveAudioParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SAVE_AUDIO, params),
-    saveSecondaryAudio: (params: { taskId: string; audioData: string; format: string }) =>
-      ipcRenderer.invoke(IPC_CHANNELS.VOICE_SAVE_SECONDARY_AUDIO, params),
-    mergeDualSourceTranscript: (params: { mainTaskId: string; micTaskId: string; systemTaskId: string }) =>
-      ipcRenderer.invoke(IPC_CHANNELS.VOICE_MERGE_DUAL_TRANSCRIPT, params),
-    transcribe: (params: VoiceTranscribeParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_TRANSCRIBE, params),
-    cancelTranscribe: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL_TRANSCRIBE, taskId),
-    generateMinutes: (params: VoiceGenerateMinutesParams) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GENERATE_MINUTES, params),
-    cancelMinutes: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL_MINUTES, taskId),
-    getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_SETTINGS),
-    setSettings: (settings: VoiceSettings) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SET_SETTINGS, settings),
-    getAudioSources: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_GET_AUDIO_SOURCES),
-    checkLocalModel: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CHECK_LOCAL_MODEL),
-    selectDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SELECT_DIRECTORY),
-    // 实时识别
-    realtimeStart: (params: { taskId: string; language?: string }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_START, params),
-    realtimeFeed: (params: { taskId: string; samples: ArrayBuffer; sampleRate: number; source?: string }) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_FEED, params),
-    realtimeStop: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_STOP, taskId),
-    realtimeCancel: (taskId: string) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REALTIME_CANCEL, taskId),
-    onRealtimeResult: (callback: (data: { taskId: string; text: string; source?: string; segment?: { start: number; end: number; text: string }; isFinal: boolean }) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_REALTIME_RESULT, handler)
-    },
-    onProgress: (callback: (data: { taskId: string; phase: string; message: string; progress?: number; chunk?: string; accumulated?: string }) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.VOICE_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_PROGRESS, handler)
-    },
-    // 悬浮字幕窗口
-    subtitleShow: (config?: VoiceSubtitleConfig) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_SHOW, config),
-    subtitleHide: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_HIDE),
-    subtitleToggle: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_TOGGLE),
-    subtitleGetVisible: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SUBTITLE_GET_VISIBLE),
-    onSubtitleText: (callback: (data: { text: string; source?: string }) => void) => {
-      const handler = (_event: any, data: { text: string; source?: string }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_TEXT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_TEXT, handler)
-    },
-    onSubtitleSettings: (callback: (config: VoiceSubtitleConfig) => void) => {
-      const handler = (_event: any, config: VoiceSubtitleConfig) => callback(config)
-      ipcRenderer.on(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_SETTINGS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.VOICE_SUBTITLE_UPDATE_SETTINGS, handler)
-    },
-  },
-
   interaction: {
     onRequest: (callback: (request: any) => void) => {
       const handler = (_event: any, request: any) => callback(request)
@@ -668,6 +429,54 @@ const electronAPI = {
     },
     respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
+  },
+
+  // 宿主通用通知（自动化完成 / ask_user 交互等）：插件通知（日历提醒）经插件桥广播，不占宿主通道
+  notification: {
+    onNotify: (callback: (payload: NotifyPayload) => void) => {
+      const handler = (_event: any, payload: NotifyPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY, handler)
+    },
+    onNotifyClick: (callback: (payload: { target?: string; id?: string }) => void) => {
+      const handler = (_event: any, payload: { target?: string; id?: string }) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CALENDAR_NOTIFY_CLICK, handler)
+    },
+    // 渲染进程主动请求系统通知
+    sendNotification: (payload: NotifyPayload) => ipcRenderer.invoke(IPC_CHANNELS.NOTIFY_SEND, payload),
+  },
+
+  // 插件通用桥：preload 不随插件膨胀，所有插件调用经 invoke(pluginId, channel) 路由
+  plugin: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST) as Promise<{
+      plugins: PluginInfo[]
+      rendererPlugins: PluginRendererInfo[]
+    }>,
+    invoke: <T = unknown,>(pluginId: string, channel: string, payload?: unknown) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_INVOKE, { pluginId, channel, payload }) as Promise<T>,
+    // 主进程插件事件推送（ctx.ipc.broadcast）：按 pluginId 过滤，回调收到 { event, payload }
+    onEvent: (pluginId: string, callback: (message: { event: string; payload: unknown }) => void) => {
+      const handler = (_event: any, message: PluginEventPayload) => {
+        if (message?.pluginId === pluginId) callback({ event: message.event, payload: message.payload })
+      }
+      ipcRenderer.on(IPC_CHANNELS.PLUGIN_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.PLUGIN_EVENT, handler)
+    },
+    setEnabled: (pluginId: string, enabled: boolean) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_SET_ENABLED, { pluginId, enabled }),
+    remove: (pluginId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DELETE, { pluginId }),
+    import: (overwrite?: boolean) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
+    listMessageActions: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
+    listViews: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_VIEWS) as Promise<Array<{ pluginId: string; view: string; component: unknown }>>,
+    listCommands: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_COMMANDS) as Promise<Array<{ pluginId: string; id: string; title: string }>>,
+    resolveFileOwner: (extension: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
+    openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 }
 

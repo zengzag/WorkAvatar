@@ -12,13 +12,14 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useLocation, Outlet } from 'react-router-dom'
 import { useAppearanceStore } from '../../stores/appearance.store'
-import { useNotesStore } from '../../stores/notes.store'
+import { useNavConfigStore } from '../../stores/nav.store'
+import { hasDirtyCloseGuard } from '../../plugins/loader'
 
 /**
  * Tab 独立窗口壳：
  * - 顶部紧凑 TitleBar：左 = tab 名称 + 回到主窗口按钮；右 = 主题切换 + 窗口控制
  * - 主体渲染对应 tab 页面（通过 Outlet / 路由匹配）
- * - 关闭按钮：notes tab 有未保存内容时弹确认框，其他 tab 直接关闭
+ * - 关闭按钮：当前 tab 有插件注册的关闭守卫（如未保存内容）时弹确认框，其他直接关闭
  * - 关闭独立窗口 = 自动回归主窗口（主进程 TabWindowService 处理）
  */
 const TabWindowLayout: React.FC = () => {
@@ -34,9 +35,6 @@ const TabWindowLayout: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false)
   // 当前窗口所属 tabKey（从主进程查询；主窗口渲染进程不会渲染此组件）
   const [ownTab, setOwnTab] = useState<string | null>(null)
-
-  // 直接订阅 notes store 的 tabs（仅在 notes 独立窗口用于脏状态检查）
-  const notesTabs = useNotesStore((s) => s.tabs)
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setIsMaximized)
@@ -54,22 +52,18 @@ const TabWindowLayout: React.FC = () => {
     setThemeMode(isDark ? 'light' : 'dark')
   }
 
-  /** 关闭窗口：notes 有未保存内容时弹确认框 */
+  /** 关闭窗口：当前 tab 有插件注册的关闭守卫（如 notes 未保存内容）时弹确认框 */
   const handleClose = () => {
-    if (ownTab === 'notes') {
-      // 检查 notes 是否有脏 tab
-      const hasDirty = notesTabs.some((tab) => tab.saveStatus === 'dirty')
-      if (hasDirty) {
-        modal.confirm({
-          title: t('tabWindow.unsavedTitle'),
-          content: t('tabWindow.unsavedContent'),
-          okText: t('tabWindow.closeAnyway'),
-          cancelText: t('common.cancel'),
-          okButtonProps: { danger: true },
-          onOk: () => window.electronAPI.window.close(),
-        })
-        return
-      }
+    if (hasDirtyCloseGuard()) {
+      modal.confirm({
+        title: t('tabWindow.unsavedTitle'),
+        content: t('tabWindow.unsavedContent'),
+        okText: t('tabWindow.closeAnyway'),
+        cancelText: t('common.cancel'),
+        okButtonProps: { danger: true },
+        onOk: () => window.electronAPI.window.close(),
+      })
+      return
     }
     window.electronAPI.window.close()
   }
@@ -83,15 +77,23 @@ const TabWindowLayout: React.FC = () => {
   }
 
   // 从 location 解析 tabKey（fallback：用 ownTab）
-  const tabKeyFromUrl = location.pathname.match(/^\/window\/([a-z]+)/)?.[1]
+  // 内置页：/window/tasks → tasks；插件页：/window/plugin/notes → notes
+  const tabKeyFromUrl = (() => {
+    const m = location.pathname.match(/^\/window\/(?:plugin\/([a-z][a-z0-9-]*)|([a-z]+))/)
+    return m ? (m[1] || m[2]) : null
+  })()
   const currentTab = tabKeyFromUrl || ownTab || ''
-
-  // tab 标题映射
-  const tabTitle = t(`nav.${currentTab}` as any, { defaultValue: 'WorkAvatar' })
+  // 插件窗口标题：用插件本地化名称（manifest.nav.label + 插件 namespace，如 navLabel→「笔记」）
+  const pluginItems = useNavConfigStore((s) => s.pluginItems)
+  const pluginItem = pluginItems.find((p) => p.key === currentTab)
+  const isPluginWindow = !!tabKeyFromUrl?.startsWith('plugin/') || (ownTab ? pluginItems.some((p) => p.key === ownTab) : false)
+  const tabTitle = isPluginWindow
+    ? (pluginItem ? t(pluginItem.label, { ns: pluginItem.key }) : '')
+    : t(`nav.${currentTab}` as any, { defaultValue: 'WorkAvatar' })
 
   // 同步到 OS 原生窗口标题（任务栏/Alt-Tab 缩略图），跟随 i18n 语言切换
   useEffect(() => {
-    document.title = tabTitle
+    if (tabTitle) document.title = tabTitle
   }, [tabTitle])
 
   const btnStyle: React.CSSProperties = {

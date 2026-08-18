@@ -30,7 +30,7 @@ export const STAGE_PROGRESS_MAP: Record<string, number> = {
 }
 
 /** 默认选中的内置工具名 */
-export const DEFAULT_TOOL_NAMES = ['kms_search', 'file_read', 'file_write', 'file_list']
+export const DEFAULT_TOOL_NAMES = ['kms_search', 'file_read', 'file_write', 'file_edit']
 
 /**
  * 将 LLM 建议的工具名匹配到内置工具 ID

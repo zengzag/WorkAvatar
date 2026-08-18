@@ -40,28 +40,6 @@ export const BUILTIN_TOOL_CATEGORIES = [
     ],
   },
   {
-    id: 'calendar',
-    defaultEnabled: false,
-    toolIds: [
-      'calendar_event_list', 'calendar_event_create',
-      'calendar_event_update', 'calendar_event_delete',
-      'calendar_todo_list', 'calendar_todo_create',
-      'calendar_todo_update', 'calendar_todo_delete',
-      'calendar_todo_complete', 'calendar_todo_stats',
-    ],
-  },
-  {
-    id: 'automation',
-    defaultEnabled: false,
-    toolIds: [
-      'automation_list_employees', 'automation_list_providers',
-      'automation_task_list', 'automation_task_create',
-      'automation_task_update', 'automation_task_delete',
-      'automation_task_toggle', 'automation_task_run_now',
-      'automation_task_preview', 'automation_run_list',
-    ],
-  },
-  {
     id: 'general',
     defaultEnabled: true,
     toolIds: [
@@ -85,6 +63,37 @@ export const BUILTIN_TOOL_CATEGORIES = [
 ] as const
 
 export type BuiltinToolCategoryId = typeof BUILTIN_TOOL_CATEGORIES[number]['id']
+
+/** 插件贡献的 MCP 工具类别（每插件一类，仅插件加载贡献工具时存在） */
+export interface PluginMcpCategory {
+  id: string
+  defaultEnabled: boolean
+  toolIds: string[]
+}
+
+/**
+ * 动态插件类别：把插件贡献的 agent 工具按插件聚成 MCP 类别（id = `plugin:<pluginId>`）。
+ * 插件未加载时不产生类别，因此日历等插件化工具仅在插件加载时才可被 MCP 暴露。
+ */
+export function getPluginMcpCategories(): PluginMcpCategory[] {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pluginHost = require('../plugin/plugin-host.service').default
+    const groups = pluginHost.getInstance().getPluginAgentToolGroups() as Array<{ pluginId: string; tools: Array<{ id: string }> }>
+    return groups.map(g => ({
+      id: `plugin:${g.pluginId}`,
+      defaultEnabled: false,
+      toolIds: g.tools.map(t => t.id),
+    }))
+  } catch {
+    return []
+  }
+}
+
+/** 完整类别 = 内置类别 + 插件类别 */
+export function getAllMcpCategories(): Array<{ id: string; defaultEnabled: boolean; toolIds: readonly string[] }> {
+  return [...BUILTIN_TOOL_CATEGORIES, ...getPluginMcpCategories()]
+}
 
 /** MCP 工具格式（与 kms-mcp-types.ts 中的 MCPTool 保持语义一致，避免耦合旧文件） */
 export interface McpTool {
@@ -169,9 +178,9 @@ export function resolveEnabledToolIds(
   enabledCategories?: BuiltinToolCategoryId[],
 ): Set<string> {
   const ids = new Set<string>()
-  for (const cat of BUILTIN_TOOL_CATEGORIES) {
+  for (const cat of getAllMcpCategories()) {
     const catEnabled = enabledCategories
-      ? enabledCategories.includes(cat.id)
+      ? enabledCategories.includes(cat.id as BuiltinToolCategoryId)
       : cat.defaultEnabled
     if (catEnabled) {
       for (const tid of cat.toolIds) {

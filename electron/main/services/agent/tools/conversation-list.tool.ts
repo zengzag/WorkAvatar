@@ -1,5 +1,5 @@
 import DatabaseService from '../../database.service'
-import { parseNaturalTime } from './calendar.tool'
+import { parseNaturalTime } from './utils'
 import type { ToolDefinition } from './types'
 
 /**

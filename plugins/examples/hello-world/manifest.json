@@ -1,0 +1,21 @@
+{
+  "id": "example-hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "engine": ">=0.2.0",
+  "description": "最小示例插件：跑通 manifest + 主进程 + 渲染端 + IPC + 事件全链路",
+  "author": "WorkAvatar",
+  "main": "dist/main/index.cjs",
+  "renderer": "dist/renderer/index.js",
+  "locale": "locale",
+  "ipc": ["greet", "count"],
+  "capabilities": [
+    { "domain": "events", "publish": true }
+  ],
+  "nav": {
+    "label": "navLabel",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"8\" cy=\"8\" r=\"6.5\"/><path d=\"M5.5 8.5l1.5 1.5 3.5-3.5\"/></svg>",
+    "order": 200,
+    "detachable": false
+  }
+}

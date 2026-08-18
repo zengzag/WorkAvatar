@@ -4,7 +4,7 @@ import { RouterProvider } from 'react-router-dom'
 import { ConfigProvider, theme as antdTheme, App as AntApp } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
-import router from './router'
+import { buildRouter } from './router'
 import './i18n'
 import './styles/index.css'
 import {
@@ -17,9 +17,13 @@ import {
 } from './stores/appearance.store'
 import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
+import { injectHostGlobals, loadPlugins } from './plugins/loader'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
 installConsoleForwarder()
+
+// 共享库单例注入（插件经 __WA_HOST__ 复用宿主 React/antd/i18n，防止双实例）
+injectHostGlobals()
 
 const ANT_LOCALE_MAP: Record<string, any> = {
   'zh-CN': zhCN,
@@ -134,10 +138,18 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   )
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-  <React.StrictMode>
-    <AppWithTheme>
-      <RouterProvider router={router} />
-    </AppWithTheme>
-  </React.StrictMode>
-)
+// 启动时序：共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配路由 → 挂载
+async function bootstrap() {
+  const plugins = await loadPlugins()
+  const router = buildRouter(plugins)
+
+  ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+    <React.StrictMode>
+      <AppWithTheme>
+        <RouterProvider router={router} />
+      </AppWithTheme>
+    </React.StrictMode>
+  )
+}
+
+bootstrap()

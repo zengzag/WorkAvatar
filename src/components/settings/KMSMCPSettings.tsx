@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import {
   PlayCircleOutlined, StopOutlined, CopyOutlined, ApiOutlined, ReloadOutlined,
-  DatabaseOutlined, CalendarOutlined, ThunderboltOutlined,
+  DatabaseOutlined, CalendarOutlined,
   BulbOutlined, GlobalOutlined, MessageOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
@@ -46,7 +46,6 @@ interface MCPExposedTool {
 const CATEGORY_ICON: Record<string, React.ReactNode> = {
   kms: <DatabaseOutlined />,
   calendar: <CalendarOutlined />,
-  automation: <ThunderboltOutlined />,
   general: <BulbOutlined />,
   web: <GlobalOutlined />,
   conversation: <MessageOutlined />,

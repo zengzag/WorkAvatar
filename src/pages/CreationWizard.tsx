@@ -69,6 +69,7 @@ const CreationWizard: React.FC = () => {
   const [refineModalOpen, setRefineModalOpen] = useState(false)
   const [refineFeedback, setRefineFeedback] = useState('')
   const [builtinTools, setBuiltinTools] = useState<any[]>([])
+  const [toolCategories, setToolCategories] = useState<any[]>([])
   const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
 
   const handleLlmChange = (pId: string, mId: string) => {
@@ -146,6 +147,10 @@ const CreationWizard: React.FC = () => {
         .filter((tool: any) => DEFAULT_TOOL_NAMES.includes(tool.name))
         .map((tool: any) => tool.id)
       setSelectedToolIds(defaultToolIds)
+    } catch {}
+    try {
+      const cats = await window.electronAPI.tool.getCategories()
+      setToolCategories(cats)
     } catch {}
   }
 
@@ -458,6 +463,7 @@ const CreationWizard: React.FC = () => {
             label: t('creationWizard.toolSettings'),
             children: <ToolCheckboxes
               tools={builtinTools}
+              categories={toolCategories}
               selectedIds={selectedToolIds}
               onChange={setSelectedToolIds}
             />,

@@ -13,6 +13,7 @@ import { allBuiltinTools, createKMSTools, createKMSCollectionTools, javascriptEx
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
 import EmployeeAgentService from '../services/employee-agent.service'
+import PluginHostService from '../services/plugin/plugin-host.service'
 import { safeHandle } from './_shared'
 
 interface ToolCategoryDef {
@@ -22,33 +23,29 @@ interface ToolCategoryDef {
   description: string
   icon: string
   toolIds: string[]
+  /** 插件贡献的分类（对应某插件，仅插件加载时存在） */
+  isPlugin?: boolean
+  /** 插件分类对应的插件 id（用于前端以插件命名空间解析 title 的 i18n key） */
+  pluginId?: string
 }
 
 /**
- * 工具分类聚合定义：
- * 每个分类对应一批工具，用户只看到分类名和开关，
- * 开启/关闭即批量操作该分类下的所有工具，降低理解成本
+ * 内置工具分类聚合定义（不含插件工具）：
+ * 插件工具按其贡献插件自动聚成"插件分类"（见 buildToolCategoryDefs），
+ * 仅当对应插件加载时才出现。日历已插件化，不再内置此分类。
  */
 const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
   {
     id: 'file_operations',
     name: 'file_operations',
     title: '文件操作',
-    description: '文件读写、创建、删除、移动、复制、搜索、目录管理等文件系统操作',
+    description: '文件读写、编辑、成品展示与图片识别等核心文件操作',
     icon: 'file',
     toolIds: [
       'file_read',
       'file_write',
       'file_edit',
       'report_generated_files',
-      'file_mkdir',
-      'file_list',
-      'file_search',
-      'file_delete',
-      'file_move',
-      'file_copy',
-      'file_rename',
-      'file_stat',
       'ocr_image',
     ],
   },
@@ -62,44 +59,6 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
       'kms_search',
       'kms_get_content',
       'kms_list_collections',
-    ],
-  },
-  {
-    id: 'calendar',
-    name: 'calendar',
-    title: '日历待办',
-    description: '日程事件的创建/查询/修改/删除，以及待办任务管理和统计',
-    icon: 'calendar',
-    toolIds: [
-      'calendar_event_list',
-      'calendar_event_create',
-      'calendar_event_update',
-      'calendar_event_delete',
-      'calendar_todo_list',
-      'calendar_todo_create',
-      'calendar_todo_update',
-      'calendar_todo_delete',
-      'calendar_todo_complete',
-      'calendar_todo_stats',
-    ],
-  },
-  {
-    id: 'automation',
-    name: 'automation',
-    title: '自动化任务',
-    description: '自动化任务的创建、调度、运行、预览和执行历史查询',
-    icon: 'robot',
-    toolIds: [
-      'automation_list_employees',
-      'automation_list_providers',
-      'automation_task_list',
-      'automation_task_create',
-      'automation_task_update',
-      'automation_task_delete',
-      'automation_task_toggle',
-      'automation_task_run_now',
-      'automation_task_preview',
-      'automation_run_list',
     ],
   },
   {
@@ -145,9 +104,31 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     icon: 'team',
     toolIds: [
       'delegate_to_employee',
+      'list_employees',
+      'list_providers',
     ],
   },
 ]
+
+/**
+ * 完整分类定义 = 内置分类 + 插件分类（每插件一类，pluginId → 插件贡献的工具）。
+ * 插件分类 id = `plugin:<pluginId>`，仅当插件激活贡献工具时才存在。
+ */
+function buildToolCategoryDefs(): ToolCategoryDef[] {
+  const pluginGroups = PluginHostService.getInstance().getPluginAgentToolGroups()
+  const pluginCats: ToolCategoryDef[] = pluginGroups.map(g => ({
+    id: `plugin:${g.pluginId}`,
+    name: `plugin:${g.pluginId}`,
+    // title 用插件 locale 的 navLabel key（前端以插件命名空间解析，如 Calendar → 日历）
+    title: 'navLabel',
+    description: `${g.pluginName} 提供的工具`,
+    icon: 'plugin',
+    isPlugin: true,
+    pluginId: g.pluginId,
+    toolIds: (g.tools as Array<{ id: string }>).map(t => t.id),
+  }))
+  return [...TOOL_CATEGORY_DEFS, ...pluginCats]
+}
 
 function getUnifiedBuiltinToolCatalog() {
   const agentTools = allBuiltinTools.map(t => ({
@@ -206,6 +187,21 @@ function getUnifiedBuiltinToolCatalog() {
     idToTool.set(tool.id, tool)
   }
 
+  // 插件贡献的 agent 工具（如日历插件工具），纳入统一目录（分类归属由插件分类 toolIds 决定）
+  const pluginTools = (PluginHostService.getInstance().getAgentTools() as Array<{
+    id: string; name: string; title: string; description: string; onDemand?: boolean
+  }>).map(t => ({
+    id: t.id,
+    name: t.name,
+    title: t.title,
+    description: t.description,
+    category: 'plugin' as const,
+    onDemand: t.onDemand ?? false,
+  }))
+  for (const tool of pluginTools) {
+    idToTool.set(tool.id, tool)
+  }
+
   return Array.from(idToTool.values())
 }
 
@@ -258,6 +254,18 @@ export function registerToolHandlers(
     return getUnifiedBuiltinToolCatalog()
   })
 
+  // 完整工具分类定义（含插件分类），供创建向导等按分类渲染
+  safeHandle(IPC_CHANNELS.TOOL_GET_CATEGORIES, () => {
+    return buildToolCategoryDefs().map(c => ({
+      id: c.id,
+      title: c.title,
+      icon: c.icon,
+      is_plugin: c.isPlugin ?? false,
+      plugin_id: c.pluginId,
+      tool_ids: c.toolIds,
+    }))
+  })
+
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, (params: { employee_id: string }) => {
     const catalog = getUnifiedBuiltinToolCatalog()
 
@@ -302,7 +310,7 @@ export function registerToolHandlers(
         : (lookup?.onDemand ? 'on_demand' : 'on')
     }
 
-    return TOOL_CATEGORY_DEFS.map(categoryDef => {
+    return buildToolCategoryDefs().map(categoryDef => {
       const tools = categoryDef.toolIds
         .map(tid => toolLookup.get(tid))
         .filter((t): t is NonNullable<typeof t> => !!t)
@@ -335,6 +343,8 @@ export function registerToolHandlers(
         title: categoryDef.title,
         description: categoryDef.description,
         icon: categoryDef.icon,
+        is_plugin: categoryDef.isPlugin ?? false,
+        plugin_id: categoryDef.pluginId,
         tool_ids: categoryDef.toolIds,
         tools,
         mode,
@@ -358,7 +368,7 @@ export function registerToolHandlers(
    * 一次性把该分类的工具 ID 全部按传入的 mode 写入
    */
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE, (params: ToolCategoryAssignParams) => {
-    const categoryDef = TOOL_CATEGORY_DEFS.find(c => c.id === params.category_id)
+    const categoryDef = buildToolCategoryDefs().find(c => c.id === params.category_id)
     if (!categoryDef) {
       return { success: false, error: `未知的工具分类: ${params.category_id}` }
     }

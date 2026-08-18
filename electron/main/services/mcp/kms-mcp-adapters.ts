@@ -271,9 +271,6 @@ export const kmsAdapterTools: ToolDefinition[] = [
 const EXCLUDED_MCP_TOOL_IDS = new Set<string>([
   // files（文件管理）
   'file_read', 'file_write', 'file_edit',
-  'file_mkdir', 'file_list', 'file_search',
-  'file_delete', 'file_move', 'file_copy',
-  'file_rename', 'file_stat',
   // scripting（代码执行）
   'javascript_exec',
   // shell（命令行执行）
@@ -309,6 +306,18 @@ export function buildAllBuiltinToolDefinitions(): ToolDefinition[] {
   // 1. 常驻 + 按需的通用内置工具（allBuiltinTools）→ 过滤掉 files/office/shell/ask_user
   for (const t of (agentTools.allBuiltinTools || []) as ToolDefinition[]) {
     if (isToolIncluded(t)) result.push(t)
+  }
+
+  // 1.1 插件贡献的 agent 工具（如日历插件工具），同样按排除清单过滤
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pluginHost = require('../plugin/plugin-host.service').default
+    const pluginTools = (pluginHost.getInstance().getAgentTools() || []) as ToolDefinition[]
+    for (const t of pluginTools) {
+      if (isToolIncluded(t)) result.push(t)
+    }
+  } catch {
+    // 插件宿主未就绪时忽略
   }
 
   // 2. KMS 主工具（scope 为空集合，即不过滤合集，等同于"全部"）

@@ -12,7 +12,7 @@ import type {
   KMSMCPExposedTool,
 } from '../../../shared/channels/kms'
 import {
-  BUILTIN_TOOL_CATEGORIES,
+  getAllMcpCategories,
   convertToolDefinitionToMcpTool,
   invokeBuiltinTool,
   resolveEnabledToolIds,
@@ -90,8 +90,8 @@ class KMSMCPService {
    * 返回工具类别元信息（id / 工具数 / 默认是否启用），供 UI 绘制类别开关。
    */
   listCategories(): KMSMCPToolCategoryInfo[] {
-    return BUILTIN_TOOL_CATEGORIES.map((c) => ({
-      id: c.id,
+    return getAllMcpCategories().map((c) => ({
+      id: c.id as BuiltinToolCategoryId,
       toolIds: [...c.toolIds],
       defaultEnabled: c.defaultEnabled,
       toolCount: c.toolIds.length,
@@ -100,10 +100,10 @@ class KMSMCPService {
 
   /** 根据 toolId 或 name 查所属工具类别，无法匹配返回 'unknown'。 */
   private findToolCategory(toolId: string, name: string): BuiltinToolCategoryId | 'unknown' {
-    for (const cat of BUILTIN_TOOL_CATEGORIES) {
+    for (const cat of getAllMcpCategories()) {
       for (const id of cat.toolIds) {
         if (id === toolId || id === name) {
-          return cat.id
+          return cat.id as BuiltinToolCategoryId
         }
       }
     }

@@ -120,4 +120,4 @@ resources/models/** filter=lfs diff=lfs merge=lfs -text
 *.dll binary
 *.db binary
 *.sqlite binary
-resources/streaming-zipformer/tokens.txt filter=lfs diff=lfs merge=lfs -text
+plugins/voice/resources/streaming-zipformer/tokens.txt filter=lfs diff=lfs merge=lfs -text

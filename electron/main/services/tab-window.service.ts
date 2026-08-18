@@ -2,11 +2,12 @@ import { BrowserWindow, app } from 'electron'
 import path from 'path'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
+import PluginHostService from './plugin/plugin-host.service'
 
 const logger = createLogger('TabWindow')
 
-/** 可分离为独立窗口的 tab key（与 NavItemKey 对齐，排除 settings） */
-export const DETACHABLE_TABS = ['tasks', 'employees', 'kms', 'voice', 'calendar', 'notes', 'automation'] as const
+/** 可分离为独立窗口的内核 tab key（插件 tab 的可分离性由 manifest.nav.detachable 决定，运行时向 PluginHost 查询） */
+export const DETACHABLE_TABS = ['tasks', 'employees', 'kms'] as const
 export type DetachableTab = typeof DETACHABLE_TABS[number]
 
 /** tabKey → 初始窗口标题（渲染端加载后由 document.title 覆盖为 i18n 标题） */
@@ -14,14 +15,17 @@ const TAB_LABELS: Record<DetachableTab, string> = {
   tasks: '任务',
   employees: '数字员工',
   kms: '资料库',
-  voice: '语音识别',
-  calendar: '日历',
-  notes: '笔记',
-  automation: '自动化',
 }
 
-function isDetachable(tabKey: string): tabKey is DetachableTab {
-  return (DETACHABLE_TABS as readonly string[]).includes(tabKey)
+function isDetachable(tabKey: string): boolean {
+  if ((DETACHABLE_TABS as readonly string[]).includes(tabKey)) return true
+  return PluginHostService.getInstance().isDetachable(tabKey)
+}
+
+function getTabTitle(tabKey: string): string {
+  const builtin = TAB_LABELS[tabKey as DetachableTab]
+  if (builtin) return builtin
+  return PluginHostService.getInstance().getPluginName(tabKey) ?? tabKey
 }
 
 /**
@@ -61,11 +65,15 @@ class TabWindowService {
 
   private loadTabUrl(win: BrowserWindow, tabKey: string): void {
     const isDev = !app.isPackaged
+    // 插件 tab：路由挂于 /window/plugin/<id> 命名空间（与主窗口 /plugin/<id> 对应）
+    const urlTabKey = PluginHostService.getInstance().isDetachable(tabKey) && !(DETACHABLE_TABS as readonly string[]).includes(tabKey as any)
+      ? `plugin/${tabKey}`
+      : tabKey
     if (isDev) {
-      win.loadURL(`http://localhost:5173/#/window/${tabKey}`)
+      win.loadURL(`http://localhost:5173/#/window/${urlTabKey}`)
     } else {
       // loadFile 的 hash 选项自动加 # 前缀，需带前导 / 匹配 createHashRouter
-      win.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'), { hash: `/window/${tabKey}` })
+      win.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'), { hash: `/window/${urlTabKey}` })
     }
   }
 
@@ -99,7 +107,7 @@ class TabWindowService {
     }
 
     const win = new BrowserWindow({
-      title: TAB_LABELS[tabKey],
+      title: getTabTitle(tabKey),
       width: 1080,
       height: 720,
       minWidth: 720,
@@ -117,6 +125,8 @@ class TabWindowService {
     })
 
     this.windows.set(tabKey, win)
+    // 独立窗口纳入插件广播目标（与主窗口同权接收 ctx.ipc.broadcast 推送）
+    PluginHostService.getInstance().addTarget(win)
 
     win.on('ready-to-show', () => {
       win.show()

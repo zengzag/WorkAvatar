@@ -17,6 +17,11 @@ build/
 build-info.json
 
 # =====================================
+# Plugin DevKit 生成物（由 scripts/package-plugin-devkit.mjs 组装，勿提交）
+# =====================================
+plugin-devkit/
+
+# =====================================
 # Electron Specific
 # =====================================
 *.exe

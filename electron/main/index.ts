@@ -6,9 +6,8 @@ import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
-import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
-import AutomationSchedulerService from './services/automation/automation-scheduler.service'
 import TabWindowService from './services/tab-window.service'
+import PluginHostService from './services/plugin/plugin-host.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { createLogger, LoggerBackend } from './services/logger'
@@ -26,9 +25,6 @@ process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error)
   if (isCrashing) return
   isCrashing = true
-  // 停止调度器，避免在进程退出期间继续触发新任务产生更多异常
-  try { CalendarSchedulerService.getInstance().stop() } catch { /* ignore */ }
-  try { AutomationSchedulerService.getInstance().stop() } catch { /* ignore */ }
   // 延迟 1s 退出，让日志写入磁盘；不可恢复的异常下继续运行会放大损坏
   setTimeout(() => {
     try { LLMLoggerService.getInstance().destroy() } catch { /* ignore */ }
@@ -91,9 +87,20 @@ app.setAppUserModelId('com.workavatar.desktop')
 const isDev = !app.isPackaged
 
 // 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
+// 注册 plugin:// 特权协议，供渲染端动态 import 插件 ESM 入口（CORS 放行跨源模块加载）
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: 'plugin',
     privileges: {
       standard: true,
       secure: true,
@@ -342,6 +349,8 @@ async function createWindow() {
   NotificationService.getInstance().setMainWindow(mainWindow)
   // 注入主窗口引用给 Tab 独立窗口服务，用于推送 detached 状态变化
   TabWindowService.getInstance().setMainWindow(mainWindow)
+  // 主窗口纳入插件广播目标（插件 ctx.ipc.broadcast 推送范围）
+  PluginHostService.getInstance().addTarget(mainWindow)
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
@@ -398,6 +407,20 @@ function createTray() {
 
 app.whenReady().then(() => {
   logger.info('App ready, registering IPC handlers and creating window')
+
+  // 插件协议：plugin://<id>/<相对路径> → 插件目录内文件（宿主校验启停与路径越权）
+  protocol.handle('plugin', (request) => {
+    return PluginHostService.getInstance().servePluginFile(request.url)
+  })
+
+  // 插件加载必须先于内核 agent 服务初始化（registerIpcHandlers 内创建 EmployeeAgentService），
+  // 保证插件注册的 agent 工具/贡献点在内核服务装配前就位
+  try {
+    PluginHostService.getInstance().init()
+  } catch (err: any) {
+    logger.error('PluginHost init failed:', err?.message || err)
+  }
+
   registerAppFileProtocol()
   registerIpcHandlers()
 
@@ -427,41 +450,17 @@ app.whenReady().then(() => {
     }
   }
 
-  // 启动日历提醒调度器（每 30 秒扫描到期提醒并推送通知）
-  try {
-    CalendarSchedulerService.getInstance().start()
-  } catch (err: any) {
-    logger.warn('Calendar scheduler start failed:', err?.message || err)
-  }
-
-  // 启动自动化任务调度器（每 30 秒扫描到期任务并触发执行）
-  try {
-    AutomationSchedulerService.getInstance().start()
-  } catch (err: any) {
-    logger.warn('Automation scheduler start failed:', err?.message || err)
-  }
+  // 启动自动化任务调度器（已插件化，由 automation 插件经 ctx.services.scheduler 驱动）
 })
 
 app.on('before-quit', () => {
   isQuitting = true
   logger.info('Application quitting, cleaning up resources')
-  // 停止日历提醒调度器
+  // 插件退出清理：deactivate + 注销插件注册的全局快捷键
   try {
-    CalendarSchedulerService.getInstance().stop()
+    PluginHostService.getInstance().shutdown()
   } catch (error) {
-    logger.error('Failed to stop CalendarSchedulerService:', error)
-  }
-  // 停止自动化任务调度器
-  try {
-    AutomationSchedulerService.getInstance().stop()
-  } catch (error) {
-    logger.error('Failed to stop AutomationSchedulerService:', error)
-  }
-  // 关闭悬浮字幕窗口
-  try {
-    require('./services/voice/subtitle-window.service').default.getInstance().destroy()
-  } catch (error) {
-    logger.error('Failed to destroy subtitle window:', error)
+    logger.error('Failed to shutdown PluginHost:', error)
   }
   // 关闭所有 Tab 独立窗口
   try {

@@ -11,6 +11,7 @@ import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSide
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
+import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import type { AvailableSkill } from '../components/workbench/ChatInput'
 import type { Employee } from '../types'
@@ -781,6 +782,8 @@ const Tasks: React.FC = () => {
           )}
           {taskMode === 'chat' && (
             <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, display: 'flex', gap: 6, alignItems: 'center' }}>
+              {/* 插件视图注入点：任务对话页头部操作区 */}
+              <PluginViewSlot view="chat.header" />
               <Dropdown menu={{ items: moreMenuItems }} trigger={['click']} placement="bottomRight">
                 <Button type="text" size="small"
                   icon={<HorizontalDotsIcon style={{ fontSize: 14 }} />}

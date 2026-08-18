@@ -10,6 +10,8 @@ import {
   BulbOutlined,
   ToolOutlined,
   CodeOutlined,
+  AppstoreOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -21,77 +23,35 @@ interface ToolItem {
   description?: string
 }
 
+/** 工具分类（来自后端，含插件分类） */
+export interface ToolCategoryDef {
+  id: string
+  title: string
+  icon: string
+  is_plugin?: boolean
+  plugin_id?: string
+  tool_ids: string[]
+}
+
 interface ToolCheckboxesProps {
   tools: ToolItem[]
+  categories: ToolCategoryDef[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
 }
 
-/** 工具分类定义（与后端 TOOL_CATEGORY_DEFS 对齐） */
-const TOOL_CATEGORIES: Array<{
-  id: string
-  icon: React.ReactNode
-  toolIds: string[]
-}> = [
-  {
-    id: 'file_operations',
-    icon: <FileOutlined />,
-    toolIds: [
-      'file_read', 'file_write', 'file_edit', 'report_generated_files',
-      'file_mkdir', 'file_list', 'file_search',
-      'file_delete', 'file_move', 'file_copy',
-      'file_rename', 'file_stat', 'ocr_image',
-    ],
-  },
-  {
-    id: 'kms',
-    icon: <DatabaseOutlined />,
-    toolIds: [
-      'kms_search', 'kms_get_content', 'kms_knowledge_card',
-      'kms_list_collections', 'kms_collection_overview',
-      'kms_get_toc', 'kms_get_paragraphs',
-    ],
-  },
-  {
-    id: 'calendar',
-    icon: <CalendarOutlined />,
-    toolIds: [
-      'calendar_event_list', 'calendar_event_create', 'calendar_event_update', 'calendar_event_delete',
-      'calendar_todo_list', 'calendar_todo_create', 'calendar_todo_update',
-      'calendar_todo_delete', 'calendar_todo_complete', 'calendar_todo_stats',
-    ],
-  },
-  {
-    id: 'automation',
-    icon: <RobotOutlined />,
-    toolIds: [
-      'automation_list_employees', 'automation_list_providers',
-      'automation_task_list', 'automation_task_create', 'automation_task_update',
-      'automation_task_delete', 'automation_task_toggle',
-      'automation_task_run_now', 'automation_task_preview', 'automation_run_list',
-    ],
-  },
-  {
-    id: 'web',
-    icon: <GlobalOutlined />,
-    toolIds: ['web_search', 'web_fetch'],
-  },
-  {
-    id: 'scripting',
-    icon: <CodeOutlined />,
-    toolIds: ['shell_exec', 'javascript_exec'],
-  },
-  {
-    id: 'conversation_memory',
-    icon: <MessageOutlined />,
-    toolIds: ['search_conversations', 'list_conversations', 'get_conversation_detail'],
-  },
-  {
-    id: 'basic_helpers',
-    icon: <BulbOutlined />,
-    toolIds: ['date_time', 'ask_user'],
-  },
-]
+const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
+  file: <FileOutlined />,
+  database: <DatabaseOutlined />,
+  calendar: <CalendarOutlined />,
+  robot: <RobotOutlined />,
+  global: <GlobalOutlined />,
+  message: <MessageOutlined />,
+  tool: <BulbOutlined />,
+  code: <CodeOutlined />,
+  plugin: <AppstoreOutlined />,
+  team: <TeamOutlined />,
+}
 
 /** 将工具名/标题映射为更简短的中文标签 */
 function toolShortLabel(tool: ToolItem, t: any): string {
@@ -101,8 +61,8 @@ function toolShortLabel(tool: ToolItem, t: any): string {
   return tool.title || tool.name
 }
 
-/** 内置工具多选列表（按分类分组） */
-const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, selectedIds, onChange }) => {
+/** 工具多选列表（按分类分组，分类来自后端含插件分类） */
+const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, categories, selectedIds, onChange }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
 
@@ -136,9 +96,9 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, selectedIds, onC
       </Text>
 
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-        {TOOL_CATEGORIES.map((cat) => {
+        {categories.map((cat) => {
           // 从传入 tools 中找出属于该分类的工具（保证 UI 不展示不存在的工具）
-          const catTools = tools.filter(tl => cat.toolIds.includes(tl.id))
+          const catTools = tools.filter(tl => cat.tool_ids.includes(tl.id))
           if (catTools.length === 0) return null
 
           const catToolIds = catTools.map(tl => tl.id)
@@ -168,10 +128,17 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, selectedIds, onC
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                  <span style={{ color: token.colorPrimary }}>{cat.icon}</span>
+                  <span style={{ color: token.colorPrimary }}>{CATEGORY_ICON_MAP[cat.icon] || <AppstoreOutlined />}</span>
                   <Text strong ellipsis style={{ fontSize: 13 }}>
-                    {t(`employeeSettings.toolCategory_${cat.id}`, { defaultValue: cat.id })}
+                    {cat.is_plugin
+                      ? t(cat.title, { ns: cat.plugin_id, defaultValue: cat.title })
+                      : t(`employeeSettings.toolCategory_${cat.id}`, { defaultValue: cat.title })}
                   </Text>
+                  {cat.is_plugin && (
+                    <Tag color="purple" style={{ fontSize: 11, padding: '0 6px', marginInlineEnd: 0 }}>
+                      {t('employeeSettings.plugin')}
+                    </Tag>
+                  )}
                   <Tag
                     color={
                       allChecked ? 'green' : someChecked ? 'orange' : 'default'

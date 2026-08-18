@@ -1,0 +1,273 @@
+#!/usr/bin/env node
+// scripts/build-plugin.mjs — WorkAvatar 插件构建脚本（单一权威源）
+//
+// 本脚本是插件构建的单一事实源，两种场景复用：
+//   1. 仓库内：scripts/build-plugins.mjs 遍历 plugins/ 目录后逐个调用本脚本
+//   2. 第三方：scripts/package-plugin-devkit.mjs 打包时把本脚本复制到
+//      plugin-template/build-plugin.mjs，随开发包分发（自包含，可独立运行）
+//
+// 用法（在插件工程根目录，或指定插件目录）：
+//   node build-plugin.mjs [pluginDir]      # 构建主进程 CJS + 渲染端 ESM 到 dist/
+//   node build-plugin.mjs [pluginDir] --zip # 构建并产出独立分发包 <id>-v<version>.zip
+//
+// 约定：
+//   - 读取 <pluginDir>/manifest.json 的 main / renderer 入口
+//   - 主进程入口（dist/main/index.cjs）→ CJS（platform=node, target=node20）
+//   - 渲染端入口（dist/renderer/index.js）→ ESM（platform=browser, target=es2020, jsx=automatic）
+//   - 渲染端共享库（react/antd 等）经 __WA_HOST__ 单例 shim 内联，产物不残留裸模块标识符
+//   - CSS 自动内联为 <style> 注入
+//   - zip 仅含运行时必需文件：manifest.json + dist/** + locale/** + resources/**
+import esbuild from 'esbuild'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+
+/** node 内置模块：主进程入口全部 external（electron 一并 external） */
+const NODE_BUILTINS = [
+  'assert', 'path', 'fs', 'os', 'crypto', 'util', 'stream', 'events', 'buffer',
+  'child_process', 'cluster', 'dns', 'http', 'https', 'net', 'tls', 'zlib', 'url',
+  'querystring', 'punycode', 'string_decoder', 'readline', 'tty', 'perf_hooks',
+  'async_hooks', 'v8', 'module', 'process', 'worker_threads',
+]
+
+/** 渲染端共享库 → __WA_HOST__ 全局命名空间映射（宿主在 globalThis.__WA_HOST__ 注入单例） */
+const HOST_EXTERNALS = {
+  react: '__WA_HOST__.React',
+  'react-dom': '__WA_HOST__.ReactDOM',
+  'react-dom/client': '__WA_HOST__.ReactDOM',
+  'react/jsx-runtime': '__WA_HOST__.jsxRuntime',
+  'react/jsx-dev-runtime': '__WA_HOST__.jsxRuntime',
+  antd: '__WA_HOST__.antd',
+  '@ant-design/icons': '__WA_HOST__.icons',
+  i18next: '__WA_HOST__.i18n',
+  'react-i18next': '__WA_HOST__.reactI18n',
+}
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** 合法 JS 标识符（排除 default 等非标识符导出） */
+const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
+/**
+ * 生成共享库 shim 模块源码：读取 __WA_HOST__ 全局单例，
+ * 导出 default + 全部具名导出（从已安装包枚举，esbuild 会按需 tree-shake）。
+ */
+function buildShimCode(pkg, globalPath) {
+  const ns = require(pkg)
+  const keys = Object.keys(ns).filter((k) => k !== 'default' && IDENTIFIER_RE.test(k))
+  const lines = [`const _m = globalThis.${globalPath};`, 'export default _m;']
+  for (const k of keys) lines.push(`export const ${k} = _m.${k};`)
+  return lines.join('\n')
+}
+
+/**
+ * 渲染端共享库 → 宿主 __WA_HOST__ 单例：
+ * 用 esbuild 虚拟模块（onResolve + onLoad）把共享库导入内联为读取 globalThis.__WA_HOST__.X 的 shim。
+ */
+function createHostExternalsPlugin() {
+  return {
+    name: 'wa-host-externals',
+    setup(build) {
+      for (const pkg of Object.keys(HOST_EXTERNALS)) {
+        build.onResolve({ filter: new RegExp(`^${escapeRegExp(pkg)}$`) }, (args) => ({
+          path: args.path,
+          namespace: 'wa-host',
+        }))
+      }
+      build.onLoad({ filter: /.*/, namespace: 'wa-host' }, (args) => ({
+        contents: buildShimCode(args.path, HOST_EXTERNALS[args.path]),
+        loader: 'js',
+      }))
+    },
+  }
+}
+
+/**
+ * CSS 内联插件：把插件内的 CSS 导入读取为源码，运行时注入 <style> 标签。
+ * 相对路径（插件内 css）与裸路径（node_modules，如 vditor/dist/index.css）均可解析。
+ */
+function inlineCssPlugin(pluginDir) {
+  return {
+    name: 'inline-css',
+    setup(build) {
+      build.onResolve({ filter: /\.css$/ }, (args) => ({
+        path: args.path,
+        namespace: 'wa-css',
+        pluginData: { resolveDir: args.resolveDir },
+      }))
+      build.onLoad({ filter: /\.css$/, namespace: 'wa-css' }, (args) => {
+        const resolveDir = args.pluginData?.resolveDir || pluginDir
+        let fullPath = path.isAbsolute(args.path)
+          ? args.path
+          : path.resolve(resolveDir, args.path)
+        if (!fs.existsSync(fullPath)) {
+          // 裸路径（如 vditor/dist/index.css）：回退到插件目录解析
+          const resolved = require.resolve(args.path, { paths: [pluginDir] })
+          fullPath = resolved
+        }
+        const css = fs.readFileSync(fullPath, 'utf8')
+        const escaped = css.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
+        return {
+          contents: `const style = document.createElement('style');\nstyle.textContent = \`${escaped}\`;\ndocument.head.appendChild(style);`,
+          loader: 'js',
+        }
+      })
+    },
+  }
+}
+
+/**
+ * 由 manifest 入口推导源码路径：dist/xxx → src/xxx，扩展名按入口类型回退探测。
+ * 例：dist/main/index.cjs → src/main/index.ts；dist/renderer/index.js → src/renderer/index.tsx
+ */
+function resolveSource(pluginDir, entry, kind) {
+  const rel = entry.replace(/^dist[\\/]/i, 'src/').replace(/\.[^.]+$/, '')
+  const exts = kind === 'main'
+    ? ['.ts', '.tsx', '.cjs', '.js', '.mjs']
+    : ['.tsx', '.ts', '.js', '.jsx']
+  for (const ext of exts) {
+    const candidate = path.join(pluginDir, rel + ext)
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return path.join(pluginDir, rel + (kind === 'main' ? '.ts' : '.tsx'))
+}
+
+async function buildMain(pluginDir, entry) {
+  const outfile = path.join(pluginDir, entry)
+  await esbuild.build({
+    entryPoints: [resolveSource(pluginDir, entry, 'main')],
+    outfile,
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'cjs',
+    external: ['electron', ...NODE_BUILTINS],
+  })
+  return outfile
+}
+
+async function buildRenderer(pluginDir, entry) {
+  const outfile = path.join(pluginDir, entry)
+  await esbuild.build({
+    entryPoints: [resolveSource(pluginDir, entry, 'renderer')],
+    outfile,
+    bundle: true,
+    platform: 'browser',
+    target: 'es2020',
+    format: 'esm',
+    jsx: 'automatic',
+    define: { 'import.meta.env.DEV': 'false' },
+    plugins: [createHostExternalsPlugin(), inlineCssPlugin(pluginDir)],
+  })
+  return outfile
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+function formatError(err) {
+  if (err && Array.isArray(err.errors) && err.errors.length) {
+    return err.errors.map((e) => e.text).join('; ')
+  }
+  return err?.message || String(err)
+}
+
+/**
+ * 生成插件分发包 zip：仅含运行时必需文件（manifest/dist/locale/resources）。
+ * zip 根即为插件内容（解压后顶层是 manifest.json），供应用内直接导入。
+ */
+function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
+  const zip = new AdmZip()
+  const addPath = (rel) => {
+    const full = path.join(pluginDir, rel)
+    if (fs.existsSync(full)) {
+      if (fs.statSync(full).isDirectory()) zip.addLocalFolder(full, rel)
+      else zip.addLocalFile(full)
+    }
+  }
+  addPath('manifest.json')
+  addPath('dist')
+  addPath('locale')
+  addPath('resources')
+  fs.mkdirSync(outDir, { recursive: true })
+  const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.zip`)
+  zip.writeZip(outPath)
+  return outPath
+}
+
+async function main() {
+  const args = process.argv.slice(2)
+  const zipMode = args.includes('--zip')
+  const dirArg = args.find((a) => !a.startsWith('--'))
+  const pluginDir = path.resolve(dirArg || process.cwd())
+
+  const manifestPath = path.join(pluginDir, 'manifest.json')
+  if (!fs.existsSync(manifestPath)) {
+    console.error(`[build-plugin] 未找到 manifest.json：${manifestPath}`)
+    console.error('用法：node build-plugin.mjs [pluginDir] [--zip]')
+    process.exit(1)
+  }
+
+  let manifest
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+  } catch (err) {
+    console.error(`[build-plugin] manifest.json 解析失败: ${err.message}`)
+    process.exit(1)
+  }
+  if (!manifest.main) {
+    console.error(`[build-plugin] manifest 缺少 main 入口`)
+    process.exit(1)
+  }
+
+  // 先删除目标 dist 目录再重建
+  fs.rmSync(path.join(pluginDir, 'dist'), { recursive: true, force: true })
+
+  console.log(`[build-plugin] 构建 ${manifest.id} v${manifest.version || '?'}...`)
+  const outputs = []
+  const errors = []
+
+  try {
+    outputs.push({ file: await buildMain(pluginDir, manifest.main), label: 'main' })
+  } catch (err) {
+    errors.push(`主进程构建失败: ${formatError(err)}`)
+  }
+
+  if (errors.length === 0 && manifest.renderer) {
+    try {
+      outputs.push({ file: await buildRenderer(pluginDir, manifest.renderer), label: 'renderer' })
+    } catch (err) {
+      errors.push(`渲染端构建失败: ${formatError(err)}`)
+    }
+  }
+
+  if (errors.length > 0) {
+    for (const e of errors) console.error(`[build-plugin]   ✗ ${e}`)
+    process.exit(1)
+  }
+
+  for (const { file, label } of outputs) {
+    const size = fs.existsSync(file) ? fs.statSync(file).size : 0
+    console.log(`[build-plugin]   ✓ ${label} → ${path.relative(pluginDir, file)} (${formatSize(size)})`)
+  }
+
+  if (zipMode) {
+    const outDir = path.join(pluginDir, 'release', 'plugins')
+    const AdmZip = require('adm-zip')
+    const outPath = packPluginZip(pluginDir, manifest, outDir, AdmZip)
+    const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0
+    console.log(`[build-plugin]   📦 ${path.relative(pluginDir, outPath)} (${formatSize(size)})`)
+  }
+
+  console.log(`[build-plugin] 完成`)
+}
+
+main().catch((err) => {
+  console.error(`[build-plugin] 执行失败: ${err?.message || err}`)
+  process.exit(1)
+})
