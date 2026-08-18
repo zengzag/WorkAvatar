@@ -5,7 +5,7 @@
  * - IPC 经 ctx.ipc.handle 注册（通道自动加 plugin:automation: 前缀，短名见 manifest 白名单），写操作后广播 data-changed
  * - agent 工具经 ctx.contributions.registerAgentTools 注入（工具 id 不变，老员工配置无需迁移）
  * - 调度器经 ctx.services.scheduler.every(30s) 驱动
- * - conversation 删除双向同步：订阅 ctx.services.conversations.onDeleted 清理关联 run 记录
+ * - conversation 删除双向同步：订阅 ctx.services.events 的 conversation:deleted 清理关联 run 记录
  */
 import type {
   PluginContext,

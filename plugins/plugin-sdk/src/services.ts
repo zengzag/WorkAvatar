@@ -76,7 +76,6 @@ export interface PluginExecuteRequest {
   system?: string
   history?: string[]
   conversationId?: string
-  title?: string
   temperature?: number
   maxTokens?: number
   useSkills?: boolean
@@ -119,141 +118,7 @@ export interface PluginEventService {
   publish(event: string, payload?: unknown): void
 }
 
-// ====== 保留服务（v1 保留不变） ======
-
-export interface PluginLlmChatRequest {
-  prompt: string
-  system?: string
-  /** 不传则用默认模型 */
-  providerId?: string
-  modelId?: string
-}
-
-/** 流式 LLM 调用回调（对齐宿主 PiAIProvider.chatStream） */
-export interface PluginLlmStreamCallbacks {
-  onChunk?: (text: string) => void
-  onThought?: (thought: string) => void
-  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
-}
-
-export interface PluginLlmChatStreamRequest {
-  /** 用户消息内容（多轮时按顺序追加 role=user 消息） */
-  prompt: string
-  /** 追加的历史用户消息（可选，按序放在 prompt 之前） */
-  history?: string[]
-  system?: string
-  /** 不传则用默认模型 */
-  providerId?: string
-  modelId?: string
-  temperature?: number
-  maxTokens?: number
-}
-
-/** 受控 LLM 调用（经宿主 PiAIProvider，自动记 LLM 日志与用量） */
-export interface PluginLlmService {
-  chat(request: PluginLlmChatRequest): Promise<string>
-  /** 流式生成（如会议纪要逐字渲染），回调返回累积文本 */
-  chatStream(
-    request: PluginLlmChatStreamRequest,
-    callbacks?: PluginLlmStreamCallbacks,
-    signal?: AbortSignal
-  ): Promise<string>
-}
-
-export interface PluginAgentTaskParams {
-  employeeId: string
-  prompt: string
-  /** 复用已有会话；不传则新建 */
-  conversationId?: string
-  /** 任务标题（运行记录展示用） */
-  title?: string
-}
-
-export interface PluginAgentTaskCallbacks {
-  onChunk?: (text: string) => void
-  onDone?: (result: { text: string }) => void
-  onError?: (error: string) => void
-}
-
-export interface PluginAgentTaskResult {
-  conversationId?: string
-  text: string
-}
-
-/** 数字员工委派（需 agent 能力） */
-export interface PluginAgentService {
-  listEmployees(): Promise<Array<{ id: string; name: string }>>
-  /** 列出 LLM 供应商及其可用模型（需 agent 能力），供自动化等场景选择 provider/model */
-  listProviders(): Promise<Array<{
-    id: string
-    name: string
-    provider_type: string
-    default_model: string
-    models: Array<{ id: string; model: string; name: string; is_default: boolean; category: string }>
-  }>>
-  runTask(
-    params: PluginAgentTaskParams,
-    callbacks?: PluginAgentTaskCallbacks,
-    signal?: AbortSignal
-  ): Promise<PluginAgentTaskResult>
-  /**
-   * 底层对话流式执行（需 agent 能力）：直接调用宿主 EmployeeAgentService.chatStream，
-   * 允许精细控制 provider/model/high_permission/use_skills/minimal_mode 等参数。
-   * 适用于自动化任务等需要精确控制执行参数、且需自行管理 conversation 的场景。
-   */
-  chatStream(
-    params: PluginAgentChatStreamParams,
-    callbacks?: PluginAgentChatStreamCallbacks,
-    signal?: AbortSignal
-  ): Promise<void>
-}
-
-/** 底层对话流式执行参数（对齐宿主 EmployeeAgentService.chatStream） */
-export interface PluginAgentChatStreamParams {
-  employeeId: string
-  providerId: string
-  modelId?: string
-  messages: Array<{ role: string; content: string }>
-  /** 复用已有会话；不传则新建 */
-  conversationId?: string
-  useSkills?: boolean
-  enableThinking?: boolean
-  minimalMode?: boolean
-  highPermission?: boolean
-}
-
-export interface PluginAgentChatStreamCallbacks {
-  onChunk?: (text: string) => void
-  onThought?: (thought: string) => void
-  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
-  onDone?: (metadata?: unknown) => void
-  onError?: (error: string) => void
-}
-
-export interface PluginConversationSummary {
-  id: string
-  title: string
-  employeeId: string
-  updatedAt: string
-}
-
-/** 内核对话只读查询（需 conversations 能力） */
-export interface PluginConversationReader {
-  getTitle(conversationId: string): Promise<string | null>
-  listRecent(limit?: number): Promise<PluginConversationSummary[]>
-  /**
-   * 订阅内核 conversation 删除事件（需 conversations 能力）。
-   * 内核删除任意 conversation（含自动化任务产生的对话）时回调 conversationId，
-   * 插件据此清理自身关联数据（如自动化 run 记录）。返回取消订阅函数。
-   */
-  onDeleted(callback: (conversationId: string) => void): () => void
-  /** 创建 conversation（需 conversations 能力），返回新会话 id */
-  create(employeeId: string, title?: string): Promise<string>
-  /** 更新 conversation 字段（messages_json / message_count / last_message_at / employee_id 等） */
-  update(id: string, data: Record<string, unknown>): Promise<void>
-  /** 删除 conversation（含其子会话与关联数据） */
-  delete(id: string): Promise<void>
-}
+// ====== 系统集成层（services.scheduler / windows / native） ======
 
 export interface PluginSchedulerService {
   /** 固定间隔任务，返回 jobId */
@@ -341,9 +206,6 @@ export interface PluginServices {
   /** 事件总线（需 capabilities.events 授权） */
   events?: PluginEventService
   notification?: PluginNotificationService
-  llm?: PluginLlmService
-  agent?: PluginAgentService
-  conversations?: PluginConversationReader
   scheduler?: PluginSchedulerService
   windows?: PluginWindowService
   native?: PluginNativeService

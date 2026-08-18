@@ -96,11 +96,11 @@ describe('createDataAccessService.query', () => {
     await expect(svc.query('settings')).rejects.toThrow('key')
   })
 
-  it('settings 查询返回单值数组', async () => {
+  it('settings 查询返回 { key, value } 行', async () => {
     const deps = makeDeps()
     const svc = createDataAccessService(deps)
     const rows = await svc.query('settings', { filter: { key: 'theme' } })
-    expect(rows).toEqual(['value'])
+    expect(rows).toEqual([{ key: 'theme', value: 'value' }])
   })
 
   it('未知实体拒绝', async () => {

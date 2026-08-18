@@ -142,11 +142,13 @@ export const migrations = _migrations
 // ====== 激活 ======
 
 let scheduler: CalendarScheduler | null = null
+let outlookSync: ReturnType<typeof getOutlookSyncService> | null = null
 
 export function activate(ctx: PluginContext): void {
   const calendar = getCalendarService(ctx)
   const auth = getOutlookAuthService(ctx)
   const sync = getOutlookSyncService(ctx)
+  outlookSync = sync
   scheduler = new CalendarScheduler(ctx)
   registerIpc(ctx)
   ctx.contributions.registerAgentTools(createCalendarTools())
@@ -159,6 +161,10 @@ export function deactivate(): void {
   if (scheduler) {
     scheduler.stop()
     scheduler = null
+  }
+  if (outlookSync) {
+    outlookSync.stop()
+    outlookSync = null
   }
 }
 

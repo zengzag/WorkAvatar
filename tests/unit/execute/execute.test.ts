@@ -27,10 +27,10 @@ describe('createExecuteService.execute', () => {
   it('agent-task 分发到 runAgentTask', async () => {
     const deps = makeDeps()
     const svc = createExecuteService(deps)
-    const result = await svc.execute({ kind: 'agent-task', employeeId: 'e1', prompt: '任务', title: '标题' })
+    const result = await svc.execute({ kind: 'agent-task', employeeId: 'e1', prompt: '任务' })
     expect(result).toEqual({ conversationId: 'c1', text: '结果' })
     expect(deps.runAgentTask).toHaveBeenCalledWith(
-      { employeeId: 'e1', prompt: '任务', conversationId: undefined, title: '标题' },
+      { employeeId: 'e1', prompt: '任务', conversationId: undefined },
       undefined,
       undefined,
     )

@@ -3,7 +3,7 @@
  * - DB 改为插件分库（ctx.storage.openSqlite('index')），建 kms_voice_tasks 表
  * - settings 改为 plugin_kv（key='voice_settings'）
  * - 录音文件目录：ctx.services.host.getDataDir() + '/voice'
- * - 纪要生成：ctx.services.llm.chatStream（通过宿主 LLM 服务）
+ * - 纪要生成：ctx.services.execute.execute({ kind: 'llm-stream', ... })（经宿主统一执行入口）
  * - 进度推送：ctx.ipc.broadcast（广播到本插件所有渲染端窗口）
  */
 import fs from 'fs'

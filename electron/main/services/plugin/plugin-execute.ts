@@ -16,7 +16,6 @@ export interface ExecuteDeps {
       employeeId: string
       prompt: string
       conversationId?: string
-      title?: string
     },
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
@@ -74,7 +73,6 @@ export function createExecuteService(deps: ExecuteDeps) {
               employeeId: request.employeeId,
               prompt: request.prompt,
               conversationId: request.conversationId,
-              title: request.title,
             },
             callbacks,
             signal,

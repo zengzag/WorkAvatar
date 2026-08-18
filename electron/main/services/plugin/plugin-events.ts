@@ -40,7 +40,7 @@ export function createEventBus(
   }
 }
 
-/** 宿主向所有订阅插件广播事件（内核事件转发） */
+/** 宿主向所有订阅插件广播事件（内核事件转发，供宿主/第三方调用） */
 export function notifyEvent(listenerMap: EventListenerMap, event: string, payload: unknown): void {
   const set = listenerMap.get(event)
   if (!set) return

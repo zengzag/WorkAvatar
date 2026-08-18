@@ -321,29 +321,30 @@ class PluginHostService {
   }
 
   private scanPlugin(rootDir: string, disabled: Set<string>): void {
-    const fail = (message: string) => {
-      this.records.set(rootDir, {
-        manifest: { id: path.basename(rootDir), name: path.basename(rootDir), version: '0.0.0', engine: '*', main: '' },
+    // 无效插件统一以 id（目录名）为 key，与有效插件一致，保证可被删除/管理
+    const fail = (id: string, message: string) => {
+      this.records.set(id, {
+        manifest: { id, name: id, version: '0.0.0', engine: '*', main: '' },
         source: 'user', rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
       })
     }
     const manifestPath = path.join(rootDir, 'manifest.json')
-    if (!fs.existsSync(manifestPath)) return fail('缺少 manifest.json')
+    if (!fs.existsSync(manifestPath)) return fail(path.basename(rootDir), '缺少 manifest.json')
     let manifest: PluginManifest
     try {
       manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
     } catch (err: any) {
-      return fail(`manifest.json 解析失败: ${err?.message || err}`)
+      return fail(path.basename(rootDir), `manifest.json 解析失败: ${err?.message || err}`)
     }
-    if (!ID_RE.test(manifest.id ?? '')) return fail(`id 非法: ${manifest.id}`)
-    if (RESERVED_IDS.includes(manifest.id)) return fail(`id 为保留字: ${manifest.id}`)
-    if (!manifest.main) return fail('缺少 main 入口')
+    if (!ID_RE.test(manifest.id ?? '')) return fail(path.basename(rootDir), `id 非法: ${manifest.id}`)
+    if (RESERVED_IDS.includes(manifest.id)) return fail(manifest.id, `id 为保留字: ${manifest.id}`)
+    if (!manifest.main) return fail(manifest.id, '缺少 main 入口')
     const entryPath = path.join(rootDir, manifest.main)
-    if (!fs.existsSync(entryPath)) return fail(`主进程入口不存在: ${manifest.main}`)
+    if (!fs.existsSync(entryPath)) return fail(manifest.id, `主进程入口不存在: ${manifest.main}`)
     const engineOk = engineSatisfies(manifest.engine ?? '*', PLUGIN_PROTOCOL_VERSION)
-    if (!engineOk) return fail(`engine 不兼容: 需要 ${manifest.engine}，宿主协议 ${PLUGIN_PROTOCOL_VERSION}`)
+    if (!engineOk) return fail(manifest.id, `engine 不兼容: 需要 ${manifest.engine}，宿主协议 ${PLUGIN_PROTOCOL_VERSION}`)
     const capCheck = validateCapabilities(manifest.capabilities)
-    if (!capCheck.ok) return fail(`capabilities 非法: ${capCheck.reason}`)
+    if (!capCheck.ok) return fail(manifest.id, `capabilities 非法: ${capCheck.reason}`)
     if (this.records.has(manifest.id)) {
       logger.warn(`插件 id 冲突，忽略后发现的: ${manifest.id} (${rootDir})`)
       return
@@ -646,11 +647,17 @@ class PluginHostService {
         },
         cron: (expression, fn) => {
           const id = `${pluginId}:cron:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+          // 仅支持 5 段式且每段为 * 或单个精确值；*/n、区间、列表等语法不支持，显式抛错避免静默失效
+          const parts = expression.trim().split(/\s+/)
+          if (parts.length !== 5) throw new Error(`cron 表达式必须为 5 段式: ${expression}`)
+          for (const part of parts) {
+            if (part !== '*' && !/^\d+$/.test(part)) {
+              throw new Error(`cron 表达式仅支持 * 或单个数值（不支持 */n、区间、列表）: ${expression}`)
+            }
+          }
           // 简单实现：每分钟检查一次 cron 表达式
           const check = () => {
             const now = new Date()
-            const parts = expression.split(/\s+/)
-            if (parts.length !== 5) return
             const matchMin = parts[0] === '*' || parts[0] === String(now.getMinutes())
             const matchHour = parts[1] === '*' || parts[1] === String(now.getHours())
             const matchDay = parts[2] === '*' || parts[2] === String(now.getDate())
@@ -658,9 +665,16 @@ class PluginHostService {
             const matchDow = parts[4] === '*' || parts[4] === String(now.getDay())
             if (matchMin && matchHour && matchDay && matchMonth && matchDow) fn()
           }
-          const timer = setInterval(check, 60_000)
+          // 先对齐到下一分钟边界再启动，避免 setInterval 从注册时刻起算导致漏触发/重复触发
+          const msToNextMinute = 60_000 - (Date.now() % 60_000)
+          const timer = setTimeout(() => {
+            check()
+            const interval = setInterval(check, 60_000)
+            if (interval.unref) interval.unref()
+            jobMap.set(id, () => clearInterval(interval))
+          }, msToNextMinute)
           if (timer.unref) timer.unref()
-          jobMap.set(id, () => clearInterval(timer))
+          jobMap.set(id, () => clearTimeout(timer))
           return id
         },
         cancel: (jobId) => {
@@ -707,12 +721,10 @@ class PluginHostService {
 
           const win = new BrowserWindow(winOptions)
           win.once('ready-to-show', () => win.show())
-          win.on('closed', () => { this.pluginWindows.delete(win); this.targets.delete(win) })
-
           this.pluginWindows.add(win)
-          // 窗口纳入广播目标
+          // 窗口纳入广播目标；closed 时统一从两个集合清理
           this.targets.add(win)
-          win.on('closed', () => this.targets.delete(win))
+          win.on('closed', () => { this.pluginWindows.delete(win); this.targets.delete(win) })
 
           // 加载内容
           if (options.contentPath) {
@@ -815,7 +827,11 @@ class PluginHostService {
           }
           for (const s of shortcuts) {
             const accelerator = s.accelerator
-            globalShortcut.register(accelerator, () => Promise.resolve(s.handler()).catch(e => pluginLogger.error('快捷键执行失败:', e)))
+            const ok = globalShortcut.register(accelerator, () => Promise.resolve(s.handler()).catch(e => pluginLogger.error('快捷键执行失败:', e)))
+            if (!ok) {
+              pluginLogger.warn(`全局快捷键注册失败（可能已被占用）: ${accelerator}`)
+              continue
+            }
             this.registeredShortcuts.add(accelerator)
           }
         },
@@ -902,7 +918,8 @@ class PluginHostService {
     }
     const handler = this.handlers.get(`plugin:${pluginId}:${channel}`)
     if (!handler) return Promise.reject(new Error(`通道未注册: plugin:${pluginId}:${channel}`))
-    return Promise.resolve(handler(payload))
+    // 用 Promise.resolve().then 包裹，handler 同步抛错也统一转为 rejected promise
+    return Promise.resolve().then(() => handler(payload))
   }
 
   /** 主进程 → 本插件所有渲染端推送事件 */
@@ -1227,7 +1244,12 @@ class PluginHostService {
   servePluginFile(url: string): Response {
     const parsed = new URL(url)
     const id = parsed.hostname
-    const rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
+    let rel: string
+    try {
+      rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
+    } catch {
+      return new Response('Bad Request', { status: 400 })
+    }
     const record = this.records.get(id)
     if (!record || record.status !== 'active') {
       return new Response('Plugin not available', { status: 404 })

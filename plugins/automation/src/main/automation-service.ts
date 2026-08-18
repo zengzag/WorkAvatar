@@ -2,9 +2,9 @@
  * 自动化服务（由宿主 electron/main/services/automation/automation.service.ts 迁移而来）。
  * 差异点：
  * - DB 改为插件分库（ctx.storage.openSqlite('index')），automation_tasks / automation_runs 表在建库时自建
- * - 任务执行改用 ctx.services.agent.chatStream（底层 EmployeeAgentService.chatStream，精细控制 provider/model/high_permission 等）
+ * - 任务执行改用 ctx.services.execute.execute({ kind: 'agent-chat', ... })（底层 EmployeeAgentService.chatStream，精细控制 provider/model/high_permission 等）
  * - 通知改用 ctx.services.notification
- * - conversation 删除双向同步：订阅 ctx.services.conversations.onDeleted 清理关联 run 记录
+ * - conversation 删除双向同步：订阅 ctx.services.events 的 conversation:deleted 清理关联 run 记录
  * - logger 用 ctx.services.logger，id 用本地 generateId()
  */
 import * as crypto from 'crypto'

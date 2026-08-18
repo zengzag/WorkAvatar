@@ -109,7 +109,7 @@ export function createDataAccessService(deps: DataAccessDeps) {
           const key = filter?.key
           if (typeof key !== 'string') throw new Error('settings 查询需要 filter.key')
           const value = deps.settings.get(key)
-          return [value] as T[]
+          return [{ key, value }] as T[]
         }
         default:
           throw new Error(`未知数据实体: ${entity}`)
