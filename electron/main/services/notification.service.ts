@@ -8,8 +8,8 @@ const logger = createLogger('Notification')
 export interface NotifyPayload {
   title: string
   body: string
-  /** 点击通知后前端跳转目标 */
-  clickTarget?: 'event' | 'todo' | 'calendar' | 'ask_user' | 'automation'
+  /** 点击通知后前端跳转目标（内核语义：automation/ask_user；命中插件 id 时跳插件页） */
+  clickTarget?: string
   clickId?: string
   /** 静默：不弹 antd notification，仅写日志（如批量提醒去重时） */
   silent?: boolean

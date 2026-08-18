@@ -14,12 +14,13 @@ const CACHEABLE_PREFIXES: Array<[string, string]> = [
   ['/settings', 'settings'],
   ['/kms', 'kms'],
   ['/automation', 'automation'],
-  ['/plugin/notes', 'notes'],
-  ['/plugin/calendar', 'calendar'],
-  ['/plugin/voice', 'voice'],
 ]
 
 function getCacheKey(pathname: string): string | null {
+  // 插件路由通用规则：/plugin/<id>/* 一律可缓存（不再按特定插件白名单）
+  if (pathname.startsWith('/plugin/')) {
+    return pathname.split('/')[2] || null
+  }
   for (const [prefix, key] of CACHEABLE_PREFIXES) {
     if (pathname === prefix || pathname.startsWith(prefix + '/')) {
       return key

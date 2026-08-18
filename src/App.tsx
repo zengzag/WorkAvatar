@@ -21,7 +21,7 @@ import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { getPluginNavIcon } from './plugins/loader'
-import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
+import { useNotification, useNotificationClick } from './hooks/useNotification'
 
 const { Sider, Content } = Layout
 
@@ -41,17 +41,20 @@ const App: React.FC = () => {
     return () => { dispose() }
   }, [])
 
-  // 监听系统右键"打开方式"或启动参数传入的 .md 文件：导航到笔记插件页
-  // 文件消费由 notes 插件经 loader 的 subscribeExternalFiles 能力订阅，这里只负责路由/窗口
+  // 监听系统右键"打开方式"或启动参数传入的外部文件：按扩展名路由到声明了该文件关联的插件页
+  // 文件消费由插件经 loader 的 subscribeExternalFiles 能力订阅，这里只负责路由/窗口
   useEffect(() => {
     const unsub = window.electronAPI.app.onOpenExternalFile((absPath) => {
-      void absPath
-      // 若笔记已分离为独立窗口，聚焦笔记窗口；否则在主窗口导航到笔记插件页
-      if (detachedTabs.includes('notes')) {
-        window.electronAPI.tabWindow.focus('notes')
-      } else {
-        navigate('/plugin/notes')
-      }
+      const ext = absPath.includes('.') ? absPath.slice(absPath.lastIndexOf('.') + 1).toLowerCase() : ''
+      window.electronAPI.plugin.resolveFileOwner(ext).then((owner) => {
+        if (!owner) return
+        // 若该插件已分离为独立窗口，聚焦独立窗口；否则在主窗口导航到插件页
+        if (detachedTabs.includes(owner)) {
+          window.electronAPI.tabWindow.focus(owner)
+        } else {
+          navigate(`/plugin/${owner}`)
+        }
+      })
     })
     return () => { unsub() }
   }, [navigate, detachedTabs])
@@ -80,11 +83,17 @@ const App: React.FC = () => {
     }
   }, [detachedTabs, navigate, getSelectedKey])
 
+  // 导航菜单配置（从 nav.store 读取显隐与排序）
+  const navConfig = useNavConfigStore((s) => s.config)
+  const pluginNavItems = useNavConfigStore((s) => s.pluginItems)
+  const moveUp = useNavConfigStore((s) => s.moveUp)
+  const moveDown = useNavConfigStore((s) => s.moveDown)
+
   /**
    * 通知点击跳转：按来源功能进入对应页面。
    * - automation：携带 conversationId+employeeId 时跳到 /tasks 并定位会话
    * - ask_user：不跳转，主窗口聚焦后 UnifiedInteractionModal 会自动弹出
-   * - 其他（calendar/event/todo）：默认进日历插件页（日历通知已由日历插件内部展示，此处兜底）
+   * - 命中已加载插件 id：跳对应插件页（通用插件能力，不再写死 calendar）
    */
   const handleNotifyClick = useCallback((target?: string, id?: string) => {
     if (target === 'automation' && id) {
@@ -98,23 +107,19 @@ const App: React.FC = () => {
       } catch { /* ignore parse error */ }
     }
     if (target === 'ask_user') return
-    navigate('/plugin/calendar')
-  }, [navigate])
+    if (target && pluginNavItems.some((p) => p.key === target)) {
+      navigate(`/plugin/${target}`)
+    }
+  }, [navigate, pluginNavItems])
 
-  // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
-  useCalendarNotify((payload) => {
+  // 全局监听宿主通用通知（自动化完成 / ask_user 交互等）：主窗口激活时由主进程推送，antd notification 显示
+  useNotification((payload) => {
     handleNotifyClick(payload.clickTarget, payload.clickId)
   })
   // 系统通知点击后由主进程推送 → 按目标跳转
-  useCalendarNotifyClick((payload) => {
+  useNotificationClick((payload) => {
     handleNotifyClick(payload.target, payload.id)
   })
-
-  // 导航菜单配置（从 nav.store 读取显隐与排序）
-  const navConfig = useNavConfigStore((s) => s.config)
-  const pluginNavItems = useNavConfigStore((s) => s.pluginItems)
-  const moveUp = useNavConfigStore((s) => s.moveUp)
-  const moveDown = useNavConfigStore((s) => s.moveDown)
 
   // 已分离 tab 的图标用半透明 + 右上角小圆点标记，提示用户"已弹窗，点击聚焦"
   // label 保持纯文本，让 antd collapsed Menu 自动生成 tooltip
