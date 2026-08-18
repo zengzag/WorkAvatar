@@ -14,7 +14,6 @@ export type NavItemKey =
   | 'tasks'
   | 'employees'
   | 'kms'
-  | 'automation'
   | 'settings'
 
 export interface NavItemConfig {
@@ -41,10 +40,9 @@ export const LOCKED_KEYS: NavItemKey[] = ['settings']
 
 export const DEFAULT_NAV_CONFIG: NavItemConfig[] = [
   { key: 'tasks', visible: true, order: 0 },
-  { key: 'automation', visible: true, order: 1 },
-  { key: 'kms', visible: true, order: 2 },
-  { key: 'employees', visible: true, order: 3 },
-  { key: 'settings', visible: true, order: 4 },
+  { key: 'kms', visible: true, order: 1 },
+  { key: 'employees', visible: true, order: 2 },
+  { key: 'settings', visible: true, order: 3 },
 ]
 
 interface NavConfigState {

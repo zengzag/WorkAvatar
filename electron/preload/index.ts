@@ -64,29 +64,11 @@ import type {
   McpSaveParams,
   McpTestParams,
   NotifyPayload,
-  ListAutomationTasksParams,
-  ListAutomationRunsParams,
-  CreateAutomationTaskInput,
-  UpdateAutomationTaskInput,
-  PreviewRunsParams,
   PluginInfo,
   PluginRendererInfo,
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
-} from '../shared/ipc-channels'
-export type {
-  AutomationTask,
-  AutomationRun,
-  AutomationTaskStatus,
-  AutomationRunStatus,
-  AutomationTriggeredBy,
-  AutomationRecurrenceRule,
-  CreateAutomationTaskInput as CreateAutomationTaskInputType,
-  UpdateAutomationTaskInput as UpdateAutomationTaskInputType,
-  ListAutomationTasksParams as ListAutomationTasksParamsType,
-  ListAutomationRunsParams as ListAutomationRunsParamsType,
-  PreviewRunsParams as PreviewRunsParamsType,
 } from '../shared/ipc-channels'
 
 const electronAPI = {
@@ -328,29 +310,6 @@ const electronAPI = {
     test: (params: McpTestParams) => ipcRenderer.invoke(IPC_CHANNELS.MCP_TEST, params),
     // 刷新指定 server 的工具缓存（主动重新连接并 listTools）
     refreshTools: (params: { id: string; employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.MCP_REFRESH_TOOLS, params),
-  },
-
-  automation: {
-    // 任务 CRUD
-    listTasks: (params?: ListAutomationTasksParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_TASKS, params),
-    getTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_GET_TASK, id),
-    createTask: (input: CreateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CREATE_TASK, input),
-    updateTask: (input: UpdateAutomationTaskInput) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_UPDATE_TASK, input),
-    deleteTask: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_TASK, { id }),
-    toggleTask: (id: string, enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_TOGGLE_TASK, { id, enabled }),
-    // 执行
-    runNow: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_RUN_NOW, { id }),
-    previewRuns: (params: PreviewRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_PREVIEW_RUNS, params),
-    // 执行历史 CRUD
-    listRuns: (params?: ListAutomationRunsParams) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_LIST_RUNS, params),
-    deleteRun: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_DELETE_RUN, { id }),
-    clearRuns: (params?: { task_id?: string }) => ipcRenderer.invoke(IPC_CHANNELS.AUTOMATION_CLEAR_RUNS, params),
-    // 数据变更事件订阅
-    onDataChanged: (callback: (payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => void) => {
-      const handler = (_event: any, payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => callback(payload)
-      ipcRenderer.on(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, handler)
-    },
   },
 
   kms: {

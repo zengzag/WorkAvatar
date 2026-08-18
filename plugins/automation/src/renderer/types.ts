@@ -1,39 +1,9 @@
-/**
- * 自动化模块 IPC 通道。
- *
- * 包含任务 CRUD、立即执行、运行历史 CRUD、下次执行预览等通道，
- * 以及主进程 → 渲染进程的 DATA_CHANGED 事件推送通道。
- */
-
-export const AUTOMATION_CHANNELS = {
-  // 任务 CRUD
-  AUTOMATION_LIST_TASKS: 'automation:list-tasks',
-  AUTOMATION_GET_TASK: 'automation:get-task',
-  AUTOMATION_CREATE_TASK: 'automation:create-task',
-  AUTOMATION_UPDATE_TASK: 'automation:update-task',
-  AUTOMATION_DELETE_TASK: 'automation:delete-task',
-  AUTOMATION_TOGGLE_TASK: 'automation:toggle-task',
-
-  // 执行
-  AUTOMATION_RUN_NOW: 'automation:run-now',
-  AUTOMATION_PREVIEW_RUNS: 'automation:preview-runs',
-
-  // 执行历史 CRUD
-  AUTOMATION_LIST_RUNS: 'automation:list-runs',
-  AUTOMATION_DELETE_RUN: 'automation:delete-run',
-  AUTOMATION_CLEAR_RUNS: 'automation:clear-runs',
-
-  // 事件推送（主进程 → 渲染进程）
-  AUTOMATION_DATA_CHANGED: 'automation:data-changed',
-} as const
-
-// ====== 类型 ======
+/** 自动化插件渲染端类型定义（与内核 shared/ipc-channels 的 automation 类型一致） */
 
 export type AutomationTaskStatus = 'idle' | 'running' | 'success' | 'failed'
 export type AutomationRunStatus = 'running' | 'success' | 'failed'
 export type AutomationTriggeredBy = 'scheduler' | 'manual'
 
-/** 重复规则（与日历模块共用语义） */
 export interface AutomationRecurrenceRule {
   freq: 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly'
   interval: number
@@ -135,7 +105,20 @@ export interface PreviewRunsParams {
   count?: number
 }
 
-export interface AutomationDataChangedPayload {
-  scope: 'task' | 'run' | 'settings'
-  ts: number
+// 前端专用：执行历史筛选条件
+export interface RunFilters {
+  status?: 'running' | 'success' | 'failed' | ('running' | 'success' | 'failed')[]
+  employee_id?: string
+  task_id?: string
+  triggered_by?: 'scheduler' | 'manual'
+  from?: number
+  to?: number
+}
+
+// 前端专用：任务筛选条件
+export interface TaskFilters {
+  employee_id?: string
+  is_enabled?: boolean
+  tag?: string
+  search?: string
 }

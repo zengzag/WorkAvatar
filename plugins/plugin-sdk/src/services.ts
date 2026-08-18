@@ -86,11 +86,51 @@ export interface PluginAgentTaskResult {
 /** 数字员工委派（需 agent 权限） */
 export interface PluginAgentService {
   listEmployees(): Promise<Array<{ id: string; name: string }>>
+  /** 列出 LLM 供应商及其可用模型（需 agent 权限），供自动化等场景选择 provider/model */
+  listProviders(): Promise<Array<{
+    id: string
+    name: string
+    provider_type: string
+    default_model: string
+    models: Array<{ id: string; model: string; name: string; is_default: boolean; category: string }>
+  }>>
   runTask(
     params: PluginAgentTaskParams,
     callbacks?: PluginAgentTaskCallbacks,
     signal?: AbortSignal
   ): Promise<PluginAgentTaskResult>
+  /**
+   * 底层对话流式执行（需 agent 权限）：直接调用宿主 EmployeeAgentService.chatStream，
+   * 允许精细控制 provider/model/high_permission/use_skills/minimal_mode 等参数。
+   * 适用于自动化任务等需要精确控制执行参数、且需自行管理 conversation 的场景。
+   */
+  chatStream(
+    params: PluginAgentChatStreamParams,
+    callbacks?: PluginAgentChatStreamCallbacks,
+    signal?: AbortSignal
+  ): Promise<void>
+}
+
+/** 底层对话流式执行参数（对齐宿主 EmployeeAgentService.chatStream） */
+export interface PluginAgentChatStreamParams {
+  employeeId: string
+  providerId: string
+  modelId?: string
+  messages: Array<{ role: string; content: string }>
+  /** 复用已有会话；不传则新建 */
+  conversationId?: string
+  useSkills?: boolean
+  enableThinking?: boolean
+  minimalMode?: boolean
+  highPermission?: boolean
+}
+
+export interface PluginAgentChatStreamCallbacks {
+  onChunk?: (text: string) => void
+  onThought?: (thought: string) => void
+  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
+  onDone?: (metadata?: unknown) => void
+  onError?: (error: string) => void
 }
 
 export interface PluginConversationSummary {
@@ -104,6 +144,18 @@ export interface PluginConversationSummary {
 export interface PluginConversationReader {
   getTitle(conversationId: string): Promise<string | null>
   listRecent(limit?: number): Promise<PluginConversationSummary[]>
+  /**
+   * 订阅内核 conversation 删除事件（需 conversations 权限）。
+   * 内核删除任意 conversation（含自动化任务产生的对话）时回调 conversationId，
+   * 插件据此清理自身关联数据（如自动化 run 记录）。返回取消订阅函数。
+   */
+  onDeleted(callback: (conversationId: string) => void): () => void
+  /** 创建 conversation（需 conversations 权限），返回新会话 id */
+  create(employeeId: string, title?: string): Promise<string>
+  /** 更新 conversation 字段（messages_json / message_count / last_message_at / employee_id 等） */
+  update(id: string, data: Record<string, unknown>): Promise<void>
+  /** 删除 conversation（含其子会话与关联数据） */
+  delete(id: string): Promise<void>
 }
 
 export interface PluginSchedulerService {
@@ -171,6 +223,17 @@ export interface PluginNativeService {
   modulePath(name: string): string
 }
 
+/** 内核事件订阅（无需权限，随 services 始终注入） */
+export interface PluginKernelEventService {
+  /**
+   * 订阅内核事件，返回取消订阅函数。
+   * 当前支持的事件：
+   * - 'conversation-deleted'：内核删除任意 conversation，payload 为 conversationId
+   * - 'model-renamed'：内核重命名 LLM 模型，payload 为 { providerId, renames: Record<oldModel, newModel> }
+   */
+  subscribe(event: string, callback: (payload: unknown) => void): () => void
+}
+
 /** 宿主路径服务（无需权限，随 services 始终注入） */
 export interface PluginHostPathsService {
   /** 用户可配置的数据目录（默认 文档/WorkAvatar；用户可在设置中改盘） */
@@ -185,6 +248,8 @@ export interface PluginServices {
   logger: PluginLogger
   /** 宿主路径（始终可用，无权限要求） */
   host: PluginHostPathsService
+  /** 内核事件订阅（始终可用，无权限要求） */
+  kernelEvents: PluginKernelEventService
   notification?: PluginNotificationService
   llm?: PluginLlmService
   agent?: PluginAgentService

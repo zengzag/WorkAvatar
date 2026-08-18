@@ -313,7 +313,13 @@ class EmployeeAgentService {
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
 
-    rows = rows.map(row => ({ ...row, tool_id: row.tool_id === 'office_exec' ? 'javascript_exec' : row.tool_id }))
+    rows = rows.map(row => ({
+      ...row,
+      tool_id: row.tool_id === 'office_exec' ? 'javascript_exec'
+        : row.tool_id === 'automation_list_employees' ? 'list_employees'
+        : row.tool_id === 'automation_list_providers' ? 'list_providers'
+        : row.tool_id,
+    }))
 
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {

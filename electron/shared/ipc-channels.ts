@@ -90,20 +90,6 @@ export type {
   McpTestResult,
 } from './channels/mcp'
 export type {
-  AutomationTask,
-  AutomationRun,
-  AutomationTaskStatus,
-  AutomationRunStatus,
-  AutomationTriggeredBy,
-  AutomationRecurrenceRule,
-  CreateAutomationTaskInput,
-  UpdateAutomationTaskInput,
-  ListAutomationTasksParams,
-  ListAutomationRunsParams,
-  PreviewRunsParams,
-  AutomationDataChangedPayload,
-} from './channels/automation'
-export type {
   PluginNavItemInfo,
   PluginInfo,
   PluginRendererInfo,

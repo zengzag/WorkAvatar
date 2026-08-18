@@ -6,7 +6,6 @@ import { APP_CHANNELS } from './app'
 import { KMS_CHANNELS } from './kms'
 import { RUNTIME_ENV_CHANNELS } from './runtime-env'
 import { MCP_CHANNELS } from './mcp'
-import { AUTOMATION_CHANNELS } from './automation'
 import { PLUGIN_CHANNELS } from './plugin'
 import { NOTIFY_CHANNELS } from './notification'
 
@@ -19,7 +18,6 @@ export const IPC_CHANNELS = {
   ...KMS_CHANNELS,
   ...RUNTIME_ENV_CHANNELS,
   ...MCP_CHANNELS,
-  ...AUTOMATION_CHANNELS,
   ...PLUGIN_CHANNELS,
   ...NOTIFY_CHANNELS,
 } as const
@@ -32,6 +30,5 @@ export * from './app'
 export * from './kms'
 export * from './runtime-env'
 export * from './mcp'
-export * from './automation'
 export * from './plugin'
 export * from './notification'

@@ -40,17 +40,6 @@ export const BUILTIN_TOOL_CATEGORIES = [
     ],
   },
   {
-    id: 'automation',
-    defaultEnabled: false,
-    toolIds: [
-      'automation_list_employees', 'automation_list_providers',
-      'automation_task_list', 'automation_task_create',
-      'automation_task_update', 'automation_task_delete',
-      'automation_task_toggle', 'automation_task_run_now',
-      'automation_task_preview', 'automation_run_list',
-    ],
-  },
-  {
     id: 'general',
     defaultEnabled: true,
     toolIds: [

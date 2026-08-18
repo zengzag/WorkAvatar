@@ -123,6 +123,8 @@ class PluginHostService {
   private pendingImportZip = ''
   /** 插件注册的对话消息快捷操作（pluginId → actions，供前端清单查询与 IPC 路由） */
   private messageActions = new Map<string, PluginMessageAction[]>()
+  /** 订阅内核事件的插件监听器（ctx.services.kernelEvents.subscribe 注册）：event → Set<callback> */
+  private kernelEventListeners = new Map<string, Set<(payload: unknown) => void>>()
   private dataDir = ''
   private initialized = false
 
@@ -380,6 +382,17 @@ class PluginHostService {
           return PathService.getInstance().getDataDir()
         },
       },
+      kernelEvents: {
+        subscribe: (event, callback) => {
+          let set = this.kernelEventListeners.get(event)
+          if (!set) {
+            set = new Set()
+            this.kernelEventListeners.set(event, set)
+          }
+          set.add(callback)
+          return () => { set.delete(callback) }
+        },
+      },
     }
 
     if (this.hasPermission(record, 'notifications')) {
@@ -464,6 +477,29 @@ class PluginHostService {
           const rows = db.prepare('SELECT id, name FROM employees ORDER BY name ASC').all() as any[]
           return rows.map((r: any) => ({ id: r.id, name: r.name }))
         },
+        listProviders: async () => {
+          const db = DatabaseService.getInstance().getDb()
+          const rows = db.prepare(
+            `SELECT id, name, provider_type, model, models_json FROM llm_providers ORDER BY is_default DESC, created_at DESC`
+          ).all() as any[]
+          return rows.map((r: any) => {
+            let models: any[] = []
+            try { models = JSON.parse(r.models_json || '[]') } catch { /* ignore */ }
+            return {
+              id: r.id,
+              name: r.name,
+              provider_type: r.provider_type,
+              default_model: r.model,
+              models: models.map((m: any) => ({
+                id: m.id,
+                model: m.model,
+                name: m.name || m.model,
+                is_default: !!m.is_default,
+                category: m.category || 'chat',
+              })),
+            }
+          })
+        },
         runTask: async (params, callbacks, signal) => {
           const employeeAgent = EmployeeAgentService.getInstance()
           const { provider_id, model_id } = (() => {
@@ -500,6 +536,36 @@ class PluginHostService {
           )
           return { conversationId, text: resultText }
         },
+        chatStream: async (params, callbacks, signal) => {
+          const employeeAgent = EmployeeAgentService.getInstance()
+          let conversationId = params.conversationId
+          if (!conversationId) {
+            const { default: WorkspaceManagerService } = require('../workspace-manager.service')
+            const conv = WorkspaceManagerService.getInstance().createConversation(params.employeeId)
+            conversationId = conv.id
+          }
+          await employeeAgent.chatStream(
+            {
+              employee_id: params.employeeId,
+              provider_id: params.providerId,
+              model_id: params.modelId,
+              messages: params.messages,
+              conversation_id: conversationId,
+              use_skills: params.useSkills ?? false,
+              enable_thinking: params.enableThinking ? 'high' : false,
+              minimal_mode: params.minimalMode ?? true,
+              high_permission: params.highPermission ?? false,
+            },
+            {
+              onChunk: (text: string) => callbacks?.onChunk?.(text),
+              onThought: (thought: string) => callbacks?.onThought?.(thought),
+              onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args }),
+              onDone: (metadata?: any) => callbacks?.onDone?.(metadata),
+              onError: (err: string) => callbacks?.onError?.(err),
+            },
+            signal,
+          )
+        },
       }
     }
 
@@ -516,6 +582,19 @@ class PluginHostService {
           return rows.map((r: any) => ({
             id: r.id, title: r.title || '', employeeId: r.employee_id, updatedAt: r.updated_at,
           }))
+        },
+        onDeleted: (callback) => {
+          return this.subscribeKernelEvent('conversation-deleted', (payload) => callback(payload as string))
+        },
+        create: async (employeeId, title) => {
+          const conv = WorkspaceManagerService.getInstance().createConversation(employeeId, undefined, title, false)
+          return conv.id
+        },
+        update: async (id, data) => {
+          WorkspaceManagerService.getInstance().updateConversation(id, data)
+        },
+        delete: async (id) => {
+          WorkspaceManagerService.getInstance().deleteConversation(id)
         },
       }
     }
@@ -1043,6 +1122,33 @@ class PluginHostService {
       if (c.fileAssociations.has(ext)) return id
     }
     return undefined
+  }
+
+  /** 订阅内核事件（供 ctx.services.kernelEvents 与 conversations.onDeleted 复用） */
+  private subscribeKernelEvent(event: string, callback: (payload: unknown) => void): () => void {
+    let set = this.kernelEventListeners.get(event)
+    if (!set) {
+      set = new Set()
+      this.kernelEventListeners.set(event, set)
+    }
+    set.add(callback)
+    return () => { set.delete(callback) }
+  }
+
+  /** 内核广播事件给所有订阅插件（ctx.services.kernelEvents.subscribe） */
+  notifyKernelEvent(event: string, payload: unknown): void {
+    const set = this.kernelEventListeners.get(event)
+    if (!set) return
+    for (const callback of set) {
+      try { callback(payload) } catch (err: any) {
+        logger.warn(`插件内核事件 ${event} 回调失败:`, err?.message || err)
+      }
+    }
+  }
+
+  /** 内核删除 conversation 时通知所有订阅插件（兼容旧调用，转发到通用事件） */
+  notifyConversationDeleted(conversationId: string): void {
+    this.notifyKernelEvent('conversation-deleted', conversationId)
   }
 
   /** 按文件扩展名解析应路由到的插件 id（无插件声明该扩展名时返回 undefined） */

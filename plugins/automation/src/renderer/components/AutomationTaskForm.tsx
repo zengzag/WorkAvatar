@@ -10,8 +10,7 @@ import type {
   CreateAutomationTaskInput,
   UpdateAutomationTaskInput,
   AutomationRecurrenceRule,
-} from '../../types/automation'
-import { getProviderModels } from '../../utils/llm'
+} from '../types'
 
 const MS = 1000
 
@@ -40,10 +39,23 @@ const FREQ_OPTIONS: { value: Freq; labelKey: string }[] = [
 
 const compactItem: React.CSSProperties = { marginBottom: 12 }
 
+/** 从供应商 models_json 提取模型列表（对齐宿主 getProviderModels） */
+function getProviderModels(provider: { models_json?: string }): Array<{ id: string; model: string; name?: string; category?: string }> {
+  if (!provider?.models_json) return []
+  try {
+    return JSON.parse(provider.models_json).map((m: any) => ({
+      ...m,
+      category: m.category || 'chat',
+    }))
+  } catch {
+    return []
+  }
+}
+
 const AutomationTaskForm: React.FC<AutomationTaskFormProps> = ({
   open, mode, task, employees, providers, onClose, onSubmit,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('automation')
   const { token } = theme.useToken()
   const [form] = Form.useForm()
   const isEdit = mode === 'edit'
@@ -73,7 +85,6 @@ const AutomationTaskForm: React.FC<AutomationTaskFormProps> = ({
         tags: task.tags || [],
       }
     }
-    // 默认值：当前时间 + 1 小时
     const start = dayjs().add(1, 'hour').minute(0).second(0)
     const defaultProvider = providers[0]?.id || ''
     return {
@@ -174,8 +185,8 @@ const AutomationTaskForm: React.FC<AutomationTaskFormProps> = ({
       width={640}
       onCancel={onClose}
       onOk={handleOk}
-      okText={isEdit ? t('common.save') : t('common.create')}
-      cancelText={t('common.cancel')}
+      okText={isEdit ? t('automation.common.save') : t('automation.common.create')}
+      cancelText={t('automation.common.cancel')}
       destroyOnHidden
       mask={{ closable: false }}
     >

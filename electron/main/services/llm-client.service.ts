@@ -275,13 +275,11 @@ class LLMClientService {
         } catch { /* 忽略非法 JSON */ }
       }
 
-      // 自动化任务与执行历史
-      for (const [oldModel, newModel] of renames) {
-        db.prepare('UPDATE automation_tasks SET model_id = ?, updated_at = unixepoch() WHERE provider_id = ? AND model_id = ?')
-          .run(newModel, providerId, oldModel)
-        db.prepare('UPDATE automation_runs SET model_id = ? WHERE provider_id = ? AND model_id = ?')
-          .run(newModel, providerId, oldModel)
-      }
+      // 自动化任务与执行历史（已插件化，经内核事件通知 automation 插件更新其分库）
+      try {
+        const { default: PluginHostService } = require('./plugin/plugin-host.service')
+        PluginHostService.getInstance().notifyKernelEvent('model-renamed', { providerId, renames: Object.fromEntries(renames) })
+      } catch { /* ignore */ }
 
       logger.info(`Synced model renames for provider ${providerId}:`, Object.fromEntries(renames))
     } catch (err: any) {

@@ -8,7 +8,7 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import type { AutomationTask } from '../../types/automation'
+import type { AutomationTask } from '../types'
 
 const MS = 1000
 
@@ -35,7 +35,7 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
   tasks, loading, employees,
   onCreate, onEdit, onDelete, onToggle, onRunNow, onPreviewRuns,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('automation')
   const { token } = theme.useToken()
   const [previewOpenId, setPreviewOpenId] = useState<string | null>(null)
   const [previewTimes, setPreviewTimes] = useState<number[]>([])
@@ -92,7 +92,6 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
               transition: 'background 0.2s',
             }}
           >
-            {/* 第一行：标题 + 状态徽标 + 操作按钮 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Tooltip title={task.title} mouseEnterDelay={0.4}>
@@ -168,11 +167,11 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
                 <Popconfirm
                   title={t('automation.confirmDeleteTask')}
                   onConfirm={() => onDelete(task.id)}
-                  okText={t('common.delete')}
-                  cancelText={t('common.cancel')}
+                  okText={t('automation.common.delete')}
+                  cancelText={t('automation.common.cancel')}
                   okButtonProps={{ danger: true }}
                 >
-                  <Tooltip title={t('common.delete')}>
+                  <Tooltip title={t('automation.common.delete')}>
                     <Button size="small" type="text" icon={<DeleteOutlined />} danger />
                   </Tooltip>
                 </Popconfirm>
@@ -186,7 +185,6 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
               </Space>
             </div>
 
-            {/* 第二行：描述（如有） */}
             {task.description && (
               <Typography.Paragraph
                 type="secondary"
@@ -197,7 +195,6 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
               </Typography.Paragraph>
             )}
 
-            {/* 第三行：元信息（员工、下次运行、上次运行、重复规则） */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12, color: token.colorTextTertiary }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <UserOutlined />
@@ -221,7 +218,6 @@ const AutomationTaskList: React.FC<AutomationTaskListProps> = ({
               )}
             </div>
 
-            {/* 第四行：错误信息（如有） */}
             {task.last_status === 'failed' && task.last_error && (
               <div
                 style={{

@@ -2,17 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Space, Segmented, theme, Input, Select } from 'antd'
 import { PlusOutlined, FieldTimeOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
-import { useAutomation } from '../hooks/useAutomation'
-import AutomationTaskList from '../components/automation/AutomationTaskList'
-import AutomationHistoryList from '../components/automation/AutomationHistoryList'
-import AutomationTaskForm, { type TaskFormMode } from '../components/automation/AutomationTaskForm'
+import { useAutomation } from './useAutomation'
+import AutomationTaskList from './components/AutomationTaskList'
+import AutomationHistoryList from './components/AutomationHistoryList'
+import AutomationTaskForm, { type TaskFormMode } from './components/AutomationTaskForm'
 import type {
   AutomationTask,
   AutomationRun,
   CreateAutomationTaskInput,
   UpdateAutomationTaskInput,
-} from '../types/automation'
+} from './types'
 
 interface Employee {
   id: string
@@ -21,9 +20,8 @@ interface Employee {
 }
 
 const AutomationPage: React.FC = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('automation')
   const { token } = theme.useToken()
-  const navigate = useNavigate()
   const auto = useAutomation()
 
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -33,7 +31,6 @@ const AutomationPage: React.FC = () => {
   const [editingTask, setEditingTask] = useState<AutomationTask | null>(null)
   const [search, setSearch] = useState('')
 
-  // 加载员工与 providers
   useEffect(() => {
     void (async () => {
       try {
@@ -96,10 +93,10 @@ const AutomationPage: React.FC = () => {
 
   const handleJump = useCallback((run: AutomationRun) => {
     if (!run.conversation_id || !run.employee_id) return
-    // 写入 localStorage 让 useEmployeeChat 自动选中该对话
     localStorage.setItem(`employeeWorkbench:activeConvId:${run.employee_id}`, run.conversation_id)
-    navigate('/tasks')
-  }, [navigate])
+    // hash 路由：跳转到任务页（插件渲染端不在宿主 Router 上下文，用 hash 跳转）
+    window.location.hash = '#/tasks'
+  }, [])
 
   const handlePreviewRuns = useCallback(
     async (taskId: string): Promise<number[]> => {
@@ -110,7 +107,6 @@ const AutomationPage: React.FC = () => {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* 顶部工具栏 */}
       <div
         style={{
           display: 'flex',
@@ -180,7 +176,6 @@ const AutomationPage: React.FC = () => {
         </Space>
       </div>
 
-      {/* 主体 */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {auto.activeTab === 'tasks' ? (
           <AutomationTaskList
@@ -207,7 +202,6 @@ const AutomationPage: React.FC = () => {
         )}
       </div>
 
-      {/* 表单弹窗 */}
       <AutomationTaskForm
         open={formOpen}
         mode={formMode}

@@ -1,0 +1,23 @@
+{
+  "id": "automation",
+  "name": "Automation",
+  "version": "1.0.0",
+  "engine": ">=0.1.0",
+  "description": "自动化任务管理，支持定时调度数字员工执行提示词任务、执行历史、未来执行预览",
+  "author": "WorkAvatar",
+  "main": "dist/main/index.cjs",
+  "renderer": "dist/renderer/index.js",
+  "locale": "locale",
+  "ipc": [
+    "list-tasks", "get-task", "create-task", "update-task", "delete-task", "toggle-task",
+    "run-now", "preview-runs",
+    "list-runs", "delete-run", "clear-runs"
+  ],
+  "permissions": ["agent", "conversations", "notifications", "scheduler", "legacyMigration"],
+  "nav": {
+    "label": "navLabel",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"8\" cy=\"8\" r=\"6\"/><path d=\"M8 4.5V8l2.5 1.5\"/></svg>",
+    "order": 10,
+    "detachable": true
+  }
+}

@@ -4,7 +4,6 @@ import type { MenuProps } from 'antd'
 import {
   SettingOutlined,
   SearchOutlined,
-  FieldTimeOutlined,
   MessageOutlined,
   TeamOutlined,
   ArrowUpOutlined,
@@ -67,7 +66,6 @@ const App: React.FC = () => {
     if (path === '/' || path.startsWith('/tasks')) return 'tasks'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/kms')) return 'kms'
-    if (path.startsWith('/automation')) return 'automation'
     return 'tasks'
   }, [location.pathname])
 
@@ -76,7 +74,7 @@ const App: React.FC = () => {
     const currentKey = getSelectedKey()
     if (!detachedTabs.includes(currentKey)) return
     // 按默认顺序找第一个未分离、可见的 tab（排除 settings，它不适合作为回退目标）
-    const fallbackOrder: NavItemKey[] = ['tasks', 'automation', 'kms', 'employees']
+    const fallbackOrder: NavItemKey[] = ['tasks', 'kms', 'employees']
     const fallback = fallbackOrder.find((k) => !detachedTabs.includes(k))
     if (fallback) {
       navigate(`/${fallback}`)
@@ -168,7 +166,6 @@ const App: React.FC = () => {
       'tasks': build('tasks', <MessageOutlined />, t('nav.tasks')),
       'employees': build('employees', <TeamOutlined />, t('nav.employees')),
       'kms': build('kms', <SearchOutlined />, t('nav.kms')),
-      'automation': build('automation', <FieldTimeOutlined />, t('nav.automation')),
       'settings': {
         icon: <span data-nav-key="settings"><SettingOutlined /></span>,
         label: t('nav.settings'),

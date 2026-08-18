@@ -7,7 +7,6 @@ import { registerToolHandlers } from './tool.handlers'
 import { registerKMSHandlers } from './kms.handlers'
 import { registerRuntimeEnvHandlers } from './runtime-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
-import { registerAutomationHandlers } from './automation.handlers'
 import { registerPluginHandlers } from './plugin.handlers'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
@@ -39,7 +38,6 @@ export function registerIpcHandlers() {
   registerKMSHandlers()
   registerRuntimeEnvHandlers()
   registerMcpHandlers()
-  registerAutomationHandlers()
   registerPluginHandlers()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）

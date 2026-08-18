@@ -26,6 +26,8 @@ export type {
   PluginAgentTaskParams,
   PluginAgentTaskCallbacks,
   PluginAgentTaskResult,
+  PluginAgentChatStreamParams,
+  PluginAgentChatStreamCallbacks,
   PluginAgentService,
   PluginConversationSummary,
   PluginConversationReader,
@@ -34,6 +36,7 @@ export type {
   PluginWindowHandle,
   PluginWindowService,
   PluginNativeService,
+  PluginKernelEventService,
   PluginServices,
 } from './services'
 export type {

@@ -612,9 +612,6 @@ class DatabaseService {
       'calendar_event_list', 'calendar_event_create', 'calendar_event_update', 'calendar_event_delete',
       'calendar_todo_list', 'calendar_todo_create', 'calendar_todo_update', 'calendar_todo_delete',
       'calendar_todo_complete', 'calendar_todo_stats',
-      'automation_list_employees', 'automation_list_providers',
-      'automation_task_list', 'automation_task_create', 'automation_task_update', 'automation_task_delete',
-      'automation_task_toggle', 'automation_task_run_now', 'automation_task_preview', 'automation_run_list',
       'search_conversations', 'list_conversations', 'get_conversation_detail',
     ]
     const placeholders = onDemandIds.map(() => '?').join(',')

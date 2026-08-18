@@ -1,10 +1,6 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import type {
-  AutomationTask,
-  AutomationRun,
-} from '../../electron/shared/ipc-channels'
-import type { TaskFilters, RunFilters } from '../types/automation'
+import type { AutomationTask, AutomationRun, TaskFilters, RunFilters } from './types'
 
 export type AutomationTab = 'tasks' | 'history'
 

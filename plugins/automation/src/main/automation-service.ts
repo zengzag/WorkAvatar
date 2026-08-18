@@ -1,27 +1,172 @@
-import { BrowserWindow } from 'electron'
-import Database from 'better-sqlite3'
-import DatabaseService from '../database.service'
-import WorkspaceManagerService from '../workspace-manager.service'
-import EmployeeAgentService from '../employee-agent.service'
-import NotificationService from '../notification.service'
-import { createLogger } from '../logger'
-import { generateId } from '../common-utils'
-import { IPC_CHANNELS } from '../../../shared/ipc-channels'
-import type {
-  AutomationTask,
-  AutomationRun,
-  AutomationTaskStatus,
-  AutomationRunStatus,
-  AutomationTriggeredBy,
-  AutomationRecurrenceRule,
-  CreateAutomationTaskInput,
-  UpdateAutomationTaskInput,
-  ListAutomationTasksParams,
-  ListAutomationRunsParams,
-  AutomationDataChangedPayload,
-} from '../../../shared/ipc-channels'
+/**
+ * 自动化服务（由宿主 electron/main/services/automation/automation.service.ts 迁移而来）。
+ * 差异点：
+ * - DB 改为插件分库（ctx.storage.openSqlite('index')），automation_tasks / automation_runs 表在建库时自建
+ * - 任务执行改用 ctx.services.agent.chatStream（底层 EmployeeAgentService.chatStream，精细控制 provider/model/high_permission 等）
+ * - 通知改用 ctx.services.notification
+ * - conversation 删除双向同步：订阅 ctx.services.conversations.onDeleted 清理关联 run 记录
+ * - logger 用 ctx.services.logger，id 用本地 generateId()
+ */
+import * as crypto from 'crypto'
+import type { PluginContext, PluginDatabase } from '../../../plugin-sdk/src'
 
-const logger = createLogger('Automation')
+function generateId(): string {
+  return crypto.randomBytes(12).toString('hex')
+}
+
+/** 插件库两张表 + plugin_kv 的幂等建表 DDL（迁移与服务初始化共用） */
+export function ensureAutomationTables(db: PluginDatabase): void {
+  db.exec('CREATE TABLE IF NOT EXISTS plugin_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      prompt TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      model_id TEXT,
+      high_permission INTEGER NOT NULL DEFAULT 0,
+      start_at INTEGER NOT NULL,
+      recurrence_rule TEXT DEFAULT '',
+      is_enabled INTEGER NOT NULL DEFAULT 1,
+      notify_on_complete INTEGER NOT NULL DEFAULT 0,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      tags_json TEXT DEFAULT '[]',
+      last_run_at INTEGER,
+      next_run_at INTEGER,
+      last_status TEXT NOT NULL DEFAULT 'idle',
+      last_error TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_tasks_enabled ON automation_tasks(is_enabled, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_automation_tasks_employee ON automation_tasks(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_tasks_status ON automation_tasks(last_status);
+
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL REFERENCES automation_tasks(id) ON DELETE CASCADE,
+      conversation_id TEXT,
+      employee_id TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      model_id TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      triggered_by TEXT NOT NULL DEFAULT 'scheduler',
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      duration_ms INTEGER,
+      error_message TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_automation_runs_task ON automation_runs(task_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_runs_conv ON automation_runs(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_automation_runs_status ON automation_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_automation_runs_started ON automation_runs(started_at DESC);
+  `)
+}
+
+// ====== 类型定义 ======
+
+export type AutomationTaskStatus = 'idle' | 'running' | 'success' | 'failed'
+export type AutomationRunStatus = 'running' | 'success' | 'failed'
+export type AutomationTriggeredBy = 'scheduler' | 'manual'
+
+export interface AutomationRecurrenceRule {
+  freq: 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly'
+  interval: number
+  count?: number
+  until?: number
+}
+
+export interface AutomationTask {
+  id: string
+  title: string
+  description: string
+  prompt: string
+  employee_id: string
+  provider_id: string
+  model_id: string | null
+  high_permission: boolean
+  start_at: number
+  recurrence_rule: AutomationRecurrenceRule | null
+  is_enabled: boolean
+  notify_on_complete: boolean
+  retry_count: number
+  tags: string[]
+  last_run_at: number | null
+  next_run_at: number | null
+  last_status: AutomationTaskStatus
+  last_error: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface AutomationRun {
+  id: string
+  task_id: string
+  conversation_id: string | null
+  employee_id: string
+  provider_id: string
+  model_id: string | null
+  status: AutomationRunStatus
+  triggered_by: AutomationTriggeredBy
+  started_at: number
+  finished_at: number | null
+  duration_ms: number | null
+  error_message: string | null
+  created_at: number
+}
+
+export interface CreateAutomationTaskInput {
+  title: string
+  description?: string
+  prompt: string
+  employee_id: string
+  provider_id: string
+  model_id?: string | null
+  high_permission?: boolean
+  start_at: number
+  recurrence_rule?: AutomationRecurrenceRule | null
+  is_enabled?: boolean
+  notify_on_complete?: boolean
+  retry_count?: number
+  tags?: string[]
+}
+
+export interface UpdateAutomationTaskInput {
+  id: string
+  title?: string
+  description?: string
+  prompt?: string
+  employee_id?: string
+  provider_id?: string
+  model_id?: string | null
+  high_permission?: boolean
+  start_at?: number
+  recurrence_rule?: AutomationRecurrenceRule | null
+  is_enabled?: boolean
+  notify_on_complete?: boolean
+  retry_count?: number
+  tags?: string[]
+}
+
+export interface ListAutomationTasksParams {
+  employee_id?: string
+  is_enabled?: boolean
+  tag?: string
+  search?: string
+}
+
+export interface ListAutomationRunsParams {
+  task_id?: string
+  employee_id?: string
+  status?: AutomationRunStatus | AutomationRunStatus[]
+  triggered_by?: AutomationTriggeredBy
+  from?: number
+  to?: number
+  limit?: number
+}
 
 const MAX_PREVIEW = 10
 const MAX_RETRY_ATTEMPTS = 3
@@ -30,30 +175,23 @@ const TASK_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000
 // ====== 服务实现 ======
 
 class AutomationService {
-  private static instance: AutomationService
-  private db: Database.Database
+  private db: PluginDatabase
+  private ctx: PluginContext
 
-  private constructor() {
-    this.db = DatabaseService.getInstance().getDb()
+  constructor(ctx: PluginContext) {
+    this.ctx = ctx
+    this.db = ctx.storage.openSqlite('index')
+    // 幂等建表：迁移可能因 legacy 为空而提前返回，此处兜底确保表存在
+    ensureAutomationTables(this.db)
   }
 
-  static getInstance(): AutomationService {
-    if (!AutomationService.instance) {
-      AutomationService.instance = new AutomationService()
-    }
-    return AutomationService.instance
+  getDb(): PluginDatabase {
+    return this.db
   }
 
   /** 广播数据变更事件给所有渲染窗口（供 agent 工具与 IPC handler 共用） */
   broadcastDataChanged(scope: 'task' | 'run' | 'settings'): void {
-    const payload: AutomationDataChangedPayload = { scope, ts: Date.now() }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        try {
-          win.webContents.send(IPC_CHANNELS.AUTOMATION_DATA_CHANGED, payload)
-        } catch { /* ignore */ }
-      }
-    }
+    this.ctx.ipc.broadcast('data-changed', { scope, ts: Date.now() })
   }
 
   // ====== Tasks CRUD ======
@@ -70,7 +208,6 @@ class AutomationService {
       args.push(params.is_enabled ? 1 : 0)
     }
     if (params.tag) {
-      // 使用 ESCAPE 子句正确转义 LIKE 通配符，避免删除合法字符
       conditions.push("tags_json LIKE ? ESCAPE '\\'")
       args.push(`%"${params.tag.replace(/[%_\\]/g, '\\$&')}"%`)
     }
@@ -103,7 +240,6 @@ class AutomationService {
     const rule = input.recurrence_rule ?? null
     const ruleJson = rule ? JSON.stringify(rule) : ''
     const retryCount = Math.max(0, Math.min(MAX_RETRY_ATTEMPTS, Math.floor(input.retry_count ?? 0)))
-    // next_run_at：启用时按 start_at 计算；不启用时为 NULL
     const nextRunAt = input.is_enabled === false ? null : this.computeNextRunAfter(rule, input.start_at, input.start_at, now)
 
     this.db.prepare(
@@ -120,14 +256,13 @@ class AutomationService {
       nextRunAt, now, now
     )
 
-    logger.info(`Task created: ${id} "${input.title}"`)
+    this.ctx.services.logger.info(`Task created: ${id} "${input.title}"`)
     return this.getTask(id)!
   }
 
   updateTask(input: UpdateAutomationTaskInput): AutomationTask | null {
     const existing = this.getTask(input.id)
     if (!existing) return null
-    // 任务执行中禁止修改执行关键字段，避免 executeOnce 使用过期 task 对象产生数据不一致
     if (existing.last_status === 'running') {
       const blocked = ['prompt', 'employee_id', 'provider_id', 'model_id',
         'recurrence_rule', 'start_at', 'retry_count', 'high_permission']
@@ -155,7 +290,6 @@ class AutomationService {
     if (input.retry_count !== undefined) pushSet('retry_count', Math.max(0, Math.min(MAX_RETRY_ATTEMPTS, Math.floor(input.retry_count))))
     if (input.tags !== undefined) pushSet('tags_json', JSON.stringify(input.tags))
 
-    // 重复规则变化或 start_at 变化或重新启用 → 重新计算 next_run_at
     let needRecompute = false
     let newRule: AutomationRecurrenceRule | null = existing.recurrence_rule
     let newStartAt = existing.start_at
@@ -188,18 +322,16 @@ class AutomationService {
     return this.getTask(input.id)
   }
 
-  deleteTask(id: string): boolean {
-    // 拒绝删除执行中的任务，避免 executeOnce finalize 阶段访问已删除的行
+  async deleteTask(id: string): Promise<boolean> {
     const task = this.getTask(id)
     if (task?.last_status === 'running') {
       throw new Error('Task is running, cannot delete')
     }
     // 先级联删除关联的 conversations（automation_runs 由 ON DELETE CASCADE 自动删除）
     const runs = this.db.prepare('SELECT conversation_id FROM automation_runs WHERE task_id = ? AND conversation_id IS NOT NULL').all(id) as any[]
-    const ws = WorkspaceManagerService.getInstance()
     for (const r of runs) {
       if (r.conversation_id) {
-        try { ws.deleteConversation(r.conversation_id) } catch { /* ignore */ }
+        try { await this.deleteConversation(r.conversation_id) } catch { /* ignore */ }
       }
     }
     const result = this.db.prepare('DELETE FROM automation_tasks WHERE id = ?').run(id)
@@ -212,7 +344,6 @@ class AutomationService {
     const now = Math.floor(Date.now() / 1000)
     let nextRunAt: number | null = null
     if (enabled && task.last_status !== 'running') {
-      // 重新启用：基于 start_at 与已有规则重算下次运行时间
       nextRunAt = this.computeNextRunAfter(task.recurrence_rule, task.start_at, task.start_at, now)
     }
     this.db.prepare(
@@ -221,15 +352,13 @@ class AutomationService {
     return this.getTask(id)
   }
 
-  moveTask(id: string, targetEmployeeId: string): AutomationTask | null {
+  async moveTask(id: string, targetEmployeeId: string): Promise<AutomationTask | null> {
     const task = this.getTask(id)
     if (!task) return null
     if (task.last_status === 'running') {
       throw new Error('Task is running, cannot move')
     }
     const now = Math.floor(Date.now() / 1000)
-    const ws = WorkspaceManagerService.getInstance()
-    // 同步更新关联 conversation 的 employee_id，避免对话仍挂在旧员工名下
     const runs = this.db.prepare(
       'SELECT conversation_id FROM automation_runs WHERE task_id = ? AND conversation_id IS NOT NULL'
     ).all(id) as { conversation_id: string }[]
@@ -237,11 +366,13 @@ class AutomationService {
       this.db.prepare(
         'UPDATE automation_tasks SET employee_id = ?, updated_at = ? WHERE id = ?'
       ).run(targetEmployeeId, now, id)
-      for (const r of runs) {
-        try { ws.updateConversation(r.conversation_id, { employee_id: targetEmployeeId }) } catch { /* ignore */ }
-      }
     })()
-    logger.info(`Task ${id} moved to employee ${targetEmployeeId}`)
+    for (const r of runs) {
+      if (r.conversation_id) {
+        try { await this.updateConversationEmployee(r.conversation_id, targetEmployeeId) } catch { /* ignore */ }
+      }
+    }
+    this.ctx.services.logger.info(`Task ${id} moved to employee ${targetEmployeeId}`)
     return this.getTask(id)
   }
 
@@ -292,29 +423,26 @@ class AutomationService {
     return rows.map((r) => this.rowToRun(r))
   }
 
-  deleteRun(id: string): boolean {
-    // 拒绝删除执行中的 run，避免 executeOnce finalize 阶段状态不一致
+  async deleteRun(id: string): Promise<boolean> {
     const row = this.db.prepare('SELECT conversation_id, status FROM automation_runs WHERE id = ?').get(id) as any
     if (!row) return false
     if (row.status === 'running') {
       throw new Error('Run is in progress, cannot delete')
     }
     if (row.conversation_id) {
-      try { WorkspaceManagerService.getInstance().deleteConversation(row.conversation_id) } catch { /* ignore */ }
+      try { await this.deleteConversation(row.conversation_id) } catch { /* ignore */ }
     }
     const result = this.db.prepare('DELETE FROM automation_runs WHERE id = ?').run(id)
     return result.changes > 0
   }
 
-  clearRuns(taskId?: string): number {
-    // 跳过正在运行的 run，避免删除执行中的记录导致 finalize 阶段状态不一致
+  async clearRuns(taskId?: string): Promise<number> {
     const rows = taskId
       ? this.db.prepare('SELECT conversation_id FROM automation_runs WHERE task_id = ? AND conversation_id IS NOT NULL AND status != ?').all(taskId, 'running') as any[]
       : this.db.prepare('SELECT conversation_id FROM automation_runs WHERE conversation_id IS NOT NULL AND status != ?').all('running') as any[]
-    const ws = WorkspaceManagerService.getInstance()
     for (const r of rows) {
       if (r.conversation_id) {
-        try { ws.deleteConversation(r.conversation_id) } catch { /* ignore */ }
+        try { await this.deleteConversation(r.conversation_id) } catch { /* ignore */ }
       }
     }
     const result = taskId
@@ -323,15 +451,24 @@ class AutomationService {
     return result.changes
   }
 
-  /** 删除指定 conversation 关联的 run（CONVERSATION_DELETE 双向同步用） */
+  /** 删除指定 conversation 关联的 run（conversation 删除双向同步用） */
   deleteRunByConversation(conversationId: string): number {
     const result = this.db.prepare('DELETE FROM automation_runs WHERE conversation_id = ?').run(conversationId)
     return result.changes
   }
 
+  /** 模型重命名同步：更新任务与执行历史中的 model_id（内核 model-renamed 事件触发） */
+  syncModelRenames(providerId: string, renames: Record<string, string>): void {
+    for (const [oldModel, newModel] of Object.entries(renames)) {
+      this.db.prepare('UPDATE automation_tasks SET model_id = ?, updated_at = unixepoch() WHERE provider_id = ? AND model_id = ?')
+        .run(newModel, providerId, oldModel)
+      this.db.prepare('UPDATE automation_runs SET model_id = ? WHERE provider_id = ? AND model_id = ?')
+        .run(newModel, providerId, oldModel)
+    }
+  }
+
   // ====== 调度支持 ======
 
-  /** 调度器使用：返回到期的任务 ID 列表（已按 next_run_at 升序） */
   listDueTaskIds(now: number, limit: number): string[] {
     const rows = this.db.prepare(
       `SELECT id FROM automation_tasks
@@ -343,12 +480,8 @@ class AutomationService {
     return rows.map((r) => r.id)
   }
 
-  /** 启动恢复：将所有 status='running' 的 task/run 标记为 failed，清理孤儿 conversation */
-  recoverOrphanRuns(): { tasks: number; runs: number } {
+  async recoverOrphanRuns(): Promise<{ tasks: number; runs: number }> {
     const now = Math.floor(Date.now() / 1000)
-    const ws = WorkspaceManagerService.getInstance()
-
-    // 查找孤儿 run 关联的 conversation，逐个清理
     const orphanRuns = this.db.prepare(
       `SELECT id, conversation_id FROM automation_runs WHERE status = 'running' AND conversation_id IS NOT NULL`
     ).all() as { id: string; conversation_id: string }[]
@@ -360,9 +493,8 @@ class AutomationService {
       `UPDATE automation_runs SET status = 'failed', finished_at = ?, error_message = 'orphan recovered on startup' WHERE status = 'running'`
     ).run(now)
 
-    // 清理孤儿 conversation，并将 run.conversation_id 置 NULL 避免悬空指针
     for (const r of orphanRuns) {
-      try { ws.deleteConversation(r.conversation_id) } catch { /* ignore */ }
+      try { await this.deleteConversation(r.conversation_id) } catch { /* ignore */ }
       this.db.prepare('UPDATE automation_runs SET conversation_id = NULL WHERE id = ?').run(r.id)
     }
 
@@ -371,21 +503,13 @@ class AutomationService {
 
   // ====== 调度计算 ======
 
-  /**
-   * 计算从 after 之后下一次运行时间。
-   * - 无重复规则：返回 null（start_at 已过则不再执行）
-   * - 有重复规则：从 start_at 开始按 freq/interval 推进，直到找到 > after 的值
-   *   - 超过 until 或迭代上限则返回 null
-   */
   computeNextRunAfter(rule: AutomationRecurrenceRule | null, startAt: number, after: number, now: number): number | null {
     if (!rule) {
-      // 不重复任务：start_at 未到则按 start_at 触发，已过则不再执行
       return startAt > now ? startAt : null
     }
     const interval = Math.max(1, rule.interval)
     const until = rule.until ?? Infinity
     const maxIterations = 500
-    // 快进跳过历史，避免长期重复任务迭代超限
     let cursor = this.fastForwardCursor(startAt, Math.max(after, now - 1), rule, interval)
     let iter = 0
     while (iter < maxIterations) {
@@ -415,8 +539,6 @@ class AutomationService {
         return startAt + Math.floor(diffSec / chunkSec) * chunkSec
       }
       case 'monthly': {
-        // 少跳一个 interval，避免月末钳位导致 cursor 偏离实际序列
-        // computeNextRunAfter 的 while 循环会逐月修正
         const startDate = new Date(startAt * 1000)
         const targetDate = new Date(target * 1000)
         const monthsDiff = (targetDate.getFullYear() - startDate.getFullYear()) * 12 + (targetDate.getMonth() - startDate.getMonth())
@@ -439,7 +561,6 @@ class AutomationService {
     }
   }
 
-  /** 预览未来 N 次运行时间 */
   previewNextRuns(task: AutomationTask, count: number = 5): number[] {
     const n = Math.max(1, Math.min(MAX_PREVIEW, count))
     const result: number[] = []
@@ -447,7 +568,6 @@ class AutomationService {
     const rule = task.recurrence_rule
     let cursor = task.start_at
     const until = rule?.until ?? Infinity
-    // 支持 count 限制：预览不超过 rule.count 次的运行
     const maxRuns = rule?.count && rule.count > 0 ? rule.count : Infinity
     const maxIterations = 200
     let iter = 0
@@ -479,8 +599,6 @@ class AutomationService {
     const originalMonth = date.getMonth()
     const result = new Date(date)
     result.setFullYear(result.getFullYear() + years)
-    // 仅跨月时回退到原月最后一天（如 2/29 + 1 年 = 3/1 → 2/28）
-    // 同月日期回退（如 2/29 + 2 年 = 2/28）是正确结果，不应再 setDate(0)
     if (result.getMonth() !== originalMonth) {
       result.setMonth(originalMonth + 1, 0)
     }
@@ -520,29 +638,19 @@ class AutomationService {
 
   // ====== 任务执行 ======
 
-  /**
-   * 执行一次自动化任务。
-   * 1. 创建 conversation（标题 `自动化-<title>-<时间>`）
-   * 2. 写入 user message
-   * 3. 创建 automation_runs 记录
-   * 4. 调用 EmployeeAgentService.chatStream
-   * 5. 完成后更新 run/task 状态与 conversation messages_json
-   * 6. 失败时按 retry_count 自动重试
-   */
   async runTask(taskId: string, triggeredBy: AutomationTriggeredBy): Promise<AutomationRun | null> {
     const task = this.getTask(taskId)
     if (!task) {
-      logger.warn(`runTask: task not found: ${taskId}`)
+      this.ctx.services.logger.warn(`runTask: task not found: ${taskId}`)
       return null
     }
-    // 原子抢占：仅当 last_status 非 running 时才设为 running，消除 TOCTOU 竞态
     const now = Math.floor(Date.now() / 1000)
     const acquired = this.db.prepare(
       `UPDATE automation_tasks SET last_status = 'running', updated_at = ?
        WHERE id = ? AND (last_status IS NULL OR last_status != 'running')`
     ).run(now, taskId)
     if (acquired.changes === 0) {
-      logger.info(`Task ${taskId} is still running, skip this trigger`)
+      this.ctx.services.logger.info(`Task ${taskId} is still running, skip this trigger`)
       return null
     }
 
@@ -551,7 +659,6 @@ class AutomationService {
 
   private async executeOnce(task: AutomationTask, triggeredBy: AutomationTriggeredBy, attempt: number): Promise<AutomationRun> {
     const now = Math.floor(Date.now() / 1000)
-    const ws = WorkspaceManagerService.getInstance()
     const titleTime = this.formatRunTitleTime(now)
     const convTitle = `自动化-${task.title}-${titleTime}`
 
@@ -564,9 +671,7 @@ class AutomationService {
       nextRunAt = triggeredBy === 'scheduler'
         ? this.computeNextRunAfter(task.recurrence_rule, task.start_at, now, now)
         : task.next_run_at
-      // 不重复任务执行后一律禁用（无论触发方式），防止手动触发后 scheduler 再次触发
       willDisable = !task.recurrence_rule && (nextRunAt === null || (task.next_run_at !== null && task.next_run_at <= now))
-      // 支持 recurrence_rule.count：本次执行后达到次数上限则禁用任务并清空 next_run_at
       if (task.recurrence_rule?.count && task.recurrence_rule.count > 0) {
         const successCount = (this.db.prepare(
           `SELECT COUNT(*) as cnt FROM automation_runs WHERE task_id = ? AND status = 'success'`
@@ -577,24 +682,8 @@ class AutomationService {
         }
       }
 
+      runId = generateId()
       const tx = this.db.transaction(() => {
-        conv = ws.createConversation(task.employee_id, undefined, convTitle, false)
-
-        const userMessage = {
-          id: `msg_${generateId()}`,
-          role: 'user',
-          content: task.prompt,
-          timestamp: Date.now(),
-        }
-        const initialMessages = [userMessage]
-        const messagesJson = JSON.stringify(initialMessages)
-        ws.updateConversation(conv.id, {
-          messages_json: messagesJson,
-          message_count: 1,
-          last_message_at: now,
-        })
-
-        runId = generateId()
         this.db.prepare(
           `INSERT INTO automation_runs
             (id, task_id, conversation_id, employee_id, provider_id, model_id,
@@ -609,13 +698,26 @@ class AutomationService {
            WHERE id = ?`
         ).run(now, nextRunAt, willDisable ? 0 : task.is_enabled ? 1 : 0, now, task.id)
       })
+      // conversation 创建/写入走内核（async 桥），与插件库事务分离
+      conv = await this.createConversation(task.employee_id, convTitle)
+      const userMessage = {
+        id: `msg_${generateId()}`,
+        role: 'user',
+        content: task.prompt,
+        timestamp: Date.now(),
+      }
+      await this.updateConversation(conv.id, {
+        messages_json: JSON.stringify([userMessage]),
+        message_count: 1,
+        last_message_at: now,
+      })
       tx()
 
-      logger.info(`Task ${task.id} run ${runId} started (attempt ${attempt + 1}, by ${triggeredBy})`)
+      this.ctx.services.logger.info(`Task ${task.id} run ${runId} started (attempt ${attempt + 1}, by ${triggeredBy})`)
     } catch (initErr: any) {
-      logger.error(`Task ${task.id} failed to initialize: ${initErr?.message || initErr}`)
+      this.ctx.services.logger.error(`Task ${task.id} failed to initialize: ${initErr?.message || initErr}`)
       if (conv?.id) {
-        try { ws.deleteConversation(conv.id) } catch { /* ignore */ }
+        try { this.deleteConversation(conv.id) } catch { /* ignore */ }
       }
       throw initErr
     }
@@ -626,31 +728,25 @@ class AutomationService {
     let errorMsg: string | null = null
 
     try {
-      const agentService = EmployeeAgentService.getInstance()
-      // 使用 AbortController 在超时后真正取消底层 LLM 执行，避免资源泄漏与数据竞态
+      const agent = this.ctx.services.agent!
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), TASK_EXECUTION_TIMEOUT_MS)
       try {
-        await agentService.chatStream(
+        await agent.chatStream(
           {
-            employee_id: task.employee_id,
-            provider_id: task.provider_id,
-            model_id: task.model_id || undefined,
+            employeeId: task.employee_id,
+            providerId: task.provider_id,
+            modelId: task.model_id || undefined,
             messages: [{ role: 'user', content: task.prompt }],
-            use_skills: true,
-            enable_thinking: false,
-            conversation_id: conv!.id,
-            minimal_mode: false,
-            high_permission: task.high_permission,
+            conversationId: conv!.id,
+            useSkills: true,
+            enableThinking: false,
+            minimalMode: false,
+            highPermission: task.high_permission,
           },
           {
             onChunk: (chunk: string) => { assistantContent += chunk },
             onThought: (thought: string) => { thinkContent += thought },
-            onToolCall: () => { /* ignore */ },
-            onToolCallDelta: () => { /* ignore */ },
-            onToolResult: () => { /* ignore */ },
-            onToolProgress: () => { /* ignore */ },
-            onDone: () => { /* 状态在 await 返回后统一更新 */ },
             onError: (err: string) => { errorMsg = err },
           },
           controller.signal
@@ -682,13 +778,12 @@ class AutomationService {
           assistantMessage,
         ]
 
-        // finalize 阶段包裹在事务中，确保 conversation/run/task 状态一致
+        await this.updateConversation(conv!.id, {
+          messages_json: JSON.stringify(finalMessages),
+          message_count: finalMessages.length,
+          last_message_at: finishedAt,
+        })
         const tx = this.db.transaction(() => {
-          ws.updateConversation(conv!.id, {
-            messages_json: JSON.stringify(finalMessages),
-            message_count: finalMessages.length,
-            last_message_at: finishedAt,
-          })
           this.db.prepare(
             `UPDATE automation_runs SET status = 'success', finished_at = ?, duration_ms = ?, error_message = NULL WHERE id = ?`
           ).run(finishedAt, durationMs, runId)
@@ -698,7 +793,7 @@ class AutomationService {
         })
         tx()
 
-        logger.info(`Task ${task.id} run ${runId} success in ${durationMs}ms`)
+        this.ctx.services.logger.info(`Task ${task.id} run ${runId} success in ${durationMs}ms`)
 
         if (task.notify_on_complete) {
           this.sendNotification(task, 'success', durationMs, undefined, conv!.id, task.employee_id)
@@ -708,7 +803,6 @@ class AutomationService {
 
       const shouldRetry = attempt < task.retry_count && attempt < MAX_RETRY_ATTEMPTS
 
-      // 失败路径也用事务包裹
       const tx = this.db.transaction(() => {
         this.db.prepare(
           `UPDATE automation_runs SET status = 'failed', finished_at = ?, duration_ms = ?, error_message = ? WHERE id = ?`
@@ -723,11 +817,11 @@ class AutomationService {
       })
       tx()
 
-      logger.warn(`Task ${task.id} run ${runId} failed: ${errorMsg}`)
+      this.ctx.services.logger.warn(`Task ${task.id} run ${runId} failed: ${errorMsg}`)
 
       if (shouldRetry) {
         const waitMs = Math.min(30000, 2000 * Math.pow(2, attempt))
-        logger.info(`Task ${task.id} retrying in ${waitMs}ms (attempt ${attempt + 2}/${task.retry_count + 1})`)
+        this.ctx.services.logger.info(`Task ${task.id} retrying in ${waitMs}ms (attempt ${attempt + 2}/${task.retry_count + 1})`)
         await new Promise(resolve => {
           const t = setTimeout(resolve, waitMs)
           if (t.unref) t.unref()
@@ -742,7 +836,7 @@ class AutomationService {
         this.sendNotification(task, 'failed', durationMs, errorMsg || undefined, conv!.id, task.employee_id)
       }
     } catch (finalizeErr: any) {
-      logger.error(`Task ${task.id} failed to finalize run ${runId}: ${finalizeErr?.message || finalizeErr}`)
+      this.ctx.services.logger.error(`Task ${task.id} failed to finalize run ${runId}: ${finalizeErr?.message || finalizeErr}`)
     }
 
     return this.getRun(runId!)!
@@ -766,9 +860,8 @@ class AutomationService {
       const body = result === 'success'
         ? `耗时 ${(durationMs / 1000).toFixed(1)} 秒`
         : `错误：${error || '未知错误'}`
-      // clickId 编码跳转信息：JSON {conversationId, employeeId}
       const clickId = JSON.stringify({ conversationId, employeeId })
-      NotificationService.getInstance().notify({
+      this.ctx.services.notification!.notify({
         title,
         body,
         clickTarget: 'automation',
@@ -782,6 +875,26 @@ class AutomationService {
     const d = new Date(unixSec * 1000)
     const pad = (n: number) => n < 10 ? `0${n}` : `${n}`
     return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}`
+  }
+
+  // ====== 内核 conversation 操作（经 ctx.services.conversations 桥接） ======
+
+  /** 创建 conversation（复用内核 WorkspaceManagerService.createConversation） */
+  private async createConversation(employeeId: string, title?: string): Promise<{ id: string }> {
+    const id = await this.ctx.services.conversations!.create(employeeId, title)
+    return { id }
+  }
+
+  private async updateConversation(id: string, data: Record<string, unknown>): Promise<void> {
+    await this.ctx.services.conversations!.update(id, data)
+  }
+
+  private async deleteConversation(id: string): Promise<void> {
+    await this.ctx.services.conversations!.delete(id)
+  }
+
+  private async updateConversationEmployee(id: string, employeeId: string): Promise<void> {
+    await this.ctx.services.conversations!.update(id, { employee_id: employeeId })
   }
 
   // ====== 工具方法 ======
@@ -838,6 +951,21 @@ class AutomationService {
       return fallback
     }
   }
+}
+
+// ====== 单例管理 ======
+
+let service: AutomationService | null = null
+
+export function getAutomationService(ctx: PluginContext): AutomationService {
+  if (!service) {
+    service = new AutomationService(ctx)
+  }
+  return service
+}
+
+export function resetAutomationService(): void {
+  service = null
 }
 
 export default AutomationService

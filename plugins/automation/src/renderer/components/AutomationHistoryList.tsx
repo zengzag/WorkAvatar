@@ -8,7 +8,7 @@ import {
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
-import type { AutomationRun } from '../../types/automation'
+import type { AutomationRun } from '../types'
 
 const MS = 1000
 
@@ -37,7 +37,7 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
   runs, loading, employees, tasks,
   onDelete, onClearAll, onJump,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('automation')
   const { token } = theme.useToken()
 
   const employeeName = useCallback((id: string) => employees.find((e) => e.id === id)?.name || id, [employees])
@@ -90,8 +90,8 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
         <Popconfirm
           title={t('automation.confirmClearRuns')}
           onConfirm={onClearAll}
-          okText={t('common.clear')}
-          cancelText={t('common.cancel')}
+          okText={t('automation.common.clear')}
+          cancelText={t('automation.common.cancel')}
           okButtonProps={{ danger: true }}
         >
           <Button size="small" icon={<ClearOutlined />} danger>
@@ -113,7 +113,6 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
               transition: 'background 0.2s',
             }}
           >
-            {/* 第一行：任务标题 + 状态 + 触发方式 + 操作 */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Typography.Text strong style={{ fontSize: 14 }} ellipsis>
@@ -141,18 +140,17 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
                 <Popconfirm
                   title={t('automation.confirmDeleteRun')}
                   onConfirm={() => onDelete(run.id)}
-                  okText={t('common.delete')}
-                  cancelText={t('common.cancel')}
+                  okText={t('automation.common.delete')}
+                  cancelText={t('automation.common.cancel')}
                   okButtonProps={{ danger: true }}
                 >
-                  <Tooltip title={t('common.delete')}>
+                  <Tooltip title={t('automation.common.delete')}>
                     <Button size="small" type="text" icon={<DeleteOutlined />} danger />
                   </Tooltip>
                 </Popconfirm>
               </Space>
             </div>
 
-            {/* 第二行：元信息 */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12, color: token.colorTextTertiary }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <UserOutlined />
@@ -171,7 +169,6 @@ const AutomationHistoryList: React.FC<AutomationHistoryListProps> = ({
               </span>
             </div>
 
-            {/* 第三行：错误信息（如有） */}
             {run.status === 'failed' && run.error_message && (
               <div
                 style={{

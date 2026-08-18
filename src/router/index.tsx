@@ -10,7 +10,6 @@ const Employees = lazy(() => import('../pages/Employees'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
-const AutomationPage = lazy(() => import('../pages/Automation'))
 
 
 const lazyElement = (node: ReactNode) => (
@@ -60,10 +59,6 @@ export function buildRouter(plugins: LoadedPlugin[]) {
           path: 'kms',
           element: lazyElement(<KMSPage />),
         },
-        {
-          path: 'automation',
-          element: lazyElement(<AutomationPage />),
-        },
         ...pluginRouteItems(plugins),
       ],
     },
@@ -76,7 +71,6 @@ export function buildRouter(plugins: LoadedPlugin[]) {
         { path: 'tasks', element: lazyElement(<Tasks />) },
         { path: 'employees', element: lazyElement(<Employees />) },
         { path: 'kms', element: lazyElement(<KMSPage />) },
-        { path: 'automation', element: lazyElement(<AutomationPage />) },
         ...pluginRouteItems(plugins),
       ],
     },

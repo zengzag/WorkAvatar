@@ -15,7 +15,7 @@ import { useAppearanceStore } from '../../stores/appearance.store'
 import { useNavConfigStore } from '../../stores/nav.store'
 
 /** 可分离为独立窗口的内置 tab key（与后端 DETACHABLE_TABS 对齐，排除 settings；插件 tab 走 nav.store 的 detachable） */
-const DETACHABLE_TABS = ['tasks', 'employees', 'kms', 'automation']
+const DETACHABLE_TABS = ['tasks', 'employees', 'kms']
 
 /**
  * 自定义窗口标题栏：

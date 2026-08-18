@@ -70,25 +70,6 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     ],
   },
   {
-    id: 'automation',
-    name: 'automation',
-    title: '自动化任务',
-    description: '自动化任务的创建、调度、运行、预览和执行历史查询',
-    icon: 'robot',
-    toolIds: [
-      'automation_list_employees',
-      'automation_list_providers',
-      'automation_task_list',
-      'automation_task_create',
-      'automation_task_update',
-      'automation_task_delete',
-      'automation_task_toggle',
-      'automation_task_run_now',
-      'automation_task_preview',
-      'automation_run_list',
-    ],
-  },
-  {
     id: 'web',
     name: 'web',
     title: '网络工具',
@@ -131,6 +112,8 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     icon: 'team',
     toolIds: [
       'delegate_to_employee',
+      'list_employees',
+      'list_providers',
     ],
   },
 ]

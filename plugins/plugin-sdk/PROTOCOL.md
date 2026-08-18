@@ -62,10 +62,10 @@
 
 | 权限 | 注入的服务 | 用途 |
 |---|---|---|
-| （无需声明） | `logger` / `host` / `ipc` / `storage` / `contributions` | 基础能力（host.getDataDir 等） |
+| （无需声明） | `logger` / `host` / `ipc` / `storage` / `contributions` / `kernelEvents` | 基础能力（host.getDataDir 等）；`kernelEvents.subscribe(event, cb)` 订阅内核事件（conversation-deleted / model-renamed 等） |
 | `llm` | `services.llm.chat()` / `chatStream()` | 受控 LLM 调用（走 PiAIProvider，自动记日志/用量；chatStream 支持流式回调与 AbortSignal） |
-| `agent` | `services.agent.runTask()/listEmployees()` | 委派数字员工 |
-| `conversations` | `services.conversations` | 内核对话只读查询 |
+| `agent` | `services.agent.runTask()/listEmployees()/listProviders()/chatStream()` | 委派数字员工；chatStream 为底层对话流式执行，精细控制 provider/model/high_permission/use_skills/minimal_mode/enable_thinking |
+| `conversations` | `services.conversations.getTitle()/listRecent()/onDeleted()/create()/update()/delete()` | 内核对话查询与写操作（经宿主 WorkspaceManagerService 桥接）；onDeleted 订阅删除事件（底层复用 kernelEvents） |
 | `notifications` | `services.notification.notify()` | 通知（主窗口激活→推 `notify` 插件事件，失焦→系统通知，点击→`notify-click` 插件事件） |
 | `scheduler` | `services.scheduler.every()/cron()/cancel()` | 定时任务（宿主统一回收） |
 | `globalShortcuts` | `contributions.registerGlobalShortcuts()` | 全局快捷键 |
