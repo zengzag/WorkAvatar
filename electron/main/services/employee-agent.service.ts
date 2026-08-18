@@ -51,6 +51,8 @@ interface EmployeeChatStreamParams {
   conversation_id?: string
   minimal_mode?: boolean
   high_permission?: boolean
+  /** 系统提示词覆盖：提供时忽略员工 rules，使用该提示词（供插件注入领域专用提示） */
+  system?: string
 }
 
 interface EmployeeChatCallbacks {
@@ -389,7 +391,7 @@ class EmployeeAgentService {
   }
 
   async chatStream(params: EmployeeChatStreamParams, callbacks: EmployeeChatCallbacks, signal?: AbortSignal): Promise<void> {
-    const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false, high_permission = false } = params
+    const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false, high_permission = false, system } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
     const employeeName = employee?.name || 'unknown'
@@ -414,7 +416,9 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
-      const systemPromptCached = await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+      const systemPromptCached = system
+        ? (agent.setCachedSystemPrompt(system), true)
+        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(

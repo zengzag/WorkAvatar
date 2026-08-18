@@ -20,7 +20,7 @@ export interface ExecuteDeps {
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
   ): Promise<{ conversationId?: string; text: string }>
-  /** 底层对话流式执行（agent-chat） */
+  /** 底层对话流式执行（agent-chat），返回会话 id（新建或复用） */
   runAgentChat(
     params: {
       employeeId: string
@@ -32,10 +32,11 @@ export interface ExecuteDeps {
       enableThinking?: boolean
       minimalMode?: boolean
       highPermission?: boolean
+      system?: string
     },
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
-  ): Promise<void>
+  ): Promise<{ conversationId: string }>
   /** 受控 LLM 单次调用（llm-chat） */
   runLlmChat(
     params: { prompt: string; system?: string; providerId?: string; modelId?: string }
@@ -83,7 +84,7 @@ export function createExecuteService(deps: ExecuteDeps) {
           if (!request.employeeId) throw new Error('agent-chat 需要 employeeId')
           if (!request.providerId) throw new Error('agent-chat 需要 providerId')
           if (!request.messages || request.messages.length === 0) throw new Error('agent-chat 需要 messages')
-          await deps.runAgentChat(
+          return await deps.runAgentChat(
             {
               employeeId: request.employeeId,
               providerId: request.providerId,
@@ -94,11 +95,11 @@ export function createExecuteService(deps: ExecuteDeps) {
               enableThinking: request.enableThinking,
               minimalMode: request.minimalMode,
               highPermission: request.highPermission,
+              system: request.system,
             },
             callbacks,
             signal,
-          )
-          return undefined as T
+          ) as T
         }
         case 'llm-chat': {
           if (!request.prompt) throw new Error('llm-chat 需要 prompt')

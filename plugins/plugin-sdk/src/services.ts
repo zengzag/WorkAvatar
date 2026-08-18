@@ -33,6 +33,7 @@ export type PluginDataEntity =
   | 'llmProviders'
   | 'memories'
   | 'settings'
+  | 'messages'
 
 /** 数据写操作类型 */
 export type PluginDataOp = 'create' | 'update' | 'delete'

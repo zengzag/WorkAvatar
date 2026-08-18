@@ -201,10 +201,11 @@ describe('execute 边界 case', () => {
     expect(result).toEqual({ conversationId: 'c9', text: '结果9' })
   })
 
-  it('agent-chat 返回 undefined', async () => {
+  it('agent-chat 返回会话 id', async () => {
     const deps = makeDeps()
+    deps.runAgentChat = vi.fn(async () => ({ conversationId: 'c10' }))
     const svc = createExecuteService(deps)
     const result = await svc.execute({ kind: 'agent-chat', employeeId: 'e1', providerId: 'p1', messages: [{ role: 'user', content: 'x' }] })
-    expect(result).toBeUndefined()
+    expect(result).toEqual({ conversationId: 'c10' })
   })
 })

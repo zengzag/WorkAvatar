@@ -163,6 +163,20 @@ const result = await ctx.services.execute!.execute({
   onChunk: (text) => console.log(text),
 })
 
+// 底层对话流式执行（返回会话 id；可注入领域专用系统提示词）
+const { conversationId } = await ctx.services.execute!.execute({
+  kind: 'agent-chat',
+  employeeId: 'emp-1',
+  providerId: 'prov-1',
+  messages: [{ role: 'user', content: '为博客建用户表' }],
+  system: '你是一个数据建模助手，只能使用数据模型工具',
+  minimalMode: false, // false 保留员工全部工具（默认 true 会清空工具）
+}, {
+  onChunk: (chunk) => console.log(chunk),
+  onToolCall: (tc) => console.log('tool', tc.name, tc.arguments),
+})
+// 会话消息可用 services.data.query('messages', { filter: { conversationId } }) 读取
+
 // 流式调用 LLM
 const text = await ctx.services.execute!.execute({
   kind: 'llm-stream',

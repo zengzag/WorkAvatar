@@ -40,7 +40,7 @@
 | kind | 说明 | 返回 | 安全级别 |
 |---|---|---|---|
 | `agent-task` | 委派数字员工执行任务 | `{ conversationId, text }` | 中 |
-| `agent-chat` | 底层对话流式执行 | `void` | 中 |
+| `agent-chat` | 底层对话流式执行 | `{ conversationId }`（支持 `system` 提示词覆盖、`minimalMode` 控制工具集） | 中 |
 | `llm-chat` | 受控 LLM 单次调用 | `string` | 中 |
 | `llm-stream` | 受控 LLM 流式调用 | `string`（累积） | 中 |
 
@@ -128,3 +128,4 @@
 | calendar | system（notification/scheduler/windows）、registerAgentTools、storage、ipc |
 | voice | execute（llm-stream）、system（windows/native）、storage、ipc |
 | automation | data（conversations write）、execute（agent-chat）、events（subscribe）、system（notification/scheduler）、registerAgentTools |
+| data-model | data（employees/llmProviders/messages read）、execute（agent-chat）、registerAgentTools |

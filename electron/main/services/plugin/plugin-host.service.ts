@@ -633,6 +633,7 @@ class PluginHostService {
               enable_thinking: params.enableThinking ? 'high' : false,
               minimal_mode: params.minimalMode ?? true,
               high_permission: params.highPermission ?? false,
+              system: params.system,
             },
             {
               onChunk: (text: string) => callbacks?.onChunk?.(text),
@@ -643,6 +644,7 @@ class PluginHostService {
             },
             signal,
           )
+          return { conversationId }
         },
         runLlmChat: async (params) => {
           const llmClient = LLMClientService.getInstance()

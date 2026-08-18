@@ -95,6 +95,11 @@ services.execute.execute({ kind, employeeId?, providerId?, modelId?, prompt?, me
 
 - `kind` 必须在 `capabilities.execute.kinds` 白名单内。
 - 插件只需理解"execute 一个任务/一次对话"，无需区分底层是 agent 还是 llm。
+- **`agent-chat`**：返回 `{ conversationId }`（新建或复用的会话 id）。支持：
+  - `system`（字符串）：覆盖员工系统提示词，注入领域专用提示（插件场景推荐）；
+  - `minimalMode`（布尔）：`false` 时保留员工全部工具（默认 `true` 会清空工具集，需编辑类工具时必须显式设 false）；
+  - `messages`：`{role, content}[]`，末条为用户消息（query），其余为历史。
+- **`llm-stream` / `llm-chat`**：返回累积文本；`llm-stream` 经 `onChunk` 流式回调。
 
 ## 7. 系统集成层（services.events）
 
