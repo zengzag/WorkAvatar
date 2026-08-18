@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Card, Space, Typography } from 'antd'
-import type { PluginRendererEntry, PluginRendererHost } from '../../../plugin-sdk/src/renderer'
+import type { PluginRendererEntry, PluginRendererHost } from '@workavatar/plugin-sdk/renderer'
 
 let hostRef: PluginRendererHost | null = null
 

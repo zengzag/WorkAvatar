@@ -1,4 +1,4 @@
-import type { PluginContext } from '../../../plugin-sdk/src'
+import type { PluginContext } from '@workavatar/plugin-sdk'
 
 let count = 0
 
