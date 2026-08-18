@@ -106,6 +106,8 @@ node build-plugin.mjs [pluginDir] --zip  # 构建并产出分发包 zip
 
 - 主进程入口（\`dist/main/index.cjs\`）→ CJS
 - 渲染端入口（\`dist/renderer/index.js\`）→ ESM，react/antd 等经 \`__WA_HOST__\` 单例 shim，无需安装这些运行时依赖
+- **依赖声明**：\`package.json\` 中 \`dependencies\` 打包进 \`dist/\` 随插件分发；\`nativeDependencies\` 由宿主借用（仅在 \`plugin-sdk/host-native-dependencies.json\` 白名单内选择，不打包，勿带 \`.node\`）；\`devDependencies\` 仅构建期用（共享库 + esbuild 等）
+- **宿主原生能力**：含 \`plugin-sdk/host-native-dependencies.json\`（宿主原生模块白名单，单源真相）。构建脚本会校验 \`nativeDependencies\` 合法性；运行时可用 \`ctx.services.host.listNativeModules()\` 查询宿主实际提供的原生模块
 - zip 仅含运行时必需文件：\`manifest.json\` + \`dist/**\` + \`locale/**\` + \`resources/**\`
 
 ## 版本兼容

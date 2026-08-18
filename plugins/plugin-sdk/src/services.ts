@@ -178,11 +178,15 @@ export interface PluginWindowService {
   create(options: PluginWindowOptions): PluginWindowHandle
 }
 
-/** 宿主原生模块租借（需 native 能力；插件禁止自带 .node 文件） */
+/**
+ * 宿主原生模块租借（需 native 能力；插件禁止自带 .node 文件）。
+ * 可租借的模块为宿主「原生依赖白名单」中的固定集合（见 host-native-dependencies.json，
+ * 运行时也可经 ctx.services.host.listNativeModules() 查询）；不在白名单中的模块借用会被拒绝。
+ */
 export interface PluginNativeService {
-  /** 租借模块实例（如 'better-sqlite3'），ABI 与宿主一致 */
+  /** 租借模块实例（如 'better-sqlite3'），须在宿主原生白名单内；ABI 与宿主一致 */
   borrow(name: string): unknown
-  /** 模块解析路径（供插件 Worker 线程 require） */
+  /** 模块解析路径（供插件 Worker 线程 require），须在宿主原生白名单内 */
   modulePath(name: string): string
 }
 
@@ -190,6 +194,8 @@ export interface PluginNativeService {
 export interface PluginHostPathsService {
   /** 用户可配置的数据目录（默认 文档/WorkAvatar；用户可在设置中改盘） */
   getDataDir(): string
+  /** 宿主可租借的原生模块白名单（name → semver 范围），供插件运行时感知宿主能力 */
+  listNativeModules(): Record<string, string>
 }
 
 // ====== KMS 数据访问层（services.kms，需 capabilities.kms 授权） ======

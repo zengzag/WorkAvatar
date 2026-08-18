@@ -77,7 +77,11 @@ async function main() {
     }
 
     const childArgs = [buildScript, pluginDir]
-    if (zipMode) childArgs.push('--zip')
+    if (zipMode) {
+      childArgs.push('--zip')
+      // 仓库内统一输出到项目根 release/plugins/（与文档/build.ps1 一致），保证 5 个插件 zip 集中产出
+      childArgs.push('--out', path.join(projectRoot, 'release', 'plugins'))
+    }
     const res = spawnSync(process.execPath, childArgs, { stdio: 'inherit' })
     if (res.status === 0) built++
     else failed++

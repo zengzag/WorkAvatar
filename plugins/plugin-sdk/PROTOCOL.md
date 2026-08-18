@@ -127,9 +127,19 @@ await services.bus.call('目标插件id:方法名', payload)  // 调用其他插
 - `shared` 数据存宿主级共享库 `plugin-data/plugin-shared.db`，跨插件/热重载持久；写入强制以本插件命名空间隔离，杜绝覆盖他人数据。
 - `bus` 目标方法名固定 `目标插件id:方法名`，host 路由到目标插件注册的 responder；目标未注册返回 rejected promise。
 
-## 8. 插件依赖
+## 8. 插件依赖与构建产物依赖
 
-manifest `dependencies`（pluginId → semver range）。宿主激活前校验依赖（缺失 / 未启用 / 无效 / 版本不满足任一），不满足则本插件标记 invalid 并给出原因；激活按拓扑顺序先激活依赖方。
+**插件间依赖**：manifest `dependencies`（pluginId → semver range）。宿主激活前校验依赖（缺失 / 未启用 / 无效 / 版本不满足任一），不满足则本插件标记 invalid 并给出原因；激活按拓扑顺序先激活依赖方。
+
+**构建产物依赖**（各插件 `package.json` 声明，构建脚本据 `manifest.main`/`renderer` 打包）：
+
+| 字段 | 去向 | 说明 |
+|---|---|---|
+| `dependencies` | 打包进 `dist/` 随插件分发 | 运行时纯 JS 依赖，无需宿主预装 |
+| `nativeDependencies` | external，**不打包** | 宿主借用的原生模块（`.node`），运行时经 `ctx.services.native.borrow` 租借，**仅限宿主白名单**，zip 禁止自带 |
+| `devDependencies` | 仅构建期 | 共享库（shim 到 `__WA_HOST__`）+ 构建工具，不随分发 |
+
+**宿主原生模块白名单（单源真相）**：`host-native-dependencies.json` 定义宿主可经 `native.borrow` 租借的原生模块集合。宿主启动校验借用合法性、构建脚本校验 `nativeDependencies` 声明，二者都读取该清单。第三方插件只能选用清单内模块，运行时可用 `ctx.services.host.listNativeModules()` 查询（对象为 `name → semver 范围`）。
 
 ## 8. UI 扩展层
 

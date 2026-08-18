@@ -28,6 +28,7 @@ import type {
   PluginViewContribution,
   PluginCommand,
 } from '../../../../plugins/plugin-sdk/src'
+import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugins/plugin-sdk/src'
 import {
   getCapability,
   canRegisterView,
@@ -519,6 +520,7 @@ class PluginHostService {
           const { default: PathService } = require('../path.service')
           return PathService.getInstance().getDataDir()
         },
+        listNativeModules: () => ({ ...HOST_NATIVE_DEPENDENCIES }),
       },
     }
 
@@ -616,11 +618,13 @@ class PluginHostService {
         },
         runAgentChat: async (params, callbacks, signal) => {
           const employeeAgent = EmployeeAgentService.getInstance()
-          let conversationId = params.conversationId
-          if (!conversationId) {
+          // 会话 id 必须为字符串：复用传入或新建（ExecuteDeps 契约要求返回 { conversationId: string }）
+          let conversationId: string
+          if (params.conversationId) {
+            conversationId = params.conversationId
+          } else {
             const { default: WorkspaceManagerService } = require('../workspace-manager.service')
-            const conv = WorkspaceManagerService.getInstance().createConversation(params.employeeId)
-            conversationId = conv.id
+            conversationId = WorkspaceManagerService.getInstance().createConversation(params.employeeId).id
           }
           await employeeAgent.chatStream(
             {
@@ -927,11 +931,19 @@ class PluginHostService {
     }
 
     if (this.hasSystemFeature(record, 'native')) {
+      // 校验模块在宿主原生白名单内；不在则拒绝借用并提示，避免插件依赖宿主未提供模块
+      const assertNativeWhitelisted = (name: string) => {
+        if (!(name in HOST_NATIVE_DEPENDENCIES)) {
+          throw new Error(`宿主不提供原生模块 "${name}"；可用：${Object.keys(HOST_NATIVE_DEPENDENCIES).join(', ')}`)
+        }
+      }
       services.native = {
         borrow: (name) => {
+          assertNativeWhitelisted(name)
           try { return require(name) } catch { return null }
         },
         modulePath: (name) => {
+          assertNativeWhitelisted(name)
           try { return require.resolve(name) } catch { return '' }
         },
       }

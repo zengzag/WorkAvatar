@@ -29,6 +29,7 @@
 ```
 my-plugin/
 ├── manifest.json           # 唯一信任入口（手写）
+├── package.json            # 依赖声明（dependencies/nativeDependencies/devDependencies）
 ├── src/
 │   ├── main/index.ts       # 主进程入口（编译为 dist/main/index.cjs）
 │   └── renderer/index.tsx  # 渲染端入口（编译为 dist/renderer/index.js，可省略）
@@ -37,6 +38,20 @@ my-plugin/
 ```
 
 主进程入口编译为 **CJS**，渲染端入口编译为 **ESM**。渲染端对 `react` / `antd` / `i18next` 等的 import 由构建脚本自动 shim 到宿主 `__WA_HOST__`，你**无需安装这些依赖**，直接 `import React from 'react'` 即可。
+
+### package.json 依赖声明约定
+
+插件**自带** `package.json` 显式声明其依赖，构建脚本据此决定打包或借用。三个字段各有定义：
+
+| 字段 | 说明 | 示例 |
+|---|---|---|
+| `dependencies` | 会被 esbuild **打包进 dist/** 的运行时纯 JS 依赖。它们随插件分发，不依赖宿主预装 | `vditor`、`@dbml/core`、`@xyflow/react`、`dayjs`、`zustand` |
+| `nativeDependencies` | **宿主借用的原生模块**（`.node`），构建时加入 external **不打包**，运行时经 `ctx.services.native.borrow(name)` 租借。**只能在宿主白名单内选择**（清单见 `plugin-sdk/host-native-dependencies.json`，随 devkit 分发），插件 zip 禁止携带 `.node` | `sherpa-onnx-node` |
+| `devDependencies` | 仅构建/类型检查用的依赖（**不随分发**）：共享库（`react`/`react-dom`/`antd`/`@ant-design/icons`/`i18next`/`react-i18next`，构建时 shim 到 `__WA_HOST__`）+ 构建工具（`esbuild`/`typescript`/`adm-zip` 等） | `antd`、`esbuild` |
+
+> **第三方如何知道宿主有哪些原生模块？** 宿主原生依赖白名单（`plugin-sdk/host-native-dependencies.json`）随 devkit 分发，是**单源真相**。构建时 `build-plugin.mjs` 会比对你在 `nativeDependencies` 声明的模块是否在白名单内，不在则警告（运行时借用会被宿主以明确报错拒绝）；运行时也可经 `ctx.services.host.listNativeModules()` 查询宿主实际提供的原生模块名与版本范围。原生依赖无法像构建期 `dependencies` 那样"即想即用"，只能选用宿主已提供的能力。
+
+> 请勿把 `nativeDependencies` 里的原生模块放进 `dependencies`——它们无法被 esbuild 打包，且导入校验会拒绝自带 `.node`。
 
 ## 3. 编写 manifest.json（含 capabilities）
 
@@ -220,8 +235,9 @@ node scripts/build-plugins.mjs my-plugin
 node scripts/build-plugins.mjs my-plugin --zip
 ```
 
-- 主进程 → `platform=node target=node20 format=cjs`，external 内置模块与 electron。
+- 主进程 → `platform=node target=node20 format=cjs`，external 内置模块与 electron，以及 `package.json.nativeDependencies` 声明的宿主原生依赖（不打包）。
 - 渲染端 → `platform=browser target=es2020 format=esm jsx=automatic`，共享库 shim 到 `__WA_HOST__`，CSS 自动内联。
+- `dependencies` 会被打包进 `dist/`，随 zip 分发；`nativeDependencies` 不打包、由宿主借用；`devDependencies` 不随分发。
 - zip 内容仅含运行时必需文件：`manifest.json` + `dist/**` + `locale/**` + `resources/**`。
 
 如果你在**独立仓库**开发插件，复制上述构建思路即可（核心是主进程出 CJS、渲染端出被 shim 的 ESM、产出约定结构的 zip）。ship 产物是单个 `<id>-v<version>.zip`。

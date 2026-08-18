@@ -134,7 +134,7 @@ function resolveSource(pluginDir, entry, kind) {
   return path.join(pluginDir, rel + (kind === 'main' ? '.ts' : '.tsx'))
 }
 
-async function buildMain(pluginDir, entry) {
+async function buildMain(pluginDir, entry, nativeDeps = []) {
   const outfile = path.join(pluginDir, entry)
   await esbuild.build({
     entryPoints: [resolveSource(pluginDir, entry, 'main')],
@@ -143,9 +143,48 @@ async function buildMain(pluginDir, entry) {
     platform: 'node',
     target: 'node20',
     format: 'cjs',
-    external: ['electron', ...NODE_BUILTINS],
+    // electron / node 内置 / 插件声明的宿主原生依赖（package.json.nativeDependencies）不打包
+    external: ['electron', ...NODE_BUILTINS, ...nativeDeps],
   })
   return outfile
+}
+
+/**
+ * 读取插件 package.json 声明的宿主原生依赖（nativeDependencies），
+ * 并与宿主原生白名单（plugin-sdk/host-native-dependencies.json，向上逐级查找）比对：
+ * 未清单内的模块构建期提示（运行时借用会被宿主拒绝）。
+ * 返回白名单校验后的模块名数组（作为主进程 external）。
+ */
+function readNativeDeps(pluginDir) {
+  let declared = {}
+  try {
+    declared = JSON.parse(fs.readFileSync(path.join(pluginDir, 'package.json'), 'utf-8')).nativeDependencies ?? {}
+  } catch {
+    return []
+  }
+  const names = Object.keys(declared)
+  if (names.length === 0) return []
+  // 宿主白名单（单源真相）：从插件目录向上逐级查找 plugin-sdk/host-native-dependencies.json
+  // 覆盖三种路径：plugins/<id>、plugins/examples/<id>、devkit 内 plugin-template
+  let whitelist = {}
+  try {
+    let dir = path.resolve(pluginDir)
+    while (true) {
+      const candidate = path.join(dir, 'plugin-sdk', 'host-native-dependencies.json')
+      if (fs.existsSync(candidate)) {
+        whitelist = JSON.parse(fs.readFileSync(candidate, 'utf-8'))
+        break
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch { /* 找不到白名单则跳过校验 */ }
+  const unknown = names.filter((n) => !(n in whitelist))
+  if (unknown.length) {
+    console.warn(`[build-plugin] ⚠ 以下 nativeDependencies 不在宿主白名单内，运行时会被拒绝: ${unknown.join(', ')}`)
+  }
+  return names
 }
 
 async function buildRenderer(pluginDir, entry) {
@@ -205,6 +244,10 @@ async function main() {
   const zipMode = args.includes('--zip')
   const dirArg = args.find((a) => !a.startsWith('--'))
   const pluginDir = path.resolve(dirArg || process.cwd())
+  // 可选 --out <dir>：指定 zip 输出目录（仓库内由 build-plugins.mjs 传入项目根 release/plugins；
+  // 独立/模板场景缺省输出到 <pluginDir>/release/plugins）
+  const outArgIndex = args.indexOf('--out')
+  const outDirArg = outArgIndex >= 0 ? args[outArgIndex + 1] : undefined
 
   const manifestPath = path.join(pluginDir, 'manifest.json')
   if (!fs.existsSync(manifestPath)) {
@@ -232,8 +275,14 @@ async function main() {
   const outputs = []
   const errors = []
 
+  // 读取插件 package.json 声明的宿主原生依赖（无则跳过）
+  const nativeDeps = readNativeDeps(pluginDir)
+  if (nativeDeps.length) {
+    console.log(`[build-plugin] 宿主原生依赖（不打包）: ${nativeDeps.join(', ')}`)
+  }
+
   try {
-    outputs.push({ file: await buildMain(pluginDir, manifest.main), label: 'main' })
+    outputs.push({ file: await buildMain(pluginDir, manifest.main, nativeDeps), label: 'main' })
   } catch (err) {
     errors.push(`主进程构建失败: ${formatError(err)}`)
   }
@@ -257,7 +306,7 @@ async function main() {
   }
 
   if (zipMode) {
-    const outDir = path.join(pluginDir, 'release', 'plugins')
+    const outDir = outDirArg ? path.resolve(outDirArg) : path.join(pluginDir, 'release', 'plugins')
     const AdmZip = require('adm-zip')
     const outPath = packPluginZip(pluginDir, manifest, outDir, AdmZip)
     const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0
