@@ -42,7 +42,7 @@ export interface ToolDefinition {
     required?: string[]
   }
   handler: (args: Record<string, any>, context?: ToolHandlerContext) => Promise<any> | any
-  source: 'builtin' | 'skill' | 'dynamic'
+  source: 'builtin' | 'skill' | 'dynamic' | 'plugin'
   permission?: ToolPermission
   timeoutMs?: number
   /** 禁用 retry 中间件：适用于交互类工具（ask_user/fs 确认），超时或取消不应重试 */

@@ -311,6 +311,18 @@ export function buildAllBuiltinToolDefinitions(): ToolDefinition[] {
     if (isToolIncluded(t)) result.push(t)
   }
 
+  // 1.1 插件贡献的 agent 工具（如日历插件工具），同样按排除清单过滤
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pluginHost = require('../plugin/plugin-host.service').default
+    const pluginTools = (pluginHost.getInstance().getAgentTools() || []) as ToolDefinition[]
+    for (const t of pluginTools) {
+      if (isToolIncluded(t)) result.push(t)
+    }
+  } catch {
+    // 插件宿主未就绪时忽略
+  }
+
   // 2. KMS 主工具（scope 为空集合，即不过滤合集，等同于"全部"）
   const emptyScope = { current: { collectionIds: [] as string[] } }
   const kmsSearchTools = (agentTools.createKMSTools || (() => []))(emptyScope) as ToolDefinition[]

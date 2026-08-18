@@ -1,7 +1,7 @@
 import type { ToolDefinition } from './types'
 import AutomationService from '../../automation/automation.service'
 import DatabaseService from '../../database.service'
-import { parseNaturalTime } from './calendar.tool'
+import { parseNaturalTime } from './utils'
 import type { AutomationRecurrenceRule } from '../../../../shared/ipc-channels'
 
 /**

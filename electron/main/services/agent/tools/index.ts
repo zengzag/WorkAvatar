@@ -4,7 +4,6 @@ import { fileTools } from './fs-tools'
 import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
-import { calendarTools } from './calendar.tool'
 import { automationTools } from './automation.tool'
 import { ocrImageTool } from './ocr.tool'
 import { delegateTool } from './delegate.tool'
@@ -17,7 +16,6 @@ export const allBuiltinTools: ToolDefinition[] = [
   webSearchTool,
   webFetchTool,
   askUserTool,
-  ...calendarTools,
   ...automationTools,
   ocrImageTool,
   delegateTool,
@@ -28,7 +26,6 @@ export * from './javascript-exec.tool'
 export { shellExecTool } from './shell-exec.tool'
 export { createKMSTools, type SearchScopeRef } from './kms-search.tool'
 export { createKMSCollectionTools } from './kms-collection-tools'
-export { calendarTools } from './calendar.tool'
 export { automationTools } from './automation.tool'
 export { createListAvailableToolsTool, createInvokeToolTool } from './meta-tools'
 export { buildOfficeGuide } from './office-prompts'

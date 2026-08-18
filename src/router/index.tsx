@@ -10,8 +10,6 @@ const Employees = lazy(() => import('../pages/Employees'))
 const CreationWizard = lazy(() => import('../pages/CreationWizard'))
 const Settings = lazy(() => import('../pages/Settings'))
 const KMSPage = lazy(() => import('../pages/KMS'))
-const VoicePage = lazy(() => import('../pages/Voice'))
-const CalendarPage = lazy(() => import('../pages/Calendar'))
 const AutomationPage = lazy(() => import('../pages/Automation'))
 
 
@@ -63,14 +61,6 @@ export function buildRouter(plugins: LoadedPlugin[]) {
           element: lazyElement(<KMSPage />),
         },
         {
-          path: 'voice',
-          element: lazyElement(<VoicePage />),
-        },
-        {
-          path: 'calendar',
-          element: lazyElement(<CalendarPage />),
-        },
-        {
           path: 'automation',
           element: lazyElement(<AutomationPage />),
         },
@@ -86,8 +76,6 @@ export function buildRouter(plugins: LoadedPlugin[]) {
         { path: 'tasks', element: lazyElement(<Tasks />) },
         { path: 'employees', element: lazyElement(<Employees />) },
         { path: 'kms', element: lazyElement(<KMSPage />) },
-        { path: 'voice', element: lazyElement(<VoicePage />) },
-        { path: 'calendar', element: lazyElement(<CalendarPage />) },
         { path: 'automation', element: lazyElement(<AutomationPage />) },
         ...pluginRouteItems(plugins),
       ],

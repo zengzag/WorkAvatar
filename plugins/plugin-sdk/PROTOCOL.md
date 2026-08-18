@@ -62,22 +62,23 @@
 
 | 权限 | 注入的服务 | 用途 |
 |---|---|---|
-| （无需声明） | `logger` / `ipc` / `storage` / `contributions` | 基础能力 |
-| `llm` | `services.llm.chat()` | 受控 LLM 调用（走 PiAIProvider，自动记日志/用量） |
+| （无需声明） | `logger` / `host` / `ipc` / `storage` / `contributions` | 基础能力（host.getDataDir 等） |
+| `llm` | `services.llm.chat()` / `chatStream()` | 受控 LLM 调用（走 PiAIProvider，自动记日志/用量；chatStream 支持流式回调与 AbortSignal） |
 | `agent` | `services.agent.runTask()/listEmployees()` | 委派数字员工 |
 | `conversations` | `services.conversations` | 内核对话只读查询 |
-| `notifications` | `services.notification.notify()` | 系统通知（点击经 `notify-click` 事件回插件） |
-| `scheduler` | `services.scheduler.every()/cron()` | 定时任务（宿主统一回收） |
+| `notifications` | `services.notification.notify()` | 通知（主窗口激活→推 `notify` 插件事件，失焦→系统通知，点击→`notify-click` 插件事件） |
+| `scheduler` | `services.scheduler.every()/cron()/cancel()` | 定时任务（宿主统一回收） |
 | `globalShortcuts` | `contributions.registerGlobalShortcuts()` | 全局快捷键 |
-| `windows` | `services.windows.create()` | 插件窗口（悬浮字幕窗等） |
+| `windows` | `services.windows.create()` | 插件窗口（悬浮字幕/登录窗等；支持 transparent/skipTaskbar/focusable/x/y/url/contentPath，创建后自动纳入广播目标） |
 | `nativeModules` | `services.native.borrow()/modulePath()` | 租借宿主原生模块（ABI 一致；插件禁止自带 .node） |
-| `legacyMigration` | migration ctx 的 `legacy` | 内核主库只读（仅内置插件迁移） |
+| `legacyMigration` | migration ctx 的 `legacy` / `legacy.kms` | 内核主库只读（`kms` 字段额外暴露 KMS 向量库只读，如 kms_voice_tasks；仅内置插件迁移） |
 
 ## 5. IPC 约定
 
 - preload 只暴露通用桥：`window.electronAPI.plugin.invoke(pluginId, channel, payload)` / `onEvent(pluginId, channel, cb)`，preload 不随插件膨胀
 - 主进程通道一律 `plugin:<id>:<channel>`，宿主拒绝插件覆盖内核通道
-- 主进程推送：`ctx.ipc.broadcast(event, payload)` → 该插件所有渲染端（主窗口 + 独立窗口）
+- 主进程推送：`ctx.ipc.broadcast(event, payload)` → 该插件所有渲染端（主窗口 + 独立窗口 + 插件自建窗口）
+- 插件 agent 工具 handler 上下文为 `PluginToolContext`：`{ onProgress?, employeeId? }`（`employeeId` 在数字员工执行场景由宿主注入，MCP 等外部调用为 null）
 
 ## 6. 存储与迁移
 
@@ -98,6 +99,7 @@
 ## 8. agent 工具贡献
 
 - `ctx.contributions.registerAgentTools(tools)`：注入宿主 ToolRegistry，参与员工三态配置（on/on_demand/off）
+- 宿主 EmployeeAgentService 在构建 agent 时合并插件工具（handler 自动注入 `employeeId` 上下文）；工具分类 UI（getUnifiedBuiltinToolCatalog）与 KMS MCP（buildAllBuiltinToolDefinitions）同样纳入插件工具
 - 工具 id 沿用现名（如 `calendar_event_list`），**老员工的工具配置无需迁移**
 - 插件禁用 → 工具不注册；现有 `getToolLookupMap` 已容忍分类中工具缺失
 - 工具分类聚合（TOOL_CATEGORY_DEFS）改为按"已注册工具"动态计算归属分类

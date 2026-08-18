@@ -1,0 +1,24 @@
+{
+  "id": "calendar",
+  "name": "Calendar",
+  "version": "1.0.0",
+  "engine": ">=0.1.0",
+  "description": "日历与待办管理，支持日程事件、待办任务、重复规则、提醒、Outlook 同步",
+  "author": "WorkAvatar",
+  "main": "dist/main/index.cjs",
+  "renderer": "dist/renderer/index.js",
+  "locale": "locale",
+  "ipc": [
+    "list-events", "create-event", "update-event", "delete-event", "delete-event-instance",
+    "list-todos", "list-todo-instances", "create-todo", "update-todo", "delete-todo", "delete-todo-instance", "complete-todo", "todo-stats",
+    "get-settings", "set-settings",
+    "outlook-login", "outlook-logout", "outlook-status", "outlook-set-config", "outlook-sync-now"
+  ],
+  "permissions": ["legacyMigration", "notifications", "scheduler", "windows"],
+  "nav": {
+    "label": "navLabel",
+    "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"1.5\" y=\"2.5\" width=\"13\" height=\"12\" rx=\"1.5\"/><path d=\"M1.5 6h13\"/><path d=\"M5 1.5v3M11 1.5v3\"/></svg>",
+    "order": 10,
+    "detachable": true
+  }
+}

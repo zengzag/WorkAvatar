@@ -15,7 +15,10 @@ export interface PluginRouteDefinition {
 export interface PluginBridge {
   /** 调用主进程插件 handler（自动携带 pluginId 与 plugin:<id>: 前缀） */
   invoke<T = unknown>(channel: string, payload?: unknown): Promise<T>
-  /** 订阅主进程 broadcast 事件，返回取消订阅函数 */
+  /**
+   * 订阅主进程 broadcast 事件，返回取消订阅函数。
+   * 回调仅收到匹配 event 名的 payload（宿主已按 event 过滤）。
+   */
   onEvent(event: string, callback: (payload: unknown) => void): () => void
 }
 

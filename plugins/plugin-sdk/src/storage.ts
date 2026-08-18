@@ -47,6 +47,15 @@ export interface PluginLegacyDatabase {
   get(sql: string, ...params: unknown[]): unknown
   /** 读内核 settings 表 KV（供插件搬走自有配置项） */
   getSetting(key: string): unknown
+  /** 只读访问 KMS 向量库（kms_voice_tasks 等历史遗留表；无权限/库不存在时为 null） */
+  kms?: PluginLegacySql | null
+}
+
+/** 只读 SQL 访问子集（用于 legacy.kms） */
+export interface PluginLegacySql {
+  listTables(): string[]
+  all(sql: string, ...params: unknown[]): unknown[]
+  get(sql: string, ...params: unknown[]): unknown
 }
 
 export interface PluginMigrationContext {

@@ -6,7 +6,6 @@ import DatabaseService from './services/database.service'
 import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
-import CalendarSchedulerService from './services/calendar/calendar-scheduler.service'
 import AutomationSchedulerService from './services/automation/automation-scheduler.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
@@ -28,7 +27,6 @@ process.on('uncaughtException', (error) => {
   if (isCrashing) return
   isCrashing = true
   // 停止调度器，避免在进程退出期间继续触发新任务产生更多异常
-  try { CalendarSchedulerService.getInstance().stop() } catch { /* ignore */ }
   try { AutomationSchedulerService.getInstance().stop() } catch { /* ignore */ }
   // 延迟 1s 退出，让日志写入磁盘；不可恢复的异常下继续运行会放大损坏
   setTimeout(() => {
@@ -455,13 +453,6 @@ app.whenReady().then(() => {
     }
   }
 
-  // 启动日历提醒调度器（每 30 秒扫描到期提醒并推送通知）
-  try {
-    CalendarSchedulerService.getInstance().start()
-  } catch (err: any) {
-    logger.warn('Calendar scheduler start failed:', err?.message || err)
-  }
-
   // 启动自动化任务调度器（每 30 秒扫描到期任务并触发执行）
   try {
     AutomationSchedulerService.getInstance().start()
@@ -479,23 +470,11 @@ app.on('before-quit', () => {
   } catch (error) {
     logger.error('Failed to shutdown PluginHost:', error)
   }
-  // 停止日历提醒调度器
-  try {
-    CalendarSchedulerService.getInstance().stop()
-  } catch (error) {
-    logger.error('Failed to stop CalendarSchedulerService:', error)
-  }
   // 停止自动化任务调度器
   try {
     AutomationSchedulerService.getInstance().stop()
   } catch (error) {
     logger.error('Failed to stop AutomationSchedulerService:', error)
-  }
-  // 关闭悬浮字幕窗口
-  try {
-    require('./services/voice/subtitle-window.service').default.getInstance().destroy()
-  } catch (error) {
-    logger.error('Failed to destroy subtitle window:', error)
   }
   // 关闭所有 Tab 独立窗口
   try {

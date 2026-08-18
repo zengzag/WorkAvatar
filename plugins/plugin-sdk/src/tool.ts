@@ -9,6 +9,8 @@
 export interface PluginToolContext {
   /** 工具执行进度回调（用于 UI 展示，不进入 LLM 上下文） */
   onProgress?: (progress: unknown) => void
+  /** 当前正在执行的数字员工 id（agent 工具场景注入；MCP 等外部调用场景为 null） */
+  employeeId?: string | null
 }
 
 export interface PluginToolDefinition {

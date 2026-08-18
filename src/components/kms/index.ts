@@ -10,5 +10,3 @@ export { default as KMSCollectionProcessModal } from './KMSCollectionProcessModa
 export { default as KnowledgeCardBanner } from './KnowledgeCardBanner'
 export { default as KnowledgeCardDetail } from './KnowledgeCardDetail'
 export { default as KMSKnowledgeCardsView } from './KMSKnowledgeCardsView'
-export { default as KMSVoiceView } from './KMSVoiceView'
-export { default as KMSVoiceSettings } from './KMSVoiceSettings'

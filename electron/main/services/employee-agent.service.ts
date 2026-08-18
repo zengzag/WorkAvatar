@@ -20,6 +20,8 @@ import type { ToolMode } from '../../shared/channels/tool'
 import type { ToolDefinition } from './agent/tools/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
+import PluginHostService from './plugin/plugin-host.service'
+import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
 
@@ -220,6 +222,12 @@ class EmployeeAgentService {
     const toolModes = this.getEmployeeToolModes(employeeId)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
 
+    // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置
+    const pluginAgentTools = this.getPluginAgentTools()
+    if (pluginAgentTools.length > 0) {
+      agent.registerTools(this.applyToolModes(pluginAgentTools, toolModes))
+    }
+
     const collectionIdsRef: SearchScopeRef = { current: { collectionIds: [] } }
     agent.registerTools(this.applyToolModes(createKMSTools(collectionIdsRef), toolModes))
     agent.registerTools(this.applyToolModes(createKMSCollectionTools(collectionIdsRef), toolModes))
@@ -289,6 +297,10 @@ class EmployeeAgentService {
     for (const t of allBuiltinTools) {
       modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
     }
+    // 插件贡献工具的默认模式（定义 onDemand → on_demand，否则 on）
+    for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
+      modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
+    }
     // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
     const extraOnDemandIds = [
       'kms_search', 'kms_get_content', 'kms_list_collections',
@@ -321,6 +333,27 @@ class EmployeeAgentService {
     return tools
       .filter(t => modeMap.get(t.id) !== 'off')
       .map(t => ({ ...t, onDemand: modeMap.get(t.id) === 'on_demand' }))
+  }
+
+  /**
+   * 插件贡献的 agent 工具：注入 employeeId 上下文（与内置工具经 interactionContext 读取保持一致）。
+   * 插件 handler 仅感知 { onProgress, employeeId }，宿主在注册时补齐运行时上下文。
+   */
+  private getPluginAgentTools(): ToolDefinition[] {
+    const tools = PluginHostService.getInstance().getAgentTools() as Array<{
+      id: string; name: string; title: string; description: string; summary?: string
+      parameters: any; handler: (args: any, context?: any) => any; onDemand?: boolean
+      permission?: string; timeoutMs?: number; noRetry?: boolean; metadata?: any
+    }>
+    return tools.map(t => ({
+      ...t,
+      source: 'plugin' as const,
+      permission: t.permission as ToolDefinition['permission'],
+      handler: (args: any, context: any) => t.handler(args, {
+        ...(context || {}),
+        employeeId: interactionContext.getStore()?.employeeId ?? null,
+      }),
+    }))
   }
 
   /** 构建任务工作区上下文（随会话稳定，注入 <workspace> 上下文块） */

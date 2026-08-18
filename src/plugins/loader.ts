@@ -99,8 +99,11 @@ function createBridge(pluginId: string): PluginBridge {
   return {
     invoke: <T,>(channel: string, payload?: unknown) =>
       window.electronAPI.plugin.invoke<T>(pluginId, channel, payload),
-    onEvent: (_event, callback) =>
-      window.electronAPI.plugin.onEvent(pluginId, payload => callback(payload)),
+    // 宿主 preload 回调带 { event, payload }，这里按事件名过滤后只回调本事件的 payload
+    onEvent: (event, callback) =>
+      window.electronAPI.plugin.onEvent(pluginId, (msg) => {
+        if (msg.event === event) callback(msg.payload)
+      }),
   }
 }
 

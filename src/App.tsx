@@ -4,8 +4,6 @@ import type { MenuProps } from 'antd'
 import {
   SettingOutlined,
   SearchOutlined,
-  AudioOutlined,
-  CalendarOutlined,
   FieldTimeOutlined,
   MessageOutlined,
   TeamOutlined,
@@ -24,15 +22,8 @@ import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { getPluginNavIcon } from './plugins/loader'
 import { useCalendarNotify, useCalendarNotifyClick } from './hooks/useCalendarNotify'
-import { useVoiceRecordingStore } from './stores/voice-recording.store'
 
 const { Sider, Content } = Layout
-
-/** 语音导航图标：录音进行中时变色，提示后台语音识别运行中 */
-const VoiceNavIcon: React.FC<{ recording: boolean; paused: boolean }> = ({ recording, paused }) => {
-  if (!recording) return <AudioOutlined />
-  return <AudioOutlined style={{ color: paused ? '#faad14' : '#ff4d4f' }} />
-}
 
 const App: React.FC = () => {
   const navigate = useNavigate()
@@ -41,8 +32,6 @@ const App: React.FC = () => {
   const { token } = theme.useToken()
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const effectiveTheme = getEffectiveTheme(themeMode)
-  const isVoiceRecording = useVoiceRecordingStore((s) => s.isRecording)
-  const isVoicePaused = useVoiceRecordingStore((s) => s.isPaused)
 
   // 当前已分离为独立窗口的 tab key 列表（主进程推送 + 主动查询）
   const [detachedTabs, setDetachedTabs] = useState<string[]>([])
@@ -75,8 +64,6 @@ const App: React.FC = () => {
     if (path === '/' || path.startsWith('/tasks')) return 'tasks'
     if (path.startsWith('/settings')) return 'settings'
     if (path.startsWith('/kms')) return 'kms'
-    if (path.startsWith('/voice')) return 'voice'
-    if (path.startsWith('/calendar')) return 'calendar'
     if (path.startsWith('/automation')) return 'automation'
     return 'tasks'
   }, [location.pathname])
@@ -86,7 +73,7 @@ const App: React.FC = () => {
     const currentKey = getSelectedKey()
     if (!detachedTabs.includes(currentKey)) return
     // 按默认顺序找第一个未分离、可见的 tab（排除 settings，它不适合作为回退目标）
-    const fallbackOrder: NavItemKey[] = ['tasks', 'calendar', 'automation', 'kms', 'voice', 'employees']
+    const fallbackOrder: NavItemKey[] = ['tasks', 'automation', 'kms', 'employees']
     const fallback = fallbackOrder.find((k) => !detachedTabs.includes(k))
     if (fallback) {
       navigate(`/${fallback}`)
@@ -97,7 +84,7 @@ const App: React.FC = () => {
    * 通知点击跳转：按来源功能进入对应页面。
    * - automation：携带 conversationId+employeeId 时跳到 /tasks 并定位会话
    * - ask_user：不跳转，主窗口聚焦后 UnifiedInteractionModal 会自动弹出
-   * - 其他（calendar/event/todo）：默认进日历页
+   * - 其他（calendar/event/todo）：默认进日历插件页（日历通知已由日历插件内部展示，此处兜底）
    */
   const handleNotifyClick = useCallback((target?: string, id?: string) => {
     if (target === 'automation' && id) {
@@ -111,7 +98,7 @@ const App: React.FC = () => {
       } catch { /* ignore parse error */ }
     }
     if (target === 'ask_user') return
-    navigate('/calendar')
+    navigate('/plugin/calendar')
   }, [navigate])
 
   // 全局监听日历/ask_user/自动化 通知：主窗口激活时由主进程推送，antd notification 显示
@@ -176,8 +163,6 @@ const App: React.FC = () => {
       'tasks': build('tasks', <MessageOutlined />, t('nav.tasks')),
       'employees': build('employees', <TeamOutlined />, t('nav.employees')),
       'kms': build('kms', <SearchOutlined />, t('nav.kms')),
-      'voice': build('voice', <VoiceNavIcon recording={isVoiceRecording} paused={isVoicePaused} />, isVoiceRecording ? t('nav.voiceRecording') : t('nav.voice')),
-      'calendar': build('calendar', <CalendarOutlined />, t('nav.calendar')),
       'automation': build('automation', <FieldTimeOutlined />, t('nav.automation')),
       'settings': {
         icon: <span data-nav-key="settings"><SettingOutlined /></span>,
@@ -185,7 +170,7 @@ const App: React.FC = () => {
         onClick: () => navigate('/settings'),
       },
     }
-  }, [t, navigate, isVoiceRecording, isVoicePaused, handleNavClick, detachedTabs])
+  }, [t, navigate, handleNavClick, detachedTabs])
 
   // 按统一配置（config 已含插件项）的完整顺序构建菜单（内置 + 插件混合排序）
   const allMenuItems = useMemo<NonNullable<MenuProps['items']>>(() => {

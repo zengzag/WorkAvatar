@@ -75,25 +75,6 @@ export type {
   KMSMCPExposedTool,
 } from './channels/kms'
 export type {
-  VoiceCreateTaskParams,
-  VoiceUpdateTaskParams,
-  VoiceSaveAudioParams,
-  VoiceSaveSecondaryAudioParams,
-  VoiceMergeDualTranscriptParams,
-  VoiceTranscribeParams,
-  VoiceRealtimeStartParams,
-  VoiceRealtimeFeedParams,
-  VoiceRealtimeResult,
-  VoiceGenerateMinutesParams,
-  VoiceSTTApiConfig,
-  VoiceSTTLocalConfig,
-  VoiceLocalModelType,
-  VoiceAudioConfig,
-  VoiceSubtitleConfig,
-  VoiceSettings,
-  VoiceLocalModelStatus,
-} from './channels/voice'
-export type {
   RuntimeEnvToolId,
   RuntimeEnvTool,
   RuntimeEnvInstallParams,
@@ -108,33 +89,6 @@ export type {
   McpTestParams,
   McpTestResult,
 } from './channels/mcp'
-export type {
-  EventColor,
-  TodoPriority,
-  TodoStatus,
-  RecurrenceRule,
-  InstanceOverride,
-  CalendarEvent,
-  CalendarEventInstance,
-  CalendarTodo,
-  CalendarTodoInstance,
-  CalendarTodoStats,
-  CalendarSettings,
-  OutlookAccount,
-  OutlookSyncConfig,
-  OutlookSyncResult,
-  OutlookSyncStatus,
-  ListEventsParams,
-  ListTodosParams,
-  CreateEventInput,
-  UpdateEventInput,
-  CreateTodoInput,
-  UpdateTodoInput,
-  NotifyPayload,
-  DeleteInstanceMode,
-  DeleteEventInstanceParams,
-  DeleteTodoInstanceParams,
-} from './channels/calendar'
 export type {
   AutomationTask,
   AutomationRun,
@@ -158,3 +112,6 @@ export type {
   PluginSetEnabledParams,
   PluginDeleteParams,
 } from './channels/plugin'
+export type {
+  NotifyPayload,
+} from './channels/notification'

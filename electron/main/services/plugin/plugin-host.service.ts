@@ -18,6 +18,12 @@ import type {
   PluginManifest,
   PluginMigration,
   PluginServices,
+  PluginWindowOptions,
+  PluginWindowHandle,
+  PluginLlmChatRequest,
+  PluginLlmChatStreamRequest,
+  PluginLlmStreamCallbacks,
+  PluginNotificationPayload,
 } from '../../../../plugins/plugin-sdk/src'
 
 const logger = createLogger('PluginHost')
@@ -104,6 +110,10 @@ class PluginHostService {
   private registeredShortcuts = new Set<string>()
   /** 插件渲染端窗口集合（主窗口 + tab 独立窗口），broadcast 时遍历 */
   private targets = new Set<BrowserWindow>()
+  /** 插件经 ctx.services.windows 创建的窗口（退出/禁用时统一回收） */
+  private pluginWindows = new Set<BrowserWindow>()
+  /** 插件经 ctx.services.scheduler 注册的定时任务清理函数（pluginId:id → dispose） */
+  private schedulerJobs = new Map<string, () => void>()
   private dataDir = ''
   private initialized = false
 
@@ -347,6 +357,7 @@ class PluginHostService {
   private buildContext(record: PluginRecord): PluginContext {
     const { manifest } = record
     const pluginLogger = createLogger(`Plugin:${manifest.id}`)
+
     const services: PluginServices = {
       logger: pluginLogger,
       host: {
@@ -360,12 +371,252 @@ class PluginHostService {
     if (this.hasPermission(record, 'notifications')) {
       const { default: NotificationService } = require('../notification.service')
       services.notification = {
-        notify: (payload) => NotificationService.getInstance().notify({
+        notify: (payload: PluginNotificationPayload) => NotificationService.getInstance().notify({
           title: payload.title,
           body: payload.body,
+          clickTarget: payload.clickTarget as any,
+          clickId: payload.clickId,
           source: `plugin:${manifest.id}`,
           silent: payload.silent,
-        }),
+          i18nKey: payload.i18nKey,
+          i18nParams: payload.i18nParams,
+        } as any),
+      }
+    }
+
+    if (this.hasPermission(record, 'llm')) {
+      const LLMClientService = require('../llm-client.service').default
+      services.llm = {
+        chat: async (request: PluginLlmChatRequest) => {
+          const llmClient = LLMClientService.getInstance()
+          const providerId = request.providerId || (() => {
+            const providers = llmClient.getProviderList() as any[]
+            return providers.find(p => p.is_default)?.id || providers[0]?.id
+          })()
+          const provider = await llmClient.getProviderConfig(providerId)
+          if (!provider) throw new Error('No LLM provider available')
+          const { createPiProvider } = require('../agent/llm/pi-provider-factory')
+          const pi = await createPiProvider(provider.id, request.modelId || provider.model)
+          if (!pi) throw new Error('Failed to create LLM provider')
+          const messages: any[] = []
+          if (request.system) messages.push({ role: 'system', content: request.system })
+          messages.push({ role: 'user', content: request.prompt })
+          const response = await pi.chat(messages, [], { logSource: `plugin:${manifest.id}` })
+          return response.content
+        },
+        chatStream: async (
+          request: PluginLlmChatStreamRequest,
+          callbacks?: PluginLlmStreamCallbacks,
+          signal?: AbortSignal,
+        ) => {
+          const llmClient = LLMClientService.getInstance()
+          const providerId = request.providerId || (() => {
+            const providers = llmClient.getProviderList() as any[]
+            return providers.find(p => p.is_default)?.id || providers[0]?.id
+          })()
+          const provider = await llmClient.getProviderConfig(providerId)
+          if (!provider) throw new Error('No LLM provider available')
+          const { createPiProvider } = require('../agent/llm/pi-provider-factory')
+          const pi = await createPiProvider(provider.id, request.modelId || provider.model)
+          if (!pi) throw new Error('Failed to create LLM provider')
+          const messages: any[] = []
+          if (request.system) messages.push({ role: 'system', content: request.system })
+          if (request.history) {
+            for (const h of request.history) messages.push({ role: 'user', content: h })
+          }
+          messages.push({ role: 'user', content: request.prompt })
+          let accumulated = ''
+          await pi.chatStream(
+            messages,
+            [],
+            {
+              onChunk: (chunk: string) => { accumulated += chunk; callbacks?.onChunk?.(chunk) },
+              onThought: (thought: string) => callbacks?.onThought?.(thought),
+              onToolCall: (tc: any) => callbacks?.onToolCall?.(tc),
+            },
+            signal,
+            { temperature: request.temperature, maxTokens: request.maxTokens, logSource: `plugin:${manifest.id}` },
+          )
+          return accumulated
+        },
+      }
+    }
+
+    if (this.hasPermission(record, 'agent')) {
+      const EmployeeAgentService = require('../employee-agent.service').default
+      services.agent = {
+        listEmployees: async () => {
+          const db = DatabaseService.getInstance().getDb()
+          const rows = db.prepare('SELECT id, name FROM employees ORDER BY name ASC').all() as any[]
+          return rows.map((r: any) => ({ id: r.id, name: r.name }))
+        },
+        runTask: async (params, callbacks, signal) => {
+          const employeeAgent = EmployeeAgentService.getInstance()
+          const { provider_id, model_id } = (() => {
+            const db = DatabaseService.getInstance().getDb()
+            const emp = db.prepare('SELECT provider_id, model_id FROM employees WHERE id = ?').get(params.employeeId) as any
+            return emp || { provider_id: null, model_id: null }
+          })()
+          let conversationId = params.conversationId
+          if (!conversationId) {
+            const { default: WorkspaceManagerService } = require('../workspace-manager.service')
+            const conv = WorkspaceManagerService.getInstance().createConversation(params.employeeId)
+            conversationId = conv.id
+          }
+          let resultText = ''
+          const streamParams = {
+            employee_id: params.employeeId,
+            provider_id: provider_id,
+            model_id: model_id,
+            messages: [{ role: 'user', content: params.prompt }],
+            conversation_id: conversationId,
+            use_skills: false,
+            collection_ids: [] as string[],
+            minimal_mode: true,
+            high_permission: false,
+          }
+          await employeeAgent.chatStream(
+            streamParams,
+            {
+              onChunk: (text: string) => { resultText += text; callbacks?.onChunk?.(text) },
+              onDone: () => callbacks?.onDone?.({ text: resultText }),
+              onError: (err: string) => callbacks?.onError?.(err),
+            },
+            signal,
+          )
+          return { conversationId, text: resultText }
+        },
+      }
+    }
+
+    if (this.hasPermission(record, 'conversations')) {
+      const { default: WorkspaceManagerService } = require('../workspace-manager.service')
+      services.conversations = {
+        getTitle: async (id) => {
+          const db = DatabaseService.getInstance().getDb()
+          const row = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id) as any
+          return row?.title ?? null
+        },
+        listRecent: async (limit = 20) => {
+          const rows = WorkspaceManagerService.getInstance().getAllConversationsWithEmployee({ limit })
+          return rows.map((r: any) => ({
+            id: r.id, title: r.title || '', employeeId: r.employee_id, updatedAt: r.updated_at,
+          }))
+        },
+      }
+    }
+
+    if (this.hasPermission(record, 'scheduler')) {
+      const jobMap = this.schedulerJobs
+      const pluginId = manifest.id
+      services.scheduler = {
+        every: (intervalMs, fn) => {
+          const id = `${pluginId}:every:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+          const timer = setInterval(fn, intervalMs)
+          if (timer.unref) timer.unref()
+          jobMap.set(id, () => clearInterval(timer))
+          return id
+        },
+        cron: (expression, fn) => {
+          const id = `${pluginId}:cron:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+          // 简单实现：每分钟检查一次 cron 表达式
+          const check = () => {
+            const now = new Date()
+            const parts = expression.split(/\s+/)
+            if (parts.length !== 5) return
+            const matchMin = parts[0] === '*' || parts[0] === String(now.getMinutes())
+            const matchHour = parts[1] === '*' || parts[1] === String(now.getHours())
+            const matchDay = parts[2] === '*' || parts[2] === String(now.getDate())
+            const matchMonth = parts[3] === '*' || parts[3] === String(now.getMonth() + 1)
+            const matchDow = parts[4] === '*' || parts[4] === String(now.getDay())
+            if (matchMin && matchHour && matchDay && matchMonth && matchDow) fn()
+          }
+          const timer = setInterval(check, 60_000)
+          if (timer.unref) timer.unref()
+          jobMap.set(id, () => clearInterval(timer))
+          return id
+        },
+        cancel: (jobId) => {
+          const dispose = jobMap.get(jobId)
+          if (dispose) { dispose(); jobMap.delete(jobId) }
+        },
+      }
+    }
+
+    if (this.hasPermission(record, 'windows')) {
+      // 预加载脚本路径
+      const getPreloadPath = () => {
+        if (!app.isPackaged) {
+          return path.join(process.cwd(), 'dist-electron', 'preload', 'index.js')
+        }
+        return path.join(__dirname, '..', '..', '..', 'preload', 'index.js')
+      }
+      services.windows = {
+        create: (options: PluginWindowOptions): PluginWindowHandle => {
+          const id = `${manifest.id}:win:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+          const winOptions: any = {
+            width: options.width,
+            height: options.height,
+            title: options.title || manifest.name,
+            autoHideMenuBar: true,
+            show: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              preload: getPreloadPath(),
+            },
+          }
+          if (options.alwaysOnTop) winOptions.alwaysOnTop = true
+          if (options.frame !== undefined) winOptions.frame = options.frame
+          if (options.transparent) {
+            winOptions.transparent = true
+            winOptions.hasShadow = options.hasShadow ?? false
+          }
+          if (options.skipTaskbar) winOptions.skipTaskbar = true
+          if (options.focusable !== undefined) winOptions.focusable = options.focusable
+          if (options.resizable !== undefined) winOptions.resizable = options.resizable
+          if (options.x !== undefined) winOptions.x = options.x
+          if (options.y !== undefined) winOptions.y = options.y
+
+          const win = new BrowserWindow(winOptions)
+          win.once('ready-to-show', () => win.show())
+          win.on('closed', () => { this.pluginWindows.delete(win); this.targets.delete(win) })
+
+          this.pluginWindows.add(win)
+          // 窗口纳入广播目标
+          this.targets.add(win)
+          win.on('closed', () => this.targets.delete(win))
+
+          // 加载内容
+          if (options.contentPath) {
+            const fullPath = path.resolve(record.rootDir, options.contentPath)
+            win.loadFile(fullPath)
+          } else if (options.url) {
+            win.loadURL(options.url)
+          }
+
+          return {
+            id,
+            close: () => { if (!win.isDestroyed()) win.close() },
+            send: (event, payload) => { if (!win.isDestroyed()) win.webContents.send(event, payload) },
+            onClosed: (cb) => { win.on('closed', () => cb()) },
+            setSize: (w, h) => { if (!win.isDestroyed()) win.setSize(w, h) },
+            show: () => { if (!win.isDestroyed()) win.show() },
+            hide: () => { if (!win.isDestroyed()) win.hide() },
+            isVisible: () => !win.isDestroyed() && win.isVisible(),
+          }
+        },
+      }
+    }
+
+    if (this.hasPermission(record, 'nativeModules')) {
+      services.native = {
+        borrow: (name) => {
+          try { return require(name) } catch { return null }
+        },
+        modulePath: (name) => {
+          try { return require.resolve(name) } catch { return '' }
+        },
       }
     }
 
@@ -455,19 +706,31 @@ class PluginHostService {
   private buildLegacyReader() {
     const db = DatabaseService.getInstance().getDb()
     const isSelect = (sql: string) => /^\s*select/i.test(sql)
-    return {
+    const makeReader = (sourceDb: any) => ({
       listTables: () =>
-        (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name),
+        (sourceDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name),
       all: (sql: string, ...params: unknown[]) => {
         if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return db.prepare(sql).all(...params)
+        return sourceDb.prepare(sql).all(...params)
       },
       get: (sql: string, ...params: unknown[]) => {
         if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return db.prepare(sql).get(...params)
+        return sourceDb.prepare(sql).get(...params)
       },
+    })
+    let kmsReader: ReturnType<typeof makeReader> | null = null
+    try {
+      // KMS 向量库（kms_voice_tasks 等历史遗留表所在）；库未初始化时惰性访问失败置 null
+      const { default: KMSDatabaseService } = require('../kms/kms-database.service')
+      kmsReader = makeReader(KMSDatabaseService.getInstance().getDb())
+    } catch {
+      kmsReader = null
+    }
+    return {
+      ...makeReader(db),
       getSetting: (key: string) =>
         (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value,
+      kms: kmsReader,
     }
   }
 
@@ -649,6 +912,16 @@ class PluginHostService {
       try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
     }
     this.registeredShortcuts.clear()
+    // 清理插件注册的定时任务
+    for (const [, dispose] of this.schedulerJobs) {
+      try { dispose() } catch { /* ignore */ }
+    }
+    this.schedulerJobs.clear()
+    // 清理插件创建的窗口
+    for (const win of this.pluginWindows) {
+      if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
+    }
+    this.pluginWindows.clear()
     for (const record of this.records.values()) {
       if (record.status === 'active' && record.module?.deactivate) {
         try { record.module.deactivate() } catch (err) {

@@ -20,6 +20,8 @@ export type {
   PluginNotificationPayload,
   PluginNotificationService,
   PluginLlmChatRequest,
+  PluginLlmChatStreamRequest,
+  PluginLlmStreamCallbacks,
   PluginLlmService,
   PluginAgentTaskParams,
   PluginAgentTaskCallbacks,

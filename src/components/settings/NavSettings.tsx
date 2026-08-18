@@ -2,7 +2,7 @@ import React, { useMemo } from 'react'
 import { Switch, Button, Space, Typography, Tooltip, theme, Tag } from 'antd'
 import {
   ArrowUpOutlined, ArrowDownOutlined, UndoOutlined, LockOutlined, AppstoreOutlined,
-  MessageOutlined, TeamOutlined, SearchOutlined, AudioOutlined, CalendarOutlined, FieldTimeOutlined, SettingOutlined,
+  MessageOutlined, TeamOutlined, SearchOutlined, FieldTimeOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import {
@@ -13,8 +13,6 @@ const ICON_MAP: Record<string, React.ReactNode> = {
   'tasks': <MessageOutlined />,
   'employees': <TeamOutlined />,
   'kms': <SearchOutlined />,
-  'voice': <AudioOutlined />,
-  'calendar': <CalendarOutlined />,
   'automation': <FieldTimeOutlined />,
   'settings': <SettingOutlined />,
 }
@@ -23,8 +21,6 @@ const LABEL_KEY_MAP: Record<string, string> = {
   'tasks': 'nav.tasks',
   'employees': 'nav.employees',
   'kms': 'nav.kms',
-  'voice': 'nav.voice',
-  'calendar': 'nav.calendar',
   'automation': 'nav.automation',
   'settings': 'nav.settings',
 }
