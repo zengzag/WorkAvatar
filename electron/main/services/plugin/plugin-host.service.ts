@@ -226,6 +226,11 @@ class PluginHostService {
     }
 
     const disabled = this.readDisabledList()
+    this.scanAndActivate(disabled)
+  }
+
+  /** 扫描目录 → 校验 → 激活。init 与 reload 复用 */
+  private scanAndActivate(disabled: Set<string>): void {
     const userDir = this.getUserDir()
     // 扫描目录（顺序 = 优先级，同 id 只保留先发现的）：
     //   dev：项目 plugins/ 作为开发插件源，仅非打包时扫描；release 不加载
@@ -259,6 +264,46 @@ class PluginHostService {
       if (record.status === 'invalid') continue
       this.activateRecord(record)
     }
+  }
+
+  /**
+   * 热重载插件：启停/导入/删除/升级后无需重启应用即可生效。
+   * 流程：deactivate 全部激活插件 → 清 require 缓存与宿主状态 → 重新扫描激活。
+   * 注意：插件贡献的 agent 工具已注册进内核 ToolRegistry，重载后需调用
+   * EmployeeAgentService.clearAgentCache 刷新员工工具列表；渲染端由调用方 reload 窗口重建。
+   */
+  reload(): void {
+    // 1. deactivate 全部激活插件
+    for (const record of this.records.values()) {
+      if (record.status === 'active' && record.module?.deactivate) {
+        try { record.module.deactivate() } catch (err: any) {
+          logger.warn(`插件 deactivate 失败: ${record.manifest.id}`, err?.message || err)
+        }
+      }
+    }
+    // 2. 清 require 缓存（插件主进程模块是 CJS，require 有缓存，必须删除才能重新加载）
+    for (const record of this.records.values()) {
+      const entry = path.join(record.rootDir, record.manifest.main)
+      try { delete require.cache[require.resolve(entry)] } catch { /* ignore */ }
+    }
+    // 3. 清宿主状态
+    this.records.clear()
+    this.handlers.clear()
+    this.contributions.clear()
+    this.messageActions.clear()
+    this.kernelEventListeners.clear()
+    this.schedulerJobs.clear()
+    for (const accelerator of this.registeredShortcuts) {
+      try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
+    }
+    this.registeredShortcuts.clear()
+    for (const win of this.pluginWindows) {
+      if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
+    }
+    this.pluginWindows.clear()
+    // 4. 重新扫描激活
+    this.scanAndActivate(this.readDisabledList())
+    logger.info('插件已热重载')
   }
 
   private scanPlugin(rootDir: string, disabled: Set<string>): void {

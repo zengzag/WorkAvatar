@@ -12,6 +12,7 @@ import type DatabaseService from '../services/database.service'
 import PathService from '../services/path.service'
 import { LoggerBackend } from '../services/logger'
 import TabWindowService from '../services/tab-window.service'
+import PluginHostService from '../services/plugin/plugin-host.service'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -135,6 +136,24 @@ export function registerAppHandlers(
       db.prepare(`DELETE FROM settings WHERE key NOT IN (${placeholders})`).run(...preserved)
     })
     tx()
+    return { success: true }
+  })
+
+  // 重启应用：插件启停/导入/删除等变更后一键生效。
+  // 采用插件热重载（PluginHostService.reload）而非 app.relaunch()：
+  // dev 模式下 relaunch 会杀掉 vite 启动的 electron 后端导致白屏，热重载在进程内重建插件并刷新渲染端。
+  safeHandle(IPC_CHANNELS.APP_RESTART, () => {
+    // 1. 热重载插件（deactivate → 清缓存 → 重新扫描激活）
+    PluginHostService.getInstance().reload()
+    // 2. 插件贡献的 agent 工具已变化，清空员工 agent 缓存使下次对话重建工具列表
+    try {
+      const { default: EmployeeAgentService } = require('../services/employee-agent.service')
+      EmployeeAgentService.getInstance().clearAgentCache()
+    } catch { /* ignore */ }
+    // 3. 刷新渲染端：重建插件路由/导航/locale
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.reload()
+    }
     return { success: true }
   })
 

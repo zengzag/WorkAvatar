@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { App, Button, Card, List, Popconfirm, Space, Switch, Tag, Tooltip } from 'antd'
-import { DeleteOutlined, FolderOpenOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, FolderOpenOutlined, PoweroffOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { PluginInfo } from '../../../electron/shared/channels/plugin'
 
@@ -99,6 +99,16 @@ const PluginsSection: React.FC = () => {
     }
   }
 
+  const handleRestart = () => {
+    modal.confirm({
+      title: t('settings.plugins.restartTitle'),
+      content: t('settings.plugins.restartConfirm'),
+      okText: t('settings.plugins.restartNow'),
+      cancelText: t('common.cancel'),
+      onOk: () => window.electronAPI.app.restart(),
+    })
+  }
+
   return (
     <Card
       style={{ maxWidth: 760 }}
@@ -123,8 +133,11 @@ const PluginsSection: React.FC = () => {
         </span>
       </div>
       {restartHint && (
-        <div style={{ marginBottom: 12, fontSize: 13 }}>
+        <div style={{ marginBottom: 12, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Tag color="warning">{t('settings.plugins.restartHint')}</Tag>
+          <Button size="small" type="primary" icon={<PoweroffOutlined />} onClick={handleRestart}>
+            {t('settings.plugins.restartNow')}
+          </Button>
         </div>
       )}
       <List
