@@ -25,6 +25,8 @@ interface ToolCategoryDef {
   toolIds: string[]
   /** 插件贡献的分类（对应某插件，仅插件加载时存在） */
   isPlugin?: boolean
+  /** 插件分类对应的插件 id（用于前端以插件命名空间解析 title 的 i18n key） */
+  pluginId?: string
 }
 
 /**
@@ -142,10 +144,12 @@ function buildToolCategoryDefs(): ToolCategoryDef[] {
   const pluginCats: ToolCategoryDef[] = pluginGroups.map(g => ({
     id: `plugin:${g.pluginId}`,
     name: `plugin:${g.pluginId}`,
-    title: g.pluginName,
+    // title 用插件 locale 的 navLabel key（前端以插件命名空间解析，如 Calendar → 日历）
+    title: 'navLabel',
     description: `${g.pluginName} 提供的工具`,
     icon: 'plugin',
     isPlugin: true,
+    pluginId: g.pluginId,
     toolIds: (g.tools as Array<{ id: string }>).map(t => t.id),
   }))
   return [...TOOL_CATEGORY_DEFS, ...pluginCats]
@@ -275,6 +279,18 @@ export function registerToolHandlers(
     return getUnifiedBuiltinToolCatalog()
   })
 
+  // 完整工具分类定义（含插件分类），供创建向导等按分类渲染
+  safeHandle(IPC_CHANNELS.TOOL_GET_CATEGORIES, () => {
+    return buildToolCategoryDefs().map(c => ({
+      id: c.id,
+      title: c.title,
+      icon: c.icon,
+      is_plugin: c.isPlugin ?? false,
+      plugin_id: c.pluginId,
+      tool_ids: c.toolIds,
+    }))
+  })
+
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, (params: { employee_id: string }) => {
     const catalog = getUnifiedBuiltinToolCatalog()
 
@@ -353,6 +369,7 @@ export function registerToolHandlers(
         description: categoryDef.description,
         icon: categoryDef.icon,
         is_plugin: categoryDef.isPlugin ?? false,
+        plugin_id: categoryDef.pluginId,
         tool_ids: categoryDef.toolIds,
         tools,
         mode,

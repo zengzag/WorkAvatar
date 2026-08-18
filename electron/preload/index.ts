@@ -273,6 +273,7 @@ const electronAPI = {
 
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
+    getCategories: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_CATEGORIES),
     getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
     getEmployeeToolCategories: (params: { employee_id: string }) =>
@@ -509,6 +510,8 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
     listMessageActions: () =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
+    resolveFileOwner: (extension: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),
   },
 }

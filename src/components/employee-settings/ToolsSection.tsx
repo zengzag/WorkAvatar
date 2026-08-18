@@ -23,6 +23,7 @@ import {
   MessageOutlined,
   BulbOutlined,
   AppstoreOutlined,
+  TeamOutlined,
 } from '@ant-design/icons'
 
 const { Text } = Typography
@@ -56,6 +57,8 @@ export interface ToolCategoryInfo {
   icon: string
   /** 插件贡献的分类（来自某插件，仅插件加载时存在） */
   is_plugin?: boolean
+  /** 插件分类对应的插件 id（用于以插件命名空间解析 title 的 i18n key） */
+  plugin_id?: string
   tool_ids: string[]
   tools: CategoryTool[]
   mode: ToolMode
@@ -75,6 +78,7 @@ const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
   message: <MessageOutlined />,
   tool: <BulbOutlined />,
   plugin: <AppstoreOutlined />,
+  team: <TeamOutlined />,
 }
 
 interface ToolsSectionProps {
@@ -204,7 +208,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                             style={{ display: 'inline-block' }}
                           >
                             {cat.is_plugin
-                              ? cat.title
+                              ? t(cat.title, { ns: cat.plugin_id, defaultValue: cat.title })
                               : t(`employeeSettings.toolCategory_${cat.id}`, {
                                   defaultValue: cat.title,
                                 })}

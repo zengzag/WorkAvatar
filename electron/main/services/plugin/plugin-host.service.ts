@@ -1045,6 +1045,11 @@ class PluginHostService {
     return undefined
   }
 
+  /** 按文件扩展名解析应路由到的插件 id（无插件声明该扩展名时返回 undefined） */
+  getPluginForFileExtension(extension: string): string | undefined {
+    return this.getFileAssociationOwner(extension)
+  }
+
   // ====== plugin:// 协议 ======
 
   /** plugin://<id>/<相对路径> → 插件目录内文件；越权路径 403，未启用插件 404 */

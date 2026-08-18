@@ -7,6 +7,8 @@ export const TOOL_CHANNELS = {
   TOOL_ASSIGN_TO_EMPLOYEE: 'tool:assign-to-employee',
   TOOL_GET_EMPLOYEE_TOOL_CATEGORIES: 'tool:get-employee-tool-categories',
   TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE: 'tool:assign-category-to-employee',
+  /** 获取完整工具分类定义（含插件分类），供创建向导等按分类渲染 */
+  TOOL_GET_CATEGORIES: 'tool:get-categories',
 
   SEARCH_GET_ENGINES: 'tool:search-get-engines',
   SEARCH_OPEN_WINDOW: 'tool:search-open-window',
