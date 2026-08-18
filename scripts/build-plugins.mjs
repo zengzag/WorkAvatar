@@ -205,13 +205,23 @@ async function main() {
   const args = process.argv.slice(2)
   const zipMode = args.includes('--zip')
   const onlyId = args.find(a => !a.startsWith('--'))
-  const dirs = fs.readdirSync(pluginsRoot, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== 'plugin-sdk')
-    .map((e) => e.name)
+  // 扫描 plugins/ 下各插件目录；examples/ 作为示例目录递归扫描其子目录
+  const dirs = []
+  for (const e of fs.readdirSync(pluginsRoot, { withFileTypes: true })) {
+    if (!e.isDirectory() || e.name === 'plugin-sdk') continue
+    if (e.name === 'examples') {
+      for (const sub of fs.readdirSync(path.join(pluginsRoot, 'examples'), { withFileTypes: true })) {
+        if (sub.isDirectory()) dirs.push(`examples/${sub.name}`)
+      }
+    } else {
+      dirs.push(e.name)
+    }
+  }
 
   let targets
   if (onlyId) {
-    targets = dirs.filter((id) => id === onlyId)
+    // 支持两种写法：examples/hello-world 或 hello-world（后者匹配 examples/ 下子目录）
+    targets = dirs.filter((id) => id === onlyId || id === `examples/${onlyId}`)
     if (targets.length === 0) {
       console.error(`[build-plugins] 未找到插件 "${onlyId}"（plugins/ 下现有：${dirs.join(', ') || '无'}）`)
       process.exit(1)

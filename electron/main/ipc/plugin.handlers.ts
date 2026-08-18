@@ -39,6 +39,14 @@ export function registerPluginHandlers(): void {
     return host.getMessageActions()
   })
 
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_LIST_VIEWS, () => {
+    return host.getViewContributions()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGIN_LIST_COMMANDS, () => {
+    return host.getCommands()
+  })
+
   ipcMain.handle(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, (_event, params: { extension?: string }) => {
     const ext = (params?.extension || '').toLowerCase().replace(/^\./, '')
     return host.getPluginForFileExtension(ext) ?? null

@@ -1,7 +1,12 @@
 export type {
   PluginManifest,
   PluginNavContribution,
-  PluginPermission,
+  PluginCapability,
+  PluginDataEntity,
+  PluginDataAccess,
+  PluginExecuteKind,
+  PluginSystemFeature,
+  PluginViewPoint,
 } from './manifest'
 export type {
   PluginToolContext,
@@ -19,6 +24,13 @@ export type {
   PluginLogger,
   PluginNotificationPayload,
   PluginNotificationService,
+  PluginDataService,
+  PluginDataQueryParams,
+  PluginDataOp,
+  PluginExecuteService,
+  PluginExecuteRequest,
+  PluginExecuteCallbacks,
+  PluginEventService,
   PluginLlmChatRequest,
   PluginLlmChatStreamRequest,
   PluginLlmStreamCallbacks,
@@ -36,7 +48,7 @@ export type {
   PluginWindowHandle,
   PluginWindowService,
   PluginNativeService,
-  PluginKernelEventService,
+  PluginHostPathsService,
   PluginServices,
 } from './services'
 export type {
@@ -46,6 +58,8 @@ export type {
   PluginMessageAction,
   PluginMessageActionContext,
   PluginMessageActionResult,
+  PluginViewContribution,
+  PluginCommand,
 } from './contributions'
 export type {
   PluginContext,
@@ -55,6 +69,7 @@ export type {
 } from './context'
 export type {
   PluginRouteDefinition,
+  PluginViewDefinition,
   PluginBridge,
   PluginRendererHost,
   PluginRendererEntry,

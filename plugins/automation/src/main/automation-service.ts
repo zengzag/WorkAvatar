@@ -728,12 +728,13 @@ class AutomationService {
     let errorMsg: string | null = null
 
     try {
-      const agent = this.ctx.services.agent!
+      const execute = this.ctx.services.execute!
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), TASK_EXECUTION_TIMEOUT_MS)
       try {
-        await agent.chatStream(
+        await execute.execute(
           {
+            kind: 'agent-chat',
             employeeId: task.employee_id,
             providerId: task.provider_id,
             modelId: task.model_id || undefined,
@@ -877,24 +878,27 @@ class AutomationService {
     return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}`
   }
 
-  // ====== 内核 conversation 操作（经 ctx.services.conversations 桥接） ======
+  // ====== 内核 conversation 操作（经 ctx.services.data 桥接） ======
 
   /** 创建 conversation（复用内核 WorkspaceManagerService.createConversation） */
   private async createConversation(employeeId: string, title?: string): Promise<{ id: string }> {
-    const id = await this.ctx.services.conversations!.create(employeeId, title)
-    return { id }
+    const conv = await this.ctx.services.data!.mutate<{ id: string }>('conversations', 'create', {
+      employeeId,
+      title,
+    })
+    return conv
   }
 
   private async updateConversation(id: string, data: Record<string, unknown>): Promise<void> {
-    await this.ctx.services.conversations!.update(id, data)
+    await this.ctx.services.data!.mutate('conversations', 'update', { id, ...data })
   }
 
   private async deleteConversation(id: string): Promise<void> {
-    await this.ctx.services.conversations!.delete(id)
+    await this.ctx.services.data!.mutate('conversations', 'delete', { id })
   }
 
   private async updateConversationEmployee(id: string, employeeId: string): Promise<void> {
-    await this.ctx.services.conversations!.update(id, { employee_id: employeeId })
+    await this.ctx.services.data!.mutate('conversations', 'update', { id, employee_id: employeeId })
   }
 
   // ====== 工具方法 ======

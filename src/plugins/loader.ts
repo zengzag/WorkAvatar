@@ -6,10 +6,12 @@ import * as icons from '@ant-design/icons'
 import * as reactI18n from 'react-i18next'
 import i18n from '../i18n'
 import { useNavConfigStore } from '../stores/nav.store'
+import { registerPluginViews } from './view-slot'
 import type {
   PluginBridge,
   PluginRendererEntry,
   PluginRendererHost,
+  PluginViewDefinition,
 } from '../../plugins/plugin-sdk/src/renderer'
 
 /** 已加载的插件渲染端描述（路由 + 导航贡献） */
@@ -25,6 +27,8 @@ export interface LoadedPlugin {
   }
   navIcon?: React.ComponentType<{ active: boolean }>
   routes: Array<{ path: string; element: React.ReactNode }>
+  /** 视图注入（宿主界面指定注入点渲染组件） */
+  views?: PluginViewDefinition[]
 }
 
 /** 共享库单例注入：插件构建时 external 并 shim 到 __WA_HOST__，避免双 React */
@@ -149,11 +153,13 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
       await def.init?.(host)
 
       if (def.navIcon) pluginNavIcons.set(info.id, def.navIcon)
+      registerPluginViews(info.id, def.views)
       loaded.push({
         id: info.id,
         name: info.name,
         nav: info.nav,
         navIcon: def.navIcon,
+        views: def.views,
         routes: def.routes.map(r => ({
           path: r.path === '' || r.path === '/' ? '' : r.path.replace(/^\//, ''),
           element: React.createElement(r.component as React.ComponentType<{}>),

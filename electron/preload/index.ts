@@ -470,6 +470,10 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
     listMessageActions: () =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
+    listViews: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_VIEWS) as Promise<Array<{ pluginId: string; view: string; component: unknown }>>,
+    listCommands: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_COMMANDS) as Promise<Array<{ pluginId: string; id: string; title: string }>>,
     resolveFileOwner: (extension: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_RESOLVE_FILE_OWNER, { extension }) as Promise<string | null>,
     openPluginsDir: () => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_OPEN_DIR),

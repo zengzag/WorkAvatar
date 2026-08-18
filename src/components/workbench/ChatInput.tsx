@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { isColorDark } from '../../utils/format'
+import { PluginViewSlot } from '../../plugins/view-slot'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -1411,6 +1412,8 @@ const ChatInput: React.FC<{
                   onClick={() => fileInputRef.current?.click()}
                   style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
               </Tooltip>
+              {/* 插件视图注入点：对话输入框工具栏 */}
+              <PluginViewSlot view="chat.toolbar" />
               <Popover
                 content={modelPickerContent}
                 trigger="click"

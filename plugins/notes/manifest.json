@@ -2,7 +2,7 @@
   "id": "notes",
   "name": "Notes",
   "version": "1.0.0",
-  "engine": ">=0.1.0",
+  "engine": ">=0.2.0",
   "description": "Markdown 笔记编辑器，支持 Vault 管理、多标签、日记、大纲、搜索",
   "author": "WorkAvatar",
   "main": "dist/main/index.cjs",
@@ -17,6 +17,9 @@
             "read-external", "write-external"
           ],
   "permissions": ["legacyMigration"],
+  "capabilities": [
+    { "domain": "ui", "views": ["message.menu"] }
+  ],
   "nav": {
     "label": "navLabel",
     "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3.5 1.5h6L13 5v9.5h-9.5z\"/><path d=\"M9.5 1.5V5H13\"/><path d=\"M6 8.5h4M6 11h4\"/></svg>",

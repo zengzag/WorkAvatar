@@ -13,6 +13,10 @@ export const PLUGIN_CHANNELS = {
   PLUGIN_IMPORT: 'plugin-host:import',
   /** 查询插件贡献的对话消息快捷操作清单（供前端渲染按钮） */
   PLUGIN_LIST_MESSAGE_ACTIONS: 'plugin-host:list-message-actions',
+  /** 查询插件注册的 UI 视图注入清单（供前端在注入点渲染组件） */
+  PLUGIN_LIST_VIEWS: 'plugin-host:list-views',
+  /** 查询插件注册的命令清单（供前端斜杠菜单/宿主调用） */
+  PLUGIN_LIST_COMMANDS: 'plugin-host:list-commands',
   /** 按文件扩展名解析应路由到的插件 id（无插件声明时返回 null） */
   PLUGIN_RESOLVE_FILE_OWNER: 'plugin-host:resolve-file-owner',
   /** 打开用户插件目录 */

@@ -24,6 +24,103 @@ export interface PluginNotificationService {
   notify(payload: PluginNotificationPayload): boolean
 }
 
+// ====== 数据访问层（services.data） ======
+
+/** 数据访问实体（与 manifest.ts 的 PluginDataEntity 一致） */
+export type PluginDataEntity =
+  | 'conversations'
+  | 'employees'
+  | 'llmProviders'
+  | 'memories'
+  | 'settings'
+
+/** 数据写操作类型 */
+export type PluginDataOp = 'create' | 'update' | 'delete'
+
+/** 数据查询参数 */
+export interface PluginDataQueryParams {
+  filter?: Record<string, unknown>
+  sort?: string
+  limit?: number
+  offset?: number
+}
+
+/**
+ * 通用数据访问服务（需 capabilities.data 授权）。
+ * - query：只读查询，entity 必须在 capabilities.data.entities 白名单内
+ * - mutate：写操作，entity + access=write 才允许
+ * 新增数据实体无需扩接口，宿主注册实体描述即可。
+ */
+export interface PluginDataService {
+  query<T = unknown>(entity: PluginDataEntity, params?: PluginDataQueryParams): Promise<T[]>
+  mutate<T = unknown>(entity: PluginDataEntity, op: PluginDataOp, payload: Record<string, unknown>): Promise<T>
+}
+
+// ====== 宿主能力层（services.execute） ======
+
+/** 统一执行入口类型（与 manifest.ts 的 PluginExecuteKind 一致） */
+export type PluginExecuteKind =
+  | 'agent-task'
+  | 'agent-chat'
+  | 'llm-chat'
+  | 'llm-stream'
+
+/** 统一执行请求 */
+export interface PluginExecuteRequest {
+  kind: PluginExecuteKind
+  employeeId?: string
+  providerId?: string
+  modelId?: string
+  prompt?: string
+  messages?: Array<{ role: string; content: string }>
+  system?: string
+  history?: string[]
+  conversationId?: string
+  title?: string
+  temperature?: number
+  maxTokens?: number
+  useSkills?: boolean
+  enableThinking?: boolean
+  minimalMode?: boolean
+  highPermission?: boolean
+}
+
+/** 统一执行回调 */
+export interface PluginExecuteCallbacks {
+  onChunk?: (text: string) => void
+  onThought?: (thought: string) => void
+  onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
+  onDone?: (metadata?: unknown) => void
+  onError?: (error: string) => void
+}
+
+/**
+ * 统一执行服务（需 capabilities.execute 授权）。
+ * 用 kind 区分执行形态，插件无需理解底层是 agent 还是 llm。
+ */
+export interface PluginExecuteService {
+  execute<T = unknown>(
+    request: PluginExecuteRequest,
+    callbacks?: PluginExecuteCallbacks,
+    signal?: AbortSignal
+  ): Promise<T>
+}
+
+// ====== 系统集成层（services.events） ======
+
+/**
+ * 事件总线服务（需 capabilities.events 授权）。
+ * - subscribe：订阅事件（白名单），返回取消订阅函数
+ * - publish：发布事件（需 publish 能力），事件名强制 plugin:<id>: 前缀
+ * 插件间可协作：A 插件发布，B 插件订阅响应。
+ */
+export interface PluginEventService {
+  subscribe(event: string, callback: (payload: unknown) => void): () => void
+  publish(event: string, payload?: unknown): void
+}
+
+// ====== 保留服务（v1 保留不变） ======
+
 export interface PluginLlmChatRequest {
   prompt: string
   system?: string
@@ -83,10 +180,10 @@ export interface PluginAgentTaskResult {
   text: string
 }
 
-/** 数字员工委派（需 agent 权限） */
+/** 数字员工委派（需 agent 能力） */
 export interface PluginAgentService {
   listEmployees(): Promise<Array<{ id: string; name: string }>>
-  /** 列出 LLM 供应商及其可用模型（需 agent 权限），供自动化等场景选择 provider/model */
+  /** 列出 LLM 供应商及其可用模型（需 agent 能力），供自动化等场景选择 provider/model */
   listProviders(): Promise<Array<{
     id: string
     name: string
@@ -100,7 +197,7 @@ export interface PluginAgentService {
     signal?: AbortSignal
   ): Promise<PluginAgentTaskResult>
   /**
-   * 底层对话流式执行（需 agent 权限）：直接调用宿主 EmployeeAgentService.chatStream，
+   * 底层对话流式执行（需 agent 能力）：直接调用宿主 EmployeeAgentService.chatStream，
    * 允许精细控制 provider/model/high_permission/use_skills/minimal_mode 等参数。
    * 适用于自动化任务等需要精确控制执行参数、且需自行管理 conversation 的场景。
    */
@@ -140,17 +237,17 @@ export interface PluginConversationSummary {
   updatedAt: string
 }
 
-/** 内核对话只读查询（需 conversations 权限） */
+/** 内核对话只读查询（需 conversations 能力） */
 export interface PluginConversationReader {
   getTitle(conversationId: string): Promise<string | null>
   listRecent(limit?: number): Promise<PluginConversationSummary[]>
   /**
-   * 订阅内核 conversation 删除事件（需 conversations 权限）。
+   * 订阅内核 conversation 删除事件（需 conversations 能力）。
    * 内核删除任意 conversation（含自动化任务产生的对话）时回调 conversationId，
    * 插件据此清理自身关联数据（如自动化 run 记录）。返回取消订阅函数。
    */
   onDeleted(callback: (conversationId: string) => void): () => void
-  /** 创建 conversation（需 conversations 权限），返回新会话 id */
+  /** 创建 conversation（需 conversations 能力），返回新会话 id */
   create(employeeId: string, title?: string): Promise<string>
   /** 更新 conversation 字段（messages_json / message_count / last_message_at / employee_id 等） */
   update(id: string, data: Record<string, unknown>): Promise<void>
@@ -208,30 +305,19 @@ export interface PluginWindowHandle {
 }
 
 /**
- * 插件窗口创建（需 windows 权限；应用退出/插件禁用时由宿主统一回收）。
+ * 插件窗口创建（需 windows 能力；应用退出/插件禁用时由宿主统一回收）。
  * 创建后的窗口自动纳入宿主广播目标：ctx.ipc.broadcast 会同时推送到该窗口渲染端。
  */
 export interface PluginWindowService {
   create(options: PluginWindowOptions): PluginWindowHandle
 }
 
-/** 宿主原生模块租借（需 nativeModules 权限；插件禁止自带 .node 文件） */
+/** 宿主原生模块租借（需 native 能力；插件禁止自带 .node 文件） */
 export interface PluginNativeService {
   /** 租借模块实例（如 'better-sqlite3'），ABI 与宿主一致 */
   borrow(name: string): unknown
   /** 模块解析路径（供插件 Worker 线程 require） */
   modulePath(name: string): string
-}
-
-/** 内核事件订阅（无需权限，随 services 始终注入） */
-export interface PluginKernelEventService {
-  /**
-   * 订阅内核事件，返回取消订阅函数。
-   * 当前支持的事件：
-   * - 'conversation-deleted'：内核删除任意 conversation，payload 为 conversationId
-   * - 'model-renamed'：内核重命名 LLM 模型，payload 为 { providerId, renames: Record<oldModel, newModel> }
-   */
-  subscribe(event: string, callback: (payload: unknown) => void): () => void
 }
 
 /** 宿主路径服务（无需权限，随 services 始终注入） */
@@ -242,14 +328,18 @@ export interface PluginHostPathsService {
 
 /**
  * 宿主注入的共享服务聚合。
- * 未在 manifest permissions 中声明的服务为 undefined（访问即报错便于发现）。
+ * 未在 manifest capabilities 中声明的服务为 undefined（访问即报错便于发现）。
  */
 export interface PluginServices {
   logger: PluginLogger
-  /** 宿主路径（始终可用，无权限要求） */
+  /** 宿主路径（始终可用，无能力要求） */
   host: PluginHostPathsService
-  /** 内核事件订阅（始终可用，无权限要求） */
-  kernelEvents: PluginKernelEventService
+  /** 通用数据访问（需 capabilities.data 授权） */
+  data?: PluginDataService
+  /** 统一执行入口（需 capabilities.execute 授权） */
+  execute?: PluginExecuteService
+  /** 事件总线（需 capabilities.events 授权） */
+  events?: PluginEventService
   notification?: PluginNotificationService
   llm?: PluginLlmService
   agent?: PluginAgentService

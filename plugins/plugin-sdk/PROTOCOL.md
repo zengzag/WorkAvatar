@@ -1,6 +1,8 @@
-# WorkAvatar 插件协议规范（P0 草案 v0.1）
+# WorkAvatar 插件协议规范
 
-> 本文件是插件协议的单一事实源，类型定义见 `src/`。评审通过后在 P1 实现宿主侧，后续只增不改（破坏性变更升 major）。
+> 本文件是插件协议的单一事实源，类型定义见 `plugins/plugin-sdk/src/`。
+> 插件通过 **manifest 声明 + 双入口插件包 + 宿主扩展点** 扩展 WorkAvatar 的能力。
+> 能力矩阵见 [CAPABILITY_MATRIX.md](../../docs/plugins/CAPABILITY_MATRIX.md)，接口签名见 [API_REFERENCE.md](../../docs/plugins/API_REFERENCE.md)。
 
 ## 1. 插件包结构
 
@@ -9,109 +11,151 @@
 ├── manifest.json          # 唯一信任入口
 ├── dist/
 │   ├── main/index.cjs     # 主进程入口：export { migrations?, activate, deactivate? }
-│   └── renderer/index.js  # 渲染端入口：export default { routes, navIcon?, init?, dispose? }
-├── resources/             # 自包含重资源（onnx 模型等），随包 asarUnpack，只读
+│   └── renderer/index.js  # 渲染端入口：export default { routes, views?, navIcon?, init?, dispose? }
+├── resources/             # 自包含重资源（onnx 模型等），只读
 └── locale/                # zh-CN.json / en-US.json
 ```
 
-两个安装来源，同一套加载器：
-
-| 来源 | 目录 | 特性 |
-|---|---|---|
-| 内置 | `<安装目录>/resources/plugins/` | 只读、随安装包分发、可禁用不可删除 |
-| 用户 | `<userData>/plugins/` | 放入即识别、可启停可删除 |
-
-插件运行期数据（sqlite 分库、KV）全部写入 `userData/plugin-data/<id>/`，与安装目录解耦，禁用不丢数据。
+插件安装到 `userData/plugins/<id>/`，可启停、可删除、可覆盖升级。运行期数据（sqlite 分库、KV）写入 `userData/plugin-data/<id>/`，与安装目录解耦，禁用/重装不丢数据。
 
 ## 2. manifest.json 字段
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `id` | ✓ | `/^[a-z][a-z0-9-]{1,63}$/`；保留字：`settings` `tasks` `employees` |
+| `id` | ✓ | `/^[a-z][a-z0-9-]{1,63}$/`；保留字：`settings` `tasks` `employees` `list` `invoke` `event` |
 | `name` / `version` | ✓ | 展示名 / semver |
-| `engine` | ✓ | 宿主协议 semver range（如 `>=0.1.0 <1.0.0`），不满足则禁用并提示 |
+| `engine` | ✓ | 宿主协议 semver range（当前为 `>=0.2.0`），不满足则禁用并提示 |
 | `main` | ✓ | 主进程入口（cjs），相对根目录 |
 | `renderer` | | 渲染端入口（ESM）；纯后台插件可省略 |
 | `locale` | | locale 目录名，默认 `locale` |
 | `ipc` | | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀 |
-| `permissions` | | 权限声明，决定 ctx.services 注入项（见 §4） |
+| `capabilities` | | 能力域授权声明（见 §4） |
+| `permissions` | | 迁移专用权限（仅保留 `legacyMigration`） |
 | `nav` | | 导航项：`label`（文案或 i18n key）、`icon`（SVG 字符串）、`order`（默认 100）、`detachable` |
 
-## 3. 生命周期（重启生效，无热插拔）
+## 3. 生命周期
 
 ```
 宿主启动
-  → 扫描两个插件目录，解析 manifest
-  → schema 校验 + engine 校验 + id 保留字校验
-  → 读 settings 表 plugins.config 启用状态，过滤
+  → 扫描 userData/plugins/，解析每个 manifest
+  → schema 校验 + engine 校验 + capabilities 校验 + id 保留字校验
+  → 读启用状态，过滤
   → 逐插件执行未应用的 migrations（原子事务 + plugin_migrations 版本记录）
-  → 逐插件 activate(ctx)（try/catch 隔离，单插件失败不阻塞宿主）
-  → 贡献点落库（agent 工具 / MCP 工具 / 文件关联 / 快捷键 / 导航）
-  → 之后才初始化 EmployeeAgentService 等内核服务（保证插件工具就位）
+  → 逐插件 activate(ctx)（单插件失败不阻塞宿主，标记 error）
+  → 贡献点落库（agent 工具 / MCP 工具 / 文件关联 / 快捷键 / 视图 / 命令 / 导航）
 渲染端启动
-  → IPC 拉取已启用插件清单
-  → import('plugin://<id>/index.js')（宿主 privileged scheme + protocol.handle）
-  → init(host) → 注册路由 / 导航 / locale → createHashRouter
+  → 拉取已启用插件清单
+  → import('plugin://<id>/index.js')
+  → init(host) → 注册路由 / 视图 / 导航 / locale
 退出 / 禁用
   → deactivate()（插件释放资源：关定时器、关窗口、关 DB 连接）
 ```
 
-启停插件在 Settings「插件管理」页操作，重启后生效。
+插件变更（启停 / 导入 / 删除 / 升级）后需重启应用生效。
 
-## 4. 权限与 ctx.services 对应表
+## 4. 能力域授权（capabilities）
 
-| 权限 | 注入的服务 | 用途 |
-|---|---|---|
-| （无需声明） | `logger` / `host` / `ipc` / `storage` / `contributions` / `kernelEvents` | 基础能力（host.getDataDir 等）；`kernelEvents.subscribe(event, cb)` 订阅内核事件（conversation-deleted / model-renamed 等） |
-| `llm` | `services.llm.chat()` / `chatStream()` | 受控 LLM 调用（走 PiAIProvider，自动记日志/用量；chatStream 支持流式回调与 AbortSignal） |
-| `agent` | `services.agent.runTask()/listEmployees()/listProviders()/chatStream()` | 委派数字员工；chatStream 为底层对话流式执行，精细控制 provider/model/high_permission/use_skills/minimal_mode/enable_thinking |
-| `conversations` | `services.conversations.getTitle()/listRecent()/onDeleted()/create()/update()/delete()` | 内核对话查询与写操作（经宿主 WorkspaceManagerService 桥接）；onDeleted 订阅删除事件（底层复用 kernelEvents） |
-| `notifications` | `services.notification.notify()` | 通知（主窗口激活→推 `notify` 插件事件，失焦→系统通知，点击→`notify-click` 插件事件） |
-| `scheduler` | `services.scheduler.every()/cron()/cancel()` | 定时任务（宿主统一回收） |
-| `globalShortcuts` | `contributions.registerGlobalShortcuts()` | 全局快捷键 |
-| `windows` | `services.windows.create()` | 插件窗口（悬浮字幕/登录窗等；支持 transparent/skipTaskbar/focusable/x/y/url/contentPath，创建后自动纳入广播目标） |
-| `nativeModules` | `services.native.borrow()/modulePath()` | 租借宿主原生模块（ABI 一致；插件禁止自带 .node） |
-| `legacyMigration` | migration ctx 的 `legacy` / `legacy.kms` | 内核主库只读（`kms` 字段额外暴露 KMS 向量库只读，如 kms_voice_tasks；仅内置插件迁移） |
+manifest `capabilities` 数组声明插件可访问的能力域，宿主在服务入口统一校验（越权抛错）。
 
-## 5. IPC 约定
+| 能力域 | 声明 | 注入服务 | 用途 |
+|---|---|---|---|
+| `data` | `{ domain:'data', entities:[...], access:'read'\|'write' }` | `services.data.query/mutate` | 通用数据访问（实体白名单 + 读写分离） |
+| `execute` | `{ domain:'execute', kinds:[...] }` | `services.execute.execute` | 统一执行入口（agent-task/agent-chat/llm-chat/llm-stream） |
+| `events` | `{ domain:'events', subscribe?:[...], publish?:boolean }` | `services.events.subscribe/publish` | 事件总线（订阅白名单 + 发布开关） |
+| `ui` | `{ domain:'ui', views:[...] }` | 渲染端 `views` + `contributions.registerView` | UI 注入（注入点白名单） |
+| `system` | `{ domain:'system', features:[...] }` | `services.notification/scheduler/windows/native` | 系统能力（特性白名单） |
 
-- preload 只暴露通用桥：`window.electronAPI.plugin.invoke(pluginId, channel, payload)` / `onEvent(pluginId, channel, cb)`，preload 不随插件膨胀
-- 主进程通道一律 `plugin:<id>:<channel>`，宿主拒绝插件覆盖内核通道
-- 主进程推送：`ctx.ipc.broadcast(event, payload)` → 该插件所有渲染端（主窗口 + 独立窗口 + 插件自建窗口）
-- 插件 agent 工具 handler 上下文为 `PluginToolContext`：`{ onProgress?, employeeId? }`（`employeeId` 在数字员工执行场景由宿主注入，MCP 等外部调用为 null）
+**数据实体**：`conversations` / `employees` / `llmProviders` / `memories` / `settings`（只读）。
+**执行类型**：`agent-task` / `agent-chat` / `llm-chat` / `llm-stream`。
+**系统特性**：`notification` / `scheduler` / `windows` / `native` / `globalShortcuts`。
+**UI 注入点**：`chat.toolbar` / `sidebar.footer` / `settings.tab` / `message.menu`。
 
-## 6. 存储与迁移
+**基础能力**（无需声明）：`logger` / `host` / `ipc` / `storage` / `contributions` / `paths`。
 
-- 插件一律使用 `ctx.storage.openSqlite()` 获得独立分库（WAL），**禁止直连内核主库**
-- 原生模块只能 `borrow('better-sqlite3')` 等租借，禁止自带 .node（启动扫描拒绝）
-- 内置插件迁出内核数据：`migrations: [{ version, run(ctx) }]`，宿主保证：
-  - 每个迁移在插件库事务内执行，失败回滚并禁用该插件（不阻塞宿主与其他插件）
-  - 成功后写 `plugin_migrations(version, applied_at)`，幂等
-  - 内核旧表在全部插件迁移完成 + 一个稳定版本后才由内核 migration DROP（兜底窗口期）
+## 5. 数据访问层（services.data）
 
-## 7. 渲染端约定
+```ts
+services.data.query(entity, { filter?, sort?, limit?, offset? })   // 只读查询
+services.data.mutate(entity, op, payload)                          // 写操作（create/update/delete）
+```
 
-- 路由挂载于 `/plugin/<id>/` 命名空间；独立窗口复用 `#/window/plugin/<id>` 加载时序
-- **共享库单例**：react / react-dom / antd / i18next 由宿主提供，SDK 构建模板强制 external 并 shim 到 `globalThis.__WA_HOST__`；插件包内若检出自带 react 则拒绝加载
-- 主题：插件 UI 只用 antd token / CSS 变量，明暗主题自动继承
-- i18n：插件 locale 文件由宿主代注册（namespace = 插件 id），渲染端直接 `t()`
+- 实体必须在 `capabilities.data.entities` 白名单内，否则拒绝。
+- `access=read` 的实体调用 `mutate` 拒绝。
+- `llmProviders` 返回前剥离 `api_key`。
 
-## 8. agent 工具贡献
+## 6. 宿主能力层（services.execute）
 
-- `ctx.contributions.registerAgentTools(tools)`：注入宿主 ToolRegistry，参与员工三态配置（on/on_demand/off）
-- 宿主 EmployeeAgentService 在构建 agent 时合并插件工具（handler 自动注入 `employeeId` 上下文）；工具分类 UI（getUnifiedBuiltinToolCatalog）与 KMS MCP（buildAllBuiltinToolDefinitions）同样纳入插件工具
-- 工具 id 沿用现名（如 `calendar_event_list`），**老员工的工具配置无需迁移**
-- 插件禁用 → 工具不注册；现有 `getToolLookupMap` 已容忍分类中工具缺失
-- 工具分类聚合（TOOL_CATEGORY_DEFS）改为按"已注册工具"动态计算归属分类
+```ts
+services.execute.execute({ kind, employeeId?, providerId?, modelId?, prompt?, messages?, ... }, callbacks?, signal?)
+```
 
-## 9. 版本策略
+- `kind` 必须在 `capabilities.execute.kinds` 白名单内。
+- 插件只需理解"execute 一个任务/一次对话"，无需区分底层是 agent 还是 llm。
 
-- `engine` semver 启动校验：不兼容 → 禁用 + 设置页提示，不崩溃
-- ctx API 只增不改：新增字段/方法为 minor；删除或语义变更为 major
-- 宿主实现须同时兼容 `engine` 声明范围内的旧插件
+## 7. 系统集成层（services.events）
 
-## 10. 安全边界（一期）
+```ts
+services.events.subscribe(event, callback)   // 订阅（白名单），返回取消订阅函数
+services.events.publish(event, payload)      // 发布（需 publish 能力），强制 plugin:<id>: 前缀
+```
 
-- 可信插件模型：内置插件随包分发；用户插件由用户自行放入（责任自负）
-- 启动时静态扫描：拒绝自带 `.node`、拒绝 manifest 通道越权
-- 第三方开放（远期）：签名校验 + utilityProcess 进程隔离，本协议预留 `permissions` 扩展位
+- **宿主事件**：`conversation:deleted`、`model:renamed`。
+- **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅（需在 subscribe 白名单声明）。
+
+## 8. UI 扩展层
+
+### 8.1 渲染端视图注入（views）
+
+渲染端入口 `default export` 的 `views` 字段声明注入点组件：
+
+```ts
+export default {
+  routes: [...],
+  views: [{ view: 'chat.toolbar', component: MyToolbar }],  // 需 capabilities.ui.views 授权
+}
+```
+
+宿主在对应注入点渲染组件（经 `__WA_HOST__` 共享 React）。
+
+### 8.2 主进程贡献点（contributions）
+
+```ts
+registerAgentTools(tools)          // 进宿主 ToolRegistry，参与员工三态配置
+registerMcpTools(tools)            // 经内置 MCP 对外暴露
+registerFileAssociations(assocs)   // 系统"打开方式"→ 路由到插件渲染端
+registerGlobalShortcuts(shortcuts) // 需 system.features 含 globalShortcuts
+registerMessageActions(actions)    // 对话消息快捷操作
+registerView(view)                 // 声明 UI 注入意图（需 capabilities.ui.views 授权）
+registerCommand(command)           // 注册命令（可被斜杠菜单/宿主调用）
+```
+
+## 9. IPC 约定
+
+- preload 只暴露通用桥：`window.electronAPI.plugin.invoke(pluginId, channel, payload)` / `onEvent(pluginId, cb)`。
+- 主进程通道一律 `plugin:<id>:<channel>`，宿主拒绝插件覆盖内核通道。
+- 主进程推送：`ctx.ipc.broadcast(event, payload)` → 该插件所有渲染端。
+- 插件 agent 工具 handler 上下文为 `PluginToolContext`：`{ onProgress?, employeeId? }`。
+
+## 10. 存储与迁移
+
+- 插件一律使用 `ctx.storage.openSqlite()` 获得独立分库（WAL），**禁止直连内核主库**。
+- 原生模块只能 `borrow('better-sqlite3')` 等租借，禁止自带 .node（启动扫描拒绝）。
+- 迁出内核旧数据：`migrations: [{ version, run(ctx) }]`，宿主保证原子事务 + 幂等 + 失败回滚禁用。
+
+## 11. 渲染端约定
+
+- 路由挂载于 `/plugin/<id>/` 命名空间；独立窗口复用同一组路径。
+- **共享库单例**：react / react-dom / antd / i18next 由宿主提供，SDK 构建模板强制 external 并 shim 到 `globalThis.__WA_HOST__`；插件包内若检出自带 react 则拒绝加载。
+- 主题：插件 UI 只用 antd token / CSS 变量，明暗主题自动继承。
+- i18n：插件 locale 文件由宿主代注册（namespace = 插件 id），渲染端直接 `t()`。
+
+## 12. 版本策略
+
+- `engine` semver 启动校验：不兼容 → 禁用 + 设置页提示，不崩溃。
+- ctx API 只增不改：新增字段/方法为 minor；删除或语义变更为 major。
+
+## 13. 安全边界
+
+- 启动时静态扫描：拒绝自带 `.node`、拒绝 manifest 通道越权、拒绝 capabilities 越权。
+- 能力域授权：data/execute/events/ui/system 各域在服务入口统一校验。
+- 敏感数据剥离：llmProviders 的 api_key 不暴露给插件。

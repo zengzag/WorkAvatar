@@ -22,18 +22,26 @@ import type {
   PluginServices,
   PluginWindowOptions,
   PluginWindowHandle,
-  PluginLlmChatRequest,
-  PluginLlmChatStreamRequest,
-  PluginLlmStreamCallbacks,
   PluginNotificationPayload,
   PluginMessageAction,
   PluginMessageActionResult,
+  PluginViewContribution,
+  PluginCommand,
 } from '../../../../plugins/plugin-sdk/src'
+import {
+  getCapability,
+  canRegisterView,
+  hasSystemFeature,
+  validateCapabilities,
+} from './plugin-capability'
+import { createDataAccessService } from './plugin-data-access'
+import { createExecuteService } from './plugin-execute'
+import { createEventBus } from './plugin-events'
 
 const logger = createLogger('PluginHost')
 
 /** 宿主插件协议版本（manifest.engine 与此比对，破坏性变更升 major） */
-export const PLUGIN_PROTOCOL_VERSION = '0.1.0'
+export const PLUGIN_PROTOCOL_VERSION = '0.2.0'
 
 /** manifest.id 保留字：与内核导航/宿主通用桥冲突 */
 const RESERVED_IDS = ['settings', 'tasks', 'employees', 'list', 'invoke', 'event']
@@ -123,8 +131,12 @@ class PluginHostService {
   private pendingImportZip = ''
   /** 插件注册的对话消息快捷操作（pluginId → actions，供前端清单查询与 IPC 路由） */
   private messageActions = new Map<string, PluginMessageAction[]>()
-  /** 订阅内核事件的插件监听器（ctx.services.kernelEvents.subscribe 注册）：event → Set<callback> */
+  /** 订阅内核事件的插件监听器（ctx.services.events.subscribe 注册）：event → Set<callback> */
   private kernelEventListeners = new Map<string, Set<(payload: unknown) => void>>()
+  /** 插件注册的 UI 视图注入（pluginId:view → contribution，供渲染端查询） */
+  private viewContributions = new Map<string, PluginViewContribution>()
+  /** 插件注册的命令（pluginId:commandId → command） */
+  private commands = new Map<string, PluginCommand>()
   private dataDir = ''
   private initialized = false
 
@@ -247,7 +259,7 @@ class PluginHostService {
       let entries: string[] = []
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true })
-          .filter(e => e.isDirectory() && e.name !== 'plugin-sdk')
+          .filter(e => e.isDirectory() && e.name !== 'plugin-sdk' && e.name !== 'examples')
           .map(e => e.name)
       } catch { /* 目录不存在则跳过 */ }
       for (const name of entries) {
@@ -292,6 +304,8 @@ class PluginHostService {
     this.contributions.clear()
     this.messageActions.clear()
     this.kernelEventListeners.clear()
+    this.viewContributions.clear()
+    this.commands.clear()
     this.schedulerJobs.clear()
     for (const accelerator of this.registeredShortcuts) {
       try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
@@ -328,6 +342,8 @@ class PluginHostService {
     if (!fs.existsSync(entryPath)) return fail(`主进程入口不存在: ${manifest.main}`)
     const engineOk = engineSatisfies(manifest.engine ?? '*', PLUGIN_PROTOCOL_VERSION)
     if (!engineOk) return fail(`engine 不兼容: 需要 ${manifest.engine}，宿主协议 ${PLUGIN_PROTOCOL_VERSION}`)
+    const capCheck = validateCapabilities(manifest.capabilities)
+    if (!capCheck.ok) return fail(`capabilities 非法: ${capCheck.reason}`)
     if (this.records.has(manifest.id)) {
       logger.warn(`插件 id 冲突，忽略后发现的: ${manifest.id} (${rootDir})`)
       return
@@ -390,8 +406,14 @@ class PluginHostService {
 
   // ====== ctx 组装 ======
 
+  /** 校验 legacyMigration 权限（v2 保留在 permissions 数组，仅迁移专用） */
   private hasPermission(record: PluginRecord, permission: string): boolean {
     return (record.manifest.permissions ?? []).includes(permission as never)
+  }
+
+  /** 校验系统能力特性（capabilities.system.features） */
+  private hasSystemFeature(record: PluginRecord, feature: Parameters<typeof hasSystemFeature>[1]): boolean {
+    return hasSystemFeature(record.manifest.capabilities, feature)
   }
 
   private openPluginDatabase(id: string, name = 'index'): Database.Database {
@@ -427,125 +449,56 @@ class PluginHostService {
           return PathService.getInstance().getDataDir()
         },
       },
-      kernelEvents: {
-        subscribe: (event, callback) => {
-          let set = this.kernelEventListeners.get(event)
-          if (!set) {
-            set = new Set()
-            this.kernelEventListeners.set(event, set)
-          }
-          set.add(callback)
-          return () => { set.delete(callback) }
-        },
-      },
     }
 
-    if (this.hasPermission(record, 'notifications')) {
-      const { default: NotificationService } = require('../notification.service')
-      services.notification = {
-        notify: (payload: PluginNotificationPayload) => NotificationService.getInstance().notify({
-          title: payload.title,
-          body: payload.body,
-          clickTarget: payload.clickTarget as any,
-          clickId: payload.clickId,
-          source: `plugin:${manifest.id}`,
-          silent: payload.silent,
-          i18nKey: payload.i18nKey,
-          i18nParams: payload.i18nParams,
-        } as any),
-      }
+    // ====== 数据访问层（services.data，需 capabilities.data 授权） ======
+    if (getCapability(record.manifest.capabilities, 'data')) {
+      const { default: WorkspaceManagerService } = require('../workspace-manager.service')
+      const { default: LLMClientService } = require('../llm-client.service')
+      const { default: EmployeeMemoryService } = require('../employee-memory.service')
+      const db = DatabaseService.getInstance().getDb()
+      services.data = createDataAccessService({
+        workspace: {
+          getAllConversationsWithEmployee: (p) => WorkspaceManagerService.getInstance().getAllConversationsWithEmployee(p),
+          getConversation: (id) => WorkspaceManagerService.getInstance().getConversation(id),
+          createConversation: (e, s, t, m, p) => WorkspaceManagerService.getInstance().createConversation(e, s, t, m, p),
+          updateConversation: (id, data) => WorkspaceManagerService.getInstance().updateConversation(id, data),
+          deleteConversation: (id) => WorkspaceManagerService.getInstance().deleteConversation(id),
+          getEmployeeList: () => WorkspaceManagerService.getInstance().getEmployeeList(),
+          getEmployee: (id) => WorkspaceManagerService.getInstance().getEmployee(id),
+          createEmployee: (n, d, p, r) => WorkspaceManagerService.getInstance().createEmployee(n, d, p, r),
+          updateEmployee: (id, data) => WorkspaceManagerService.getInstance().updateEmployee(id, data),
+          deleteEmployee: (id, dw) => WorkspaceManagerService.getInstance().deleteEmployee(id, dw),
+        },
+        llm: {
+          getProviderList: () => LLMClientService.getInstance().getProviderList(),
+          getProvider: (id) => LLMClientService.getInstance().getProvider(id),
+          createProvider: (p) => LLMClientService.getInstance().createProvider(p),
+          updateProvider: (id, p) => LLMClientService.getInstance().updateProvider(id, p),
+          deleteProvider: (id) => LLMClientService.getInstance().deleteProvider(id),
+        },
+        memory: {
+          listMemories: (e) => EmployeeMemoryService.getInstance().listMemories(e),
+          searchMemories: (e, q, l) => EmployeeMemoryService.getInstance().searchMemories(e, q, l),
+          createMemory: (p) => EmployeeMemoryService.getInstance().createMemory(p),
+          updateMemory: (id, p) => EmployeeMemoryService.getInstance().updateMemory(id, p),
+          deleteMemory: (id) => EmployeeMemoryService.getInstance().deleteMemory(id),
+          togglePin: (id) => EmployeeMemoryService.getInstance().togglePin(id),
+        },
+        settings: {
+          get: (key) => (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value,
+        },
+      })
     }
 
-    if (this.hasPermission(record, 'llm')) {
-      const LLMClientService = require('../llm-client.service').default
-      services.llm = {
-        chat: async (request: PluginLlmChatRequest) => {
-          const llmClient = LLMClientService.getInstance()
-          const providerId = request.providerId || (() => {
-            const providers = llmClient.getProviderList() as any[]
-            return providers.find(p => p.is_default)?.id || providers[0]?.id
-          })()
-          const provider = await llmClient.getProviderConfig(providerId)
-          if (!provider) throw new Error('No LLM provider available')
-          const { createPiProvider } = require('../agent/llm/pi-provider-factory')
-          const pi = await createPiProvider(provider.id, request.modelId || provider.model)
-          if (!pi) throw new Error('Failed to create LLM provider')
-          const messages: any[] = []
-          if (request.system) messages.push({ role: 'system', content: request.system })
-          messages.push({ role: 'user', content: request.prompt })
-          const response = await pi.chat(messages, [], { logSource: `plugin:${manifest.id}` })
-          return response.content
-        },
-        chatStream: async (
-          request: PluginLlmChatStreamRequest,
-          callbacks?: PluginLlmStreamCallbacks,
-          signal?: AbortSignal,
-        ) => {
-          const llmClient = LLMClientService.getInstance()
-          const providerId = request.providerId || (() => {
-            const providers = llmClient.getProviderList() as any[]
-            return providers.find(p => p.is_default)?.id || providers[0]?.id
-          })()
-          const provider = await llmClient.getProviderConfig(providerId)
-          if (!provider) throw new Error('No LLM provider available')
-          const { createPiProvider } = require('../agent/llm/pi-provider-factory')
-          const pi = await createPiProvider(provider.id, request.modelId || provider.model)
-          if (!pi) throw new Error('Failed to create LLM provider')
-          const messages: any[] = []
-          if (request.system) messages.push({ role: 'system', content: request.system })
-          if (request.history) {
-            for (const h of request.history) messages.push({ role: 'user', content: h })
-          }
-          messages.push({ role: 'user', content: request.prompt })
-          let accumulated = ''
-          await pi.chatStream(
-            messages,
-            [],
-            {
-              onChunk: (chunk: string) => { accumulated += chunk; callbacks?.onChunk?.(chunk) },
-              onThought: (thought: string) => callbacks?.onThought?.(thought),
-              onToolCall: (tc: any) => callbacks?.onToolCall?.(tc),
-            },
-            signal,
-            { temperature: request.temperature, maxTokens: request.maxTokens, logSource: `plugin:${manifest.id}` },
-          )
-          return accumulated
-        },
-      }
-    }
-
-    if (this.hasPermission(record, 'agent')) {
+    // ====== 宿主能力层（services.execute，需 capabilities.execute 授权） ======
+    if (getCapability(record.manifest.capabilities, 'execute')) {
       const EmployeeAgentService = require('../employee-agent.service').default
-      services.agent = {
-        listEmployees: async () => {
-          const db = DatabaseService.getInstance().getDb()
-          const rows = db.prepare('SELECT id, name FROM employees ORDER BY name ASC').all() as any[]
-          return rows.map((r: any) => ({ id: r.id, name: r.name }))
-        },
-        listProviders: async () => {
-          const db = DatabaseService.getInstance().getDb()
-          const rows = db.prepare(
-            `SELECT id, name, provider_type, model, models_json FROM llm_providers ORDER BY is_default DESC, created_at DESC`
-          ).all() as any[]
-          return rows.map((r: any) => {
-            let models: any[] = []
-            try { models = JSON.parse(r.models_json || '[]') } catch { /* ignore */ }
-            return {
-              id: r.id,
-              name: r.name,
-              provider_type: r.provider_type,
-              default_model: r.model,
-              models: models.map((m: any) => ({
-                id: m.id,
-                model: m.model,
-                name: m.name || m.model,
-                is_default: !!m.is_default,
-                category: m.category || 'chat',
-              })),
-            }
-          })
-        },
-        runTask: async (params, callbacks, signal) => {
+      const LLMClientService = require('../llm-client.service').default
+      const { createPiProvider } = require('../agent/llm/pi-provider-factory')
+      const pluginId = manifest.id
+      services.execute = createExecuteService({
+        runAgentTask: async (params, callbacks, signal) => {
           const employeeAgent = EmployeeAgentService.getInstance()
           const { provider_id, model_id } = (() => {
             const db = DatabaseService.getInstance().getDb()
@@ -559,19 +512,18 @@ class PluginHostService {
             conversationId = conv.id
           }
           let resultText = ''
-          const streamParams = {
-            employee_id: params.employeeId,
-            provider_id: provider_id,
-            model_id: model_id,
-            messages: [{ role: 'user', content: params.prompt }],
-            conversation_id: conversationId,
-            use_skills: false,
-            collection_ids: [] as string[],
-            minimal_mode: true,
-            high_permission: false,
-          }
           await employeeAgent.chatStream(
-            streamParams,
+            {
+              employee_id: params.employeeId,
+              provider_id: provider_id,
+              model_id: model_id,
+              messages: [{ role: 'user', content: params.prompt }],
+              conversation_id: conversationId,
+              use_skills: false,
+              collection_ids: [] as string[],
+              minimal_mode: true,
+              high_permission: false,
+            },
             {
               onChunk: (text: string) => { resultText += text; callbacks?.onChunk?.(text) },
               onDone: () => callbacks?.onDone?.({ text: resultText }),
@@ -581,7 +533,7 @@ class PluginHostService {
           )
           return { conversationId, text: resultText }
         },
-        chatStream: async (params, callbacks, signal) => {
+        runAgentChat: async (params, callbacks, signal) => {
           const employeeAgent = EmployeeAgentService.getInstance()
           let conversationId = params.conversationId
           if (!conversationId) {
@@ -611,40 +563,77 @@ class PluginHostService {
             signal,
           )
         },
+        runLlmChat: async (params) => {
+          const llmClient = LLMClientService.getInstance()
+          const providerId = params.providerId || (() => {
+            const providers = llmClient.getProviderList() as any[]
+            return providers.find((p: any) => p.is_default)?.id || providers[0]?.id
+          })()
+          const provider = await llmClient.getProviderConfig(providerId)
+          if (!provider) throw new Error('No LLM provider available')
+          const pi = await createPiProvider(provider.id, params.modelId || provider.model)
+          if (!pi) throw new Error('Failed to create LLM provider')
+          const messages: any[] = []
+          if (params.system) messages.push({ role: 'system', content: params.system })
+          messages.push({ role: 'user', content: params.prompt })
+          const response = await pi.chat(messages, [], { logSource: `plugin:${pluginId}` })
+          return response.content
+        },
+        runLlmStream: async (params, callbacks, signal) => {
+          const llmClient = LLMClientService.getInstance()
+          const providerId = params.providerId || (() => {
+            const providers = llmClient.getProviderList() as any[]
+            return providers.find((p: any) => p.is_default)?.id || providers[0]?.id
+          })()
+          const provider = await llmClient.getProviderConfig(providerId)
+          if (!provider) throw new Error('No LLM provider available')
+          const pi = await createPiProvider(provider.id, params.modelId || provider.model)
+          if (!pi) throw new Error('Failed to create LLM provider')
+          const messages: any[] = []
+          if (params.system) messages.push({ role: 'system', content: params.system })
+          if (params.history) {
+            for (const h of params.history) messages.push({ role: 'user', content: h })
+          }
+          messages.push({ role: 'user', content: params.prompt })
+          let accumulated = ''
+          await pi.chatStream(
+            messages,
+            [],
+            {
+              onChunk: (chunk: string) => { accumulated += chunk; callbacks?.onChunk?.(chunk) },
+              onThought: (thought: string) => callbacks?.onThought?.(thought),
+              onToolCall: (tc: any) => callbacks?.onToolCall?.(tc),
+            },
+            signal,
+            { temperature: params.temperature, maxTokens: params.maxTokens, logSource: `plugin:${pluginId}` },
+          )
+          return accumulated
+        },
+      })
+    }
+
+    // ====== 系统集成层（services.events，需 capabilities.events 授权） ======
+    if (getCapability(record.manifest.capabilities, 'events')) {
+      services.events = createEventBus(this.kernelEventListeners, manifest.id, pluginLogger)
+    }
+
+    if (this.hasSystemFeature(record, 'notification')) {
+      const { default: NotificationService } = require('../notification.service')
+      services.notification = {
+        notify: (payload: PluginNotificationPayload) => NotificationService.getInstance().notify({
+          title: payload.title,
+          body: payload.body,
+          clickTarget: payload.clickTarget as any,
+          clickId: payload.clickId,
+          source: `plugin:${manifest.id}`,
+          silent: payload.silent,
+          i18nKey: payload.i18nKey,
+          i18nParams: payload.i18nParams,
+        } as any),
       }
     }
 
-    if (this.hasPermission(record, 'conversations')) {
-      const { default: WorkspaceManagerService } = require('../workspace-manager.service')
-      services.conversations = {
-        getTitle: async (id) => {
-          const db = DatabaseService.getInstance().getDb()
-          const row = db.prepare('SELECT title FROM conversations WHERE id = ?').get(id) as any
-          return row?.title ?? null
-        },
-        listRecent: async (limit = 20) => {
-          const rows = WorkspaceManagerService.getInstance().getAllConversationsWithEmployee({ limit })
-          return rows.map((r: any) => ({
-            id: r.id, title: r.title || '', employeeId: r.employee_id, updatedAt: r.updated_at,
-          }))
-        },
-        onDeleted: (callback) => {
-          return this.subscribeKernelEvent('conversation-deleted', (payload) => callback(payload as string))
-        },
-        create: async (employeeId, title) => {
-          const conv = WorkspaceManagerService.getInstance().createConversation(employeeId, undefined, title, false)
-          return conv.id
-        },
-        update: async (id, data) => {
-          WorkspaceManagerService.getInstance().updateConversation(id, data)
-        },
-        delete: async (id) => {
-          WorkspaceManagerService.getInstance().deleteConversation(id)
-        },
-      }
-    }
-
-    if (this.hasPermission(record, 'scheduler')) {
+    if (this.hasSystemFeature(record, 'scheduler')) {
       const jobMap = this.schedulerJobs
       const pluginId = manifest.id
       services.scheduler = {
@@ -681,7 +670,7 @@ class PluginHostService {
       }
     }
 
-    if (this.hasPermission(record, 'windows')) {
+    if (this.hasSystemFeature(record, 'windows')) {
       // 预加载脚本路径
       const getPreloadPath = () => {
         if (!app.isPackaged) {
@@ -747,7 +736,7 @@ class PluginHostService {
       }
     }
 
-    if (this.hasPermission(record, 'nativeModules')) {
+    if (this.hasSystemFeature(record, 'native')) {
       services.native = {
         borrow: (name) => {
           try { return require(name) } catch { return null }
@@ -821,8 +810,8 @@ class PluginHostService {
           for (const a of assocs) contributions.fileAssociations.set(a.extension.toLowerCase(), manifest.id)
         },
         registerGlobalShortcuts: (shortcuts) => {
-          if (!this.hasPermission(record_, 'globalShortcuts')) {
-            throw new Error('未声明 globalShortcuts 权限')
+          if (!this.hasSystemFeature(record_, 'globalShortcuts')) {
+            throw new Error('未声明 globalShortcuts 能力')
           }
           for (const s of shortcuts) {
             const accelerator = s.accelerator
@@ -844,6 +833,22 @@ class PluginHostService {
             })
           }
           this.messageActions.set(manifest.id, actions)
+        },
+        registerView: (view: PluginViewContribution) => {
+          const check = canRegisterView(record_.manifest.capabilities, view.view)
+          if (!check.ok) throw new Error(check.reason)
+          this.viewContributions.set(`${manifest.id}:${view.view}`, view)
+        },
+        registerCommand: (command: PluginCommand) => {
+          const channel = `command:${command.id}`
+          this.handlers.set(`plugin:${manifest.id}:${channel}`, async (payload: any) => {
+            try {
+              return await command.handler(payload?.args)
+            } catch (err: any) {
+              return { error: err?.message || String(err) }
+            }
+          })
+          this.commands.set(`${manifest.id}:${command.id}`, command)
         },
       },
     }
@@ -1169,18 +1174,7 @@ class PluginHostService {
     return undefined
   }
 
-  /** 订阅内核事件（供 ctx.services.kernelEvents 与 conversations.onDeleted 复用） */
-  private subscribeKernelEvent(event: string, callback: (payload: unknown) => void): () => void {
-    let set = this.kernelEventListeners.get(event)
-    if (!set) {
-      set = new Set()
-      this.kernelEventListeners.set(event, set)
-    }
-    set.add(callback)
-    return () => { set.delete(callback) }
-  }
-
-  /** 内核广播事件给所有订阅插件（ctx.services.kernelEvents.subscribe） */
+  /** 内核广播事件给所有订阅插件（ctx.services.events.subscribe） */
   notifyKernelEvent(event: string, payload: unknown): void {
     const set = this.kernelEventListeners.get(event)
     if (!set) return
@@ -1191,9 +1185,35 @@ class PluginHostService {
     }
   }
 
-  /** 内核删除 conversation 时通知所有订阅插件（兼容旧调用，转发到通用事件） */
+  /** 内核删除 conversation 时通知所有订阅插件（v2 事件名 conversation:deleted） */
   notifyConversationDeleted(conversationId: string): void {
-    this.notifyKernelEvent('conversation-deleted', conversationId)
+    this.notifyKernelEvent('conversation:deleted', conversationId)
+  }
+
+  /** 插件注册的 UI 视图注入清单（供渲染端查询渲染） */
+  getViewContributions(): Array<{ pluginId: string; view: string; component: unknown }> {
+    const result: Array<{ pluginId: string; view: string; component: unknown }> = []
+    for (const [key, v] of this.viewContributions) {
+      const sep = key.indexOf(':')
+      const pluginId = key.slice(0, sep)
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      result.push({ pluginId, view: v.view, component: v.component })
+    }
+    return result
+  }
+
+  /** 插件注册的命令清单（供渲染端斜杠菜单/宿主调用） */
+  getCommands(): Array<{ pluginId: string; id: string; title: string }> {
+    const result: Array<{ pluginId: string; id: string; title: string }> = []
+    for (const [key, c] of this.commands) {
+      const sep = key.indexOf(':')
+      const pluginId = key.slice(0, sep)
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      result.push({ pluginId, id: c.id, title: c.title })
+    }
+    return result
   }
 
   /** 按文件扩展名解析应路由到的插件 id（无插件声明该扩展名时返回 undefined） */

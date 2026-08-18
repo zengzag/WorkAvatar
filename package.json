@@ -11,7 +11,9 @@
     "build": "tsc && vite build && electron-builder",
     "build:win": "electron-builder --win",
     "preview": "vite preview",
-    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs"
+    "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs",
+    "test": "vitest run --config tests/vitest.config.ts",
+    "test:watch": "vitest --config tests/vitest.config.ts"
   },
   "keywords": [
     "数字员工",
@@ -78,6 +80,7 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
     "vite-plugin-electron": "^1.1.0",
-    "vite-plugin-electron-renderer": "^1.0.0"
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vitest": "^4.1.10"
   }
 }

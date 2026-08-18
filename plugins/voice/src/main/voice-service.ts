@@ -517,8 +517,9 @@ class VoiceService {
 
       // 流式生成：每收到一个 chunk 即推送进度，progress 在 30~90 之间渐进
       let accumulated = ''
-      await this.ctx.services.llm!.chatStream(
+      await this.ctx.services.execute!.execute(
         {
+          kind: 'llm-stream',
           prompt: userMessage,
           system: systemPrompt,
           providerId: llmConfig.provider_id,

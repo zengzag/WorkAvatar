@@ -3,6 +3,7 @@
  * 宿主启动时经 plugin:// 协议动态 import，注册路由/导航后挂载路由表。
  */
 import type { ComponentType } from 'react'
+import type { PluginViewPoint } from './manifest'
 
 export interface PluginRouteDefinition {
   /** 相对路径，挂载到 /plugin/<id>/ 命名空间下；'' 或 '/' 为插件首页 */
@@ -10,6 +11,14 @@ export interface PluginRouteDefinition {
   component: ComponentType
   /** 路由级 keepAlive（对应宿主 KeepAliveOutlet），默认 true */
   keepAlive?: boolean
+}
+
+/** 渲染端视图注入：在宿主界面指定注入点渲染组件（组件在渲染端，天然可用） */
+export interface PluginViewDefinition {
+  /** 注入点 id，须在 capabilities.ui.views 白名单内 */
+  view: PluginViewPoint
+  /** 注入点渲染的组件 */
+  component: ComponentType<{ context?: unknown }>
 }
 
 export interface PluginBridge {
@@ -47,6 +56,8 @@ export interface PluginRendererEntry {
   routes: PluginRouteDefinition[]
   /** 动态导航图标（如录音状态变色）；静态图标用 manifest.nav.icon */
   navIcon?: ComponentType<{ active: boolean }>
+  /** 视图注入（在宿主界面指定注入点渲染组件，需 capabilities.ui.views 授权） */
+  views?: PluginViewDefinition[]
   /** 路由挂载前调用一次（订阅事件、初始化 store 等） */
   init?(host: PluginRendererHost): void | Promise<void>
   /** 宿主卸载本插件路由时调用（清理订阅） */

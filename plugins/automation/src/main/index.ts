@@ -113,11 +113,11 @@ export function activate(ctx: PluginContext): void {
   registerIpc(ctx)
   ctx.contributions.registerAgentTools(createAutomationTools(ctx))
   // conversation 删除双向同步：内核删除对话 → 清理关联 run 记录
-  unsubscribeConversationDeleted = ctx.services.conversations!.onDeleted((conversationId) => {
-    try { service.deleteRunByConversation(conversationId) } catch { /* ignore */ }
+  unsubscribeConversationDeleted = ctx.services.events!.subscribe('conversation:deleted', (conversationId) => {
+    try { service.deleteRunByConversation(conversationId as string) } catch { /* ignore */ }
   })
   // 模型重命名同步：内核重命名模型 → 更新任务/执行历史中的 model_id
-  unsubscribeModelRenamed = ctx.services.kernelEvents.subscribe('model-renamed', (payload) => {
+  unsubscribeModelRenamed = ctx.services.events!.subscribe('model:renamed', (payload) => {
     try {
       const { providerId, renames } = payload as { providerId: string; renames: Record<string, string> }
       service.syncModelRenames(providerId, renames)
