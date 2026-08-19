@@ -214,7 +214,7 @@ function CanvasInner() {
     if (!menu) return []
     if (menu.type === 'pane') {
       return [
-        { key: 'new-table', label: hostT('page.newProject'), onClick: handleNewTable },
+        { key: 'new-table', label: hostT('page.newTable'), onClick: handleNewTable },
         { key: 'layout', label: hostT('page.autoLayout'), onClick: requestLayout }
       ]
     }

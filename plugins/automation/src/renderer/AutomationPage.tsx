@@ -3,6 +3,7 @@ import { Button, Space, Segmented, theme, Input, Select } from 'antd'
 import { PlusOutlined, FieldTimeOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useAutomation } from './useAutomation'
+import { auto as autoBridge } from './store'
 import AutomationTaskList from './components/AutomationTaskList'
 import AutomationHistoryList from './components/AutomationHistoryList'
 import AutomationTaskForm, { type TaskFormMode } from './components/AutomationTaskForm'
@@ -57,7 +58,7 @@ const AutomationPage: React.FC = () => {
 
   // 订阅员工/模型变更，刷新下拉选项
   useEffect(() => {
-    const unsub = auto.onMetaChanged(({ scope }) => {
+    const unsub = autoBridge.onMetaChanged(({ scope }) => {
       if (scope === 'employees') void loadEmployees()
       else void loadProviders()
     })

@@ -49,15 +49,19 @@ describe('data-model 插件 activate', () => {
     }
   })
 
-  it('注册 18 个 agent 工具', async () => {
+  it('注册 8 个分层协议 agent 工具', async () => {
     const mod = await loadPlugin()
     mod.activate(mock.ctx)
-    expect(mock.contributions.agentTools.length).toBe(18)
+    expect(mock.contributions.agentTools.length).toBe(8)
     const ids = mock.contributions.agentTools.map(t => t.id)
-    expect(ids).toContain('create_table')
-    expect(ids).toContain('add_field')
-    expect(ids).toContain('create_relationship')
-    expect(ids).toContain('list_tables')
+    expect(ids).toContain('get_model_meta')
+    expect(ids).toContain('get_model_json')
+    expect(ids).toContain('set_model_json')
+    expect(ids).toContain('patch_model')
+    expect(ids).toContain('import_dbml')
+    expect(ids).toContain('import_dbml_file')
+    expect(ids).toContain('export_model_file')
+    expect(ids).toContain('import_model_file')
   })
 
   it('deactivate 不抛错', async () => {
@@ -121,11 +125,11 @@ describe('data-model 插件 IPC handler', () => {
     expect(typeof res.dbml).toBe('string')
   })
 
-  it('agent 工具 create_table 应用到模型会话并广播', async () => {
+  it('agent 工具 set_model_json 应用到模型会话并广播', async () => {
     const create = mock.ipc.handlers.get('project-create')!
     await create({ name: 'A' })
-    const tool = mock.contributions.agentTools.find(t => t.id === 'create_table')!
-    const res = await tool.handler({ name: 'users', fields: [{ name: 'id', type: 'bigint', primaryKey: true }] }, {})
+    const tool = mock.contributions.agentTools.find(t => t.id === 'set_model_json')!
+    const res = await tool.handler({ model: { tables: [{ id: 't1', name: 'users', fields: [{ id: 'f1', name: 'id', type: 'bigint', primaryKey: true }] }] }, mode: 'replace' }, {})
     expect(res).toMatchObject({ success: true })
     const get = mock.ipc.handlers.get('model-get')!
     const got = await get() as { model: any }
@@ -135,15 +139,61 @@ describe('data-model 插件 IPC handler', () => {
     expect(mock.ipc.broadcasts.some(b => b.event === 'model-changed')).toBe(true)
   })
 
-  it('agent 工具 list_tables 返回表清单', async () => {
+  it('agent 工具 get_model_meta 返回轻量概览', async () => {
     const create = mock.ipc.handlers.get('project-create')!
     await create({ name: 'A' })
-    const createTable = mock.contributions.agentTools.find(t => t.id === 'create_table')!
-    await createTable.handler({ name: 'users' }, {})
-    const list = mock.contributions.agentTools.find(t => t.id === 'list_tables')!
-    const res = await list.handler({}, {})
+    const set = mock.contributions.agentTools.find(t => t.id === 'set_model_json')!
+    await set.handler({ model: { tables: [{ id: 't1', name: 'users', fields: [{ id: 'f1', name: 'id', type: 'bigint', primaryKey: true }] }] }, mode: 'replace' }, {})
+    const meta = mock.contributions.agentTools.find(t => t.id === 'get_model_meta')!
+    const res = await meta.handler({}, {})
     expect(res).toMatchObject({ success: true })
-    expect((res as any).data.length).toBe(1)
+    expect((res as any).data.tablesCount).toBe(1)
+    expect((res as any).data.tables[0].name).toBe('users')
+  })
+
+  it('agent 工具 get_model_json 返回完整 JSON', async () => {
+    const create = mock.ipc.handlers.get('project-create')!
+    await create({ name: 'A' })
+    const set = mock.contributions.agentTools.find(t => t.id === 'set_model_json')!
+    await set.handler({ model: { tables: [{ id: 't1', name: 'users', fields: [{ id: 'f1', name: 'id', type: 'bigint', primaryKey: true }] }] }, mode: 'replace' }, {})
+    const get = mock.contributions.agentTools.find(t => t.id === 'get_model_json')!
+    const res = await get.handler({}, {})
+    expect(res).toMatchObject({ success: true })
+    expect((res as any).data.model.tables[0].name).toBe('users')
+  })
+
+  it('agent 工具 patch_model 增量添加表与字段', async () => {
+    const create = mock.ipc.handlers.get('project-create')!
+    await create({ name: 'A' })
+    const patch = mock.contributions.agentTools.find(t => t.id === 'patch_model')!
+    const res = await patch.handler({
+      operations: [
+        { op: 'addTable', table: { name: 'orders', fields: [{ name: 'id', type: 'bigint', primaryKey: true }] } },
+        { op: 'addField', table: 'orders', field: { name: 'total', type: 'decimal' } }
+      ]
+    }, {})
+    expect(res).toMatchObject({ success: true })
+    const get = mock.ipc.handlers.get('model-get')!
+    const got = await get() as { model: any }
+    const orders = got.model.tables.find((t: any) => t.name === 'orders')
+    expect(orders).toBeTruthy()
+    expect(orders.fields.some((f: any) => f.name === 'total')).toBe(true)
+  })
+
+  it('agent 工具 patch_model 失败时整体回滚', async () => {
+    const create = mock.ipc.handlers.get('project-create')!
+    await create({ name: 'A' })
+    const patch = mock.contributions.agentTools.find(t => t.id === 'patch_model')!
+    const res = await patch.handler({
+      operations: [
+        { op: 'addTable', table: { name: 'orders' } },
+        { op: 'addTable', table: { name: 'orders' } } // 重复表名，应失败
+      ]
+    }, {})
+    expect(res).toMatchObject({ success: false })
+    const get = mock.ipc.handlers.get('model-get')!
+    const got = await get() as { model: any }
+    expect(got.model.tables.some((t: any) => t.name === 'orders')).toBe(false)
   })
 
   it('chat-send 调用宿主 execute 并记录对话', async () => {

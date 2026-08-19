@@ -2,7 +2,7 @@
 
 import type { PluginContext } from '../../../plugin-sdk/src'
 import type { DataModel } from '../shared/domain'
-import { getToolByName, NO_MODEL_REQUIRED_TOOLS, PROJECT_REPLACING_TOOLS, type ToolResult } from '../shared/model-tools'
+import { getToolByName, type ToolResult } from '../shared/model-tools'
 import { importDbml } from './dbml-service'
 
 export interface ModelChangedPayload {
@@ -36,22 +36,17 @@ class ModelSession {
   applyTool(name: string, args: unknown): { result: ToolResult } {
     const tool = getToolByName(name)
     if (!tool) return { result: { ok: false, error: `未知工具: ${name}` } }
-    if (!this.current && !NO_MODEL_REQUIRED_TOOLS.has(name)) {
+    if (!this.current) {
       return { result: { ok: false, error: '当前无数据模型（请先新建或打开项目）' } }
     }
     try {
-      const baseModel = this.current ?? createEmptyPlaceholder()
-      const { model, result } = tool.execute(baseModel, args, {
-        parseDbml: (dbml, n) => importDbml(dbml, n)
+      const { model, result } = tool.execute(this.current, args, {
+        parseDbml: (dbml, n) => importDbml(dbml, n),
+        readFile: (p) => require('fs').readFileSync(p, 'utf-8'),
+        writeFile: (p, content) => require('fs').writeFileSync(p, content, 'utf-8')
       })
-      const prevId = this.current?.id
       this.current = model
-      let filePath: string | null | undefined
-      if (PROJECT_REPLACING_TOOLS.has(name) || (prevId && prevId !== model.id)) {
-        this.currentFilePath = null
-        filePath = null
-      }
-      this.broadcast(filePath)
+      this.broadcast()
       return { result }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -63,14 +58,6 @@ class ModelSession {
     if (!this.current || !this.ctx) return
     const payload: ModelChangedPayload = filePath === undefined ? { model: this.current } : { model: this.current, filePath }
     this.ctx.ipc.broadcast('model-changed', payload)
-  }
-}
-
-function createEmptyPlaceholder(): DataModel {
-  return {
-    id: '__placeholder__', name: '__placeholder__', databaseType: 'generic',
-    tables: [], relationships: [], indexes: [], enums: [],
-    sourceDocumentId: null, createdAt: 0, updatedAt: 0
   }
 }
 

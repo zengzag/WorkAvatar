@@ -8,13 +8,10 @@ import { dm, hostT } from '../store'
 
 function ToolCallCard({ tc }: { tc: NonNullable<ChatMessage['toolCalls']>[number] }) {
   const name = tc.name ?? ''
-  const icon = name.startsWith('list_') || name.startsWith('get_') ? '🔍'
-    : name.startsWith('create_') ? '➕'
-    : name.startsWith('update_') ? '✏️'
-    : name.startsWith('delete_') ? '🗑'
-    : name === 'create_relationship' ? '🔗'
-    : name === 'import_dbml' ? '📥'
-    : name === 'clear_model' ? '🧹'
+  const icon = name === 'get_model_meta' || name === 'get_model_json' ? '🔍'
+    : name === 'set_model_json' || name === 'patch_model' ? '✏️'
+    : name === 'import_dbml' || name === 'import_dbml_file' || name === 'import_model_file' ? '📥'
+    : name === 'export_model_file' ? '📤'
     : '🛠'
   return (
     <div style={{ border: '1px solid var(--dm-border)', borderRadius: 8, padding: '6px 10px', fontSize: 12, margin: '4px 0' }}>

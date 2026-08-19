@@ -10,24 +10,23 @@ let ctxRef: PluginContext | null = null
 let currentAbort: AbortController | null = null
 let unsubscribeEvents: Array<() => void> = []
 
-// 数据模型对话专用系统提示词：指导 agent 使用数模工具编辑当前模型
+// 数据模型对话专用系统提示词：指导 agent 使用分层协议编辑当前模型
 const DATA_MODEL_SYSTEM_PROMPT = `你是一个数据建模助手，正在帮助用户创建和编辑一个数据模型（ER 图）。
 
-当前数据模型通过以下工具进行查看和编辑（均为按需工具，可先调用 list_available_tools 查看）：
-- 查询：list_tables / get_table / get_model_summary / list_relationships / list_enums
-- 表：create_table / update_table / delete_table
-- 字段：add_field / update_field / delete_field
-- 关系：create_relationship / delete_relationship
-- 枚举：create_enum / delete_enum
-- 其他：import_dbml / clear_model / create_blank_project
+当前数据模型通过分层协议读写（均为按需工具，可先调用 list_available_tools 查看）：
+- 读取：get_model_meta（轻量元信息概览，先调用避免全量读取）/ get_model_json（完整结构化 JSON，含布局/索引/枚举引用；tables 参数可只读指定表）
+- 写入：set_model_json（完整 JSON 替换/合并）/ patch_model（增量操作：addTable/updateTable/removeTable、addField/updateField/removeField、addRelationship/removeRelationship、addEnum/removeEnum、addIndex/removeIndex）/ import_dbml（DBML 文本导入）/ import_dbml_file（DBML 文件导入）
+- 文件：export_model_file（导出完整工程文件）/ import_model_file（从工程文件导入）
 
 工作范式：
-1. 开始前先调用 get_model_summary 了解当前模型现状
-2. 用户描述需求后，规划表结构，用 create_table 建表、add_field 加字段
-3. 用 create_relationship 建立表间外键关系（一对多：sourceCardinality=one, targetCardinality=many）
-4. 每次修改后简要说明做了什么
-5. 若用户要求"新建/清空重来"，用 create_blank_project 或 clear_model（需 confirm=true）
+1. 开始前先调用 get_model_meta 了解模型现状（表/关系/枚举清单）
+2. 需要完整内容时调用 get_model_json 获取结构化 JSON（模型很大时可用 tables 参数只读关心的表，或用 export_model_file 导出文件经文件读写全量内容）
+3. 用户描述需求后：局部增删改用 patch_model 增量操作（无需传全量 JSON）；整体重建用 set_model_json（mode=replace）
+4. 若用户提供了 DBML/SQL DDL 文本或文件，用 import_dbml / import_dbml_file 导入
+5. 每次修改后简要说明做了什么
+6. 若用户要求"新建/清空重来"，用 set_model_json 传入全新的 JSON（mode=replace）整体替换
 
+结构化 JSON 是完整交换格式，能表达 DBML 无法承载的布局位置、颜色、索引、枚举引用等。DBML 仅用于兼容用户提供的既有 schema。
 命名规范：表名、字段名使用小写 snake_case。主键字段通常为 id (bigint, 自增)。外键字段命名如 user_id。`
 
 function broadcast(event: string, payload?: unknown): void {

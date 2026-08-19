@@ -25,7 +25,7 @@ export function DataModelPage() {
   const { message } = App.useApp()
 
   const [showInspector, setShowInspector] = useState(true)
-  const [inspectorWidth, setInspectorWidth] = useState(280)
+  const [inspectorWidth, setInspectorWidth] = useState(320)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
