@@ -31,25 +31,38 @@ const AutomationPage: React.FC = () => {
   const [editingTask, setEditingTask] = useState<AutomationTask | null>(null)
   const [search, setSearch] = useState('')
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const empResult = await window.electronAPI.employee.list()
-        if (Array.isArray(empResult)) setEmployees(empResult as Employee[])
-        else if (empResult && Array.isArray((empResult as any).list)) setEmployees((empResult as any).list)
-      } catch (err) {
-        console.error('Failed to load employees:', err)
-      }
-    })()
-    void (async () => {
-      try {
-        const result = await window.electronAPI.llm.getProviders()
-        if (Array.isArray(result)) setProviders(result as any[])
-      } catch (err) {
-        console.error('Failed to load providers:', err)
-      }
-    })()
+  const loadEmployees = useCallback(async () => {
+    try {
+      const empResult = await window.electronAPI.employee.list()
+      if (Array.isArray(empResult)) setEmployees(empResult as Employee[])
+      else if (empResult && Array.isArray((empResult as any).list)) setEmployees((empResult as any).list)
+    } catch (err) {
+      console.error('Failed to load employees:', err)
+    }
   }, [])
+
+  const loadProviders = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.llm.getProviders()
+      if (Array.isArray(result)) setProviders(result as any[])
+    } catch (err) {
+      console.error('Failed to load providers:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadEmployees()
+    void loadProviders()
+  }, [loadEmployees, loadProviders])
+
+  // 订阅员工/模型变更，刷新下拉选项
+  useEffect(() => {
+    const unsub = auto.onMetaChanged(({ scope }) => {
+      if (scope === 'employees') void loadEmployees()
+      else void loadProviders()
+    })
+    return () => { unsub() }
+  }, [loadEmployees, loadProviders])
 
   const filteredTasks = useMemo(() => {
     if (!search.trim()) return auto.tasks

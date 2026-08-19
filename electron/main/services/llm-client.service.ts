@@ -172,6 +172,7 @@ class LLMClientService {
       await this.keyStorage.saveApiKey(id, apiKeyValue)
     }
 
+    this.notifyProviderChanged()
     return this.getProvider(id)
   }
 
@@ -219,6 +220,7 @@ class LLMClientService {
       `).run(...values)
     }
 
+    this.notifyProviderChanged()
     return this.getProvider(id)
   }
 
@@ -290,7 +292,16 @@ class LLMClientService {
   async deleteProvider(id: string): Promise<boolean> {
     await this.keyStorage.deleteApiKey(id)
     const result = this.db.getDb().prepare('DELETE FROM llm_providers WHERE id = ?').run(id)
+    if (result.changes > 0) this.notifyProviderChanged()
     return result.changes > 0
+  }
+
+  /** 供应商/模型增删改后通知订阅插件刷新模型下拉选项 */
+  private notifyProviderChanged(): void {
+    try {
+      const { default: PluginHostService } = require('./plugin/plugin-host.service')
+      PluginHostService.getInstance().notifyKernelEvent('provider:changed', { ts: Date.now() })
+    } catch { /* ignore */ }
   }
 
   private async callEmbeddingAPI(config: any, input: string | string[], timeoutMs?: number, modelName?: string): Promise<any> {

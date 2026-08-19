@@ -51,4 +51,6 @@ export const auto = {
   // 事件订阅
   onDataChanged: (cb: (payload: { scope: 'task' | 'run' | 'settings'; ts: number }) => void): (() => void) =>
     onEvent('data-changed', (payload) => cb(payload as { scope: 'task' | 'run' | 'settings'; ts: number })),
+  onMetaChanged: (cb: (payload: { scope: 'employees' | 'providers'; ts: number }) => void): (() => void) =>
+    onEvent('meta-changed', (payload) => cb(payload as { scope: 'employees' | 'providers'; ts: number })),
 }

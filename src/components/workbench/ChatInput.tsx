@@ -1153,7 +1153,7 @@ const ChatInput: React.FC<{
             })}
 
             {/* 下拉Popover：第4个位置或更多按钮 */}
-            {dropdownEmployees.length > 0 && (
+            {(dropdownEmployees.length > 0 || fifthSlotEmployee) && (
               <Popover
                 open={employeePickerOpen}
                 onOpenChange={(o) => { setEmployeePickerOpen(o); if (!o) setEmployeeSearch('') }}

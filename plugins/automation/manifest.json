@@ -17,7 +17,7 @@
   "capabilities": [
     { "domain": "data", "entities": ["conversations"], "access": "write" },
     { "domain": "execute", "kinds": ["agent-chat"] },
-    { "domain": "events", "subscribe": ["conversation:deleted", "model:renamed"] },
+    { "domain": "events", "subscribe": ["conversation:deleted", "model:renamed", "provider:changed", "employee:created", "employee:updated", "employee:deleted"] },
     { "domain": "system", "features": ["notification", "scheduler"] }
   ],
   "nav": {

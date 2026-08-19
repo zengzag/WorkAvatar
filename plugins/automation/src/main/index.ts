@@ -106,6 +106,7 @@ export const migrations = _migrations
 let scheduler: AutomationScheduler | null = null
 let unsubscribeConversationDeleted: (() => void) | null = null
 let unsubscribeModelRenamed: (() => void) | null = null
+let unsubscribeEmployeeEvents: Array<() => void> = []
 
 export function activate(ctx: PluginContext): void {
   const service = getAutomationService(ctx)
@@ -122,7 +123,22 @@ export function activate(ctx: PluginContext): void {
       const { providerId, renames } = payload as { providerId: string; renames: Record<string, string> }
       service.syncModelRenames(providerId, renames)
     } catch { /* ignore */ }
+    // 通知渲染端刷新员工/模型下拉选项
+    ctx.ipc.broadcast('meta-changed', { scope: 'providers', ts: Date.now() })
   })
+  // 员工增删改：通知渲染端刷新员工下拉选项
+  const subscribeEmployee = (event: string) => {
+    unsubscribeEmployeeEvents.push(ctx.services.events!.subscribe(event, () => {
+      ctx.ipc.broadcast('meta-changed', { scope: 'employees', ts: Date.now() })
+    }))
+  }
+  subscribeEmployee('employee:created')
+  subscribeEmployee('employee:updated')
+  subscribeEmployee('employee:deleted')
+  // 供应商/模型增删改：通知渲染端刷新模型下拉选项
+  unsubscribeEmployeeEvents.push(ctx.services.events!.subscribe('provider:changed', () => {
+    ctx.ipc.broadcast('meta-changed', { scope: 'providers', ts: Date.now() })
+  }))
   scheduler.start()
   ctx.services.logger.info('automation 插件激活完成')
 }
@@ -140,6 +156,8 @@ export function deactivate(): void {
     unsubscribeModelRenamed()
     unsubscribeModelRenamed = null
   }
+  unsubscribeEmployeeEvents.forEach((unsub) => { try { unsub() } catch { /* ignore */ } })
+  unsubscribeEmployeeEvents = []
   resetAutomationService()
 }
 
