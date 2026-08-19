@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Select, Empty, Tooltip } from 'antd'
-import { SendOutlined, StopOutlined, ClearOutlined } from '@ant-design/icons'
+import { SendOutlined, StopOutlined, ClearOutlined, CloseOutlined } from '@ant-design/icons'
 import { useDataModelStore, type ChatMessage } from '../data-model.store'
 import { dm, hostT } from '../store'
 
@@ -59,7 +59,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
   )
 }
 
-export function ChatPanel() {
+export function ChatPanel({ onClose }: { onClose?: () => void }) {
   const messages = useDataModelStore((s) => s.messages)
   const isStreaming = useDataModelStore((s) => s.isStreaming)
   const chatError = useDataModelStore((s) => s.chatError)
@@ -152,6 +152,11 @@ export function ChatPanel() {
           <Tooltip title={hostT('page.newChat')}>
             <Button size="small" icon={<ClearOutlined />} onClick={newChat} />
           </Tooltip>
+          {onClose && (
+            <Tooltip title={hostT('page.close')}>
+              <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
+            </Tooltip>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Select

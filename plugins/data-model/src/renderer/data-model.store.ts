@@ -115,8 +115,9 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
 
   applyRemoteModel: (model) => {
     const prev = get().model
-    const topologyChanged = !prev || prev.tables.length !== model.tables.length || prev.relationships.length !== model.relationships.length
+    const topologyChanged = !prev || topologyChangedFn(prev, model)
     set({ model: cloneModel(model) })
+    // AI 工具增删表时触发自动排版；纯字段/属性编辑不打扰用户已排好的位置
     if (topologyChanged) set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
   },
 
@@ -127,7 +128,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     next.tables.push(table)
     next.updatedAt = Date.now()
     set({ model: next })
-    set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     void dm.syncModel(next)
   },
 
@@ -149,7 +149,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     next.relationships = next.relationships.filter((r) => r.sourceTableId !== id && r.targetTableId !== id)
     next.updatedAt = Date.now()
     set({ model: next, selectedTableId: null })
-    set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     void dm.syncModel(next)
   },
 
@@ -195,7 +194,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     next.relationships.push(rel)
     next.updatedAt = Date.now()
     set({ model: next })
-    set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     void dm.syncModel(next)
   },
 
@@ -206,7 +204,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     next.relationships = next.relationships.filter((r) => r.id !== id)
     next.updatedAt = Date.now()
     set({ model: next, selectedRelationshipId: null })
-    set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     void dm.syncModel(next)
   },
 
@@ -224,7 +221,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     const res = await dm.createProject(name)
     if ('model' in res) {
       set({ model: cloneModel(res.model), selectedTableId: null, selectedRelationshipId: null })
-      set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
       await get().loadProjects()
     }
   },
@@ -232,7 +228,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   loadSample: () => {
     const sample = createSampleModel()
     set({ model: cloneModel(sample), selectedTableId: null, selectedRelationshipId: null })
-    set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     void dm.syncModel(sample)
   },
 
@@ -240,7 +235,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     const res = await dm.openProject(id)
     if ('model' in res) {
       set({ model: cloneModel(res.model), selectedTableId: null, selectedRelationshipId: null })
-      set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
     }
   },
 
@@ -259,10 +253,15 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     set({ employees })
     const settings = get().settings
     const preferred = settings.defaultEmployeeId
+    const current = get().selectedEmployeeId
     if (preferred && employees.some((e) => e.id === preferred)) {
       set({ selectedEmployeeId: preferred })
-    } else if (!get().selectedEmployeeId && employees.length > 0) {
+    } else if (current && employees.some((e) => e.id === current)) {
+      // 当前选择仍有效，保持不变
+    } else if (employees.length > 0) {
       set({ selectedEmployeeId: employees[0].id })
+    } else {
+      set({ selectedEmployeeId: null })
     }
   },
 
@@ -271,11 +270,16 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     set({ providers })
     const settings = get().settings
     const preferred = settings.defaultProviderId
+    const current = get().selectedProviderId
     if (preferred && providers.some((p) => p.id === preferred)) {
       set({ selectedProviderId: preferred, selectedModelId: settings.defaultModelId ?? null })
-    } else if (!get().selectedProviderId && providers.length > 0) {
+    } else if (current && providers.some((p) => p.id === current)) {
+      // 当前选择仍有效，保持不变
+    } else if (providers.length > 0) {
       const def = providers.find((p) => p.is_default) ?? providers[0]
       set({ selectedProviderId: def?.id ?? null, selectedModelId: def?.model ?? null })
+    } else {
+      set({ selectedProviderId: null, selectedModelId: null })
     }
   },
 
@@ -313,7 +317,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     const res = await dm.importProjectFile()
     if (res.model) {
       set({ model: cloneModel(res.model), selectedTableId: null, selectedRelationshipId: null })
-      set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
       await get().loadProjects()
     }
   },
@@ -434,4 +437,25 @@ function createSampleModel(): DataModel {
     t.y = 80 + Math.floor(i / 3) * 240
   })
   return model
+}
+
+/**
+ * 判断两次 model 之间的拓扑结构是否发生变化（增删表或增删关系）。
+ * 用于决定 AI 工具操作后是否需要自动排版——
+ * 纯字段编辑、属性修改不打扰用户已排好的位置。
+ */
+function topologyChangedFn(a: DataModel, b: DataModel): boolean {
+  const aTableIds = new Set(a.tables.map((t) => t.id))
+  const bTableIds = new Set(b.tables.map((t) => t.id))
+  if (aTableIds.size !== bTableIds.size) return true
+  for (const id of aTableIds) {
+    if (!bTableIds.has(id)) return true
+  }
+  const aRelIds = new Set(a.relationships.map((r) => r.id))
+  const bRelIds = new Set(b.relationships.map((r) => r.id))
+  if (aRelIds.size !== bRelIds.size) return true
+  for (const id of aRelIds) {
+    if (!bRelIds.has(id)) return true
+  }
+  return false
 }

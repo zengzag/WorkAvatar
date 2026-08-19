@@ -73,6 +73,8 @@ export const dm = {
   listChats: (employeeId?: string) => invoke<Array<{ conversationId: string; employeeId: string; title: string; updatedAt: number }>>('chats-list', { employeeId }),
   deleteChat: (conversationId: string) => invoke<{ ok: boolean } | { error: string }>('chat-delete', { conversationId }),
   onChatsChanged: (cb: () => void) => onEvent('chats-changed', () => cb()),
+  onMetaChanged: (cb: (payload: { scope: 'employees' | 'providers' }) => void) =>
+    onEvent('meta-changed', (p) => cb(p as any)),
   onModelChanged: (cb: (payload: { model: DataModel; filePath?: string | null }) => void) =>
     onEvent('model-changed', (p) => cb(p as any)),
   onChatEvent: (cb: (payload: any) => void) => onEvent('chat-event', (p) => cb(p)),

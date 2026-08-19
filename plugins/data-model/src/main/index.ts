@@ -8,6 +8,7 @@ import { importDbml, exportDbml } from './dbml-service'
 
 let ctxRef: PluginContext | null = null
 let currentAbort: AbortController | null = null
+let unsubscribeEvents: Array<() => void> = []
 
 // 数据模型对话专用系统提示词：指导 agent 使用数模工具编辑当前模型
 const DATA_MODEL_SYSTEM_PROMPT = `你是一个数据建模助手，正在帮助用户创建和编辑一个数据模型（ER 图）。
@@ -311,12 +312,28 @@ export function activate(ctx: PluginContext): void {
 
   registerIpc(ctx)
   ctx.contributions.registerAgentTools(createDataModelAgentTools())
+
+  // 订阅员工/模型变更事件，通知渲染端刷新下拉选项
+  const events = ctx.services.events
+  if (events) {
+    const subscribe = (event: string, scope: 'employees' | 'providers') => {
+      unsubscribeEvents.push(events.subscribe(event, () => broadcast('meta-changed', { scope, ts: Date.now() })))
+    }
+    subscribe('employee:created', 'employees')
+    subscribe('employee:updated', 'employees')
+    subscribe('employee:deleted', 'employees')
+    subscribe('model:renamed', 'providers')
+    subscribe('provider:changed', 'providers')
+  }
+
   ctx.services.logger.info('data-model 插件激活完成')
 }
 
 export function deactivate(): void {
   currentAbort?.abort()
   currentAbort = null
+  unsubscribeEvents.forEach((unsub) => { try { unsub() } catch { /* ignore */ } })
+  unsubscribeEvents = []
   ctxRef = null
 }
 

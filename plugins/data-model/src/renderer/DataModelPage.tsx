@@ -1,16 +1,16 @@
 // 数据模型主页面
 
-import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm, Dropdown } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm } from 'antd'
 import {
   SaveOutlined, PlusOutlined, ImportOutlined, ExportOutlined,
-  ApartmentOutlined, MessageOutlined, CloseOutlined, SettingOutlined,
-  DeleteOutlined, FolderOpenOutlined, DownloadOutlined, UploadOutlined
+  ApartmentOutlined, CloseOutlined, SettingOutlined,
+  DeleteOutlined, DownloadOutlined, UploadOutlined
 } from '@ant-design/icons'
 import { Canvas } from './canvas/Canvas'
 import { TableInspector } from './inspector/TableInspector'
 import { RelationshipInspector } from './inspector/RelationshipInspector'
-import { ChatPanel } from './chat/ChatPanel'
+import { FloatingChat } from './chat/FloatingChat'
 import { DataModelSettingsDrawer } from './DataModelSettingsDrawer'
 import { useDataModelStore } from './data-model.store'
 import { dm, hostT } from './store'
@@ -24,8 +24,8 @@ export function DataModelPage() {
   const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadEmployees, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
   const { message } = App.useApp()
 
-  const [showChat, setShowChat] = useState(true)
   const [showInspector, setShowInspector] = useState(true)
+  const [inspectorWidth, setInspectorWidth] = useState(280)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -34,6 +34,26 @@ export function DataModelPage() {
   const [importText, setImportText] = useState('')
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [exportText, setExportText] = useState('')
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+  // 检查器宽度拖拽调整
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    resizeRef.current = { startX: e.clientX, startWidth: inspectorWidth }
+    const onMove = (ev: MouseEvent) => {
+      if (!resizeRef.current) return
+      const delta = resizeRef.current.startX - ev.clientX
+      const next = Math.min(520, Math.max(220, resizeRef.current.startWidth + delta))
+      setInspectorWidth(next)
+    }
+    const onUp = () => {
+      resizeRef.current = null
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
 
   // 初始化
   useEffect(() => {
@@ -52,6 +72,15 @@ export function DataModelPage() {
   useEffect(() => {
     const unsub = dm.onModelChanged((payload) => {
       applyRemoteModel(payload.model)
+    })
+    return unsub
+  }, [])
+
+  // 订阅员工/模型变更（主进程广播），刷新下拉选项
+  useEffect(() => {
+    const unsub = dm.onMetaChanged(({ scope }) => {
+      if (scope === 'employees') void loadEmployees()
+      else void loadProviders()
     })
     return unsub
   }, [])
@@ -178,14 +207,6 @@ export function DataModelPage() {
         <Button size="small" icon={<ApartmentOutlined />} onClick={loadSample}>{hostT('page.sample')}</Button>
         <Button size="small" icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{hostT('page.importDbml')}</Button>
         <Button size="small" icon={<ExportOutlined />} onClick={handleExport}>{hostT('page.exportDbml')}</Button>
-        <Tooltip title={hostT('page.chatEmpty')}>
-          <Button
-            size="small"
-            type={showChat ? 'primary' : 'default'}
-            icon={<MessageOutlined />}
-            onClick={() => setShowChat((v) => !v)}
-          />
-        </Tooltip>
         <Tooltip title={hostT('page.settings')}>
           <Button size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} />
         </Tooltip>
@@ -195,6 +216,7 @@ export function DataModelPage() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
           <Canvas />
+          <FloatingChat />
           {model && model.tables.length === 0 && (
             <div
               style={{
@@ -214,31 +236,32 @@ export function DataModelPage() {
         </div>
 
         {showInspector && (
-          <div style={{ width: 280, borderLeft: '1px solid var(--dm-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--dm-border)', display: 'flex', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{hostT('page.inspector')}</span>
-              <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setShowInspector(false)} />
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto' }}>
-              {selectedTable ? (
-                <TableInspector table={selectedTable} />
-              ) : selectedRelationship ? (
-                <RelationshipInspector relationship={selectedRelationship} />
-              ) : (
-                <Empty description={hostT('page.noSelection')} style={{ marginTop: 40 }} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {showChat && (
-          <div style={{ width: 320, borderLeft: '1px solid var(--dm-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--dm-border)', display: 'flex', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{hostT('page.title')}</span>
-              <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setShowChat(false)} />
-            </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <ChatPanel />
+          <div style={{ display: 'flex', minHeight: 0 }}>
+            {/* 拖拽调整宽度手柄 */}
+            <div
+              onMouseDown={startResize}
+              style={{
+                width: 5, cursor: 'col-resize', flexShrink: 0,
+                borderLeft: '1px solid var(--dm-border)',
+                background: 'transparent', transition: 'background 0.2s'
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--dm-primary-soft)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            />
+            <div style={{ width: inspectorWidth, borderLeft: '1px solid var(--dm-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--dm-border)', display: 'flex', alignItems: 'center' }}>
+                <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{hostT('page.inspector')}</span>
+                <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setShowInspector(false)} />
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                {selectedTable ? (
+                  <TableInspector table={selectedTable} />
+                ) : selectedRelationship ? (
+                  <RelationshipInspector relationship={selectedRelationship} />
+                ) : (
+                  <Empty description={hostT('page.noSelection')} style={{ marginTop: 40 }} />
+                )}
+              </div>
             </div>
           </div>
         )}

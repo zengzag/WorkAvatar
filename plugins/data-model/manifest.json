@@ -19,7 +19,8 @@
   ],
   "capabilities": [
     { "domain": "data", "entities": ["conversations", "employees", "llmProviders", "messages"], "access": "write" },
-    { "domain": "execute", "kinds": ["agent-chat"] }
+    { "domain": "execute", "kinds": ["agent-chat"] },
+    { "domain": "events", "subscribe": ["employee:created", "employee:updated", "employee:deleted", "model:renamed", "provider:changed"] }
   ],
   "nav": {
     "label": "navLabel",

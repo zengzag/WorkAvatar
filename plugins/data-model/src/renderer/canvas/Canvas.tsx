@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
-  useNodesState, useEdgesState, addEdge, type Connection, type Node, type Edge
+  useNodesState, useEdgesState, useReactFlow,
+  type Connection, type Node, type Edge, type OnNodeDrag, type NodeMouseHandler
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useDataModelStore } from '../data-model.store'
 import { useAppearance, hostT } from '../store'
-import { createTable, createRelationship, type Table, type Relationship } from '../../shared/domain'
+import { createTable, createRelationship } from '../../shared/domain'
 import { TableNode, type TableNodeData } from './TableNode'
 import { RelationshipEdge, type RelationshipEdgeData } from './RelationshipEdge'
-import { layoutTables } from './dagre-layout'
+import { layoutTables, NODE_WIDTH, HEADER_HEIGHT, FIELD_HEIGHT, NODE_HEIGHT_COLLAPSED, getVisibleFields } from './dagre-layout'
 import { CanvasContextMenu, type ContextMenuState } from './CanvasContextMenu'
 
 const nodeTypes = { table: TableNode }
@@ -30,17 +31,68 @@ function CanvasInner() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<RelationshipEdgeData>>([])
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const { setCenter, getNode, fitView } = useReactFlow()
 
-  // 同步节点/边
+  // 用于检测 model 是否切换（新项目加载）
+  const prevModelId = useRef<string | undefined>(model?.id)
+
+  // 当 model 切换（新项目加载）时，重新自动布局
   useEffect(() => {
-    if (!model) { setNodes([]); setEdges([]); return }
-    const tableNodes: Node<TableNodeData>[] = model.tables.map((t) => ({
-      id: t.id,
-      type: 'table',
-      position: { x: t.x, y: t.y },
-      data: { table: t, relationships: model.relationships },
-      selected: t.id === selectedTableId
-    }))
+    if (!model) {
+      setNodes([])
+      setEdges([])
+      prevModelId.current = undefined
+      return
+    }
+    if (prevModelId.current !== model.id) {
+      prevModelId.current = model.id
+      const width = containerRef.current?.clientWidth ?? 800
+      const { nodes: laidOut } = layoutTables(model, width)
+      setNodes(laidOut.map((l) => ({
+        id: l.id,
+        type: 'table',
+        position: l.position,
+        data: { table: model.tables.find((t) => t.id === l.id)!, relationships: model.relationships }
+      })))
+      setEdges(model.relationships.map((r) => ({
+        id: r.id,
+        type: 'relationship',
+        source: r.sourceTableId,
+        target: r.targetTableId,
+        sourceHandle: `field-${r.sourceFieldId}-right`,
+        targetHandle: `field-${r.targetFieldId}-left`,
+        data: { relationship: r }
+      })))
+    }
+  }, [model, setNodes, setEdges])
+
+  // 当 model 内的 tables/relationships 变化时，同步节点数据（不重布局）
+  // - 已有节点：更新 data（保留用户拖拽的 position）
+  // - 新增表：使用默认位置
+  // - 删除表：移除对应节点
+  useEffect(() => {
+    if (!model) return
+    if (prevModelId.current !== model.id) return // 已由上面的 effect 处理
+
+    const tableMap = new Map(model.tables.map((t) => [t.id, t]))
+
+    setNodes((nds) => {
+      const existing = nds.filter((n) => tableMap.has(n.id))
+      const updated = existing.map((n) => {
+        const table = tableMap.get(n.id)!
+        return { ...n, data: { table, relationships: model.relationships } }
+      })
+      const existingIds = new Set(nds.map((n) => n.id))
+      const newTables = model.tables.filter((t) => !existingIds.has(t.id))
+      const newNodes = newTables.map((table) => ({
+        id: table.id,
+        type: 'table' as const,
+        position: { x: table.x || 200, y: table.y || 200 },
+        data: { table, relationships: model.relationships }
+      }))
+      return [...updated, ...newNodes]
+    })
+
     const relEdges: Edge<RelationshipEdgeData>[] = model.relationships.map((r) => ({
       id: r.id,
       type: 'relationship',
@@ -51,27 +103,60 @@ function CanvasInner() {
       data: { relationship: r },
       selected: r.id === selectedRelationshipId
     }))
-    setNodes(tableNodes)
     setEdges(relEdges)
-  }, [model, selectedTableId, selectedRelationshipId])
+  }, [model, setNodes, setEdges, selectedRelationshipId])
 
-  // 自动布局
+  // 选中态同步到节点
   useEffect(() => {
-    if (!model || model.tables.length === 0) return
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === selectedTableId })))
+  }, [selectedTableId, setNodes])
+
+  // 响应自动排版请求（用户点击按钮 / AI 工具增删表后）
+  useEffect(() => {
+    if (!layoutRequest) return
+    const currentModel = useDataModelStore.getState().model
+    if (!currentModel || currentModel.tables.length === 0) return
     const width = containerRef.current?.clientWidth ?? 800
-    const { nodes: laidOut } = layoutTables(model, width)
-    setNodes((nds) => nds.map((n) => {
-      const pos = laidOut.find((l) => l.id === n.id)
-      return pos ? { ...n, position: pos.position } : n
-    }))
-  }, [layoutRequest])
+    const { nodes: laidOut } = layoutTables(currentModel, width)
+    setNodes(laidOut.map((l) => ({
+      id: l.id,
+      type: 'table',
+      position: l.position,
+      data: { table: currentModel.tables.find((t) => t.id === l.id)!, relationships: currentModel.relationships }
+    })))
+    setEdges(currentModel.relationships.map((r) => ({
+      id: r.id,
+      type: 'relationship',
+      source: r.sourceTableId,
+      target: r.targetTableId,
+      sourceHandle: `field-${r.sourceFieldId}-right`,
+      targetHandle: `field-${r.targetFieldId}-left`,
+      data: { relationship: r }
+    })))
+    const raf = requestAnimationFrame(() => {
+      try { fitView({ padding: 0.2, duration: 300 }) } catch { /* 节点未挂载时忽略 */ }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [layoutRequest, setNodes, setEdges, fitView])
 
   // 聚焦
   useEffect(() => {
     if (!focusRequest) return
-    const el = document.querySelector(`[data-id="${focusRequest.tableId}"]`)
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [focusRequest])
+    const node = getNode(focusRequest.tableId)
+    if (!node) return
+    const table = (node.data as TableNodeData)?.table
+    if (!table) return
+    const relationships = model?.relationships ?? []
+    const visibleCount = getVisibleFields(table, relationships).length
+    const h = table.expanded
+      ? HEADER_HEIGHT + Math.max(table.fields.length * FIELD_HEIGHT, 40) + 8
+      : visibleCount > 0
+        ? HEADER_HEIGHT + visibleCount * FIELD_HEIGHT + 8
+        : NODE_HEIGHT_COLLAPSED
+    const cx = node.position.x + NODE_WIDTH / 2
+    const cy = node.position.y + h / 2
+    setCenter(cx, cy, { zoom: 1, duration: 400 })
+  }, [focusRequest, getNode, setCenter, model])
 
   const onConnect = useCallback((conn: Connection) => {
     const sourceFieldId = conn.sourceHandle?.replace(/^field-/, '').replace(/-right$/, '')
@@ -88,11 +173,11 @@ function CanvasInner() {
     addRelationship(rel)
   }, [addRelationship])
 
-  const onNodeDragStop = useCallback((_: any, node: Node) => {
+  const onNodeDragStop: OnNodeDrag<Node<TableNodeData>> = useCallback((_: any, node: Node) => {
     updateTable(node.id, { x: node.position.x, y: node.position.y })
   }, [updateTable])
 
-  const onNodeClick = useCallback((_: any, node: Node) => {
+  const onNodeClick: NodeMouseHandler<Node<TableNodeData>> = useCallback((_: any, node: Node) => {
     selectTable(node.id)
   }, [selectTable])
 
@@ -173,6 +258,7 @@ function CanvasInner() {
         fitView
         minZoom={0.2}
         maxZoom={2}
+        proOptions={{ hideAttribution: true }}
       >
         <Background gap={20} size={1} />
         <Controls />
