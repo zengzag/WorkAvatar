@@ -12,6 +12,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react'
 import type { MessageSegment } from './types'
+import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 
 const { Text } = Typography
 
@@ -132,6 +133,8 @@ const ToolCallSegmentInner: React.FC<{
   const { message } = App.useApp()
   const { t } = useTranslation()
   const [resultExpanded, setResultExpanded] = useState(false)
+  const { containerRef: argsScrollRef, onScroll: argsOnScroll } = useAutoFollowScroll<HTMLPreElement>()
+  const { containerRef: progressScrollRef, onScroll: progressOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const isArgsStreaming = !!seg.isToolArgsStreaming
   // toolError 优先级最高：用户停止生成 / LLM 中断 / 工具异常时展示已取消或失败态
   const isToolError = !!seg.toolError
@@ -320,7 +323,7 @@ const ToolCallSegmentInner: React.FC<{
                     </Text>
                   )}
                 </div>
-                <pre style={{
+                <pre ref={argsScrollRef} onScroll={argsOnScroll} style={{
                   margin: 0,
                   padding: '8px 10px',
                   background: isArgsStreaming ? token.colorInfoBg : token.colorBgContainer,
@@ -342,7 +345,7 @@ const ToolCallSegmentInner: React.FC<{
                 <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>
                   {t('workbench.toolProgress')}
                 </Text>
-                <div style={{
+                <div ref={progressScrollRef} onScroll={progressOnScroll} style={{
                   padding: '6px 10px',
                   background: token.colorPrimaryBg,
                   borderRadius: 6,

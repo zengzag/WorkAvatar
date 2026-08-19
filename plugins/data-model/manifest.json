@@ -10,9 +10,11 @@
   "locale": "locale",
   "ipc": [
     "project-list", "project-create", "project-open", "project-delete", "project-save",
+    "project-export-file", "project-import-file",
     "model-get", "model-sync",
     "dbml-import", "dbml-export",
     "employees-list", "providers-list",
+    "settings-get", "settings-set", "data-dir", "data-dir-open",
     "chat-send", "chat-cancel", "chat-history", "chats-list", "chat-delete"
   ],
   "capabilities": [

@@ -64,13 +64,23 @@ export function ChatPanel() {
   const isStreaming = useDataModelStore((s) => s.isStreaming)
   const chatError = useDataModelStore((s) => s.chatError)
   const employees = useDataModelStore((s) => s.employees)
+  const providers = useDataModelStore((s) => s.providers)
   const selectedEmployeeId = useDataModelStore((s) => s.selectedEmployeeId)
+  const selectedProviderId = useDataModelStore((s) => s.selectedProviderId)
+  const selectedModelId = useDataModelStore((s) => s.selectedModelId)
   const conversationId = useDataModelStore((s) => s.conversationId)
   const chats = useDataModelStore((s) => s.chats)
-  const { sendMessage, cancelChat, newChat, setSelectedEmployee, loadChats, loadChatHistory, deleteChat } = useDataModelStore.getState()
+  const { sendMessage, cancelChat, newChat, setSelectedEmployee, setSelectedProvider, setSelectedModel, loadChats, loadChatHistory, deleteChat } = useDataModelStore.getState()
 
   const [input, setInput] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
+
+  const selectedProvider = providers.find((p) => p.id === selectedProviderId)
+  const models = selectedProvider?.models_json
+    ? (() => {
+        try { return JSON.parse(selectedProvider.models_json) as Array<{ id: string; model: string; name?: string }> } catch { return [] }
+      })()
+    : []
 
   // 加载历史对话列表（员工变化 / 列表变化时刷新）
   useEffect(() => {
@@ -142,6 +152,28 @@ export function ChatPanel() {
           <Tooltip title={hostT('page.newChat')}>
             <Button size="small" icon={<ClearOutlined />} onClick={newChat} />
           </Tooltip>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Select
+            size="small"
+            style={{ flex: 1 }}
+            placeholder={hostT('settings.selectProvider')}
+            value={selectedProviderId ?? undefined}
+            onChange={setSelectedProvider}
+            options={providers.map((p) => ({ value: p.id, label: p.name }))}
+            allowClear
+          />
+          {selectedProvider && (
+            <Select
+              size="small"
+              style={{ flex: 1 }}
+              placeholder={hostT('settings.selectModel')}
+              value={selectedModelId ?? undefined}
+              onChange={setSelectedModel}
+              options={models.map((m) => ({ value: m.id, label: m.name ?? m.model }))}
+              allowClear
+            />
+          )}
         </div>
         {chats.length > 0 && (
           <Select

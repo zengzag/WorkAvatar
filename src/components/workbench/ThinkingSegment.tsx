@@ -3,6 +3,7 @@ import { BulbOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
+import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 
 const { Text } = Typography
 
@@ -89,7 +90,7 @@ const ThinkingSegmentInner: React.FC<{
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
-  const stepsWrapperRef = useRef<HTMLDivElement>(null)
+  const { containerRef: stepsWrapperRef, onScroll: stepsOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const fallbackRef = useRef<number | undefined>(undefined)
   const [stepsExpanded, setStepsExpanded] = useState(false)
   const [stepsOverflow, setStepsOverflow] = useState(false)
@@ -183,6 +184,7 @@ const ThinkingSegmentInner: React.FC<{
           >
             <div
               ref={stepsWrapperRef}
+              onScroll={stepsOnScroll}
               style={{
                 display: 'flex',
                 flexDirection: 'column',

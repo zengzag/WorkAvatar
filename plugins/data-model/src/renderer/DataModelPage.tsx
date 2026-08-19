@@ -1,15 +1,17 @@
 // 数据模型主页面
 
 import { useEffect, useMemo, useState } from 'react'
-import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty } from 'antd'
+import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm, Dropdown } from 'antd'
 import {
   SaveOutlined, PlusOutlined, ImportOutlined, ExportOutlined,
-  ApartmentOutlined, MessageOutlined, CloseOutlined
+  ApartmentOutlined, MessageOutlined, CloseOutlined, SettingOutlined,
+  DeleteOutlined, FolderOpenOutlined, DownloadOutlined, UploadOutlined
 } from '@ant-design/icons'
 import { Canvas } from './canvas/Canvas'
 import { TableInspector } from './inspector/TableInspector'
 import { RelationshipInspector } from './inspector/RelationshipInspector'
 import { ChatPanel } from './chat/ChatPanel'
+import { DataModelSettingsDrawer } from './DataModelSettingsDrawer'
 import { useDataModelStore } from './data-model.store'
 import { dm, hostT } from './store'
 import { createTable } from '../shared/domain'
@@ -19,11 +21,12 @@ export function DataModelPage() {
   const projects = useDataModelStore((s) => s.projects)
   const selectedTableId = useDataModelStore((s) => s.selectedTableId)
   const selectedRelationshipId = useDataModelStore((s) => s.selectedRelationshipId)
-  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadEmployees, loadProviders, requestLayout, addTable } = useDataModelStore.getState()
+  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadEmployees, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
   const { message } = App.useApp()
 
   const [showChat, setShowChat] = useState(true)
   const [showInspector, setShowInspector] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
@@ -37,6 +40,8 @@ export function DataModelPage() {
     void (async () => {
       const { model: m } = await dm.getModel()
       if (m) setModel(m)
+      await loadSettings()
+      await loadDataDir()
       await loadProjects()
       await loadEmployees()
       await loadProviders()
@@ -142,10 +147,23 @@ export function DataModelPage() {
           popupRender={(menu) => (
             <>
               {menu}
-              <div style={{ padding: 8, borderTop: '1px solid var(--dm-border)' }}>
+              <div style={{ padding: 8, borderTop: '1px solid var(--dm-border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <Button size="small" block icon={<PlusOutlined />} onClick={() => setNewProjectOpen(true)}>
                   {hostT('page.newProject')}
                 </Button>
+                <Button size="small" block icon={<DownloadOutlined />} onClick={() => void exportProjectFile()}>
+                  {hostT('page.exportFile')}
+                </Button>
+                <Button size="small" block icon={<UploadOutlined />} onClick={() => void importProjectFile()}>
+                  {hostT('page.importFile')}
+                </Button>
+                {model && (
+                  <Popconfirm title={hostT('page.deleteConfirm')} onConfirm={() => void deleteProject(model.id)}>
+                    <Button size="small" block danger icon={<DeleteOutlined />}>
+                      {hostT('page.delete')}
+                    </Button>
+                  </Popconfirm>
+                )}
               </div>
             </>
           )}
@@ -167,6 +185,9 @@ export function DataModelPage() {
             icon={<MessageOutlined />}
             onClick={() => setShowChat((v) => !v)}
           />
+        </Tooltip>
+        <Tooltip title={hostT('page.settings')}>
+          <Button size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} />
         </Tooltip>
       </div>
 
@@ -281,6 +302,9 @@ export function DataModelPage() {
           style={{ fontFamily: 'var(--dm-mono)' }}
         />
       </Modal>
+
+      {/* 设置 */}
+      <DataModelSettingsDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }

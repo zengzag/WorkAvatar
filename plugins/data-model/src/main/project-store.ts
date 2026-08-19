@@ -18,6 +18,14 @@ export interface ChatRecord {
   updatedAt: number
 }
 
+export interface DataModelSettings {
+  defaultEmployeeId?: string
+  defaultProviderId?: string
+  defaultModelId?: string
+}
+
+const SETTINGS_KEY = 'data-model-settings'
+
 class ProjectStore {
   private db: PluginDatabase | null = null
 
@@ -37,6 +45,12 @@ class ProjectStore {
         employee_id TEXT NOT NULL,
         title TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      )
+    `)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS plugin_kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
       )
     `)
   }
@@ -102,6 +116,24 @@ class ProjectStore {
 
   deleteChat(conversationId: string): void {
     this.requireDb().prepare('DELETE FROM dm_chats WHERE conversation_id = ?').run(conversationId)
+  }
+
+  // ====== 插件设置 ======
+
+  getSettings(): DataModelSettings {
+    const row = this.requireDb().prepare('SELECT value FROM plugin_kv WHERE key = ?').get(SETTINGS_KEY) as { value: string } | undefined
+    if (!row) return {}
+    try {
+      return JSON.parse(row.value) as DataModelSettings
+    } catch {
+      return {}
+    }
+  }
+
+  setSettings(settings: DataModelSettings): void {
+    this.requireDb().prepare(
+      'INSERT INTO plugin_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).run(SETTINGS_KEY, JSON.stringify(settings))
   }
 }
 

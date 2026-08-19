@@ -54,7 +54,7 @@ const NavSettings: React.FC = () => {
         style={{
           borderTop: `1px solid ${token.colorBorder}`,
           borderInline: `1px solid ${token.colorBorder}`,
-          borderBottom: 'none',
+          borderBottom: `1px solid ${token.colorBorder}`,
           borderRadius: 8,
           overflow: 'hidden',
         }}
@@ -103,7 +103,7 @@ const NavSettings: React.FC = () => {
                     size="small"
                     type="text"
                     icon={<ArrowUpOutlined />}
-                    disabled={isFirst}
+                    disabled={isFirst || isLocked}
                     onClick={() => moveUp(item.key)}
                   />
                 </Tooltip>
@@ -112,7 +112,7 @@ const NavSettings: React.FC = () => {
                     size="small"
                     type="text"
                     icon={<ArrowDownOutlined />}
-                    disabled={isLast}
+                    disabled={isLast || isLocked}
                     onClick={() => moveDown(item.key)}
                   />
                 </Tooltip>

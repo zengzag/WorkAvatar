@@ -1,14 +1,20 @@
 // 渲染端桥接封装：bridge + i18n + IPC 通道
 
 import { useState, useEffect } from 'react'
-import type { PluginBridge } from '../../../plugin-sdk/src/renderer'
+import type { PluginBridge, PluginHostCapabilities } from '../../../plugin-sdk/src/renderer'
 import type { DataModel } from '../shared/domain'
 
 let bridge: PluginBridge | null = null
 let hostI18n: ((key: string, options?: Record<string, unknown>) => string) | null = null
+let hostCaps: PluginHostCapabilities | null = null
 
 export function setBridge(b: PluginBridge): void { bridge = b }
 export function setHostI18n(t: (key: string, options?: Record<string, unknown>) => string): void { hostI18n = t }
+export function setHostCapabilities(c: PluginHostCapabilities | undefined): void { hostCaps = c ?? null }
+
+export function getHostCapabilities(): PluginHostCapabilities | null {
+  return hostCaps
+}
 
 export function hostT(key: string, options?: Record<string, unknown>): string {
   if (hostI18n) return hostI18n(key, options)
@@ -69,5 +75,13 @@ export const dm = {
   onChatsChanged: (cb: () => void) => onEvent('chats-changed', () => cb()),
   onModelChanged: (cb: (payload: { model: DataModel; filePath?: string | null }) => void) =>
     onEvent('model-changed', (p) => cb(p as any)),
-  onChatEvent: (cb: (payload: any) => void) => onEvent('chat-event', (p) => cb(p))
+  onChatEvent: (cb: (payload: any) => void) => onEvent('chat-event', (p) => cb(p)),
+  // 设置
+  getSettings: () => invoke<{ settings: any }>('settings-get'),
+  setSettings: (settings: any) => invoke<{ ok: boolean }>('settings-set', { settings }),
+  getDataDir: () => invoke<{ dataDir: string }>('data-dir'),
+  openDataDir: () => invoke<{ ok: boolean }>('data-dir-open'),
+  // 项目导出/导入（文件）
+  exportProjectFile: (model: DataModel) => invoke<{ ok: boolean; path?: string; error?: string }>('project-export-file', { model }),
+  importProjectFile: () => invoke<{ model?: DataModel; error?: string }>('project-import-file')
 }

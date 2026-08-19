@@ -158,6 +158,8 @@ export interface KMSMCPToolCategoryInfo {
   toolIds: string[]
   defaultEnabled: boolean
   toolCount: number
+  /** 插件类别对应的插件 id（用于前端以插件命名空间解析类别名） */
+  pluginId?: string
 }
 
 export interface KMSMCPExposedTool {

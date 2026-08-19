@@ -887,7 +887,6 @@ export default {
     // Tool categories
     mcpCategoryTitle: 'Exposed Tool Categories',
     mcpCategoryDesc: 'Enable or disable built-in tool categories exposed via MCP. Recommend enabling only the categories you actually need to reduce security risk.',
-    mcpCategoryHint: 'Non-core categories (Calendar, Automation, Conversation Memory, etc.) are disabled by default; enable manually as needed.',
     mcpCategory_kms: 'Knowledge Library Search',
     mcpCategory_kmsDesc: 'Local library document search, summary, TOC, collections (kms_search, kms_get_content, etc.)',
     mcpCategory_calendar: 'Calendar & Todos',

@@ -1,5 +1,11 @@
 {
   "navLabel": "日历",
+  "common": {
+    "confirm": "确定",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除"
+  },
   "calendar": {
     "title": "日历",
     "subtitle": "日程与待办，安排你的每一天",

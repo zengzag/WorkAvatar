@@ -95,6 +95,7 @@ class KMSMCPService {
       toolIds: [...c.toolIds],
       defaultEnabled: c.defaultEnabled,
       toolCount: c.toolIds.length,
+      pluginId: c.pluginId,
     }))
   }
 

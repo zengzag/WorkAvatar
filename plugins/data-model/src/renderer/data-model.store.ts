@@ -26,6 +26,10 @@ interface DataModelState {
   employees: any[]
   providers: any[]
   selectedEmployeeId: string | null
+  selectedProviderId: string | null
+  selectedModelId: string | null
+  settings: { defaultEmployeeId?: string; defaultProviderId?: string; defaultModelId?: string }
+  dataDir: string
   // chat
   messages: ChatMessage[]
   isStreaming: boolean
@@ -61,6 +65,18 @@ interface DataModelState {
   loadEmployees: () => Promise<void>
   loadProviders: () => Promise<void>
   setSelectedEmployee: (id: string | null) => void
+  setSelectedProvider: (id: string | null) => void
+  setSelectedModel: (id: string | null) => void
+
+  // settings
+  loadSettings: () => Promise<void>
+  saveSettings: (patch: Partial<{ defaultEmployeeId: string; defaultProviderId: string; defaultModelId: string }>) => Promise<void>
+  loadDataDir: () => Promise<void>
+  openDataDir: () => Promise<void>
+
+  // project file export/import
+  exportProjectFile: () => Promise<void>
+  importProjectFile: () => Promise<void>
 
   // chat
   sendMessage: (text: string) => Promise<void>
@@ -85,6 +101,10 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   employees: [],
   providers: [],
   selectedEmployeeId: null,
+  selectedProviderId: null,
+  selectedModelId: null,
+  settings: {},
+  dataDir: '',
   messages: [],
   isStreaming: false,
   conversationId: null,
@@ -237,7 +257,11 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   loadEmployees: async () => {
     const employees = await dm.listEmployees()
     set({ employees })
-    if (!get().selectedEmployeeId && employees.length > 0) {
+    const settings = get().settings
+    const preferred = settings.defaultEmployeeId
+    if (preferred && employees.some((e) => e.id === preferred)) {
+      set({ selectedEmployeeId: preferred })
+    } else if (!get().selectedEmployeeId && employees.length > 0) {
       set({ selectedEmployeeId: employees[0].id })
     }
   },
@@ -245,23 +269,65 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   loadProviders: async () => {
     const providers = await dm.listProviders()
     set({ providers })
+    const settings = get().settings
+    const preferred = settings.defaultProviderId
+    if (preferred && providers.some((p) => p.id === preferred)) {
+      set({ selectedProviderId: preferred, selectedModelId: settings.defaultModelId ?? null })
+    } else if (!get().selectedProviderId && providers.length > 0) {
+      const def = providers.find((p) => p.is_default) ?? providers[0]
+      set({ selectedProviderId: def?.id ?? null, selectedModelId: def?.model ?? null })
+    }
   },
 
   setSelectedEmployee: (id) => set({ selectedEmployeeId: id }),
+  setSelectedProvider: (id) => set({ selectedProviderId: id, selectedModelId: null }),
+  setSelectedModel: (id) => set({ selectedModelId: id }),
+
+  loadSettings: async () => {
+    const { settings } = await dm.getSettings()
+    set({ settings: settings ?? {} })
+  },
+
+  saveSettings: async (patch) => {
+    const next = { ...get().settings, ...patch }
+    set({ settings: next })
+    await dm.setSettings(next)
+  },
+
+  loadDataDir: async () => {
+    const { dataDir } = await dm.getDataDir()
+    set({ dataDir })
+  },
+
+  openDataDir: async () => {
+    await dm.openDataDir()
+  },
+
+  exportProjectFile: async () => {
+    const model = get().model
+    if (!model) return
+    await dm.exportProjectFile(model)
+  },
+
+  importProjectFile: async () => {
+    const res = await dm.importProjectFile()
+    if (res.model) {
+      set({ model: cloneModel(res.model), selectedTableId: null, selectedRelationshipId: null })
+      set((s) => ({ layoutRequest: s.layoutRequest + 1 }))
+      await get().loadProjects()
+    }
+  },
 
   sendMessage: async (text) => {
-    const { selectedEmployeeId, employees, providers, conversationId, messages } = get()
+    const { selectedEmployeeId, employees, selectedProviderId, selectedModelId, conversationId, messages } = get()
     if (!selectedEmployeeId) {
       set({ chatError: 'chat.error.noEmployee' })
       return
     }
+    // 模型解析：显式选择 > 员工配置；provider 由主进程兜底（默认 provider）
     const employee = employees.find((e) => e.id === selectedEmployeeId)
-    const providerId = employee?.provider_id
-    const modelId = employee?.model_id
-    if (!providerId) {
-      set({ chatError: 'chat.error.noProvider' })
-      return
-    }
+    const providerId = selectedProviderId ?? employee?.provider_id
+    const modelId = selectedModelId ?? employee?.model_id
 
     const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: text }
     const assistantMsg: ChatMessage = { id: `a-${Date.now()}`, role: 'assistant', content: '', streaming: true }

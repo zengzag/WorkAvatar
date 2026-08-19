@@ -65,9 +65,15 @@ function persist(config: NavItemConfig[]): void {
 }
 
 function reindex(config: NavItemConfig[]): NavItemConfig[] {
+  // 锁定项（settings）始终排在最后，忽略持久化中的历史排序
   return config
     .slice()
-    .sort((a, b) => a.order - b.order)
+    .sort((a, b) => {
+      const aLocked = LOCKED_KEYS.includes(a.key as NavItemKey) ? 1 : 0
+      const bLocked = LOCKED_KEYS.includes(b.key as NavItemKey) ? 1 : 0
+      if (aLocked !== bLocked) return aLocked - bLocked
+      return a.order - b.order
+    })
     .map((item, idx) => ({ ...item, order: idx }))
 }
 
@@ -115,6 +121,7 @@ export const useNavConfigStore = create<NavConfigState>()(
     },
 
     moveUp: (key) => {
+      if (LOCKED_KEYS.includes(key as NavItemKey)) return
       set((state) => {
         const sorted = state.config.slice().sort((a, b) => a.order - b.order)
         const idx = sorted.findIndex((c) => c.key === key)
@@ -128,6 +135,7 @@ export const useNavConfigStore = create<NavConfigState>()(
     },
 
     moveDown: (key) => {
+      if (LOCKED_KEYS.includes(key as NavItemKey)) return
       set((state) => {
         const sorted = state.config.slice().sort((a, b) => a.order - b.order)
         const idx = sorted.findIndex((c) => c.key === key)

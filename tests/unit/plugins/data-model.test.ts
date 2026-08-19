@@ -39,8 +39,11 @@ describe('data-model 插件 activate', () => {
     const mod = await loadPlugin()
     mod.activate(mock.ctx)
     const channels = ['project-list', 'project-create', 'project-open', 'project-delete', 'project-save',
+      'project-export-file', 'project-import-file',
       'model-get', 'model-sync', 'dbml-import', 'dbml-export',
-      'employees-list', 'providers-list', 'chat-send', 'chat-cancel', 'chat-history', 'chats-list', 'chat-delete']
+      'employees-list', 'providers-list',
+      'settings-get', 'settings-set', 'data-dir', 'data-dir-open',
+      'chat-send', 'chat-cancel', 'chat-history', 'chats-list', 'chat-delete']
     for (const c of channels) {
       expect(mock.ipc.handlers.has(c)).toBe(true)
     }
@@ -183,5 +186,43 @@ describe('data-model 插件 IPC handler', () => {
     const list = mock.ipc.handlers.get('chats-list')!
     const chats = await list({}) as any[]
     expect(chats.some(c => c.conversationId === 'conv-2')).toBe(false)
+  })
+
+  it('settings-set 保存 / settings-get 读取', async () => {
+    const set = mock.ipc.handlers.get('settings-set')!
+    await set({ settings: { defaultEmployeeId: 'e1', defaultProviderId: 'p1' } })
+    const get = mock.ipc.handlers.get('settings-get')!
+    const res = await get() as { settings: any }
+    expect(res.settings.defaultEmployeeId).toBe('e1')
+    expect(res.settings.defaultProviderId).toBe('p1')
+  })
+
+  it('data-dir 返回插件数据目录', async () => {
+    const handler = mock.ipc.handlers.get('data-dir')!
+    const res = await handler() as { dataDir: string }
+    expect(typeof res.dataDir).toBe('string')
+    expect(res.dataDir.length).toBeGreaterThan(0)
+  })
+
+  it('chat-send 无 providerId 时从默认 provider 兜底', async () => {
+    mock.services.data!.query = vi.fn(async (entity: string) => {
+      if (entity === 'llmProviders') return [{ id: 'p-default', name: '默认', is_default: true, model: 'm1' }]
+      return []
+    }) as any
+    mock.services.data!.mutate = vi.fn(async () => ({})) as any
+    mock.services.execute!.execute = vi.fn(async (req: any, callbacks?: any) => {
+      callbacks?.onDone?.({})
+      return { conversationId: 'conv-3' }
+    }) as any
+
+    const handler = mock.ipc.handlers.get('chat-send')!
+    const res = await handler({ employeeId: 'e1', messages: [{ role: 'user', content: 'x' }] })
+    expect(res).toEqual({ conversationId: 'conv-3' })
+    // 应使用默认 provider
+    expect(mock.services.execute!.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'p-default', modelId: 'm1' }),
+      expect.anything(),
+      expect.anything()
+    )
   })
 })

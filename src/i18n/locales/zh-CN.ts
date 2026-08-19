@@ -887,7 +887,6 @@ export default {
     // 工具类别（细分开关）
     mcpCategoryTitle: '对外开放工具类别',
     mcpCategoryDesc: '按类别启用或禁用对外暴露的内置工具。建议仅启用实际需要的类别，降低安全风险。',
-    mcpCategoryHint: '非核心类别（日历、自动化、对话记忆等）默认关闭，按需手动开启。',
     mcpCategory_kms: '资料库检索',
     mcpCategory_kmsDesc: '本地资料库文档检索、摘要、目录、合集等（kms_search、kms_get_content 等）',
     mcpCategory_calendar: '日历与待办',

@@ -29,14 +29,7 @@ export const BUILTIN_TOOL_CATEGORIES = [
     id: 'kms',
     defaultEnabled: true,
     toolIds: [
-      'kms_search', 'kms_get_content',
-      'kms_list_collections', 'kms_collection_overview',
-      'kms_get_toc', 'kms_get_paragraphs',
-      'kms_knowledge_card',
-      // KMS MCP 原独有、但 Agent 工具也能支撑的：列目录 / 统计
-      'kms_list_dirs', 'kms_stats',
-      'kms_get_summary', 'kms_list_files_in_collection',
-      'kms_get_collection_summary',
+      'kms_search', 'kms_get_content', 'kms_list_collections',
     ],
   },
   {
@@ -69,6 +62,8 @@ export interface PluginMcpCategory {
   id: string
   defaultEnabled: boolean
   toolIds: string[]
+  /** 对应插件 id（用于前端以插件命名空间解析类别名） */
+  pluginId?: string
 }
 
 /**
@@ -84,6 +79,7 @@ export function getPluginMcpCategories(): PluginMcpCategory[] {
       id: `plugin:${g.pluginId}`,
       defaultEnabled: false,
       toolIds: g.tools.map(t => t.id),
+      pluginId: g.pluginId,
     }))
   } catch {
     return []
@@ -91,11 +87,11 @@ export function getPluginMcpCategories(): PluginMcpCategory[] {
 }
 
 /** 完整类别 = 内置类别 + 插件类别 */
-export function getAllMcpCategories(): Array<{ id: string; defaultEnabled: boolean; toolIds: readonly string[] }> {
+export function getAllMcpCategories(): Array<{ id: string; defaultEnabled: boolean; toolIds: readonly string[]; pluginId?: string }> {
   return [...BUILTIN_TOOL_CATEGORIES, ...getPluginMcpCategories()]
 }
 
-/** MCP 工具格式（与 kms-mcp-types.ts 中的 MCPTool 保持语义一致，避免耦合旧文件） */
+/** MCP 协议 tools/list 返回的工具格式 */
 export interface McpTool {
   name: string
   description: string

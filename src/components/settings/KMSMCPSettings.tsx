@@ -29,6 +29,8 @@ interface MCPToolCategoryInfo {
   toolIds: string[]
   defaultEnabled: boolean
   toolCount: number
+  /** 插件类别对应的插件 id（用于以插件命名空间解析类别名） */
+  pluginId?: string
 }
 
 interface MCPExposedTool {
@@ -234,8 +236,10 @@ const KMSMCPSettings: React.FC = () => {
   const mcpUrl = status.running ? status.url : `http://localhost:${config.port}/mcp`
 
   const renderCategoryTitle = (cat: MCPToolCategoryInfo) => {
-    const key = `settings.mcpCategory_${cat.id}` as any
-    const labeled = t(key, { defaultValue: cat.id })
+    const isPlugin = !!cat.pluginId
+    const labeled = isPlugin
+      ? t('navLabel', { ns: cat.pluginId, defaultValue: cat.id })
+      : t(`settings.mcpCategory_${cat.id}` as any, { defaultValue: cat.id })
     return (
       <Space size={6}>
         {CATEGORY_ICON[cat.id] || <BulbOutlined />}
@@ -343,12 +347,6 @@ const KMSMCPSettings: React.FC = () => {
           <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
             {t('settings.mcpCategoryDesc')}
           </Paragraph>
-          <Alert
-            type="warning"
-            showIcon
-            style={{ marginBottom: 12 }}
-            message={<Text style={{ fontSize: 12 }}>{t('settings.mcpCategoryHint')}</Text>}
-          />
           <div
             style={{
               display: 'grid',

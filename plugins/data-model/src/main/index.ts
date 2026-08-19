@@ -111,14 +111,85 @@ function registerIpc(ctx: PluginContext): void {
     return providers
   })
 
+  // ====== 设置 ======
+  ctx.ipc.handle('settings-get', () => ({ settings: projectStore.getSettings() }))
+
+  ctx.ipc.handle('settings-set', (payload: any) => {
+    projectStore.setSettings(payload?.settings ?? {})
+    return { ok: true }
+  })
+
+  ctx.ipc.handle('data-dir', () => ({ dataDir: ctx.paths.data }))
+
+  ctx.ipc.handle('data-dir-open', () => {
+    const { shell } = require('electron')
+    shell.openPath(ctx.paths.data)
+    return { ok: true }
+  })
+
+  // ====== 项目导出 / 导入（.dmv.json 文件） ======
+  ctx.ipc.handle('project-export-file', async (payload: any) => {
+    const model = payload?.model
+    if (!model) return { error: '当前无数据模型' }
+    const { dialog } = require('electron')
+    const res = await dialog.showSaveDialog({
+      title: '导出数据模型',
+      defaultPath: `${model.name || 'model'}.dmv.json`,
+      filters: [{ name: '数据模型文件', extensions: ['dmv.json', 'json'] }]
+    })
+    if (res.canceled || !res.filePath) return { ok: false }
+    const fs = require('fs')
+    fs.writeFileSync(res.filePath, JSON.stringify({ version: 1, model, updatedAt: Date.now() }, null, 2), 'utf-8')
+    return { ok: true, path: res.filePath }
+  })
+
+  ctx.ipc.handle('project-import-file', async () => {
+    const { dialog } = require('electron')
+    const res = await dialog.showOpenDialog({
+      title: '导入数据模型',
+      properties: ['openFile'],
+      filters: [{ name: '数据模型文件', extensions: ['dmv.json', 'json'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return { error: '已取消' }
+    const fs = require('fs')
+    try {
+      const raw = JSON.parse(fs.readFileSync(res.filePaths[0], 'utf-8'))
+      const model = raw?.model ?? raw
+      if (!model?.tables || !model?.id) return { error: '文件格式不正确' }
+      projectStore.save(model)
+      modelSession.setModel(model, null)
+      return { model }
+    } catch (e) {
+      return { error: `导入失败: ${e instanceof Error ? e.message : String(e)}` }
+    }
+  })
+
   // ====== 对话（复用宿主 agent） ======
   ctx.ipc.handle('chat-send', async (payload: any, signal?: AbortSignal) => {
     const execute = ctx.services.execute
     if (!execute) return { error: '宿主未提供 execute 能力' }
     const { employeeId, providerId, modelId, messages, conversationId } = payload ?? {}
     if (!employeeId) return { error: '缺少 employeeId' }
-    if (!providerId) return { error: '缺少 providerId' }
     if (!messages || messages.length === 0) return { error: '缺少 messages' }
+
+    // 解析 provider：显式传入 > 插件默认 > 宿主默认 provider > 首个 provider
+    let resolvedProviderId = providerId
+    let resolvedModelId = modelId
+    if (!resolvedProviderId) {
+      const settings = projectStore.getSettings()
+      resolvedProviderId = settings.defaultProviderId
+      resolvedModelId = resolvedModelId ?? settings.defaultModelId
+    }
+    if (!resolvedProviderId) {
+      const data = ctx.services.data
+      if (data) {
+        const providers = await data.query('llmProviders') as any[]
+        const def = providers.find((p) => p.is_default) ?? providers[0]
+        resolvedProviderId = def?.id
+        if (!resolvedModelId) resolvedModelId = def?.model
+      }
+    }
+    if (!resolvedProviderId) return { error: 'chat.error.noProvider' }
 
     const controller = new AbortController()
     currentAbort = controller
@@ -152,8 +223,8 @@ function registerIpc(ctx: PluginContext): void {
         {
           kind: 'agent-chat',
           employeeId,
-          providerId,
-          modelId,
+          providerId: resolvedProviderId,
+          modelId: resolvedModelId,
           messages,
           conversationId,
           system: DATA_MODEL_SYSTEM_PROMPT,

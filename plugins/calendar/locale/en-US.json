@@ -1,5 +1,11 @@
 {
   "navLabel": "Calendar",
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete"
+  },
   "calendar": {
     "title": "Calendar",
     "subtitle": "Events and tasks, organize your day",
