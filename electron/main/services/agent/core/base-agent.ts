@@ -272,22 +272,30 @@ export abstract class BaseAgent {
 
       // aborted 走正常返回路径（pi-agent-adapter 已捕获 AbortError），仍透传 tokenUsage/contextStats
       this.context.setState(streamMetadata?.aborted ? 'aborted' : 'completed')
+      if (streamMetadata?.aborted) {
+        logger.warn(`Agent "${this.name}" run aborted: ${streamMetadata.abortReason || '未知原因'} (iterations=${this.context.getIterationCount()}, latencyMs=${Date.now() - startTime})`)
+      }
       this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
 
       callbacks.onDone?.({
         totalLatencyMs: Date.now() - startTime,
         iterations: this.context.getIterationCount(),
+        aborted: !!streamMetadata?.aborted,
+        abortReason: streamMetadata?.abortReason,
         tokenUsage: streamMetadata?.tokenUsage,
         contextStats: this.memoryManager.getStats() ?? undefined,
       })
     } catch (error: any) {
       if (signal?.aborted) {
         this.context.setState('aborted')
+        logger.warn(`Agent "${this.name}" run aborted via catch: ${error?.message || String(error)} (iterations=${this.context.getIterationCount()}, latencyMs=${Date.now() - startTime})`)
         this.eventEmitter.emit('run:end', { iterations: this.context.getIterationCount() })
         // catch 兜底：底层异常路径下无法拿到 tokenUsage，但仍刷新 contextStats
         callbacks.onDone?.({
           totalLatencyMs: Date.now() - startTime,
           iterations: this.context.getIterationCount(),
+          aborted: true,
+          abortReason: error?.message || String(error),
           contextStats: this.memoryManager.getStats() ?? undefined,
         })
         return
@@ -431,10 +439,10 @@ export abstract class BaseAgent {
     maxIterations: number,
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal
-  ): Promise<AgentResponseMetadata & { aborted?: boolean }> {
+  ): Promise<AgentResponseMetadata & { aborted?: boolean; abortReason?: string }> {
     this.context.setState('running')
 
-    const { tokenUsage, aborted } = await runPiAgentLoop({
+    const { tokenUsage, aborted, abortReason } = await runPiAgentLoop({
       config: this.config,
       messages,
       toolDefinitions: tools,
@@ -464,7 +472,7 @@ export abstract class BaseAgent {
       },
     })
 
-    return { tokenUsage, aborted }
+    return { tokenUsage, aborted, abortReason }
   }
 
   private normalizeConfig(config: AgentConfig): AgentConfig {

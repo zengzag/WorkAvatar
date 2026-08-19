@@ -203,6 +203,7 @@ export default {
     completed: 'Completed',
     toolCancelled: 'Cancelled',
     toolFailed: 'Failed',
+    msgAborted: 'Interrupted',
     delegationFailed: 'Delegation Failed',
     delegationCompleted: 'Delegation Completed',
     delegationRunning: 'Delegating',

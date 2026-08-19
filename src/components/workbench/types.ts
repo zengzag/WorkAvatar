@@ -85,6 +85,8 @@ export interface MessageWithThought extends Message {
   images?: string[]
   _comparisonBranchMsgs?: MessageWithThought[]
   isCompactSummary?: boolean
+  /** 本次生成被中止（用户停止/切换/异常中断），UI 展示中断提醒 */
+  isAborted?: boolean
 }
 
 export function ensureSegments(msg: MessageWithThought): MessageWithThought {

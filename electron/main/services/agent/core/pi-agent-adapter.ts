@@ -573,7 +573,14 @@ export interface RunPiAgentLoopParams {
  * 内部完成：Message 转换、AgentTool 包装、事件转换、上下文截断、token 统计。
  * 保留现有 AgentRunStreamCallbacks + AgentEventEmitter 契约，前端零改动。
  */
-export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ tokenUsage?: TokenUsage; aborted?: boolean }> {
+export interface RunPiAgentLoopResult {
+  tokenUsage?: TokenUsage
+  aborted?: boolean
+  /** 中断原因描述，便于排查 aborted 是用户主动停止还是底层异常 */
+  abortReason?: string
+}
+
+export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunPiAgentLoopResult> {
   const {
     config,
     messages,
@@ -661,9 +668,14 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
   // 中止时（signal.aborted 或底层 fetch 抛 AbortError）不抛出，保留已累计的 tokenUsage 返回，
   // 让 base-agent 走 aborted 分支并把 tokenUsage/contextStats 透传给前端
   let aborted = false
+  let abortReason: string | undefined
   try {
     for await (const event of eventStream) {
-      if (signal?.aborted) { aborted = true; break }
+      if (signal?.aborted) {
+        aborted = true
+        abortReason = '用户主动停止（signal 已中止）'
+        break
+      }
       handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
         totalTokenUsage = {
           promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
@@ -675,13 +687,23 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
         }
       })
     }
-  } catch (err) {
+  } catch (err: any) {
     // signal.aborted 视为正常中止，保留 tokenUsage 返回；其他异常继续上抛
     if (signal?.aborted) {
       aborted = true
+      // 区分用户主动停止 vs 底层异常（如网络中断）：若底层抛的是非 AbortError 错误，
+      // 说明 signal 虽被中止但底层同时发生了异常，记录具体错误便于排查
+      const isAbortError = err?.name === 'AbortError' || /abort/i.test(err?.message || '')
+      abortReason = isAbortError
+        ? '用户主动停止（signal 已中止，底层请求被中止）'
+        : `signal 已中止，但底层抛出异常: ${err?.message || String(err)}`
     } else {
       throw err
     }
+  }
+
+  if (aborted) {
+    logger.warn(`Agent loop aborted: ${abortReason}`)
   }
 
   // 若未累计到任何 token（abort 过早或 LLM 未返回 usage），返回 undefined 让前端回退到字符数
@@ -689,7 +711,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<{ to
     || totalTokenUsage.completionTokens !== undefined
     || totalTokenUsage.totalTokens !== undefined
     || totalTokenUsage.cachedTokens !== undefined
-  return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted }
+  return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted, abortReason }
 }
 
 function handleAgentEvent(

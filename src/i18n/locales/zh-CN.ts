@@ -203,6 +203,7 @@ export default {
     completed: '完成',
     toolCancelled: '已取消',
     toolFailed: '失败',
+    msgAborted: '已中断',
     delegationFailed: '委托失败',
     delegationCompleted: '委托完成',
     delegationRunning: '委托执行中',

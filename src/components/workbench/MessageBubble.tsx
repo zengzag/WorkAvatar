@@ -240,11 +240,10 @@ const MessageBubble: React.FC<{
   )
 
   const currentBranchModelLabel = useMemo(() => {
-    if (!hasBranches) return null
     const currentBranch = branchData || { comparisonProviderId: msg.comparisonProviderId, comparisonModelId: msg.comparisonModelId }
     const label = resolveModelLabel(currentBranch, providers)
     return label || null
-  }, [hasBranches, branchData, msg.comparisonProviderId, msg.comparisonModelId, providers])
+  }, [branchData, msg.comparisonProviderId, msg.comparisonModelId, providers])
 
   const displayMsg = useMemo(() =>
     msg.role === 'assistant'
@@ -435,6 +434,14 @@ const MessageBubble: React.FC<{
               <GeneratedFilesBar segments={displaySegments} />
             )}
 
+            {!displayIsStreaming && displayMsg.isAborted && (
+              <div style={{ marginTop: 2, marginLeft: 2 }}>
+                <Tag color="warning" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
+                  {t('workbench.msgAborted')}
+                </Tag>
+              </div>
+            )}
+
             {!displayIsStreaming && (
               <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
                 {hasBranches && (
@@ -469,12 +476,6 @@ const MessageBubble: React.FC<{
                       onClick={() => onSwitchBranch(msg.id, branchIndex + 1)}
                       style={{ padding: '0 2px', minWidth: 16, height: 16 }} />
                   </div>
-                )}
-                {currentBranchModelLabel && (
-                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
-                    onClick={() => onOpenComparison(msg.id)}>
-                    {currentBranchModelLabel}
-                  </Tag>
                 )}
                 {displayContent && (
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
@@ -515,6 +516,12 @@ const MessageBubble: React.FC<{
                 alignItems: 'center',
                 flexWrap: 'wrap',
               }}>
+                {currentBranchModelLabel && (
+                  <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
+                    onClick={() => onOpenComparison(msg.id)}>
+                    {currentBranchModelLabel}
+                  </Tag>
+                )}
                 <TokenUsageDisplay tokenUsage={displayTokenUsage} />
                 {isLastAssistantMessage && (
                   <ContextUsageInline

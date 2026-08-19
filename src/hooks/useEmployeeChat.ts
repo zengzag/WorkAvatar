@@ -231,6 +231,23 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           }
         }
 
+        // 切换员工时，将旧员工仍在流式中的消息本地收尾（isStreaming=false），
+        // 避免切回时消息停留在流式状态导致按钮/用量不显示
+        const oldEmployeeId = getPersistentEmployeeId()
+        const oldCache = oldEmployeeId ? _persistentMessagesByEmployee.get(oldEmployeeId) : undefined
+        if (oldCache) {
+          for (const [convId, msgs] of oldCache.entries()) {
+            if (!msgs.some(m => m.isStreaming)) continue
+            const finalized = msgs.map(m => m.isStreaming ? { ...m, isStreaming: false, isAborted: true } : m)
+            oldCache.set(convId, finalized)
+            window.electronAPI.conversation.update({
+              id: convId,
+              messages_json: JSON.stringify(finalized),
+              message_count: finalized.length,
+            }).catch(() => {})
+          }
+        }
+
         const cleanup = getPersistentListenersCleanup()
         if (cleanup) {
           cleanup()
@@ -689,7 +706,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const streamEntries = Array.from(streamStatesRef.current.entries()).filter(([, s]) => s.conversationId === convId)
     for (const [sessionId, ss] of streamEntries) {
       ss.isStreaming = false
-      streamStatesRef.current.delete(sessionId)
+      // 不删除 streamState，让后端 onDone 接管清理并写入 tokenUsage（与 handleStop 一致），
+      // 避免消息停留在 isStreaming 状态导致按钮/用量不显示
       try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
     }
   }
@@ -1031,6 +1049,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         timestamp: Date.now(),
         isStreaming: true,
         segments: [],
+        comparisonProviderId: providerId,
+        comparisonModelId: selectedLlmModelId || undefined,
       }
       updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
 
@@ -1216,8 +1236,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       isStreaming: true,
       isError: false,
       tokenUsage: undefined,
-      comparisonProviderId: undefined,
-      comparisonModelId: undefined,
+      comparisonProviderId: providerId,
+      comparisonModelId: selectedLlmModelId || undefined,
     }
 
     await commitAndStartStream(
@@ -1339,8 +1359,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isStreaming: true,
         isError: false,
         tokenUsage: undefined,
-        comparisonProviderId: undefined,
-        comparisonModelId: undefined,
+        comparisonProviderId: providerId,
+        comparisonModelId: selectedLlmModelId || undefined,
       }
     } else {
       assistantMessageId = `msg_${generateId()}`
@@ -1351,6 +1371,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         timestamp: Date.now(),
         isStreaming: true,
         segments: [],
+        comparisonProviderId: providerId,
+        comparisonModelId: selectedLlmModelId || undefined,
       }
       newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }

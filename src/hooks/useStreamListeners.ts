@@ -732,6 +732,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           isStreaming: false,
           segments: segs,
           tokenUsage,
+          // 中止（用户停止/切换/异常中断）时标记，UI 展示中断提醒
+          isAborted: metadata?.aborted === true,
         }
         window.electronAPI.conversation.update({
           id: streamState.conversationId,

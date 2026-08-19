@@ -75,6 +75,10 @@ export interface ToolCallRecord {
 export interface AgentResponseMetadata {
   totalLatencyMs?: number
   iterations?: number
+  /** 本次 run 是否被中止（用户停止/切换/异常中断），前端据此展示中断提醒 */
+  aborted?: boolean
+  /** 中断原因描述，便于排查 aborted 是用户主动停止还是底层异常 */
+  abortReason?: string
   tokenUsage?: TokenUsage
   contextStats?: {
     totalMessages: number
