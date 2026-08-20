@@ -16,7 +16,7 @@ export function createDataModelAgentTools(): PluginToolDefinition[] {
     description: tool.description,
     summary: tool.description.split('。')[0],
     parameters: tool.parameters as PluginToolDefinition['parameters'],
-    onDemand: true,
+    onDemand: false,
     handler: (args) => {
       const { result } = modelSession.applyTool(tool.name, args)
       if (result.ok) {

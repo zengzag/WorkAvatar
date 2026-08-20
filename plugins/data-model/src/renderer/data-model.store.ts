@@ -29,6 +29,8 @@ interface DataModelState {
   conversationId: string | null
   chatError: string | null
   chats: Array<{ conversationId: string; title: string; updatedAt: number }>
+  /** 当前会话上下文用量统计（done 事件 metadata.contextStats） */
+  contextStats: any
 
   // model
   setModel: (model: DataModel | null) => void
@@ -100,6 +102,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   conversationId: null,
   chatError: null,
   chats: [],
+  contextStats: null,
 
   setModel: (model) => set({ model: model ? cloneModel(model) : null }),
 
@@ -340,7 +343,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
 
   newChat: () => {
     void dm.cancelChat()
-    set({ messages: [], conversationId: null, isStreaming: false, chatError: null })
+    set({ messages: [], conversationId: null, isStreaming: false, chatError: null, contextStats: null })
   },
 
   loadChatHistory: async (conversationId) => {
@@ -355,7 +358,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
       segments: Array.isArray(m.segments) ? m.segments : undefined,
       isStreaming: false
     }))
-    set({ messages: msgs, conversationId })
+    set({ messages: msgs, conversationId, contextStats: null })
   },
 
   loadChats: async () => {
@@ -556,13 +559,23 @@ function applyChatEvent(msgs: ChatMessage[], payload: any): ChatMessage[] {
       return [...msgs.slice(0, -1), { ...last, segments: segs }]
     }
     case 'done': {
+      const metadata = payload.metadata ?? {}
       const finalized = finalizeToolSegments(segs, hostT('chat.toolCancelled')).map((s) => ({
         ...s,
         isStreaming: false,
         completedAt: s.completedAt || Date.now(),
         ...(s.type === 'thinking' ? { collapsed: true } : {}),
       }))
-      return [...msgs.slice(0, -1), { ...last, segments: finalized, isStreaming: false }]
+      const usage = metadata.tokenUsage ?? metadata.usage
+      const tokenUsage = usage
+        ? {
+            promptTokens: usage.promptTokens ?? usage.prompt_tokens,
+            completionTokens: usage.completionTokens ?? usage.completion_tokens,
+            totalTokens: usage.totalTokens ?? usage.total_tokens,
+            cachedTokens: usage.cachedTokens ?? usage.cached_tokens,
+          }
+        : undefined
+      return [...msgs.slice(0, -1), { ...last, segments: finalized, isStreaming: false, tokenUsage }]
     }
     case 'error': {
       const error = payload.error ?? hostT('chat.toolFailed')
@@ -593,6 +606,7 @@ function ensureChatEventListener(): void {
         messages,
         isStreaming: done ? false : state.isStreaming,
         chatError: payload?.type === 'error' ? (payload.error ?? null) : state.chatError,
+        contextStats: done ? (payload?.metadata?.contextStats ?? state.contextStats) : state.contextStats,
       }
     })
   })

@@ -54,24 +54,20 @@ export function ExplorerPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, borderRight: '1px solid var(--dm-border)', background: 'var(--dm-bg)' }}>
-      {/* 头部 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '8px 10px', borderBottom: '1px solid var(--dm-border)' }}>
-        <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{hostT('explorer.title')}</span>
-        <Tooltip title={hostT('page.newTable')}>
-          <Button size="small" type="text" icon={<PlusOutlined />} onClick={handleAddTable} />
-        </Tooltip>
-      </div>
-
-      {/* 搜索 */}
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--dm-border)' }}>
+      {/* 搜索 + 新建表（同一行） */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 10px', borderBottom: '1px solid var(--dm-border)' }}>
         <Input
           size="small"
+          style={{ flex: 1, minWidth: 0 }}
           prefix={<SearchOutlined style={{ color: 'var(--dm-muted)' }} />}
           placeholder={hostT('explorer.search')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           allowClear
         />
+        <Tooltip title={hostT('page.newTable')}>
+          <Button size="small" type="text" icon={<PlusOutlined />} onClick={handleAddTable} />
+        </Tooltip>
       </div>
 
       {/* 列表 */}

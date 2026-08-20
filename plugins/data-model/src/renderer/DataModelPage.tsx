@@ -10,8 +10,7 @@ import {
 import { Canvas } from './canvas/Canvas'
 import { TableInspector } from './inspector/TableInspector'
 import { RelationshipInspector } from './inspector/RelationshipInspector'
-import { AppSidebar, type SidebarView } from './AppSidebar'
-import { SidePanel } from './SidePanel'
+import { SidePanel, type SidebarView } from './SidePanel'
 import { DataModelSettingsDrawer } from './DataModelSettingsDrawer'
 import { useDataModelStore } from './data-model.store'
 import { dm, hostT } from './store'
@@ -216,14 +215,12 @@ export function DataModelPage() {
 
       {/* 主区域 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* 左侧图标栏：数据模型 / AI 对话 切换 */}
-        <AppSidebar active={sidebarView} onChange={setSidebarView} />
-
-        {/* 左侧面板：数据模型列表 或 AI 对话（可展开收起、调节宽度） */}
+        {/* 左侧面板：数据模型列表 或 AI 对话（顶部切换视图 + 收起按钮，可调节宽度） */}
         <SidePanel
           view={sidebarView}
           collapsed={panelCollapsed}
           width={panelWidth}
+          onViewChange={setSidebarView}
           onToggleCollapsed={() => setPanelCollapsed((v) => !v)}
           onWidthChange={setPanelWidth}
         />

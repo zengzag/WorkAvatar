@@ -303,3 +303,11 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
 .markdown-viewer {
   height: 100% !important;
 }
+
+/* 工具调用折叠框：容器较窄时隐藏次要信息（工具名括号/耗时/输出字符数），
+   只保留工具名 + 状态标签，保证折叠态单行显示不换行撑高 */
+@container (max-width: 360px) {
+  .dm-toolcall-extra {
+    display: none !important;
+  }
+}

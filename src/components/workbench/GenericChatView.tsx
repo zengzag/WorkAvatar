@@ -28,6 +28,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
   onClose,
   onToggleSegment,
   loading,
+  contextStats,
   style,
 }) => {
   const { t } = useTranslation()
@@ -116,6 +117,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               onOpenComparison={noop}
               getToolDisplayName={getToolDisplayName}
               providers={providers}
+              contextStats={contextStats}
               hideMessageActions
             />
             <div ref={messagesEndRef} />

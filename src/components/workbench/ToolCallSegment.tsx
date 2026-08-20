@@ -231,7 +231,7 @@ const ToolCallSegmentInner: React.FC<{
   }
 
   return (
-    <div style={{ marginBottom: 4 }}>
+    <div style={{ marginBottom: 4, containerType: 'inline-size' }}>
       <div
         style={{
           borderRadius: 8,
@@ -259,32 +259,32 @@ const ToolCallSegmentInner: React.FC<{
             <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
           )}
           <CodeOutlined style={{ fontSize: 13, color: accentColor }} />
-          <Text strong style={{ fontSize: 13, color: token.colorText }}>
+          <Text strong style={{ fontSize: 13, color: token.colorText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
           </Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>({seg.toolName})</Text>
+          <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 11 }}>({seg.toolName})</Text>
           {duration !== null && (
-            <Text type="secondary" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
               <ClockCircleOutlined style={{ fontSize: 10 }} />
               {t('workbench.executionTime', { time: duration })}
             </Text>
           )}
           {isToolError ? (
-            <Tag color="error" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+            <Tag color="error" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
               <CloseCircleOutlined /> {seg.toolError}
             </Tag>
           ) : isArgsStreaming ? (
-            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
               <LoadingOutlined spin /> {t('workbench.generatingArgs')}
             </Tag>
           ) : isToolPending ? (
-            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto' }}>
+            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
               <LoadingOutlined spin /> {t('workbench.executing')}
             </Tag>
           ) : (
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               {resultStr && (
-                <Text type="secondary" style={{ fontSize: 10 }}>
+                <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 10 }}>
                   {t('workbench.outputChars')}: {resultStr.length}
                 </Text>
               )}

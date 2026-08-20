@@ -81,7 +81,7 @@ export function CanvasContextMenu({ state, items, onClose }: Props) {
 
 export function buildPaneItems(onNewTable: () => void, onLayout: () => void): MenuItem[] {
   return [
-    { key: 'new-table', label: hostT('table.addField') === 'table.addField' ? '新建表' : hostT('page.newProject'), onClick: onNewTable },
+    { key: 'new-table', label: hostT('page.newTable'), onClick: onNewTable },
     { key: 'layout', label: hostT('page.autoLayout'), onClick: onLayout }
   ]
 }

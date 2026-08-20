@@ -5,6 +5,7 @@ import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Relationship, Table } from '../../shared/domain'
 import { getVisibleFields, FIELD_HEIGHT, HEADER_HEIGHT, NODE_WIDTH } from './dagre-layout'
 import { useDataModelStore } from '../data-model.store'
+import { hostT } from '../store'
 
 export type TableNodeData = { table: Table; relationships: Relationship[] }
 export type TableNodeType = Node<TableNodeData>
@@ -85,7 +86,7 @@ function TableNodeInner({ data, selected }: TableNodeComponentProps) {
     >
       <div
         onClick={toggleExpanded}
-        title={table.expanded ? '点击折叠' : '点击展开'}
+        title={table.expanded ? hostT('table.collapse') : hostT('table.expand')}
         style={{
           height: HEADER_HEIGHT, display: 'flex', alignItems: 'center', padding: '0 10px', gap: 6,
           background: `${table.color}22`, borderBottom: '1px solid var(--dm-border)',
@@ -105,7 +106,7 @@ function TableNodeInner({ data, selected }: TableNodeComponentProps) {
       {(table.expanded || showFieldsWhenCollapsed) && (
         <div>
           {visibleFields.length === 0 ? (
-            <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--dm-muted)', fontStyle: 'italic' }}>无字段</div>
+            <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--dm-muted)', fontStyle: 'italic' }}>{hostT('table.noFields')}</div>
           ) : (
             visibleFields.map((f) => <FieldRow key={f.id} field={f} color={table.color} />)
           )}

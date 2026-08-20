@@ -13,7 +13,7 @@ let unsubscribeEvents: Array<() => void> = []
 // 数据模型对话专用系统提示词：指导 agent 使用分层协议编辑当前模型
 const DATA_MODEL_SYSTEM_PROMPT = `你是一个数据建模助手，正在帮助用户创建和编辑一个数据模型（ER 图）。
 
-当前数据模型通过分层协议读写（均为按需工具，可先调用 list_available_tools 查看）：
+当前数据模型通过分层协议读写（工具已直接可用）：
 - 读取：get_model_meta（轻量元信息概览，先调用避免全量读取）/ get_model_json（完整结构化 JSON，含布局/索引/枚举引用；tables 参数可只读指定表）
 - 写入：set_model_json（完整 JSON 替换/合并）/ patch_model（增量操作：addTable/updateTable/removeTable、addField/updateField/removeField、addRelationship/removeRelationship、addEnum/removeEnum、addIndex/removeIndex）/ import_dbml（DBML 文本导入）/ import_dbml_file（DBML 文件导入）
 - 文件：export_model_file（导出完整工程文件）/ import_model_file（从工程文件导入）
@@ -198,22 +198,19 @@ function registerIpc(ctx: PluginContext): void {
     let thought = ''
     let errText = ''
 
+    // 新会话生成会话 id（插件分库持久化，不依赖宿主 conversations 表）
+    const convId = conversationId || `dm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+
     const persist = async (convId: string, msgs: unknown[]) => {
-      const data = ctx.services.data
-      if (!data) return
       try {
-        await data.mutate('conversations', 'update', {
-          id: convId,
-          messages_json: JSON.stringify(msgs),
-          message_count: msgs.length
-        })
+        projectStore.saveMessages(convId, msgs)
       } catch (e) {
         ctx.services.logger.warn('持久化对话消息失败:', e instanceof Error ? e.message : String(e))
       }
     }
 
-    // 新会话先写用户消息（会话 id 由宿主生成，需在 execute 返回后补写）
-    let lastConvId: string | null = isNewConv ? null : conversationId
+    // 新会话先写用户消息（会话 id 由插件生成，execute 后补写助手回复）
+    let lastConvId: string | null = isNewConv ? null : convId
 
     try {
       const result = await execute.execute(
@@ -222,7 +219,7 @@ function registerIpc(ctx: PluginContext): void {
           providerId: resolvedProviderId,
           modelId: resolvedModelId,
           messages,
-          conversationId,
+          conversationId: convId,
           system: DATA_MODEL_SYSTEM_PROMPT,
           tools: createDataModelAgentTools(),
           useSkills: false,
@@ -246,12 +243,11 @@ function registerIpc(ctx: PluginContext): void {
         },
         mergedSignal
       )
-      lastConvId = (result as { conversationId: string }).conversationId
+      lastConvId = (result as { conversationId: string }).conversationId || convId
 
       // 持久化：读取现有消息 → 追加用户消息 + 助手回复
       if (lastConvId) {
-        const data = ctx.services.data
-        const existing = data ? (await data.query('messages', { filter: { conversationId: lastConvId } }) as unknown[]) : []
+        const existing = projectStore.getMessages(lastConvId)
         const userMsg = { role: 'user' as const, content: lastMsg?.content ?? '' }
         const assistantMsg: Record<string, unknown> = { role: 'assistant', content: acc }
         if (thought) assistantMsg.reasoning_content = thought
@@ -287,10 +283,8 @@ function registerIpc(ctx: PluginContext): void {
   })
 
   ctx.ipc.handle('chat-history', async (payload: any) => {
-    const data = ctx.services.data
-    if (!data || !payload?.conversationId) return []
-    const messages = await data.query('messages', { filter: { conversationId: payload.conversationId } })
-    return messages
+    if (!payload?.conversationId) return []
+    return projectStore.getMessages(payload.conversationId)
   })
 }
 

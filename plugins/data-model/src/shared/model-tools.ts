@@ -42,6 +42,116 @@ function err(error: string): ToolResult {
   return { ok: false, error }
 }
 
+/**
+ * 归一化外部传入的模型 JSON：确保每个表/字段/关系/枚举/索引都有唯一 id。
+ * LLM 生成的 JSON 常省略 id（仅 name/fields），缺失 id 会导致 React Flow
+ * 节点无法定位（"Handle: No node id found"）与关系引用失效。
+ */
+function normalizeModel(raw: any): DataModel {
+  const used = new Set<string>()
+  const uniqueId = (prefix: string, existing?: string): string => {
+    let id = existing && !used.has(existing) ? existing : createId(prefix)
+    while (used.has(id)) id = createId(prefix)
+    used.add(id)
+    return id
+  }
+
+  const tables: Table[] = (Array.isArray(raw?.tables) ? raw.tables : []).map((t: any) => {
+    const tableId = uniqueId('tbl', t?.id)
+    const fields: Field[] = (Array.isArray(t?.fields) ? t.fields : []).map((f: any) => ({
+      id: uniqueId('fld', f?.id),
+      name: f?.name ?? 'new_field',
+      type: f?.type ?? 'varchar',
+      typeLength: f?.typeLength ?? null,
+      precision: f?.precision ?? null,
+      scale: f?.scale ?? null,
+      primaryKey: !!f?.primaryKey,
+      unique: !!f?.unique,
+      nullable: f?.nullable ?? true,
+      autoIncrement: !!f?.autoIncrement,
+      defaultValue: f?.defaultValue ?? null,
+      comment: f?.comment ?? null,
+      enumTypeId: f?.enumTypeId ?? null,
+      createdAt: f?.createdAt ?? Date.now()
+    }))
+    return {
+      id: tableId,
+      name: t?.name ?? 'new_table',
+      schema: t?.schema ?? null,
+      fields,
+      x: t?.x ?? 0,
+      y: t?.y ?? 0,
+      width: t?.width ?? 260,
+      color: t?.color ?? '#71717a',
+      comment: t?.comment ?? null,
+      isView: !!t?.isView,
+      expanded: t?.expanded ?? true,
+      createdAt: t?.createdAt ?? Date.now()
+    }
+  })
+
+  const relationships: Relationship[] = (Array.isArray(raw?.relationships) ? raw.relationships : []).map((r: any) => {
+    const sTable = tables.find((t) => t.id === r?.sourceTableId || t.name.toLowerCase() === (r?.sourceTableName ?? '').toLowerCase())
+    const tTable = tables.find((t) => t.id === r?.targetTableId || t.name.toLowerCase() === (r?.targetTableName ?? '').toLowerCase())
+    const sf = sTable?.fields.find((f) => f.id === r?.sourceFieldId || f.name.toLowerCase() === (r?.sourceFieldName ?? '').toLowerCase())
+    const tf = tTable?.fields.find((f) => f.id === r?.targetFieldId || f.name.toLowerCase() === (r?.targetFieldName ?? '').toLowerCase())
+    return {
+      id: uniqueId('rel', r?.id),
+      name: r?.name ?? null,
+      sourceTableId: sTable?.id ?? '',
+      sourceFieldId: sf?.id ?? '',
+      targetTableId: tTable?.id ?? '',
+      targetFieldId: tf?.id ?? '',
+      sourceCardinality: (r?.sourceCardinality === 'many' ? 'many' : 'one') as Cardinality,
+      targetCardinality: (r?.targetCardinality === 'many' ? 'many' : 'one') as Cardinality,
+      createdAt: r?.createdAt ?? Date.now()
+    }
+  })
+
+  const enums: EnumType[] = (Array.isArray(raw?.enums) ? raw.enums : []).map((e: any) => ({
+    id: uniqueId('enum', e?.id),
+    name: e?.name ?? 'new_enum',
+    values: (Array.isArray(e?.values) ? e.values : []).map((v: any) => ({
+      id: uniqueId('enumv', v?.id),
+      name: v?.name ?? '',
+      comment: v?.comment ?? null
+    })),
+    createdAt: e?.createdAt ?? Date.now()
+  }))
+
+  const indexes: Index[] = (Array.isArray(raw?.indexes) ? raw.indexes : []).map((ix: any) => {
+    const table = tables.find((t) => t.id === ix?.tableId || t.name.toLowerCase() === (ix?.tableName ?? '').toLowerCase())
+    const fieldIds = (Array.isArray(ix?.fieldIds) ? ix.fieldIds : [])
+      .map((fid: string) => {
+        const f = table?.fields.find((f) => f.id === fid || f.name.toLowerCase() === String(fid).toLowerCase())
+        return f?.id
+      })
+      .filter((id: string | undefined): id is string => !!id)
+    return {
+      id: uniqueId('idx', ix?.id),
+      name: ix?.name ?? '',
+      tableId: table?.id ?? '',
+      fieldIds,
+      unique: !!ix?.unique,
+      type: ix?.type ?? 'btree',
+      createdAt: ix?.createdAt ?? Date.now()
+    }
+  })
+
+  return {
+    id: raw?.id ?? createId('dm'),
+    name: raw?.name ?? '未命名数据模型',
+    databaseType: raw?.databaseType ?? 'generic',
+    tables,
+    relationships,
+    indexes,
+    enums,
+    sourceDocumentId: raw?.sourceDocumentId ?? null,
+    createdAt: raw?.createdAt ?? Date.now(),
+    updatedAt: Date.now()
+  }
+}
+
 // ============ 读取：轻量元信息 ============
 
 const getModelMetaTool: ToolDef = {
@@ -120,14 +230,12 @@ const setModelJsonTool: ToolDef = {
       return { model, result: err('model 参数无效：缺少 tables 数组') }
     }
     if (args.mode === 'merge') return mergeModel(model, incoming)
+    const normalized = normalizeModel(incoming)
     const replaced: DataModel = {
-      ...incoming,
+      ...normalized,
       id: model.id,
-      name: incoming.name ?? model.name,
-      databaseType: incoming.databaseType ?? model.databaseType,
-      relationships: incoming.relationships ?? [],
-      indexes: incoming.indexes ?? [],
-      enums: incoming.enums ?? [],
+      name: normalized.name ?? model.name,
+      databaseType: normalized.databaseType ?? model.databaseType,
       updatedAt: Date.now()
     }
     return { model: replaced, result: ok({ mode: 'replace', tables: replaced.tables.length, relationships: replaced.relationships.length }, `已用 JSON 替换模型：${replaced.tables.length} 表 / ${replaced.relationships.length} 关系`) }
@@ -460,16 +568,17 @@ const importModelFileTool: ToolDef = {
 // ============ 合并逻辑（按表名去重并入） ============
 
 function mergeModel(model: DataModel, incoming: DataModel): ToolExecResult {
+  const normalized = normalizeModel(incoming)
   const existingNames = new Set(model.tables.map((t) => t.name.toLowerCase()))
-  const newTables = incoming.tables.filter((t) => !existingNames.has(t.name.toLowerCase()))
+  const newTables = normalized.tables.filter((t) => !existingNames.has(t.name.toLowerCase()))
   const allTables = [...model.tables, ...newTables]
-  const incomingTableIdToName = new Map(incoming.tables.map((t) => [t.id, t.name.toLowerCase()]))
+  const incomingTableIdToName = new Map(normalized.tables.map((t) => [t.id, t.name.toLowerCase()]))
   const incomingFieldIdToName = new Map<string, string>()
-  for (const t of incoming.tables) {
+  for (const t of normalized.tables) {
     for (const f of t.fields) incomingFieldIdToName.set(`${t.id}:${f.id}`, f.name.toLowerCase())
   }
   const existingRelKeys = new Set(model.relationships.map((r) => `${r.sourceTableId}:${r.sourceFieldId}:${r.targetTableId}:${r.targetFieldId}`))
-  const newRels = incoming.relationships
+  const newRels = normalized.relationships
     .map((rel) => {
       const sName = incomingTableIdToName.get(rel.sourceTableId)
       const tName = incomingTableIdToName.get(rel.targetTableId)

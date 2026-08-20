@@ -1,7 +1,8 @@
 // 对话面板：复用宿主任务对话 UI（GenericChatView），消息状态由 store 维护（收起/展开不丢失）
 
 import { useEffect } from 'react'
-import { Select, Button } from 'antd'
+import { Select, Button, Tooltip } from 'antd'
+import { PlusOutlined } from '@ant-design/icons'
 import { useDataModelStore } from '../data-model.store'
 import { dm, getHostCapabilities, hostT } from '../store'
 
@@ -12,6 +13,7 @@ export function ChatPanel() {
   const providers = useDataModelStore((s) => s.providers)
   const conversationId = useDataModelStore((s) => s.conversationId)
   const chats = useDataModelStore((s) => s.chats)
+  const contextStats = useDataModelStore((s) => s.contextStats)
   const { sendMessage, cancelChat, newChat, loadChats, loadChatHistory, deleteChat, toggleSegment } = useDataModelStore.getState()
 
   const GenericChatView = getHostCapabilities()?.GenericChatView
@@ -23,13 +25,13 @@ export function ChatPanel() {
     return unsub
   }, [])
 
-  // 顶部自定义区：历史对话切换（模型选择已移至设置面板）
+  // 顶部自定义区：历史对话切换 + 新对话按钮（模型选择已移至设置面板）
   const header = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       {chats.length > 0 && (
         <Select
           size="small"
-          style={{ width: '100%' }}
+          style={{ flex: 1, minWidth: 0 }}
           placeholder={hostT('page.chatHistory')}
           value={conversationId ?? undefined}
           onChange={(id) => void loadChatHistory(id)}
@@ -55,6 +57,9 @@ export function ChatPanel() {
           )}
         />
       )}
+      <Tooltip title={hostT('chat.newChat')}>
+        <Button size="small" type="text" icon={<PlusOutlined />} onClick={newChat} />
+      </Tooltip>
     </div>
   )
 
@@ -70,11 +75,10 @@ export function ChatPanel() {
       conversationId={conversationId}
       providers={providers}
       placeholder={hostT('page.chatPlaceholder')}
-      title={hostT('page.chat')}
       header={header}
+      contextStats={contextStats}
       onSend={(text, images) => void sendMessage(text, images)}
       onStop={cancelChat}
-      onNewChat={newChat}
       onToggleSegment={toggleSegment}
     />
   )

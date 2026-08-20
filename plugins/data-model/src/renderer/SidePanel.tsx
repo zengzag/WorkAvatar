@@ -1,17 +1,19 @@
-// 左侧面板容器：根据图标栏选中视图渲染“数据模型”或“AI 对话”，支持展开/收起与宽度拖拽
+// 左侧面板容器：根据视图切换渲染“数据模型”或“AI 对话”，支持展开/收起与宽度拖拽
 
 import { useRef } from 'react'
-import { Button, Tooltip } from 'antd'
+import { Button, Segmented, Tooltip } from 'antd'
 import { LeftOutlined } from '@ant-design/icons'
 import { ExplorerPanel } from './ExplorerPanel'
 import { ChatPanel } from './chat/ChatPanel'
-import type { SidebarView } from './AppSidebar'
 import { hostT } from './store'
+
+export type SidebarView = 'explorer' | 'chat'
 
 interface Props {
   view: SidebarView
   collapsed: boolean
   width: number
+  onViewChange: (view: SidebarView) => void
   onToggleCollapsed: () => void
   onWidthChange: (width: number) => void
 }
@@ -19,7 +21,7 @@ interface Props {
 const MIN_WIDTH = 240
 const MAX_WIDTH = 560
 
-export function SidePanel({ view, collapsed, width, onToggleCollapsed, onWidthChange }: Props) {
+export function SidePanel({ view, collapsed, width, onViewChange, onToggleCollapsed, onWidthChange }: Props) {
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const startResize = (e: React.MouseEvent) => {
@@ -67,8 +69,18 @@ export function SidePanel({ view, collapsed, width, onToggleCollapsed, onWidthCh
           display: 'flex', flexDirection: 'column', minHeight: 0
         }}
       >
-        {/* 面板头部：收起按钮 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '4px 8px', borderBottom: '1px solid var(--dm-border)' }}>
+        {/* 面板头部：视图切换 + 收起按钮（同一行） */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--dm-border)' }}>
+          <Segmented
+            size="small"
+            value={view}
+            onChange={(v) => onViewChange(v as SidebarView)}
+            options={[
+              { value: 'explorer', label: hostT('explorer.title') },
+              { value: 'chat', label: hostT('page.chat') }
+            ]}
+          />
+          <div style={{ flex: 1 }} />
           <Tooltip title={hostT('page.collapsePanel')}>
             <Button size="small" type="text" icon={<LeftOutlined />} onClick={onToggleCollapsed} />
           </Tooltip>

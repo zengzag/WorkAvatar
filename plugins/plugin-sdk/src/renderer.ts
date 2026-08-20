@@ -68,6 +68,13 @@ export interface GenericChatViewMessage {
   isStreaming?: boolean
   isError?: boolean
   segments?: GenericChatViewSegment[]
+  /** token 用量（done 事件 metadata.tokenUsage），用于消息底部展示 */
+  tokenUsage?: {
+    promptTokens?: number
+    completionTokens?: number
+    totalTokens?: number
+    cachedTokens?: number
+  }
 }
 
 /** 通用对话视图 Props（受控组件：调用方维护消息与回调，宿主渲染任务风格对话 UI） */
@@ -94,6 +101,8 @@ export interface GenericChatViewProps {
   onToggleSegment?: (msgId: string, segId: string) => void
   /** 会话加载中（显示 loading 态） */
   loading?: boolean
+  /** 上下文用量统计（done 事件 metadata.contextStats），展示在最后一条助手消息底部 */
+  contextStats?: any
   style?: CSSProperties
 }
 

@@ -45,6 +45,13 @@ class ProjectStore {
         updated_at INTEGER NOT NULL
       )
     `)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS dm_messages (
+        conversation_id TEXT PRIMARY KEY,
+        messages_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
     this.migrateChatsSchema()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS plugin_kv (
@@ -137,6 +144,27 @@ class ProjectStore {
 
   deleteChat(conversationId: string): void {
     this.requireDb().prepare('DELETE FROM dm_chats WHERE conversation_id = ?').run(conversationId)
+    this.requireDb().prepare('DELETE FROM dm_messages WHERE conversation_id = ?').run(conversationId)
+  }
+
+  // ====== 数据模型对话消息（插件分库持久化，独立于宿主 conversations 表） ======
+
+  saveMessages(conversationId: string, msgs: unknown[]): void {
+    this.requireDb().prepare(
+      'INSERT INTO dm_messages (conversation_id, messages_json, updated_at) VALUES (?, ?, ?) ' +
+      'ON CONFLICT(conversation_id) DO UPDATE SET messages_json = excluded.messages_json, updated_at = excluded.updated_at'
+    ).run(conversationId, JSON.stringify(msgs), Date.now())
+  }
+
+  getMessages(conversationId: string): unknown[] {
+    const row = this.requireDb().prepare('SELECT messages_json FROM dm_messages WHERE conversation_id = ?').get(conversationId) as { messages_json: string } | undefined
+    if (!row) return []
+    try {
+      const arr = JSON.parse(row.messages_json)
+      return Array.isArray(arr) ? arr : []
+    } catch {
+      return []
+    }
   }
 
   // ====== 插件设置 ======
