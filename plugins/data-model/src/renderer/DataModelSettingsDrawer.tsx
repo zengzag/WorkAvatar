@@ -11,7 +11,6 @@ interface Props {
 }
 
 export function DataModelSettingsDrawer({ open, onClose }: Props) {
-  const employees = useDataModelStore((s) => s.employees)
   const providers = useDataModelStore((s) => s.providers)
   const settings = useDataModelStore((s) => s.settings)
   const dataDir = useDataModelStore((s) => s.dataDir)
@@ -32,21 +31,6 @@ export function DataModelSettingsDrawer({ open, onClose }: Props) {
       width={420}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{hostT('settings.defaultEmployee')}</div>
-          <Select
-            style={{ width: '100%' }}
-            placeholder={hostT('page.selectEmployee')}
-            value={settings.defaultEmployeeId}
-            onChange={(v) => void saveSettings({ defaultEmployeeId: v })}
-            options={employees.map((e) => ({ value: e.id, label: e.name }))}
-            allowClear
-          />
-          <div style={{ fontSize: 12, color: 'var(--dm-muted)', marginTop: 4 }}>{hostT('settings.defaultEmployeeDesc')}</div>
-        </div>
-
-        <Divider style={{ margin: '4px 0' }} />
-
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{hostT('settings.defaultModel')}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

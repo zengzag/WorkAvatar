@@ -2,7 +2,7 @@
  * 插件渲染端入口契约（dist/renderer/index.js，ESM default export）。
  * 宿主启动时经 plugin:// 协议动态 import，注册路由/导航后挂载路由表。
  */
-import type { ComponentType } from 'react'
+import type { ComponentType, CSSProperties, ReactNode } from 'react'
 import type { PluginViewPoint } from './manifest'
 
 export interface PluginRouteDefinition {
@@ -29,6 +29,70 @@ export interface PluginBridge {
    * 回调仅收到匹配 event 名的 payload（宿主已按 event 过滤）。
    */
   onEvent(event: string, callback: (payload: unknown) => void): () => void
+}
+
+/**
+ * 通用对话消息段（工具调用/思考/回答）——与宿主任务对话 UI 的消息结构兼容。
+ * 插件复用宿主 GenericChatView 渲染时，需以该结构维护消息状态。
+ */
+export interface GenericChatViewSegment {
+  type: 'thinking' | 'answer' | 'tool_call'
+  id: string
+  timestamp?: number
+  completedAt?: number
+  content?: string
+  isStreaming?: boolean
+  collapsed?: boolean
+  toolName?: string
+  toolArgs?: any
+  toolResult?: any
+  isToolComplete?: boolean
+  toolCallId?: string
+  toolError?: string
+  /** LLM 正在流式生成工具参数（arguments JSON 尚未完成） */
+  isToolArgsStreaming?: boolean
+  /** 流式生成中的原始参数文本（JSON 增量，可能不完整） */
+  toolArgsRaw?: string
+  /** 工具执行中间进度步骤（仅UI展示） */
+  toolProgress?: any[]
+}
+
+/** 通用对话消息（与宿主 MessageWithThought 兼容的最小结构） */
+export interface GenericChatViewMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp?: number
+  thought?: string
+  images?: string[]
+  isStreaming?: boolean
+  isError?: boolean
+  segments?: GenericChatViewSegment[]
+}
+
+/** 通用对话视图 Props（受控组件：调用方维护消息与回调，宿主渲染任务风格对话 UI） */
+export interface GenericChatViewProps {
+  messages: GenericChatViewMessage[]
+  isStreaming: boolean
+  chatError?: string | null
+  conversationId?: string | null
+  /** 底部输入框 placeholder */
+  placeholder?: string
+  /** 顶部栏标题 */
+  title?: string
+  /** 模型供应商列表（驱动消息模型标签与输入框模型选择器） */
+  providers?: any[]
+  /** 顶部栏与标题之间的自定义区（如 provider/model/历史选择器） */
+  header?: ReactNode
+  /** 发送消息（content 为纯文本，images 为可选的 dataUrl 列表） */
+  onSend: (content: string, images?: string[]) => void
+  /** 停止生成 */
+  onStop: () => void
+  onNewChat?: () => void
+  onClose?: () => void
+  /** 会话加载中（显示 loading 态） */
+  loading?: boolean
+  style?: CSSProperties
 }
 
 /**
@@ -60,6 +124,8 @@ export interface PluginHostCapabilities {
   getLocale(): string
   /** 订阅语言切换，返回取消订阅函数 */
   onLocaleChange(callback: (locale: string) => void): () => void
+  /** 通用对话视图组件（复用宿主任务对话 UI 样式，插件在页面内直接渲染） */
+  GenericChatView?: ComponentType<GenericChatViewProps>
 }
 
 export interface PluginRendererHost {

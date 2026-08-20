@@ -8,6 +8,7 @@ import i18n from '../i18n'
 import { useNavConfigStore } from '../stores/nav.store'
 import { useAppearanceStore, getEffectiveTheme } from '../stores/appearance.store'
 import { registerPluginViews } from './view-slot'
+import { GenericChatView } from '../components/workbench'
 import type {
   PluginBridge,
   PluginRendererEntry,
@@ -170,6 +171,8 @@ export async function loadPlugins(): Promise<LoadedPlugin[]> {
             }
           })
         },
+        // 通用对话视图：复用宿主任务对话 UI，插件页面可直接渲染
+        GenericChatView,
       }
 
       const host: PluginRendererHost = {

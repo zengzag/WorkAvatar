@@ -292,7 +292,9 @@ const ChatInput: React.FC<{
   enableThinking?: ThinkingLevel
   onThinkingChange?: (level: ThinkingLevel) => void
   isCompacting?: boolean
-}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting }) => {
+  /** 隐藏高级工具栏（高权限/模型对比/资料库/极简模式/技能下拉），用于轻量对话视图 */
+  hideToolbar?: boolean
+}> = ({ onSend, onStop, isStreaming, placeholder, providers, attachedImages, onImagesChange, selectedModels, onModelsChange, selectedCollectionIds, onSelectedCollectionIdsChange, allCollections, minimalMode, onMinimalModeChange, canToggleMinimalMode, conversationId, getInitialDraft, onDraftChange, availableSkills, centerMode, showEmployeeSelector, employees, selectedEmployeeId, onSelectEmployee, defaultProviderId, defaultModelId, onDefaultModelChange, enableThinking, onThinkingChange, isCompacting, hideToolbar }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1399,15 +1401,17 @@ const ChatInput: React.FC<{
           <PluginViewSlot view="chat.quick" />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
-                <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
-                  onClick={() => setHighPermission(!highPermission)}
-                  style={{
-                    color: highPermission ? token.colorWarning : token.colorTextQuaternary,
-                    padding: '0 2px', height: 20, minWidth: 20,
-                    background: highPermission ? token.colorWarningBg : 'transparent',
-                  }} />
-              </Tooltip>
+              {!hideToolbar && (
+                <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
+                  <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
+                    onClick={() => setHighPermission(!highPermission)}
+                    style={{
+                      color: highPermission ? token.colorWarning : token.colorTextQuaternary,
+                      padding: '0 2px', height: 20, minWidth: 20,
+                      background: highPermission ? token.colorWarningBg : 'transparent',
+                    }} />
+                </Tooltip>
+              )}
               {/* 统一的上传文件按钮（图片 + 普通文件二合一，按类型分流） */}
               <Tooltip title={t('workbench.attachFile', { defaultValue: '上传文件' })}>
                 <Button type="text" size="small" icon={<PaperClipOutlined style={{ fontSize: 12 }} />}
@@ -1416,46 +1420,50 @@ const ChatInput: React.FC<{
               </Tooltip>
               {/* 插件视图注入点：对话输入框工具栏 */}
               <PluginViewSlot view="chat.toolbar" />
-              <Popover
-                content={modelPickerContent}
-                trigger="click"
-                placement="topLeft"
-                arrow={false}
-                styles={{ container: { padding: 8 } }}
-                onOpenChange={(open) => {
-                  setShowModelPicker(open)
-                  if (open) setModelSearchText('')
-                }}
-                open={showModelPicker}
-              >
-                <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
-                  style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
-                  title={t('workbench.compareModels')} />
-              </Popover>
-              <Popover
-                content={collectionPickerContent}
-                trigger="click"
-                placement="topLeft"
-                arrow={false}
-                styles={{ container: { padding: 8 } }}
-                onOpenChange={setShowKbPicker}
-                open={showKbPicker}
-              >
-                <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
-                  style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
-                  title={t('workbench.knowledgeBase')} />
-              </Popover>
-              <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
-                <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
-                  onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
-                  style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
-              </Tooltip>
-              <Tooltip title={t('workbench.selectSkillToExecute')}>
-                <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
-                  <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
-                    style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
-                </Dropdown>
-              </Tooltip>
+              {!hideToolbar && (
+                <>
+                  <Popover
+                    content={modelPickerContent}
+                    trigger="click"
+                    placement="topLeft"
+                    arrow={false}
+                    styles={{ container: { padding: 8 } }}
+                    onOpenChange={(open) => {
+                      setShowModelPicker(open)
+                      if (open) setModelSearchText('')
+                    }}
+                    open={showModelPicker}
+                  >
+                    <Button type="text" size="small" icon={<SwapOutlined style={{ fontSize: 12 }} />}
+                      style={{ color: selectedModels.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      title={t('workbench.compareModels')} />
+                  </Popover>
+                  <Popover
+                    content={collectionPickerContent}
+                    trigger="click"
+                    placement="topLeft"
+                    arrow={false}
+                    styles={{ container: { padding: 8 } }}
+                    onOpenChange={setShowKbPicker}
+                    open={showKbPicker}
+                  >
+                    <Button type="text" size="small" icon={<DatabaseOutlined style={{ fontSize: 12 }} />}
+                      style={{ color: selectedCollectionIds.length > 0 ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }}
+                      title={t('workbench.knowledgeBase')} />
+                  </Popover>
+                  <Tooltip title={canToggleMinimalMode ? t('workbench.minimalModeTooltip') : t('workbench.minimalModeDisabledTooltip')}>
+                    <Button type="text" size="small" icon={<ThunderboltOutlined style={{ fontSize: 12 }} />}
+                      onClick={() => { if (canToggleMinimalMode) onMinimalModeChange(!minimalMode) }}
+                      style={{ color: minimalMode ? token.colorPrimary : token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20, opacity: canToggleMinimalMode ? 1 : 0.4, cursor: canToggleMinimalMode ? 'pointer' : 'not-allowed' }} />
+                  </Tooltip>
+                  <Tooltip title={t('workbench.selectSkillToExecute')}>
+                    <Dropdown menu={{ items: slashCommands.map(cmd => ({ key: cmd.key, label: <Text strong style={{ fontSize: 12 }}>{cmd.label}</Text>, onClick: () => handleSlashSelect(cmd) })) }} trigger={['click']}>
+                      <Button type="text" size="small" icon={<CompressOutlined style={{ fontSize: 12 }} />}
+                        style={{ color: token.colorTextQuaternary, padding: '0 2px', height: 20, minWidth: 20 }} />
+                    </Dropdown>
+                  </Tooltip>
+                </>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               {onDefaultModelChange && (

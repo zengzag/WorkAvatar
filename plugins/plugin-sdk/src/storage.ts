@@ -20,7 +20,8 @@ export interface PluginDatabase {
   /** 注册自定义 SQL 函数（FTS5 分词等场景） */
   function(name: string, fn: (...args: unknown[]) => unknown): void
   pragma(source: string): unknown
-  transaction<T>(fn: () => T): T
+  /** 事务：返回可调用的事务函数（调用时执行，失败自动回滚） */
+  transaction<T>(fn: () => T): () => T
   close(): void
 }
 

@@ -96,14 +96,7 @@ function registerIpc(ctx: PluginContext): void {
     return { dbml: exportDbml(model) }
   })
 
-  // ====== 员工 / 供应商（复用宿主数据能力） ======
-  ctx.ipc.handle('employees-list', async () => {
-    const data = ctx.services.data
-    if (!data) return []
-    const employees = await data.query('employees')
-    return employees
-  })
-
+  // ====== 供应商（复用宿主数据能力） ======
   ctx.ipc.handle('providers-list', async () => {
     const data = ctx.services.data
     if (!data) return []
@@ -164,12 +157,11 @@ function registerIpc(ctx: PluginContext): void {
     }
   })
 
-  // ====== 对话（复用宿主 agent） ======
+  // ====== 对话（复用宿主通用对话引擎，不绑定员工） ======
   ctx.ipc.handle('chat-send', async (payload: any, signal?: AbortSignal) => {
     const execute = ctx.services.execute
     if (!execute) return { error: '宿主未提供 execute 能力' }
-    const { employeeId, providerId, modelId, messages, conversationId } = payload ?? {}
-    if (!employeeId) return { error: '缺少 employeeId' }
+    const { providerId, modelId, messages, conversationId } = payload ?? {}
     if (!messages || messages.length === 0) return { error: '缺少 messages' }
 
     // 解析 provider：显式传入 > 插件默认 > 宿主默认 provider > 首个 provider
@@ -222,12 +214,12 @@ function registerIpc(ctx: PluginContext): void {
       const result = await execute.execute(
         {
           kind: 'agent-chat',
-          employeeId,
           providerId: resolvedProviderId,
           modelId: resolvedModelId,
           messages,
           conversationId,
           system: DATA_MODEL_SYSTEM_PROMPT,
+          tools: createDataModelAgentTools(),
           useSkills: false,
           enableThinking: true,
           minimalMode: false,
@@ -237,6 +229,9 @@ function registerIpc(ctx: PluginContext): void {
           onChunk: (text) => { acc += text; broadcast('chat-event', { type: 'chunk', text }) },
           onThought: (thoughtChunk) => { thought += thoughtChunk; broadcast('chat-event', { type: 'thought', thought: thoughtChunk }) },
           onToolCall: (tc) => broadcast('chat-event', { type: 'tool-call', toolCall: tc }),
+          onToolCallDelta: (delta) => broadcast('chat-event', { type: 'tool-call-delta', delta }),
+          onToolResult: (tr) => broadcast('chat-event', { type: 'tool-result', ...tr }),
+          onToolProgress: (p) => broadcast('chat-event', { type: 'tool-progress', ...p }),
           onDone: (metadata) => broadcast('chat-event', { type: 'done', metadata }),
           onError: (error) => {
             errText = error
@@ -259,7 +254,7 @@ function registerIpc(ctx: PluginContext): void {
         await persist(lastConvId, [...(hasUser ? existing : [...existing, userMsg]), assistantMsg])
         // 记录数据模型对话（供历史列表）
         const title = lastMsg?.content?.slice(0, 40) || '数据模型对话'
-        projectStore.saveChat({ conversationId: lastConvId, employeeId, title, updatedAt: Date.now() })
+        projectStore.saveChat({ conversationId: lastConvId, title, updatedAt: Date.now() })
         broadcast('chats-changed', { ts: Date.now() })
       }
       return { conversationId: lastConvId } as { conversationId: string }
@@ -268,8 +263,8 @@ function registerIpc(ctx: PluginContext): void {
     }
   })
 
-  ctx.ipc.handle('chats-list', (payload: any) => {
-    return projectStore.listChats(payload?.employeeId)
+  ctx.ipc.handle('chats-list', () => {
+    return projectStore.listChats()
   })
 
   ctx.ipc.handle('chat-delete', (payload: any) => {
@@ -312,15 +307,12 @@ export function activate(ctx: PluginContext): void {
   registerIpc(ctx)
   ctx.contributions.registerAgentTools(createDataModelAgentTools())
 
-  // 订阅员工/模型变更事件，通知渲染端刷新下拉选项
+  // 订阅模型变更事件，通知渲染端刷新下拉选项
   const events = ctx.services.events
   if (events) {
-    const subscribe = (event: string, scope: 'employees' | 'providers') => {
+    const subscribe = (event: string, scope: 'providers') => {
       unsubscribeEvents.push(events.subscribe(event, () => broadcast('meta-changed', { scope, ts: Date.now() })))
     }
-    subscribe('employee:created', 'employees')
-    subscribe('employee:updated', 'employees')
-    subscribe('employee:deleted', 'employees')
     subscribe('model:renamed', 'providers')
     subscribe('provider:changed', 'providers')
   }

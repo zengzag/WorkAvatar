@@ -41,7 +41,7 @@ describe('data-model 插件 activate', () => {
     const channels = ['project-list', 'project-create', 'project-open', 'project-delete', 'project-save',
       'project-export-file', 'project-import-file',
       'model-get', 'model-sync', 'dbml-import', 'dbml-export',
-      'employees-list', 'providers-list',
+      'providers-list',
       'settings-get', 'settings-set', 'data-dir', 'data-dir-open',
       'chat-send', 'chat-cancel', 'chat-history', 'chats-list', 'chat-delete']
     for (const c of channels) {
@@ -208,7 +208,7 @@ describe('data-model 插件 IPC handler', () => {
     mock.services.data!.mutate = vi.fn(async () => ({})) as any
 
     const handler = mock.ipc.handlers.get('chat-send')!
-    const res = await handler({ employeeId: 'e1', providerId: 'p1', messages: [{ role: 'user', content: '建表' }] })
+    const res = await handler({ providerId: 'p1', messages: [{ role: 'user', content: '建表' }] })
     expect(res).toEqual({ conversationId: 'conv-1' })
     // 记录到 dm_chats
     const list = mock.ipc.handlers.get('chats-list')!
@@ -228,7 +228,7 @@ describe('data-model 插件 IPC handler', () => {
     mock.services.data!.mutate = vi.fn(async () => ({})) as any
 
     const send = mock.ipc.handlers.get('chat-send')!
-    await send({ employeeId: 'e1', providerId: 'p1', messages: [{ role: 'user', content: 'x' }] })
+    await send({ providerId: 'p1', messages: [{ role: 'user', content: 'x' }] })
 
     const del = mock.ipc.handlers.get('chat-delete')!
     const res = await del({ conversationId: 'conv-2' })
@@ -240,11 +240,11 @@ describe('data-model 插件 IPC handler', () => {
 
   it('settings-set 保存 / settings-get 读取', async () => {
     const set = mock.ipc.handlers.get('settings-set')!
-    await set({ settings: { defaultEmployeeId: 'e1', defaultProviderId: 'p1' } })
+    await set({ settings: { defaultProviderId: 'p1', defaultModelId: 'm1' } })
     const get = mock.ipc.handlers.get('settings-get')!
     const res = await get() as { settings: any }
-    expect(res.settings.defaultEmployeeId).toBe('e1')
     expect(res.settings.defaultProviderId).toBe('p1')
+    expect(res.settings.defaultModelId).toBe('m1')
   })
 
   it('data-dir 返回插件数据目录', async () => {
@@ -266,7 +266,7 @@ describe('data-model 插件 IPC handler', () => {
     }) as any
 
     const handler = mock.ipc.handlers.get('chat-send')!
-    const res = await handler({ employeeId: 'e1', messages: [{ role: 'user', content: 'x' }] })
+    const res = await handler({ messages: [{ role: 'user', content: 'x' }] })
     expect(res).toEqual({ conversationId: 'conv-3' })
     // 应使用默认 provider
     expect(mock.services.execute!.execute).toHaveBeenCalledWith(

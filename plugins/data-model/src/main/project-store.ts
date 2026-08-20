@@ -13,13 +13,11 @@ export interface ProjectRecord {
 
 export interface ChatRecord {
   conversationId: string
-  employeeId: string
   title: string
   updatedAt: number
 }
 
 export interface DataModelSettings {
-  defaultEmployeeId?: string
   defaultProviderId?: string
   defaultModelId?: string
 }
@@ -42,17 +40,43 @@ class ProjectStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS dm_chats (
         conversation_id TEXT PRIMARY KEY,
-        employee_id TEXT NOT NULL,
+        employee_id TEXT,
         title TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       )
     `)
+    this.migrateChatsSchema()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS plugin_kv (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       )
     `)
+  }
+
+  /**
+   * 兼容旧库迁移：旧版 dm_chats.employee_id 为 NOT NULL，但通用对话不再绑定员工
+   * （saveChat 写入 NULL）。CREATE TABLE IF NOT EXISTS 不迁移已有表，需重建去约束。
+   */
+  private migrateChatsSchema(): void {
+    const db = this.requireDb()
+    const cols = db.prepare('PRAGMA table_info(dm_chats)').all() as Array<{ name: string; notnull: number }>
+    const employeeId = cols.find((c) => c.name === 'employee_id')
+    if (!employeeId || employeeId.notnull === 0) return
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE dm_chats_new (
+          conversation_id TEXT PRIMARY KEY,
+          employee_id TEXT,
+          title TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO dm_chats_new (conversation_id, employee_id, title, updated_at)
+          SELECT conversation_id, employee_id, title, updated_at FROM dm_chats;
+        DROP TABLE dm_chats;
+        ALTER TABLE dm_chats_new RENAME TO dm_chats;
+      `)
+    })()
   }
 
   private requireDb(): PluginDatabase {
@@ -97,18 +121,15 @@ class ProjectStore {
 
   saveChat(chat: ChatRecord): void {
     this.requireDb().prepare(
-      'INSERT INTO dm_chats (conversation_id, employee_id, title, updated_at) VALUES (?, ?, ?, ?) ' +
-      'ON CONFLICT(conversation_id) DO UPDATE SET employee_id = excluded.employee_id, title = excluded.title, updated_at = excluded.updated_at'
-    ).run(chat.conversationId, chat.employeeId, chat.title, Date.now())
+      'INSERT INTO dm_chats (conversation_id, employee_id, title, updated_at) VALUES (?, NULL, ?, ?) ' +
+      'ON CONFLICT(conversation_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at'
+    ).run(chat.conversationId, chat.title, Date.now())
   }
 
-  listChats(employeeId?: string): ChatRecord[] {
-    const rows = (employeeId
-      ? this.requireDb().prepare('SELECT conversation_id, employee_id, title, updated_at FROM dm_chats WHERE employee_id = ? ORDER BY updated_at DESC').all(employeeId)
-      : this.requireDb().prepare('SELECT conversation_id, employee_id, title, updated_at FROM dm_chats ORDER BY updated_at DESC').all()) as any[]
+  listChats(): ChatRecord[] {
+    const rows = this.requireDb().prepare('SELECT conversation_id, title, updated_at FROM dm_chats ORDER BY updated_at DESC').all() as any[]
     return rows.map((r) => ({
       conversationId: r.conversation_id,
-      employeeId: r.employee_id,
       title: r.title,
       updatedAt: r.updated_at
     }))

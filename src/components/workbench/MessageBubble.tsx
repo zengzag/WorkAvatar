@@ -187,7 +187,9 @@ const MessageBubble: React.FC<{
   contextStats?: any
   isCompacting?: boolean
   onCompact?: () => void
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact }) => {
+  /** 隐藏消息操作按钮（重生成/切换模型/删除/编辑等），用于不支持这些能力的轻量对话视图 */
+  hideMessageActions?: boolean
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -375,12 +377,16 @@ const MessageBubble: React.FC<{
                   <Button type="text" size="small" icon={<CopyOutlined style={{ fontSize: 12 }} />}
                     onClick={() => onCopy(msg.content)} />
                 )}
-                <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
-                  onClick={handleStartEdit} title={t('workbench.editMessage')} />
-                <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
-                  okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                  <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
-                </Popconfirm>
+                {!hideMessageActions && (
+                  <>
+                    <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 12 }} />}
+                      onClick={handleStartEdit} title={t('workbench.editMessage')} />
+                    <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
+                      okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                    </Popconfirm>
+                  </>
+                )}
               </Space>
             )}
           </div>
@@ -444,7 +450,7 @@ const MessageBubble: React.FC<{
 
             {!displayIsStreaming && (
               <Space size={4} style={{ marginTop: 2, marginLeft: 2 }}>
-                {hasBranches && (
+                {!hideMessageActions && hasBranches && (
                   <div
                     style={{
                       display: 'inline-flex',
@@ -495,16 +501,20 @@ const MessageBubble: React.FC<{
                   ))}
                 {/* 插件视图注入点：消息气泡操作区 */}
                 <PluginViewSlot view="message.bubble" context={{ role: msg.role, content: displayContent, messageId: msg.id }} />
-                <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
-                  onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />
-                <ModelSwitchPopover
-                  providers={providers}
-                  onSelect={(providerId, modelId) => onSwitchModelRegenerate(msg.id, providerId, modelId)}
-                />
-                <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
-                  okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                  <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
-                </Popconfirm>
+                {!hideMessageActions && (
+                  <>
+                    <Button type="text" size="small" icon={<ReloadOutlined style={{ fontSize: 12 }} />}
+                      onClick={() => onRegenerate(msg.id)} title={t('workbench.regenerate')} />
+                    <ModelSwitchPopover
+                      providers={providers}
+                      onSelect={(providerId, modelId) => onSwitchModelRegenerate(msg.id, providerId, modelId)}
+                    />
+                    <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
+                      okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
+                    </Popconfirm>
+                  </>
+                )}
               </Space>
             )}
             {!displayIsStreaming && (

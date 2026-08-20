@@ -617,6 +617,53 @@ class PluginHostService {
           return { conversationId, text: resultText }
         },
         runAgentChat: async (params, callbacks, signal) => {
+          // 通用模式：不传 employeeId，走通用对话引擎（不绑定员工，自定义 system + tools）
+          if (!params.employeeId) {
+            const GenericChatService = require('../generic-chat.service').default
+            const genericChat = GenericChatService.getInstance()
+            // 会话 id：复用传入或新建（通用对话不进入任务列表，conversationId 由调用方管理）
+            let conversationId = params.conversationId
+            if (!conversationId) {
+              conversationId = `generic_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            }
+            const tools = (params.tools || []).map((t: any) => ({
+              ...t,
+              source: 'plugin' as const,
+              permission: t.permission as any,
+              handler: (args: any, context: any) => t.handler(args, {
+                ...(context || {}),
+                employeeId: null,
+              }),
+            }))
+            await genericChat.chatStream(
+              {
+                providerId: params.providerId,
+                modelId: params.modelId,
+                systemPrompt: params.system,
+                tools,
+                useSkills: params.useSkills ?? false,
+                enableThinking: params.enableThinking ? 'high' : false,
+                minimalMode: params.minimalMode ?? false,
+                conversationId,
+                // LLM 调用日志按插件名/会话分文件，便于定位
+                logName: pluginId,
+              },
+              params.messages,
+              {
+                onChunk: (text: string) => callbacks?.onChunk?.(text),
+                onThought: (thought: string) => callbacks?.onThought?.(thought),
+                onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args }),
+                onToolCallDelta: (delta: any) => callbacks?.onToolCallDelta?.(delta),
+                onToolResult: (tr: any) => callbacks?.onToolResult?.(tr),
+                onToolProgress: (p: any) => callbacks?.onToolProgress?.(p),
+                onDone: (metadata?: any) => callbacks?.onDone?.(metadata),
+                onError: (err: string) => callbacks?.onError?.(err),
+              },
+              signal,
+            )
+            return { conversationId }
+          }
+
           const employeeAgent = EmployeeAgentService.getInstance()
           // 会话 id 必须为字符串：复用传入或新建（ExecuteDeps 契约要求返回 { conversationId: string }）
           let conversationId: string
@@ -643,6 +690,9 @@ class PluginHostService {
               onChunk: (text: string) => callbacks?.onChunk?.(text),
               onThought: (thought: string) => callbacks?.onThought?.(thought),
               onToolCall: (tc: any) => callbacks?.onToolCall?.({ id: tc.id, name: tc.name, arguments: tc.args }),
+              onToolCallDelta: (delta: any) => callbacks?.onToolCallDelta?.(delta),
+              onToolResult: (tr: any) => callbacks?.onToolResult?.(tr),
+              onToolProgress: (p: any) => callbacks?.onToolProgress?.(p),
               onDone: (metadata?: any) => callbacks?.onDone?.(metadata),
               onError: (err: string) => callbacks?.onError?.(err),
             },

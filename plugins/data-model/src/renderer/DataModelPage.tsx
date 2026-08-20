@@ -21,7 +21,7 @@ export function DataModelPage() {
   const projects = useDataModelStore((s) => s.projects)
   const selectedTableId = useDataModelStore((s) => s.selectedTableId)
   const selectedRelationshipId = useDataModelStore((s) => s.selectedRelationshipId)
-  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadEmployees, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
+  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
   const { message } = App.useApp()
 
   const [showInspector, setShowInspector] = useState(true)
@@ -63,7 +63,6 @@ export function DataModelPage() {
       await loadSettings()
       await loadDataDir()
       await loadProjects()
-      await loadEmployees()
       await loadProviders()
     })()
   }, [])
@@ -76,11 +75,10 @@ export function DataModelPage() {
     return unsub
   }, [])
 
-  // 订阅员工/模型变更（主进程广播），刷新下拉选项
+  // 订阅模型变更（主进程广播），刷新下拉选项
   useEffect(() => {
     const unsub = dm.onMetaChanged(({ scope }) => {
-      if (scope === 'employees') void loadEmployees()
-      else void loadProviders()
+      if (scope === 'providers') void loadProviders()
     })
     return unsub
   }, [])

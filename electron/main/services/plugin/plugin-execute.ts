@@ -20,19 +20,22 @@ export interface ExecuteDeps {
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
   ): Promise<{ conversationId?: string; text: string }>
-  /** 底层对话流式执行（agent-chat），返回会话 id（新建或复用） */
+  /** 底层对话流式执行（agent-chat），返回会话 id（新建或复用）。
+   *  员工模式：传 employeeId，走员工 agent（员工 rules/工具/记忆/工作区）。
+   *  通用模式：不传 employeeId，传 system + tools，走通用对话引擎（不绑定员工）。 */
   runAgentChat(
     params: {
-      employeeId: string
+      employeeId?: string
       providerId: string
       modelId?: string
-      messages: Array<{ role: string; content: string }>
+      messages: Array<{ role: string; content: string; images?: string[] }>
       conversationId?: string
       useSkills?: boolean
       enableThinking?: boolean
       minimalMode?: boolean
       highPermission?: boolean
       system?: string
+      tools?: any[]
     },
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
@@ -81,9 +84,10 @@ export function createExecuteService(deps: ExecuteDeps) {
           return result as T
         }
         case 'agent-chat': {
-          if (!request.employeeId) throw new Error('agent-chat 需要 employeeId')
           if (!request.providerId) throw new Error('agent-chat 需要 providerId')
           if (!request.messages || request.messages.length === 0) throw new Error('agent-chat 需要 messages')
+          // 通用模式：不传 employeeId，传 system + tools（不绑定员工）
+          if (!request.employeeId && !request.system) throw new Error('agent-chat 通用模式需要 system')
           return await deps.runAgentChat(
             {
               employeeId: request.employeeId,
@@ -96,6 +100,7 @@ export function createExecuteService(deps: ExecuteDeps) {
               minimalMode: request.minimalMode,
               highPermission: request.highPermission,
               system: request.system,
+              tools: request.tools,
             },
             callbacks,
             signal,

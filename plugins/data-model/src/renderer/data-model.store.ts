@@ -5,16 +5,11 @@ import {
   createTable, createField, createRelationship, createDataModel,
   type DataModel, type Table, type Field, type Relationship
 } from '../shared/domain'
-import { dm, type ProjectRecord } from './store'
+import { dm, hostT, type ProjectRecord } from './store'
+import type { GenericChatViewMessage, GenericChatViewSegment } from '../../../plugin-sdk/src/renderer'
 
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  reasoning?: string
-  toolCalls?: Array<{ id?: string; name?: string; arguments?: string; status?: 'running' | 'done' | 'error'; output?: string }>
-  streaming?: boolean
-}
+/** 对话消息：复用宿主任务对话 UI 的消息结构（segments 驱动工具调用/思考/回答渲染） */
+export type ChatMessage = GenericChatViewMessage
 
 interface DataModelState {
   model: DataModel | null
@@ -23,19 +18,17 @@ interface DataModelState {
   selectedRelationshipId: string | null
   focusRequest: { tableId: string; nonce: number } | null
   layoutRequest: number
-  employees: any[]
   providers: any[]
-  selectedEmployeeId: string | null
   selectedProviderId: string | null
   selectedModelId: string | null
-  settings: { defaultEmployeeId?: string; defaultProviderId?: string; defaultModelId?: string }
+  settings: { defaultProviderId?: string; defaultModelId?: string }
   dataDir: string
   // chat
   messages: ChatMessage[]
   isStreaming: boolean
   conversationId: string | null
   chatError: string | null
-  chats: Array<{ conversationId: string; employeeId: string; title: string; updatedAt: number }>
+  chats: Array<{ conversationId: string; title: string; updatedAt: number }>
 
   // model
   setModel: (model: DataModel | null) => void
@@ -62,15 +55,13 @@ interface DataModelState {
   saveProject: () => Promise<void>
 
   // employees/providers
-  loadEmployees: () => Promise<void>
   loadProviders: () => Promise<void>
-  setSelectedEmployee: (id: string | null) => void
   setSelectedProvider: (id: string | null) => void
   setSelectedModel: (id: string | null) => void
 
   // settings
   loadSettings: () => Promise<void>
-  saveSettings: (patch: Partial<{ defaultEmployeeId: string; defaultProviderId: string; defaultModelId: string }>) => Promise<void>
+  saveSettings: (patch: Partial<{ defaultProviderId: string; defaultModelId: string }>) => Promise<void>
   loadDataDir: () => Promise<void>
   openDataDir: () => Promise<void>
 
@@ -79,7 +70,7 @@ interface DataModelState {
   importProjectFile: () => Promise<void>
 
   // chat
-  sendMessage: (text: string) => Promise<void>
+  sendMessage: (text: string, images?: string[]) => Promise<void>
   cancelChat: () => void
   newChat: () => void
   loadChatHistory: (conversationId: string) => Promise<void>
@@ -98,9 +89,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   selectedRelationshipId: null,
   focusRequest: null,
   layoutRequest: 0,
-  employees: [],
   providers: [],
-  selectedEmployeeId: null,
   selectedProviderId: null,
   selectedModelId: null,
   settings: {},
@@ -248,23 +237,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     await get().loadProjects()
   },
 
-  loadEmployees: async () => {
-    const employees = await dm.listEmployees()
-    set({ employees })
-    const settings = get().settings
-    const preferred = settings.defaultEmployeeId
-    const current = get().selectedEmployeeId
-    if (preferred && employees.some((e) => e.id === preferred)) {
-      set({ selectedEmployeeId: preferred })
-    } else if (current && employees.some((e) => e.id === current)) {
-      // 当前选择仍有效，保持不变
-    } else if (employees.length > 0) {
-      set({ selectedEmployeeId: employees[0].id })
-    } else {
-      set({ selectedEmployeeId: null })
-    }
-  },
-
   loadProviders: async () => {
     const providers = await dm.listProviders()
     set({ providers })
@@ -283,7 +255,6 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     }
   },
 
-  setSelectedEmployee: (id) => set({ selectedEmployeeId: id }),
   setSelectedProvider: (id) => set({ selectedProviderId: id, selectedModelId: null }),
   setSelectedModel: (id) => set({ selectedModelId: id }),
 
@@ -321,35 +292,41 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     }
   },
 
-  sendMessage: async (text) => {
-    const { selectedEmployeeId, employees, selectedProviderId, selectedModelId, conversationId, messages } = get()
-    if (!selectedEmployeeId) {
-      set({ chatError: 'chat.error.noEmployee' })
+  sendMessage: async (text, images) => {
+    if (get().isStreaming) return
+    const { selectedProviderId, selectedModelId, conversationId, messages } = get()
+    if (!selectedProviderId) {
+      set({ chatError: 'chat.error.noProvider' })
       return
     }
-    // 模型解析：显式选择 > 员工配置；provider 由主进程兜底（默认 provider）
-    const employee = employees.find((e) => e.id === selectedEmployeeId)
-    const providerId = selectedProviderId ?? employee?.provider_id
-    const modelId = selectedModelId ?? employee?.model_id
 
-    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', content: text }
-    const assistantMsg: ChatMessage = { id: `a-${Date.now()}`, role: 'assistant', content: '', streaming: true }
+    const now = Date.now()
+    const userMsg: ChatMessage = { id: `msg_${now}_u`, role: 'user', content: text, timestamp: now, images }
+    const assistantMsg: ChatMessage = { id: `msg_${now}_a`, role: 'assistant', content: '', timestamp: now, isStreaming: true, segments: [] }
     set({ messages: [...messages, userMsg, assistantMsg], isStreaming: true, chatError: null })
+
+    ensureChatEventListener()
 
     const history = messages
       .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content))
-      .map((m) => ({ role: m.role, content: m.content }))
+      .map((m) => ({ role: m.role, content: m.content, images: m.images }))
 
     const res = await dm.sendChat({
-      employeeId: selectedEmployeeId,
-      providerId,
-      modelId,
-      messages: [...history, { role: 'user', content: text }],
+      providerId: selectedProviderId,
+      modelId: selectedModelId ?? undefined,
+      messages: [...history, { role: 'user', content: text, images }],
       conversationId: conversationId ?? undefined
     })
 
     if ('error' in res) {
-      set({ isStreaming: false, chatError: res.error })
+      set((state) => {
+        const msgs = [...state.messages]
+        const last = msgs[msgs.length - 1]
+        if (last && last.role === 'assistant') {
+          msgs[msgs.length - 1] = { ...last, isStreaming: false, isError: true }
+        }
+        return { messages: msgs, isStreaming: false, chatError: res.error }
+      })
       return
     }
     set({ conversationId: res.conversationId })
@@ -360,25 +337,33 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     set({ isStreaming: false })
   },
 
-  newChat: () => set({ messages: [], conversationId: null, isStreaming: false, chatError: null }),
+  newChat: () => {
+    void dm.cancelChat()
+    set({ messages: [], conversationId: null, isStreaming: false, chatError: null })
+  },
 
   loadChatHistory: async (conversationId) => {
+    ensureChatEventListener()
     const raw = await dm.chatHistory(conversationId)
     const msgs: ChatMessage[] = (raw as any[]).map((m) => ({
       id: m.id ?? `m-${Date.now()}-${Math.random()}`,
       role: m.role === 'user' ? 'user' : 'assistant',
       content: typeof m.content === 'string' ? m.content : (m.content?.text ?? ''),
-      reasoning: m.reasoning_content
+      thought: m.reasoning_content,
+      images: Array.isArray(m.images) ? m.images : undefined,
+      segments: Array.isArray(m.segments) ? m.segments : undefined,
+      isStreaming: false
     }))
     set({ messages: msgs, conversationId })
   },
 
   loadChats: async () => {
-    const chats = await dm.listChats(get().selectedEmployeeId ?? undefined)
+    const chats = await dm.listChats()
     set({ chats })
   },
 
   deleteChat: async (conversationId) => {
+    if (get().conversationId === conversationId) void dm.cancelChat()
     await dm.deleteChat(conversationId)
     if (get().conversationId === conversationId) {
       set({ messages: [], conversationId: null })
@@ -386,6 +371,217 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     await get().loadChats()
   }
 }))
+
+// ====== 对话流式事件 → 消息段更新（与宿主任务对话的 segments 结构一致） ======
+
+/** 关闭流式中的 thinking/answer 段（keepType 指定时仅关闭该类型，其余保持流式） */
+function finalizeStreamingSegs(segs: GenericChatViewSegment[], keepType?: 'thinking' | 'answer'): GenericChatViewSegment[] {
+  const result = [...segs]
+  for (let i = 0; i < result.length; i++) {
+    const s = result[i]
+    if (!s.isStreaming) continue
+    if (keepType === 'thinking' && s.type !== 'thinking') continue
+    if (keepType === 'answer' && s.type !== 'answer') continue
+    result[i] = { ...s, isStreaming: false, completedAt: s.completedAt || Date.now(), ...(s.type === 'thinking' ? { collapsed: true } : {}) }
+  }
+  return result
+}
+
+function safeParseJson(text: string): any {
+  try { return JSON.parse(text) } catch { return undefined }
+}
+
+/** 未完成的 tool_call 段收尾：解析流式参数，标记完成（中断/失败） */
+function finalizeToolSegments(segs: GenericChatViewSegment[], error?: string): GenericChatViewSegment[] {
+  return segs.map((s) => {
+    if (s.type !== 'tool_call' || s.isToolComplete) return s
+    return {
+      ...s,
+      toolArgs: s.toolArgs ?? (s.toolArgsRaw ? safeParseJson(s.toolArgsRaw) : undefined),
+      toolArgsRaw: undefined,
+      isToolArgsStreaming: false,
+      isToolComplete: true,
+      toolError: error,
+      collapsed: true,
+      completedAt: s.completedAt || Date.now(),
+    }
+  })
+}
+
+function applyChatEvent(msgs: ChatMessage[], payload: any): ChatMessage[] {
+  const last = msgs[msgs.length - 1]
+  if (!last || last.role !== 'assistant' || !last.isStreaming) return msgs
+  const segs = [...(last.segments || [])]
+
+  switch (payload?.type) {
+    case 'chunk': {
+      const text = payload.text ?? ''
+      if (!text) return msgs
+      const updated = finalizeStreamingSegs(segs, 'thinking')
+      const lastSeg = updated[updated.length - 1]
+      if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+        updated[updated.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + text }
+      } else {
+        updated.push({ type: 'answer', id: `${last.id}_seg_${updated.length}`, content: text, isStreaming: true, timestamp: Date.now() })
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: updated, content: (last.content || '') + text }]
+    }
+    case 'thought': {
+      const thought = payload.thought ?? ''
+      if (!thought) return msgs
+      const updated = finalizeStreamingSegs(segs, 'answer')
+      const lastSeg = updated[updated.length - 1]
+      if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+        updated[updated.length - 1] = { ...lastSeg, content: (lastSeg.content || '') + thought }
+      } else {
+        updated.push({ type: 'thinking', id: `${last.id}_seg_${updated.length}`, content: thought, isStreaming: true, collapsed: false, timestamp: Date.now() })
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: updated, thought: (last.thought || '') + thought }]
+    }
+    case 'tool-call-delta': {
+      const delta = payload.delta ?? {}
+      const argsText = delta.arguments ?? ''
+      const updated = finalizeStreamingSegs(segs)
+      let targetIndex = -1
+      if (delta.id) {
+        targetIndex = updated.findIndex((s) => s.type === 'tool_call' && s.toolCallId === delta.id)
+      }
+      if (targetIndex === -1) {
+        targetIndex = updated.findIndex((s) => s.type === 'tool_call' && s.isToolComplete === false && s.toolName === delta.name)
+      }
+      if (targetIndex !== -1) {
+        updated[targetIndex] = {
+          ...updated[targetIndex],
+          toolName: delta.name || updated[targetIndex].toolName,
+          toolCallId: delta.id || updated[targetIndex].toolCallId,
+          toolArgsRaw: (updated[targetIndex].toolArgsRaw || '') + argsText,
+        }
+      } else {
+        updated.push({
+          type: 'tool_call', id: `${last.id}_tool_${updated.length}`,
+          toolName: delta.name || '', toolCallId: delta.id || `delta_${delta.index}`,
+          toolArgsRaw: argsText, isToolArgsStreaming: true, isToolComplete: false,
+          collapsed: false, timestamp: Date.now(),
+        })
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: updated }]
+    }
+    case 'tool-call': {
+      const tc = payload.toolCall ?? {}
+      const updated = finalizeStreamingSegs(segs)
+      // 优先复用 delta 阶段创建的参数流式段，避免产生重复的 tool_call 段
+      let targetIndex = updated.findIndex((s) =>
+        s.type === 'tool_call' && s.isToolArgsStreaming === true &&
+        (s.toolCallId === tc.id || (s.toolName === tc.name && !s.isToolComplete))
+      )
+      if (targetIndex !== -1) {
+        updated[targetIndex] = {
+          ...updated[targetIndex],
+          toolName: tc.name,
+          toolArgs: tc.arguments,
+          toolArgsRaw: undefined,
+          isToolArgsStreaming: false,
+          toolCallId: tc.id,
+          isToolComplete: false,
+          collapsed: true,
+        }
+      } else {
+        updated.push({
+          type: 'tool_call', id: `${last.id}_tool_${updated.length}`,
+          toolName: tc.name, toolCallId: tc.id, toolArgs: tc.arguments,
+          isToolComplete: false, collapsed: true, timestamp: Date.now(),
+        })
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: updated }]
+    }
+    case 'tool-result': {
+      const { name, result, success } = payload
+      let targetIndex = -1
+      for (let i = segs.length - 1; i >= 0; i--) {
+        if (segs[i].type === 'tool_call' && segs[i].toolName === name && !segs[i].isToolComplete) {
+          targetIndex = i
+          break
+        }
+      }
+      if (targetIndex === -1) return msgs
+      const prev = segs[targetIndex]
+      const rawArgs = prev.toolArgsRaw
+      segs[targetIndex] = {
+        ...prev,
+        toolArgs: prev.toolArgs ?? (rawArgs ? safeParseJson(rawArgs) : undefined),
+        toolArgsRaw: undefined,
+        isToolArgsStreaming: false,
+        toolResult: result,
+        isToolComplete: true,
+        toolError: success === false ? (typeof result === 'string' ? result : undefined) : undefined,
+        collapsed: true,
+        completedAt: Date.now(),
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: segs }]
+    }
+    case 'tool-progress': {
+      const { toolCallId, name, progress } = payload
+      let targetIndex = -1
+      if (toolCallId) {
+        targetIndex = segs.findIndex((s) => s.type === 'tool_call' && s.toolCallId === toolCallId && !s.isToolComplete)
+      }
+      if (targetIndex === -1) {
+        for (let i = segs.length - 1; i >= 0; i--) {
+          if (segs[i].type === 'tool_call' && segs[i].toolName === name && !segs[i].isToolComplete) {
+            targetIndex = i
+            break
+          }
+        }
+      }
+      if (targetIndex === -1) return msgs
+      segs[targetIndex] = {
+        ...segs[targetIndex],
+        toolProgress: [...(segs[targetIndex].toolProgress || []), progress],
+      }
+      return [...msgs.slice(0, -1), { ...last, segments: segs }]
+    }
+    case 'done': {
+      const finalized = finalizeToolSegments(segs, hostT('chat.toolCancelled')).map((s) => ({
+        ...s,
+        isStreaming: false,
+        completedAt: s.completedAt || Date.now(),
+        ...(s.type === 'thinking' ? { collapsed: true } : {}),
+      }))
+      return [...msgs.slice(0, -1), { ...last, segments: finalized, isStreaming: false }]
+    }
+    case 'error': {
+      const error = payload.error ?? hostT('chat.toolFailed')
+      const finalized = finalizeToolSegments(segs, error).map((s) => ({
+        ...s,
+        isStreaming: false,
+        completedAt: s.completedAt || Date.now(),
+        ...(s.type === 'thinking' ? { collapsed: true } : {}),
+      }))
+      return [...msgs.slice(0, -1), { ...last, segments: finalized, isStreaming: false, isError: true, content: last.content || error }]
+    }
+    default:
+      return msgs
+  }
+}
+
+// 模块级单例订阅：对话事件流在面板收起/展开期间持续更新 store 消息
+let chatEventListenerReady = false
+
+function ensureChatEventListener(): void {
+  if (chatEventListenerReady) return
+  chatEventListenerReady = true
+  dm.onChatEvent((payload: any) => {
+    useDataModelStore.setState((state) => {
+      const messages = applyChatEvent(state.messages, payload)
+      const done = payload?.type === 'done' || payload?.type === 'error'
+      return {
+        messages,
+        isStreaming: done ? false : state.isStreaming,
+        chatError: payload?.type === 'error' ? (payload.error ?? null) : state.chatError,
+      }
+    })
+  })
+}
 
 /** 示例博客模型（users / posts / comments） */
 function createSampleModel(): DataModel {

@@ -30,6 +30,8 @@ interface MessageListProps {
   contextStats?: any
   isCompacting?: boolean
   onCompact?: () => void
+  /** 隐藏消息操作按钮（重生成/切换模型/删除/编辑等），用于不支持这些能力的轻量对话视图 */
+  hideMessageActions?: boolean
 }
 
 const MessageList: React.FC<MessageListProps> = ({
@@ -50,6 +52,7 @@ const MessageList: React.FC<MessageListProps> = ({
   contextStats,
   isCompacting,
   onCompact,
+  hideMessageActions,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -212,6 +215,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   contextStats={isLastAssistantMsg ? contextStats : undefined}
                   isCompacting={isLastAssistantMsg ? isCompacting : false}
                   onCompact={isLastAssistantMsg ? onCompact : undefined}
+                  hideMessageActions={hideMessageActions}
                 />
               )
             })()}

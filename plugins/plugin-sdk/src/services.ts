@@ -5,6 +5,8 @@ export interface PluginLogger {
   error(message: string, ...args: unknown[]): void
 }
 
+import type { PluginToolDefinition } from './tool'
+
 export interface PluginNotificationPayload {
   title: string
   body: string
@@ -73,7 +75,7 @@ export interface PluginExecuteRequest {
   providerId?: string
   modelId?: string
   prompt?: string
-  messages?: Array<{ role: string; content: string }>
+  messages?: Array<{ role: string; content: string; images?: string[] }>
   system?: string
   history?: string[]
   conversationId?: string
@@ -83,6 +85,8 @@ export interface PluginExecuteRequest {
   enableThinking?: boolean
   minimalMode?: boolean
   highPermission?: boolean
+  /** 通用模式（agent-chat 不传 employeeId 时）：自定义工具集 */
+  tools?: PluginToolDefinition[]
 }
 
 /** 统一执行回调 */
@@ -90,6 +94,12 @@ export interface PluginExecuteCallbacks {
   onChunk?: (text: string) => void
   onThought?: (thought: string) => void
   onToolCall?: (toolCall: { id?: string; name?: string; arguments?: string }) => void
+  /** 工具调用参数流式增量（arguments 为 JSON 字符串增量片段） */
+  onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
+  /** 工具执行结果 */
+  onToolResult?: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  /** 工具执行中间进度（仅UI展示，不进入LLM上下文） */
+  onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone?: (metadata?: unknown) => void
   onError?: (error: string) => void
 }

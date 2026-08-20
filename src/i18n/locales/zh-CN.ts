@@ -176,6 +176,8 @@ export default {
     loadMore: '加载更多 ({{current}}/{{total}})',
     noConv: '暂无任务',
     startConvHint: '在下方输入消息开始任务',
+    genericChatEmpty: '与 AI 对话，开始你的创作',
+    newChat: '新对话',
     loadingMessages: '正在加载任务历史...',
     loadOlderMessages: '查看更早的 {{count}} 条消息',
     noEmployeeHint: '还没有数字员工，创建一个开始任务吧',

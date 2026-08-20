@@ -176,6 +176,8 @@ export default {
     loadMore: 'Load more ({{current}}/{{total}})',
     noConv: 'No tasks',
     startConvHint: 'Type a message below to start a task',
+    genericChatEmpty: 'Chat with AI to start creating',
+    newChat: 'New chat',
     loadingMessages: 'Loading task history...',
     loadOlderMessages: 'Load older {{count}} messages',
     noEmployeeHint: 'No digital employees yet. Create one to start a task.',

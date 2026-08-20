@@ -64,13 +64,12 @@ export const dm = {
   syncModel: (model: DataModel) => invoke<{ ok: boolean } | { error: string }>('model-sync', { model }),
   importDbml: (dbml: string, name?: string) => invoke<{ model: DataModel } | { error: string }>('dbml-import', { dbml, name }),
   exportDbml: () => invoke<{ dbml: string } | { error: string }>('dbml-export'),
-  listEmployees: () => invoke<any[]>('employees-list'),
   listProviders: () => invoke<any[]>('providers-list'),
-  sendChat: (payload: { employeeId: string; providerId: string; modelId?: string; messages: Array<{ role: string; content: string }>; conversationId?: string }) =>
+  sendChat: (payload: { providerId: string; modelId?: string; messages: Array<{ role: string; content: string; images?: string[] }>; conversationId?: string }) =>
     invoke<{ conversationId: string } | { error: string }>('chat-send', payload),
   cancelChat: () => invoke<{ ok: boolean }>('chat-cancel'),
   chatHistory: (conversationId: string) => invoke<any[]>('chat-history', { conversationId }),
-  listChats: (employeeId?: string) => invoke<Array<{ conversationId: string; employeeId: string; title: string; updatedAt: number }>>('chats-list', { employeeId }),
+  listChats: () => invoke<Array<{ conversationId: string; title: string; updatedAt: number }>>('chats-list'),
   deleteChat: (conversationId: string) => invoke<{ ok: boolean } | { error: string }>('chat-delete', { conversationId }),
   onChatsChanged: (cb: () => void) => onEvent('chats-changed', () => cb()),
   onMetaChanged: (cb: (payload: { scope: 'employees' | 'providers' }) => void) =>
