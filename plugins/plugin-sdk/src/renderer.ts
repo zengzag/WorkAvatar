@@ -99,6 +99,8 @@ export interface GenericChatViewProps {
   onClose?: () => void
   /** 折叠/展开消息分段（thinking/tool_call），msgId + segId */
   onToggleSegment?: (msgId: string, segId: string) => void
+  /** 删除单条消息（提供后消息气泡显示删除按钮） */
+  onDeleteMessage?: (msgId: string) => void
   /** 会话加载中（显示 loading 态） */
   loading?: boolean
   /** 上下文用量统计（done 事件 metadata.contextStats），展示在最后一条助手消息底部 */

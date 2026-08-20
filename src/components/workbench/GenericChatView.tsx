@@ -27,6 +27,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
   onNewChat,
   onClose,
   onToggleSegment,
+  onDeleteMessage,
   loading,
   contextStats,
   style,
@@ -108,7 +109,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               activeConversationId={conversationId ?? null}
               chatContainerRef={chatContainerRef}
               onCopy={handleCopy}
-              onDeleteMessage={noop}
+              onDeleteMessage={onDeleteMessage ?? noop}
               onRegenerate={noop}
               onSwitchModelRegenerate={noop}
               onEditAndResubmit={noop}
@@ -118,7 +119,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               getToolDisplayName={getToolDisplayName}
               providers={providers}
               contextStats={contextStats}
-              hideMessageActions
+              hideMessageActions={!onDeleteMessage}
             />
             <div ref={messagesEndRef} />
           </>

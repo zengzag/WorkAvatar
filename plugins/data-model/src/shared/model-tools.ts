@@ -67,7 +67,8 @@ function normalizeModel(raw: any): DataModel {
       scale: f?.scale ?? null,
       primaryKey: !!f?.primaryKey,
       unique: !!f?.unique,
-      nullable: f?.nullable ?? true,
+      // 兼容 notNull 简写（notNull=true 等价 nullable=false）
+      nullable: f?.nullable ?? (f?.notNull ? false : true),
       autoIncrement: !!f?.autoIncrement,
       defaultValue: f?.defaultValue ?? null,
       comment: f?.comment ?? null,
@@ -91,10 +92,17 @@ function normalizeModel(raw: any): DataModel {
   })
 
   const relationships: Relationship[] = (Array.isArray(raw?.relationships) ? raw.relationships : []).map((r: any) => {
-    const sTable = tables.find((t) => t.id === r?.sourceTableId || t.name.toLowerCase() === (r?.sourceTableName ?? '').toLowerCase())
-    const tTable = tables.find((t) => t.id === r?.targetTableId || t.name.toLowerCase() === (r?.targetTableName ?? '').toLowerCase())
-    const sf = sTable?.fields.find((f) => f.id === r?.sourceFieldId || f.name.toLowerCase() === (r?.sourceFieldName ?? '').toLowerCase())
-    const tf = tTable?.fields.find((f) => f.id === r?.targetFieldId || f.name.toLowerCase() === (r?.targetFieldName ?? '').toLowerCase())
+    // 兼容多种命名：sourceTableId/sourceFieldId/targetTableId/targetFieldId、
+    // fromTable/fromField/toTable/toField，以及嵌套 from:{table,field}/to:{table,field}
+    const sTableName = r?.sourceTableName ?? r?.fromTable ?? r?.from?.table
+    const tTableName = r?.targetTableName ?? r?.toTable ?? r?.to?.table
+    const sFieldName = r?.sourceFieldName ?? r?.fromField ?? r?.from?.field
+    const tFieldName = r?.targetFieldName ?? r?.toField ?? r?.to?.field
+    const sTable = tables.find((t) => t.id === r?.sourceTableId || t.name.toLowerCase() === (sTableName ?? '').toLowerCase())
+    const tTable = tables.find((t) => t.id === r?.targetTableId || t.name.toLowerCase() === (tTableName ?? '').toLowerCase())
+    const sf = sTable?.fields.find((f) => f.id === r?.sourceFieldId || f.name.toLowerCase() === (sFieldName ?? '').toLowerCase())
+    const tf = tTable?.fields.find((f) => f.id === r?.targetFieldId || f.name.toLowerCase() === (tFieldName ?? '').toLowerCase())
+    const { sourceCardinality, targetCardinality } = mapRelationshipType(r?.type, r?.sourceCardinality, r?.targetCardinality)
     return {
       id: uniqueId('rel', r?.id),
       name: r?.name ?? null,
@@ -102,8 +110,8 @@ function normalizeModel(raw: any): DataModel {
       sourceFieldId: sf?.id ?? '',
       targetTableId: tTable?.id ?? '',
       targetFieldId: tf?.id ?? '',
-      sourceCardinality: (r?.sourceCardinality === 'many' ? 'many' : 'one') as Cardinality,
-      targetCardinality: (r?.targetCardinality === 'many' ? 'many' : 'one') as Cardinality,
+      sourceCardinality,
+      targetCardinality,
       createdAt: r?.createdAt ?? Date.now()
     }
   })
@@ -111,17 +119,19 @@ function normalizeModel(raw: any): DataModel {
   const enums: EnumType[] = (Array.isArray(raw?.enums) ? raw.enums : []).map((e: any) => ({
     id: uniqueId('enum', e?.id),
     name: e?.name ?? 'new_enum',
+    // 兼容 values 为字符串数组（如 ["active","inactive"]）
     values: (Array.isArray(e?.values) ? e.values : []).map((v: any) => ({
-      id: uniqueId('enumv', v?.id),
-      name: v?.name ?? '',
-      comment: v?.comment ?? null
+      id: uniqueId('enumv', typeof v === 'string' ? undefined : v?.id),
+      name: typeof v === 'string' ? v : (v?.name ?? ''),
+      comment: typeof v === 'string' ? null : (v?.comment ?? null)
     })),
     createdAt: e?.createdAt ?? Date.now()
   }))
 
   const indexes: Index[] = (Array.isArray(raw?.indexes) ? raw.indexes : []).map((ix: any) => {
-    const table = tables.find((t) => t.id === ix?.tableId || t.name.toLowerCase() === (ix?.tableName ?? '').toLowerCase())
-    const fieldIds = (Array.isArray(ix?.fieldIds) ? ix.fieldIds : [])
+    // 兼容 table/fields 简写（table 为表名，fields 为字段名数组）
+    const table = tables.find((t) => t.id === ix?.tableId || t.name.toLowerCase() === (ix?.tableName ?? ix?.table ?? '').toLowerCase())
+    const fieldIds = (Array.isArray(ix?.fieldIds) ? ix.fieldIds : Array.isArray(ix?.fields) ? ix.fields : [])
       .map((fid: string) => {
         const f = table?.fields.find((f) => f.id === fid || f.name.toLowerCase() === String(fid).toLowerCase())
         return f?.id
@@ -149,6 +159,25 @@ function normalizeModel(raw: any): DataModel {
     sourceDocumentId: raw?.sourceDocumentId ?? null,
     createdAt: raw?.createdAt ?? Date.now(),
     updatedAt: Date.now()
+  }
+}
+
+/**
+ * 将关系 type（one-to-one / one-to-many / many-to-one / many-to-many，连字符或下划线均可）
+ * 映射为源/目标基数；未提供 type 时回退到 sourceCardinality/targetCardinality。
+ */
+function mapRelationshipType(type: unknown, sourceCard?: unknown, targetCard?: unknown): { sourceCardinality: Cardinality; targetCardinality: Cardinality } {
+  const t = String(type ?? '').toLowerCase().replace(/-/g, '_')
+  switch (t) {
+    case 'one_to_one': return { sourceCardinality: 'one', targetCardinality: 'one' }
+    case 'one_to_many': return { sourceCardinality: 'one', targetCardinality: 'many' }
+    case 'many_to_one': return { sourceCardinality: 'many', targetCardinality: 'one' }
+    case 'many_to_many': return { sourceCardinality: 'many', targetCardinality: 'many' }
+    default:
+      return {
+        sourceCardinality: (sourceCard === 'many' ? 'many' : 'one') as Cardinality,
+        targetCardinality: (targetCard === 'many' ? 'many' : 'one') as Cardinality
+      }
   }
 }
 
@@ -215,7 +244,7 @@ const getModelJsonTool: ToolDef = {
 
 const setModelJsonTool: ToolDef = {
   name: 'set_model_json',
-  description: '用结构化 JSON 设置当前数据模型，是修改模型的主要方式。mode=replace 用传入的 model 整体替换；mode=merge 按表名去重并入（已存在的表跳过）。AI 编辑 get_model_json 返回的 JSON 后调用本工具写回，即可完成任意增删改。',
+  description: '用结构化 JSON 设置当前数据模型，是修改模型的主要方式。mode=replace 用传入的 model 整体替换；mode=merge 按表名去重并入（已存在的表跳过）。AI 编辑 get_model_json 返回的 JSON 后调用本工具写回，即可完成任意增删改。JSON 格式：model.tables 为表数组（每项含 name、fields 字段数组，字段含 name/type/primaryKey/unique/notNull/autoIncrement/defaultValue 等，可省略 id）；model.relationships 为关系数组，每项用 from:{table,field} 与 to:{table,field} 指定源/目标表与字段（也兼容 fromTable/fromField/toTable/toField 或 sourceTableName/sourceFieldName/targetTableName/targetFieldName），type 为 one-to-one/one-to-many/many-to-one/many-to-many；model.indexes 为索引数组（table 表名 + fields 字段名数组）；model.enums 为枚举数组（name + values 字符串数组）。',
   parameters: {
     type: 'object',
     properties: {
@@ -231,10 +260,12 @@ const setModelJsonTool: ToolDef = {
     }
     if (args.mode === 'merge') return mergeModel(model, incoming)
     const normalized = normalizeModel(incoming)
+    // LLM 生成的 JSON 常省略 model 级 name，此时保留当前模型名，避免被"未命名数据模型"默认值覆盖
+    const hasName = typeof incoming.name === 'string' && incoming.name.trim() !== ''
     const replaced: DataModel = {
       ...normalized,
       id: model.id,
-      name: normalized.name ?? model.name,
+      name: hasName ? normalized.name : model.name,
       databaseType: normalized.databaseType ?? model.databaseType,
       updatedAt: Date.now()
     }

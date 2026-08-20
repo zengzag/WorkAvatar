@@ -38,6 +38,8 @@ export interface ExecuteDeps {
       tools?: any[]
       /** 通用模式：注入宿主内置 shell/文件工具并分配任务工作区 */
       enableBuiltinTools?: boolean
+      /** 通用模式：指定任务工作区目录（内置文件工具沙箱根）；缺省时宿主自动创建 */
+      workspacePath?: string
     },
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
@@ -104,6 +106,7 @@ export function createExecuteService(deps: ExecuteDeps) {
               system: request.system,
               tools: request.tools,
               enableBuiltinTools: request.enableBuiltinTools,
+              workspacePath: request.workspacePath,
             },
             callbacks,
             signal,

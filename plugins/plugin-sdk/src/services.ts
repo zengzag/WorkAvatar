@@ -89,6 +89,8 @@ export interface PluginExecuteRequest {
   tools?: PluginToolDefinition[]
   /** 通用模式（agent-chat 不传 employeeId 时）：注入宿主内置 shell/文件工具并分配任务工作区 */
   enableBuiltinTools?: boolean
+  /** 通用模式：指定任务工作区目录（分配内置文件工具沙箱根目录）；缺省时宿主按会话自动创建 */
+  workspacePath?: string
 }
 
 /** 统一执行回调 */

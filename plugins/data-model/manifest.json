@@ -9,13 +9,14 @@
   "renderer": "dist/renderer/index.js",
   "locale": "locale",
   "ipc": [
-    "project-list", "project-create", "project-open", "project-delete", "project-save",
+    "project-list", "project-create", "project-open", "project-delete", "project-save", "project-rename",
     "project-export-file", "project-import-file",
     "model-get", "model-sync",
     "dbml-import", "dbml-export",
     "employees-list", "providers-list",
     "settings-get", "settings-set", "data-dir", "data-dir-open",
-    "chat-send", "chat-cancel", "chat-history", "chats-list", "chat-delete"
+    "chat-send", "chat-cancel", "chat-history", "chats-list", "chat-delete", "chat-delete-message",
+    "chat-delete-task-dir", "chat-open-dir"
   ],
   "capabilities": [
     { "domain": "data", "entities": ["conversations", "employees", "llmProviders", "messages"], "access": "write" },

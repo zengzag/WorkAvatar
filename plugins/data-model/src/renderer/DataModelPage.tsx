@@ -1,11 +1,12 @@
 // 数据模型主页面
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm } from 'antd'
+import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm, Dropdown } from 'antd'
 import {
   SaveOutlined, PlusOutlined, ImportOutlined, ExportOutlined,
   ApartmentOutlined, SettingOutlined, RightOutlined,
-  DeleteOutlined, DownloadOutlined, UploadOutlined
+  DeleteOutlined, DownloadOutlined, UploadOutlined,
+  EditOutlined, MoreOutlined
 } from '@ant-design/icons'
 import { Canvas } from './canvas/Canvas'
 import { TableInspector } from './inspector/TableInspector'
@@ -21,7 +22,7 @@ export function DataModelPage() {
   const projects = useDataModelStore((s) => s.projects)
   const selectedTableId = useDataModelStore((s) => s.selectedTableId)
   const selectedRelationshipId = useDataModelStore((s) => s.selectedRelationshipId)
-  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
+  const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, renameProject, saveProject, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
   const { message } = App.useApp()
 
   const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
@@ -34,6 +35,8 @@ export function DataModelPage() {
   const [exportOpen, setExportOpen] = useState(false)
   const [newProjectOpen, setNewProjectOpen] = useState(false)
   const [newProjectName, setNewProjectName] = useState('')
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameName, setRenameName] = useState('')
   const [importText, setImportText] = useState('')
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
   const [exportText, setExportText] = useState('')
@@ -105,6 +108,21 @@ export function DataModelPage() {
     setNewProjectOpen(false)
     setNewProjectName('')
     message.success(hostT('page.created'))
+  }
+
+  const openRename = () => {
+    if (!model) return
+    setRenameName(model.name)
+    setRenameOpen(true)
+  }
+
+  const handleRename = async () => {
+    if (!model) return
+    const name = renameName.trim()
+    if (!name) return
+    await renameProject(model.id, name)
+    setRenameOpen(false)
+    message.success(hostT('page.renamed'))
   }
 
   const handleAddTableFromEmpty = () => {
@@ -181,6 +199,11 @@ export function DataModelPage() {
                 <Button size="small" block icon={<PlusOutlined />} onClick={() => setNewProjectOpen(true)}>
                   {hostT('page.newProject')}
                 </Button>
+                {model && (
+                  <Button size="small" block icon={<EditOutlined />} onClick={openRename}>
+                    {hostT('page.rename')}
+                  </Button>
+                )}
                 <Button size="small" block icon={<DownloadOutlined />} onClick={() => void exportProjectFile()}>
                   {hostT('page.exportFile')}
                 </Button>
@@ -205,9 +228,19 @@ export function DataModelPage() {
           <Button size="small" icon={<ApartmentOutlined />} onClick={requestLayout} />
         </Tooltip>
         <div style={{ flex: 1 }} />
-        <Button size="small" icon={<ApartmentOutlined />} onClick={loadSample}>{hostT('page.sample')}</Button>
-        <Button size="small" icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>{hostT('page.importDbml')}</Button>
-        <Button size="small" icon={<ExportOutlined />} onClick={handleExport}>{hostT('page.exportDbml')}</Button>
+        {/* 导入/导出 DBML、加载示例 收进二级菜单，避免顶部堆叠 */}
+        <Dropdown
+          menu={{
+            items: [
+              { key: 'sample', icon: <ApartmentOutlined />, label: hostT('page.sample'), onClick: () => loadSample() },
+              { type: 'divider' },
+              { key: 'importDbml', icon: <ImportOutlined />, label: hostT('page.importDbml'), onClick: () => setImportOpen(true) },
+              { key: 'exportDbml', icon: <ExportOutlined />, label: hostT('page.exportDbml'), onClick: handleExport }
+            ]
+          }}
+        >
+          <Button size="small" icon={<MoreOutlined />}>{hostT('page.more')}</Button>
+        </Dropdown>
         <Tooltip title={hostT('page.settings')}>
           <Button size="small" icon={<SettingOutlined />} onClick={() => setSettingsOpen(true)} />
         </Tooltip>
@@ -307,6 +340,23 @@ export function DataModelPage() {
           value={newProjectName}
           onChange={(e) => setNewProjectName(e.target.value)}
           onPressEnter={handleCreateProject}
+        />
+      </Modal>
+
+      {/* 重命名项目 */}
+      <Modal
+        title={hostT('page.renameTitle')}
+        open={renameOpen}
+        onOk={handleRename}
+        onCancel={() => setRenameOpen(false)}
+        okText={hostT('page.rename')}
+        cancelText={hostT('page.cancel')}
+      >
+        <Input
+          placeholder={hostT('page.projectName')}
+          value={renameName}
+          onChange={(e) => setRenameName(e.target.value)}
+          onPressEnter={handleRename}
         />
       </Modal>
 

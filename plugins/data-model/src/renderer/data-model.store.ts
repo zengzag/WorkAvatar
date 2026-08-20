@@ -28,7 +28,9 @@ interface DataModelState {
   isStreaming: boolean
   conversationId: string | null
   chatError: string | null
-  chats: Array<{ conversationId: string; title: string; updatedAt: number }>
+  chats: Array<{ conversationId: string; title: string; updatedAt: number; workspacePath?: string | null }>
+  /** 当前会话的任务工作区目录（用于"打开任务文件夹"等） */
+  workspacePath: string | null
   /** 当前会话上下文用量统计（done 事件 metadata.contextStats） */
   contextStats: any
 
@@ -55,6 +57,7 @@ interface DataModelState {
   openProject: (id: string) => Promise<void>
   deleteProject: (id: string) => Promise<void>
   saveProject: () => Promise<void>
+  renameProject: (id: string, name: string) => Promise<void>
 
   // employees/providers
   loadProviders: () => Promise<void>
@@ -77,7 +80,9 @@ interface DataModelState {
   newChat: () => void
   loadChatHistory: (conversationId: string) => Promise<void>
   loadChats: () => Promise<void>
-  deleteChat: (conversationId: string) => Promise<void>
+  deleteChat: (conversationId: string) => Promise<{ ok: boolean; taskDir?: string; taskDirNonEmpty?: boolean } | { error: string }>
+  openChatDir: (conversationId: string) => Promise<void>
+  deleteMessage: (msgId: string) => Promise<void>
   toggleSegment: (msgId: string, segId: string) => void
 }
 
@@ -102,6 +107,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
   conversationId: null,
   chatError: null,
   chats: [],
+  workspacePath: null,
   contextStats: null,
 
   setModel: (model) => set({ model: model ? cloneModel(model) : null }),
@@ -241,6 +247,15 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
     await get().loadProjects()
   },
 
+  renameProject: async (id, name) => {
+    await dm.renameProject(id, name)
+    const model = get().model
+    if (model && model.id === id) {
+      set({ model: cloneModel({ ...model, name, updatedAt: Date.now() }) })
+    }
+    await get().loadProjects()
+  },
+
   loadProviders: async () => {
     const providers = await dm.listProviders()
     set({ providers })
@@ -313,12 +328,13 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
 
     const history = messages
       .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content))
-      .map((m) => ({ role: m.role, content: m.content, images: m.images }))
+      .map((m) => ({ id: m.id, role: m.role, content: m.content, images: m.images }))
 
     const res = await dm.sendChat({
       providerId: selectedProviderId,
       modelId: selectedModelId ?? undefined,
-      messages: [...history, { role: 'user', content: text, images }],
+      messages: [...history, { id: userMsg.id, role: 'user', content: text, images }],
+      assistantId: assistantMsg.id,
       conversationId: conversationId ?? undefined
     })
 
@@ -333,7 +349,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
       })
       return
     }
-    set({ conversationId: res.conversationId })
+    set({ conversationId: res.conversationId, workspacePath: res.workspacePath ?? null })
   },
 
   cancelChat: () => {
@@ -343,7 +359,7 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
 
   newChat: () => {
     void dm.cancelChat()
-    set({ messages: [], conversationId: null, isStreaming: false, chatError: null, contextStats: null })
+    set({ messages: [], conversationId: null, workspacePath: null, isStreaming: false, chatError: null, contextStats: null })
   },
 
   loadChatHistory: async (conversationId) => {
@@ -358,21 +374,51 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
       segments: Array.isArray(m.segments) ? m.segments : undefined,
       isStreaming: false
     }))
-    set({ messages: msgs, conversationId, contextStats: null })
+    const ws = get().chats.find((c) => c.conversationId === conversationId)?.workspacePath ?? null
+    set({ messages: msgs, conversationId, workspacePath: ws, contextStats: null })
   },
 
   loadChats: async () => {
     const chats = await dm.listChats()
     set({ chats })
+    // 同步当前会话的工作区目录（切换到历史对话后据此显示"打开任务文件夹"）
+    const current = get().conversationId
+    if (current) {
+      const ws = chats.find((c) => c.conversationId === current)?.workspacePath ?? null
+      if (get().workspacePath !== ws) set({ workspacePath: ws })
+    }
   },
 
   deleteChat: async (conversationId) => {
     if (get().conversationId === conversationId) void dm.cancelChat()
-    await dm.deleteChat(conversationId)
+    const res = await dm.deleteChat(conversationId)
+    if ('error' in res && res.error) return res
     if (get().conversationId === conversationId) {
-      set({ messages: [], conversationId: null })
+      set({ messages: [], conversationId: null, workspacePath: null })
     }
     await get().loadChats()
+    return res
+  },
+
+  openChatDir: async (conversationId) => {
+    await dm.openChatDir(conversationId)
+  },
+
+  deleteMessage: async (msgId) => {
+    const convId = get().conversationId
+    if (!convId || get().isStreaming) return
+    const msgs = get().messages
+    const idx = msgs.findIndex((m) => m.id === msgId)
+    if (idx === -1) return
+    const target = msgs[idx]
+    const next = [...msgs]
+    next.splice(idx, 1)
+    // 删除用户消息时同步删除紧随其后的助手回复（与宿主任务对话语义一致）
+    if (target.role === 'user' && next[idx] && next[idx].role === 'assistant') {
+      next.splice(idx, 1)
+    }
+    set({ messages: next })
+    await dm.deleteMessage(convId, msgId, target.role, target.content)
   },
 
   toggleSegment: (msgId, segId) => {

@@ -54,6 +54,7 @@ export const webSearchTool: ToolDefinition = {
     },
     required: ['query']
   },
+  timeoutMs: 60000,
   handler: async (args: any) => {
     try {
       const query = String(args.query || '').trim()

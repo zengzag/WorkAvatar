@@ -307,7 +307,7 @@ const MessageBubble: React.FC<{
         <div style={{
           maxWidth: '88%',
           minWidth: 0,
-          width: isEditing ? '100%' : undefined,
+          width: msg.role === 'assistant' || isEditing ? '100%' : undefined,
           ...(msg.role === 'user' ? { marginLeft: -10 } : { marginRight: -10 }),
         }}>
         {msg.role === 'user' && (

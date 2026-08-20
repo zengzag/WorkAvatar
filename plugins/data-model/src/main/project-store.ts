@@ -15,6 +15,8 @@ export interface ChatRecord {
   conversationId: string
   title: string
   updatedAt: number
+  /** 任务工作区目录（新对话创建，可读写文件） */
+  workspacePath?: string | null
 }
 
 export interface DataModelSettings {
@@ -42,7 +44,8 @@ class ProjectStore {
         conversation_id TEXT PRIMARY KEY,
         employee_id TEXT,
         title TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        workspace_path TEXT
       )
     `)
     this.db.exec(`
@@ -53,6 +56,7 @@ class ProjectStore {
       )
     `)
     this.migrateChatsSchema()
+    this.migrateChatsWorkspacePath()
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS plugin_kv (
         key TEXT PRIMARY KEY,
@@ -76,7 +80,8 @@ class ProjectStore {
           conversation_id TEXT PRIMARY KEY,
           employee_id TEXT,
           title TEXT NOT NULL,
-          updated_at INTEGER NOT NULL
+          updated_at INTEGER NOT NULL,
+          workspace_path TEXT
         );
         INSERT INTO dm_chats_new (conversation_id, employee_id, title, updated_at)
           SELECT conversation_id, employee_id, title, updated_at FROM dm_chats;
@@ -84,6 +89,14 @@ class ProjectStore {
         ALTER TABLE dm_chats_new RENAME TO dm_chats;
       `)
     })()
+  }
+
+  /** 兼容旧库迁移：为 dm_chats 补充 task 工作区目录列 */
+  private migrateChatsWorkspacePath(): void {
+    const db = this.requireDb()
+    const cols = db.prepare('PRAGMA table_info(dm_chats)').all() as Array<{ name: string }>
+    if (cols.some((c) => c.name === 'workspace_path')) return
+    db.exec('ALTER TABLE dm_chats ADD COLUMN workspace_path TEXT')
   }
 
   private requireDb(): PluginDatabase {
@@ -118,6 +131,10 @@ class ProjectStore {
     this.requireDb().prepare('DELETE FROM dm_projects WHERE id = ?').run(id)
   }
 
+  rename(id: string, name: string): void {
+    this.requireDb().prepare('UPDATE dm_projects SET name = ?, updated_at = ? WHERE id = ?').run(name, Date.now(), id)
+  }
+
   createBlank(name?: string): DataModel {
     const model = createDataModel({ name: name || '未命名数据模型' })
     this.save(model)
@@ -128,18 +145,24 @@ class ProjectStore {
 
   saveChat(chat: ChatRecord): void {
     this.requireDb().prepare(
-      'INSERT INTO dm_chats (conversation_id, employee_id, title, updated_at) VALUES (?, NULL, ?, ?) ' +
-      'ON CONFLICT(conversation_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at'
-    ).run(chat.conversationId, chat.title, Date.now())
+      'INSERT INTO dm_chats (conversation_id, employee_id, title, updated_at, workspace_path) VALUES (?, NULL, ?, ?, ?) ' +
+      'ON CONFLICT(conversation_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at, workspace_path = COALESCE(excluded.workspace_path, workspace_path)'
+    ).run(chat.conversationId, chat.title, Date.now(), chat.workspacePath ?? null)
   }
 
   listChats(): ChatRecord[] {
-    const rows = this.requireDb().prepare('SELECT conversation_id, title, updated_at FROM dm_chats ORDER BY updated_at DESC').all() as any[]
+    const rows = this.requireDb().prepare('SELECT conversation_id, title, updated_at, workspace_path FROM dm_chats ORDER BY updated_at DESC').all() as any[]
     return rows.map((r) => ({
       conversationId: r.conversation_id,
       title: r.title,
-      updatedAt: r.updated_at
+      updatedAt: r.updated_at,
+      workspacePath: r.workspace_path ?? null
     }))
+  }
+
+  getChatWorkspacePath(conversationId: string): string | null {
+    const row = this.requireDb().prepare('SELECT workspace_path FROM dm_chats WHERE conversation_id = ?').get(conversationId) as { workspace_path: string | null } | undefined
+    return row?.workspace_path ?? null
   }
 
   deleteChat(conversationId: string): void {

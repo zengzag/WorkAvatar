@@ -1,5 +1,7 @@
 // data-model 插件主进程入口
 
+import fs from 'fs'
+import path from 'path'
 import type { PluginContext, PluginMainModule } from '../../../plugin-sdk/src'
 import { projectStore } from './project-store'
 import { modelSession } from './model-session'
@@ -38,6 +40,37 @@ function broadcast(event: string, payload?: unknown): void {
   ctxRef?.ipc.broadcast(event, payload)
 }
 
+// ====== 任务工作区目录（参考数字员工：<数据目录>/<插件根>/YYYYMMDD_HHmmss） ======
+// 数据目录已按插件隔离（userData/plugin-data/data-model），根目录取其中的 tasks/
+function taskRootDir(): string {
+  return path.join(ctxRef!.paths.data, 'tasks')
+}
+
+/** 新对话创建独立任务目录（YYYYMMDD_HHmmss，碰撞时追加序号） */
+function createTaskWorkspace(): string {
+  const root = taskRootDir()
+  fs.mkdirSync(root, { recursive: true })
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const base = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  let dir = path.join(root, base)
+  let i = 1
+  while (fs.existsSync(dir)) {
+    dir = path.join(root, `${base}_${i}`)
+    i++
+  }
+  fs.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** 安全校验：目标路径必须位于任务根目录下，防止删除/打开任意路径 */
+function isWithinTaskRoot(p: string): boolean {
+  const root = path.resolve(taskRootDir())
+  const target = path.resolve(p)
+  const rel = path.relative(root, target)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
 function registerIpc(ctx: PluginContext): void {
   // ====== 项目 ======
   ctx.ipc.handle('project-list', () => projectStore.list())
@@ -68,6 +101,20 @@ function registerIpc(ctx: PluginContext): void {
     const model = modelSession.getModel()
     if (!model) return { error: '当前无数据模型' }
     projectStore.save(model)
+    return { ok: true }
+  })
+
+  ctx.ipc.handle('project-rename', (payload: any) => {
+    const id = payload?.id
+    const name = payload?.name
+    if (!id || typeof name !== 'string' || !name.trim()) return { error: '缺少项目名称' }
+    const trimmed = name.trim()
+    projectStore.rename(id, trimmed)
+    const model = modelSession.getModel()
+    if (model && model.id === id) {
+      modelSession.setModel({ ...model, name: trimmed, updatedAt: Date.now() }, null)
+      broadcast('model-changed', { model: modelSession.getModel() })
+    }
     return { ok: true }
   })
 
@@ -201,6 +248,22 @@ function registerIpc(ctx: PluginContext): void {
     // 新会话生成会话 id（插件分库持久化，不依赖宿主 conversations 表）
     const convId = conversationId || `dm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 
+    // 任务工作区：新会话创建独立任务目录；已有会话沿用记录中的目录
+    // 目录注入系统提示，使 agent 可通过文件工具读写该目录
+    let workspacePath: string | null = null
+    if (isNewConv) {
+      try {
+        workspacePath = createTaskWorkspace()
+      } catch (e) {
+        ctx.services.logger.warn('创建任务工作区失败:', e instanceof Error ? e.message : String(e))
+      }
+    } else {
+      workspacePath = projectStore.getChatWorkspacePath(conversationId)
+    }
+    const system = workspacePath
+      ? DATA_MODEL_SYSTEM_PROMPT + `\n\n当前任务工作区目录：${workspacePath}\n该目录为本次对话的专属任务文件夹，可用 file_read / file_write / file_edit / shell_exec 读取、写入、编辑其中的文件以完成建模与分析任务。`
+      : DATA_MODEL_SYSTEM_PROMPT
+
     const persist = async (convId: string, msgs: unknown[]) => {
       try {
         projectStore.saveMessages(convId, msgs)
@@ -220,13 +283,14 @@ function registerIpc(ctx: PluginContext): void {
           modelId: resolvedModelId,
           messages,
           conversationId: convId,
-          system: DATA_MODEL_SYSTEM_PROMPT,
+          system,
           tools: createDataModelAgentTools(),
           useSkills: false,
           enableThinking: true,
           minimalMode: false,
           highPermission: false,
-          enableBuiltinTools: true
+          enableBuiltinTools: true,
+          workspacePath: workspacePath ?? undefined
         },
         {
           onChunk: (text) => { acc += text; broadcast('chat-event', { type: 'chunk', text }) },
@@ -248,18 +312,18 @@ function registerIpc(ctx: PluginContext): void {
       // 持久化：读取现有消息 → 追加用户消息 + 助手回复
       if (lastConvId) {
         const existing = projectStore.getMessages(lastConvId)
-        const userMsg = { role: 'user' as const, content: lastMsg?.content ?? '' }
-        const assistantMsg: Record<string, unknown> = { role: 'assistant', content: acc }
+        const userMsg = { id: lastMsg?.id, role: 'user' as const, content: lastMsg?.content ?? '' }
+        const assistantMsg: Record<string, unknown> = { id: payload?.assistantId, role: 'assistant', content: acc }
         if (thought) assistantMsg.reasoning_content = thought
         if (errText) assistantMsg.content = (assistantMsg.content as string) + (acc ? `\n\n[错误] ${errText}` : `[错误] ${errText}`)
         const hasUser = existing.some((m) => (m as any).role === 'user' && (m as any).content === userMsg.content)
         await persist(lastConvId, [...(hasUser ? existing : [...existing, userMsg]), assistantMsg])
         // 记录数据模型对话（供历史列表）
         const title = lastMsg?.content?.slice(0, 40) || '数据模型对话'
-        projectStore.saveChat({ conversationId: lastConvId, title, updatedAt: Date.now() })
+        projectStore.saveChat({ conversationId: lastConvId, title, updatedAt: Date.now(), workspacePath })
         broadcast('chats-changed', { ts: Date.now() })
       }
-      return { conversationId: lastConvId } as { conversationId: string }
+      return { conversationId: lastConvId, workspacePath } as { conversationId: string; workspacePath: string | null }
     } finally {
       if (currentAbort === controller) currentAbort = null
     }
@@ -272,8 +336,55 @@ function registerIpc(ctx: PluginContext): void {
   ctx.ipc.handle('chat-delete', (payload: any) => {
     const convId = payload?.conversationId
     if (!convId) return { error: '缺少 conversationId' }
+    const ws = projectStore.getChatWorkspacePath(convId)
     projectStore.deleteChat(convId)
     broadcast('chats-changed', { ts: Date.now() })
+    // 任务目录：空目录直接删除；非空目录保留并上报，由前端决定是否一并删除
+    let taskDir: string | undefined
+    let taskDirNonEmpty: boolean | undefined
+    if (ws && isWithinTaskRoot(ws) && fs.existsSync(ws)) {
+      try {
+        if (fs.readdirSync(ws).length === 0) {
+          fs.rmdirSync(ws)
+        } else {
+          taskDir = ws
+          taskDirNonEmpty = true
+        }
+      } catch (e) {
+        ctx.services.logger.warn('处理任务目录失败:', e instanceof Error ? e.message : String(e))
+      }
+    }
+    return { ok: true, taskDir, taskDirNonEmpty }
+  })
+
+  // 删除对话的任务工作区目录（移至回收站，路径须位于任务根目录内）
+  ctx.ipc.handle('chat-delete-task-dir', async (payload: any) => {
+    const dir = payload?.path
+    if (!dir) return { ok: false, error: '缺少路径' }
+    if (!isWithinTaskRoot(dir)) return { ok: false, error: '路径不在任务工作区内，拒绝删除' }
+    if (!fs.existsSync(dir)) return { ok: true }
+    const { shell } = require('electron')
+    try {
+      if (typeof shell.trashItem === 'function') {
+        await shell.trashItem(dir)
+      } else {
+        fs.rmSync(dir, { recursive: true, force: true })
+      }
+    } catch {
+      try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+    return { ok: true }
+  })
+
+  // 打开对话的任务工作区目录
+  ctx.ipc.handle('chat-open-dir', (payload: any) => {
+    const convId = payload?.conversationId
+    const ws = convId ? projectStore.getChatWorkspacePath(convId) : null
+    if (!ws || !fs.existsSync(ws)) return { ok: false, error: '任务工作区不存在' }
+    try {
+      const { shell } = require('electron')
+      if (shell?.openPath) shell.openPath(ws)
+    } catch { ctx.services.logger.warn('打开任务工作区失败:', ws) }
     return { ok: true }
   })
 
@@ -285,6 +396,27 @@ function registerIpc(ctx: PluginContext): void {
   ctx.ipc.handle('chat-history', async (payload: any) => {
     if (!payload?.conversationId) return []
     return projectStore.getMessages(payload.conversationId)
+  })
+
+  ctx.ipc.handle('chat-delete-message', (payload: any) => {
+    const convId = payload?.conversationId
+    const msgId = payload?.msgId
+    if (!convId || !msgId) return { error: '缺少参数' }
+    const msgs = projectStore.getMessages(convId) as Array<{ id?: string; role?: string; content?: string }>
+    let idx = msgs.findIndex((m) => m.id === msgId)
+    // 兼容旧数据（无 id 字段）：按 role+content 兜底匹配
+    if (idx === -1 && payload?.role && payload?.content !== undefined) {
+      idx = msgs.findIndex((m) => m.role === payload.role && m.content === payload.content)
+    }
+    if (idx === -1) return { error: '消息不存在' }
+    const next = [...msgs]
+    next.splice(idx, 1)
+    // 删除用户消息时同步删除紧随其后的助手回复（与宿主任务对话语义一致）
+    if (msgs[idx].role === 'user' && next[idx] && next[idx].role === 'assistant') {
+      next.splice(idx, 1)
+    }
+    projectStore.saveMessages(convId, next)
+    return { ok: true }
   })
 }
 

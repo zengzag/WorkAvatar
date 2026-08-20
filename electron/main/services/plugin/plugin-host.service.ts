@@ -639,24 +639,28 @@ class PluginHostService {
 
             // 可选：注入宿主内置 shell/文件工具，并分配任务工作区（类似数字员工）
             let builtinTools: any[] = []
-            let taskWorkspace: string | undefined
+            let taskWorkspace = params.workspacePath
             if (params.enableBuiltinTools) {
               const { shellExecTool } = require('../agent/tools/shell-exec.tool')
               const { residentFileTools } = require('../agent/tools/fs-tools')
               builtinTools = [shellExecTool, ...residentFileTools]
-              // 在插件数据目录下为本次会话创建独立任务工作区
-              const { default: PathService } = require('../path.service')
-              const base = path.join(PathService.getInstance().getDataDir(), 'plugins', manifest.id, 'tasks')
-              const ts = new Date()
-              const pad = (n: number) => String(n).padStart(2, '0')
-              const dirName = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
-              taskWorkspace = path.join(base, dirName)
-              let i = 1
-              while (fs.existsSync(taskWorkspace)) {
-                taskWorkspace = path.join(base, `${dirName}_${i}`)
-                i++
+              // 插件已指定任务工作区（持久化到会话）则直接复用，否则在插件数据目录下为本次会话新建
+              if (!taskWorkspace) {
+                const { default: PathService } = require('../path.service')
+                const base = path.join(PathService.getInstance().getDataDir(), 'plugins', manifest.id, 'tasks')
+                const ts = new Date()
+                const pad = (n: number) => String(n).padStart(2, '0')
+                const dirName = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
+                taskWorkspace = path.join(base, dirName)
+                let i = 1
+                while (fs.existsSync(taskWorkspace)) {
+                  taskWorkspace = path.join(base, `${dirName}_${i}`)
+                  i++
+                }
+                fs.mkdirSync(taskWorkspace, { recursive: true })
               }
-              fs.mkdirSync(taskWorkspace, { recursive: true })
+              // 插件传入的目录可能尚未创建，确保存在以便文件工具使用
+              if (!fs.existsSync(taskWorkspace)) fs.mkdirSync(taskWorkspace, { recursive: true })
             }
 
             const run = () => genericChat.chatStream(
