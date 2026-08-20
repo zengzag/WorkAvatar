@@ -60,7 +60,8 @@ function TableNodeInner({ data, selected }: TableNodeComponentProps) {
     () => getVisibleFields(table, relationships),
     [table, relationships]
   )
-  const pkCount = table.fields.filter((f) => f.primaryKey).length
+  const fields = table.fields ?? []
+  const pkCount = fields.filter((f) => f.primaryKey).length
 
   const toggleExpanded = useCallback(
     (e: React.MouseEvent) => {
@@ -95,8 +96,8 @@ function TableNodeInner({ data, selected }: TableNodeComponentProps) {
         <span style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {table.schema ? `${table.schema}.` : ''}{table.name}
         </span>
-        {!table.expanded && table.fields.length > visibleFields.length && (
-          <span style={{ color: 'var(--dm-muted)', fontSize: 11 }}>+{table.fields.length - visibleFields.length}</span>
+        {!table.expanded && fields.length > visibleFields.length && (
+          <span style={{ color: 'var(--dm-muted)', fontSize: 11 }}>+{fields.length - visibleFields.length}</span>
         )}
         {pkCount > 0 && <span style={{ color: 'var(--dm-muted)', fontSize: 11 }}>PK {pkCount}</span>}
         <span style={{ color: 'var(--dm-muted)', fontSize: 11 }}>{table.expanded ? '▾' : '▸'}</span>

@@ -15,25 +15,27 @@ export const HEADER_HEIGHT = 36
  * 这样折叠后连线仍能定位到对应字段的 Handle，画布上的关系边不会消失。
  */
 export function getVisibleFields(table: Table, relationships: Relationship[]): Table['fields'] {
-  if (table.expanded) return table.fields
+  const fields = table.fields ?? []
+  if (table.expanded) return fields
   const visibleIds = new Set<string>()
-  for (const f of table.fields) {
+  for (const f of fields) {
     if (f.primaryKey) visibleIds.add(f.id)
   }
   for (const r of relationships) {
     if (r.sourceTableId === table.id) visibleIds.add(r.sourceFieldId)
     if (r.targetTableId === table.id) visibleIds.add(r.targetFieldId)
   }
-  return table.fields.filter((f) => visibleIds.has(f.id))
+  return fields.filter((f) => visibleIds.has(f.id))
 }
 
 export function computeNodeHeight(table: Table, relationships: Relationship[]): number {
+  const fields = table.fields ?? []
   if (!table.expanded) {
     const visibleCount = getVisibleFields(table, relationships).length
     if (visibleCount === 0) return NODE_HEIGHT_COLLAPSED
     return HEADER_HEIGHT + visibleCount * FIELD_HEIGHT + 8
   }
-  const fieldCount = table.fields.length
+  const fieldCount = fields.length
   return HEADER_HEIGHT + Math.max(fieldCount * FIELD_HEIGHT, 40) + 8
 }
 

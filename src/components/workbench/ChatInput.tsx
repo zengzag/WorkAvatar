@@ -305,12 +305,12 @@ const ChatInput: React.FC<{
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
 
-  /** 同步：内容变化后通知父组件（草稿） */
+  /** 同步：内容变化后通知父组件（草稿），并更新空状态（控制 placeholder 与发送按钮） */
   const emitDraftChange = useCallback(() => {
-    if (!editorRef.current || !onDraftChange) return
+    if (!editorRef.current) return
     const draftStr = serializeEditorDraft(editorRef.current)
-    onDraftChange(draftStr)
-    // 同步更新空状态
+    onDraftChange?.(draftStr)
+    // 同步更新空状态（即使未提供 onDraftChange 也必须更新，否则 placeholder 不消失、发送按钮不恢复）
     setEditorEmpty(!editorRef.current.textContent && editorRef.current.querySelectorAll(`.${FILE_TOKEN_CLASS}`).length === 0)
   }, [onDraftChange])
 

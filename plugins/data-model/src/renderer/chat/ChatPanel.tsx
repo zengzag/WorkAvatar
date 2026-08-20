@@ -5,16 +5,14 @@ import { Select, Button } from 'antd'
 import { useDataModelStore } from '../data-model.store'
 import { dm, getHostCapabilities, hostT } from '../store'
 
-export function ChatPanel({ onClose }: { onClose?: () => void }) {
+export function ChatPanel() {
   const messages = useDataModelStore((s) => s.messages)
   const isStreaming = useDataModelStore((s) => s.isStreaming)
   const chatError = useDataModelStore((s) => s.chatError)
   const providers = useDataModelStore((s) => s.providers)
-  const selectedProviderId = useDataModelStore((s) => s.selectedProviderId)
-  const selectedModelId = useDataModelStore((s) => s.selectedModelId)
   const conversationId = useDataModelStore((s) => s.conversationId)
   const chats = useDataModelStore((s) => s.chats)
-  const { sendMessage, cancelChat, newChat, setSelectedProvider, setSelectedModel, loadChats, loadChatHistory, deleteChat } = useDataModelStore.getState()
+  const { sendMessage, cancelChat, newChat, loadChats, loadChatHistory, deleteChat, toggleSegment } = useDataModelStore.getState()
 
   const GenericChatView = getHostCapabilities()?.GenericChatView
 
@@ -25,38 +23,9 @@ export function ChatPanel({ onClose }: { onClose?: () => void }) {
     return unsub
   }, [])
 
-  const selectedProvider = providers.find((p) => p.id === selectedProviderId)
-  const models = selectedProvider?.models_json
-    ? (() => {
-        try { return JSON.parse(selectedProvider.models_json) as Array<{ id: string; model: string; name?: string }> } catch { return [] }
-      })()
-    : []
-
-  // 顶部自定义区：模型选择 + 历史对话切换
+  // 顶部自定义区：历史对话切换（模型选择已移至设置面板）
   const header = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Select
-          size="small"
-          style={{ flex: 1 }}
-          placeholder={hostT('settings.selectProvider')}
-          value={selectedProviderId ?? undefined}
-          onChange={setSelectedProvider}
-          options={providers.map((p) => ({ value: p.id, label: p.name }))}
-          allowClear
-        />
-        {selectedProvider && (
-          <Select
-            size="small"
-            style={{ flex: 1 }}
-            placeholder={hostT('settings.selectModel')}
-            value={selectedModelId ?? undefined}
-            onChange={setSelectedModel}
-            options={models.map((m) => ({ value: m.id, label: m.name ?? m.model }))}
-            allowClear
-          />
-        )}
-      </div>
       {chats.length > 0 && (
         <Select
           size="small"
@@ -101,12 +70,12 @@ export function ChatPanel({ onClose }: { onClose?: () => void }) {
       conversationId={conversationId}
       providers={providers}
       placeholder={hostT('page.chatPlaceholder')}
-      title={hostT('page.title')}
+      title={hostT('page.chat')}
       header={header}
       onSend={(text, images) => void sendMessage(text, images)}
       onStop={cancelChat}
       onNewChat={newChat}
-      onClose={onClose}
+      onToggleSegment={toggleSegment}
     />
   )
 }

@@ -19,6 +19,7 @@ const PRESET_COLORS = ['#71717a', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#
 export function TableInspector({ table }: { table: Table }) {
   const { updateTable, removeTable, addField, updateField, removeField } = useDataModelStore.getState()
   const [newFieldName, setNewFieldName] = useState('')
+  const fields = table.fields ?? []
 
   const addNewField = () => {
     if (!newFieldName.trim()) return
@@ -64,7 +65,7 @@ export function TableInspector({ table }: { table: Table }) {
 
       {/* 字段列表（重点） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{hostT('table.addField')}（{table.fields.length}）</span>
+        <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{hostT('table.addField')}（{fields.length}）</span>
         <Tooltip title={hostT('table.addField')}>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={addNewField} />
         </Tooltip>
@@ -80,7 +81,7 @@ export function TableInspector({ table }: { table: Table }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {table.fields.map((f) => (
+        {fields.map((f) => (
           <FieldEditor key={f.id} tableId={table.id} field={f} onRemove={() => removeField(table.id, f.id)} />
         ))}
       </div>

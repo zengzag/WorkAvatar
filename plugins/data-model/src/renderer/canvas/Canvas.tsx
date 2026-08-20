@@ -149,7 +149,7 @@ function CanvasInner() {
     const relationships = model?.relationships ?? []
     const visibleCount = getVisibleFields(table, relationships).length
     const h = table.expanded
-      ? HEADER_HEIGHT + Math.max(table.fields.length * FIELD_HEIGHT, 40) + 8
+      ? HEADER_HEIGHT + Math.max((table.fields ?? []).length * FIELD_HEIGHT, 40) + 8
       : visibleCount > 0
         ? HEADER_HEIGHT + visibleCount * FIELD_HEIGHT + 8
         : NODE_HEIGHT_COLLAPSED

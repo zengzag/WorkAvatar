@@ -674,7 +674,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                     return (
                       <Tooltip
                         key={`${ev.id}-${ev.instance_start_at}`}
-                        title={`${ev.title}\n${formatEventTime(ev.instance_start_at)} - ${formatEventTime(ev.instance_end_at)}${ev.location ? '\n' + ev.location : ''}`}
+                        title={`${ev.title}\n${formatEventTime(ev.instance_start_at)} - ${formatEventTime(ev.instance_end_at)}`}
                       >
                         <div
                           onMouseDown={(e) => handleEventMouseDown(e, ev, dms)}

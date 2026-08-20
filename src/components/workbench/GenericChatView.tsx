@@ -2,9 +2,9 @@
 // 调用方维护消息与回调（messages/isStreaming/onSend/onStop...），宿主负责渲染。
 // 暴露给插件（hostCapabilities.GenericChatView），插件页面内可直接调用 LLM 实现自定义对话。
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { theme, Button, Tooltip } from 'antd'
-import { ClearOutlined, CloseOutlined, RobotOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, RobotOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import type { GenericChatViewProps } from '../../../plugins/plugin-sdk/src/renderer'
 import { MessageList, ChatInput } from './index'
@@ -26,6 +26,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
   onStop,
   onNewChat,
   onClose,
+  onToggleSegment,
   loading,
   style,
 }) => {
@@ -41,6 +42,13 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
 
   // 流式自动滚动：仅当用户位于底部时跟随，用户上滚浏览历史时不打扰
   const { messagesEndRef, chatContainerRef, handleScroll, forceScrollToBottom } = useChatScroll(normalizedMessages)
+
+  // 切换会话（加载历史）时重置滚动到底部，避免沿用上一会话的上滚位置导致新历史不显示最新消息
+  const forceScrollRef = useRef(forceScrollToBottom)
+  forceScrollRef.current = forceScrollToBottom
+  useEffect(() => {
+    forceScrollRef.current()
+  }, [conversationId])
 
   const handleCopy = useCallback(async (content: string) => {
     try { await navigator.clipboard.writeText(content) } catch { /* ignore */ }
@@ -70,7 +78,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 4 }}>
                 {onNewChat && (
                   <Tooltip title={t('workbench.newChat')}>
-                    <Button size="small" type="text" icon={<ClearOutlined />} onClick={onNewChat} />
+                    <Button size="small" type="text" icon={<PlusOutlined />} onClick={onNewChat} />
                   </Tooltip>
                 )}
                 {onClose && (
@@ -103,7 +111,7 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
               onRegenerate={noop}
               onSwitchModelRegenerate={noop}
               onEditAndResubmit={noop}
-              onToggleSegment={noop}
+              onToggleSegment={onToggleSegment ?? noop}
               onSwitchBranch={noop}
               onOpenComparison={noop}
               getToolDisplayName={getToolDisplayName}

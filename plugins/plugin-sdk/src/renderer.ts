@@ -90,6 +90,8 @@ export interface GenericChatViewProps {
   onStop: () => void
   onNewChat?: () => void
   onClose?: () => void
+  /** 折叠/展开消息分段（thinking/tool_call），msgId + segId */
+  onToggleSegment?: (msgId: string, segId: string) => void
   /** 会话加载中（显示 loading 态） */
   loading?: boolean
   style?: CSSProperties

@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { App, Button, Select, Modal, Input, Radio, Tooltip, Empty, Popconfirm } from 'antd'
 import {
   SaveOutlined, PlusOutlined, ImportOutlined, ExportOutlined,
-  ApartmentOutlined, CloseOutlined, SettingOutlined,
+  ApartmentOutlined, SettingOutlined, RightOutlined,
   DeleteOutlined, DownloadOutlined, UploadOutlined
 } from '@ant-design/icons'
 import { Canvas } from './canvas/Canvas'
 import { TableInspector } from './inspector/TableInspector'
 import { RelationshipInspector } from './inspector/RelationshipInspector'
-import { FloatingChat } from './chat/FloatingChat'
+import { AppSidebar, type SidebarView } from './AppSidebar'
+import { SidePanel } from './SidePanel'
 import { DataModelSettingsDrawer } from './DataModelSettingsDrawer'
 import { useDataModelStore } from './data-model.store'
 import { dm, hostT } from './store'
@@ -24,7 +25,10 @@ export function DataModelPage() {
   const { setModel, applyRemoteModel, loadProjects, createProject, loadSample, openProject, deleteProject, saveProject, loadProviders, requestLayout, addTable, loadSettings, loadDataDir, exportProjectFile, importProjectFile } = useDataModelStore.getState()
   const { message } = App.useApp()
 
-  const [showInspector, setShowInspector] = useState(true)
+  const [sidebarView, setSidebarView] = useState<SidebarView>('explorer')
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(280)
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
   const [inspectorWidth, setInspectorWidth] = useState(320)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -212,9 +216,20 @@ export function DataModelPage() {
 
       {/* 主区域 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* 左侧图标栏：数据模型 / AI 对话 切换 */}
+        <AppSidebar active={sidebarView} onChange={setSidebarView} />
+
+        {/* 左侧面板：数据模型列表 或 AI 对话（可展开收起、调节宽度） */}
+        <SidePanel
+          view={sidebarView}
+          collapsed={panelCollapsed}
+          width={panelWidth}
+          onToggleCollapsed={() => setPanelCollapsed((v) => !v)}
+          onWidthChange={setPanelWidth}
+        />
+
         <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
           <Canvas />
-          <FloatingChat />
           {model && model.tables.length === 0 && (
             <div
               style={{
@@ -233,23 +248,39 @@ export function DataModelPage() {
           )}
         </div>
 
-        {showInspector && (
-          <div style={{ display: 'flex', minHeight: 0 }}>
-            {/* 拖拽调整宽度手柄 */}
+        {/* 右侧检查器：仅支持收起/展开，无关闭按钮 */}
+        <div style={{ display: 'flex', minHeight: 0 }}>
+          {/* 拖拽调整宽度手柄 */}
+          <div
+            onMouseDown={startResize}
+            style={{
+              width: 5, cursor: 'col-resize', flexShrink: 0,
+              borderLeft: '1px solid var(--dm-border)',
+              background: 'transparent', transition: 'background 0.2s'
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--dm-primary-soft)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          />
+          {inspectorCollapsed ? (
+            /* 折叠态：窄条，点击展开 */
             <div
-              onMouseDown={startResize}
+              onClick={() => setInspectorCollapsed(false)}
+              title={hostT('page.inspector')}
               style={{
-                width: 5, cursor: 'col-resize', flexShrink: 0,
-                borderLeft: '1px solid var(--dm-border)',
-                background: 'transparent', transition: 'background 0.2s'
+                width: 28, borderLeft: '1px solid var(--dm-border)', cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                paddingTop: 12, gap: 8, background: 'var(--dm-bg)'
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--dm-primary-soft)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            />
+            >
+              <span style={{ writingMode: 'vertical-rl', fontSize: 12, color: 'var(--dm-muted)', fontWeight: 600, letterSpacing: 2 }}>
+                {hostT('page.inspector')}
+              </span>
+            </div>
+          ) : (
             <div style={{ width: inspectorWidth, borderLeft: '1px solid var(--dm-border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--dm-border)', display: 'flex', alignItems: 'center' }}>
                 <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{hostT('page.inspector')}</span>
-                <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setShowInspector(false)} />
+                <Button size="small" type="text" icon={<RightOutlined />} title={hostT('page.collapseInspector')} onClick={() => setInspectorCollapsed(true)} />
               </div>
               <div style={{ flex: 1, overflowY: 'auto' }}>
                 {selectedTable ? (
@@ -261,8 +292,8 @@ export function DataModelPage() {
                 )}
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* 新建项目 */}

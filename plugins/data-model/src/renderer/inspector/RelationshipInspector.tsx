@@ -20,8 +20,8 @@ export function RelationshipInspector({ relationship }: { relationship: Relation
 
   const sourceTable = model.tables.find((t) => t.id === relationship.sourceTableId)
   const targetTable = model.tables.find((t) => t.id === relationship.targetTableId)
-  const sourceField = sourceTable?.fields.find((f) => f.id === relationship.sourceFieldId)
-  const targetField = targetTable?.fields.find((f) => f.id === relationship.targetFieldId)
+  const sourceField = sourceTable?.fields?.find((f) => f.id === relationship.sourceFieldId)
+  const targetField = targetTable?.fields?.find((f) => f.id === relationship.targetFieldId)
   const type = deriveRelationshipType(relationship)
 
   return (

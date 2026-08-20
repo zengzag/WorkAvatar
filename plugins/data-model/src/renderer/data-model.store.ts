@@ -76,6 +76,7 @@ interface DataModelState {
   loadChatHistory: (conversationId: string) => Promise<void>
   loadChats: () => Promise<void>
   deleteChat: (conversationId: string) => Promise<void>
+  toggleSegment: (msgId: string, segId: string) => void
 }
 
 function cloneModel(model: DataModel): DataModel {
@@ -369,6 +370,20 @@ export const useDataModelStore = create<DataModelState>((set, get) => ({
       set({ messages: [], conversationId: null })
     }
     await get().loadChats()
+  },
+
+  toggleSegment: (msgId, segId) => {
+    set((state) => ({
+      messages: state.messages.map((m) => {
+        if (m.id !== msgId || !m.segments) return m
+        return {
+          ...m,
+          segments: m.segments.map((s) =>
+            s.id === segId ? { ...s, collapsed: !s.collapsed } : s
+          ),
+        }
+      }),
+    }))
   }
 }))
 

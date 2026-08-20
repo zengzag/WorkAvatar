@@ -113,7 +113,7 @@ function formatEvent(e: CalendarEvent): string {
   const start = new Date(e.start_at * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   const end = new Date(e.end_at * 1000).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   const repeat = e.recurrence_rule ? ` 重复:${e.recurrence_rule.freq}` : ''
-  return `• ${e.title} | ${start}-${end}${e.all_day ? '(全天)' : ''}${e.location ? ` @${e.location}` : ''}${repeat} [id=${e.id}]`
+  return `• ${e.title} | ${start}-${end}${e.all_day ? '(全天)' : ''}${repeat} [id=${e.id}]`
 }
 
 function formatTodo(t: CalendarTodo): string {
@@ -172,7 +172,7 @@ const calendarEventCreateTool: PluginToolDefinition = {
   summary: '创建新的日历日程事件。新建日程时使用，支持重复规则与提醒。',
   description: `创建一个新的日历日程事件。
 - 必填：title、start_time
-- 可选：end_time（默认为开始时间+1小时）、all_day、location、description、color、recurrence_rule、reminders
+- 可选：end_time（默认为开始时间+1小时）、all_day、description、color、recurrence_rule、reminders
 
 recurrence_rule 格式：{"freq":"daily|weekly|monthly|yearly","interval":数字,"count":可选,"until":可选unix秒,"byday":["MO","TU",...],"bymonthday":[15,...],"bymonth":[1,...],"bysetpos":-1}
 - byday：SU/MO/TU/WE/TH/FR/SA，工作日可设 ["MO","TU","WE","TH","FR"]
@@ -184,7 +184,6 @@ ${TIME_HINT}`,
     properties: {
       title: { type: 'string', description: '日程主题' },
       description: { type: 'string', description: '日程描述' },
-      location: { type: 'string', description: '地点' },
       start_time: { type: 'string', description: '开始时间，接受 Unix 秒或日期字符串（如 "2026-07-24 15:00"）' },
       end_time: { type: 'string', description: '结束时间，接受 Unix 秒或日期字符串（默认为开始时间+1小时）' },
       all_day: { type: 'boolean', description: '是否全天事件' },
@@ -225,7 +224,6 @@ ${TIME_HINT}`,
       const input: CreateEventInput = {
         title: String(args.title),
         description: args.description ? String(args.description) : undefined,
-        location: args.location ? String(args.location) : undefined,
         start_at: startAt,
         end_at: endAt,
         all_day: args.all_day === true,
@@ -264,7 +262,6 @@ ${TIME_HINT}`,
       id: { type: 'string', description: '日程ID（必填）' },
       title: { type: 'string', description: '日程主题' },
       description: { type: 'string', description: '日程描述' },
-      location: { type: 'string', description: '地点' },
       start_time: { type: 'string', description: '开始时间，接受 Unix 秒或日期字符串' },
       end_time: { type: 'string', description: '结束时间，接受 Unix 秒或日期字符串' },
       all_day: { type: 'boolean', description: '是否全天事件' },
@@ -304,7 +301,6 @@ ${TIME_HINT}`,
         id: String(args.id),
         title: args.title !== undefined ? String(args.title) : undefined,
         description: args.description !== undefined ? String(args.description) : undefined,
-        location: args.location !== undefined ? String(args.location) : undefined,
         start_at: startAt,
         end_at: endAt,
         all_day: args.all_day !== undefined ? args.all_day === true : undefined,

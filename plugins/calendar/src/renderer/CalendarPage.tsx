@@ -22,6 +22,7 @@ const CalendarPage: React.FC = () => {
   const { t } = useTranslation('calendar')
   const { token } = theme.useToken()
   const cal = useCalendar()
+  const { refreshAll } = cal
   const [eventModalOpen, setEventModalOpen] = useState(false)
   const [eventModalMode, setEventModalMode] = useState<EventFormMode>('create')
   const [editingEvent, setEditingEvent] = useState<CalendarEventInstance | null>(null)
@@ -41,6 +42,20 @@ const CalendarPage: React.FC = () => {
     onMode: (mode: DeleteInstanceMode) => Promise<any> | any
   } | null>(null)
   const calendarWrapRef = useRef<HTMLDivElement | null>(null)
+  const pageRef = useRef<HTMLDivElement | null>(null)
+
+  // 页面被 KeepAlive 缓存（display:none 隐藏）后重新可见时，立即刷新数据，避免进入时数据陈旧
+  useEffect(() => {
+    const el = pageRef.current
+    if (!el) return
+    const parent = el.parentElement
+    if (!parent) return
+    const observer = new MutationObserver(() => {
+      if (parent.style.display !== 'none') refreshAll()
+    })
+    observer.observe(parent, { attributes: true, attributeFilter: ['style'] })
+    return () => observer.disconnect()
+  }, [refreshAll])
 
   // 周/日视图首次进入时滚动到中间位置；周↔日切换时保留滚动位置
   const lastViewRef = useRef<string | null>(null)
@@ -205,7 +220,7 @@ const CalendarPage: React.FC = () => {
   }, [cal, todoModalMode])
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div ref={pageRef} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* 顶部工具栏 */}
       <div style={{
         display: 'flex',

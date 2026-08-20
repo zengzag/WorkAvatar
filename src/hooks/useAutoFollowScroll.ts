@@ -1,40 +1,55 @@
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useLayoutEffect, useEffect, useCallback } from 'react'
 
 /**
  * 内部可滚动容器的"自动跟随到底部"能力
  *
  * 职责：
- * - 内容高度变化时，若用户停留在底部附近则自动滚到底（MutationObserver + rAF 节流，
+ * - 内容变化时，若用户停留在底部附近则自动滚到底（MutationObserver + rAF 节流，
  *   合并流式输出的多次 DOM 变更，避免同步 reflow）
  * - onScroll：用户滚动时按阈值更新 isAtBottom，手动上滚即暂停自动跟随，
- *   滚回底部附近后恢复（与 useChatScroll 一致的用户操作区分）
+ *   滚回底部附近后恢复
+ *
+ * 实现要点：
+ * - 通过无依赖的 useLayoutEffect 在元素挂载/切换时重建 observer，避免容器为条件
+ *   渲染（如折叠的工具调用段）时 observer 未建立导致不触发
+ * - 不依赖高度比较，只要用户位于底部就跟随，避免高度判断陈旧导致漏滚
  */
 export function useAutoFollowScroll<T extends HTMLElement>() {
-  const containerRef = useRef<T>(null)
+  const containerRef = useRef<T | null>(null)
   const isAtBottomRef = useRef(true)
-  const lastHeightRef = useRef(-1)
+  const rafIdRef = useRef<number | null>(null)
+  const elRef = useRef<T | null>(null)
+  const observerRef = useRef<MutationObserver | null>(null)
 
-  useEffect(() => {
+  // 元素挂载/切换时重建 observer（容器可能为条件渲染，如折叠的工具调用段）
+  useLayoutEffect(() => {
     const el = containerRef.current
+    if (el === elRef.current) return
+    elRef.current = el
+    observerRef.current?.disconnect()
+    observerRef.current = null
     if (!el) return
-    let rafId: number | null = null
     const observer = new MutationObserver(() => {
       if (!isAtBottomRef.current) return
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        const h = el.scrollHeight
-        if (h !== lastHeightRef.current) {
-          lastHeightRef.current = h
-          if (isAtBottomRef.current) el.scrollTop = el.scrollHeight
+      if (rafIdRef.current !== null) return
+      rafIdRef.current = requestAnimationFrame(() => {
+        rafIdRef.current = null
+        if (isAtBottomRef.current && containerRef.current) {
+          containerRef.current.scrollTop = containerRef.current.scrollHeight
         }
       })
     })
     observer.observe(el, { childList: true, subtree: true, characterData: true })
-    lastHeightRef.current = el.scrollHeight
+    observerRef.current = observer
+  })
+
+  // 卸载时清理（重置 elRef 以便 StrictMode 重挂载时重建 observer）
+  useEffect(() => {
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId)
-      observer.disconnect()
+      observerRef.current?.disconnect()
+      observerRef.current = null
+      elRef.current = null
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current)
     }
   }, [])
 

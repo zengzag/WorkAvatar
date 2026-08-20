@@ -26,6 +26,11 @@ const DATA_MODEL_SYSTEM_PROMPT = `你是一个数据建模助手，正在帮助�
 5. 每次修改后简要说明做了什么
 6. 若用户要求"新建/清空重来"，用 set_model_json 传入全新的 JSON（mode=replace）整体替换
 
+你同时具备通用能力（与数字员工一致）：
+- 任务工作区：每次会话分配独立任务文件夹，可读写文件（file_read / file_write / file_edit），增删改直接执行
+- shell_exec：执行系统命令（python/node/git/pip/npm 等），用于脚本、数据处理、外部工具
+- 需要时可用文件工具读写任务工作区内的临时文件，配合 shell 完成复杂任务
+
 结构化 JSON 是完整交换格式，能表达 DBML 无法承载的布局位置、颜色、索引、枚举引用等。DBML 仅用于兼容用户提供的既有 schema。
 命名规范：表名、字段名使用小写 snake_case。主键字段通常为 id (bigint, 自增)。外键字段命名如 user_id。`
 
@@ -223,7 +228,8 @@ function registerIpc(ctx: PluginContext): void {
           useSkills: false,
           enableThinking: true,
           minimalMode: false,
-          highPermission: false
+          highPermission: false,
+          enableBuiltinTools: true
         },
         {
           onChunk: (text) => { acc += text; broadcast('chat-event', { type: 'chunk', text }) },
