@@ -7,6 +7,7 @@ import Database from 'better-sqlite3'
 import { createLogger } from '../logger'
 import DatabaseService from '../database.service'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
+import { PLUGIN_PACKAGE_EXT } from '../../../shared/channels/plugin'
 import type {
   PluginEventPayload,
   PluginInfo,
@@ -635,12 +636,35 @@ class PluginHostService {
                 employeeId: null,
               }),
             }))
-            await genericChat.chatStream(
+
+            // 可选：注入宿主内置 shell/文件工具，并分配任务工作区（类似数字员工）
+            let builtinTools: any[] = []
+            let taskWorkspace: string | undefined
+            if (params.enableBuiltinTools) {
+              const { shellExecTool } = require('../agent/tools/shell-exec.tool')
+              const { residentFileTools } = require('../agent/tools/fs-tools')
+              builtinTools = [shellExecTool, ...residentFileTools]
+              // 在插件数据目录下为本次会话创建独立任务工作区
+              const { default: PathService } = require('../path.service')
+              const base = path.join(PathService.getInstance().getDataDir(), 'plugins', manifest.id, 'tasks')
+              const ts = new Date()
+              const pad = (n: number) => String(n).padStart(2, '0')
+              const dirName = `${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
+              taskWorkspace = path.join(base, dirName)
+              let i = 1
+              while (fs.existsSync(taskWorkspace)) {
+                taskWorkspace = path.join(base, `${dirName}_${i}`)
+                i++
+              }
+              fs.mkdirSync(taskWorkspace, { recursive: true })
+            }
+
+            const run = () => genericChat.chatStream(
               {
                 providerId: params.providerId,
                 modelId: params.modelId,
                 systemPrompt: params.system,
-                tools,
+                tools: [...builtinTools, ...tools],
                 useSkills: params.useSkills ?? false,
                 enableThinking: params.enableThinking ? 'high' : false,
                 minimalMode: params.minimalMode ?? false,
@@ -661,6 +685,22 @@ class PluginHostService {
               },
               signal,
             )
+
+            if (taskWorkspace) {
+              const { interactionContext } = require('../unified-interaction.service')
+              await interactionContext.run(
+                {
+                  sessionId: conversationId,
+                  employeeId: 'generic',
+                  conversationId,
+                  workspacePath: taskWorkspace,
+                  highPermission: params.highPermission === true,
+                },
+                run,
+              )
+            } else {
+              await run()
+            }
             return { conversationId }
           }
 
@@ -1272,7 +1312,7 @@ class PluginHostService {
   }
 
   /**
-   * 导入插件 zip 包：选择文件 → 读取 manifest 校验 → 解压到 userData/plugins/<id>。
+   * 导入插件包：选择文件 → 读取 manifest 校验 → 解压到 userData/plugins/<id>。
    * 已安装相同 id 插件且未指定 overwrite 时返回 needsUpgradeConfirm（前端二次确认），
    * 确认后再以 overwrite=true 重装（复用上次 zip 路径，不再弹选择框）。
    */
@@ -1282,13 +1322,17 @@ class PluginHostService {
       const res = await dialog.showOpenDialog({
         title: '导入 WorkAvatar 插件',
         properties: ['openFile'],
-        filters: [{ name: 'WorkAvatar 插件包', extensions: ['zip'] }],
+        filters: [{ name: 'WorkAvatar 插件包', extensions: [PLUGIN_PACKAGE_EXT] }],
       })
       if (res.canceled || !res.filePaths[0]) return { ok: false, message: 'cancelled' }
       zipPath = res.filePaths[0]
       this.pendingImportZip = zipPath
     }
+    return this.importPluginFromPath(zipPath, overwrite)
+  }
 
+  /** 从指定路径导入插件包（系统"打开方式"直接加载 / 应用内导入复用） */
+  async importPluginFromPath(zipPath: string, overwrite?: boolean): Promise<PluginImportResult> {
     let zip: AdmZip
     try {
       zip = new AdmZip(zipPath)
@@ -1505,8 +1549,9 @@ class PluginHostService {
     }
     const ext = path.extname(target).slice(1).toLowerCase()
     const mime = PLUGIN_MIME[ext] ?? 'application/octet-stream'
+    // no-store：禁止 Chromium 缓存插件文件，否则插件升级/重装后渲染端仍加载旧版本
     return new Response(fs.readFileSync(target), {
-      headers: { 'Content-Type': mime },
+      headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' },
     })
   }
 

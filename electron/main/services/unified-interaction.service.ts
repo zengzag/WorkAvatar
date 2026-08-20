@@ -61,6 +61,8 @@ export interface SessionContext {
   employeeId: string
   conversationId?: string
   highPermission?: boolean
+  /** 任务工作区目录（通用对话等无 DB 会话记录时直接注入，供文件/shell 工具作为沙箱边界） */
+  workspacePath?: string
   /** 委托链深度（0=顶层会话），上限 3 */
   delegationDepth?: number
   /** 委托链已参与的员工 id 列表，防环 */

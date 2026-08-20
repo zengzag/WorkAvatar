@@ -114,7 +114,11 @@ export function registerLLMHandlers(
       if (abortController.signal.aborted) { chunkBuffer.length = 0; return }
       const chunks = chunkBuffer.splice(0)
       if (!event.sender.isDestroyed()) {
-        event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+        try {
+          event.sender.send(IPC_CHANNELS.LLM_CHAT_CHUNK, { sessionId, chunks })
+        } catch {
+          // 窗口在 setImmediate 延迟回调执行前被销毁，WebFrameMain 已 dispose，忽略该竞态错误
+        }
       }
     }
     const scheduleFlush = () => {
@@ -134,7 +138,11 @@ export function registerLLMHandlers(
       const deltas = Array.from(toolCallDeltaBuffer.values())
       toolCallDeltaBuffer.clear()
       if (!event.sender.isDestroyed()) {
-        event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
+        try {
+          event.sender.send(IPC_CHANNELS.AGENT_TOOL_CALL_DELTA, { sessionId, deltas })
+        } catch {
+          // 窗口在 setImmediate 延迟回调执行前被销毁，WebFrameMain 已 dispose，忽略该竞态错误
+        }
       }
     }
     const scheduleToolCallDeltaFlush = () => {

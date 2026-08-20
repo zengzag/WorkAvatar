@@ -1,3 +1,6 @@
+/** 插件分发包自定义扩展名（不含点）：内部仍为 zip 归档，仅换后缀便于识别与文件关联 */
+export const PLUGIN_PACKAGE_EXT = 'wap'
+
 export const PLUGIN_CHANNELS = {
   /** 渲染端查询插件列表（含启停状态/来源/兼容性/导航贡献） */
   PLUGIN_LIST: 'plugin-host:list',

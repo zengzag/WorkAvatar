@@ -9,6 +9,12 @@ fileAssociations:
     description: Markdown 文件
     role: Viewer
     icon: resources/icons/icon.ico
+  # 插件分发包：双击 .wap 文件直接用 WorkAvatar 打开并加载插件
+  - ext: wap
+    name: WorkAvatar 插件包
+    description: WorkAvatar 插件包
+    role: Editor
+    icon: resources/icons/icon.ico
 
 npmRebuild: false
 

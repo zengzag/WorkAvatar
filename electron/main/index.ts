@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol, session, desktopCapturer } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage, protocol, session, desktopCapturer, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { Readable } from 'stream'
@@ -10,6 +10,7 @@ import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
+import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
 import { createLogger, LoggerBackend } from './services/logger'
 
 const logger = createLogger('Main')
@@ -40,10 +41,12 @@ if (!gotTheLock) {
   app.quit()
 }
 
-// ====== 外部 .md 文件打开（系统右键"打开方式" / 拖到应用图标） ======
+// ====== 外部文件打开（系统右键"打开方式" / 拖到应用图标） ======
 
 /** 待发送给渲染进程的 .md 文件路径队列（窗口未就绪时暂存） */
 const pendingOpenFiles: string[] = []
+/** 待加载的 .wap 插件包路径队列（应用未就绪时暂存，就绪后弹确认框加载） */
+const pendingOpenPluginFiles: string[] = []
 
 /** 从 argv 中提取 .md 文件绝对路径 */
 function extractMdFilesFromArgv(argv: string[]): string[] {
@@ -63,6 +66,23 @@ function extractMdFilesFromArgv(argv: string[]): string[] {
   return files
 }
 
+/** 从 argv 中提取 .wap 插件包绝对路径 */
+function extractPluginFilesFromArgv(argv: string[]): string[] {
+  const files: string[] = []
+  for (const arg of argv) {
+    if (!arg || arg.startsWith('-')) continue
+    if (arg === process.argv0 || arg.endsWith('electron') || arg.endsWith('electron.exe')) continue
+    if (arg.endsWith('.js') || arg.endsWith('.cjs') || arg.endsWith('.mjs')) continue
+    if (arg.toLowerCase().endsWith(`.${PLUGIN_PACKAGE_EXT}`)) {
+      const resolved = path.resolve(arg)
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        files.push(resolved)
+      }
+    }
+  }
+  return files
+}
+
 /** 把待打开的 .md 文件路径推送给渲染进程（窗口未就绪时暂存到队列） */
 function sendOpenExternalFile(absPath: string): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -72,9 +92,81 @@ function sendOpenExternalFile(absPath: string): void {
   }
 }
 
+/**
+ * 打开 .wap 插件包：弹确认框询问是否加载，确认后导入并热重载生效。
+ * 应用未就绪时暂存到队列，就绪后统一处理。
+ */
+async function handleOpenPluginFile(filePath: string): Promise<void> {
+  if (!app.isReady()) {
+    pendingOpenPluginFiles.push(filePath)
+    return
+  }
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    title: '加载插件',
+    message: '是否加载这个插件？',
+    detail: `${path.basename(filePath)}\n确认后将安装并加载该插件。`,
+    buttons: ['加载', '取消'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  if (response !== 0) return
+
+  const host = PluginHostService.getInstance()
+  let result = await host.importPluginFromPath(filePath, false)
+  // 已安装同 id 插件 → 二次确认覆盖升级
+  if (result.needsUpgradeConfirm) {
+    const { existingVersion, newVersion } = result.needsUpgradeConfirm
+    const { response: upgradeResponse } = await dialog.showMessageBox({
+      type: 'warning',
+      title: '插件已存在',
+      message: '已安装相同插件，是否覆盖升级？',
+      detail: `${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
+      buttons: ['覆盖升级', '取消'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    })
+    if (upgradeResponse !== 0) return
+    result = await host.importPluginFromPath(filePath, true)
+  }
+
+  if (result.ok) {
+    // 直接加载生效（热重载插件 + 刷新渲染端）
+    try {
+      host.reload()
+      const { default: EmployeeAgentService } = require('./services/employee-agent.service')
+      EmployeeAgentService.getInstance().clearAgentCache()
+    } catch { /* ignore */ }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.reload()
+    }
+    dialog.showMessageBox({
+      type: 'info',
+      title: '插件已加载',
+      message: `插件 ${result.id} v${result.version} 已加载`,
+      buttons: ['确定'],
+    })
+  } else if (result.message && result.message !== 'cancelled') {
+    dialog.showMessageBox({
+      type: 'error',
+      title: '加载失败',
+      message: result.message,
+      buttons: ['确定'],
+    })
+  }
+}
+
 // macOS: 通过 open-file 事件接收文件（Finder 拖到 Dock 图标 / Spotlight 打开）
 app.on('open-file', (event, filePath) => {
-  if (filePath.toLowerCase().endsWith('.md') && fs.existsSync(filePath)) {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith(`.${PLUGIN_PACKAGE_EXT}`) && fs.existsSync(filePath)) {
+    event.preventDefault()
+    handleOpenPluginFile(path.resolve(filePath))
+    return
+  }
+  if (lower.endsWith('.md') && fs.existsSync(filePath)) {
     event.preventDefault()
     sendOpenExternalFile(path.resolve(filePath))
   }
@@ -448,6 +540,15 @@ app.whenReady().then(() => {
     for (const file of mdFiles) {
       sendOpenExternalFile(file)
     }
+    // 提取 .wap 插件包并弹确认框加载
+    const pluginFiles = extractPluginFilesFromArgv(process.argv)
+    for (const file of pluginFiles) {
+      handleOpenPluginFile(file)
+    }
+  }
+  // 处理应用就绪前暂存的 .wap 插件包
+  while (pendingOpenPluginFiles.length > 0) {
+    handleOpenPluginFile(pendingOpenPluginFiles.shift()!)
   }
 
   // 启动自动化任务调度器（已插件化，由 automation 插件经 ctx.services.scheduler 驱动）
@@ -516,5 +617,10 @@ app.on('second-instance', (_event, argv) => {
   const mdFiles = extractMdFilesFromArgv(argv)
   for (const file of mdFiles) {
     sendOpenExternalFile(file)
+  }
+  // 第二实例传入的 .wap 插件包 → 弹确认框加载
+  const pluginFiles = extractPluginFilesFromArgv(argv)
+  for (const file of pluginFiles) {
+    handleOpenPluginFile(file)
   }
 })

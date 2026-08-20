@@ -112,6 +112,7 @@ class WorkspaceManagerService {
     default_skill_id?: string
     workspace_path?: string | null
     memory_enabled?: boolean
+    avatar_type?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
     if (!employee) return null
@@ -122,7 +123,7 @@ class WorkspaceManagerService {
     const ALLOWED_COLUMNS = [
       'name', 'description', 'rules', 'profile_json',
       'default_skill_id',
-      'memory_enabled', 'workspace_path'
+      'memory_enabled', 'workspace_path', 'avatar_type'
     ]
 
     Object.entries(data).forEach(([key, value]) => {

@@ -36,6 +36,8 @@ export interface ExecuteDeps {
       highPermission?: boolean
       system?: string
       tools?: any[]
+      /** 通用模式：注入宿主内置 shell/文件工具并分配任务工作区 */
+      enableBuiltinTools?: boolean
     },
     callbacks?: PluginExecuteCallbacks,
     signal?: AbortSignal
@@ -101,6 +103,7 @@ export function createExecuteService(deps: ExecuteDeps) {
               highPermission: request.highPermission,
               system: request.system,
               tools: request.tools,
+              enableBuiltinTools: request.enableBuiltinTools,
             },
             callbacks,
             signal,

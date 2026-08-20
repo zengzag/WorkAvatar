@@ -231,30 +231,31 @@ node scripts/build-plugins.mjs
 # 构建单个
 node scripts/build-plugins.mjs my-plugin
 
-# 构建并产出独立分发包 zip → release/plugins/<id>-v<version>.zip
+# 构建并产出独立分发包 .wap → release/plugins/<id>-v<version>.wap
 node scripts/build-plugins.mjs my-plugin --zip
 ```
 
 - 主进程 → `platform=node target=node20 format=cjs`，external 内置模块与 electron，以及 `package.json.nativeDependencies` 声明的宿主原生依赖（不打包）。
 - 渲染端 → `platform=browser target=es2020 format=esm jsx=automatic`，共享库 shim 到 `__WA_HOST__`，CSS 自动内联。
-- `dependencies` 会被打包进 `dist/`，随 zip 分发；`nativeDependencies` 不打包、由宿主借用；`devDependencies` 不随分发。
-- zip 内容仅含运行时必需文件：`manifest.json` + `dist/**` + `locale/**` + `resources/**`。
+- `dependencies` 会被打包进 `dist/`，随包分发；`nativeDependencies` 不打包、由宿主借用；`devDependencies` 不随分发。
+- 分发包内容仅含运行时必需文件：`manifest.json` + `dist/**` + `locale/**` + `resources/**`。文件后缀为 `.wap`（WorkAvatar 插件包，内部仍为 zip 归档）。
 
-如果你在**独立仓库**开发插件，复制上述构建思路即可（核心是主进程出 CJS、渲染端出被 shim 的 ESM、产出约定结构的 zip）。ship 产物是单个 `<id>-v<version>.zip`。
+如果你在**独立仓库**开发插件，复制上述构建思路即可（核心是主进程出 CJS、渲染端出被 shim 的 ESM、产出约定结构的包）。ship 产物是单个 `<id>-v<version>.wap`。
 
 ## 8. 安装与分发到用户
 
-用户侧有两种安装方式（效果一致）：
+用户侧有三种安装方式（效果一致）：
 
-1. **导入 zip**：应用设置 → 插件 → 「导入插件」，选择一个 `.zip`。
+1. **导入插件包**：应用设置 → 插件 → 「导入插件」，选择一个 `.wap` 文件。
    - 若已安装相同 `id`，会弹出覆盖/升级确认（显示旧版本 → 新版本），确认后删除旧安装目录并用新包重装。
    - 导入校验：必须有合法 `manifest.json`、`main` 存在、`id` 合法、不携带 `.node` 原生模块、路径不越界。
-2. **手动放入目录**：解压 zip 到 `userData/plugins/<id>/`，重启应用自动识别。
+2. **直接打开 `.wap` 文件**：双击 `.wap`（或系统右键"打开方式"选择 WorkAvatar），弹出确认框询问是否加载，确认后直接安装并热重载生效。
+3. **手动放入目录**：解压包到 `userData/plugins/<id>/`，重启应用自动识别。
 
-任意方式安装后**重启应用生效**。插件数据目录 `userData/plugin-data/<id>/` 在重装/禁用时不删除，升级不丢用户数据。
+任意方式安装后**重启应用生效**（直接打开 `.wap` 会立即热重载生效）。插件数据目录 `userData/plugin-data/<id>/` 在重装/禁用时不删除，升级不丢用户数据。
 
 ## 9. 发布建议与版本策略
 
 - **版本兼容**：`engine` 声明宿主协议范围，宿主做 semver 校验。请确保语义版本随功能变更递增。
 - **升级覆盖**：宿主按 `id` 判定"已安装"，升级即删除旧安装目录重装新包；**运行时数据保留**（在 `plugin-data`）。
-- 分发物就是 `release/plugins/<id>-v<version>.zip`，可直接发给用户或在应用内「导入插件」安装。
+- 分发物就是 `release/plugins/<id>-v<version>.wap`，可直接发给用户或在应用内「导入插件」安装。

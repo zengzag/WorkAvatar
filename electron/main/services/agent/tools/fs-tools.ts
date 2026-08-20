@@ -29,6 +29,8 @@ export function getWorkspacePath(): string | null {
       const conv = db.prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(ctx.conversationId) as { workspace_path?: string } | undefined
       if (conv?.workspace_path) return conv.workspace_path
     }
+    // 通用对话（无 DB 会话记录）直接使用注入的任务工作区
+    if (ctx.workspacePath) return ctx.workspacePath
     const employee = db.prepare('SELECT workspace_path FROM employees WHERE id = ?').get(ctx.employeeId) as { workspace_path: string | null } | undefined
     return employee?.workspace_path || null
   } catch {

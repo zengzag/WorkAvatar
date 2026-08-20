@@ -68,7 +68,6 @@ interface EmployeeChatCallbacks {
 
 interface CachedAgentEntry {
   agent: EmployeeAgent
-  conversationId: string | null
   collectionIdsRef: SearchScopeRef
   /** 该 agent 持有的 MCP client 引用释放函数，agent 缓存被清除时调用 */
   mcpRelease?: () => Promise<void>
@@ -106,19 +105,13 @@ class EmployeeAgentService {
     conversationId?: string,
     employee?: DBEmployee
   ): Promise<CachedAgentEntry> {
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}`
+    // 缓存 key 必须包含 conversationId：不同任务（对话）各自持有独立 agent 实例，
+    // 避免并发多任务时共享同一 agent（_running/_currentSignal/MCP 引用）导致互相中断。
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}:${conversationId || 'no-conv'}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
-      if (conversationId && existing.conversationId !== conversationId) {
-        // 切换对话时清除旧缓存：先释放 MCP client 引用，再删除条目
-        if (existing.mcpRelease) {
-          existing.mcpRelease().catch(() => { /* ignore */ })
-        }
-        this.agentEntries.delete(cacheKey)
-      } else {
-        return existing
-      }
+      return existing
     }
 
     const emp = employee ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
@@ -277,11 +270,10 @@ class EmployeeAgentService {
 
     this.agentEntries.set(cacheKey, {
       agent,
-      conversationId: conversationId || null,
       collectionIdsRef,
       mcpRelease,
     })
-    return { agent, conversationId: conversationId || null, collectionIdsRef }
+    return { agent, collectionIdsRef }
   }
 
   /**
@@ -572,7 +564,8 @@ class EmployeeAgentService {
     enable_thinking?: ThinkingLevel
   }): any {
     const { employee_id, provider_id, model_id, enable_thinking } = params
-    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}`
+    // 与 getOrCreateAgent 的缓存 key 保持一致（无 conversationId 时用 no-conv 兜底）
+    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}:no-conv`
     const entry = this.agentEntries.get(cacheKey)
     if (!entry) return null
     return entry.agent.getContextStats()

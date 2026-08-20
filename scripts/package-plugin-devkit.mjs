@@ -75,16 +75,17 @@ plugin-devkit/
 3. **改 manifest**：编辑 \`manifest.json\`，修改 \`id\`（小写连字符，≤64 字符，避开保留字 \`settings/tasks/employees/list/invoke/event\`）、\`name\`、\`version\`、\`engine\`（当前为 \`>=0.2.0\`）、\`ipc\`、\`capabilities\`、\`nav\`。
 4. **写代码**：在 \`src/main/index.ts\` 写主进程逻辑，在 \`src/renderer/index.tsx\` 写界面。
 5. **构建**：在模板目录执行 \`npm run build\`（或 \`node build-plugin.mjs\`）。
-6. **打包**：执行 \`npm run build:zip\`（或 \`node build-plugin.mjs --zip\`），产出 \`release/plugins/<id>-v<version>.zip\`。
+6. **打包**：执行 \`npm run build:zip\`（或 \`node build-plugin.mjs --zip\`），产出 \`release/plugins/<id>-v<version>.wap\`。
 
 ## 安装到 WorkAvatar
 
-用户侧两种方式（效果一致）：
+用户侧三种方式（效果一致）：
 
-1. **导入 zip**：应用设置 → 插件 → 「导入插件」，选择 \`<id>-v<version>.zip\`。
-2. **手动放入目录**：解压 zip 到 \`userData/plugins/<id>/\`，重启应用自动识别。
+1. **导入插件包**：应用设置 → 插件 → 「导入插件」，选择 \`<id>-v<version>.wap\`。
+2. **直接打开 \`.wap\` 文件**：双击 \`.wap\`（或系统右键"打开方式"选择 WorkAvatar），确认后直接安装并热重载生效。
+3. **手动放入目录**：解压包到 \`userData/plugins/<id>/\`，重启应用自动识别。
 
-任意方式安装后**重启应用生效**。插件数据目录 \`userData/plugin-data/<id>/\` 在重装/禁用时不删除，升级不丢用户数据。
+任意方式安装后**重启应用生效**（直接打开 \`.wap\` 会立即热重载生效）。插件数据目录 \`userData/plugin-data/<id>/\` 在重装/禁用时不删除，升级不丢用户数据。
 
 ## 类型引用
 

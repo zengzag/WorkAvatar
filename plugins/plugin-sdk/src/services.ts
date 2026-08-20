@@ -87,6 +87,8 @@ export interface PluginExecuteRequest {
   highPermission?: boolean
   /** 通用模式（agent-chat 不传 employeeId 时）：自定义工具集 */
   tools?: PluginToolDefinition[]
+  /** 通用模式（agent-chat 不传 employeeId 时）：注入宿主内置 shell/文件工具并分配任务工作区 */
+  enableBuiltinTools?: boolean
 }
 
 /** 统一执行回调 */

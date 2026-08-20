@@ -8,7 +8,7 @@
 //
 // 用法（在插件工程根目录，或指定插件目录）：
 //   node build-plugin.mjs [pluginDir]      # 构建主进程 CJS + 渲染端 ESM 到 dist/
-//   node build-plugin.mjs [pluginDir] --zip # 构建并产出独立分发包 <id>-v<version>.zip
+//   node build-plugin.mjs [pluginDir] --zip # 构建并产出独立分发包 <id>-v<version>.wap
 //
 // 约定：
 //   - 读取 <pluginDir>/manifest.json 的 main / renderer 入口
@@ -217,7 +217,7 @@ function formatError(err) {
 }
 
 /**
- * 生成插件分发包 zip：仅含运行时必需文件（manifest/dist/locale/resources）。
+ * 生成插件分发包（自定义扩展名 .wap，内部仍为 zip 归档）：仅含运行时必需文件（manifest/dist/locale/resources）。
  * zip 根即为插件内容（解压后顶层是 manifest.json），供应用内直接导入。
  */
 function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
@@ -234,7 +234,7 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
   addPath('locale')
   addPath('resources')
   fs.mkdirSync(outDir, { recursive: true })
-  const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.zip`)
+  const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.wap`)
   zip.writeZip(outPath)
   return outPath
 }

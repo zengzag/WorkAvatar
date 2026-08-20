@@ -4,11 +4,11 @@
 // 批量构建 plugins/ 下的所有插件（薄封装，核心逻辑见 scripts/build-plugin.mjs）：
 // - 扫描 plugins/ 下各子目录（跳过 plugin-sdk），读取 manifest.json
 // - 逐个调用 scripts/build-plugin.mjs 构建（主进程 CJS + 渲染端 ESM）
-// - --zip 产出独立分发包 release/plugins/<id>-v<version>.zip
+// - --zip 产出独立分发包 release/plugins/<id>-v<version>.wap
 //
 // 用法：
 //   node scripts/build-plugins.mjs [pluginId]      # 构建全部或指定插件到 dist/
-//   node scripts/build-plugins.mjs [pluginId] --zip # 构建并存放独立分发包 release/plugins/<id>-v<ver>.zip
+//   node scripts/build-plugins.mjs [pluginId] --zip # 构建并存放独立分发包 release/plugins/<id>-v<ver>.wap
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
