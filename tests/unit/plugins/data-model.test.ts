@@ -208,6 +208,43 @@ describe('data-model 插件 IPC handler', () => {
     expect(rel.targetFieldId).toBe(users.fields.find((f: any) => f.name === 'id').id)
   })
 
+  it('import_model_file 归一化缺失 id 的工程文件，避免节点无法渲染', async () => {
+    const create = mock.ipc.handlers.get('project-create')!
+    await create({ name: 'A' })
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const tmp = path.join(process.cwd(), 'tmp_import_model_test.json')
+    // LLM 生成的工程文件常省略 id（仅 name/fields），缺失 id 会导致 React Flow
+    // 节点无法定位（"Handle: No node id found"）与关系引用失效
+    fs.writeFileSync(tmp, JSON.stringify({
+      tables: [
+        { name: 'users', fields: [{ name: 'id', type: 'bigint', primaryKey: true }] },
+        { name: 'orders', fields: [{ name: 'id', type: 'bigint', primaryKey: true }, { name: 'user_id', type: 'bigint' }] }
+      ],
+      relationships: [
+        { from: { table: 'orders', field: 'user_id' }, to: { table: 'users', field: 'id' }, type: 'many-to-one' }
+      ]
+    }))
+    try {
+      const tool = mock.contributions.agentTools.find(t => t.id === 'import_model_file')!
+      const res = await tool.handler({ path: tmp, mode: 'replace' }, {})
+      expect(res).toMatchObject({ success: true })
+      const get = mock.ipc.handlers.get('model-get')!
+      const got = await get() as { model: any }
+      const m = got.model
+      // 所有表必须有 id
+      expect(m.tables.every((t: any) => !!t.id)).toBe(true)
+      // 关系必须解析到真实表/字段 id
+      const rel = m.relationships[0]
+      expect(rel.sourceTableId).toBeTruthy()
+      expect(rel.sourceFieldId).toBeTruthy()
+      expect(rel.targetTableId).toBeTruthy()
+      expect(rel.targetFieldId).toBeTruthy()
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+  })
+
   it('get_model_json 的 output 包含完整 JSON 内容', async () => {
     const create = mock.ipc.handlers.get('project-create')!
     await create({ name: 'A' })

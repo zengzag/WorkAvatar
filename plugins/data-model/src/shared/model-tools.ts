@@ -583,13 +583,13 @@ const importModelFileTool: ToolDef = {
       return { model, result: err(`解析工程文件失败: ${e instanceof Error ? e.message : String(e)}`) }
     }
     if (args.mode === 'merge') return mergeModel(model, incoming)
+    // 归一化：LLM 生成的工程文件常省略 id，缺失 id 会导致 React Flow 节点无法定位
+    // （"Handle: No node id found"）与关系引用失效，与 set_model_json 保持一致
+    const normalized = normalizeModel(incoming)
     const replaced: DataModel = {
-      ...incoming,
+      ...normalized,
       id: model.id,
       name: incoming.name ?? model.name,
-      relationships: incoming.relationships ?? [],
-      indexes: incoming.indexes ?? [],
-      enums: incoming.enums ?? [],
       updatedAt: Date.now()
     }
     return { model: replaced, result: ok({ mode: 'replace', tables: replaced.tables.length, relationships: replaced.relationships.length }, `已从工程文件导入并替换模型：${replaced.tables.length} 表 / ${replaced.relationships.length} 关系`) }
