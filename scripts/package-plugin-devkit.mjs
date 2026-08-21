@@ -3,7 +3,7 @@
 //
 // 打包 WorkAvatar 插件开发包（面向第三方开发者，脱离本仓库独立开发）。
 // plugin-devkit/ 目录即开发包内容，本脚本负责：
-//   1. 同步 SDK 类型契约（plugins/plugin-sdk → plugin-devkit/plugin-sdk）
+//   1. 同步 SDK 类型契约（plugin-sdk → plugin-devkit/plugin-sdk）
 //   2. 同步文档（docs/plugins/*.md → plugin-devkit/docs/）
 //   3. 生成开发包 README
 //   4. 压缩 plugin-devkit/ 成 release/plugin-devkit-v<version>.zip
@@ -128,7 +128,7 @@ async function main() {
   const AdmZip = require('adm-zip')
 
   // 1. 同步 SDK 类型契约
-  const sdkSrc = path.join(projectRoot, 'plugins', 'plugin-sdk')
+  const sdkSrc = path.join(projectRoot, 'plugin-sdk')
   const sdkDest = path.join(devkitRoot, 'plugin-sdk')
   fs.rmSync(sdkDest, { recursive: true, force: true })
   copyDir(sdkSrc, sdkDest)

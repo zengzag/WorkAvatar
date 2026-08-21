@@ -7,7 +7,7 @@ import type {
   PluginDataEntity,
   PluginDataOp,
   PluginDataQueryParams,
-} from '../../../../plugins/plugin-sdk/src'
+} from '../../../../plugin-sdk/src'
 
 /** 宿主服务依赖（由 plugin-host 注入真实单例，测试注入 mock） */
 export interface DataAccessDeps {

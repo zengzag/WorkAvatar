@@ -6,7 +6,7 @@
 import type {
   PluginExecuteRequest,
   PluginExecuteCallbacks,
-} from '../../../../plugins/plugin-sdk/src'
+} from '../../../../plugin-sdk/src'
 
 /** 宿主执行引擎依赖（由 plugin-host 注入真实实现，测试注入 mock） */
 export interface ExecuteDeps {

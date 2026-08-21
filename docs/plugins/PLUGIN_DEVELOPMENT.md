@@ -1,6 +1,6 @@
 # WorkAvatar 插件开发与打包教程
 
-> 面向外部开发者：独立开发、打包、分发 WorkAvatar 插件。协议细节见 [API_REFERENCE.md](./API_REFERENCE.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)，类型契约见 [plugins/plugin-sdk](../../plugins/plugin-sdk/)，最小示例见 [plugins/examples/hello-world](../../plugins/examples/hello-world/)。
+> 面向外部开发者：独立开发、打包、分发 WorkAvatar 插件。协议细节见 [API_REFERENCE.md](./API_REFERENCE.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)，类型契约见 [plugin-sdk](../../plugin-sdk/)，最小示例见 [plugins/examples/hello-world](../../plugins/examples/hello-world/)。
 
 ## 目录
 
@@ -20,7 +20,7 @@
 
 - Node.js ≥ 20。
 - 一个可运行的 WorkAvatar（用于安装调试）。
-- 参考插件结构与类型：`plugins/notes`、`plugins/calendar`、`plugins/voice`、`plugins/automation`、`plugins/examples/hello-world`，类型契约在 `plugins/plugin-sdk/src`。
+- 参考插件结构与类型：`plugins/notes`、`plugins/calendar`、`plugins/voice`、`plugins/automation`、`plugins/examples/hello-world`，类型契约在 `plugin-sdk/src`。
 
 ## 2. 插件工程结构
 

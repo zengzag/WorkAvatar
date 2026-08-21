@@ -28,8 +28,8 @@ import type {
   PluginMessageActionResult,
   PluginViewContribution,
   PluginCommand,
-} from '../../../../plugins/plugin-sdk/src'
-import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugins/plugin-sdk/src'
+} from '../../../../plugin-sdk/src'
+import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugin-sdk/src'
 import {
   getCapability,
   canRegisterView,

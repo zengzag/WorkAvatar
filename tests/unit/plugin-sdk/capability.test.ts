@@ -13,7 +13,7 @@ import {
   validateCapabilities,
   getCapability,
 } from '../../../electron/main/services/plugin/plugin-capability'
-import type { PluginCapability } from '../../../plugins/plugin-sdk/src'
+import type { PluginCapability } from '../../../plugin-sdk/src'
 
 const fullCaps: PluginCapability[] = [
   { domain: 'data', entities: ['conversations', 'employees', 'messages'], access: 'write' },

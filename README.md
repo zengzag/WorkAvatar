@@ -135,11 +135,13 @@ WorkAvatar 的导航页功能（笔记、日历、语音、自动化、数据模
 
 WorkAvatar 的插件协议采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的架构（VSCode 扩展简化版），并采用 **能力域授权**（capabilities）开放通用数据访问、统一执行入口、事件总线、UI 注入等放权能力，在相对安全前提下最大化第三方扩展性。
 
-- 插件协议规范：[plugins/plugin-sdk/PROTOCOL.md](plugins/plugin-sdk/PROTOCOL.md)
+- 插件协议规范：[plugin-sdk/PROTOCOL.md](plugin-sdk/PROTOCOL.md)
 - 插件 API 参考：[docs/plugins/API_REFERENCE.md](docs/plugins/API_REFERENCE.md)
 - 插件能力矩阵：[docs/plugins/CAPABILITY_MATRIX.md](docs/plugins/CAPABILITY_MATRIX.md)
 - 插件开发与打包教程（面向外部开发者）：[docs/plugins/PLUGIN_DEVELOPMENT.md](docs/plugins/PLUGIN_DEVELOPMENT.md)
 - 插件示例工程：[plugins/examples/](plugins/examples/)
+
+> **仓库结构**：内置插件源码（笔记/日历/语音/自动化/数据模型）独立为 git 子仓库 `WorkAvatar-Plugins`，作为本仓库 `plugins/` 的 submodule 依赖；`plugin-sdk/`（插件协议类型契约）由本仓库持有。克隆后需执行 `git submodule update --init --recursive` 拉取插件源码。
 
 ---
 
@@ -229,6 +231,9 @@ WorkAvatar 的插件协议采用 **manifest 声明 + 双入口插件包 + 宿主
 ### 安装依赖
 
 ```bash
+# 拉取插件子仓库（内置插件源码）
+git submodule update --init --recursive
+
 npm install
 ```
 

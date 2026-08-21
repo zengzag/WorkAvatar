@@ -24,9 +24,10 @@ async function main() {
   const zipMode = args.includes('--zip')
   const onlyId = args.find(a => !a.startsWith('--'))
   // 扫描 plugins/ 下各插件目录；examples/ 作为示例目录递归扫描其子目录
+  // （plugins/ 为 git submodule，含 .git/node_modules/tests/ 等非插件目录，跳过）
   const dirs = []
   for (const e of fs.readdirSync(pluginsRoot, { withFileTypes: true })) {
-    if (!e.isDirectory() || e.name === 'plugin-sdk') continue
+    if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'plugin-sdk' || e.name === 'tests' || e.name === 'node_modules') continue
     if (e.name === 'examples') {
       for (const sub of fs.readdirSync(path.join(pluginsRoot, 'examples'), { withFileTypes: true })) {
         if (sub.isDirectory()) dirs.push(`examples/${sub.name}`)

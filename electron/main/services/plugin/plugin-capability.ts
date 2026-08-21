@@ -10,7 +10,7 @@ import type {
   PluginKmsQueryType,
   PluginSystemFeature,
   PluginViewPoint,
-} from '../../../../plugins/plugin-sdk/src'
+} from '../../../../plugin-sdk/src'
 
 /** 能力校验结果 */
 export type CapabilityCheck =

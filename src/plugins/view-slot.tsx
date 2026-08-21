@@ -4,7 +4,7 @@
  * 宿主界面用 <PluginViewSlot view="chat.toolbar" /> 在对应位置渲染。
  */
 import React from 'react'
-import type { PluginViewDefinition } from '../../plugins/plugin-sdk/src/renderer'
+import type { PluginViewDefinition } from '../../plugin-sdk/src/renderer'
 
 /** 已收集的视图注入（pluginId:view → 组件） */
 const viewRegistry = new Map<string, React.ComponentType<{ context?: unknown }>>()

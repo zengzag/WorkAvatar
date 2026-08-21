@@ -14,7 +14,7 @@ import type {
   PluginRendererEntry,
   PluginRendererHost,
   PluginViewDefinition,
-} from '../../plugins/plugin-sdk/src/renderer'
+} from '../../plugin-sdk/src/renderer'
 
 /** 已加载的插件渲染端描述（路由 + 导航贡献） */
 export interface LoadedPlugin {

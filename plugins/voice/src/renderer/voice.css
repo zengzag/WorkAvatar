@@ -1,5 +1,0 @@
-/* KMSVoiceView 使用的 blink 动画 */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}

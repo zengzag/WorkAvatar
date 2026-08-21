@@ -1,6 +1,6 @@
 # WorkAvatar 插件协议 · API 参考
 
-> 类型契约见 [plugin-sdk/src](../../plugins/plugin-sdk/src/)，协议规范见 [PROTOCOL.md](../../plugins/plugin-sdk/PROTOCOL.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)。
+> 类型契约见 [plugin-sdk/src](../../plugin-sdk/src/)，协议规范见 [PROTOCOL.md](../../plugin-sdk/PROTOCOL.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)。
 
 WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的插件模型。
 插件通过 **capabilities（能力域授权）** 声明可访问的能力，并可使用通用数据访问、统一执行入口、事件总线、UI 注入四类放权能力。
