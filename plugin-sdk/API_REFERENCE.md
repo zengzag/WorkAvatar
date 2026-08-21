@@ -1,6 +1,6 @@
 # WorkAvatar 插件协议 · API 参考
 
-> 类型契约见 [plugin-sdk/src](../../plugin-sdk/src/)，协议规范见 [PROTOCOL.md](../../plugin-sdk/PROTOCOL.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)。
+> 类型契约见 [plugin-sdk/src](./src/)，协议规范见 [PROTOCOL.md](./PROTOCOL.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)。
 
 WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的插件模型。
 插件通过 **capabilities（能力域授权）** 声明可访问的能力，并可使用通用数据访问、统一执行入口、事件总线、UI 注入四类放权能力。
@@ -52,7 +52,7 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 | `nav` | | 导航项：`label`、`icon`、`order`、`detachable` |
 | `dependencies` | | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活 |
 
-参考真实示例：[notes/manifest.json](../../plugins/notes/manifest.json)、[calendar/manifest.json](../../plugins/calendar/manifest.json)、[voice/manifest.json](../../plugins/voice/manifest.json)、[automation/manifest.json](../../plugins/automation/manifest.json)、[hello-world/manifest.json](../../plugins/examples/hello-world/manifest.json)。
+参考真实示例：开发包 `plugin-template/` 模板工程的 `manifest.json`（最小可构建示例）。
 
 ## 3. 生命周期
 

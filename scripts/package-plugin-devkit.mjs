@@ -3,8 +3,8 @@
 //
 // 打包 WorkAvatar 插件开发包（面向第三方开发者，脱离本仓库独立开发）。
 // plugin-devkit/ 目录即开发包内容，本脚本负责：
-//   1. 同步 SDK 类型契约（plugin-sdk → plugin-devkit/plugin-sdk）
-//   2. 同步文档（docs/plugins/*.md → plugin-devkit/docs/）
+//   1. 同步 SDK 类型契约（plugin-sdk → plugin-devkit/plugin-sdk，含 API_REFERENCE/CAPABILITY_MATRIX/PROTOCOL）
+//   2. 复制模板（plugins/examples/hello-world → plugin-template，含 PLUGIN_DEVELOPMENT 教程）
 //   3. 生成开发包 README
 //   4. 压缩 plugin-devkit/ 成 release/plugin-devkit-v<version>.zip
 //
@@ -53,12 +53,13 @@ function buildReadme() {
 \`\`\`
 plugin-devkit/
 ├── README.md                    # 本文件
-├── docs/                        # 插件开发文档
-│   ├── PLUGIN_DEVELOPMENT.md    # 开发与打包教程（从零开始）
+├── plugin-sdk/                  # 插件协议类型契约（TypeScript 类型）+ 协议文档
+│   ├── src/                     # 类型定义
+│   ├── PROTOCOL.md              # 协议规范
 │   ├── API_REFERENCE.md         # 接口签名参考
 │   └── CAPABILITY_MATRIX.md     # 能力矩阵
-├── plugin-sdk/                  # 插件协议类型契约（TypeScript 类型）
 └── plugin-template/             # 独立模板工程（自包含，可 npm install + 构建）
+    ├── PLUGIN_DEVELOPMENT.md    # 开发与打包教程（从零开始）
     ├── package.json
     ├── tsconfig.json
     ├── build-plugin.mjs         # 参数化构建脚本（可在任意目录运行）
@@ -118,41 +119,42 @@ node build-plugin.mjs [pluginDir] --zip  # 构建并产出分发包 zip
 
 ## 详细文档
 
-- 开发与打包教程：[docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md)
-- 接口签名：[docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-- 能力矩阵：[docs/CAPABILITY_MATRIX.md](docs/CAPABILITY_MATRIX.md)
+- 开发与打包教程：[plugin-template/PLUGIN_DEVELOPMENT.md](plugin-template/PLUGIN_DEVELOPMENT.md)
+- 接口签名：[plugin-sdk/API_REFERENCE.md](plugin-sdk/API_REFERENCE.md)
+- 能力矩阵：[plugin-sdk/CAPABILITY_MATRIX.md](plugin-sdk/CAPABILITY_MATRIX.md)
 `
 }
 
 async function main() {
   const AdmZip = require('adm-zip')
 
-  // 1. 同步 SDK 类型契约
+  // 1. 同步 SDK 类型契约（含 API_REFERENCE.md / CAPABILITY_MATRIX.md / PROTOCOL.md）
   const sdkSrc = path.join(projectRoot, 'plugin-sdk')
   const sdkDest = path.join(devkitRoot, 'plugin-sdk')
   fs.rmSync(sdkDest, { recursive: true, force: true })
   copyDir(sdkSrc, sdkDest)
 
-  // 2. 同步文档
-  const docsDest = path.join(devkitRoot, 'docs')
-  fs.rmSync(docsDest, { recursive: true, force: true })
-  for (const name of ['PLUGIN_DEVELOPMENT.md', 'API_REFERENCE.md', 'CAPABILITY_MATRIX.md']) {
-    copyFile(path.join(projectRoot, 'docs', 'plugins', name), path.join(docsDest, name))
-  }
-
-  // 3. 复制模板（单一权威源 plugins/examples/hello-world → plugin-template，随开发包分发）
+  // 2. 复制模板（单一权威源 plugins/examples/hello-world → plugin-template，随开发包分发；
+  //    含 PLUGIN_DEVELOPMENT.md 开发教程）
   const templateSrc = path.join(projectRoot, 'plugins', 'examples', 'hello-world')
   const templateDest = path.join(devkitRoot, 'plugin-template')
   fs.rmSync(templateDest, { recursive: true, force: true })
   copyDir(templateSrc, templateDest)
+  // 改写 PLUGIN_DEVELOPMENT.md 中指向主仓库根 plugin-sdk 的相对链接为开发包内相对路径
+  // （主仓库 hello-world 深 3 层 → ../../../plugin-sdk；开发包 plugin-template 深 1 层 → ../plugin-sdk）
+  const devDocPath = path.join(templateDest, 'PLUGIN_DEVELOPMENT.md')
+  if (fs.existsSync(devDocPath)) {
+    const devDoc = fs.readFileSync(devDocPath, 'utf-8')
+    fs.writeFileSync(devDocPath, devDoc.replaceAll('../../../plugin-sdk/', '../plugin-sdk/'), 'utf-8')
+  }
 
-  // 4. 同步构建脚本（单一权威源 scripts/build-plugin.mjs → 模板，随开发包分发）
+  // 3. 同步构建脚本（单一权威源 scripts/build-plugin.mjs → 模板，随开发包分发）
   copyFile(
     path.join(projectRoot, 'scripts', 'build-plugin.mjs'),
     path.join(templateDest, 'build-plugin.mjs')
   )
 
-  // 5. 改写模板 tsconfig 的 SDK paths 为开发包内相对路径
+  // 4. 改写模板 tsconfig 的 SDK paths 为开发包内相对路径
   //    （仓库内 hello-world 在 plugins/examples/ 深 3 层，开发包内模板在 plugin-template/ 深 2 层，
   //     相对 plugin-sdk 的级数不同，需改写为开发包级数）
   const tsconfigPath = path.join(templateDest, 'tsconfig.json')
@@ -163,15 +165,15 @@ async function main() {
     fs.writeFileSync(tsconfigPath, JSON.stringify(tsconfig, null, 2) + '\n', 'utf-8')
   }
 
-  // 6. 生成 README
+  // 5. 生成 README
   fs.writeFileSync(path.join(devkitRoot, 'README.md'), buildReadme(), 'utf-8')
 
-  // 7. 清理模板构建产物（node_modules/dist/release 不进开发包，第三方自行 npm install）
+  // 6. 清理模板构建产物（node_modules/dist/release 不进开发包，第三方自行 npm install）
   for (const dir of ['node_modules', 'dist', 'release']) {
     fs.rmSync(path.join(templateDest, dir), { recursive: true, force: true })
   }
 
-  // 8. 压缩 plugin-devkit/ 成 zip
+  // 7. 压缩 plugin-devkit/ 成 zip
   const outDir = path.join(projectRoot, 'release', 'plugin-devkit')
   fs.mkdirSync(outDir, { recursive: true })
   const outPath = path.join(outDir, `plugin-devkit-v${DEVKIT_VERSION}.zip`)

@@ -2,7 +2,7 @@
 
 > 本文件是插件协议的单一事实源，类型定义见 `plugin-sdk/src/`。
 > 插件通过 **manifest 声明 + 双入口插件包 + 宿主扩展点** 扩展 WorkAvatar 的能力。
-> 能力矩阵见 [CAPABILITY_MATRIX.md](../../docs/plugins/CAPABILITY_MATRIX.md)，接口签名见 [API_REFERENCE.md](../../docs/plugins/API_REFERENCE.md)。
+> 能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)，接口签名见 [API_REFERENCE.md](./API_REFERENCE.md)。
 
 ## 1. 插件包结构
 

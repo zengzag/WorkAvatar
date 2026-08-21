@@ -1,7 +1,7 @@
 # WorkAvatar 插件能力矩阵
 
 > 能力 × 能力域 × 安全级别 × 示例插件 一览表。
-> 协议细节见 [PROTOCOL.md](../../plugin-sdk/PROTOCOL.md)，接口签名见 [API_REFERENCE.md](./API_REFERENCE.md)。
+> 协议细节见 [PROTOCOL.md](./PROTOCOL.md)，接口签名见 [API_REFERENCE.md](./API_REFERENCE.md)。
 
 ## 能力域总览
 
