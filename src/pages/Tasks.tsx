@@ -218,6 +218,8 @@ const Tasks: React.FC = () => {
     loadingConversationId,
     getInputDraft,
     setInputDraft,
+    getInputModels,
+    setInputModels,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -496,6 +498,17 @@ const Tasks: React.FC = () => {
     saveNewTaskDraft({ selectedModels: models })
   }, [setSelectedModels, saveNewTaskDraft])
 
+  // 对话模式下，监听模型变化并持久化到当前对话缓存（各任务独立存储模型选择）
+  const handleChatModelsChange = useCallback((models: ModelSelection[]) => {
+    setSelectedModels(models)
+    setInputModels(models)
+  }, [setSelectedModels, setInputModels])
+
+  // 切换对话时恢复该对话自己的模型选择，避免上一个任务的模型串扰到当前任务
+  useEffect(() => {
+    setSelectedModels(getInputModels())
+  }, [activeConversationId, getInputModels])
+
   // 新任务模式下，监听知识库变化并持久化
   const handleCollectionIdsChangeWithCache = useCallback((ids: string[]) => {
     setSelectedCollectionIds(ids)
@@ -506,6 +519,7 @@ const Tasks: React.FC = () => {
   const handleSendWithReset = useCallback(async (content: string, images: string[], models: ModelSelection[], options?: { highPermission?: boolean }) => {
     setAttachedImages([])
     setSelectedModels([])
+    setInputModels([])
     clearNewTaskDraft()
     await handleSend(content, images, models, options)
     // 发送后切换到对话模式；任务列表由 activeConversationId/taskMode 变化触发的
@@ -513,7 +527,7 @@ const Tasks: React.FC = () => {
     if (taskMode === 'new') {
       setTaskMode('chat')
     }
-  }, [handleSend, taskMode, clearNewTaskDraft])
+  }, [handleSend, taskMode, clearNewTaskDraft, setInputModels])
 
   // 从 chat 切回 new 时，用 localStorage 的草稿同步到 inputDraft（供 ChatInput 重新挂载时读取）
   // 切换员工时不再恢复草稿，保留当前编辑器内容
@@ -891,7 +905,7 @@ const Tasks: React.FC = () => {
                 attachedImages={attachedImages}
                 onImagesChange={setAttachedImages}
                 selectedModels={selectedModels}
-                onModelsChange={setSelectedModels}
+                onModelsChange={handleChatModelsChange}
                 selectedCollectionIds={selectedCollectionIds}
                 onSelectedCollectionIdsChange={setSelectedCollectionIds}
                 allCollections={allCollections}

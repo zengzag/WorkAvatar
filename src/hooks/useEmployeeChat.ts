@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
-import type { MessageWithThought, MessageBranch } from '../components/workbench'
+import type { MessageWithThought, MessageBranch, ModelSelection } from '../components/workbench'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
@@ -45,6 +45,9 @@ const _persistentActiveConvId = new Map<string, string>()
 
 // 按 conversationId 缓存输入框草稿：切换对话/员工时保留各自草稿，切回时恢复
 const _persistentDrafts = new Map<string, string>()
+
+// 按 conversationId 缓存输入框选中的模型：切换对话时恢复各自模型选择，避免跨任务串扰
+const _persistentModels = new Map<string, ModelSelection[]>()
 
 // 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
 // 组件重挂载时优先从此缓存恢复，避免 DB 查询竞争条件导致显示 0/0
@@ -94,6 +97,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const [contextStats, setContextStats] = useState<Record<string, any>>({})
   const [isCompacting, setIsCompacting] = useState(false)
   const inputDraftRef = useRef('')
+  const inputModelsRef = useRef<ModelSelection[]>([])
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
@@ -215,6 +219,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setAllConversations([])
         setLoadingConversationId(null)
         inputDraftRef.current = ''
+        inputModelsRef.current = []
         // 重置 pendingMessage 与延迟发送，避免跨员工串扰
         setPendingMessage(null)
         setPendingHighPermission(false)
@@ -320,8 +325,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setActiveConversationId(cachedActiveConvId)
         activeConversationIdRef.current = cachedActiveConvId
         setLoadingConversationId(cachedActiveConvId)
-        // 恢复该对话的草稿
+        // 恢复该对话的草稿与模型选择
         inputDraftRef.current = _persistentDrafts.get(cachedActiveConvId) || ''
+        inputModelsRef.current = _persistentModels.get(cachedActiveConvId) || []
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
@@ -524,6 +530,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       setIsStreaming(false)
       isStreamingRef.current = false
       inputDraftRef.current = ''
+      inputModelsRef.current = []
       forceScrollToBottom()
 
       refreshConversationList()
@@ -570,8 +577,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setIsStreaming(hasActiveStream)
     isStreamingRef.current = hasActiveStream
 
-    // 切换对话时同步恢复该对话的草稿，避免显示上一个对话的输入内容
+    // 切换对话时同步恢复该对话的草稿与模型选择，避免显示上一个对话的输入内容/模型
     inputDraftRef.current = _persistentDrafts.get(convId) || ''
+    inputModelsRef.current = _persistentModels.get(convId) || []
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -718,6 +726,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
+      _persistentModels.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -727,6 +736,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setMessages([])
         setIsStreaming(false)
         inputDraftRef.current = ''
+        inputModelsRef.current = []
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -740,6 +750,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         await abortConvStreams(convId)
         deleteConvMessages(convId)
         _persistentDrafts.delete(convId)
+        _persistentModels.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -748,6 +759,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setMessages([])
         setIsStreaming(false)
         inputDraftRef.current = ''
+        inputModelsRef.current = []
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -770,6 +782,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       // 清理当前员工所有对话的草稿
       for (const conv of allConversations) {
         _persistentDrafts.delete(conv.id)
+        _persistentModels.delete(conv.id)
       }
 
       await window.electronAPI.conversation.deleteAll(id)
@@ -779,6 +792,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       setMessages([])
       setIsStreaming(false)
       inputDraftRef.current = ''
+      inputModelsRef.current = []
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
@@ -797,6 +811,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       await abortConvStreams(convId)
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
+      _persistentModels.delete(convId)
 
       await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -806,6 +821,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setMessages([])
         setIsStreaming(false)
         inputDraftRef.current = ''
+        inputModelsRef.current = []
       }
       message.success(t('workbench.moveConversationSuccess'))
       return true
@@ -1399,6 +1415,17 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
   const getInputDraft = useCallback(() => inputDraftRef.current, [])
 
+  // 模型选择更新：同步到当前对话的持久化缓存，切换对话时能恢复各自模型选择
+  const setInputModels = useCallback((models: ModelSelection[]) => {
+    inputModelsRef.current = models
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentModels.set(convId, models)
+    }
+  }, [])
+
+  const getInputModels = useCallback(() => inputModelsRef.current, [])
+
   // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
   const clearActiveConversation = useCallback(() => {
     setActiveConversationId(null)
@@ -1407,6 +1434,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setIsStreaming(false)
     isStreamingRef.current = false
     inputDraftRef.current = ''
+    inputModelsRef.current = []
     setIsComparisonMode(false)
     setComparisonMessageIds([])
   }, [])
@@ -1967,6 +1995,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     loadingConversationId,
     getInputDraft,
     setInputDraft,
+    getInputModels,
+    setInputModels,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
