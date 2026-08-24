@@ -358,7 +358,7 @@ class EmployeeAgentService {
       : ''
     const lines: string[] = []
     if (taskWorkspace) {
-      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行）`)
+      lines.push(`当前任务工作区：${taskWorkspace}（读写授权，增删改直接执行。完成任务产生的所有中间脚本、临时文件、过程产物及最终成果，一律在此目录内创建、读写和修改；除用户特殊要求外，不得在此目录之外新建或改动任何文件）`)
       if (emp.workspace_path) {
         lines.push(`数字员工工作区：${emp.workspace_path}（只读默认，增删改需用户确认，仅用于查看其他任务）`)
       }

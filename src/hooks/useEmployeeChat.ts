@@ -49,6 +49,22 @@ const _persistentDrafts = new Map<string, string>()
 // 按 conversationId 缓存输入框选中的模型：切换对话时恢复各自模型选择，避免跨任务串扰
 const _persistentModels = new Map<string, ModelSelection[]>()
 
+// 按 conversationId 绑定输入框默认模型（模型按钮）：各任务独立，切换对话时恢复各自绑定的模型
+const _persistentDefaultModels = new Map<string, { providerId: string; modelId: string }>()
+
+// 解析对话绑定的默认模型（default_model_json，DB 持久化），无效/空返回 null
+const parseConvDefaultModel = (conv: any): { providerId: string; modelId: string } | null => {
+  const raw = conv?.default_model_json
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    if (obj && obj.providerId && obj.modelId) return { providerId: obj.providerId, modelId: obj.modelId }
+  } catch {
+    // JSON 解析失败忽略
+  }
+  return null
+}
+
 // 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
 // 组件重挂载时优先从此缓存恢复，避免 DB 查询竞争条件导致显示 0/0
 const _persistentContextStats = new Map<string, any>()
@@ -98,6 +114,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const [isCompacting, setIsCompacting] = useState(false)
   const inputDraftRef = useRef('')
   const inputModelsRef = useRef<ModelSelection[]>([])
+  const inputDefaultModelRef = useRef<{ providerId: string; modelId: string } | null>(null)
+  // 响应式默认模型状态：与 inputDefaultModelRef 同步，供 ChatInput 展示并触发重渲染
+  const [inputDefaultModel, setInputDefaultModelState] = useState<{ providerId: string; modelId: string } | null>(null)
   const [showSidePanel, setShowSidePanel] = useState(true)
   const [isComparisonMode, setIsComparisonMode] = useState(false)
   const [comparisonMessageIds, setComparisonMessageIds] = useState<string[]>([])
@@ -220,6 +239,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setLoadingConversationId(null)
         inputDraftRef.current = ''
         inputModelsRef.current = []
+        inputDefaultModelRef.current = null
+        setInputDefaultModelState(null)
         // 重置 pendingMessage 与延迟发送，避免跨员工串扰
         setPendingMessage(null)
         setPendingHighPermission(false)
@@ -329,6 +350,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         inputDraftRef.current = _persistentDrafts.get(cachedActiveConvId) || ''
         inputModelsRef.current = _persistentModels.get(cachedActiveConvId) || []
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
+        inputDefaultModelRef.current = _persistentDefaultModels.get(cachedActiveConvId) || (convData ? parseConvDefaultModel(convData) : null) || null
+        setInputDefaultModelState(inputDefaultModelRef.current)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
         }
@@ -371,6 +394,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentConvList.set(id!, convList)
       setEmployee(result)
       setAllConversations(convList)
+
+      // 从 convList 恢复各对话绑定的默认模型（仅本会话未显式设置过的）
+      for (const conv of convList) {
+        if (_persistentDefaultModels.has(conv.id)) continue
+        const dbModel = parseConvDefaultModel(conv)
+        if (dbModel) _persistentDefaultModels.set(conv.id, dbModel)
+      }
+      // 当前激活对话若尚未恢复模型（selectConversation 早于 convList 加载），从缓存补齐
+      if (activeConversationIdRef.current && !inputDefaultModelRef.current) {
+        const dbModel = _persistentDefaultModels.get(activeConversationIdRef.current)
+        if (dbModel) {
+          inputDefaultModelRef.current = dbModel
+          setInputDefaultModelState(dbModel)
+        }
+      }
 
       // 从 convList 恢复所有对话的 contextStats
       const restoredStats: Record<string, any> = {}
@@ -531,6 +569,19 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       isStreamingRef.current = false
       inputDraftRef.current = ''
       inputModelsRef.current = []
+      if (selectedLlmProviderId) {
+        inputDefaultModelRef.current = { providerId: selectedLlmProviderId, modelId: selectedLlmModelId }
+        _persistentDefaultModels.set(convId, inputDefaultModelRef.current)
+        setInputDefaultModelState(inputDefaultModelRef.current)
+        // 新对话绑定默认模型持久化到 DB，切换任务/重启后仍恢复各自模型
+        window.electronAPI.conversation.update({
+          id: convId,
+          default_model_json: JSON.stringify(inputDefaultModelRef.current),
+        }).catch(() => {})
+      } else {
+        inputDefaultModelRef.current = null
+        setInputDefaultModelState(null)
+      }
       forceScrollToBottom()
 
       refreshConversationList()
@@ -580,6 +631,11 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     // 切换对话时同步恢复该对话的草稿与模型选择，避免显示上一个对话的输入内容/模型
     inputDraftRef.current = _persistentDrafts.get(convId) || ''
     inputModelsRef.current = _persistentModels.get(convId) || []
+    // 优先内存缓存（本会话最新选择），其次 DB 持久化的 default_model_json，保证跨任务/重启隔离
+    const cachedDefaultModel = _persistentDefaultModels.get(convId)
+    const defaultModelConvData = allConversations.find(c => c.id === convId)
+    inputDefaultModelRef.current = cachedDefaultModel || parseConvDefaultModel(defaultModelConvData) || null
+    setInputDefaultModelState(inputDefaultModelRef.current)
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -727,6 +783,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
+      _persistentDefaultModels.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -737,6 +794,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setIsStreaming(false)
         inputDraftRef.current = ''
         inputModelsRef.current = []
+        inputDefaultModelRef.current = null
+        setInputDefaultModelState(null)
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -751,6 +810,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         deleteConvMessages(convId)
         _persistentDrafts.delete(convId)
         _persistentModels.delete(convId)
+        _persistentDefaultModels.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -760,6 +820,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setIsStreaming(false)
         inputDraftRef.current = ''
         inputModelsRef.current = []
+        inputDefaultModelRef.current = null
+        setInputDefaultModelState(null)
       }
       message.success(t('workbench.deleteSuccess'))
     } catch {
@@ -783,6 +845,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       for (const conv of allConversations) {
         _persistentDrafts.delete(conv.id)
         _persistentModels.delete(conv.id)
+        _persistentDefaultModels.delete(conv.id)
       }
 
       await window.electronAPI.conversation.deleteAll(id)
@@ -793,6 +856,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       setIsStreaming(false)
       inputDraftRef.current = ''
       inputModelsRef.current = []
+      inputDefaultModelRef.current = null
+      setInputDefaultModelState(null)
       message.success(t('workbench.clearAllSuccess'))
     } catch {
       message.error(t('workbench.clearAllFailed'))
@@ -812,6 +877,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       deleteConvMessages(convId)
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
+      _persistentDefaultModels.delete(convId)
 
       await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -822,6 +888,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setIsStreaming(false)
         inputDraftRef.current = ''
         inputModelsRef.current = []
+        inputDefaultModelRef.current = null
+        setInputDefaultModelState(null)
       }
       message.success(t('workbench.moveConversationSuccess'))
       return true
@@ -942,6 +1010,15 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
   }
 
+  // 实际执行模型：优先当前对话绑定的默认模型（输入框模型按钮），其次员工级默认/默认 provider
+  // 保证发送/重发/编辑重发/压缩使用与输入框显示一致的模型
+  const resolveExecModel = () => {
+    const bound = inputDefaultModelRef.current
+    const providerId = bound?.providerId || selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    const modelId = bound?.modelId || selectedLlmModelId || undefined
+    return { providerId: providerId || '', modelId }
+  }
+
   const sendMessage = async (convId: string, content: string, images?: string[], models?: Array<{ providerId: string; modelId: string }>, options?: { highPermission?: boolean }) => {
     const targetConvId = convId || activeConversationIdRef.current
     if (!targetConvId) return
@@ -1051,7 +1128,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         setComparisonMessageIds(assistantIds)
       }
     } else {
-      const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+      const { providerId, modelId } = resolveExecModel()
       if (!providerId) {
         message.warning(t('workbench.noLlmProvider'))
         return
@@ -1066,7 +1143,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isStreaming: true,
         segments: [],
         comparisonProviderId: providerId,
-        comparisonModelId: selectedLlmModelId || undefined,
+        comparisonModelId: modelId,
       }
       updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
 
@@ -1089,7 +1166,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         const result = await window.electronAPI.llm.employeeChatStream({
           employee_id: id!,
           provider_id: providerId,
-          model_id: selectedLlmModelId || undefined,
+          model_id: modelId,
           messages: messageHistory,
           options: { temperature: DEFAULT_TEMPERATURE },
           use_skills: true,
@@ -1222,7 +1299,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const targetMsg = currentMsgs[msgIndex]
     if (targetMsg.role !== 'assistant') return
 
-    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    const { providerId, modelId } = resolveExecModel()
     if (!providerId) {
       message.warning(t('workbench.noLlmProvider'))
       return
@@ -1253,7 +1330,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       isError: false,
       tokenUsage: undefined,
       comparisonProviderId: providerId,
-      comparisonModelId: selectedLlmModelId || undefined,
+      comparisonModelId: modelId,
     }
 
     await commitAndStartStream(
@@ -1262,7 +1339,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       newMessages.slice(0, msgIndex),
       msgId,
       providerId,
-      selectedLlmModelId || undefined,
+      modelId,
     )
   }
 
@@ -1331,7 +1408,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
     const targetMsg = currentMsgs[msgIndex]
 
-    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    const { providerId, modelId } = resolveExecModel()
     if (!providerId) {
       message.warning(t('workbench.noLlmProvider'))
       return
@@ -1376,7 +1453,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isError: false,
         tokenUsage: undefined,
         comparisonProviderId: providerId,
-        comparisonModelId: selectedLlmModelId || undefined,
+        comparisonModelId: modelId,
       }
     } else {
       assistantMessageId = `msg_${generateId()}`
@@ -1388,7 +1465,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         isStreaming: true,
         segments: [],
         comparisonProviderId: providerId,
-        comparisonModelId: selectedLlmModelId || undefined,
+        comparisonModelId: modelId,
       }
       newMessages.splice(assistantMsgIndex, 0, assistantMessage)
     }
@@ -1399,7 +1476,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       newMessages.slice(0, assistantMsgIndex),
       assistantMessageId,
       providerId,
-      selectedLlmModelId || undefined,
+      modelId,
     )
   }
 
@@ -1426,6 +1503,22 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
 
   const getInputModels = useCallback(() => inputModelsRef.current, [])
 
+  // 默认模型更新：绑定到当前对话，各任务独立存储，切换对话时恢复各自默认模型
+  const setInputDefaultModel = useCallback((providerId: string, modelId: string) => {
+    const value = { providerId, modelId }
+    inputDefaultModelRef.current = value
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentDefaultModels.set(convId, value)
+      // 持久化到 DB，保证重启后仍按对话恢复各自的默认模型
+      window.electronAPI.conversation.update({
+        id: convId,
+        default_model_json: JSON.stringify(value),
+      }).catch(() => {})
+    }
+    setInputDefaultModelState(value)
+  }, [])
+
   // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
   const clearActiveConversation = useCallback(() => {
     setActiveConversationId(null)
@@ -1435,6 +1528,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     isStreamingRef.current = false
     inputDraftRef.current = ''
     inputModelsRef.current = []
+    inputDefaultModelRef.current = null
+    setInputDefaultModelState(null)
     setIsComparisonMode(false)
     setComparisonMessageIds([])
   }, [])
@@ -1908,7 +2003,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const convId = activeConversationIdRef.current
     if (!convId || !id || isCompacting || isStreaming) return
 
-    const providerId = selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    const { providerId, modelId } = resolveExecModel()
     if (!providerId) return
 
     setIsCompacting(true)
@@ -1932,7 +2027,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       const result = await window.electronAPI.llm.compactConversation({
         employee_id: id,
         provider_id: providerId,
-        model_id: selectedLlmModelId,
+        model_id: modelId,
         messages: messageHistory,
         conversation_id: convId,
         collection_ids: selectedCollectionIds,
@@ -1997,6 +2092,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setInputDraft,
     getInputModels,
     setInputModels,
+    inputDefaultModel,
+    setInputDefaultModel,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
