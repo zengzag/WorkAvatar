@@ -7,7 +7,6 @@ import KMSSearchEngineService, { type SearchResult, type SearchOptions } from '.
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
 import KMSAutoIndexService from './kms-auto-index.service'
-import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
@@ -781,7 +780,7 @@ class KMSService {
 
     const searchStart = Date.now()
     // 前端传入的 timeRangeStart/End 为毫秒，kms_files.modified_time 存储为 unix 秒，
-    // 此处统一转换为秒，与 agentSearch / searchFiles 保持一致
+    // 此处统一转换为秒，与 searchFiles 保持一致
     const normalizedOptions = options
       ? {
           ...options,
@@ -845,10 +844,6 @@ class KMSService {
 
   getFileSummary(fileId: string): any {
     return KMSFileReaderService.getInstance().getFileSummary(fileId)
-  }
-
-  async agentSearch(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
-    return KMSSearchAgentService.getInstance().search(query, options)
   }
 
   async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {

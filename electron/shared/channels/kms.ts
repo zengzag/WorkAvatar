@@ -4,8 +4,6 @@ export const KMS_CHANNELS = {
   KMS_UPDATE_DIR: 'kms:update-dir',
   KMS_DELETE_DIR: 'kms:delete-dir',
   KMS_SEARCH: 'kms:search',
-  KMS_AGENT_SEARCH: 'kms:agent-search',
-  KMS_AGENT_SEARCH_PROGRESS: 'kms:agent-search-progress',
   KMS_GET_FILE_CONTENT: 'kms:get-file-content',
   KMS_GET_FILE_SUMMARY: 'kms:get-file-summary',
   KMS_BUILD_INDEX: 'kms:build-index',
@@ -124,17 +122,6 @@ export interface KMSSearchParams {
   collectionIds?: string[]
 }
 
-export interface KMSAgentSearchParams {
-  query: string
-  maxRounds?: number
-  topK?: number
-  dirIds?: string[]
-  collectionIds?: string[]
-  fileExtensions?: string[]
-  timeRangeStart?: number
-  timeRangeEnd?: number
-}
-
 export interface KMSGetFileContentParams {
   fileId: string
   paragraphId?: string
@@ -199,7 +186,6 @@ export interface KMSModelConfig {
 }
 
 export interface KMSSetSettingsParams {
-  model?: KMSModelConfig | null
   embeddingModel?: KMSModelConfig | null
   summaryModel?: KMSModelConfig | null
   searchParams?: {

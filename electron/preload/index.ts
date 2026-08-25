@@ -40,7 +40,6 @@ import type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
-  KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
@@ -320,12 +319,6 @@ const electronAPI = {
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
     searchFiles: (params: KMSSearchFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_FILES, params),
-    agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
-    onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
-      const handler = (_event: any, step: any) => callback(step)
-      ipcRenderer.on(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
-    },
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),

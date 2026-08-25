@@ -37,7 +37,6 @@ interface IndexProgress {
 interface KMSSettingsPanelProps {
   settings: KMSSettings
   onSaveSettings: (params: {
-    model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
@@ -75,7 +74,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   const { token } = theme.useToken()
 
   const [providers, setProviders] = useState<LLMProvider[]>([])
-  const [modelConfig, setModelConfig] = useState<KMSModelConfig | null>(settings.model)
   const [embeddingModelConfig, setEmbeddingModelConfig] = useState<KMSModelConfig | null>(settings.embeddingModel)
   const [summaryModelConfig, setSummaryModelConfig] = useState<KMSModelConfig | null>(settings.summaryModel)
   const [maxRounds, setMaxRounds] = useState<number>(settings.searchParams?.maxRounds ?? 5)
@@ -98,7 +96,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   }, [])
 
   useEffect(() => {
-    setModelConfig(settings.model)
     setEmbeddingModelConfig(settings.embeddingModel)
     setSummaryModelConfig(settings.summaryModel)
     setMaxRounds(settings.searchParams?.maxRounds ?? 5)
@@ -133,13 +130,12 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
     }
     const timer = setTimeout(() => {
       onSaveSettings({
-        model: modelConfig,
         embeddingModel: embeddingModelConfig,
         summaryModel: summaryModelConfig,
       })
     }, 500)
     return () => clearTimeout(timer)
-  }, [modelConfig, embeddingModelConfig, summaryModelConfig, onSaveSettings])
+  }, [embeddingModelConfig, summaryModelConfig, onSaveSettings])
 
   // 自动保存：检索参数变化后延迟 500ms 保存
   useEffect(() => {
@@ -169,63 +165,6 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
 
   const renderModelTab = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* AI 搜索模型 */}
-      <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text strong style={{ display: 'block' }}>{t('kms.settingsPanel.aiSearchModel')}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.aiSearchModelDesc')}</Text>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-              <LLMSelector
-                providerId={modelConfig?.provider_id || ''}
-                modelId={modelConfig?.model_id || ''}
-                onChange={(providerId, modelId) => {
-                  if (providerId) {
-                    setModelConfig(prev => ({
-                      provider_id: providerId,
-                      model_id: modelId,
-                      enable_thinking: prev?.enable_thinking ?? false,
-                    }))
-                  } else {
-                    setModelConfig(null)
-                  }
-                }}
-                modelCategory="chat"
-                providers={providers}
-              />
-              {modelConfig?.provider_id && (
-                <Text
-                  type="secondary"
-                  style={{ fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onClick={() => setModelConfig(null)}
-                >
-                  {t('common.clearAll')}
-                </Text>
-              )}
-            </div>
-          </div>
-          {modelConfig?.provider_id && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.settingsPanel.enableThinking')}</Text>
-                <Tooltip title={t('kms.settingsPanel.enableThinkingTooltip')}>
-                  <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>ⓘ</Text>
-                </Tooltip>
-              </div>
-              <Switch
-                size="small"
-                checked={modelConfig?.enable_thinking ?? false}
-                onChange={(checked) => {
-                  setModelConfig(prev => prev ? { ...prev, enable_thinking: checked } : prev)
-                }}
-              />
-            </div>
-          )}
-        </div>
-      </Card>
-
       {/* 摘要模型 */}
       <Card size="small" style={{ borderColor: token.colorBorderSecondary }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

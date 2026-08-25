@@ -53,7 +53,6 @@ export type {
   KMSAddDirParams,
   KMSUpdateDirParams,
   KMSSearchParams,
-  KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,

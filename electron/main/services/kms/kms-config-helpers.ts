@@ -16,7 +16,6 @@ export interface KmsEmbeddingConfig {
 }
 
 export interface KmsSettings {
-  model: any
   embeddingModel: any
   summaryModel: any
   searchParams: {
@@ -53,20 +52,11 @@ function readSettingJson(key: string): any | null {
   }
 }
 
-/** 获取 KMS AI 搜索模型配置
- * 优先级：KMS AI搜索模型 (kms_model) > 知识场景默认模型 > 任意可用提供商
+/** 获取 KMS 默认 LLM 配置（用于索引供应商解析与摘要模型兜底）
+ * 优先级：知识场景默认模型 > 任意可用提供商
  */
 export function getKmsLLMConfig(): KmsLLMConfig | null {
   const llmClient = LLMClientService.getInstance()
-
-  const kmsModel = readSettingJson('kms_model')
-  if (kmsModel?.provider_id && llmClient.getProvider(kmsModel.provider_id)) {
-    return {
-      providerId: kmsModel.provider_id,
-      modelId: kmsModel.model_id || undefined,
-      enableThinking: !!kmsModel.enable_thinking,
-    }
-  }
 
   const defaultModel = readSettingJson('default_model_knowledge')
   if (defaultModel?.provider_id && llmClient.getProvider(defaultModel.provider_id)) {
@@ -83,7 +73,7 @@ export function getKmsLLMConfig(): KmsLLMConfig | null {
 }
 
 /** 获取摘要模型配置
- * 优先级：KMS 摘要模型 (kms_summary_model) > KMS AI搜索模型 (kms_model) > 知识场景默认模型 > 任意可用提供商
+ * 优先级：KMS 摘要模型 (kms_summary_model) > 知识场景默认模型 > 任意可用提供商
  */
 export function getKmsSummaryLLMConfig(): KmsLLMConfig | null {
   const llmClient = LLMClientService.getInstance()
@@ -133,7 +123,6 @@ export function getKmsEmbeddingConfig(): KmsEmbeddingConfig | null {
 /** 读取全部 KMS 设置 */
 export function getKmsSettings(): KmsSettings {
   return {
-    model: readSettingJson('kms_model'),
     embeddingModel: readSettingJson('kms_embedding_model'),
     summaryModel: readSettingJson('kms_summary_model'),
     searchParams: { ...DEFAULT_SEARCH_PARAMS, ...(readSettingJson('kms_search_params') || {}) },
@@ -155,7 +144,6 @@ function writeSetting(key: string, value: any): void {
 
 /** 持久化 KMS 设置（不含 autoIndex 的运行时生效，调用方需单独处理） */
 export function setKmsSettings(params: any): void {
-  if (params.model !== undefined) writeSetting('kms_model', params.model)
   if (params.embeddingModel !== undefined) writeSetting('kms_embedding_model', params.embeddingModel)
   if (params.summaryModel !== undefined) writeSetting('kms_summary_model', params.summaryModel)
   if (params.searchParams !== undefined) writeSetting('kms_search_params', params.searchParams)

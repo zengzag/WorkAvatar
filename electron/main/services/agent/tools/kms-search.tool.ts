@@ -1,5 +1,5 @@
 import KMSService from '../../kms/kms.service'
-import type { ToolDefinition, ToolHandlerContext } from './types'
+import type { ToolDefinition } from './types'
 
 export interface SearchScopeRef {
   current: {
@@ -31,15 +31,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     return ref && ref.length > 0 ? ref : undefined
   }
 
-  // 复杂查询关键词，命中时 auto 模式走深度检索
-  const DEEP_HINT_KEYWORDS = ['分析', '总结', '趋势', '对比', '梳理', '综合', '深度', '详细', '归纳', '概述', '比较', '异同', '原因', '影响']
-
-  function shouldUseDeepMode(query: string): boolean {
-    if (query.length > 20) return true
-    return DEEP_HINT_KEYWORDS.some(kw => query.includes(kw))
-  }
-
-  /** 剥离 ID 前缀（如 f:xxx / p:xxx），防御 LLM 误传 */
+  // 剥离 ID 前缀（如 f:xxx / p:xxx），防御 LLM 误传
   function stripIdPrefix(id: string): string {
     const trimmed = id.trim()
     const match = trimmed.match(/^[a-z]+:(.+)$/i)
@@ -102,7 +94,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     name: 'kms_search',
     title: '本地资料检索',
     summary: '检索本地资料库内容（PDF/Word/Excel/PPT/Markdown等），结果自动附加相关知识卡片与合集摘要。需要查找资料库文档、获取文档片段时使用。',
-    description: '对本地资料库进行检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。mode=simple 单次检索（快速，返回匹配片段与定位）；mode=deep 调用检索子智能体多轮检索（自动识别查询意图，输出结论与溯源，适合复杂分析）；mode=auto 由系统根据查询复杂度自动选择。检索结果会自动附加匹配的知识卡片（已沉淀的高频主题摘要）与合集摘要，无需单独调用其他工具。',
+    description: '对本地资料库进行检索。支持 PDF、Word、Excel、PPT、Markdown、TXT 等格式。支持关键词检索（keyword）与关键词+向量混合检索（hybrid，兼顾精确匹配与语义相似，概念性查询建议）。检索结果会自动附加匹配的知识卡片（已沉淀的高频主题摘要）与合集摘要，无需单独调用其他工具。',
     parameters: {
       type: 'object',
       properties: {
@@ -110,31 +102,18 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
           type: 'string',
           description: '检索查询语句或自然语言问题',
         },
-        mode: {
-          type: 'string',
-          enum: ['simple', 'deep', 'auto'],
-          description: '检索模式：simple 单次检索（快速） / deep 深度检索（子智能体多轮，适合综合分析） / auto 自动判断（默认）',
-          default: 'auto',
-        },
         search_mode: {
           type: 'string',
           enum: ['keyword', 'hybrid'],
-          description: 'simple 模式下的检索方式：keyword 关键词检索（默认） / hybrid 关键词+向量混合检索（兼顾精确匹配与语义相似，概念性查询建议）',
+          description: '检索方式：keyword 关键词检索（默认） / hybrid 关键词+向量混合检索（兼顾精确匹配与语义相似，概念性查询建议）',
           default: 'keyword',
         },
         top_k: {
           type: 'number',
-          description: 'simple 模式返回结果数量（1-20，默认5）',
+          description: '返回结果数量（1-20，默认5）',
           minimum: 1,
           maximum: 20,
           default: 5,
-        },
-        max_rounds: {
-          type: 'number',
-          description: 'deep 模式最大检索轮次（1-5，默认3）',
-          minimum: 1,
-          maximum: 5,
-          default: 3,
         },
         collection_ids: {
           type: 'array',
@@ -149,7 +128,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
         file_extensions: {
           type: 'array',
           items: { type: 'string' },
-          description: '限定文件扩展名（simple 模式可选，如 ["pdf", "docx", "md"]）',
+          description: '限定文件扩展名（可选，如 ["pdf", "docx", "md"]）',
         },
         time_range_start: {
           type: 'number',
@@ -162,68 +141,20 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
       },
       required: ['query'],
     },
-    timeoutMs: 600000, // deep 模式可能多轮检索，统一 10 分钟超时
-    handler: async (args: any, context?: ToolHandlerContext) => {
+    timeoutMs: 120000,
+    handler: async (args: any) => {
       try {
         const query = String(args.query || '').trim()
         if (!query || query.length < 1) {
           return { success: true, output: '请输入查询内容。' }
         }
 
-        const rawMode = String(args.mode || 'auto')
-        const mode = rawMode === 'simple' || rawMode === 'deep' ? rawMode : (shouldUseDeepMode(query) ? 'deep' : 'simple')
         const collectionIds = resolveCollectionIds(args)
         const dirIds = args.dir_ids && Array.isArray(args.dir_ids) && args.dir_ids.length > 0 ? args.dir_ids : resolveDirIds()
         const fileExtensions = resolveFileExtensions(args)
         const timeRangeStart = typeof args.time_range_start === 'number' ? args.time_range_start : undefined
         const timeRangeEnd = typeof args.time_range_end === 'number' ? args.time_range_end : undefined
 
-        // ====== deep 模式：检索子智能体多轮检索 ======
-        if (mode === 'deep') {
-          const maxRounds = Math.min(Math.max(args.max_rounds || 3, 1), 5)
-          const result = await kmsService.agentSearch(query, {
-            maxRounds,
-            collectionIds,
-            dirIds,
-            fileExtensions,
-            timeRangeStart,
-            timeRangeEnd,
-            onProgress: (step) => {
-              context?.onProgress?.(step)
-            },
-          })
-
-          let output = `【${result.queryTypeLabel}】${result.searchRounds}轮检索\n\n`
-          output += `${result.conclusion}\n`
-
-          if (result.sources.length > 0) {
-            output += '\n--- 来源 ---\n'
-            for (let i = 0; i < result.sources.length; i++) {
-              const s = result.sources[i]
-              output += `[${i + 1}] ${s.fileName}`
-              if (s.paragraphTitle) output += ` > ${s.paragraphTitle}`
-              output += '\n'
-              output += `路径: ${s.filePath}\n`
-              output += `file_id: ${s.fileId}\n`
-              if (s.paragraphId) output += `paragraph_id: ${s.paragraphId}\n`
-              if (s.startLine !== undefined && s.endLine !== undefined) {
-                output += `lines: ${s.startLine}-${s.endLine}\n`
-              }
-              if (s.startOffset !== undefined && s.endOffset !== undefined) {
-                output += `offset: ${s.startOffset}-${s.endOffset}\n`
-              }
-              output += '\n'
-            }
-          }
-
-          // 附加知识卡片和合集摘要
-          output += await appendKnowledgeCards(query)
-          output += appendCollectionSummaries(query)
-
-          return { success: true, output }
-        }
-
-        // ====== simple 模式：单次检索 ======
         const topK = Math.min(Math.max(args.top_k || 5, 1), 20)
         const useSemantic = String(args.search_mode || 'keyword') === 'hybrid'
 
@@ -243,7 +174,7 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
             msg += ' 当前限定在指定合集中检索，可尝试不传 collection_ids 搜索全部资料库。'
           }
           if (!useSemantic) {
-            msg += ' 建议：尝试混合检索(search_mode:"hybrid")，或使用深度检索(mode:"deep")'
+            msg += ' 建议：尝试混合检索(search_mode:"hybrid")'
           }
           // 即使文件无结果，仍尝试附加卡片和合集摘要
           const cardsOutput = await appendKnowledgeCards(query)

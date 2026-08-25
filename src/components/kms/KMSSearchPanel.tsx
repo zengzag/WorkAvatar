@@ -1,14 +1,11 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react'
+import React, { useCallback, useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Empty, Spin, Typography, theme } from 'antd'
+import { Empty, Spin } from 'antd'
 import KMSSearchInput from './KMSSearchInput'
 import KMSSearchResultList from './KMSSearchResultList'
-import KMSAgentResult from './KMSAgentResult'
 import KnowledgeCardBanner from './KnowledgeCardBanner'
 import KnowledgeCardDetail from './KnowledgeCardDetail'
-import type { SearchFilters, AgentSearchResult, SearchTraceStep, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
-
-const { Text } = Typography
+import type { SearchFilters, SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
 interface HighlightRange { start: number; end: number }
 
@@ -48,8 +45,6 @@ interface KMSSearchPanelProps {
   searchMode: SearchMode
   onSearchModeChange: (mode: SearchMode) => void
   searchResults: SearchResult[]
-  agentResult: AgentSearchResult | null
-  liveSteps: SearchTraceStep[]
   isSearching: boolean
   onSearch: (query: string, mode?: SearchMode, filters?: SearchFilters) => void
   dirs: IndexDir[]
@@ -70,8 +65,6 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   searchMode,
   onSearchModeChange,
   searchResults,
-  agentResult,
-  liveSteps,
   isSearching,
   onSearch,
   dirs,
@@ -86,7 +79,6 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   onClearSearchHistory,
 }) => {
   const { t } = useTranslation()
-  const { token } = theme.useToken()
 
   const [filterDirIds, setFilterDirIds] = useState<string[]>([])
   const [internalCollectionIds, setInternalCollectionIds] = useState<string[]>([])
@@ -147,24 +139,6 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
     }
   }, [onSearchModeChange, searchQuery, isSearching, onSearch, buildFilters])
 
-  const searchKeywords = useMemo(() => {
-    if (!searchQuery.trim()) return []
-    return searchQuery.trim().split(/\s+/).filter(kw => kw.length > 0)
-  }, [searchQuery])
-
-  const stepTypeColors = useMemo<Record<string, string>>(() => ({
-    info: token.colorTextTertiary,
-    llm: token.colorInfo,
-    search: token.colorPrimary,
-    read: token.colorWarning,
-    plan: token.colorSuccess,
-    result: token.colorError,
-  }), [token])
-
-  const typeIcons = useMemo<Record<string, string>>(() => ({
-    info: '•', llm: '🤖', search: '🔍', read: '📄', plan: '📋', result: '✓',
-  }), [])
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <KMSSearchInput
@@ -205,53 +179,9 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
           </div>
         )}
         {isSearching ? (
-          searchMode === 'ai' && liveSteps.length > 0 ? (
-            <div style={{ padding: '12px 4px' }}>
-              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Spin size="small" />
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.aiSearching')}</Text>
-              </div>
-              {liveSteps.map((step, i) => (
-                <div key={`live-${step.phase}-${i}`} style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 0',
-                  fontSize: 12, lineHeight: 1.6, color: token.colorTextSecondary,
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                }}>
-                  <span style={{ color: stepTypeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
-                    {typeIcons[step.type] || '•'}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div>
-                      <Text style={{ fontSize: 12, fontWeight: 500 }}>{step.action}</Text>
-                      {step.durationMs !== undefined && (
-                        <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>{step.durationMs}ms</Text>
-                      )}
-                    </div>
-                    {step.detail && (
-                      <Text type="secondary" style={{ fontSize: 11, wordBreak: 'break-all' }}>{step.detail}</Text>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center', padding: 60 }}>
-              <Spin size="large" description={searchMode === 'ai' ? t('kms.aiSearching') : t('kms.searching')} />
-            </div>
-          )
-        ) : searchMode === 'ai' ? (
-          agentResult ? (
-            <KMSAgentResult
-              agentResult={agentResult}
-              searchKeywords={searchKeywords}
-              stepTypeColors={stepTypeColors}
-              onPreview={onPreview}
-              onOpenFile={onOpenFile}
-              onOpenFileDir={onOpenFileDir}
-            />
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('kms.noAiResult')} />
-          )
+          <div style={{ textAlign: 'center', padding: 60 }}>
+            <Spin size="large" description={t('kms.searching')} />
+          </div>
         ) : searchResults.length === 0 ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('kms.noResults')} />
         ) : (

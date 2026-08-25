@@ -36,8 +36,6 @@ const KMSPage: React.FC = () => {
     searchMode,
     setSearchMode,
     searchResults,
-    agentResult,
-    liveSteps,
     isSearching,
     indexProgress,
     isIndexing,
@@ -187,8 +185,6 @@ const KMSPage: React.FC = () => {
             searchMode={searchMode}
             onSearchModeChange={setSearchMode}
             searchResults={searchResults}
-            agentResult={agentResult}
-            liveSteps={liveSteps}
             isSearching={isSearching}
             onSearch={search}
             dirs={dirs}

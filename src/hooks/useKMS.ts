@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { useTranslation } from 'react-i18next'
 
 interface IndexDir {
   id: string
@@ -60,38 +59,6 @@ interface KMSStats {
   index: { totalEntries: number; byType: Record<string, number>; embeddingCount: number; ftsEntryCount: number }
 }
 
-export interface AgentSearchSource {
-  fileId: string
-  fileName: string
-  filePath: string
-  paragraphId?: string
-  paragraphTitle?: string
-  snippet: string
-  startLine?: number
-  endLine?: number
-  startOffset?: number
-  endOffset?: number
-  score?: number
-}
-
-export interface AgentSearchResult {
-  queryType: 'locate' | 'concept' | 'trend' | 'analysis'
-  queryTypeLabel: string
-  conclusion: string
-  sources: AgentSearchSource[]
-  searchRounds: number
-  searchTrace: string[]
-  searchSteps?: SearchTraceStep[]
-}
-
-export interface SearchTraceStep {
-  phase: string
-  action: string
-  detail?: string
-  durationMs?: number
-  type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result'
-}
-
 export interface SearchFilters {
   dirIds?: string[]
   collectionIds?: string[]
@@ -125,7 +92,6 @@ export interface KMSAutoIndexStatus {
 
 /** KMS 设置（模型 + 检索参数 + 自动索引） */
 export interface KMSSettings {
-  model: KMSModelConfig | null
   embeddingModel: KMSModelConfig | null
   summaryModel: KMSModelConfig | null
   searchParams: {
@@ -175,16 +141,13 @@ export interface SearchHistoryItem {
   created_at: number
 }
 
-export type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'ai' | 'file'
+export type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'file'
 
 export function useKMS() {
-  const { t } = useTranslation()
   const [dirs, setDirs] = useState<IndexDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMode, setSearchMode] = useState<SearchMode>('hybrid')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
-  const [agentResult, setAgentResult] = useState<AgentSearchResult | null>(null)
-  const [liveSteps, setLiveSteps] = useState<SearchTraceStep[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null)
   const [isIndexing, setIsIndexing] = useState(false)
@@ -193,7 +156,6 @@ export function useKMS() {
   const [fileSummary, setFileSummary] = useState<any>(null)
   const [previewFile, setPreviewFile] = useState<SearchResult | null>(null)
   const [kmsSettings, setKmsSettings] = useState<KMSSettings>({
-    model: null,
     embeddingModel: null,
     summaryModel: null,
     searchParams: { maxRounds: 3, topK: 10, resultLimit: 100, autoReparseHotData: true, enableKnowledgeCards: true, knowledgeCardThreshold: 5, autoRefreshStaleCards: true },
@@ -272,56 +234,12 @@ export function useKMS() {
   const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
       setSearchResults([])
-      setAgentResult(null)
-      setLiveSteps([])
       return
     }
     setIsSearching(true)
-    setLiveSteps([])
-
-    let unsubscribe: (() => void) | null = null
-    if (mode === 'ai') {
-      unsubscribe = window.electronAPI.kms.onAgentSearchProgress((step: SearchTraceStep) => {
-        setLiveSteps(prev => [...prev, step])
-      })
-    }
 
     try {
-      if (mode === 'ai') {
-        const aiTopK = kmsSettingsRef.current.searchParams?.topK || 10
-        const result = await window.electronAPI.kms.agentSearch({
-          query,
-          topK: aiTopK,
-          maxRounds: 3,
-          dirIds: filters?.dirIds,
-          collectionIds: filters?.collectionIds,
-          fileExtensions: filters?.fileExtensions,
-          timeRangeStart: filters?.timeRangeStart,
-          timeRangeEnd: filters?.timeRangeEnd,
-        })
-        if (result && !result.error) {
-          setAgentResult(result)
-          setSearchResults([])
-          window.electronAPI.kms.recordSearchHistory({
-            query,
-            searchMode: 'ai',
-            resultCount: result.sources?.length || 0,
-            filters,
-          }).catch(() => {})
-        } else {
-          const errorMsg = result?.error || 'Unknown error'
-          setAgentResult({
-            queryType: 'locate',
-            queryTypeLabel: t('kms.queryTypeLocate'),
-            conclusion: `${t('kms.aiSearchFailed', { error: errorMsg })}${errorMsg.includes('LLM provider') ? `\n\n${t('kms.aiSearchLLMHint')}` : ''}`,
-            sources: [],
-            searchRounds: 0,
-            searchTrace: [],
-            searchSteps: [],
-          })
-          setSearchResults([])
-        }
-      } else if (mode === 'file') {
+      if (mode === 'file') {
         const results = await window.electronAPI.kms.searchFiles({
           query,
           dirIds: filters?.dirIds,
@@ -330,7 +248,6 @@ export function useKMS() {
           timeRangeStart: filters?.timeRangeStart,
           timeRangeEnd: filters?.timeRangeEnd,
         })
-        setAgentResult(null)
         // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
         const fileResults = Array.isArray(results) ? results : []
         setSearchResults(fileResults)
@@ -353,7 +270,6 @@ export function useKMS() {
           dirIds: filters?.dirIds,
           collectionIds: filters?.collectionIds,
         })
-        setAgentResult(null)
         // safeHandle 错误时返回 { error }（truthy），必须用 Array.isArray 兜底避免下游 useMemo 遍历时报 "e is not iterable"
         const listResults = Array.isArray(results) ? results : []
         setSearchResults(listResults)
@@ -367,9 +283,7 @@ export function useKMS() {
     } catch (err) {
       console.error('KMS search failed:', err)
       setSearchResults([])
-      setAgentResult(null)
     } finally {
-      if (unsubscribe) unsubscribe()
       setIsSearching(false)
     }
   }, [])
@@ -448,7 +362,6 @@ export function useKMS() {
       const result = await window.electronAPI.kms.getSettings()
       if (result && !result.error) {
         setKmsSettings({
-          model: result.model || null,
           embeddingModel: result.embeddingModel || null,
           summaryModel: result.summaryModel || null,
           searchParams: {
@@ -473,7 +386,6 @@ export function useKMS() {
   }, [])
 
   const saveKmsSettings = useCallback(async (params: {
-    model?: KMSModelConfig | null
     embeddingModel?: KMSModelConfig | null
     summaryModel?: KMSModelConfig | null
     searchParams?: { maxRounds?: number; topK?: number; resultLimit?: number; autoReparseHotData?: boolean; enableKnowledgeCards?: boolean; knowledgeCardThreshold?: number; autoRefreshStaleCards?: boolean }
@@ -650,8 +562,6 @@ export function useKMS() {
     searchMode,
     setSearchMode,
     searchResults,
-    agentResult,
-    liveSteps,
     isSearching,
     indexProgress,
     isIndexing,

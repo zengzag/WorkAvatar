@@ -246,7 +246,7 @@ class LLMClientService {
       const settingKeys = [
         'default_model_creation', 'default_model_workbench', 'default_model_knowledge',
         'default_model_quick', 'default_model_embedding', 'default_model_memory',
-        'kms_model', 'kms_embedding_model', 'kms_summary_model',
+        'kms_embedding_model', 'kms_summary_model',
       ]
       const updateSetting = (key: string, value: any) => {
         db.prepare('UPDATE settings SET value = ?, updated_at = unixepoch() WHERE key = ?')
