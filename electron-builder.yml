@@ -18,8 +18,8 @@ fileAssociations:
 
 npmRebuild: false
 
-# 顶层压缩：最大化 asar 内文件压缩率
-compression: maximum
+# 日常构建用 normal（快）；正式发布用 npm run build:release 覆盖为 maximum（最小体积、构建慢）
+compression: normal
 
 # 仅保留应用实际使用的 Electron 语言包（zh-CN/zh-TW/en-US），其余 ~50 个 .pak 移除
 electronLanguages:
@@ -69,6 +69,15 @@ files:
   - "!node_modules/@mlightcad/**"
   - "!node_modules/@flyfish-dev/**"
   - "!node_modules/filesize/**"
+  # ── file-viewer-copy-assets：@file-viewer/react-full 的传递依赖（自托管部署 CLI 资产包，
+  #    含 worker/wasm/字体 ~139MB），渲染端资产已由 Vite 打进 dist/assets，打包死重 ──
+  - "!node_modules/file-viewer-copy-assets/**"
+  # ── vditor：生产环境由 dist/vditor 提供运行时资产（vite 插件复制），主进程无引用 ──
+  - "!node_modules/vditor/**"
+  # ── @dbml：仅数据建模插件使用，插件构建时已 bundle 进自身 dist，宿主代码零引用 ──
+  - "!node_modules/@dbml/**"
+  # ── @xyflow：仅数据建模插件（ER 图）使用，插件构建时已 bundle 进自身 dist ──
+  - "!node_modules/@xyflow/**"
   # ── 排除开发时依赖（不应出现在生产包） ──
   - "!node_modules/.vite/**"
   - "!node_modules/typescript/**"

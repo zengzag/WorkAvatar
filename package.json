@@ -9,6 +9,7 @@
     "prebuild": "npm run gen:buildinfo && node scripts/build-plugins.mjs",
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
+    "build:release": "npm run build -- --config.compression=maximum",
     "build:win": "electron-builder --win",
     "preview": "vite preview",
     "postinstall": "electron-builder install-app-deps && node scripts/patch-pdf-parse.mjs",
@@ -25,7 +26,6 @@
   "license": "MIT",
   "dependencies": {
     "@ant-design/icons": "^6.2.2",
-    "@dagrejs/dagre": "^3.0.0",
     "@dbml/core": "^8.3.1-custom-metadata.3",
     "@earendil-works/pi-agent-core": "^0.84.1",
     "@earendil-works/pi-ai": "^0.84.1",
