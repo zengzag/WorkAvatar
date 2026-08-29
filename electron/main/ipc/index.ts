@@ -19,6 +19,7 @@ import EmployeeExportService from '../services/employee-export.service'
 import EmployeeMemoryService from '../services/employee-memory.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import McpRegistryService from '../services/mcp-registry.service'
+import PowerSaveService from '../services/power-save.service'
 
 export function registerIpcHandlers() {
   const workspaceManager = WorkspaceManagerService.getInstance()
@@ -43,11 +44,15 @@ export function registerIpcHandlers() {
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
 
+  // 初始化前台防休眠服务（监听窗口焦点变化，按需阻止系统熄屏/休眠）
+  PowerSaveService.getInstance().init()
+
   // 启动定时记忆精炼服务（空闲对话的记忆提取）
   MemoryRefinementService.getInstance().start()
 
-  // 应用退出前清理所有活跃 MCP client
+  // 应用退出前清理所有活跃 MCP client 与前台防休眠 blocker
   app.on('before-quit', () => {
     McpRegistryService.getInstance().shutdownAll().catch(() => { /* ignore */ })
+    PowerSaveService.getInstance().shutdown()
   })
 }

@@ -11,6 +11,9 @@ export const APP_CHANNELS = {
   APP_GET_VERSION: 'app:get-version',
   APP_OPEN_LOG_DIR: 'app:open-log-dir',
   APP_CLEAR_ALL_DATA: 'app:clear-all-data',
+  // 前台防休眠：应用处于前台时禁止系统自动熄屏/休眠（查询/设置开关）
+  POWER_SAVE_GET: 'power-save:get',
+  POWER_SAVE_SET: 'power-save:set',
   // 重启应用（插件启停/导入/删除等变更后一键生效）
   APP_RESTART: 'app:restart',
   // 渲染进程日志转发（fire-and-forget）：渲染进程 console 输出转发到主进程写入日志文件

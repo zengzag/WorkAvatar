@@ -653,6 +653,10 @@ export default {
   },
   settings: {
     tabLlm: 'LLM 配置',
+    tabGeneral: '通用',
+    generalTitle: '通用设置',
+    preventSleep: '前台保持屏幕常亮',
+    preventSleepDesc: '应用处于前台（窗口可见且聚焦）时，禁止系统自动关闭屏幕和进入休眠状态',
     tabStorage: '存储',
     tabAppearance: '外观',
     tabAbout: '关于',

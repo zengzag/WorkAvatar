@@ -653,6 +653,10 @@ export default {
   },
   settings: {
     tabLlm: 'LLM Config',
+    tabGeneral: 'General',
+    generalTitle: 'General Settings',
+    preventSleep: 'Keep screen awake in foreground',
+    preventSleepDesc: 'Prevent the system from turning off the screen or sleeping while the app is in the foreground (window visible and focused)',
     tabStorage: 'Storage',
     tabAppearance: 'Appearance',
     tabAbout: 'About',
