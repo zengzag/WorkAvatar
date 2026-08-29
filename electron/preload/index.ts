@@ -148,6 +148,7 @@ const electronAPI = {
     compactConversation: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, params),
     getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
+    listActiveSessions: (employeeId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_SESSIONS, employeeId),
     onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
       const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)

@@ -252,6 +252,7 @@ const Tasks: React.FC = () => {
     handleEditAndResubmit,
     handleToggleSegment,
     handleSwitchBranch,
+    handleBranchMessage,
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,
@@ -890,6 +891,7 @@ const Tasks: React.FC = () => {
                     onEditAndResubmit={handleEditAndResubmit}
                     onToggleSegment={handleToggleSegment}
                     onSwitchBranch={handleSwitchBranch}
+                    onBranch={handleBranchMessage}
                     onOpenComparison={handleOpenComparison}
                     getToolDisplayName={getToolDisplayName}
                     providers={providers}

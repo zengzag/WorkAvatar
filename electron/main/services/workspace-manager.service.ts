@@ -225,7 +225,7 @@ class WorkspaceManagerService {
     return this.db.getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Conversation || null
   }
 
-  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string): Conversation {
+  createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string): Conversation {
     const employee = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(employeeId) as { id: string; workspace_path: string | null } | undefined
     if (!employee) {
       throw new Error(`Employee not found: ${employeeId}`)
@@ -238,7 +238,10 @@ class WorkspaceManagerService {
     // - 有 parentConversationId（委托子会话）：在主管会话的工作区目录下创建子目录
     // - 无 parentConversationId（顶层会话）：在员工工作区下创建独立目录
     let workspacePath = ''
-    if (parentConversationId) {
+    if (reuseWorkspacePath) {
+      // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）
+      workspacePath = reuseWorkspacePath
+    } else if (parentConversationId) {
       const parent = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string } | undefined
       const parentWs = parent?.workspace_path || ''
       workspacePath = parentWs ? this.createTaskWorkspace(parentWs) : ''

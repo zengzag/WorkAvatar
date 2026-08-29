@@ -38,6 +38,8 @@ export function registerLLMHandlers(
   employeeAgent: EmployeeAgentService
 ) {
   const activeSessions: Map<string, AbortController> = new Map()
+  // 会话附带的员工/对话信息，供前端查询"仍在运行"的会话以恢复 UI（renderer 重载后状态丢失）
+  const activeSessionsMeta: Map<string, { employeeId?: string; conversationId?: string }> = new Map()
   const interactionService = UnifiedInteractionService.getInstance()
 
   safeHandle(IPC_CHANNELS.LLM_ABORT_CHAT, (sessionId?: string) => {
@@ -54,6 +56,18 @@ export function registerLLMHandlers(
       activeSessions.clear()
     }
     return { success: true }
+  })
+
+  safeHandle(IPC_CHANNELS.LLM_LIST_ACTIVE_SESSIONS, (employeeId?: string) => {
+    const sessions: { sessionId: string; employeeId?: string; conversationId?: string }[] = []
+    for (const [sessionId, controller] of activeSessions) {
+      // 已 abort 的会话视为已结束，不参与恢复
+      if (controller.signal.aborted) continue
+      const meta = activeSessionsMeta.get(sessionId)
+      if (employeeId && meta?.employeeId !== employeeId) continue
+      sessions.push({ sessionId, employeeId: meta?.employeeId, conversationId: meta?.conversationId })
+    }
+    return sessions
   })
 
   safeHandle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
@@ -100,6 +114,7 @@ export function registerLLMHandlers(
     const abortController = new AbortController()
     const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
+    activeSessionsMeta.set(sessionId, { employeeId: params.employee_id, conversationId: params.conversation_id })
     sessionWebContents.set(sessionId, event.sender)
 
     interactionService.registerSession(sessionId, event.sender)
@@ -233,6 +248,7 @@ export function registerLLMHandlers(
                   event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId, metadata: mergedMetadata })
                 }
                 activeSessions.delete(sessionId)
+                activeSessionsMeta.delete(sessionId)
                 sessionWebContents.delete(sessionId)
               },
               onError: (error: string) => {
@@ -243,6 +259,7 @@ export function registerLLMHandlers(
                   sentError = true
                 }
                 activeSessions.delete(sessionId)
+                activeSessionsMeta.delete(sessionId)
                 sessionWebContents.delete(sessionId)
               },
             },
@@ -256,6 +273,7 @@ export function registerLLMHandlers(
               event.sender.send(IPC_CHANNELS.LLM_CHAT_DONE, { sessionId })
             }
             activeSessions.delete(sessionId)
+            activeSessionsMeta.delete(sessionId)
             sessionWebContents.delete(sessionId)
             return
           }
@@ -264,6 +282,7 @@ export function registerLLMHandlers(
             event.sender.send(IPC_CHANNELS.LLM_CHAT_ERROR, { sessionId, error: error?.message || String(error) })
           }
           activeSessions.delete(sessionId)
+          activeSessionsMeta.delete(sessionId)
           sessionWebContents.delete(sessionId)
         } finally {
           interactionService.unregisterSession(sessionId)

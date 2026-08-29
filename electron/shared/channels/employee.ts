@@ -86,6 +86,8 @@ export interface ConversationCreateParams {
   skill_id?: string
   title?: string
   minimal_mode?: boolean
+  /** 复用指定工作区路径（分支任务），传入时不新建任务目录 */
+  workspace_path?: string
 }
 
 export interface ConversationSearchParams {

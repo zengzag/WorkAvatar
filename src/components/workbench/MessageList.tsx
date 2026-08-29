@@ -24,6 +24,7 @@ interface MessageListProps {
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
   onSwitchBranch: (msgId: string, branchIndex: number) => void
+  onBranch?: (msgId: string) => void
   onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
@@ -46,6 +47,7 @@ const MessageList: React.FC<MessageListProps> = ({
   onEditAndResubmit,
   onToggleSegment,
   onSwitchBranch,
+  onBranch,
   onOpenComparison,
   getToolDisplayName,
   providers,
@@ -208,6 +210,7 @@ const MessageList: React.FC<MessageListProps> = ({
                   onEditAndResubmit={onEditAndResubmit}
                   onToggleSegment={onToggleSegment}
                   onSwitchBranch={onSwitchBranch}
+                  onBranch={onBranch}
                   onOpenComparison={onOpenComparison}
                   getToolDisplayName={getToolDisplayName}
                   providers={providers}
