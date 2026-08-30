@@ -286,9 +286,9 @@ class EmployeeAgentService {
     for (const t of allBuiltinTools) {
       modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
     }
-    // 插件贡献工具的默认模式（定义 onDemand → on_demand，否则 on）
+    // 插件贡献工具的默认模式：第三方插件默认关闭，需在员工设置中手动启用
     for (const t of PluginHostService.getInstance().getAgentTools() as any[]) {
-      modeMap.set(t.id, t.onDemand ? 'on_demand' : 'on')
+      modeMap.set(t.id, 'off')
     }
     // KMS / 脚本 / 对话记忆工具（工厂函数创建，均按需）
     const extraOnDemandIds = [

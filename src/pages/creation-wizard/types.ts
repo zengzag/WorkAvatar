@@ -42,6 +42,8 @@ export function matchSuggestedToolIds(
   if (!suggestedTools.length || !builtinTools.length) return []
   const suggestedSet = new Set(suggestedTools.map((s) => s.toLowerCase()))
   return builtinTools
+    // 排除第三方插件工具，创建时默认不启用插件
+    .filter((tool: any) => tool.category !== 'plugin')
     .filter((tool: any) => suggestedSet.has((tool.name || '').toLowerCase()))
     .map((tool: any) => tool.id)
 }

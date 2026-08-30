@@ -1,0 +1,10 @@
+{
+  "_comment": "宿主原生依赖白名单（单源真相）：宿主经 ctx.services.native.borrow 提供的原生模块。第三方插件只能在 nativeDependencies 声明此清单内模块，否则构建期告警、运行期拒绝借用。须与主程序 package.json dependencies 中相应原生包保持一致。",
+  "better-sqlite3": "^12.9.0",
+  "sqlite-vec": "^0.1.9",
+  "@node-rs/jieba": "^2.0.1",
+  "sharp": "^0.34.5",
+  "onnxruntime-node": "^1.27.0",
+  "sherpa-onnx-node": "^1.13.4",
+  "paddleocr": "^1.2.0"
+}

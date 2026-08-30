@@ -268,8 +268,10 @@ class PluginHostService {
     for (const { dir } of scanDirs) {
       let entries: string[] = []
       try {
+        // 只扫描真正的插件目录：必须包含 manifest.json。dev 源 plugins/ 为 git submodule，
+        // 含 .git/node_modules/tests/examples 等非插件目录，统一以 manifest 存在与否判定。
         entries = fs.readdirSync(dir, { withFileTypes: true })
-          .filter(e => e.isDirectory() && e.name !== 'plugin-sdk' && e.name !== 'examples')
+          .filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'manifest.json')))
           .map(e => e.name)
       } catch { /* 目录不存在则跳过 */ }
       for (const name of entries) {
