@@ -93,26 +93,6 @@ class KMSAutoIndexService {
     this.cancelCurrentRun()
   }
 
-  pause(): void {
-    if (this.autoIndexTimer && !this.autoIndexRunning) {
-      clearInterval(this.autoIndexTimer)
-      this.autoIndexTimer = null
-      logger.info('Auto-index timer paused')
-    }
-  }
-
-  resume(): void {
-    if (!this.autoIndexTimer && this.autoIndexConfig.enabled && !this.autoIndexRunning) {
-      const intervalMs = Math.max(1, this.autoIndexConfig.intervalMinutes) * 60 * 1000
-      this.autoIndexTimer = setInterval(() => {
-        this.runCheck().catch((err) => {
-          logger.error('Auto-index check failed:', err)
-        })
-      }, intervalMs)
-      logger.info('Auto-index timer resumed')
-    }
-  }
-
   getStatus(): AutoIndexStatus {
     const nextRunAt = this.autoIndexTimer && this.autoIndexLastRunAt
       ? this.autoIndexLastRunAt + Math.max(1, this.autoIndexConfig.intervalMinutes) * 60

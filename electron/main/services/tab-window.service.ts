@@ -138,18 +138,6 @@ class TabWindowService {
       this.notifyDetachedChange()
     })
 
-    // 失焦/获焦时同步暂停/恢复 KMS 自动索引（与主窗口行为一致）
-    win.on('blur', () => {
-      try {
-        require('./kms/kms-index-manager.service').default.getInstance().pauseAutoIndex()
-      } catch { /* ignore */ }
-    })
-    win.on('focus', () => {
-      try {
-        require('./kms/kms-index-manager.service').default.getInstance().resumeAutoIndex()
-      } catch { /* ignore */ }
-    })
-
     win.webContents.setWindowOpenHandler((details) => {
       require('electron').shell.openExternal(details.url)
       return { action: 'deny' }
