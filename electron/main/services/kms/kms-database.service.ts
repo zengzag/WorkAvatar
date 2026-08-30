@@ -265,6 +265,36 @@ class KMSDatabaseService {
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      -- 文件搜索目录配置表（仅参与文件名/路径匹配搜索，不建立索引、不做全文搜索）
+      CREATE TABLE IF NOT EXISTS kms_search_dirs (
+        id TEXT PRIMARY KEY,
+        dir_path TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        recursive INTEGER NOT NULL DEFAULT 1,
+        file_extensions TEXT DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      -- 文件搜索目录下的文件记录（轻量元数据，独立于索引管线 kms_files）
+      CREATE TABLE IF NOT EXISTS kms_search_dir_files (
+        id TEXT PRIMARY KEY,
+        dir_id TEXT NOT NULL REFERENCES kms_search_dirs(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL UNIQUE,
+        file_name TEXT NOT NULL,
+        file_ext TEXT NOT NULL DEFAULT '',
+        file_size INTEGER NOT NULL DEFAULT 0,
+        modified_time INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_kms_search_dir_files_dir ON kms_search_dir_files(dir_id);
+      CREATE INDEX IF NOT EXISTS idx_kms_search_dir_files_name ON kms_search_dir_files(file_name);
+      CREATE INDEX IF NOT EXISTS idx_kms_search_dir_files_ext ON kms_search_dir_files(file_ext);
+      CREATE INDEX IF NOT EXISTS idx_kms_search_dir_files_modified ON kms_search_dir_files(modified_time);
+
       -- 文件注册表
       CREATE TABLE IF NOT EXISTS kms_files (
         id TEXT PRIMARY KEY,

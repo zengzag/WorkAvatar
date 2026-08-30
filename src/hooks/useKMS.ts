@@ -12,6 +12,19 @@ interface IndexDir {
   updated_at: number
 }
 
+/** 文件搜索目录（仅参与文件名/路径匹配搜索，不建立索引） */
+interface SearchDir {
+  id: string
+  dir_path: string
+  display_name: string
+  enabled: number
+  recursive: number
+  file_extensions: string
+  file_count?: number
+  created_at: number
+  updated_at: number
+}
+
 interface HighlightRange {
   start: number
   end: number
@@ -145,6 +158,7 @@ export type SearchMode = 'keyword' | 'semantic' | 'hybrid' | 'file'
 
 export function useKMS() {
   const [dirs, setDirs] = useState<IndexDir[]>([])
+  const [searchDirs, setSearchDirs] = useState<SearchDir[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMode, setSearchMode] = useState<SearchMode>('hybrid')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
@@ -230,6 +244,46 @@ export function useKMS() {
       return undefined
     }
   }, [loadDirs, loadStats])
+
+  const loadSearchDirs = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.kms.listSearchDirs()
+      setSearchDirs(Array.isArray(result) ? result : [])
+    } catch (err) {
+      console.error('Failed to load KMS search dirs:', err)
+    }
+  }, [])
+
+  const addSearchDir = useCallback(async (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => {
+    try {
+      const result = await window.electronAPI.kms.addSearchDir({ dirPath, displayName, recursive, fileExtensions })
+      if (result && (result as any).error) {
+        throw new Error((result as any).error)
+      }
+      await loadSearchDirs()
+    } catch (err) {
+      console.error('Failed to add KMS search dir:', err)
+      throw err
+    }
+  }, [loadSearchDirs])
+
+  const updateSearchDir = useCallback(async (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => {
+    try {
+      await window.electronAPI.kms.updateSearchDir({ id, ...updates })
+      await loadSearchDirs()
+    } catch (err) {
+      console.error('Failed to update KMS search dir:', err)
+    }
+  }, [loadSearchDirs])
+
+  const deleteSearchDir = useCallback(async (id: string) => {
+    try {
+      await window.electronAPI.kms.deleteSearchDir(id)
+      await loadSearchDirs()
+    } catch (err) {
+      console.error('Failed to delete KMS search dir:', err)
+    }
+  }, [loadSearchDirs])
 
   const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
@@ -553,10 +607,12 @@ export function useKMS() {
     loadStats()
     loadKmsSettings()
     loadAutoIndexStatus()
-  }, [loadDirs, loadStats, loadKmsSettings, loadAutoIndexStatus])
+    loadSearchDirs()
+  }, [loadDirs, loadStats, loadKmsSettings, loadAutoIndexStatus, loadSearchDirs])
 
   return {
     dirs,
+    searchDirs,
     searchQuery,
     setSearchQuery,
     searchMode,
@@ -582,6 +638,10 @@ export function useKMS() {
     addDir,
     updateDir,
     deleteDir,
+    loadSearchDirs,
+    addSearchDir,
+    updateSearchDir,
+    deleteSearchDir,
     search,
     getFileContent,
     getFileFullContent,

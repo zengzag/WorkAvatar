@@ -2,16 +2,15 @@ import React, { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Button, Switch, Popconfirm, Empty, Typography, Space, Card, theme,
-  Modal, Input, Checkbox, Tag, Tooltip, App,
+  Modal, Input, Tag, Tooltip, App,
 } from 'antd'
 import {
-  FolderOpenOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
-  FileTextOutlined, FileImageOutlined,
+  FileSearchOutlined, PlusOutlined, DeleteOutlined, EditOutlined,
 } from '@ant-design/icons'
 
 const { Title, Text, Paragraph } = Typography
 
-interface IndexDir {
+interface SearchDir {
   id: string
   dir_path: string
   display_name: string
@@ -23,39 +22,29 @@ interface IndexDir {
   updated_at: number
 }
 
-interface KMSDirPanelProps {
-  dirs: IndexDir[]
+interface KMSSearchDirPanelProps {
+  dirs: SearchDir[]
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
-  onDeleteDir: (id: string) => Promise<{ migrated?: number; removed?: number } | undefined>
-  onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
+  onDeleteDir: (id: string) => void
+  onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => Promise<void> | void
 }
 
-/** 支持的文件扩展名分组 */
-const FILE_TYPE_GROUPS: { labelKey: string; icon: React.ReactNode; exts: string[] }[] = [
-  { labelKey: 'kms.fileGroupDocuments', icon: <FileTextOutlined />, exts: ['pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx'] },
-  { labelKey: 'kms.fileGroupText', icon: <FileTextOutlined />, exts: ['txt', 'md', 'html', 'htm'] },
-  { labelKey: 'kms.fileGroupImages', icon: <FileImageOutlined />, exts: ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'] },
-]
-
-/** 所有支持的扩展名 */
-const ALL_SUPPORTED_EXTS = FILE_TYPE_GROUPS.flatMap(g => g.exts)
-
-const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDir, onAddDir }) => {
+const KMSSearchDirPanel: React.FC<KMSSearchDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDir, onAddDir }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
   const { message } = App.useApp()
 
   const [modalOpen, setModalOpen] = useState(false)
-  const [editingDir, setEditingDir] = useState<IndexDir | null>(null)
+  const [editingDir, setEditingDir] = useState<SearchDir | null>(null)
   const [pendingDirPath, setPendingDirPath] = useState<string>('')
   const [displayName, setDisplayName] = useState('')
   const [recursive, setRecursive] = useState(true)
-  const [selectedExts, setSelectedExts] = useState<string[]>([])
-  const [allExts, setAllExts] = useState(true)
+  const [extInput, setExtInput] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const parseExts = useCallback((extStr: string): string[] => {
     if (!extStr || !extStr.trim()) return []
-    return extStr.split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+    return extStr.split(/[,，]/).map(e => e.trim().replace(/^\./, '').toLowerCase()).filter(Boolean)
   }, [])
 
   const handleAddDir = useCallback(async () => {
@@ -63,7 +52,6 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       const result = await window.electronAPI.app.showOpenDialog({
         properties: ['openDirectory'],
       })
-      // safeHandle 在主进程异常时返回 { error } 对象，需显式判定
       if (result && (result as any).error) {
         message.error(t('kms.dirPickerFailed') + ((result as any).error ? `: ${(result as any).error}` : ''))
         return
@@ -75,8 +63,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
         setPendingDirPath(dirPath)
         setDisplayName(defaultName)
         setRecursive(true)
-        setSelectedExts([])
-        setAllExts(true)
+        setExtInput('')
         setModalOpen(true)
       }
     } catch (err: any) {
@@ -85,19 +72,18 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     }
   }, [message, t])
 
-  const handleEditDir = useCallback((dir: IndexDir) => {
+  const handleEditDir = useCallback((dir: SearchDir) => {
     const exts = parseExts(dir.file_extensions)
     setEditingDir(dir)
     setPendingDirPath(dir.dir_path)
     setDisplayName(dir.display_name)
     setRecursive(dir.recursive === 1)
-    setSelectedExts(exts)
-    setAllExts(exts.length === 0)
+    setExtInput(exts.join(', '))
     setModalOpen(true)
   }, [parseExts])
 
   const handleSaveDir = useCallback(async () => {
-    const finalExts = allExts ? [] : selectedExts
+    const finalExts = parseExts(extInput)
     if (editingDir) {
       onUpdateDir(editingDir.id, {
         displayName: displayName.trim() || undefined,
@@ -106,57 +92,45 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       })
       message.success(t('kms.dirConfigSaved'))
       setModalOpen(false)
-    } else {
-      try {
-        await onAddDir(pendingDirPath, displayName.trim() || undefined, recursive, finalExts)
-        message.success(t('kms.dirConfigAdded'))
-        setModalOpen(false)
-      } catch (err: any) {
-        message.error(t('kms.dirAddFailed') + (err?.message ? `: ${err.message}` : ''))
-      }
+      return
     }
-  }, [editingDir, pendingDirPath, displayName, recursive, allExts, selectedExts, onUpdateDir, onAddDir, message, t])
-
-  const handleAllExtsChange = useCallback((checked: boolean) => {
-    setAllExts(checked)
-    if (checked) {
-      setSelectedExts([])
+    // 新增目录：主进程会立即扫描目录并注册文件（await 完成才关闭弹窗）
+    setSaving(true)
+    try {
+      await onAddDir(pendingDirPath, displayName.trim() || undefined, recursive, finalExts)
+      message.success(t('kms.dirConfigAdded'))
+      setModalOpen(false)
+    } catch (err: any) {
+      message.error(t('kms.dirAddFailed') + (err?.message ? `: ${err.message}` : ''))
+      throw err // 抛出让 Modal 保持打开，便于用户重试
+    } finally {
+      setSaving(false)
     }
-  }, [])
+  }, [editingDir, pendingDirPath, displayName, recursive, extInput, parseExts, onUpdateDir, onAddDir, message, t])
 
-  const formatDirExts = useCallback((dir: IndexDir): { text: string; count: number } => {
-    const exts = parseExts(dir.file_extensions)
-    if (exts.length === 0) {
-      return { text: t('kms.allFileTypes'), count: ALL_SUPPORTED_EXTS.length }
-    }
-    return { text: exts.map(e => `.${e}`).join('  '), count: exts.length }
-  }, [parseExts, t])
+  const modalTitle = editingDir ? t('kms.editSearchDir') : t('kms.addSearchDir')
 
-  const modalTitle = editingDir ? t('kms.editDir') : t('kms.addDir')
-
-  // 标题与"添加目录"按钮同行，左标题右按钮
   const header = (
     <>
       <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <Space>
-          <FolderOpenOutlined style={{ color: token.colorPrimary }} />
-          <Title level={5} style={{ margin: 0 }}>{t('kms.dirs')}</Title>
+          <FileSearchOutlined style={{ color: token.colorPrimary }} />
+          <Title level={5} style={{ margin: 0 }}>{t('kms.searchDirs')}</Title>
         </Space>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={handleAddDir}
         >
-          {t('kms.addDir')}
+          {t('kms.addSearchDir')}
         </Button>
       </div>
       <Paragraph type="secondary" style={{ margin: '0 0 12px', fontSize: 12 }}>
-        {t('kms.settingsPanel.dirsDesc')}
+        {t('kms.settingsPanel.searchDirsDesc')}
       </Paragraph>
     </>
   )
 
-  // 目录配置弹窗（必须始终渲染，否则 dirs 为空时点击"添加目录"按钮后 Modal 不会挂载）
   const dirConfigModal = (
     <Modal
       title={modalTitle}
@@ -165,6 +139,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       onCancel={() => setModalOpen(false)}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
+      okButtonProps={{ loading: saving }}
       width={560}
       zIndex={1500}
       styles={{ mask: { zIndex: 1499 }, wrapper: { zIndex: 1500 } }}
@@ -202,63 +177,36 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
           <Switch checked={recursive} onChange={setRecursive} size="small" />
         </div>
 
-        {/* 文件类型选择 */}
+        {/* 自由文件类型（逗号分隔，留空为全部类型） */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <Text style={{ fontSize: 13 }}>{t('kms.fileTypes')}</Text>
-            <Checkbox checked={allExts} onChange={e => handleAllExtsChange(e.target.checked)}>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.allFileTypes')}</Text>
-            </Checkbox>
-          </div>
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
-            {t('kms.fileTypesDesc')}
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+            {t('kms.searchDirExts')}
           </Text>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {FILE_TYPE_GROUPS.map((group) => (
-              <div key={group.labelKey}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  {group.icon}
-                  <Text style={{ fontSize: 12, fontWeight: 500 }}>{t(group.labelKey)}</Text>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {group.exts.map(ext => (
-                    <Tag.CheckableTag
-                      key={ext}
-                      checked={selectedExts.includes(ext)}
-                      onChange={(checked) => {
-                        if (checked) {
-                          setSelectedExts(prev => Array.from(new Set([...prev, ext])))
-                        } else {
-                          setSelectedExts(prev => prev.filter(e => e !== ext))
-                        }
-                        setAllExts(false)
-                      }}
-                      style={{ fontSize: 12 }}
-                    >
-                      .{ext}
-                    </Tag.CheckableTag>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <Input
+            value={extInput}
+            onChange={e => setExtInput(e.target.value)}
+            placeholder={t('kms.searchDirExtsPlaceholder')}
+            size="small"
+          />
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+            {t('kms.searchDirExtsDesc')}
+          </Text>
         </div>
       </div>
     </Modal>
   )
 
-  // 空状态：仅显示 Empty + 标题栏中的添加按钮
   if (dirs.length === 0) {
     return (
       <>
         {header}
         <div style={{ padding: '40px 20px', textAlign: 'center' }}>
           <Empty
-            image={<FolderOpenOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />}
+            image={<FileSearchOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />}
             description={
               <div>
                 <Text style={{ display: 'block', fontSize: 15, fontWeight: 500 }}>
-                  {t('kms.noDirs')}
+                  {t('kms.noSearchDirs')}
                 </Text>
               </div>
             }
@@ -276,7 +224,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
       <div style={{ flex: 1, overflow: 'auto' }}>
         <Space orientation="vertical" style={{ width: '100%' }} size={8}>
           {dirs.map((dir) => {
-            const extInfo = formatDirExts(dir)
+            const exts = parseExts(dir.file_extensions)
             return (
               <Card
                 key={dir.id}
@@ -288,7 +236,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                      <FolderOpenOutlined style={{ color: dir.enabled ? token.colorPrimary : token.colorTextQuaternary }} />
+                      <FileSearchOutlined style={{ color: dir.enabled ? token.colorPrimary : token.colorTextQuaternary }} />
                       <Text strong style={{ fontSize: 14 }}>
                         {dir.display_name || dir.dir_path.split(/[/\\]/).pop()}
                       </Text>
@@ -317,14 +265,14 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                       >
                         {t('kms.dirFileCount', { count: dir.file_count || 0 })}
                       </Tag>
-                      <Tooltip title={extInfo.text}>
+                      <Tooltip title={exts.length > 0 ? exts.map(e => `.${e}`).join('  ') : t('kms.allFileTypes')}>
                         <Tag
-                          color={extInfo.count === ALL_SUPPORTED_EXTS.length ? 'blue' : undefined}
+                          color={exts.length === 0 ? 'blue' : undefined}
                           style={{ fontSize: 11, margin: 0, lineHeight: '18px', padding: '0 6px' }}
                         >
-                          {t('kms.fileTypes')}: {extInfo.count === ALL_SUPPORTED_EXTS.length
+                          {t('kms.fileTypes')}: {exts.length === 0
                             ? t('kms.allFileTypes')
-                            : `${extInfo.count} ${t('kms.typesUnit')}`}
+                            : `${exts.length} ${t('kms.typesUnit')}`}
                         </Tag>
                       </Tooltip>
                     </div>
@@ -337,13 +285,8 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
                       onClick={() => handleEditDir(dir)}
                     />
                     <Popconfirm
-                      title={t('kms.removeDirConfirm')}
-                      onConfirm={async () => {
-                        const result = await onDeleteDir(dir.id)
-                        if (result && (result.removed ?? 0) > 0) {
-                          message.info(t('kms.removeDirCleanupHint', { count: result.removed }))
-                        }
-                      }}
+                      title={t('kms.removeSearchDirConfirm')}
+                      onConfirm={() => onDeleteDir(dir.id)}
                       okText={t('common.confirm')}
                       cancelText={t('common.cancel')}
                     >
@@ -366,4 +309,4 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
   )
 }
 
-export default KMSDirPanel
+export default KMSSearchDirPanel

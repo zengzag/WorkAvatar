@@ -3,6 +3,8 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   KMSAddDirParams,
   KMSUpdateDirParams,
+  KMSAddSearchDirParams,
+  KMSUpdateSearchDirParams,
   KMSSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
@@ -74,6 +76,27 @@ export function registerKMSHandlers(): void {
       timeRangeStart: params.timeRangeStart,
       timeRangeEnd: params.timeRangeEnd,
     })
+  })
+
+  // 文件搜索目录管理（仅参与文件名/路径匹配搜索，不建立索引）
+  safeHandle(IPC_CHANNELS.KMS_LIST_SEARCH_DIRS, async () => {
+    return kmsService.listSearchDirs()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_SEARCH_DIR, async (params: KMSAddSearchDirParams) => {
+    return kmsService.addSearchDir(params.dirPath, params.displayName, params.recursive, params.fileExtensions)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_UPDATE_SEARCH_DIR, async (params: KMSUpdateSearchDirParams) => {
+    return kmsService.updateSearchDir(params.id, params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_SEARCH_DIR, async (id: string) => {
+    return kmsService.deleteSearchDir(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_REFRESH_SEARCH_DIR, async (id: string) => {
+    return kmsService.refreshSearchDir(id)
   })
 
   // 文件内容

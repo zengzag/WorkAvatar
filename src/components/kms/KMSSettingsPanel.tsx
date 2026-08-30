@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons'
 import LLMSelector from '../llm/LLMSelector'
 import KMSDirPanel from './KMSDirPanel'
+import KMSSearchDirPanel from './KMSSearchDirPanel'
 import KMSIndexPanel from './KMSIndexPanel'
 import type { LLMProvider } from '../../types'
 import type { KMSSettings, KMSModelConfig, KMSAutoIndexConfig, KMSAutoIndexStatus } from '../../hooks/useKMS'
@@ -16,6 +17,18 @@ import type { KMSSettings, KMSModelConfig, KMSAutoIndexConfig, KMSAutoIndexStatu
 const { Title, Text, Paragraph } = Typography
 
 interface IndexDir {
+  id: string
+  dir_path: string
+  display_name: string
+  enabled: number
+  recursive: number
+  file_extensions: string
+  file_count?: number
+  created_at: number
+  updated_at: number
+}
+
+interface SearchDir {
   id: string
   dir_path: string
   display_name: string
@@ -46,6 +59,10 @@ interface KMSSettingsPanelProps {
   onAddDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
   onUpdateDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
   onDeleteDir: (id: string) => Promise<{ migrated?: number; removed?: number } | undefined>
+  searchDirs: SearchDir[]
+  onAddSearchDir: (dirPath: string, displayName?: string, recursive?: boolean, fileExtensions?: string[]) => void
+  onUpdateSearchDir: (id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }) => void
+  onDeleteSearchDir: (id: string) => void
   isIndexing: boolean
   indexProgress: IndexProgress | null
   onUpdateIndex: (withEmbedding?: boolean) => void
@@ -62,6 +79,10 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   onAddDir,
   onUpdateDir,
   onDeleteDir,
+  searchDirs,
+  onAddSearchDir,
+  onUpdateSearchDir,
+  onDeleteSearchDir,
   isIndexing,
   indexProgress,
   onUpdateIndex,
@@ -391,21 +412,18 @@ const KMSSettingsPanel: React.FC<KMSSettingsPanelProps> = ({
   )
 
   const renderDirsTab = () => (
-    <div>
-      <div style={{ marginBottom: 12 }}>
-        <Space>
-          <FolderOpenOutlined style={{ color: token.colorPrimary }} />
-          <Title level={5} style={{ margin: 0 }}>{t('kms.dirs')}</Title>
-        </Space>
-        <Paragraph type="secondary" style={{ margin: '4px 0 0', fontSize: 12 }}>
-          {t('kms.settingsPanel.dirsDesc')}
-        </Paragraph>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <KMSDirPanel
         dirs={dirs}
         onUpdateDir={onUpdateDir}
         onDeleteDir={onDeleteDir}
         onAddDir={onAddDir}
+      />
+      <KMSSearchDirPanel
+        dirs={searchDirs}
+        onUpdateDir={onUpdateSearchDir}
+        onDeleteDir={onDeleteSearchDir}
+        onAddDir={onAddSearchDir}
       />
     </div>
   )

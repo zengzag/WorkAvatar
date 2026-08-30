@@ -60,6 +60,12 @@ export const KMS_CHANNELS = {
   KMS_REBUILD_FILE_INDEX: 'kms:rebuild-file-index',
   // KMS 文件搜索（按文件名匹配）
   KMS_SEARCH_FILES: 'kms:search-files',
+  // KMS 文件搜索目录（仅参与文件名/路径匹配搜索，不建立索引）
+  KMS_LIST_SEARCH_DIRS: 'kms:list-search-dirs',
+  KMS_ADD_SEARCH_DIR: 'kms:add-search-dir',
+  KMS_UPDATE_SEARCH_DIR: 'kms:update-search-dir',
+  KMS_DELETE_SEARCH_DIR: 'kms:delete-search-dir',
+  KMS_REFRESH_SEARCH_DIR: 'kms:refresh-search-dir',
   // KMS MCP 服务（已扩展为通用内置工具 MCP）
   KMS_MCP_START: 'kms-mcp:start',
   KMS_MCP_STOP: 'kms-mcp:stop',
@@ -101,6 +107,21 @@ export interface KMSAddDirParams {
 }
 
 export interface KMSUpdateDirParams {
+  id: string
+  displayName?: string
+  enabled?: boolean
+  recursive?: boolean
+  fileExtensions?: string[]
+}
+
+export interface KMSAddSearchDirParams {
+  dirPath: string
+  displayName?: string
+  recursive?: boolean
+  fileExtensions?: string[]
+}
+
+export interface KMSUpdateSearchDirParams {
   id: string
   displayName?: string
   enabled?: boolean

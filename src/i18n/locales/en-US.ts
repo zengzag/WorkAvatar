@@ -1027,6 +1027,15 @@ export default {
     dirConfigAdded: 'Directory added',
     dirAddFailed: 'Failed to add directory',
     dirPickerFailed: 'Failed to open directory picker',
+    // File search directories (name-only search, no indexing)
+    searchDirs: 'File Search Directories',
+    addSearchDir: 'Add Directory',
+    editSearchDir: 'Edit Search Directory',
+    noSearchDirs: 'No file search directories yet. Add directories to search their files by name.',
+    removeSearchDirConfirm: 'Remove this file search directory? Only search records are deleted, disk files remain untouched.',
+    searchDirExts: 'File Types',
+    searchDirExtsPlaceholder: 'e.g. js, ts, py, json (comma-separated, empty = all types)',
+    searchDirExtsDesc: 'Only match files with these extensions; supports any type. Leave empty to match all files.',
     search: 'Search',
     searching: 'Searching...',
     searchPlaceholder: 'Search local files by keywords...',
@@ -1151,6 +1160,7 @@ export default {
       autoRefreshStaleCardsDesc: 'Automatically regenerate card content when related document changes make cards stale',
       paramsSaved: 'Search parameters saved',
       dirsDesc: 'Manage local directories to be indexed',
+      searchDirsDesc: 'Manage directories used only for file-name search (no indexing, no full-text search)',
       indexDesc: 'Manage file index building, incremental updates and rebuilding',
       // Auto index
       autoIndexTitle: 'Auto Index',

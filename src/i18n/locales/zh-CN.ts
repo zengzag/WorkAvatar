@@ -1028,6 +1028,15 @@ export default {
     dirConfigAdded: '目录已添加',
     dirAddFailed: '添加目录失败',
     dirPickerFailed: '打开目录选择器失败',
+    // 文件搜索目录（仅参与文件名搜索，不建立索引）
+    searchDirs: '文件搜索目录',
+    addSearchDir: '添加目录',
+    editSearchDir: '编辑搜索目录',
+    noSearchDirs: '暂无文件搜索目录，添加后可额外按文件名搜索其中的文件',
+    removeSearchDirConfirm: '确定移除该文件搜索目录？仅删除搜索记录，不会删除磁盘文件。',
+    searchDirExts: '文件类型',
+    searchDirExtsPlaceholder: '如：js, ts, py, json（逗号分隔，留空为全部类型）',
+    searchDirExtsDesc: '仅匹配这些扩展名的文件，支持任意类型；留空则匹配目录下的所有文件',
     // 搜索
     search: '搜索',
     searching: '搜索中...',
@@ -1157,6 +1166,7 @@ export default {
       autoRefreshStaleCardsDesc: '相关文档变更导致卡片过期时，自动重新生成卡片内容',
       paramsSaved: '检索参数已保存',
       dirsDesc: '管理需要建立索引的本地目录',
+      searchDirsDesc: '管理仅参与文件名搜索的目录（不建立索引、不做全文搜索）',
       indexDesc: '管理文件索引的构建、增量更新与重建',
       // 自动索引
       autoIndexTitle: '自动索引',

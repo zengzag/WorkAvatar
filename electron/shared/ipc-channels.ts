@@ -52,6 +52,8 @@ export type {
 export type {
   KMSAddDirParams,
   KMSUpdateDirParams,
+  KMSAddSearchDirParams,
+  KMSUpdateSearchDirParams,
   KMSSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
