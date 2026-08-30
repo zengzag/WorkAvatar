@@ -31,13 +31,12 @@ const KMSPage: React.FC = () => {
 
   const {
     dirs,
+    searchDirs,
     searchQuery,
     setSearchQuery,
     searchMode,
     setSearchMode,
     searchResults,
-    agentResult,
-    liveSteps,
     isSearching,
     indexProgress,
     isIndexing,
@@ -61,6 +60,9 @@ const KMSPage: React.FC = () => {
     addDir,
     updateDir,
     deleteDir,
+    addSearchDir,
+    updateSearchDir,
+    deleteSearchDir,
     search,
     buildIndex,
     incrementalIndex,
@@ -187,8 +189,6 @@ const KMSPage: React.FC = () => {
             searchMode={searchMode}
             onSearchModeChange={setSearchMode}
             searchResults={searchResults}
-            agentResult={agentResult}
-            liveSteps={liveSteps}
             isSearching={isSearching}
             onSearch={search}
             dirs={dirs}
@@ -243,6 +243,10 @@ const KMSPage: React.FC = () => {
           onAddDir={addDir}
           onUpdateDir={updateDir}
           onDeleteDir={deleteDir}
+          searchDirs={searchDirs}
+          onAddSearchDir={addSearchDir}
+          onUpdateSearchDir={updateSearchDir}
+          onDeleteSearchDir={deleteSearchDir}
           isIndexing={isIndexing}
           indexProgress={indexProgress}
           onUpdateIndex={(withEmbedding) => incrementalIndex(undefined, withEmbedding)}

@@ -34,43 +34,37 @@ class MemoryRefinementService extends ScheduledTaskBase {
   }
 
   protected async runCheck(): Promise<void> {
-    if (this.running) return
-    this.running = true
-    try {
-      const now = Math.floor(Date.now() / 1000)
-      const idleCutoff = now - IDLE_THRESHOLD_SECONDS
-      const recentCutoff = now - RECENT_WINDOW_SECONDS
+    const now = Math.floor(Date.now() / 1000)
+    const idleCutoff = now - IDLE_THRESHOLD_SECONDS
+    const recentCutoff = now - RECENT_WINDOW_SECONDS
 
-      const candidates = this.db.getDb().prepare(`
-        SELECT c.id, c.employee_id, c.title, c.messages_json, c.message_count,
-               c.memory_extracted_message_count,
-               e.name as employee_name
-        FROM conversations c
-        JOIN employees e ON c.employee_id = e.id
-        WHERE e.memory_enabled = 1
-          AND c.last_message_at IS NOT NULL
-          AND c.last_message_at < ?
-          AND c.last_message_at > ?
-          AND c.message_count > COALESCE(c.memory_extracted_message_count, 0)
-        ORDER BY c.last_message_at DESC
-        LIMIT ?
-      `).all(idleCutoff, recentCutoff, MAX_BATCH_SIZE) as any[]
+    const candidates = this.db.getDb().prepare(`
+      SELECT c.id, c.employee_id, c.title, c.messages_json, c.message_count,
+             c.memory_extracted_message_count,
+             e.name as employee_name
+      FROM conversations c
+      JOIN employees e ON c.employee_id = e.id
+      WHERE e.memory_enabled = 1
+        AND c.last_message_at IS NOT NULL
+        AND c.last_message_at < ?
+        AND c.last_message_at > ?
+        AND c.message_count > COALESCE(c.memory_extracted_message_count, 0)
+      ORDER BY c.last_message_at DESC
+      LIMIT ?
+    `).all(idleCutoff, recentCutoff, MAX_BATCH_SIZE) as any[]
 
-      if (candidates.length === 0) return
+    if (candidates.length === 0) return
 
-      logger.info(`Found ${candidates.length} conversation(s) pending memory extraction`)
+    logger.info(`Found ${candidates.length} conversation(s) pending memory extraction`)
 
-      for (const conv of candidates) {
-        try {
-          await this.extractMemoriesForConversation(conv)
-        } catch (err: any) {
-          logger.error(`Memory extraction failed for conversation ${conv.id}:`, err?.message || err)
-          // 推进 message_count 指针避免反复失败重试；用户可通过手动提取重新处理
-          this.markExtracted(conv.id, conv.message_count)
-        }
+    for (const conv of candidates) {
+      try {
+        await this.extractMemoriesForConversation(conv)
+      } catch (err: any) {
+        logger.error(`Memory extraction failed for conversation ${conv.id}:`, err?.message || err)
+        // 推进 message_count 指针避免反复失败重试；用户可通过手动提取重新处理
+        this.markExtracted(conv.id, conv.message_count)
       }
-    } finally {
-      this.running = false
     }
   }
 

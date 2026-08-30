@@ -222,9 +222,11 @@ function getToolLookupMap(): Map<string, { id: string; name: string; title: stri
   return map
 }
 
-/** 工具无显式配置时的默认模式：定义上按需 → on_demand，常驻 → on */
+/** 工具无显式配置时的默认模式：插件 → off，按需 → on_demand，常驻 → on */
 function resolveDefaultToolMode(toolId: string): ToolMode {
-  return getToolLookupMap().get(toolId)?.onDemand ? 'on_demand' : 'on'
+  const lookup = getToolLookupMap().get(toolId)
+  if (lookup?.category === 'plugin') return 'off'
+  return lookup?.onDemand ? 'on_demand' : 'on'
 }
 
 /** 分配参数 → 工具模式：优先 mode；缺失时按 is_enabled 兼容推断 */
@@ -280,7 +282,7 @@ export function registerToolHandlers(
       const row = rowMap.get(tool.id)
       const mode: ToolMode = row && isValidToolMode(row.tool_mode)
         ? row.tool_mode
-        : (tool.onDemand ? 'on_demand' : 'on')
+        : resolveDefaultToolMode(tool.id)
       return {
         ...tool,
         mode,
@@ -304,10 +306,9 @@ export function registerToolHandlers(
 
     const resolveMode = (toolId: string): ToolMode => {
       const row = rowMap.get(toolId)
-      const lookup = toolLookup.get(toolId)
       return row && isValidToolMode(row.tool_mode)
         ? row.tool_mode
-        : (lookup?.onDemand ? 'on_demand' : 'on')
+        : resolveDefaultToolMode(toolId)
     }
 
     return buildToolCategoryDefs().map(categoryDef => {

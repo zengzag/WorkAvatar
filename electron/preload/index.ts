@@ -39,8 +39,9 @@ import type {
   EmployeeMemoryExtractConversationParams,
   KMSAddDirParams,
   KMSUpdateDirParams,
+  KMSAddSearchDirParams,
+  KMSUpdateSearchDirParams,
   KMSSearchParams,
-  KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
@@ -131,7 +132,7 @@ const electronAPI = {
     listAll: (params?: ConversationListWithEmployeeParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST_ALL, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
-    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string }) =>
+    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
@@ -149,6 +150,7 @@ const electronAPI = {
     compactConversation: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_COMPACT_CONVERSATION, params),
     getContextStats: (params: any) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_GET_CONTEXT_STATS, params),
     abortChat: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_CHAT, sessionId),
+    listActiveSessions: (employeeId?: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_SESSIONS, employeeId),
     onChunk: (callback: (data: { sessionId: string; chunk?: string; chunks?: string[] }) => void) => {
       const handler = (_event: any, data: { sessionId: string; chunk?: string; chunks?: string[] }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.LLM_CHAT_CHUNK, handler)
@@ -210,6 +212,9 @@ const electronAPI = {
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
+    // 前台防休眠：查询/设置"应用处于前台时禁止系统熄屏/休眠"
+    getPreventSleep: () => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_GET),
+    setPreventSleep: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SET, enabled),
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) =>
       ipcRenderer.send(IPC_CHANNELS.APP_RENDERER_LOG, { level, message }),
@@ -320,12 +325,11 @@ const electronAPI = {
     deleteDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_DIR, id),
     search: (params: KMSSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH, params),
     searchFiles: (params: KMSSearchFilesParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_SEARCH_FILES, params),
-    agentSearch: (params: KMSAgentSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_AGENT_SEARCH, params),
-    onAgentSearchProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
-      const handler = (_event: any, step: any) => callback(step)
-      ipcRenderer.on(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, handler)
-    },
+    listSearchDirs: () => ipcRenderer.invoke(IPC_CHANNELS.KMS_LIST_SEARCH_DIRS),
+    addSearchDir: (params: KMSAddSearchDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_SEARCH_DIR, params),
+    updateSearchDir: (params: KMSUpdateSearchDirParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_SEARCH_DIR, params),
+    deleteSearchDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_SEARCH_DIR, id),
+    refreshSearchDir: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_REFRESH_SEARCH_DIR, id),
     getFileContent: (params: KMSGetFileContentParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_CONTENT, params),
     getFileSummary: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_SUMMARY, fileId),
     getFileFullContent: (fileId: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_FILE_FULL_CONTENT, fileId),

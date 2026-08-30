@@ -11,6 +11,7 @@ import {
   LeftOutlined,
   RightOutlined,
   SwapOutlined,
+  ForkOutlined,
   SearchOutlined,
   CompressOutlined,
 } from '@ant-design/icons'
@@ -180,6 +181,7 @@ const MessageBubble: React.FC<{
   onEditAndResubmit: (msgId: string, newContent: string) => void
   onToggleSegment: (msgId: string, segId: string) => void
   onSwitchBranch: (msgId: string, branchIndex: number) => void
+  onBranch?: (msgId: string) => void
   onOpenComparison: (msgId: string) => void
   getToolDisplayName: (name: string) => string
   providers: any[]
@@ -189,7 +191,7 @@ const MessageBubble: React.FC<{
   onCompact?: () => void
   /** 隐藏消息操作按钮（重生成/切换模型/删除/编辑等），用于不支持这些能力的轻量对话视图 */
   hideMessageActions?: boolean
-}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions }) => {
+}> = ({ msg, onCopy, onDeleteMessage, onRegenerate, onSwitchModelRegenerate, onEditAndResubmit, onToggleSegment, onSwitchBranch, onBranch, onOpenComparison, getToolDisplayName, providers, isLastAssistantMessage, contextStats, isCompacting, onCompact, hideMessageActions }) => {
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const { message: messageApi } = App.useApp()
@@ -509,6 +511,10 @@ const MessageBubble: React.FC<{
                       providers={providers}
                       onSelect={(providerId, modelId) => onSwitchModelRegenerate(msg.id, providerId, modelId)}
                     />
+                    {onBranch && (
+                      <Button type="text" size="small" icon={<ForkOutlined style={{ fontSize: 12 }} />}
+                        onClick={() => onBranch(msg.id)} title={t('workbench.branchMessage')} />
+                    )}
                     <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
                       okText={t('common.confirm')} cancelText={t('common.cancel')}>
                       <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />

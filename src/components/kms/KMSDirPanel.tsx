@@ -9,7 +9,7 @@ import {
   FileTextOutlined, FileImageOutlined,
 } from '@ant-design/icons'
 
-const { Text } = Typography
+const { Title, Text, Paragraph } = Typography
 
 interface IndexDir {
   id: string
@@ -134,6 +134,28 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
 
   const modalTitle = editingDir ? t('kms.editDir') : t('kms.addDir')
 
+  // 标题与"添加目录"按钮同行，左标题右按钮
+  const header = (
+    <>
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Space>
+          <FolderOpenOutlined style={{ color: token.colorPrimary }} />
+          <Title level={5} style={{ margin: 0 }}>{t('kms.dirs')}</Title>
+        </Space>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={handleAddDir}
+        >
+          {t('kms.addDir')}
+        </Button>
+      </div>
+      <Paragraph type="secondary" style={{ margin: '0 0 12px', fontSize: 12 }}>
+        {t('kms.settingsPanel.dirsDesc')}
+      </Paragraph>
+    </>
+  )
+
   // 目录配置弹窗（必须始终渲染，否则 dirs 为空时点击"添加目录"按钮后 Modal 不会挂载）
   const dirConfigModal = (
     <Modal
@@ -225,25 +247,19 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
     </Modal>
   )
 
-  // 空状态：仅显示 Empty + 添加按钮
+  // 空状态：仅显示 Empty + 标题栏中的添加按钮
   if (dirs.length === 0) {
     return (
       <>
-        <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+        {header}
+        <div style={{ padding: '40px 20px', textAlign: 'center' }}>
           <Empty
             image={<FolderOpenOutlined style={{ fontSize: 48, color: token.colorTextQuaternary }} />}
             description={
               <div>
-                <Text style={{ display: 'block', marginBottom: 8, fontSize: 15, fontWeight: 500 }}>
+                <Text style={{ display: 'block', fontSize: 15, fontWeight: 500 }}>
                   {t('kms.noDirs')}
                 </Text>
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={handleAddDir}
-                >
-                  {t('kms.addDir')}
-                </Button>
               </div>
             }
           />
@@ -255,15 +271,7 @@ const KMSDirPanel: React.FC<KMSDirPanelProps> = ({ dirs, onUpdateDir, onDeleteDi
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ padding: '0 0 16px 0', display: 'flex', justifyContent: 'flex-end' }}>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={handleAddDir}
-        >
-          {t('kms.addDir')}
-        </Button>
-      </div>
+      {header}
 
       <div style={{ flex: 1, overflow: 'auto' }}>
         <Space orientation="vertical" style={{ width: '100%' }} size={8}>

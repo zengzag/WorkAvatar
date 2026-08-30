@@ -13,6 +13,7 @@ import PathService from '../services/path.service'
 import { LoggerBackend } from '../services/logger'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
+import PowerSaveService from '../services/power-save.service'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -21,6 +22,7 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'web_search_engine',
   'web_search_result_count',
   'calendar_settings',
+  'prevent_sleep_when_foreground',
 ])
 
 // 需要清空的用户数据表（按依赖顺序，受外键约束）
@@ -97,6 +99,16 @@ export function registerAppHandlers(
 
   safeHandle(IPC_CHANNELS.SETTINGS_SET, (params: SettingsSetParams) => {
     settingsSetStmt.run(params.key, params.value)
+    return { success: true }
+  })
+
+  // 前台防休眠开关：查询当前是否开启（开启时应用处于前台禁止系统熄屏/休眠）
+  safeHandle(IPC_CHANNELS.POWER_SAVE_GET, () => {
+    return PowerSaveService.getInstance().getEnabled()
+  })
+
+  safeHandle(IPC_CHANNELS.POWER_SAVE_SET, (enabled: boolean) => {
+    PowerSaveService.getInstance().setEnabled(!!enabled)
     return { success: true }
   })
 

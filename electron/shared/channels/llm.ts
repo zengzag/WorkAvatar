@@ -9,6 +9,7 @@ export const LLM_CHANNELS = {
   LLM_CHAT: 'llm:chat',
   EMPLOYEE_CHAT_STREAM: 'employee:chat-stream',
   LLM_ABORT_CHAT: 'llm:abort-chat',
+  LLM_LIST_ACTIVE_SESSIONS: 'llm:list-active-sessions',
   LLM_CHAT_CHUNK: 'llm:chat-chunk',
   LLM_CHAT_DONE: 'llm:chat-done',
   LLM_CHAT_ERROR: 'llm:chat-error',

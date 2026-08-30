@@ -3,8 +3,9 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import type {
   KMSAddDirParams,
   KMSUpdateDirParams,
+  KMSAddSearchDirParams,
+  KMSUpdateSearchDirParams,
   KMSSearchParams,
-  KMSAgentSearchParams,
   KMSGetFileContentParams,
   KMSMCPSetConfigParams,
   KMSGetFileSummariesParams,
@@ -77,41 +78,25 @@ export function registerKMSHandlers(): void {
     })
   })
 
-  // AI 智能检索（带实时进度推送）
-  // 注意：此处未使用 safeHandle，因为需要透传 event 用于进度推送；
-  // 同时需要在内部对 result 做序列化净化（与 safeHandle 行为一致）
-  ipcMain.handle(IPC_CHANNELS.KMS_AGENT_SEARCH, async (event, params: KMSAgentSearchParams) => {
-    try {
-      const sender = event.sender
-      const result = await kmsService.agentSearch(params.query, {
-        maxRounds: params.maxRounds,
-        topK: params.topK,
-        dirIds: params.dirIds,
-        collectionIds: params.collectionIds,
-        fileExtensions: params.fileExtensions,
-        timeRangeStart: params.timeRangeStart,
-        timeRangeEnd: params.timeRangeEnd,
-        onProgress: (step) => {
-          try {
-            if (!sender.isDestroyed()) {
-              sender.send(IPC_CHANNELS.KMS_AGENT_SEARCH_PROGRESS, step)
-            }
-          } catch (e) {
-            /* 进度推送失败忽略，避免阻塞搜索流程 */
-          }
-        },
-      })
-      // 用 structuredClone 替代 JSON.parse(JSON.stringify()) 做深拷贝，
-      // 性能更好且保留 Date/Map/Set 等类型
-      try {
-        return structuredClone(result)
-      } catch {
-        return JSON.parse(JSON.stringify(result))
-      }
-    } catch (err: any) {
-      logger.error(`IPC handler error [KMS_AGENT_SEARCH]:`, err?.message || err)
-      return { error: err?.message || 'Unknown error' }
-    }
+  // 文件搜索目录管理（仅参与文件名/路径匹配搜索，不建立索引）
+  safeHandle(IPC_CHANNELS.KMS_LIST_SEARCH_DIRS, async () => {
+    return kmsService.listSearchDirs()
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_ADD_SEARCH_DIR, async (params: KMSAddSearchDirParams) => {
+    return kmsService.addSearchDir(params.dirPath, params.displayName, params.recursive, params.fileExtensions)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_UPDATE_SEARCH_DIR, async (params: KMSUpdateSearchDirParams) => {
+    return kmsService.updateSearchDir(params.id, params)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_DELETE_SEARCH_DIR, async (id: string) => {
+    return kmsService.deleteSearchDir(id)
+  })
+
+  safeHandle(IPC_CHANNELS.KMS_REFRESH_SEARCH_DIR, async (id: string) => {
+    return kmsService.refreshSearchDir(id)
   })
 
   // 文件内容

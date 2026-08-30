@@ -1,4 +1,49 @@
+﻿<#
+.SYNOPSIS
+WorkAvatar Windows Build Script - 打包脚本。
+
+.DESCRIPTION
+构建并打包 WorkAvatar 桌面应用。默认 normal 模式（compression=normal，快速）；
+-r 切换为 release（compression=maximum，体积最小）；-p 仅编译插件，跳过打包。
+
+.PARAMETER Mode
+打包模式：normal（默认，快速）或 release（体积最小）。也可用 -r 快捷开关代替。
+
+.PARAMETER Release
+快捷开关，等价于 -Mode release。
+
+.PARAMETER PluginOnly
+仅重新编译插件并产出 .wap 分发包，跳过 tsc/vite/electron-builder 打包。
+
+.EXAMPLE
+.\build.ps1
+.\build.ps1 -r
+.\build.ps1 -p
+#>
+
+# 打包模式：normal（默认，快速日常构建，compression=normal）；release（正式发布，compression=maximum 最小体积）
+# -PluginOnly：仅重新编译插件并产出 .wap 分发包，跳过 tsc/vite/electron-builder 打包
+param(
+    [ValidateSet("normal", "release")]
+    [string]$Mode = "normal",
+    [Alias("r")]
+    [switch]$Release,
+    [Alias("p")]
+    [switch]$PluginOnly,
+    [Alias("h")]
+    [switch]$Help
+)
+
 $ErrorActionPreference = "Stop"
+
+# -r 是 release 模式的快捷开关，等价于 -Mode release
+if ($Release) { $Mode = "release" }
+
+# -h/-? 仅显示帮助并立即退出，不触发任何构建步骤
+if ($Help) {
+    Get-Help $PSCommandPath
+    exit 0
+}
 
 function Write-Step([string]$step, [string]$message) {
     Write-Host "[$step] $message" -ForegroundColor Cyan
@@ -20,8 +65,27 @@ Write-Host "========================================" -ForegroundColor Magenta
 Write-Host "  WorkAvatar Windows Build Script"       -ForegroundColor Magenta
 Write-Host "========================================" -ForegroundColor Magenta
 Write-Host ""
+Write-Host "  Mode: $Mode" -ForegroundColor Yellow
+Write-Host "  Usage: .\build.ps1              # normal（快速）"
+Write-Host "         .\build.ps1 -r          # release（compression=maximum，体积最小）。别名：-Mode release"
+Write-Host "         .\build.ps1 -p          # 仅重新编译插件（产出 .wap 分发包）。别名：-PluginOnly"
+Write-Host "         .\build.ps1 -h          # 显示帮助（-? 亦可）"
+Write-Host ""
 
 Set-Location $PSScriptRoot
+
+# 仅重新编译插件：直接构建全部插件并产出 .wap 分发包，跳过 build-info/tsc/vite/electron-builder
+if ($PluginOnly) {
+    Write-Step "插件" "仅编译插件（--zip 产出 .wap 分发包）..."
+    node scripts/build-plugins.mjs --zip
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error-Msg "Plugin build failed"
+        exit 1
+    }
+    Write-Success "插件编译完成。"
+    Read-Host "Press Enter to exit"
+    exit 0
+}
 
 # 生成 build-info.json（version + commit + buildTime），供 vite define 与主进程日志共用
 Write-Step "1/6" "Generating build-info.json..."
@@ -98,7 +162,12 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 
 # Step 6: Electron Builder packaging (NSIS installer)
-Write-Step "6/6" "Electron Builder packaging (NSIS installer)..."
+Write-Step "6/6" "Electron Builder packaging (NSIS installer) [mode: $Mode]..."
+if ($Mode -eq "release") {
+    Write-Host "  compression=maximum (体积最小，构建慢)"
+} else {
+    Write-Host "  compression=normal (快速)"
+}
 Write-Host "  Generating NSIS installer..."
 
 # 清理上次失败残留的 .tmp 目录和旧 win-unpacked，避免 EPERM rename 冲突
@@ -114,7 +183,12 @@ if (Test-Path $releaseDir) {
 # 不带 --dir：按 electron-builder.yml 中 win.target=nsis 生成真正的安装包
 # （包含安装目录选择、桌面/开始菜单快捷方式、卸载器）
 $buildExitCode = 0
-& npx electron-builder --win --publish never
+$extraArgs = @()
+if ($Mode -eq "release") {
+    # release 模式覆盖 yml 默认 compression=normal 为 maximum（最小安装包体积）
+    $extraArgs = @("--config.compression=maximum")
+}
+& npx electron-builder --win --publish never @extraArgs
 $buildExitCode = $LASTEXITCODE
 
 if ($buildExitCode -ne 0) {

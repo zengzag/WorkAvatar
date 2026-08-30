@@ -8,7 +8,10 @@ const logger = createLogger('ScheduledTask')
  */
 export abstract class ScheduledTaskBase {
   private timer: NodeJS.Timeout | null = null
+  /** 任务是否已启动（isRunning / triggerNow 使用） */
   protected running: boolean = false
+  /** 并发防护：同一时刻仅允许一次 runCheck 在执行 */
+  private executing: boolean = false
   protected readonly name: string
   protected readonly intervalMs: number
 
@@ -21,17 +24,24 @@ export abstract class ScheduledTaskBase {
     this.stop()
     this.running = true
     // 启动后立即跑一次，避免错失启动期间到期的任务
-    this.runCheck().catch(err => {
-      logger.error(`[${this.name}] Initial check failed:`, err)
-    })
+    this.runCheckSafe()
     this.timer = setInterval(() => {
-      this.runCheck().catch(err => {
-        logger.error(`[${this.name}] Scheduled check failed:`, err)
-      })
+      this.runCheckSafe()
     }, this.intervalMs)
     // unref 让定时器不阻止进程退出
     if (this.timer.unref) this.timer.unref()
     logger.info(`[${this.name}] Started: interval=${this.intervalMs}ms`)
+  }
+
+  /** 执行检查并带并发防护，避免与 running 状态混淆 */
+  private runCheckSafe(): Promise<void> {
+    if (this.executing) return Promise.resolve()
+    this.executing = true
+    return this.runCheck().catch(err => {
+      logger.error(`[${this.name}] Scheduled check failed:`, err)
+    }).finally(() => {
+      this.executing = false
+    })
   }
 
   stop(): void {
@@ -50,7 +60,7 @@ export abstract class ScheduledTaskBase {
   /** 立即触发一次检查（不等待下一个间隔） */
   async triggerNow(): Promise<void> {
     if (!this.running) return
-    return this.runCheck()
+    return this.runCheckSafe()
   }
 
   protected abstract runCheck(): Promise<void>

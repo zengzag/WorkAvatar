@@ -47,6 +47,8 @@ export interface Conversation {
   updated_at: number
   last_message_at: number | null
   context_stats_json?: string
+  /** 对话绑定的默认模型（输入框模型按钮）：各任务独立，JSON 形如 {"providerId":"","modelId":""} */
+  default_model_json?: string
   /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
   workspace_path?: string
   /** 父会话 ID：委托产生的子会话记录其主管会话 ID，空字符串表示顶层会话 */

@@ -18,8 +18,8 @@ fileAssociations:
 
 npmRebuild: false
 
-# 顶层压缩：最大化 asar 内文件压缩率
-compression: maximum
+# 日常构建用 normal（快）；正式发布用 npm run build:release 覆盖为 maximum（最小体积、构建慢）
+compression: normal
 
 # 仅保留应用实际使用的 Electron 语言包（zh-CN/zh-TW/en-US），其余 ~50 个 .pak 移除
 electronLanguages:
@@ -37,77 +37,24 @@ files:
   - dist-electron/**/*
   - package.json
   - build-info.json
-  # ── 排除 Vite 已打包的 renderer 依赖（它们已内联在 dist/ 中） ──
-  - "!node_modules/react/**"
-  - "!node_modules/react-dom/**"
-  - "!node_modules/antd/**"
-  - "!node_modules/@ant-design/**"
-  - "!node_modules/@rc-component/**"
-  - "!node_modules/zustand/**"
-  - "!node_modules/react-markdown/**"
-  - "!node_modules/react-router-dom/**"
-  - "!node_modules/react-router/**"
-  - "!node_modules/@remix-run/**"
-  - "!node_modules/react-i18next/**"
-  - "!node_modules/i18next/**"
-  - "!node_modules/immer/**"
-  - "!node_modules/react-syntax-highlighter/**"
-  - "!node_modules/rehype-katex/**"
-  - "!node_modules/remark-gfm/**"
-  - "!node_modules/remark-math/**"
-  - "!node_modules/katex/**"
-  - "!node_modules/dayjs/**"
-  - "!node_modules/@file-viewer/**"
-  - "!node_modules/mermaid/**"
-  - "!node_modules/@mermaid-js/**"
-  - "!node_modules/three/**"
-  - "!node_modules/maplibre-gl/**"
-  - "!node_modules/@maplibre/**"
-  - "!node_modules/hls.js/**"
-  - "!node_modules/ag-psd/**"
-  - "!node_modules/@myriaddreamin/**"
-  - "!node_modules/@mlightcad/**"
-  - "!node_modules/@flyfish-dev/**"
-  - "!node_modules/filesize/**"
-  # ── 排除开发时依赖（不应出现在生产包） ──
-  - "!node_modules/.vite/**"
-  - "!node_modules/typescript/**"
-  - "!node_modules/@esbuild/**"
-  - "!node_modules/esbuild/**"
-  - "!node_modules/lightningcss*/**"
-  - "!node_modules/@rolldown/**"
-  - "!node_modules/app-builder-bin/**"
-  - "!node_modules/7zip-bin/**"
-  - "!node_modules/electron-winstaller/**"
-  - "!node_modules/electron-builder*/**"
-  - "!node_modules/@electron/rebuild/**"
-  - "!node_modules/.cache/**"
-  # ── 排除纯开发用途的 transitive 依赖 ──
-  - "!node_modules/sql.js/**"
-  - "!node_modules/diff2html/**"
-  - "!node_modules/billboard.js/**"
-  - "!node_modules/cytoscape/**"
-  - "!node_modules/cytoscape-fcose/**"
-  - "!node_modules/epubjs/**"
-  - "!node_modules/rtf.js/**"
-  # ── tesseract.js：已移除兜底逻辑，整个依赖树（含 tesseract.js-core ~43MB WASM）排除 ──
-  - "!node_modules/tesseract.js/**"
-  - "!node_modules/tesseract.js-core/**"
-  # ── onnxruntime-node：仅保留 win32/x64，排除其他平台二进制 ──
+  # ── 运行时 node_modules 由 electron-builder 依据 package.json dependencies 自动打包 ──
+  #    渲染端库（react/antd/vditor 等）与插件端库（@dbml/@xyflow 等）已移至 devDependencies：
+  #    前者由 Vite 打进 dist/，后者由插件构建打进插件自身 dist，均不出现在生产依赖树，
+  #    故不再需要大批量的 node_modules 排除规则，既加快 node-module 收集又缩小产物体积。
+  # ── 原生模块平台修剪：仅保留当前平台二进制 ──
   - "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/linux/**"
   - "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64/**"
-  # ── sherpa-onnx：仅保留 win-x64，排除其他平台原生包 ──
   - "!node_modules/sherpa-onnx-darwin-arm64/**"
   - "!node_modules/sherpa-onnx-darwin-x64/**"
   - "!node_modules/sherpa-onnx-linux-x64/**"
   - "!node_modules/sherpa-onnx-linux-arm64/**"
   - "!node_modules/sherpa-onnx-win-ia32/**"
-  # ── @napi-rs/canvas：未被任何源码 import，纯 transitive 依赖，整目录排除 ──
-  - "!node_modules/@napi-rs/canvas*/**"
   # ── better-sqlite3：运行时使用预编译 .node，源码（sqlite3.c ~9MB）无需打包 ──
   - "!node_modules/better-sqlite3/deps/**"
   - "!node_modules/better-sqlite3/src/**"
+  # ── plugins 为 git 子模块（含自带 node_modules），打包时整体排除 ──
+  - "!plugins/**"
   # ── 全局排除开发时文件模式 ──
   - "!**/*.{d.ts,map}"
   - "!**/{test,tests,__tests__,spec,fixtures,mocks}/**"

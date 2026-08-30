@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import fs from 'fs'
+import { promises as fsp } from 'fs'
 import path from 'path'
 import KMSDatabaseService from './kms-database.service'
 import KMSCrawlerService from './kms-crawler.service'
@@ -7,9 +8,9 @@ import KMSSearchEngineService, { type SearchResult, type SearchOptions } from '.
 import KMSIndexManagerService, { type IndexProgress, type AutoIndexConfig, type AutoIndexStatus } from './kms-index-manager.service'
 import KMSIndexWorkerClientService from './kms-index-worker-client.service'
 import KMSAutoIndexService from './kms-auto-index.service'
-import KMSSearchAgentService, { type AgentSearchResult, type AgentSearchOptions } from './kms-search-agent.service'
 import KMSSearchHistoryService from './kms-search-history.service'
 import KMSFileReaderService from './kms-file-reader.service'
+import KMSSearchDirWatcherService from './kms-search-dir-watcher.service'
 import KMSKeywordStatsService from './kms-keyword-stats.service'
 import KMSKnowledgeCardService from './kms-knowledge-card.service'
 import KMSStopWordsService from './kms-stop-words.service'
@@ -70,6 +71,8 @@ class KMSService {
     })
     // 确保"手动文件源"虚拟目录存在（用于合集文件注册）
     this.ensureManualSourceDir()
+    // 文件搜索目录：注册监听回调 + 启动实时监听与兜底重扫
+    this.initSearchDirWatchers()
   }
 
   /**
@@ -259,6 +262,265 @@ class KMSService {
        WHERE d.dir_path != ?
        ORDER BY d.created_at ASC`
     ).all(KMSService.MANUAL_SOURCE_PATH)
+  }
+
+  // ==================== 文件搜索目录（仅文件名搜索，不索引） ====================
+
+  /**
+   * 跳过常见开发/缓存目录，避免扫描无意义的文件夹。
+   * 文件搜索目录不做默认扩展名限制，因此不共享索引目录的 SKIP 逻辑。
+   */
+  private static readonly SEARCH_DIR_SKIP_DIRS = new Set([
+    'node_modules', '.git', '.svn', '.hg',
+    '__pycache__', '.DS_Store', 'Thumbs.db',
+    '.vscode', '.idea', '.trae',
+    'dist', 'build', 'out', 'target',
+  ])
+
+  /** 同一搜索目录的并发扫描去重 */
+  private searchDirScanning = new Set<string>()
+
+  /** 启动文件搜索目录监听，并异步兜底重扫（覆盖应用关闭期间的磁盘变化） */
+  private initSearchDirWatchers(): void {
+    KMSSearchDirWatcherService.getInstance().setRescanCallback(async (dirId) => {
+      await this.refreshSearchDir(dirId)
+    })
+    const dirs = this.db.prepare('SELECT id, dir_path FROM kms_search_dirs WHERE enabled = 1').all() as any[]
+    if (dirs.length === 0) return
+    setImmediate(() => {
+      for (const dir of dirs) {
+        this.refreshSearchDir(dir.id).catch((err: any) => {
+          logger.warn(`文件搜索目录启动重扫失败 (${dir.dir_path}): ${err?.message || err}`)
+        })
+      }
+    })
+  }
+
+  listSearchDirs(): any[] {
+    return this.db.prepare(
+      `SELECT d.*,
+        (SELECT COUNT(*) FROM kms_search_dir_files f WHERE f.dir_id = d.id) as file_count
+       FROM kms_search_dirs d
+       ORDER BY d.created_at ASC`
+    ).all() as any[]
+  }
+
+  getSearchDir(id: string): any {
+    return this.db.prepare('SELECT * FROM kms_search_dirs WHERE id = ?').get(id)
+  }
+
+  async addSearchDir(dirPath: string, displayName?: string, recursive: boolean = true, fileExtensions?: string[]): Promise<any> {
+    if (!fs.existsSync(dirPath)) {
+      throw new Error(`目录不存在: ${dirPath}`)
+    }
+
+    // 兼容 Windows 大小写不敏感：先按原路径查，再用归一化路径查
+    const existing = this.db.prepare(
+      'SELECT * FROM kms_search_dirs WHERE dir_path = ? OR LOWER(dir_path) = LOWER(?)'
+    ).get(dirPath, dirPath) as any
+
+    if (existing) {
+      // 已存在相同目录，更新可修改字段并重新扫描
+      await this.updateSearchDir(existing.id, { displayName, recursive, fileExtensions })
+      return this.getSearchDir(existing.id)
+    }
+
+    const id = generateId()
+    this.db.prepare(`
+      INSERT INTO kms_search_dirs (id, dir_path, display_name, recursive, file_extensions)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, dirPath, displayName || dirPath.split(/[\\/]/).pop() || dirPath, recursive ? 1 : 0, fileExtensions?.join(',') || '')
+
+    // 添加后立即扫描注册文件并启动监听，保证文件搜索立即可用
+    await this.refreshSearchDir(id)
+    return this.getSearchDir(id)
+  }
+
+  async updateSearchDir(id: string, updates: { displayName?: string; enabled?: boolean; recursive?: boolean; fileExtensions?: string[] }): Promise<any> {
+    const sets: string[] = []
+    const params: any[] = []
+
+    if (updates.displayName !== undefined) {
+      sets.push('display_name = ?')
+      params.push(updates.displayName)
+    }
+    if (updates.enabled !== undefined) {
+      sets.push('enabled = ?')
+      params.push(updates.enabled ? 1 : 0)
+    }
+    if (updates.recursive !== undefined) {
+      sets.push('recursive = ?')
+      params.push(updates.recursive ? 1 : 0)
+    }
+    if (updates.fileExtensions !== undefined) {
+      sets.push('file_extensions = ?')
+      params.push(updates.fileExtensions.join(','))
+    }
+
+    if (sets.length > 0) {
+      sets.push('updated_at = unixepoch()')
+      params.push(id)
+      this.db.prepare(`UPDATE kms_search_dirs SET ${sets.join(', ')} WHERE id = ?`).run(...params)
+    }
+
+    // 递归/扩展名/启用状态变化时重新扫描并重建监听，保持文件记录与实际磁盘一致
+    if (updates.recursive !== undefined || updates.fileExtensions !== undefined || updates.enabled !== undefined) {
+      await this.refreshSearchDir(id)
+    }
+    return this.getSearchDir(id)
+  }
+
+  deleteSearchDir(id: string): void {
+    KMSSearchDirWatcherService.getInstance().unwatchDir(id)
+    this.db.prepare('DELETE FROM kms_search_dir_files WHERE dir_id = ?').run(id)
+    this.db.prepare('DELETE FROM kms_search_dirs WHERE id = ?').run(id)
+  }
+
+  /**
+   * 重新扫描文件搜索目录，异步增量同步磁盘文件记录（不阻塞主进程事件循环）。
+   * 禁用时清空记录并停止监听；启用时扫描完成后（重）启动实时监听。
+   */
+  async refreshSearchDir(id: string): Promise<{ added: number; updated: number; removed: number }> {
+    const dir = this.db.prepare('SELECT * FROM kms_search_dirs WHERE id = ?').get(id) as any
+    if (!dir) throw new Error('文件搜索目录不存在')
+
+    if (!dir.enabled) {
+      KMSSearchDirWatcherService.getInstance().unwatchDir(id)
+      const result = this.db.prepare('DELETE FROM kms_search_dir_files WHERE dir_id = ?').run(id)
+      return { added: 0, updated: 0, removed: result.changes }
+    }
+
+    if (!fs.existsSync(dir.dir_path)) {
+      KMSSearchDirWatcherService.getInstance().unwatchDir(id)
+      throw new Error(`目录不存在: ${dir.dir_path}`)
+    }
+
+    // 同目录并发扫描去重：监听会保持后续增量，后到的请求直接返回
+    if (this.searchDirScanning.has(id)) return { added: 0, updated: 0, removed: 0 }
+    this.searchDirScanning.add(id)
+    try {
+      const recursive = dir.recursive === 1
+      const extensions = dir.file_extensions
+        ? dir.file_extensions.split(',').map((e: string) => e.trim().toLowerCase()).filter(Boolean)
+        : []
+      const files = await this.scanSearchDirFiles(dir.dir_path, recursive, extensions)
+      const result = this.syncSearchDirFiles(id, files)
+      // 扫描完成后（重）启动监听，覆盖递归/扩展名变更及监听异常恢复场景
+      KMSSearchDirWatcherService.getInstance().watchDir(dir)
+      logger.info(`文件搜索目录重扫完成 (${dir.dir_path}): +${result.added} ~${result.updated} -${result.removed}`)
+      return result
+    } finally {
+      this.searchDirScanning.delete(id)
+    }
+  }
+
+  /**
+   * 异步扫描文件搜索目录（仅收集文件元数据，不做内容解析）。
+   * 文件类型无默认限制（可匹配任意扩展名），仅跳过临时文件与常见开发/缓存目录。
+   * stat 并发分批执行，避免大目录下逐文件串行等待。
+   */
+  private async scanSearchDirFiles(
+    dirPath: string,
+    recursive: boolean,
+    extensions: string[],
+  ): Promise<Array<{ filePath: string; fileName: string; fileSize: number; modifiedTime: number }>> {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      throw new Error(`目录不存在: ${dirPath}`)
+    }
+
+    const extSet = new Set(extensions.map(e => e.toLowerCase().replace(/^\./, '')).filter(Boolean))
+    const results: Array<{ filePath: string; fileName: string; fileSize: number; modifiedTime: number }> = []
+    const queue: string[] = [dirPath]
+
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      let entries: fs.Dirent[]
+      try {
+        entries = await fsp.readdir(current, { withFileTypes: true })
+      } catch {
+        continue
+      }
+
+      const statTasks: Promise<void>[] = []
+      for (const entry of entries) {
+        const fullPath = path.join(current, entry.name)
+        if (entry.isDirectory()) {
+          if (recursive && !KMSService.SEARCH_DIR_SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+            queue.push(fullPath)
+          }
+        } else if (entry.isFile()) {
+          if (entry.name.startsWith('~$') || entry.name.startsWith('.~')) continue
+          const ext = path.extname(entry.name).toLowerCase().slice(1)
+          if (extSet.size > 0 && !extSet.has(ext)) continue
+          statTasks.push(
+            fsp.stat(fullPath).then(stat => {
+              results.push({
+                filePath: fullPath,
+                fileName: entry.name,
+                fileSize: stat.size,
+                modifiedTime: Math.floor(stat.mtimeMs / 1000),
+              })
+            }).catch(() => {})
+          )
+        }
+      }
+      // 并发 stat 分批等待（每批 64），兼顾吞吐与磁盘压力
+      for (let i = 0; i < statTasks.length; i += 64) {
+        await Promise.all(statTasks.slice(i, i + 64))
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * 将扫描结果增量同步到数据库：仅写入新增/变化的行，删除磁盘上已不存在的记录。
+   * 未变化的行（大小与修改时间一致）跳过写入，避免全量 upsert 造成 WAL 膨胀。
+   */
+  private syncSearchDirFiles(
+    dirId: string,
+    files: Array<{ filePath: string; fileName: string; fileSize: number; modifiedTime: number }>,
+  ): { added: number; updated: number; removed: number } {
+    const existing = this.db.prepare(
+      'SELECT file_path, file_size, modified_time FROM kms_search_dir_files WHERE dir_id = ?'
+    ).all(dirId) as any[]
+    const existingMap = new Map(existing.map(r => [r.file_path as string, r]))
+    const newPaths = new Set(files.map(f => f.filePath))
+    const toRemove = [...existingMap.keys()].filter(p => !newPaths.has(p))
+
+    let added = 0
+    let updated = 0
+    const upsert = this.db.prepare(`
+      INSERT INTO kms_search_dir_files (id, dir_id, file_path, file_name, file_ext, file_size, modified_time)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(file_path) DO UPDATE SET
+        file_name = excluded.file_name,
+        file_ext = excluded.file_ext,
+        file_size = excluded.file_size,
+        modified_time = excluded.modified_time,
+        updated_at = unixepoch()
+    `)
+
+    const tx = this.db.transaction(() => {
+      for (const f of files) {
+        const ex = existingMap.get(f.filePath)
+        if (ex && ex.file_size === f.fileSize && ex.modified_time === f.modifiedTime) continue
+        upsert.run(generateId(), dirId, f.filePath, f.fileName, path.extname(f.fileName).toLowerCase().slice(1), f.fileSize, f.modifiedTime)
+        if (ex) updated++
+        else added++
+      }
+      // 分批删除，避免 IN 子句参数超限
+      for (let i = 0; i < toRemove.length; i += 500) {
+        const batch = toRemove.slice(i, i + 500)
+        const placeholders = batch.map(() => '?').join(',')
+        this.db.prepare(
+          `DELETE FROM kms_search_dir_files WHERE dir_id = ? AND file_path IN (${placeholders})`
+        ).run(dirId, ...batch)
+      }
+    })
+    tx()
+
+    return { added, updated, removed: toRemove.length }
   }
 
   createCollection(name: string, description: string = ''): any {
@@ -705,56 +967,85 @@ class KMSService {
 
   /**
    * 按文件名搜索文件（不匹配文件内容）
+   * 搜索范围 = 索引目录中的文件（kms_files）+ 启用的文件搜索目录中的文件（kms_search_dir_files）。
+   * 文件搜索目录的文件不参与索引与全文搜索，仅按文件名/路径匹配。
    * 支持与现有搜索相同的过滤条件（dirIds, collectionIds, fileExtensions, timeRangeStart, timeRangeEnd）
    */
   searchFiles(query: string, options?: SearchOptions): SearchResult[] {
     const startTime = Date.now()
-    let sql = `
+    const results: SearchResult[] = []
+
+    // 1. 索引目录中的文件（kms_files）
+    let indexSql = `
       SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
       FROM kms_files f
-      LEFT JOIN kms_index_dirs d ON d.id = f.dir_id
       WHERE f.file_name LIKE ?
     `
-    const params: any[] = [`%${query}%`]
+    const indexParams: any[] = [`%${query}%`]
 
     if (options?.dirIds && options.dirIds.length > 0) {
       const placeholders = options.dirIds.map(() => '?').join(',')
-      sql += ` AND f.dir_id IN (${placeholders})`
-      params.push(...options.dirIds)
+      indexSql += ` AND f.dir_id IN (${placeholders})`
+      indexParams.push(...options.dirIds)
     }
 
     if (options?.fileExtensions && options.fileExtensions.length > 0) {
       const placeholders = options.fileExtensions.map(() => '?').join(',')
-      sql += ` AND f.file_ext IN (${placeholders})`
-      params.push(...options.fileExtensions)
+      indexSql += ` AND f.file_ext IN (${placeholders})`
+      indexParams.push(...options.fileExtensions)
     }
 
     if (options?.timeRangeStart !== undefined) {
-      sql += ' AND f.modified_time >= ?'
+      indexSql += ' AND f.modified_time >= ?'
       // 前端传入毫秒，modified_time 存储为 unix 秒
-      params.push(Math.floor(options.timeRangeStart / 1000))
+      indexParams.push(Math.floor(options.timeRangeStart / 1000))
     }
 
     if (options?.timeRangeEnd !== undefined) {
-      sql += ' AND f.modified_time <= ?'
-      // 前端传入毫秒，modified_time 存储为 unix 秒
-      params.push(Math.floor(options.timeRangeEnd / 1000))
+      indexSql += ' AND f.modified_time <= ?'
+      indexParams.push(Math.floor(options.timeRangeEnd / 1000))
     }
 
     if (options?.collectionIds && options.collectionIds.length > 0) {
       const placeholders = options.collectionIds.map(() => '?').join(',')
-      sql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
-      params.push(...options.collectionIds)
+      indexSql += ` AND f.id IN (SELECT file_id FROM kms_file_collections WHERE collection_id IN (${placeholders}))`
+      indexParams.push(...options.collectionIds)
     }
+
+    results.push(...this.db.prepare(indexSql).all(...indexParams) as SearchResult[])
+
+    // 2. 文件搜索目录中的文件（kms_search_dir_files，仅启用的目录）
+    // 目录筛选（dirIds）与合集筛选（collectionIds）仅作用于索引目录文件
+    let searchSql = `
+      SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
+      FROM kms_search_dir_files f
+      JOIN kms_search_dirs d ON d.id = f.dir_id
+      WHERE d.enabled = 1 AND f.file_name LIKE ?
+    `
+    const searchParams: any[] = [`%${query}%`]
+
+    if (options?.fileExtensions && options.fileExtensions.length > 0) {
+      const placeholders = options.fileExtensions.map(() => '?').join(',')
+      searchSql += ` AND f.file_ext IN (${placeholders})`
+      searchParams.push(...options.fileExtensions)
+    }
+
+    if (options?.timeRangeStart !== undefined) {
+      searchSql += ' AND f.modified_time >= ?'
+      searchParams.push(Math.floor(options.timeRangeStart / 1000))
+    }
+
+    if (options?.timeRangeEnd !== undefined) {
+      searchSql += ' AND f.modified_time <= ?'
+      searchParams.push(Math.floor(options.timeRangeEnd / 1000))
+    }
+
+    results.push(...this.db.prepare(searchSql).all(...searchParams) as SearchResult[])
 
     // 默认限制返回数量，避免大量结果导致前端渲染卡顿
     const limit = options?.topK ?? 200
-    sql += ' LIMIT ?'
-    params.push(limit)
-
-    const results = this.db.prepare(sql).all(...params) as SearchResult[]
     logger.info(`searchFiles "${query}": ${results.length} results, ${Date.now() - startTime}ms`)
-    return results
+    return results.slice(0, limit)
   }
 
   async search(query: string, options?: SearchOptions & { useSemantic?: boolean }): Promise<SearchResult[]> {
@@ -781,7 +1072,7 @@ class KMSService {
 
     const searchStart = Date.now()
     // 前端传入的 timeRangeStart/End 为毫秒，kms_files.modified_time 存储为 unix 秒，
-    // 此处统一转换为秒，与 agentSearch / searchFiles 保持一致
+    // 此处统一转换为秒，与 searchFiles 保持一致
     const normalizedOptions = options
       ? {
           ...options,
@@ -847,12 +1138,28 @@ class KMSService {
     return KMSFileReaderService.getInstance().getFileSummary(fileId)
   }
 
-  async agentSearch(query: string, options?: AgentSearchOptions): Promise<AgentSearchResult> {
-    return KMSSearchAgentService.getInstance().search(query, options)
-  }
-
   async getFileFullContent(fileId: string): Promise<{ content: string; fileName: string; filePath: string; truncated: boolean }> {
-    return KMSFileReaderService.getInstance().getFileFullContent(fileId)
+    try {
+      return await KMSFileReaderService.getInstance().getFileFullContent(fileId)
+    } catch (err) {
+      // 文件搜索目录的文件不在 kms_files 索引管线中，直接从磁盘读取（供预览）
+      const row = this.db.prepare('SELECT * FROM kms_search_dir_files WHERE id = ?').get(fileId) as any
+      if (!row) throw err
+      const MAX_CONTENT_CHARS = 5_000_000
+      let content = ''
+      try {
+        content = await fsp.readFile(row.file_path, 'utf8')
+      } catch {
+        content = ''
+      }
+      const truncated = content.length > MAX_CONTENT_CHARS
+      return {
+        content: truncated ? content.substring(0, MAX_CONTENT_CHARS) : content,
+        fileName: row.file_name,
+        filePath: row.file_path,
+        truncated,
+      }
+    }
   }
 
   async buildFullIndex(providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false): Promise<void> {

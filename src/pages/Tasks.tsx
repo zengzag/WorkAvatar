@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, SettingOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
@@ -11,6 +11,7 @@ import TaskSidebar, { type TaskWithEmployee } from '../components/tasks/TaskSide
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
 import { useTranslation } from 'react-i18next'
 import useEmployeeChat from '../hooks/useEmployeeChat'
+import { getCachedSceneDefaultModel } from '../utils/default-model'
 import { PluginViewSlot } from '../plugins/view-slot'
 import type { AttachedImage, ModelSelection } from '../components/workbench'
 import type { AvailableSkill } from '../components/workbench/ChatInput'
@@ -220,6 +221,8 @@ const Tasks: React.FC = () => {
     setInputDraft,
     getInputModels,
     setInputModels,
+    inputDefaultModel,
+    setInputDefaultModel,
     providers,
     selectedLlmProviderId,
     selectedLlmModelId,
@@ -249,6 +252,7 @@ const Tasks: React.FC = () => {
     handleEditAndResubmit,
     handleToggleSegment,
     handleSwitchBranch,
+    handleBranchMessage,
     getToolDisplayName,
     isConversationStreaming,
     generateConversationTitle,
@@ -256,6 +260,10 @@ const Tasks: React.FC = () => {
     isCompacting,
     handleCompact,
   } = chatHook
+
+  // 稳定的场景默认模型（workbench 全局默认），作为未绑定模型对话的回退值。
+  // 不使用可变的员工级 selectedLlmProviderId，避免 A 任务设置的模型串扰到未绑定的 B 任务
+  const sceneDefaultModel = useMemo(() => getCachedSceneDefaultModel('workbench'), [])
 
   // 从数字员工"快速任务"跳转而来：?new=1&employee=<id> → 打开新任务模式并预选员工
   const appliedQueryRef = useRef<string | null>(null)
@@ -328,7 +336,8 @@ const Tasks: React.FC = () => {
   }, [globalTasks, filterEmployeeId, searchQuery, contentMatchIds])
 
   // 新建任务（保留当前已选员工，清除激活对话避免新消息发到旧对话）
-  // 注意：用户主动点击"新建任务"时，也清空草稿缓存（给用户一个干净的新开始）
+  // 注意：不在此处清空草稿缓存，用户从任务切换回新任务时保留之前输入的草稿；
+  // 发送成功后由 handleSendWithReset 的 clearNewTaskDraft 清理，保证新任务干净开始
   const handleNewTask = useCallback(() => {
     setTaskMode('new')
     const empId = currentEmployeeId || null
@@ -337,10 +346,6 @@ const Tasks: React.FC = () => {
     setAttachedImages([])
     setSelectedModels([])
     clearActiveConversation()
-    // 清除当前员工的新任务草稿缓存
-    if (empId) {
-      try { localStorage.removeItem(`tasks:newTaskDraft:${empId}`) } catch {}
-    }
   }, [currentEmployeeId, clearActiveConversation])
 
   // 选择已有任务
@@ -654,6 +659,15 @@ const Tasks: React.FC = () => {
     openDirInExplorer(activeTask?.workspace_path)
   }, [globalTasks, activeConversationId, openDirInExplorer])
 
+  // 打开执行当前任务的数字员工设置抽屉
+  const handleOpenEmployeeSettings = useCallback(() => {
+    const activeTask = globalTasks.find(t => t.id === activeConversationId)
+    if (activeTask?.employee_id && activeTask.employee_id !== currentEmployeeId) {
+      setCurrentEmployeeId(activeTask.employee_id)
+    }
+    setSettingsOpen(true)
+  }, [globalTasks, activeConversationId, currentEmployeeId])
+
   const moreMenuItems = useMemo<MenuProps['items']>(() => {
     return [
       {
@@ -668,8 +682,14 @@ const Tasks: React.FC = () => {
         label: t('workbench.openWorkspace'),
         onClick: handleOpenWorkspace,
       },
+      {
+        key: 'openEmployeeSettings',
+        icon: <SettingOutlined />,
+        label: t('workbench.openEmployeeSettings'),
+        onClick: handleOpenEmployeeSettings,
+      },
     ]
-  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace])
+  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }
@@ -886,6 +906,7 @@ const Tasks: React.FC = () => {
                     onEditAndResubmit={handleEditAndResubmit}
                     onToggleSegment={handleToggleSegment}
                     onSwitchBranch={handleSwitchBranch}
+                    onBranch={handleBranchMessage}
                     onOpenComparison={handleOpenComparison}
                     getToolDisplayName={getToolDisplayName}
                     providers={providers}
@@ -916,9 +937,9 @@ const Tasks: React.FC = () => {
                 getInitialDraft={getInputDraft}
                 onDraftChange={setInputDraft}
                 availableSkills={availableSkills}
-                defaultProviderId={selectedLlmProviderId}
-                defaultModelId={selectedLlmModelId}
-                onDefaultModelChange={handleLlmChange}
+                defaultProviderId={inputDefaultModel?.providerId || sceneDefaultModel?.provider_id || ''}
+                defaultModelId={inputDefaultModel?.modelId || sceneDefaultModel?.model_id || ''}
+                onDefaultModelChange={setInputDefaultModel}
                 enableThinking={enableThinking}
                 onThinkingChange={setEnableThinking}
                 isCompacting={isCompacting}

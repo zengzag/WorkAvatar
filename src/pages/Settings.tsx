@@ -7,6 +7,7 @@ import {
   GlobalOutlined,
   AppstoreOutlined,
   ToolOutlined,
+  ControlOutlined,
 } from '@ant-design/icons'
 import type { TabsProps } from 'antd'
 import { useTranslation } from 'react-i18next'
@@ -23,6 +24,7 @@ import {
   NavSettings,
   RuntimeEnvSection,
   PluginsSection,
+  GeneralSettings,
 } from '../components/settings'
 import { PluginViewSlot } from '../plugins/view-slot'
 
@@ -39,6 +41,15 @@ const Settings: React.FC = () => {
   )
 
   const tabItems: TabsProps['items'] = [
+    {
+      key: 'general',
+      label: (
+        <span>
+          <ControlOutlined /> {t('settings.tabGeneral')}
+        </span>
+      ),
+      children: contentWrap(<GeneralSettings />),
+    },
     {
       key: 'llm',
       label: (
@@ -127,7 +138,7 @@ const Settings: React.FC = () => {
     },
   ]
 
-  const validTabs = ['llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
+  const validTabs = ['general', 'llm', 'defaultModel', 'kmsMcp', 'storage', 'appearance', 'nav', 'plugins', 'runtime', 'internetSearch', 'about']
 
   // 插件设置注入点：至少一个插件注册 settings.tab 视野时，追加聚合 Tab
   const pluginSettingsViews = getPluginViews('settings.tab')

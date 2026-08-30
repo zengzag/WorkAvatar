@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input, Button, Space, Tooltip, Popover, Typography, Tag, Select, Badge, theme } from 'antd'
-import { SearchOutlined, RobotOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined, CloseCircleFilled, FilterOutlined } from '@ant-design/icons'
+import { SearchOutlined, HistoryOutlined, DeleteOutlined, FileSearchOutlined, CloseCircleFilled, FilterOutlined } from '@ant-design/icons'
 import KMSFilterPanel from './KMSFilterPanel'
 import type { SearchHistoryItem, SearchMode } from '../../hooks/useKMS'
 
@@ -216,7 +216,6 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
     { label: t('kms.keywordSearch'), value: 'keyword' },
     { label: t('kms.semanticSearch'), value: 'semantic' },
     { label: t('kms.fileSearch'), value: 'file' },
-    { label: t('kms.aiSearch'), value: 'ai' },
   ]
 
   return (
@@ -247,7 +246,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
             onBlur={handleInputBlur}
             placeholder={searchMode === 'file' ? t('kms.fileSearchPlaceholder') : t('kms.searchPlaceholder')}
             size="large"
-            prefix={searchMode === 'ai' ? <RobotOutlined style={{ color: token.colorTextQuaternary }} /> : searchMode === 'file' ? <FileSearchOutlined style={{ color: token.colorTextQuaternary }} /> : <SearchOutlined style={{ color: token.colorTextQuaternary }} />}
+            prefix={searchMode === 'file' ? <FileSearchOutlined style={{ color: token.colorTextQuaternary }} /> : <SearchOutlined style={{ color: token.colorTextQuaternary }} />}
             suffix={
               <Space size={4}>
                 {searchQuery ? (
@@ -272,7 +271,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
                 <Button
                   type="primary"
                   size="small"
-                  icon={searchMode === 'ai' ? <RobotOutlined /> : <SearchOutlined />}
+                  icon={<SearchOutlined />}
                   onClick={onSearch}
                   loading={isSearching}
                 >
