@@ -160,6 +160,7 @@ export default {
     employeeConfig: 'Employee Config',
     openWorkspace: 'Open Workspace Folder',
     openTaskWorkspace: 'Open Task Folder',
+    openEmployeeSettings: 'Open Employee Settings',
     workspace: 'Workspace',
     workspaceNotSet: 'No workspace folder is set for this employee',
     openWorkspaceFailed: 'Failed to open workspace: {{error}}',

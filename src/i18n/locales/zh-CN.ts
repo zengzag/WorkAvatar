@@ -160,6 +160,7 @@ export default {
     employeeConfig: '员工配置',
     openWorkspace: '打开工作区目录',
     openTaskWorkspace: '打开任务目录',
+    openEmployeeSettings: '打开数字员工设置',
     workspace: '工作区',
     workspaceNotSet: '该员工未设置工作区目录',
     openWorkspaceFailed: '打开工作区失败：{{error}}',

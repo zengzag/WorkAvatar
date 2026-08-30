@@ -576,36 +576,10 @@ const ChatInput: React.FC<{
     const editor = editorRef.current
     if (!editor) return
     editor.focus()
-    const sel = window.getSelection()
-    let range: Range | null = null
-    if (sel && sel.rangeCount > 0) {
-      range = sel.getRangeAt(0)
-      if (!editor.contains(range.startContainer)) range = null
-    }
-    if (range) {
-      range.deleteContents()
-      const parts = text.split('\n')
-      for (let i = 0; i < parts.length; i++) {
-        if (parts[i]) {
-          const node = document.createTextNode(parts[i])
-          range.insertNode(node)
-          range.setStartAfter(node)
-          range.setEndAfter(node)
-        }
-        if (i < parts.length - 1) {
-          const br = document.createElement('br')
-          range.insertNode(br)
-          range.setStartAfter(br)
-          range.setEndAfter(br)
-        }
-      }
-      if (sel) {
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    } else {
-      editor.appendChild(document.createTextNode(text))
-    }
+    // 使用 execCommand('insertText') 由浏览器负责插入与选区维护，
+    // 避免手动 insertNode 破坏光标状态，导致后续手动输入出现重复字符（Chromium bug）
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    document.execCommand('insertText', false, normalized)
     emitDraftChange()
   }, [emitDraftChange])
 

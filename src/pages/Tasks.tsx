@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import 'katex/dist/katex.min.css'
 import { Button, Typography, Spin, Tooltip, theme, App, Dropdown } from 'antd'
 import type { MenuProps } from 'antd'
-import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { MenuUnfoldOutlined, PlusOutlined, RobotOutlined, FolderOpenOutlined, SettingOutlined } from '@ant-design/icons'
 import MessageList from '../components/workbench/MessageList'
 import ChatInput from '../components/workbench/ChatInput'
 import MultiChatPanel from '../components/workbench/MultiChatPanel'
@@ -659,6 +659,15 @@ const Tasks: React.FC = () => {
     openDirInExplorer(activeTask?.workspace_path)
   }, [globalTasks, activeConversationId, openDirInExplorer])
 
+  // 打开执行当前任务的数字员工设置抽屉
+  const handleOpenEmployeeSettings = useCallback(() => {
+    const activeTask = globalTasks.find(t => t.id === activeConversationId)
+    if (activeTask?.employee_id && activeTask.employee_id !== currentEmployeeId) {
+      setCurrentEmployeeId(activeTask.employee_id)
+    }
+    setSettingsOpen(true)
+  }, [globalTasks, activeConversationId, currentEmployeeId])
+
   const moreMenuItems = useMemo<MenuProps['items']>(() => {
     return [
       {
@@ -673,8 +682,14 @@ const Tasks: React.FC = () => {
         label: t('workbench.openWorkspace'),
         onClick: handleOpenWorkspace,
       },
+      {
+        key: 'openEmployeeSettings',
+        icon: <SettingOutlined />,
+        label: t('workbench.openEmployeeSettings'),
+        onClick: handleOpenEmployeeSettings,
+      },
     ]
-  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace])
+  }, [t, handleOpenWorkspace, handleOpenTaskWorkspace, handleOpenEmployeeSettings])
 
   const workbenchStyle = useMemo(() => `
     .cursor-blink { animation: blink 1s infinite; }
