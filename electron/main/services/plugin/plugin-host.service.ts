@@ -915,10 +915,21 @@ class PluginHostService {
     if (this.hasSystemFeature(record, 'scheduler')) {
       const jobMap = this.schedulerJobs
       const pluginId = manifest.id
+      // 回调异常隔离：单插件定时回调抛错不允许冒泡为 uncaughtException 导致宿主退出
+      const safeFn = (fn: (...args: any[]) => any) => (...args: any[]) => {
+        try {
+          const ret = fn(...args)
+          if (ret && typeof ret.catch === 'function') {
+            ret.catch((err: any) => logger.error(`Plugin ${pluginId} scheduler callback rejected:`, err))
+          }
+        } catch (err) {
+          logger.error(`Plugin ${pluginId} scheduler callback threw:`, err)
+        }
+      }
       services.scheduler = {
         every: (intervalMs, fn) => {
           const id = `${pluginId}:every:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
-          const timer = setInterval(fn, intervalMs)
+          const timer = setInterval(safeFn(fn), intervalMs)
           if (timer.unref) timer.unref()
           jobMap.set(id, () => clearInterval(timer))
           return id
@@ -933,6 +944,7 @@ class PluginHostService {
               throw new Error(`cron 表达式仅支持 * 或单个数值（不支持 */n、区间、列表）: ${expression}`)
             }
           }
+          const safe = safeFn(fn)
           // 简单实现：每分钟检查一次 cron 表达式
           const check = () => {
             const now = new Date()
@@ -941,7 +953,7 @@ class PluginHostService {
             const matchDay = parts[2] === '*' || parts[2] === String(now.getDate())
             const matchMonth = parts[3] === '*' || parts[3] === String(now.getMonth() + 1)
             const matchDow = parts[4] === '*' || parts[4] === String(now.getDay())
-            if (matchMin && matchHour && matchDay && matchMonth && matchDow) fn()
+            if (matchMin && matchHour && matchDay && matchMonth && matchDow) safe()
           }
           // 先对齐到下一分钟边界再启动，避免 setInterval 从注册时刻起算导致漏触发/重复触发
           const msToNextMinute = 60_000 - (Date.now() % 60_000)
