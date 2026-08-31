@@ -51,6 +51,79 @@ function readBuildInfo() {
 
 const buildInfo = readBuildInfo()
 
+// KMS 索引 Worker 产物 banner：运行时 electron 桩。
+// 真实 electron 仅在主进程可用，worker_threads 里 require('electron') 会抛
+// "Cannot find module 'electron'"。但 KMS Worker 的依赖树会（静态/动态 import）
+// 引入部分主进程模块（ipc/_shared、plugin-host、secure-key-storage 等），其顶层
+// require('electron') 让 Worker 加载即崩溃。vite-plugin-electron 会对所有入口
+// 强制 external electron（优先级高于 resolve.alias / resolveId），故解析级方案无效；
+// 改为在产物文件顶部用 banner 拦截 Module._load，把 'electron' 解析到安全桩。
+// Worker 实际索引流程不执行主进程专属 API（路径经 workerData 传入、API Key 预解密），
+// 桩内全为空实现/安全默认值即可。OCR Worker 导入链干净，无需此栏。
+const workerElectronShimBanner = `(function () {
+  var mod = require('node:module');
+  var origLoad = mod._load;
+  function noop() {}
+  var appStub = {
+    isPackaged: false, getPath: function () { return ''; }, getAppPath: function () { return ''; },
+    getVersion: function () { return ''; }, whenReady: function () { return Promise.resolve(); },
+    quit: noop, on: noop, once: noop, removeListener: noop, emit: noop, addListener: noop,
+    setAppUserModelId: noop, getLoginItemSettings: function () { return {}; },
+    setLoginItemSettings: noop, requestSingleInstanceLock: function () { return false; },
+    commandLine: { appendSwitch: noop, appendArgument: noop }
+  };
+  var webContentsStub = {
+    send: noop, on: noop, once: noop, removeListener: noop,
+    executeJavaScript: function () { return Promise.resolve(); },
+    loadURL: function () { return Promise.resolve(); }, loadFile: function () { return Promise.resolve(); },
+    getURL: function () { return ''; }, getTitle: function () { return ''; },
+    canGoBack: function () { return false; },
+    session: { webRequest: { onBeforeRequest: noop } }
+  };
+  var bwinStub = {
+    on: noop, once: noop, removeListener: noop,
+    loadURL: function () { return Promise.resolve(); }, loadFile: function () { return Promise.resolve(); },
+    close: noop, destroy: noop, show: noop, hide: noop, focus: noop, setMenu: noop, setTitle: noop,
+    getBounds: function () { return { x: 0, y: 0, width: 0, height: 0 }; },
+    setBounds: noop, getSize: function () { return [0, 0]; }, setSize: noop,
+    isDestroyed: function () { return true; }, minimize: noop, maximize: noop,
+    unmaximize: noop, restore: noop, isMaximized: function () { return false; },
+    isMinimized: function () { return false; }, webContents: webContentsStub
+  };
+  var ipcStub = { handle: noop, removeHandler: noop, on: noop, once: noop, removeListener: noop, emit: noop };
+  var safeStorageStub = {
+    isEncryptionAvailable: function () { return false; }, encryptString: function (s) { return s; },
+    decryptString: function () { return ''; }, getSelectedStorageBackend: function () { return 'vault'; }
+  };
+  var stub = {
+    app: appStub,
+    BrowserWindow: function () { return bwinStub; },
+    ipcMain: ipcStub, ipcRenderer: ipcStub,
+    safeStorage: safeStorageStub,
+    Notification: function () { return { show: noop, on: noop, close: noop, isSupported: function () { return false; }, title: '', body: '' }; },
+    dialog: { showOpenDialog: function () { return Promise.resolve({ canceled: true, filePaths: [] }); }, showSaveDialog: function () { return Promise.resolve({ canceled: true, filePath: '' }); }, showMessageBox: function () { return Promise.resolve({ response: 0 }); } },
+    shell: { openExternal: function () { return Promise.resolve(); }, openPath: function () { return Promise.resolve(); }, showItemInFolder: noop, openItem: noop, beep: noop },
+    Menu: function () { return { popup: noop, append: noop, insert: noop, items: [] }; },
+    MenuItem: function (o) { return o || {}; },
+    Tray: function () { return { on: noop, setContextMenu: noop, setToolTip: noop, setImage: noop, destroy: noop, isDestroyed: function () { return false; } }; },
+    nativeImage: { createFromPath: function () { return { resize: function () { return { toPNG: function () { return Buffer.alloc(0); } }; }, toPNG: function () { return Buffer.alloc(0); }, isEmpty: function () { return true; } }; } },
+    protocol: { handle: noop, registerSchemesAsPrivileged: noop, registerFileProtocol: noop },
+    session: { defaultSession: { setPermissionRequestHandler: noop, on: noop, once: noop } },
+    desktopCapturer: { getSources: function () { return Promise.resolve([]); } },
+    powerSaveBlocker: { start: function () { return 0; }, stop: noop, isStarted: function () { return false; } },
+    globalShortcut: { register: function () { return false; }, unregister: noop, unregisterAll: noop, isRegistered: function () { return false; } },
+    screen: { getPrimaryDisplay: function () { return { size: { width: 0, height: 0 }, workArea: { x: 0, y: 0, width: 0, height: 0 } }; } },
+    clipboard: { writeText: noop, readText: function () { return ''; } },
+    net: { request: function () { return { on: noop, abort: noop }; } },
+    webFrameMain: { fromId: function () { return null; } },
+    utilityProcess: { fork: function () { return { on: noop, once: noop, postMessage: noop }; } }
+  };
+  mod._load = function (request, parent, isMain) {
+    if (request === 'electron') return stub;
+    return origLoad.call(this, request, parent, isMain);
+  };
+})();`
+
 // Vditor 在运行时会从 cdn 动态加载 lute/katex/highlight.js 等子资源（请求 {cdn}/dist/js/...），
 // Electron 环境无法访问公网 CDN，因此把 node_modules/vditor 暴露到 /vditor 路径。
 // dev：用中间件静态服务 node_modules/vditor；build：把 dist/ 复制到 outDir/vditor/dist/。
@@ -144,6 +217,9 @@ export default defineConfig({
               external: nativeExternals,
               output: {
                 entryFileNames: 'kms-index-worker.js',
+                // 运行时 electron 桩：banner 在产物顶部拦截 Module._load，
+                // 让 Worker 内任何 require('electron') 解析到安全桩而非抛错
+                banner: workerElectronShimBanner,
                 // Worker 是单文件入口，禁用代码分割避免产出多个 chunk
                 // （new Worker(filename) 只能加载单文件）
                 codeSplitting: false,
