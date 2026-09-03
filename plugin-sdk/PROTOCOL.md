@@ -163,6 +163,7 @@ registerAgentTools(tools)          // 进宿主 ToolRegistry，参与员工三�
 registerMcpTools(tools)            // 经内置 MCP 对外暴露
 registerFileAssociations(assocs)   // 系统"打开方式"→ 路由到插件渲染端
 registerGlobalShortcuts(shortcuts) // 需 system.features 含 globalShortcuts
+registerAgentMiddleware(middles)   // 数字员工工具调用中间件（需 system.features 含 agentMiddleware）
 registerMessageActions(actions)    // 对话消息快捷操作
 registerView(view)                 // 声明 UI 注入意图（需 capabilities.ui.views 授权）
 registerCommand(command)           // 注册命令（可被斜杠菜单/宿主调用）

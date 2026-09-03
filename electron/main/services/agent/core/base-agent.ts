@@ -4,7 +4,7 @@ import { MemoryManager } from '../memory/memory-manager'
 import type { IMemoryManager, MemoryConfig, MemoryStats } from '../memory/types'
 import { ToolRegistry } from '../tools/tool-registry'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
-import { ToolMiddlewareChain, createTimeoutMiddleware, createRetryMiddleware, createLoggingMiddleware, createResultSizeMiddleware } from '../tools/tool-middleware'
+import { ToolMiddlewareChain, createTimeoutMiddleware, createRetryMiddleware, createLoggingMiddleware, createResultSizeMiddleware, type ToolMiddleware } from '../tools/tool-middleware'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
 import { AgentEventEmitter } from './agent-events'
 import { AgentContext } from './agent-context'
@@ -102,6 +102,16 @@ export abstract class BaseAgent {
 
   getToolDispatcher(): ToolDispatcher {
     return this.toolDispatcher
+  }
+
+  /**
+   * 向本 agent 追加工具调用中间件（与 toolDispatcher 共享的链）。
+   * before（默认）插入链首，先于内置 logging/retry/timeout/result_size 执行，可短路阻断；
+   * after 追加链尾，仅在结果截断后执行。插件中间件经此挂载。
+   */
+  useToolMiddleware(middleware: ToolMiddleware, position: 'before' | 'after' = 'before'): void {
+    if (position === 'after') this.middlewareChain.use(middleware)
+    else this.middlewareChain.useFront(middleware)
   }
 
   getMemoryManager(): IMemoryManager {

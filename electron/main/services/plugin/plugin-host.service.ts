@@ -28,8 +28,11 @@ import type {
   PluginMessageActionResult,
   PluginViewContribution,
   PluginCommand,
+  PluginToolMiddleware,
 } from '../../../../plugin-sdk/src'
 import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugin-sdk/src'
+import { toToolMiddleware } from './middleware-adapter'
+import type { ToolMiddleware } from '../agent/tools/tool-middleware'
 import {
   getCapability,
   canRegisterView,
@@ -107,6 +110,8 @@ interface CollectedContributions {
   agentTools: unknown[]
   mcpTools: unknown[]
   fileAssociations: Map<string, string> // 扩展名(小写含点) → pluginId
+  /** 插件注册的数字员工工具调用中间件（agentMiddleware 能力门控） */
+  agentMiddlewares: PluginToolMiddleware[]
 }
 
 const SETTINGS_KEY = 'plugins.config'
@@ -1058,7 +1063,7 @@ class PluginHostService {
     }
 
     const contributions: CollectedContributions = {
-      agentTools: [], mcpTools: [], fileAssociations: new Map(),
+      agentTools: [], mcpTools: [], fileAssociations: new Map(), agentMiddlewares: [],
     }
     this.contributions.set(manifest.id, contributions)
 
@@ -1114,6 +1119,12 @@ class PluginHostService {
             if (dup) throw new Error(`工具 id "${tool.id}" 已被插件 ${dup} 注册`)
           }
           contributions.agentTools.push(...tools)
+        },
+        registerAgentMiddleware: (middlewares) => {
+          if (!this.hasSystemFeature(record_, 'agentMiddleware')) {
+            throw new Error('未声明 agentMiddleware 能力')
+          }
+          contributions.agentMiddlewares.push(...middlewares)
         },
         registerMcpTools: (tools) => { contributions.mcpTools.push(...tools) },
         registerFileAssociations: (assocs) => {
@@ -1461,6 +1472,17 @@ class PluginHostService {
     return tools
   }
 
+  /** 全部插件注册并已适配为宿主格式的数字员工工具中间件（供新建 agent 时挂载；仅激活成功插件） */
+  getAgentToolMiddlewares(): ToolMiddleware[] {
+    const middlewares: ToolMiddleware[] = []
+    for (const [pluginId, c] of this.contributions) {
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      for (const m of c.agentMiddlewares) middlewares.push(toToolMiddleware(m, pluginId))
+    }
+    return middlewares
+  }
+
   /** 按插件分组的 agent 工具（仅激活成功且贡献了工具的插件），供工具分类按插件聚合 */
   getPluginAgentToolGroups(): Array<{ pluginId: string; pluginName: string; tools: unknown[] }> {
     const result: Array<{ pluginId: string; pluginName: string; tools: unknown[] }> = []
@@ -1508,6 +1530,14 @@ class PluginHostService {
   /** 内核删除 conversation 时通知所有订阅插件（v2 事件名 conversation:deleted） */
   notifyConversationDeleted(conversationId: string): void {
     this.notifyKernelEvent('conversation:deleted', conversationId)
+  }
+
+  /**
+   * 数字员工运行时事件桥：把 agent 事件广播给订阅 'agent:event' 的插件。
+   * data 透传 agent 原始事件数据；无订阅者时 notifyKernelEvent 早退，零额外成本。
+   */
+  notifyAgentEvent(employeeId: string, conversationId: string | undefined, event: string, data: unknown): void {
+    this.notifyKernelEvent('agent:event', { employeeId, conversationId, event, data })
   }
 
   /** 插件注册的 UI 视图注入清单（供渲染端查询渲染） */

@@ -30,6 +30,7 @@ export type PluginSystemFeature =
   | 'windows' // 创建插件窗口
   | 'native' // 租借宿主原生模块
   | 'globalShortcuts' // 全局快捷键
+  | 'agentMiddleware' // 注册数字员工工具调用中间件（执行路径拦截）
 
 /** KMS 数据查询类型（services.kms.query 白名单） */
 export type PluginKmsQueryType = 'search' | 'content' | 'collections'

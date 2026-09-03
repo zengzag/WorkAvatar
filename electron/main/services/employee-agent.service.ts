@@ -202,6 +202,8 @@ class EmployeeAgentService {
       toolMaxResultSize: modelConfig?.tool_max_result_size ?? 50000,
       onEvent: (event, data) => {
         logger.info(`${event}`, data)
+        // 事件桥：转发给订阅 'agent:event' 的插件；无订阅者时 notifyKernelEvent 早退，零额外成本
+        PluginHostService.getInstance().notifyAgentEvent(employeeId, conversationId, event, data)
       },
     }
 
@@ -273,6 +275,12 @@ class EmployeeAgentService {
 
     // 注入任务工作区上下文（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
     agent.updateWorkspaceContextPrompt(this.buildWorkspaceContextPrompt(emp, conversationId))
+
+    // 挂插件中间件（链首守卫）：逆序 attach，保证注册优先的插件中间件最先执行（FIFO）
+    const pluginMiddlewares = PluginHostService.getInstance().getAgentToolMiddlewares()
+    for (const mw of pluginMiddlewares.reverse()) {
+      agent.useToolMiddleware(mw)
+    }
 
     this.agentEntries.set(cacheKey, {
       agent,

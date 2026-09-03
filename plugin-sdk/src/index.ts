@@ -12,6 +12,8 @@ export type {
 export type {
   PluginToolContext,
   PluginToolDefinition,
+  PluginToolResult,
+  PluginToolMiddleware,
 } from './tool'
 export type {
   PluginDatabase,
