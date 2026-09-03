@@ -103,7 +103,8 @@ class EmployeeAgentService {
     modelId?: string,
     enableThinking?: ThinkingLevel,
     conversationId?: string,
-    employee?: DBEmployee
+    employee?: DBEmployee,
+    minimalMode?: boolean
   ): Promise<CachedAgentEntry> {
     // 缓存 key 必须包含 conversationId：不同任务（对话）各自持有独立 agent 实例，
     // 避免并发多任务时共享同一 agent（_running/_currentSignal/MCP 引用）导致互相中断。
@@ -205,6 +206,11 @@ class EmployeeAgentService {
     }
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
+
+    // 极简模式在 agent 创建时冻结（绑定任务/对话），后续消息不可更改：
+    // 若在缓存命中后仍逐条 setMinimalMode，开启极简的新任务会污染旧任务共享的 agent，
+    // 导致旧任务误判为极简而不再传递工具。设计上极简模式是任务的创建期配置，首次消息后固定。
+    agent.setMinimalMode(!!minimalMode)
 
     // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
     // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
@@ -398,9 +404,8 @@ class EmployeeAgentService {
     }
 
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee)
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode)
       const agent = entry.agent
-      agent.setMinimalMode(minimal_mode)
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
@@ -408,9 +413,10 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
+      // KB 范围是否注入取决于任务冻结的极简模式（agent.getMinimalMode()），而非传入的 minimal_mode 参数
       const systemPromptCached = system
         ? (agent.setCachedSystemPrompt(system), true)
-        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(
@@ -543,13 +549,13 @@ class EmployeeAgentService {
     }
 
     return LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, undefined, minimal_mode)
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids
 
       const history = this.expandFrontendMessages(messages)
 
-      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
 
       const { summary, stats } = await agent.compactConversation(history)
 
