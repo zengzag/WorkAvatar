@@ -212,7 +212,7 @@ const electronAPI = {
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
-    // 前台防休眠：查询/设置"应用处于前台时禁止系统熄屏/休眠"
+    // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"
     getPreventSleep: () => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_GET),
     setPreventSleep: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SET, enabled),
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件

@@ -44,7 +44,7 @@ export function registerIpcHandlers() {
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()
 
-  // 初始化前台防休眠服务（监听窗口焦点变化，按需阻止系统熄屏/休眠）
+  // 初始化防休眠服务（监听窗口显隐/关闭变化，窗口未全部关闭时按需阻止系统熄屏/休眠）
   PowerSaveService.getInstance().init()
 
   // 启动定时记忆精炼服务（空闲对话的记忆提取）

@@ -1016,9 +1016,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const generateConversationTitle = async (conversationId: string, userContent: string) => {
     try {
       const quickModel = await getSceneDefaultModel('quick')
-      // 兜底：quick 场景模型 → 默认 provider → 第一个 provider
+      // 兜底：quick 场景模型 → 第一个 provider
       const providerId = quickModel?.provider_id
-        || providers.find((p: any) => p.is_default)?.id
         || providers[0]?.id
       if (!providerId) return
 
@@ -1081,11 +1080,11 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
   }
 
-  // 实际执行模型：优先当前对话绑定的默认模型（输入框模型按钮），其次员工级默认/默认 provider
+  // 实际执行模型：优先当前对话绑定的默认模型（输入框模型按钮），其次员工级默认/第一个 provider
   // 保证发送/重发/编辑重发/压缩使用与输入框显示一致的模型
   const resolveExecModel = () => {
     const bound = inputDefaultModelRef.current
-    const providerId = bound?.providerId || selectedLlmProviderId || providers.find((p: any) => p.is_default)?.id
+    const providerId = bound?.providerId || selectedLlmProviderId || providers[0]?.id
     const modelId = bound?.modelId || selectedLlmModelId || undefined
     return { providerId: providerId || '', modelId }
   }

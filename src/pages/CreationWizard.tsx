@@ -131,7 +131,7 @@ const CreationWizard: React.FC = () => {
           setSelectedModelId(sceneDefault.model_id)
         }
       } else if (!selectedProviderId) {
-        const defaultProvider = (result as LLMProvider[]).find((p) => p.is_default)
+        const defaultProvider = (result as LLMProvider[])[0]
         if (defaultProvider) {
           setSelectedProviderId(defaultProvider.id)
         }
@@ -249,7 +249,7 @@ const CreationWizard: React.FC = () => {
     }
     if (!profile) return
 
-    const providerId = selectedProviderId || providers.find((p) => p.is_default)?.id
+    const providerId = selectedProviderId || providers[0]?.id
     if (!providerId) {
       message.warning(t('creationWizard.noProviderForRefine'))
       return

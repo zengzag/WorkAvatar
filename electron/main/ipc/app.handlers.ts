@@ -102,7 +102,7 @@ export function registerAppHandlers(
     return { success: true }
   })
 
-  // 前台防休眠开关：查询当前是否开启（开启时应用处于前台禁止系统熄屏/休眠）
+  // 防休眠开关：查询当前是否开启（开启时窗口未全部关闭则禁止系统熄屏/休眠）
   safeHandle(IPC_CHANNELS.POWER_SAVE_GET, () => {
     return PowerSaveService.getInstance().getEnabled()
   })

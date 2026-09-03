@@ -147,7 +147,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
    *  1. 从 default_model_memory / default_model_workbench 设置读取 provider_id + model_id
    *  2. 用 getProviderConfig 获取完整 provider 配置
    *  3. 用 getModelConfig + resolveModelName 解析出 API 模型名
-   *  4. 当 model_id 为空时，取 provider 的 is_default 模型或第一个 chat 模型
+   *  4. 当 model_id 为空时，取 provider 的第一个 chat 模型
    *
    *  public 供 IPC handler 在前端未传 model_id 时复用同一解析逻辑。
    */
@@ -188,7 +188,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
     const config = await llmClient.getProviderConfig(provider.id)
     if (!config) return null
 
-    // modelIdentifier = undefined → getModelConfig 取 is_default
+    // modelIdentifier = undefined → getModelConfig 取第一个 chat 模型
     const modelConfig = this.getModelConfig(config, undefined)
     const resolvedModelName = modelConfig?.model || config.model
 
@@ -202,7 +202,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
   /** 从 provider 的 models_json 中查找匹配的模型配置。
    *  与 employee-agent.service.ts.getModelConfig 完全相同逻辑：
    *  - modelId 非空时：先按 id 查找，再按 model 查找
-   *  - modelId 为空时：取 is_default 的条目
+   *  - modelId 为空时：取第一个 chat 模型
    */
   private getModelConfig(config: any, modelId?: string): { model?: string; is_default?: boolean; category?: string } | null {
     if (!config?.models_json) return null
@@ -210,7 +210,7 @@ class MemoryRefinementService extends ScheduledTaskBase {
       const models = JSON.parse(config.models_json) as Array<{ id?: string; model?: string; is_default?: boolean; category?: string }>
       const matched = modelId
         ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
-        : models.find(m => m.is_default)
+        : models.find(m => (m.category || 'chat') === 'chat') ?? models[0]
       return matched ?? null
     } catch {
       return null

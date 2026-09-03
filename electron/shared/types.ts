@@ -76,7 +76,7 @@ export interface LLMModelConfig {
   thinking_budget?: number
   max_retry?: number
   context_window?: number
-  is_default: boolean
+  is_default?: boolean
 }
 
 export interface LLMProvider {

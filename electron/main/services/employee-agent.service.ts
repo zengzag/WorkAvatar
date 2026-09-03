@@ -389,7 +389,7 @@ class EmployeeAgentService {
       const models: Array<LLMModelConfig & Record<string, any>> = JSON.parse(config.models_json)
       const matched = modelId
         ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
-        : models.find(m => m.is_default)
+        : models.find(m => (m.category || 'chat') === 'chat') ?? models[0]
       return matched ?? null
     } catch {
       return null
@@ -510,7 +510,7 @@ class EmployeeAgentService {
       const models: LLMModelConfig[] = JSON.parse(config.models_json)
       const matched = modelId
         ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
-        : models.find(m => m.is_default)
+        : models.find(m => (m.category || 'chat') === 'chat') ?? models[0]
       if (matched?.max_retry !== undefined) {
         return matched.max_retry
       }

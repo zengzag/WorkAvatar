@@ -29,7 +29,6 @@ import {
   CompressOutlined,
   RestOutlined,
 } from '@ant-design/icons'
-import type { LLMProvider } from '../../types'
 import { getSceneDefaultModel } from '../../utils/default-model'
 
 const { Text, Paragraph } = Typography
@@ -222,10 +221,10 @@ const MemorySection: React.FC<MemorySectionProps> = ({
         providerId = sceneModel.provider_id
         modelId = sceneModel.model_id
       } else {
-        // 最终回退：第一个默认 provider
+        // 最终回退：第一个 provider
         const providers = await window.electronAPI.llm.getProviders()
         const defaultProvider = (providers && providers.length > 0)
-          ? (providers.find((p: LLMProvider) => p.is_default) || providers[0])
+          ? providers[0]
           : null
         if (defaultProvider) {
           providerId = defaultProvider.id

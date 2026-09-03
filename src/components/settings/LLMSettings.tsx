@@ -5,7 +5,6 @@ import {
   Input,
   Button,
   Select,
-  Switch,
   InputNumber,
   Table,
   Space,
@@ -17,14 +16,12 @@ import {
   Collapse,
   Tooltip,
   App,
-  theme,
 } from 'antd'
 import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
   ApiOutlined,
-  CheckCircleOutlined,
   SyncOutlined,
   SettingOutlined,
   QuestionCircleOutlined,
@@ -115,7 +112,6 @@ const CATEGORY_TAG_MAP: Record<LLMModelCategory, { color: string }> = {
 const LLMSettings: React.FC = () => {
   const { t } = useTranslation()
   const { message } = App.useApp()
-  const { token } = theme.useToken()
   const [providers, setProviders] = useState<LLMProvider[]>([])
   const [modalVisible, setModalVisible] = useState(false)
   const [editingProvider, setEditingProvider] = useState<LLMProvider | null>(null)
@@ -174,7 +170,6 @@ const LLMSettings: React.FC = () => {
       timeout_ms: provider.timeout_ms,
       extra_headers_json: provider.extra_headers_json || '',
       extra_body_json: (provider as any).extra_body_json || '',
-      is_default: provider.is_default,
       api_key: '',
     })
     setModalVisible(true)
@@ -194,7 +189,7 @@ const LLMSettings: React.FC = () => {
   const handleSave = useCallback(async () => {
     try {
       const values = await form.validateFields()
-      const defaultChatModel = models.find(m => m.category === 'chat' && m.is_default)
+      const defaultChatModel = models.find(m => m.category === 'chat')
       const defaultEmbeddingModel = models.find(m => m.category === 'embedding')
       const providerData = {
         ...values,
@@ -256,7 +251,6 @@ const LLMSettings: React.FC = () => {
       temperature: 0.7,
       max_tokens: 4096,
       max_retry: 100,
-      is_default: false,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -275,18 +269,8 @@ const LLMSettings: React.FC = () => {
       presence_penalty: model.presence_penalty,
       max_retry: model.max_retry ?? 100,
       context_window: model.context_window,
-      is_default: model.is_default,
     })
     setModelModalVisible(true)
-  }, [modelForm])
-
-  const handleModelCategoryChange = useCallback((category: LLMModelCategory) => {
-    setModelCategory(category)
-    if (category === 'embedding') {
-      modelForm.setFieldsValue({
-        is_default: false,
-      })
-    }
   }, [modelForm])
 
   const handleSaveModel = useCallback(async () => {
@@ -307,11 +291,6 @@ const LLMSettings: React.FC = () => {
           max_retry: values.max_retry,
           context_window: values.context_window,
         } : {}),
-        is_default: category === 'chat' ? values.is_default : false,
-      }
-
-      if (values.is_default && category === 'chat') {
-        setModels(prev => prev.map(m => m.category === 'chat' ? { ...m, is_default: false } : m))
       }
 
       if (editingModel) {
@@ -345,13 +324,6 @@ const LLMSettings: React.FC = () => {
     { title: t('settings.providerName'), dataIndex: 'name', key: 'name', width: 110 },
     { title: t('settings.modelId'), dataIndex: 'model', key: 'model', width: 150 },
     {
-      title: t('settings.defaultModel'),
-      dataIndex: 'is_default',
-      key: 'is_default',
-      width: 50,
-      render: (isDefault: boolean) => isDefault ? <CheckCircleOutlined style={{ color: token.colorSuccess }} /> : null,
-    },
-    {
       title: t('common.edit'),
       key: 'actions',
       width: 80,
@@ -364,7 +336,7 @@ const LLMSettings: React.FC = () => {
         </Space>
       ),
     },
-  ], [t, token.colorSuccess, handleEditModel, handleDeleteModel])
+  ], [t, handleEditModel, handleDeleteModel])
 
   const columns = useMemo(() => [
     {
@@ -412,14 +384,6 @@ const LLMSettings: React.FC = () => {
       },
     },
     {
-      title: t('settings.defaultModel'),
-      dataIndex: 'is_default',
-      key: 'is_default',
-      width: 80,
-      render: (isDefault: boolean) =>
-        isDefault ? <CheckCircleOutlined style={{ color: token.colorSuccess }} /> : null,
-    },
-    {
       title: t('common.edit'),
       key: 'actions',
       width: 200,
@@ -442,7 +406,7 @@ const LLMSettings: React.FC = () => {
         </Space>
       ),
     },
-  ], [t, token.colorSuccess, testingId, handleTestConnection, handleEdit, handleDelete])
+  ], [t, testingId, handleTestConnection, handleEdit, handleDelete])
 
   const providerTypeOptions = useMemo(() => [
     {
@@ -484,12 +448,12 @@ const LLMSettings: React.FC = () => {
         open={modalVisible}
         onOk={handleSave}
         onCancel={() => setModalVisible(false)}
-        width={780}
+        width={600}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <div style={{ display: 'flex', gap: 16 }}>
+        <Form form={form} layout="vertical" requiredMark={false} className="llm-compact-form" style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
             <Form.Item name="name" label={t('settings.providerName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
               <Input placeholder="DeepSeek" />
             </Form.Item>
@@ -501,7 +465,7 @@ const LLMSettings: React.FC = () => {
             </Form.Item>
           </div>
 
-          <div style={{ display: 'flex', gap: 16 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
             <Form.Item name="base_url" label={
               <span>{t('settings.apiEndpoint')} <Tooltip title={t('settings.apiEndpointTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
             } style={{ flex: 1 }}>
@@ -513,68 +477,61 @@ const LLMSettings: React.FC = () => {
             </Form.Item>
           </div>
 
-          <Collapse
-            defaultActiveKey={['models']}
+          <Divider titlePlacement="left" style={{ margin: '12px 0' }}>
+            <Space size={4}>
+              <SettingOutlined />
+              <Text strong style={{ fontSize: 13 }}>{t('settings.modelConfig')}</Text>
+            </Space>
+          </Divider>
+
+          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.modelConfigHint')}</Text>
+            <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAddModel}>
+              {t('settings.addModel')}
+            </Button>
+          </div>
+          <Table
+            dataSource={models}
+            columns={modelColumns}
+            rowKey="id"
             size="small"
-            style={{ marginBottom: 16 }}
-            items={[
-              {
-                key: 'models',
-                label: <span><SettingOutlined /> {t('settings.modelConfig')}</span>,
-                children: (
-                  <>
-                    <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text type="secondary">{t('settings.modelConfigHint')}</Text>
-                      <Button type="primary" size="small" icon={<PlusOutlined />} onClick={handleAddModel}>
-                        {t('settings.addModel')}
-                      </Button>
-                    </div>
-                    <Table
-                      dataSource={models}
-                      columns={modelColumns}
-                      rowKey="id"
-                      size="small"
-                      pagination={false}
-                      locale={{ emptyText: t('settings.noModels') }}
-                      scroll={{ x: 500 }}
-                    />
-                  </>
-                ),
-              },
-            ]}
+            pagination={false}
+            locale={{ emptyText: t('settings.noModels') }}
+            scroll={{ x: 440 }}
+            style={{ marginBottom: 12 }}
           />
 
           <Collapse
             size="small"
-            style={{ marginBottom: 16 }}
+            ghost
+            style={{ marginBottom: 4 }}
             items={[
               {
                 key: 'advanced',
-                label: <span><GlobalOutlined /> {t('settings.advancedConfig')}</span>,
+                label: <Space size={4}><GlobalOutlined /> {t('settings.advancedConfig')}</Space>,
                 children: (
                   <>
                     <Form.Item name="timeout_ms" label={t('settings.timeout')}>
-                      <InputNumber min={1000} max={300000} step={1000} style={{ width: 180 }} />
+                      <InputNumber min={1000} max={300000} step={1000} style={{ width: 160 }} />
                     </Form.Item>
-                    <Form.Item name="extra_headers_json" label={
-                      <span>{t('settings.extraHeaders')} <Tooltip title={t('settings.extraHeadersTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                    }>
-                      <Input.TextArea rows={2} placeholder='{"X-Custom-Header": "value"}' />
-                    </Form.Item>
-                    <Form.Item name="extra_body_json" label={
-                      <span>{t('settings.extraBody')} <Tooltip title={t('settings.extraBodyTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
-                    }>
-                      <Input.TextArea rows={2} placeholder='{"key": "value"}' />
-                    </Form.Item>
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <Form.Item name="extra_headers_json" label={
+                        <span>{t('settings.extraHeaders')} <Tooltip title={t('settings.extraHeadersTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                      } style={{ flex: 1 }}>
+                        <Input.TextArea rows={2} placeholder='{"X-Custom-Header": "value"}' />
+                      </Form.Item>
+                      <Form.Item name="extra_body_json" label={
+                        <span>{t('settings.extraBody')} <Tooltip title={t('settings.extraBodyTooltip')}><QuestionCircleOutlined style={{ marginLeft: 4 }} /></Tooltip></span>
+                      } style={{ flex: 1 }}>
+                        <Input.TextArea rows={2} placeholder='{"key": "value"}' />
+                      </Form.Item>
+                    </div>
                   </>
                 ),
               },
             ]}
           />
 
-          <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefault')}>
-            <Switch />
-          </Form.Item>
         </Form>
       </Modal>
 
@@ -587,81 +544,79 @@ const LLMSettings: React.FC = () => {
         okText={t('common.save')}
         cancelText={t('common.cancel')}
       >
-        <Form form={modelForm} layout="vertical" style={{ marginTop: 16 }}>
-          <div style={{ display: 'flex', gap: 16 }}>
+        <Form form={modelForm} layout="vertical" requiredMark={false} className="llm-compact-form" style={{ marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
             <Form.Item name="category" label={t('settings.modelCategory')} rules={[{ required: true }]} style={{ flex: 1 }}>
-              <Select onChange={handleModelCategoryChange}>
+              <Select>
                 <Select.Option value="chat">{t('settings.modelCategory_chat')}</Select.Option>
                 <Select.Option value="embedding">{t('settings.modelCategory_embedding')}</Select.Option>
               </Select>
             </Form.Item>
-          </div>
-
-          <div style={{ display: 'flex', gap: 16 }}>
             <Form.Item name="name" label={t('settings.displayName')} rules={[{ required: true, message: t('settings.enterName') }]} style={{ flex: 1 }}>
               <Input placeholder="DeepSeek-V3" />
             </Form.Item>
-            <Form.Item name="model" label={t('settings.modelId')} rules={[{ required: true, message: t('settings.enterModelId') }]} style={{ flex: 1 }}>
+            <Form.Item name="model" label={t('settings.modelId')} rules={[{ required: true, message: t('settings.enterModelId') }]} style={{ flex: 1.2 }}>
               <Input placeholder={modelCategory === 'embedding' ? 'text-embedding-3-small' : 'deepseek-chat'} />
             </Form.Item>
           </div>
 
           {modelCategory === 'chat' && (
             <>
-              <Divider plain>{t('settings.generateParams')}</Divider>
+              <Divider plain style={{ margin: '8px 0 12px' }}>{t('settings.generateParams')}</Divider>
 
-              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 12px' }}>
                 <Form.Item name="temperature" label={
                   <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={0} max={2} step={0.1} style={{ width: 120 }} />
+                  <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
                 </Form.Item>
                 <Form.Item name="max_tokens" label={t('settings.maxToken')}>
-                  <InputNumber min={1} max={128000} step={1024} style={{ width: 140 }} />
+                  <InputNumber min={1} max={128000} step={1024} style={{ width: '100%' }} />
                 </Form.Item>
                 <Form.Item name="max_retry" label={
                   <span>{t('settings.maxRetry')} <Tooltip title={t('settings.maxRetryTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={1} max={1000} step={10} style={{ width: 140 }} />
+                  <InputNumber min={1} max={1000} step={10} style={{ width: '100%' }} />
                 </Form.Item>
                 <Form.Item name="top_p" label={
                   <span>{t('settings.topP')} <Tooltip title={t('settings.topPTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={0} max={1} step={0.05} style={{ width: 120 }} />
+                  <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
                 </Form.Item>
-              </div>
-
-              <div style={{ display: 'flex', gap: 16 }}>
                 <Form.Item name="frequency_penalty" label={
                   <span>{t('settings.frequencyPenalty')} <Tooltip title={t('settings.frequencyPenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+                  <InputNumber min={-2} max={2} step={0.1} style={{ width: '100%' }} />
                 </Form.Item>
                 <Form.Item name="presence_penalty" label={
                   <span>{t('settings.presencePenalty')} <Tooltip title={t('settings.presencePenaltyTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={-2} max={2} step={0.1} style={{ width: 120 }} />
+                  <InputNumber min={-2} max={2} step={0.1} style={{ width: '100%' }} />
                 </Form.Item>
                 <Form.Item name="context_window" label={
                   <span>{t('settings.contextWindow')} <Tooltip title={t('settings.contextWindowTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
-                  <InputNumber min={1024} max={2000000} step={1024} style={{ width: 160 }} />
+                  <InputNumber min={1024} max={2000000} step={1024} style={{ width: '100%' }} />
                 </Form.Item>
               </div>
-
-              <Form.Item name="is_default" valuePropName="checked" label={t('settings.setAsDefaultModel')}>
-                <Switch />
-              </Form.Item>
             </>
           )}
 
           {modelCategory === 'embedding' && (
-            <div style={{ padding: '12px 0' }}>
+            <div style={{ padding: '4px 0' }}>
               <Text type="secondary">{t('settings.embeddingModelHint')}</Text>
             </div>
           )}
         </Form>
       </Modal>
+      <style>{`
+        .llm-compact-form .ant-form-item {
+          margin-bottom: 14px;
+        }
+        .llm-compact-form .ant-form-item-explain-error {
+          font-size: 12px;
+        }
+      `}</style>
     </>
   )
 }
