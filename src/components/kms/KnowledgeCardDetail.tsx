@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Drawer, Button, Tag, Space, Typography, Input, App, Spin, theme } from 'antd'
+import { Drawer, Button, Tag, Space, Typography, Input, App, Spin, theme, Collapse } from 'antd'
 import {
   PushpinOutlined, PushpinFilled, ReloadOutlined, DeleteOutlined,
   EditOutlined, SaveOutlined, CloseOutlined, FileTextOutlined,
@@ -36,6 +36,10 @@ export interface KnowledgeCard {
   keyPoints: KnowledgeCardKeyPoint[]
   citations: KnowledgeCardCitation[]
   relatedFileIds: string[]
+  /** 用户为该卡片单独设置的生成要求，刷新时作为补充方向提交给 LLM */
+  requirement: string
+  /** 最近一次生成/刷新的执行轨迹，用于事后排查是否真正检索到资料库内容 */
+  trace: SearchTraceStep[]
   status: 'active' | 'stale' | 'archived' | 'disabled' | 'generating'
   pinned: boolean
   searchCount: number
@@ -79,9 +83,13 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
   const [editingSummary, setEditingSummary] = useState(false)
   const [summaryDraft, setSummaryDraft] = useState('')
   const [savingSummary, setSavingSummary] = useState(false)
+  const [editingRequirement, setEditingRequirement] = useState(false)
+  const [requirementDraft, setRequirementDraft] = useState('')
+  const [savingRequirement, setSavingRequirement] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pinning, setPinning] = useState(false)
   const [localCard, setLocalCard] = useState<KnowledgeCard | null>(card)
+  const progressRef = React.useRef<HTMLDivElement>(null)
 
   const stepTypeColors = React.useMemo<Record<string, string>>(() => ({
     info: token.colorTextTertiary,
@@ -95,7 +103,15 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
   useEffect(() => {
     setLocalCard(card)
     setEditingSummary(false)
+    setEditingRequirement(false)
   }, [card])
+
+  // 生成日志新增步骤时自动滚动到底部
+  useEffect(() => {
+    if (processing && progressRef.current) {
+      progressRef.current.scrollTop = progressRef.current.scrollHeight
+    }
+  }, [progressSteps, processing])
 
   const handleStartEdit = useCallback(() => {
     setSummaryDraft(localCard?.summary || '')
@@ -128,6 +144,38 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
       setSavingSummary(false)
     }
   }, [localCard, summaryDraft, t, message])
+
+  const handleStartEditRequirement = useCallback(() => {
+    setRequirementDraft(localCard?.requirement || '')
+    setEditingRequirement(true)
+  }, [localCard])
+
+  const handleCancelEditRequirement = useCallback(() => {
+    setRequirementDraft('')
+    setEditingRequirement(false)
+  }, [])
+
+  const handleSaveRequirement = useCallback(async () => {
+    if (!localCard) return
+    setSavingRequirement(true)
+    try {
+      const result = await window.electronAPI.kms.updateKnowledgeCard({
+        id: localCard.id,
+        requirement: requirementDraft.trim(),
+      })
+      if (result?.success) {
+        setLocalCard({ ...localCard, requirement: requirementDraft.trim() })
+        setEditingRequirement(false)
+        message.success(t('kms.knowledgeCards.saveRequirement'))
+      } else {
+        message.error(result?.error || t('kms.knowledgeCards.saveRequirement'))
+      }
+    } catch (err: any) {
+      message.error(err?.message || t('kms.knowledgeCards.saveRequirement'))
+    } finally {
+      setSavingRequirement(false)
+    }
+  }, [localCard, requirementDraft, t, message])
 
   const handleDelete = useCallback(() => {
     if (!localCard) return
@@ -220,6 +268,26 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
     return null
   }
 
+  const renderStepRows = (steps: SearchTraceStep[]) => steps.map((step, i) => (
+    <div key={`step-${i}`} style={{
+      display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0',
+      fontSize: 12, lineHeight: 1.5, color: token.colorTextSecondary,
+    }}>
+      <span style={{ color: stepTypeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
+        {STEP_ICONS[step.type] || '•'}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ fontSize: 12, fontWeight: 500 }}>{step.action}</Text>
+        {step.durationMs !== undefined && (
+          <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>{step.durationMs}ms</Text>
+        )}
+        {step.detail && (
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', wordBreak: 'break-all' }}>{step.detail}</Text>
+        )}
+      </div>
+    </div>
+  ))
+
   const renderProgressSection = () => {
     if (!processing || !progressSteps || progressSteps.length === 0) return null
     return (
@@ -234,28 +302,90 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
           <Spin size="small" />
           <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.generating')}</Text>
         </div>
-        {progressSteps.map((step, i) => (
-          <div key={`step-${i}`} style={{
-            display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0',
-            fontSize: 12, lineHeight: 1.5, color: token.colorTextSecondary,
-          }}>
-            <span style={{ color: stepTypeColors[step.type] || token.colorTextTertiary, flexShrink: 0 }}>
-              {STEP_ICONS[step.type] || '•'}
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ fontSize: 12, fontWeight: 500 }}>{step.action}</Text>
-              {step.durationMs !== undefined && (
-                <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>{step.durationMs}ms</Text>
-              )}
-              {step.detail && (
-                <Text type="secondary" style={{ fontSize: 11, display: 'block', wordBreak: 'break-all' }}>{step.detail}</Text>
-              )}
-            </div>
-          </div>
-        ))}
+        <div ref={progressRef} style={{ maxHeight: 200, overflow: 'auto' }}>
+          {renderStepRows(progressSteps)}
+        </div>
       </div>
     )
   }
+
+  const renderTraceSection = () => {
+    const trace = localCard?.trace || []
+    if (processing || trace.length === 0) return null
+    const searchSteps = trace.filter(s => s.type === 'search' || s.action?.startsWith('调用 kms_search'))
+    const fileSteps = trace.filter(s => s.type === 'read' || s.action?.startsWith('调用 kms_get_content'))
+    const header = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Text strong>{t('kms.knowledgeCards.generateTraceLabel')}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {t('kms.knowledgeCards.generateTraceCount', {
+            search: searchSteps.length,
+            read: fileSteps.length,
+            total: trace.length,
+          })}
+        </Text>
+      </div>
+    )
+    return (
+      <Collapse
+        ghost
+        style={{ marginBottom: 16 }}
+        defaultActiveKey={[]}
+        items={[{
+          key: 'trace',
+          label: header,
+          children: (
+            <div style={{
+              maxHeight: 300, overflow: 'auto',
+              padding: '8px 12px',
+              background: token.colorBgLayout,
+              borderRadius: token.borderRadiusLG,
+              border: `1px solid ${token.colorBorderSecondary}`,
+            }}>
+              {renderStepRows(trace)}
+            </div>
+          ),
+        }]}
+      />
+    )
+  }
+
+  const renderRequirementSection = () => (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <Text strong>{t('kms.knowledgeCards.requirementLabel')}</Text>
+        {!processing && !editingRequirement ? (
+          <Button size="small" type="link" icon={<EditOutlined />} onClick={handleStartEditRequirement}>
+            {t('kms.knowledgeCards.editRequirement')}
+          </Button>
+        ) : editingRequirement ? (
+          <Space size="small">
+            <Button size="small" type="primary" icon={<SaveOutlined />} loading={savingRequirement} onClick={handleSaveRequirement}>
+              {t('kms.knowledgeCards.saveRequirement')}
+            </Button>
+            <Button size="small" icon={<CloseOutlined />} onClick={handleCancelEditRequirement}>
+              {t('kms.knowledgeCards.cancelEdit')}
+            </Button>
+          </Space>
+        ) : null}
+      </div>
+      {editingRequirement ? (
+        <TextArea
+          value={requirementDraft}
+          onChange={e => setRequirementDraft(e.target.value)}
+          placeholder={t('kms.knowledgeCards.requirementPlaceholder')}
+          autoSize={{ minRows: 2, maxRows: 5 }}
+        />
+      ) : (
+        <>
+          <Paragraph style={{ margin: 0, color: token.colorTextSecondary, fontSize: 13, lineHeight: 1.7 }}>
+            {localCard?.requirement || t('kms.knowledgeCards.noRequirement')}
+          </Paragraph>
+          <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.requirementCardHint')}</Text>
+        </>
+      )}
+    </div>
+  )
 
   const renderSummarySection = () => (
     <div style={{ marginBottom: 16 }}>
@@ -286,22 +416,6 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
         <Paragraph style={{ margin: 0, color: token.colorTextSecondary, lineHeight: 1.7 }}>
           {localCard?.summary || '-'}
         </Paragraph>
-      )}
-    </div>
-  )
-
-  const renderKeyPointsSection = () => (
-    <div style={{ marginBottom: 16 }}>
-      <Text strong style={{ display: 'block', marginBottom: 8 }}>{t('kms.knowledgeCards.keyPointsLabel')}</Text>
-      {localCard?.keyPoints.length === 0 ? (
-        <Text type="secondary">-</Text>
-      ) : (
-        localCard?.keyPoints.map((kp, i) => (
-          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
-            <Tag color="blue" style={{ flexShrink: 0, lineHeight: '20px' }}>[{kp.sourceIndex + 1}]</Tag>
-            <Text style={{ fontSize: 13, lineHeight: 1.6 }}>{kp.point}</Text>
-          </div>
-        ))
       )}
     </div>
   )
@@ -394,9 +508,14 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
             {/* 生成/刷新进度 */}
             {renderProgressSection()}
 
+            {/* 最近一次生成流程轨迹（用于排查是否真正检索到资料库内容） */}
+            {renderTraceSection()}
+
+            {/* 生成要求（该卡片单独的生成方向，刷新时使用） */}
+            {renderRequirementSection()}
+
             {/* 卡片内容（生成中只显示已有摘要，完成后显示完整内容） */}
             {localCard.summary && renderSummarySection()}
-            {localCard.keyPoints.length > 0 && renderKeyPointsSection()}
             {localCard.citations.length > 0 && renderCitationsSection()}
           </div>
 

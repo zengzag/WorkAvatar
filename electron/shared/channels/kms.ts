@@ -286,6 +286,7 @@ export interface KMSUpdateKnowledgeCardParams {
   id: string
   summary?: string
   keyPoints?: Array<{ point: string; sourceIndex: number }>
+  requirement?: string
   pinned?: boolean
 }
 

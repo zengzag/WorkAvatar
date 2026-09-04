@@ -398,7 +398,7 @@ const electronAPI = {
     getKeywordStats: (params?: { limit?: number; minCount?: number; recentDays?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KEYWORD_STATS, params || {}),
     getKnowledgeCards: (params: KMSGetKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARDS, params),
     getKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARD, id),
-    generateKnowledgeCard: (keyword: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, keyword),
+    generateKnowledgeCard: (keyword: string, requirement?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, keyword, requirement),
     onKnowledgeCardProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
       const handler = (_event: any, step: any) => callback(step)
       ipcRenderer.on(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, handler)

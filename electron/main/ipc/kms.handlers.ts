@@ -422,10 +422,11 @@ export function registerKMSHandlers(): void {
     return kmsService.getKnowledgeCard(id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, async (event, keyword: string) => {
+  ipcMain.handle(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, async (event, keyword: string, requirement?: string) => {
     try {
       const sender = event.sender
       const result = await kmsService.generateKnowledgeCard(keyword, undefined, {
+        requirement,
         onProgress: (step) => {
           try { if (!sender.isDestroyed()) sender.send(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, step) } catch (e) { /* ignore */ }
         },

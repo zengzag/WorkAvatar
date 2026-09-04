@@ -1489,7 +1489,7 @@ class KMSService {
     return KMSKnowledgeCardService.getInstance().getCard(id)
   }
 
-  async generateKnowledgeCard(keyword: string, displayKeyword?: string, options?: { onProgress?: (step: any) => void }): Promise<{ success: boolean; card?: any; error?: string }> {
+  async generateKnowledgeCard(keyword: string, displayKeyword?: string, options?: { onProgress?: (step: any) => void; requirement?: string }): Promise<{ success: boolean; card?: any; error?: string }> {
     return KMSKnowledgeCardService.getInstance().generateCard(keyword, displayKeyword, options)
   }
 
@@ -1497,7 +1497,7 @@ class KMSService {
     return KMSKnowledgeCardService.getInstance().refreshCard(id, signal, options)
   }
 
-  updateKnowledgeCard(params: { id: string; summary?: string; keyPoints?: any[]; pinned?: boolean }): { success: boolean; error?: string } {
+  updateKnowledgeCard(params: { id: string; summary?: string; keyPoints?: any[]; requirement?: string; pinned?: boolean }): { success: boolean; error?: string } {
     return KMSKnowledgeCardService.getInstance().updateCard(params)
   }
 
