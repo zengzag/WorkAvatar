@@ -18,8 +18,14 @@ export const LLM_CHANNELS = {
   AGENT_TOOL_CALL_DELTA: 'agent:tool-call-delta',
   AGENT_TOOL_RESULT: 'agent:tool-result',
   AGENT_TOOL_PROGRESS: 'agent:tool-progress',
-  /** 委托事件转发：子员工 chatStream 的事件经此通道回传主管前端 */
-  AGENT_DELEGATION_EVENT: 'agent:delegation:event',
+  /** run 事件通道：按 runId 路由的子会话事件 */
+  AGENT_RUN_EVENT: 'agent:run:event',
+  /** 查询活跃子会话运行（renderer 重载恢复用） */
+  LLM_LIST_ACTIVE_RUNS: 'llm:list-active-runs',
+  /** 中止单个子会话运行（级联其子树） */
+  LLM_ABORT_RUN: 'llm:abort-run',
+  /** 查询子会话完整对话（审计入口） */
+  LLM_GET_RUN_CONVERSATION: 'llm:get-run-conversation',
   EMPLOYEE_COMPACT_CONVERSATION: 'employee:compact-conversation',
   EMPLOYEE_GET_CONTEXT_STATS: 'employee:get-context-stats',
   INTERACTION_REQUEST: 'interaction:request',

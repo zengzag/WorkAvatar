@@ -191,11 +191,14 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
     },
-    onDelegationEvent: (callback: (data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => void) => {
-      const handler = (_event: any, data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
+    onRunEvent: (callback: (data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => void) => {
+      const handler = (_event: any, data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_RUN_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_RUN_EVENT, handler)
     },
+    listActiveRuns: (params?: { employeeId?: string; parentConversationId?: string }) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_RUNS, params),
+    abortRun: (runId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_RUN, runId),
+    getRunConversation: (runId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_GET_RUN_CONVERSATION, runId),
   },
 
   settings: {

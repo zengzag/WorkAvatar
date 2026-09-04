@@ -33,8 +33,16 @@ export interface MessageSegment {
   /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */
   generatedFiles?: GeneratedFileInfo[]
   // ---- delegation 段专用字段 ----
-  /** 委托 id（路由子员工事件用） */
+  /** 委托 id（路由子员工事件用；与后端 runId 一致） */
   delegationId?: string
+  /** 后端子会话运行 id（v2，贯穿 launch→await→渲染） */
+  runId?: string
+  /** 并行组 id（一次 launch_agents 派发的一组 run 共享） */
+  groupRunId?: string
+  /** 并行组内序号（用于组内定位/首卡展示组信息） */
+  runGroupIndex?: number
+  /** 并行组内总数 */
+  parallelTotal?: number
   /** 目标员工 id */
   targetEmployeeId?: string
   /** 目标员工名 */
@@ -44,13 +52,20 @@ export interface MessageSegment {
   /** 委托指令 */
   instruction?: string
   /** 委托状态 */
-  delegationStatus?: 'streaming' | 'completed' | 'failed' | 'timed_out'
+  delegationStatus?: 'queued' | 'streaming' | 'completed' | 'failed' | 'timed_out' | 'cancelled'
   /** 子员工完整执行流（递归渲染） */
   subSegments?: MessageSegment[]
   /** 子员工 token 消耗 */
   delegationTokenUsage?: TokenUsage
   /** 折叠态展示的结果摘要 */
   resultSummary?: string
+  /** 结构化运行结果（v2，含产物文件清单） */
+  runResult?: {
+    summary?: string
+    generatedFiles?: GeneratedFileInfo[]
+    autoDetectedFiles?: GeneratedFileInfo[]
+    references?: string[]
+  }
 }
 
 export interface TokenUsage {
@@ -132,7 +147,7 @@ export function ensureSegments(msg: MessageWithThought): MessageWithThought {
 
 function isSegmentComplete(s: MessageSegment): boolean {
   if (s.type === 'tool_call') return !!s.isToolComplete
-  if (s.type === 'delegation') return s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out'
+  if (s.type === 'delegation') return s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out' || s.delegationStatus === 'cancelled'
   return s.isStreaming === false
 }
 

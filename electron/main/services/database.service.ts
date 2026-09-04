@@ -334,6 +334,23 @@ class DatabaseService {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_delegate_perm_unique ON employee_delegate_permissions(supervisor_id, target_id);
       CREATE INDEX IF NOT EXISTS idx_delegate_perm_supervisor ON employee_delegate_permissions(supervisor_id);
 
+      -- 子会话运行记录（多智能体运行时）：每次委托/派发一个 run，状态机与结构化结果落库
+      CREATE TABLE IF NOT EXISTS sub_agent_runs (
+        run_id TEXT PRIMARY KEY,
+        parent_conversation_id TEXT NOT NULL,
+        employee_id TEXT NOT NULL DEFAULT '',
+        parent_run_id TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'queued',
+        inputs_json TEXT DEFAULT '{}',
+        result_json TEXT DEFAULT '{}',
+        usage_json TEXT DEFAULT '{}',
+        error TEXT,
+        started_at INTEGER,
+        ended_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_parent ON sub_agent_runs(parent_conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
+
       -- 日历日程表：用户与智能体创建的日程事件
       CREATE TABLE IF NOT EXISTS calendar_events (
         id TEXT PRIMARY KEY,

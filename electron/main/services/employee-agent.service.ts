@@ -314,8 +314,12 @@ class EmployeeAgentService {
       modeMap.set(id, 'on_demand')
     }
 
-    // 协作工具（delegate_to_employee）默认关闭，需在员工设置中手动启用
+    // 协作/编排工具：并行编排（launch/await）默认常驻，多独立子任务可并行；其余（串行委托/平级消息）需按需开启
     modeMap.set('delegate_to_employee', 'off')
+    modeMap.set('launch_agents', 'on')
+    modeMap.set('await_agents', 'on')
+    modeMap.set('send_message', 'off')
+    modeMap.set('read_messages', 'off')
 
     let rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'

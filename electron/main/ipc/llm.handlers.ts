@@ -14,24 +14,9 @@ import { createPiProvider } from '../services/agent/llm/pi-provider-factory'
 import UnifiedInteractionService, { interactionContext } from '../services/unified-interaction.service'
 import { generateId } from '../services/common-utils'
 import { safeHandle } from './_shared'
-
-/** 主管会话 → webContents 映射，供 delegate 工具转发子员工事件到主管前端 */
-const sessionWebContents: Map<string, Electron.WebContents> = new Map()
-
-/**
- * 委托事件转发：delegate 工具调用此函数把子员工 chatStream 的事件推给主管前端。
- * 由 delegate.tool.ts 引用，避免工具 handler 内重复持有 IPC 上下文。
- */
-export function forwardDelegationEvent(
-  parentSessionId: string,
-  delegationId: string,
-  eventType: string,
-  data: any
-): void {
-  const wc = sessionWebContents.get(parentSessionId)
-  if (!wc || wc.isDestroyed()) return
-  wc.send(IPC_CHANNELS.AGENT_DELEGATION_EVENT, { parentSessionId, delegationId, eventType, data })
-}
+import { registerSessionWebContents, unregisterSessionWebContents } from './agent-run-events'
+import SubAgentRuntime from '../services/agent-runtime/runtime'
+import WorkspaceManagerService from '../services/workspace-manager.service'
 
 export function registerLLMHandlers(
   llmClient: LLMClientService,
@@ -68,6 +53,27 @@ export function registerLLMHandlers(
       sessions.push({ sessionId, employeeId: meta?.employeeId, conversationId: meta?.conversationId })
     }
     return sessions
+  })
+
+  // 活跃子会话运行列表（renderer 重载后恢复运行面板/消息流用）
+  safeHandle(IPC_CHANNELS.LLM_LIST_ACTIVE_RUNS, (params?: { employeeId?: string; parentConversationId?: string }) => {
+    return SubAgentRuntime.getInstance().listActiveRuns(params || {})
+  })
+
+  // 中止单个子会话运行（级联其子树）
+  safeHandle(IPC_CHANNELS.LLM_ABORT_RUN, (runId?: string) => {
+    if (!runId) return { success: false, error: '缺少 runId' }
+    return { success: SubAgentRuntime.getInstance().cancelRun(runId) }
+  })
+
+  // 查询子会话完整对话（审计入口）
+  safeHandle(IPC_CHANNELS.LLM_GET_RUN_CONVERSATION, (runId?: string) => {
+    if (!runId) return { success: false, error: '缺少 runId' }
+    const run = SubAgentRuntime.getInstance().getRun(runId)
+    if (!run?.conversationId) return { success: false, error: 'run 不存在或未关联会话' }
+    const conv = WorkspaceManagerService.getInstance().getConversation(run.conversationId)
+    if (!conv) return { success: false, error: '会话不存在' }
+    return { success: true, conversation: conv, employeeName: run.employeeName, instruction: run.instruction }
   })
 
   safeHandle(IPC_CHANNELS.LLM_PROVIDER_LIST, () => {
@@ -115,7 +121,7 @@ export function registerLLMHandlers(
     const sessionId = generateId()
     activeSessions.set(sessionId, abortController)
     activeSessionsMeta.set(sessionId, { employeeId: params.employee_id, conversationId: params.conversation_id })
-    sessionWebContents.set(sessionId, event.sender)
+    registerSessionWebContents(sessionId, event.sender)
 
     interactionService.registerSession(sessionId, event.sender)
 
@@ -232,9 +238,8 @@ export function registerLLMHandlers(
                 flushToolCallDeltas()
                 // abort 时也发送 metadata（含 tokenUsage/contextStats），让前端能显示用量
                 if (!event.sender.isDestroyed()) {
-                  // 合并子员工 token 用量到主管会话 metadata
-                  const ctx = interactionContext.getStore()
-                  const childUsage = ctx?.childTokenUsage
+                  // 合并子会话 token 用量到主管会话 metadata（经 run 运行时聚合）
+                  const childUsage = SubAgentRuntime.getInstance().getAggregatedUsage(sessionId)
                   const mergedMetadata = { ...(metadata || {}) }
                   if (childUsage && (childUsage.totalTokens || childUsage.completionTokens || childUsage.promptTokens)) {
                     const base = metadata?.tokenUsage || {}
@@ -249,7 +254,7 @@ export function registerLLMHandlers(
                 }
                 activeSessions.delete(sessionId)
                 activeSessionsMeta.delete(sessionId)
-                sessionWebContents.delete(sessionId)
+                unregisterSessionWebContents(sessionId)
               },
               onError: (error: string) => {
                 flushChunks()
@@ -260,7 +265,7 @@ export function registerLLMHandlers(
                 }
                 activeSessions.delete(sessionId)
                 activeSessionsMeta.delete(sessionId)
-                sessionWebContents.delete(sessionId)
+                unregisterSessionWebContents(sessionId)
               },
             },
             abortController.signal
@@ -274,7 +279,7 @@ export function registerLLMHandlers(
             }
             activeSessions.delete(sessionId)
             activeSessionsMeta.delete(sessionId)
-            sessionWebContents.delete(sessionId)
+            unregisterSessionWebContents(sessionId)
             return
           }
           // 避免与 onError 回调重复发送错误，仅当 onError 未处理时发送
@@ -283,7 +288,7 @@ export function registerLLMHandlers(
           }
           activeSessions.delete(sessionId)
           activeSessionsMeta.delete(sessionId)
-          sessionWebContents.delete(sessionId)
+          unregisterSessionWebContents(sessionId)
         } finally {
           interactionService.unregisterSession(sessionId)
         }

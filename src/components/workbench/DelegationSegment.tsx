@@ -59,12 +59,14 @@ const DelegationSegmentInner: React.FC<{
   const status = seg.delegationStatus || 'streaming'
 
   const isError = status === 'failed' || status === 'timed_out'
+  const isCancelled = status === 'cancelled'
+  const isQueued = status === 'queued'
   const isDone = status === 'completed'
-  const isRunning = !isError && !isDone
+  const isRunning = !isError && !isCancelled && !isDone
 
-  const accentColor = isError ? token.colorError : isDone ? token.colorSuccess : token.colorPrimary
-  const accentBorder = isError ? token.colorErrorBorder : isDone ? token.colorSuccessBorder : token.colorPrimaryBorder
-  const headerBg = isError ? token.colorErrorBg : isDone ? token.colorSuccessBg : token.colorPrimaryBg
+  const accentColor = isError ? token.colorError : isCancelled ? token.colorTextSecondary : isDone ? token.colorSuccess : token.colorPrimary
+  const accentBorder = isError ? token.colorErrorBorder : isCancelled ? token.colorBorder : isDone ? token.colorSuccessBorder : token.colorPrimaryBorder
+  const headerBg = isError ? token.colorErrorBg : isCancelled ? token.colorFillQuaternary : isDone ? token.colorSuccessBg : token.colorPrimaryBg
 
   const duration = useElapsedTime(seg.timestamp, !isRunning, seg.completedAt)
   const usage: TokenUsage | undefined = seg.delegationTokenUsage
@@ -76,19 +78,29 @@ const DelegationSegmentInner: React.FC<{
         <CloseCircleOutlined /> {t('workbench.delegationFailed')}
       </Tag>
     }
+    if (isCancelled) {
+      return <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
+        <ClockCircleOutlined /> {t('workbench.runCancelled')}
+      </Tag>
+    }
     if (isDone) {
       return <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
         <CheckCircleOutlined /> {t('workbench.delegationCompleted')}
       </Tag>
     }
+    if (isQueued) {
+      return <Tag color="warning" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
+        <ClockCircleOutlined /> {t('workbench.runQueued')}
+      </Tag>
+    }
     return <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
       <LoadingOutlined spin /> {t('workbench.delegationRunning')}
     </Tag>
-  }, [isError, isDone, t])
+  }, [isError, isCancelled, isDone, isQueued, t])
 
   const subSegments = seg.subSegments || []
   const instruction = seg.instruction || ''
-  const summary = seg.resultSummary || ''
+  const summary = seg.resultSummary || seg.runResult?.summary || ''
   const hasSubContent = subSegments.length > 0
 
   return (
@@ -120,8 +132,16 @@ const DelegationSegmentInner: React.FC<{
           ) : (
             <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
           )}
-          <TeamOutlined style={{ fontSize: 13, color: accentColor }} />
-          <Text strong style={{ fontSize: 13, color: token.colorText }}>
+          <TeamOutlined style={{ fontSize: 13, color: accentColor, flexShrink: 0 }} />
+          <Text strong style={{
+            fontSize: 13,
+            color: token.colorText,
+            flex: '1 1 auto',
+            minWidth: 0,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}>
             {t('workbench.delegationTo')} {seg.targetEmployeeName || t('workbench.delegationUnknown')}
           </Text>
           {instruction && (
@@ -130,6 +150,8 @@ const DelegationSegmentInner: React.FC<{
                 fontSize: 11,
                 color: token.colorTextTertiary,
                 maxWidth: 260,
+                flexShrink: 1,
+                minWidth: 0,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -138,7 +160,12 @@ const DelegationSegmentInner: React.FC<{
               </Text>
             </Tooltip>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {seg.runGroupIndex === 0 && seg.parallelTotal && seg.parallelTotal > 1 && (
+              <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>
+                {t('workbench.runGroupTotal', { count: seg.parallelTotal })}
+              </Tag>
+            )}
             {duration !== null && (
               <Text type="secondary" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
                 <ClockCircleOutlined style={{ fontSize: 10 }} />
@@ -156,7 +183,7 @@ const DelegationSegmentInner: React.FC<{
 
         {/* 折叠态：结果摘要 / 错误信息 */}
         {!isExpanded && (() => {
-          const foldText = isError ? (seg.toolError || summary) : summary
+          const foldText = (isError || isCancelled) ? (seg.toolError || summary) : summary
           if (!foldText) return null
           return (
             <div style={{
@@ -207,7 +234,7 @@ const DelegationSegmentInner: React.FC<{
                   </div>
                 )}
                 {/* 失败时在子段下方补充错误详情 */}
-                {isError && seg.toolError && (
+                {(isError || isCancelled) && seg.toolError && (
                   <div style={{
                     marginTop: 6,
                     padding: '6px 10px',
@@ -222,7 +249,7 @@ const DelegationSegmentInner: React.FC<{
                   </div>
                 )}
               </>
-            ) : isError && seg.toolError ? (
+            ) : (isError || isCancelled) && seg.toolError ? (
               <div style={{
                 padding: '6px 10px',
                 fontSize: 12,

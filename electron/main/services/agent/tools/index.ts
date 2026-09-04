@@ -6,6 +6,8 @@ import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
 import { ocrImageTool } from './ocr.tool'
 import { delegateTool } from './delegate.tool'
+import { launchAgentsTool, awaitAgentsTool } from './launch-agents.tool'
+import { sendMessageTool, readMessagesTool } from './collab-messages.tool'
 import { listEmployeesTool, listProvidersTool } from './collaboration.tool'
 import type { ToolDefinition } from './types'
 
@@ -18,6 +20,10 @@ export const allBuiltinTools: ToolDefinition[] = [
   askUserTool,
   ocrImageTool,
   delegateTool,
+  launchAgentsTool,
+  awaitAgentsTool,
+  sendMessageTool,
+  readMessagesTool,
   listEmployeesTool,
   listProvidersTool,
 ]
@@ -31,3 +37,5 @@ export { createListAvailableToolsTool, createInvokeToolTool } from './meta-tools
 export { buildOfficeGuide } from './office-prompts'
 export { runSkillScriptTool } from './run-skill-script.tool'
 export { delegateTool } from './delegate.tool'
+export { launchAgentsTool, awaitAgentsTool, buildMultiAgentDescription } from './launch-agents.tool'
+export { sendMessageTool, readMessagesTool } from './collab-messages.tool'

@@ -25,12 +25,12 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
   const [previewFile, setPreviewFile] = useState<GeneratedFileInfo | null>(null)
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
 
-  // 聚合所有 tool_call 段的 generatedFiles，按路径去重（后写覆盖先写，保留最新 size/mtime）
+  // 聚合所有 tool_call / delegation 段的 generatedFiles，按路径去重（后写覆盖先写，保留最新 size/mtime）
   const generatedFiles = useMemo(() => {
     if (!segments) return []
     const map = new Map<string, GeneratedFileInfo>()
     for (const seg of segments) {
-      if (seg.type === 'tool_call' && seg.generatedFiles && seg.generatedFiles.length > 0) {
+      if (seg.generatedFiles && seg.generatedFiles.length > 0) {
         for (const f of seg.generatedFiles) map.set(f.path, f)
       }
     }

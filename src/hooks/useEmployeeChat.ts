@@ -3,6 +3,7 @@ import dayjs from 'dayjs'
 import { useTranslation } from 'react-i18next'
 import type { Conversation } from '../types'
 import type { MessageWithThought, MessageBranch, ModelSelection } from '../components/workbench'
+import type { MessageSegment } from '../components/workbench/types'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
@@ -19,6 +20,7 @@ import {
   createPersistentMessagesCache,
 } from './chat-helpers'
 import { useStreamListeners, getPersistentListenersCleanup, getPersistentEmployeeId, setPersistentEmployeeId } from './useStreamListeners'
+import { recoverSubSegmentsFromLog } from './run-recovery'
 
 interface UseEmployeeChatParams {
   id: string | undefined
@@ -310,11 +312,51 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         assistantMessageId,
         segCounter: 0,
         toolCallCounter: 0,
+        runCounter: 0,
+        groupSeq: 0,
       })
       if (s.conversationId === activeConversationIdRef.current) {
         setIsStreaming(true)
         isStreamingRef.current = true
       }
+
+      // 恢复子会话运行卡片：从后端事件日志重建 delegation 段，
+      // 重载后该 run 的后续事件流仍会实时注入（useStreamListeners.onRunEvent）
+      try {
+        const runs = await window.electronAPI.llm.listActiveRuns({ parentConversationId: s.conversationId }) as any[]
+        if (Array.isArray(runs) && runs.length > 0) {
+          const segs: MessageSegment[] = runs.map((run: any, i: number) => {
+            const log: Array<{ eventType: string; data: any }> = run.eventLog || []
+            const startEv = log.find(e => e.eventType === 'start')
+            return {
+              type: 'delegation',
+              id: `${assistantMessageId}_run_rec_${i}_${run.runId}`,
+              runId: run.runId,
+              delegationId: run.runId,
+              targetEmployeeId: startEv?.data?.targetEmployeeId || run.employeeId,
+              targetEmployeeName: startEv?.data?.targetEmployeeName || run.employeeName || t('workbench.delegationUnknown'),
+              targetAvatarType: startEv?.data?.targetAvatarType || run.employeeAvatarType,
+              instruction: startEv?.data?.instruction || run.instruction,
+              delegationStatus: (run.status === 'running' || run.status === 'queued') ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
+              subSegments: recoverSubSegmentsFromLog(log, run.runId),
+              isToolComplete: false,
+              collapsed: false,
+              timestamp: Date.now(),
+            }
+          })
+          const cache = resolveConvCache(s.conversationId)
+          const cached = cache.get(s.conversationId)
+          if (cached && cached.length > 0) {
+            const updated = cached.map(m => (m.id === assistantMessageId ? { ...m, segments: segs } : m))
+            setConvMessages(s.conversationId, updated)
+            window.electronAPI.conversation.update({
+              id: s.conversationId,
+              messages_json: JSON.stringify(updated),
+              message_count: updated.length,
+            }).catch(() => {})
+          }
+        }
+      } catch { /* 子会话恢复失败不阻断主管会话恢复 */ }
     }
   }
 
@@ -1154,6 +1196,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           assistantMessageId,
           segCounter: 0,
           toolCallCounter: 0,
+          runCounter: 0,
+          groupSeq: 0,
         }
 
         if (targetConvId === activeConversationIdRef.current) {
@@ -1228,6 +1272,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         assistantMessageId,
         segCounter: 0,
         toolCallCounter: 0,
+        runCounter: 0,
+        groupSeq: 0,
       }
 
       try {
@@ -1324,6 +1370,8 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       assistantMessageId,
       segCounter: 0,
       toolCallCounter: 0,
+      runCounter: 0,
+      groupSeq: 0,
     }
 
     try {

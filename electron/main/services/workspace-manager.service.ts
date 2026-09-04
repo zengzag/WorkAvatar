@@ -387,6 +387,14 @@ class WorkspaceManagerService {
     delTx()
     const ok = toDelete.length > 0
 
+    // 清理子会话运行记录并中止在途 run（懒加载避免循环依赖）
+    if (ok) {
+      try {
+        const { default: SubAgentRuntime } = require('./agent-runtime/runtime')
+        SubAgentRuntime.getInstance().clearRunsByConversations(toDelete)
+      } catch { /* ignore */ }
+    }
+
     // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除
     // 子会话的工作区目录位于主会话目录下，删除主会话目录时会一并清理子目录
     let taskDir: string | undefined

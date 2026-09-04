@@ -13,6 +13,10 @@ export interface ConversationStreamState {
   assistantMessageId: string | null
   segCounter: number
   toolCallCounter: number
+  /** delegation/run 段 id 计数器 */
+  runCounter: number
+  /** 并行组自增号（生成 groupRunId） */
+  groupSeq: number
 }
 
 export const getActiveBranchData = (m: MessageWithThought): {
@@ -55,7 +59,7 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
         name: 'delegate_to_employee',
         args: { target_employee_id: s.targetEmployeeId, instruction: s.instruction || '' },
         result: s.resultSummary,
-        isComplete: s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out',
+        isComplete: s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out' || s.delegationStatus === 'cancelled',
       }
     }
     return {
@@ -173,17 +177,21 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
         hasToolCalls = true
       } else if (seg.type === 'delegation') {
         // delegation 段等价于一次 delegate_to_employee 调用 + 结果摘要
-        // 子员工完整过程不进主管 LLM 上下文，仅 resultSummary 作为 tool_result
+        // 子员工完整过程不进主管 LLM 上下文，仅 resultSummary（含产物文件清单）作为 tool_result
         if (hasToolCalls) flushTurn()
+        const runFiles = (seg.runResult?.generatedFiles || []).concat(seg.runResult?.autoDetectedFiles || [])
+        const fileLines = runFiles.length > 0
+          ? `\n生成的成果文件：\n${runFiles.map(f => `- ${f.path}`).join('\n')}`
+          : ''
         currentToolCalls.push({
-          id: seg.delegationId || seg.id,
+          id: seg.delegationId || seg.runId || seg.id,
           name: 'delegate_to_employee',
           args: {
             target_employee_id: seg.targetEmployeeId,
             instruction: seg.instruction || '',
           },
-          result: seg.resultSummary || '(子员工已完成)',
-          isComplete: seg.delegationStatus === 'completed' || seg.delegationStatus === 'failed' || seg.delegationStatus === 'timed_out',
+          result: `${seg.resultSummary || '(子员工已完成)'}${fileLines}`,
+          isComplete: seg.delegationStatus === 'completed' || seg.delegationStatus === 'failed' || seg.delegationStatus === 'timed_out' || seg.delegationStatus === 'cancelled',
         })
         hasToolCalls = true
       }
