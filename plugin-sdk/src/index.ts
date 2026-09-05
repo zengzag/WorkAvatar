@@ -1,5 +1,6 @@
 export type {
   PluginManifest,
+  PluginManifestEmployee,
   PluginNavContribution,
   PluginCapability,
   PluginDataEntity,

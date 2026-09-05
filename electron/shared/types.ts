@@ -1,3 +1,6 @@
+/** 员工来源：user=用户创建（DB 落库） / builtin=宿主内置（运行时注册） / plugin=插件声明（运行时注册） */
+export type EmployeeSource = 'user' | 'builtin' | 'plugin'
+
 export interface Employee {
   id: string
   workspace_path?: string
@@ -7,9 +10,23 @@ export interface Employee {
   profile_json: string
   avatar_type: string
   default_skill_id?: string
+  /** 员工来源，缺省视为 user（旧数据兼容） */
+  source?: EmployeeSource
+  /** 注册表内唯一 key（内置员工如 knowledge-base，插件员工如 calendar-assistant） */
+  source_key?: string
+  /** 归属插件 id（仅 source=plugin），用于 UI 按插件分组与禁用时下线 */
+  plugin_id?: string
+  /** 归属插件显示名（仅 source=plugin，随列表下发） */
+  plugin_name?: string
+  /** 是否启用（缺省 true）。禁用后任务界面不可被选为发起任务的员工 */
+  is_enabled?: boolean
+  /** 注册员工默认启用的工具 id 列表（内置/插件声明，随列表下发，仅注册员工有） */
+  defaultTools?: string[]
   /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化），空串/缺失表示未配置 */
   delegation_json?: string | null
   memory_enabled: boolean
+  /** 注册员工影子记录标记（DB 占位行，仅外键引用用，不参与列表展示） */
+  is_registered?: number
   arch_version: number
   total_tasks: number
   total_approvals: number

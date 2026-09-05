@@ -90,6 +90,8 @@ interface ToolsSectionProps {
   onChangeToolMode?: (toolId: string, mode: ToolMode) => void
   /** 切换整个分类下所有工具的模式 */
   onChangeCategoryMode?: (categoryId: string, mode: ToolMode) => void
+  /** 只读模式（注册员工）：展示三态，禁止切换 */
+  readonly?: boolean
 }
 
 const ToolsSection: React.FC<ToolsSectionProps> = ({
@@ -97,6 +99,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
   toolCategories,
   onChangeToolMode,
   onChangeCategoryMode,
+  readonly,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -255,6 +258,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                       size="small"
                       options={modeOptions}
                       value={cat.mode}
+                      disabled={readonly}
                       onChange={(value) =>
                         handleChangeCategoryMode(cat.id, value as ToolMode)
                       }
@@ -324,6 +328,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                                     size="small"
                                     options={modeOptions}
                                     value={tool.mode}
+                                    disabled={readonly}
                                     onChange={(value) =>
                                       handleChangeToolMode(
                                         tool.id,

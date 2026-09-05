@@ -46,6 +46,8 @@ interface SkillsSectionProps {
   onInstallFromZip: () => void
   onUninstallSkill: (skillId: string) => void
   onToggleSkill: (skillId: string, enabled: boolean) => void
+  /** 只读模式（注册员工）：禁止安装/卸载/切换技能 */
+  readonly?: boolean
 }
 
 // 描述回退逻辑：优先 description，其次取 skillMdContent 前 200 字符去掉首行 Markdown 标题，最后回退到无描述
@@ -66,6 +68,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
   onInstallFromZip,
   onUninstallSkill,
   onToggleSkill,
+  readonly,
 }) => {
   const { t } = useTranslation()
   const { token } = theme.useToken()
@@ -94,10 +97,10 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
         }
         extra={
           <Space>
-            <Button icon={<FolderOpenOutlined />} onClick={onInstallFromDir} loading={installingSkill}>
+            <Button icon={<FolderOpenOutlined />} onClick={onInstallFromDir} loading={installingSkill} disabled={readonly}>
               {t('employeeSettings.installFromDir')}
             </Button>
-            <Button icon={<FileZipOutlined />} onClick={onInstallFromZip} loading={installingSkill}>
+            <Button icon={<FileZipOutlined />} onClick={onInstallFromZip} loading={installingSkill} disabled={readonly}>
               {t('employeeSettings.installFromZip')}
             </Button>
           </Space>
@@ -141,7 +144,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     </Space>
                   </div>
                 </div>
-                {skill.source !== 'bundled' && (
+                {!readonly && skill.source !== 'bundled' && (
                   <Popconfirm
                     title={t('employeeSettings.confirmUninstallSkill')}
                     description={t('employeeSettings.uninstallSkillDesc')}
@@ -205,7 +208,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                 <Switch
                   checked={skill.enabled}
                   onChange={(checked) => handleToggle(skill.id, checked)}
-                  disabled={skill.source === 'project'}
+                  disabled={readonly || skill.source === 'project'}
                   checkedChildren={t('common.enable')}
                   unCheckedChildren={t('common.disable')}
                 />

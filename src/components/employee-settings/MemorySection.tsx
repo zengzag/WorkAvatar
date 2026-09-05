@@ -62,6 +62,8 @@ interface MemorySectionProps {
   employeeId: string
   memoryEnabled: boolean
   onMemoryEnabledChange: (enabled: boolean) => void
+  /** 只读模式（注册员工）：记忆列表只读（开关仍可切换） */
+  readonly?: boolean
 }
 
 // 记忆主题常量（值为后端 LLM 提取时写入的中文标识）
@@ -85,6 +87,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
   employeeId,
   memoryEnabled,
   onMemoryEnabledChange,
+  readonly,
 }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
@@ -372,11 +375,11 @@ const MemorySection: React.FC<MemorySectionProps> = ({
             {memoryEnabled && (
               <>
                 <Tooltip title={t('employeeSettings.memoryTrashHint')}>
-                  <Button icon={<DeleteOutlined />} onClick={openTrash}>
+                  <Button icon={<DeleteOutlined />} onClick={openTrash} disabled={readonly}>
                     {t('employeeSettings.memoryTrash')}
                   </Button>
                 </Tooltip>
-                <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal}>
+                <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal} disabled={readonly}>
                   {t('employeeSettings.addMemory')}
                 </Button>
               </>
@@ -427,7 +430,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                     icon={<CompressOutlined />}
                     onClick={handleConsolidate}
                     loading={consolidating}
-                    disabled={consolidating}
+                    disabled={consolidating || readonly}
                   >
                     {t('employeeSettings.consolidateMemories')}
                   </Button>
@@ -496,6 +499,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                             size="small"
                             icon={m.is_pinned ? <PushpinFilled style={{ color: token.colorPrimary }} /> : <PushpinOutlined />}
                             onClick={() => handleTogglePin(m)}
+                            disabled={readonly}
                           />
                         </Tooltip>
                         <Tooltip title={t('common.edit')}>
@@ -504,6 +508,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                             size="small"
                             icon={<EditOutlined />}
                             onClick={() => openEditModal(m)}
+                            disabled={readonly}
                           />
                         </Tooltip>
                         <Tooltip title={t('common.delete')}>
@@ -513,6 +518,7 @@ const MemorySection: React.FC<MemorySectionProps> = ({
                             danger
                             icon={<DeleteOutlined />}
                             onClick={() => handleDeleteMemory(m)}
+                            disabled={readonly}
                           />
                         </Tooltip>
                       </Space>

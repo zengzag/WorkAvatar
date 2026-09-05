@@ -4,6 +4,9 @@ import type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDuplicateParams,
+  EmployeeSetEnabledParams,
+  EmployeeSetMemoryEnabledParams,
   ConversationListParams,
   ConversationListWithEmployeeParams,
   ConversationCreateParams,
@@ -28,6 +31,7 @@ import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
+import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
@@ -41,11 +45,31 @@ export function registerEmployeeHandlers(
   memoryService: EmployeeMemoryService
 ) {
   safeHandle(IPC_CHANNELS.EMPLOYEE_LIST, () => {
-    return workspaceManager.getEmployeeList()
+    // DB 员工（用户创建）在前，注册员工（内置/插件，只读）追加在后；前端按来源分组展示。
+    // 两者统一附加启用状态（KV 持久化），任务界面按 is_enabled 过滤不可选员工
+    const registry = EmployeeRegistryService.getInstance()
+    // 过滤注册员工的影子记录（is_registered=1，仅外键占位），避免与 registry.listRegistered() 重复展示
+    const dbList = workspaceManager.getEmployeeList()
+      .filter(e => !e.is_registered)
+      .map(e => ({ ...e, is_enabled: registry.isEnabled(e.id) }))
+    // 注册员工展示其独立工作区根目录（dataDir/registry-workspaces/<id 摘要>），供打开工作区按钮使用
+    const registered = registry.listRegistered().map(e => ({
+      ...e,
+      workspace_path: workspaceManager.getRegistryWorkspaceRoot(e.id),
+    }))
+    return [...dbList, ...registered]
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_GET, (id: string) => {
-    return workspaceManager.getEmployee(id)
+    // 注册员工（内置/插件）优先返回注册表对象：DB 中仅存影子记录，缺少 source/source_key 等注册属性标记
+    const registered = EmployeeRegistryService.getInstance().getRegistered(id)
+    if (registered) {
+      return { ...registered, workspace_path: workspaceManager.getRegistryWorkspaceRoot(id) }
+    }
+    const emp = workspaceManager.getEmployee(id)
+    return emp
+      ? { ...emp, is_enabled: EmployeeRegistryService.getInstance().isEnabled(id) }
+      : null
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_CREATE, (params: EmployeeCreateParams) => {
@@ -63,12 +87,29 @@ export function registerEmployeeHandlers(
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams) => {
+    // 注册员工（内置/插件）只读，禁止删除
+    if (EmployeeRegistryService.getInstance().isRegistered(params.id)) return false
     const ok = workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
     if (ok) {
       // 删除员工时清除关联的 Agent 缓存
       try { EmployeeAgentService.getInstance().clearAgentCache(params.id) } catch { /* ignore */ }
     }
     return ok
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DUPLICATE, (params: EmployeeDuplicateParams) => {
+    // 另存副本：注册员工（内置/插件）→ 用户员工（DB 落库），副本可自由编辑/删除/导出
+    return EmployeeRegistryService.getInstance().duplicateAsUser(params.id)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_SET_ENABLED, (params: EmployeeSetEnabledParams) => {
+    // 启用/禁用开关：注册员工（内置/插件）与 user 员工均生效（KV 持久化）
+    return EmployeeRegistryService.getInstance().setEnabled(params.id, params.enabled)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_SET_MEMORY_ENABLED, (params: EmployeeSetMemoryEnabledParams) => {
+    // 记忆开关仅对注册员工（内置/插件）生效（user 员工走 update.memory_enabled）
+    return EmployeeRegistryService.getInstance().setMemoryEnabled(params.id, params.enabled)
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_LIST, (params: ConversationListParams) => {

@@ -33,6 +33,7 @@ import type {
 import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugin-sdk/src'
 import { toToolMiddleware } from './middleware-adapter'
 import type { ToolMiddleware } from '../agent/tools/tool-middleware'
+import type { RegisteredEmployee } from '../employee-registry.service'
 import {
   getCapability,
   canRegisterView,
@@ -105,6 +106,9 @@ interface PluginRecord {
   /** activate 成功后的主进程模块（含 deactivate） */
   module?: { deactivate?: () => void | Promise<void> }
 }
+
+/** manifest 员工 key 命名规则（与插件 id 一致） */
+const EMPLOYEE_KEY_RE = /^[a-z][a-z0-9-]{1,63}$/
 
 interface CollectedContributions {
   agentTools: unknown[]
@@ -361,6 +365,9 @@ class PluginHostService {
     this.commands.clear()
     this.busResponders.clear()
     this.schedulerJobs.clear()
+    // 插件员工随热重载整体下线，重新激活后按新声明重建（内置员工不受影响）
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().resetPluginEmployees()
     for (const accelerator of this.registeredShortcuts) {
       try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
     }
@@ -428,6 +435,8 @@ class PluginHostService {
       record.module = { deactivate: mod.deactivate }
       record.status = 'active'
       record.statusMessage = undefined
+      // 插件激活成功后注册其 manifest 声明的数字员工（异常隔离：单员工声明非法只跳过，不影响插件运行）
+      this.registerManifestEmployees(record)
       logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})`)
     } catch (err: any) {
       record.status = 'error'
@@ -464,6 +473,42 @@ class PluginHostService {
   /** 校验 legacyMigration 权限（v2 保留在 permissions 数组，仅迁移专用） */
   private hasPermission(record: PluginRecord, permission: string): boolean {
     return (record.manifest.permissions ?? []).includes(permission as never)
+  }
+
+  /** 将插件 manifest.employees 声明注册进员工注册表（激活成功后调用） */
+  private registerManifestEmployees(record: PluginRecord): void {
+    const list = record.manifest.employees
+    if (!list || list.length === 0) return
+    const employees: RegisteredEmployee[] = []
+    for (const e of list) {
+      if (!e || typeof e.key !== 'string' || !EMPLOYEE_KEY_RE.test(e.key)) {
+        logger.warn(`插件 ${record.manifest.id} 员工 key 非法，已跳过: ${e?.key}`)
+        continue
+      }
+      if (!e.name || typeof e.systemPrompt !== 'string') {
+        logger.warn(`插件 ${record.manifest.id} 员工缺少 name/systemPrompt，已跳过: ${e.key}`)
+        continue
+      }
+      employees.push({
+        id: e.key,
+        source_key: e.key,
+        name: e.name,
+        description: e.description || '',
+        rules: e.systemPrompt,
+        profile_json: '',
+        avatar_type: e.avatarType || 'default',
+        memory_enabled: false,
+        arch_version: 1,
+        total_tasks: 0,
+        total_approvals: 0,
+        created_at: 0,
+        updated_at: 0,
+        defaultTools: e.defaultTools,
+      })
+    }
+    if (employees.length === 0) return
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().registerPluginEmployees(record.manifest.id, record.manifest.name, employees)
   }
 
   /** 校验系统能力特性（capabilities.system.features） */
@@ -1310,6 +1355,11 @@ class PluginHostService {
     else disabled.add(pluginId)
     this.writeDisabledList(disabled)
     record.enabled = enabled
+    // 禁用时同步下线插件员工（重新启用需重启激活）
+    if (!enabled) {
+      const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+      EmployeeRegistryService.getInstance().unregisterPluginEmployees(pluginId)
+    }
     logger.info(`插件${enabled ? '启用' : '禁用'}: ${pluginId}（重启生效）`)
   }
 
@@ -1318,6 +1368,9 @@ class PluginHostService {
     if (!record) throw new Error(`插件不存在: ${pluginId}`)
     fs.rmSync(record.rootDir, { recursive: true, force: true })
     this.records.delete(pluginId)
+    // 删除时卸载插件员工
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().unregisterPluginEmployees(pluginId)
     logger.info(`插件已删除: ${pluginId}（重启生效）`)
   }
 

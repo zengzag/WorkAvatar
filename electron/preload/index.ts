@@ -6,6 +6,9 @@ import type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDuplicateParams,
+  EmployeeSetEnabledParams,
+  EmployeeSetMemoryEnabledParams,
   ConversationListParams,
   ConversationListWithEmployeeParams,
   ConversationCreateParams,
@@ -84,6 +87,9 @@ const electronAPI = {
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
     delete: (params: EmployeeDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    duplicate: (params: EmployeeDuplicateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DUPLICATE, params),
+    setEnabled: (params: EmployeeSetEnabledParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SET_ENABLED, params),
+    setMemoryEnabled: (params: EmployeeSetMemoryEnabledParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SET_MEMORY_ENABLED, params),
     onChanged: (callback: (data: { ts: number }) => void) => {
       const handler = (_event: any, data: { ts: number }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_ON_CHANGED, handler)

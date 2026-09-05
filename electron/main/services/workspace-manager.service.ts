@@ -1,9 +1,11 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import { BrowserWindow } from 'electron'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
+import EmployeeRegistryService from './employee-registry.service'
 import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -220,7 +222,13 @@ class WorkspaceManagerService {
       sql += ` OFFSET ?`
       values.push(params.offset)
     }
-    return this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string }>
+    const rows = this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string | null }>
+    // 注册员工（内置/插件）无 DB 记录，LEFT JOIN 拿不到名称：回退注册表补齐
+    return rows.map(row => {
+      if (row.employee_name) return row as Conversation & { employee_name: string }
+      const reg = EmployeeRegistryService.getInstance().getRegistered(row.employee_id)
+      return reg ? { ...row, employee_name: reg.name } : (row as Conversation & { employee_name: string })
+    })
   }
 
   getConversation(id: string): Conversation | null {
@@ -228,8 +236,15 @@ class WorkspaceManagerService {
   }
 
   createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string): Conversation {
+    // 注册员工（内置/插件）提前同步影子记录到 employees 表，保证 conversations 外键引用有效（id 稳定不变）
+    if (EmployeeRegistryService.getInstance().isRegistered(employeeId)) {
+      EmployeeRegistryService.getInstance().ensureDbRecords()
+    }
     const employee = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(employeeId) as { id: string; workspace_path: string | null } | undefined
-    if (!employee) {
+    // 注册员工（内置/插件）无 DB 记录：回退注册表，工作区落在独立的注册员工工作区根目录
+    const employeeWorkspace = employee?.workspace_path
+      ?? (EmployeeRegistryService.getInstance().isRegistered(employeeId) ? this.getRegistryWorkspaceRoot(employeeId) : undefined)
+    if (!employee && !employeeWorkspace) {
       throw new Error(`Employee not found: ${employeeId}`)
     }
 
@@ -248,7 +263,7 @@ class WorkspaceManagerService {
       const parentWs = parent?.workspace_path || ''
       workspacePath = parentWs ? this.createTaskWorkspace(parentWs) : ''
     } else {
-      workspacePath = employee.workspace_path ? this.createTaskWorkspace(employee.workspace_path) : ''
+      workspacePath = employeeWorkspace ? this.createTaskWorkspace(employeeWorkspace) : ''
     }
 
     this.db.getDb().prepare(`
@@ -280,6 +295,68 @@ class WorkspaceManagerService {
     }
     fs.mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */
+  getRegistryWorkspaceRoot(employeeId: string): string {
+    // 注册员工 id 含 ':' 等路径非法字符，用稳定哈希派生目录名（sha1 前 8 hex，与 generateShortId 同构、可复现）
+    const dirName = crypto.createHash('sha1').update(employeeId).digest('hex').slice(0, 8)
+    const root = path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
+    fs.mkdirSync(root, { recursive: true })
+    return root
+  }
+
+  /** 旧版注册员工工作区目录名（dataDir/registry-workspaces/<id 摘要>，与旧 getRegistryWorkspaceRoot 一致） */
+  private legacyRegistryDirName(employeeId: string): string {
+    return employeeId.replace(/[^\w-]/g, '_').slice(0, 60)
+  }
+
+  /**
+   * 一次性迁移：旧版注册员工工作区根（dataDir/registry-workspaces/<id 摘要>）→ 与用户员工一致的新根（employees/ 内）。
+   * 仅迁移当前注册员工名下非空的旧目录（任务子目录移至新根后删除旧目录），未匹配的旧目录保留不动。
+   */
+  migrateLegacyRegistryWorkspaces(): void {
+    try {
+      const legacyRoot = path.join(PathService.getInstance().getDataDir(), 'registry-workspaces')
+      if (!fs.existsSync(legacyRoot)) return
+      const items = fs.readdirSync(legacyRoot, { withFileTypes: true })
+      if (items.length === 0) return
+      const registry = EmployeeRegistryService.getInstance()
+      const registeredIds = new Set(registry.listRegistered().map(e => e.id))
+      for (const item of items) {
+        if (!item.isDirectory()) continue
+        const legacyDir = path.join(legacyRoot, item.name)
+        // 反向匹配：目录名来自注册员工 id 摘要，仅能对应当前已知 id
+        const empId = [...registeredIds].find(id => this.legacyRegistryDirName(id) === item.name)
+        if (!empId) continue
+        const entries = fs.existsSync(legacyDir) ? fs.readdirSync(legacyDir) : []
+        if (entries.length === 0) {
+          fs.rmdirSync(legacyDir)
+          continue
+        }
+        const newRoot = this.getRegistryWorkspaceRoot(empId)
+        for (const entry of entries) {
+          const src = path.join(legacyDir, entry)
+          const dest = path.join(newRoot, entry)
+          if (fs.existsSync(dest)) continue
+          try {
+            fs.renameSync(src, dest)
+          } catch {
+            // 跨卷等场景回退为复制后删除
+            fs.cpSync(src, dest, { recursive: true })
+            fs.rmSync(src, { recursive: true, force: true })
+          }
+        }
+        fs.rmdirSync(legacyDir)
+      }
+      const rest = fs.readdirSync(legacyRoot)
+      if (rest.length === 0) {
+        fs.rmdirSync(legacyRoot)
+      }
+      logger.info('注册员工工作区目录已迁移至 employees/ 根目录')
+    } catch (err: any) {
+      logger.warn('注册员工工作区目录迁移失败:', err?.message || err)
+    }
   }
 
   /** 获取对话的任务工作区目录（未分配返回空字符串） */

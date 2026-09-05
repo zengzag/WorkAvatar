@@ -40,6 +40,8 @@ const { Text, Paragraph } = Typography
 
 interface McpSectionProps {
   employeeId: string
+  /** 只读模式（注册员工）：禁止新增/编辑/删除/启停 MCP 服务 */
+  readonly?: boolean
 }
 
 /** 新增 Modal 的默认 JSON 模板（标准 mcpServers 格式） */
@@ -172,7 +174,7 @@ function parseMcpJson(text: string): ParsedMcpJson {
   return { servers }
 }
 
-const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
+const McpSection: React.FC<McpSectionProps> = ({ employeeId, readonly }) => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
   const { token } = theme.useToken()
@@ -436,7 +438,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
           </Space>
         }
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAddModal} disabled={readonly}>
             {t('employeeSettings.mcpAddServer')}
           </Button>
         }
@@ -554,6 +556,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
                         icon={<ReloadOutlined />}
                         onClick={() => handleRefreshTools(server)}
                         loading={testingId === server.id}
+                        disabled={readonly}
                       />
                     </Tooltip>
                     <Tooltip title={t('common.edit')}>
@@ -561,14 +564,16 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
                         size="small"
                         icon={<EditOutlined />}
                         onClick={() => openEditModal(server)}
+                        disabled={readonly}
                       />
                     </Tooltip>
                     <Popconfirm
                       title={t('employeeSettings.mcpConfirmDelete')}
                       description={t('employeeSettings.mcpDeleteDesc')}
                       onConfirm={() => handleDelete(server.id)}
+                      disabled={readonly}
                     >
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} disabled={readonly} />
                     </Popconfirm>
                   </Space>
                   <Switch
@@ -577,6 +582,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId }) => {
                     checkedChildren={t('common.enable')}
                     unCheckedChildren={t('common.disable')}
                     size="small"
+                    disabled={readonly}
                   />
                 </div>
               </div>

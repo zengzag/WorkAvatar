@@ -20,6 +20,7 @@ import type { ToolDefinition } from './agent/tools/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
 import PluginHostService from './plugin/plugin-host.service'
+import EmployeeRegistryService from './employee-registry.service'
 import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
@@ -116,7 +117,10 @@ class EmployeeAgentService {
       return existing
     }
 
-    const emp = employee ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
+    const emp = employee
+      ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
+      // 注册员工（内置/插件）无 DB 记录：回退注册表解析
+      ?? EmployeeRegistryService.getInstance().toDBEmployee(employeeId)
     if (!emp) {
       throw new Error(`Employee ${employeeId} not found`)
     }
@@ -320,9 +324,21 @@ class EmployeeAgentService {
     const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
     for (const r of rows) {
       if (!parseEmployeeDelegation(r.delegation_json).acceptDelegation) continue
+      // 已禁用的员工不参与委托
+      if (!EmployeeRegistryService.getInstance().isEnabled(r.id)) continue
       let role: string | undefined
       try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
       out.push({ id: r.id, name: r.name, description: r.description, role })
+    }
+    // 注册员工（内置/插件）无 DB 记录：委托目标回退注册表（接受委托默认开启；已禁用员工不参与）
+    const foundIds = new Set(rows.map(r => r.id))
+    for (const id of targetIds) {
+      if (foundIds.has(id)) continue
+      const reg = EmployeeRegistryService.getInstance().getRegistered(id)
+      if (!reg || reg.is_enabled === false) continue
+      let role: string | undefined
+      try { role = reg.profile_json ? JSON.parse(reg.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: reg.id, name: reg.name, description: reg.description, role })
     }
     out.sort((a, b) => a.name.localeCompare(b.name))
     return out
@@ -355,6 +371,15 @@ class EmployeeAgentService {
     // 平级协作消息工具默认关闭（委托类工具不在此列：由员工委托设置驱动注册）
     modeMap.set('send_message', 'off')
     modeMap.set('read_messages', 'off')
+
+    // 注册员工（内置/插件）的默认工具声明：将声明中的工具强制启用，
+    // 使插件员工开箱即用（插件工具默认 off，不覆盖则无法工作）
+    const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(employeeId)
+    if (registryDefaults) {
+      for (const [toolId, mode] of registryDefaults) {
+        if (mode === 'on' || mode === 'on_demand') modeMap.set(toolId, mode)
+      }
+    }
 
     let rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
@@ -451,7 +476,7 @@ class EmployeeAgentService {
     const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false, high_permission = false, system } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
-    const employeeName = employee?.name || 'unknown'
+    const employeeName = employee?.name || EmployeeRegistryService.getInstance().getRegistered(employee_id)?.name || 'unknown'
 
     logger.info(`Chat stream started: employee="${employeeName}"(${employee_id}), conversation=${conversation_id || 'none'}, msgs=${messages.length}, skills=${use_skills}, thinking=${enable_thinking ?? 'auto'}, minimal=${minimal_mode}, highPerm=${high_permission}`)
 
@@ -601,7 +626,7 @@ class EmployeeAgentService {
     const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
-    const employeeName = employee?.name || 'unknown'
+    const employeeName = employee?.name || EmployeeRegistryService.getInstance().getRegistered(employee_id)?.name || 'unknown'
 
     const logCtx = {
       employeeId: employee_id,

@@ -155,6 +155,7 @@ class DatabaseService {
         total_tasks INTEGER DEFAULT 0,
         total_approvals INTEGER DEFAULT 0,
         memory_enabled BOOLEAN NOT NULL DEFAULT 0,
+        is_registered INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -506,6 +507,8 @@ class DatabaseService {
     this.addColumnIfNotExists('employees', 'last_active_at', 'INTEGER')
     // 委托能力设置：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串表示未配置（全默认）
     this.addColumnIfNotExists('employees', 'delegation_json', "TEXT DEFAULT ''")
+    // 注册员工（内置/插件）在 employees 表的影子记录标记：仅作外键占位，不参与员工列表展示
+    this.addColumnIfNotExists('employees', 'is_registered', 'INTEGER NOT NULL DEFAULT 0')
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')

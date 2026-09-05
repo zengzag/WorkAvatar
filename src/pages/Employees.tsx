@@ -5,7 +5,7 @@ import type { MenuProps } from 'antd'
 import {
   PlusOutlined, RobotOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
   FolderOpenOutlined, SettingOutlined, SearchOutlined, EllipsisOutlined,
-  AppstoreOutlined, BarsOutlined,
+  AppstoreOutlined, BarsOutlined, CopyOutlined, DatabaseOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
@@ -33,6 +33,18 @@ type ViewMode = 'grid' | 'list'
 interface EmployeeStats {
   conversationCount: number
   lastActiveAt: number | null
+}
+
+/** 员工库分组：内置（官方）/ 我的（用户创建)/ 按插件 */
+interface EmployeeGroup {
+  key: string
+  title: string
+  employees: Employee[]
+}
+
+/** 注册员工（内置/插件）只读：无设置与删除入口，仅可快速任务与另存副本 */
+function isRegistered(e: Employee): boolean {
+  return e.source === 'builtin' || e.source === 'plugin'
 }
 
 const Employees: React.FC = () => {
@@ -91,7 +103,7 @@ const Employees: React.FC = () => {
     loadEmployees()
   }, [loadEmployees, location.pathname])
 
-  // 员工变更事件：刷新列表（含增/改/删及其他页面触发的删除）
+  // 员工变更事件：刷新列表（含增/改/删及其他页面触发的删除、插件员工上下线）
   useEffect(() => {
     const unsub = window.electronAPI.employee.onChanged(() => {
       loadEmployees()
@@ -118,6 +130,7 @@ const Employees: React.FC = () => {
   }, [t])
 
   const handleCardClick = useCallback((emp: Employee) => {
+    // 注册员工打开设置抽屉：与正常员工一致的展示，实操入口（保存/删除/工具切换等）在抽屉内只读
     setSelectedEmployeeId(emp.id)
     setSettingsOpen(true)
   }, [])
@@ -127,6 +140,20 @@ const Employees: React.FC = () => {
     localStorage.removeItem(`employeeWorkbench:activeConvId:${emp.id}`)
     navigate(`/tasks?new=1&employee=${encodeURIComponent(emp.id)}`)
   }, [navigate])
+
+  const handleDuplicate = useCallback(async (emp: Employee) => {
+    try {
+      const created = await window.electronAPI.employee.duplicate({ id: emp.id })
+      if (created) {
+        message.success(t('digitalEmployees.duplicateSuccess', { defaultValue: '已另存为我的员工' }))
+        await loadEmployees()
+      } else {
+        message.error(t('digitalEmployees.duplicateFailed', { defaultValue: '另存副本失败' }))
+      }
+    } catch {
+      message.error(t('digitalEmployees.duplicateFailed', { defaultValue: '另存副本失败' }))
+    }
+  }, [message, t, loadEmployees])
 
   const handleDeleteEmployee = useCallback((emp: Employee) => {
     let deleteWorkspace = true
@@ -212,32 +239,79 @@ const Employees: React.FC = () => {
     setSelectedEmployeeId(undefined)
   }, [])
 
-  const filteredEmployees = useMemo(() => {
-    let result = employees
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      result = result.filter(e =>
-        e.name.toLowerCase().includes(q) ||
-        (e.description || '').toLowerCase().includes(q)
-      )
+  /** 按来源分组：我的 → 内置 → 按插件逐一分组；每组内应用搜索过滤 */
+  const groups = useMemo<EmployeeGroup[]>(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const match = (e: Employee) =>
+      !q || e.name.toLowerCase().includes(q) || (e.description || '').toLowerCase().includes(q)
+
+    const result: EmployeeGroup[] = []
+    const mine = employees.filter(e => e.source !== 'builtin' && e.source !== 'plugin' && match(e))
+    if (mine.length > 0) {
+      result.push({ key: 'mine', title: t('digitalEmployees.groupMine', { defaultValue: '我的员工' }), employees: mine })
+    }
+    const builtin = employees.filter(e => e.source === 'builtin' && match(e))
+    if (builtin.length > 0) {
+      result.push({ key: 'builtin', title: t('digitalEmployees.groupBuiltin', { defaultValue: '内置员工' }), employees: builtin })
+    }
+    const pluginMap = new Map<string, Employee[]>()
+    for (const e of employees) {
+      if (e.source !== 'plugin' || !match(e)) continue
+      const pid = e.plugin_id || 'plugin'
+      if (!pluginMap.has(pid)) pluginMap.set(pid, [])
+      pluginMap.get(pid)!.push(e)
+    }
+    for (const [pid, list] of pluginMap) {
+      result.push({ key: pid, title: list[0].plugin_name || pid, employees: list })
     }
     return result
-  }, [employees, searchQuery])
+  }, [employees, searchQuery, t])
 
   const totalCount = employees.length
 
-  const getCardMenuItems = useCallback((): MenuProps['items'] => [
-    { key: 'task', label: t('digitalEmployees.quickChat', { defaultValue: '快速任务' }), icon: <MessageOutlined /> },
-    { key: 'settings', label: t('common.settings', { defaultValue: '设置' }), icon: <SettingOutlined /> },
-    { type: 'divider' },
-    { key: 'delete', label: t('common.delete', { defaultValue: '删除' }), icon: <DeleteOutlined />, danger: true },
-  ], [t])
+  const getCardMenuItems = useCallback((emp: Employee): MenuProps['items'] => {
+    if (isRegistered(emp)) {
+      // 只读员工：快速任务 + 另存副本（无设置/删除）；禁用时快速任务不可用
+      return [
+        {
+          key: 'task',
+          label: t('digitalEmployees.quickChat', { defaultValue: '快速任务' }),
+          icon: <MessageOutlined />,
+          disabled: emp.is_enabled === false,
+        },
+        { key: 'duplicate', label: t('digitalEmployees.duplicateCopy', { defaultValue: '另存为我的员工' }), icon: <CopyOutlined /> },
+      ]
+    }
+    return [
+      {
+        key: 'task',
+        label: t('digitalEmployees.quickChat', { defaultValue: '快速任务' }),
+        icon: <MessageOutlined />,
+        disabled: emp.is_enabled === false,
+      },
+      { key: 'settings', label: t('common.settings', { defaultValue: '设置' }), icon: <SettingOutlined /> },
+      { type: 'divider' },
+      { key: 'delete', label: t('common.delete', { defaultValue: '删除' }), icon: <DeleteOutlined />, danger: true },
+    ]
+  }, [t])
 
   const handleCardMenuClick = useCallback((emp: Employee, key: string) => {
     if (key === 'task') handleStartTask(emp)
     else if (key === 'settings') handleCardClick(emp)
     else if (key === 'delete') handleDeleteEmployee(emp)
-  }, [handleStartTask, handleCardClick, handleDeleteEmployee])
+    else if (key === 'duplicate') handleDuplicate(emp)
+  }, [handleStartTask, handleCardClick, handleDeleteEmployee, handleDuplicate])
+
+  /** 来源角标文案：内置=官方，插件=插件名 */
+  const getSourceBadge = useCallback((emp: Employee): { label: string; color?: string } | null => {
+    if (emp.source === 'builtin') {
+      return { label: t('digitalEmployees.sourceOfficial', { defaultValue: '官方' }) }
+    }
+    if (emp.source === 'plugin') {
+      return { label: emp.plugin_name || emp.plugin_id || 'Plugin' }
+    }
+    return null
+  }, [t])
 
   const pageStyle = useMemo(() => `
     .emp-grid .emp-card {
@@ -272,6 +346,218 @@ const Employees: React.FC = () => {
       </div>
     )
   }
+
+  /** 分组标题 + 组内员工卡片（grid/list 两视图） */
+  const renderGroup = (group: EmployeeGroup) => (
+    <div key={group.key} style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingLeft: 2 }}>
+        <Text strong style={{ fontSize: 13 }}>
+          {group.title}
+        </Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {group.employees.length}
+        </Text>
+        {group.key === 'builtin' && (
+          <Tooltip title={t('digitalEmployees.builtinHint', { defaultValue: '随应用发布的官方员工，只读；可另存副本后个性化' })}>
+            <DatabaseOutlined style={{ fontSize: 12, color: token.colorPrimary }} />
+          </Tooltip>
+        )}
+      </div>
+
+      {viewMode === 'grid' ? (
+        <div className="emp-grid" style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+          gap: 12,
+        }}>
+          {group.employees.map((emp) => {
+            const color = getAvatarColor(emp.id)
+            const empStats = stats[emp.id]
+            const convCount = empStats?.conversationCount ?? 0
+            const lastActive = formatLastActive(empStats?.lastActiveAt)
+            const badge = getSourceBadge(emp)
+            return (
+              <div
+                key={emp.id}
+                className="emp-card"
+                onClick={() => handleCardClick(emp)}
+                style={{
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  borderRadius: 8,
+                  background: token.colorBgContainer,
+                  padding: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}
+              >
+                {/* 头部：头像 + 名称 + 来源角标 */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <Avatar
+                    size={44}
+                    style={{ backgroundColor: color, borderRadius: 8, flexShrink: 0 }}
+                    icon={emp.source === 'builtin' ? <DatabaseOutlined style={{ fontSize: 22 }} /> : <RobotOutlined style={{ fontSize: 22 }} />}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Text strong ellipsis style={{ fontSize: 14, display: 'block' }}>
+                      {emp.name}
+                    </Text>
+                    {badge && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        {badge.label}
+                      </Text>
+                    )}
+                  </div>
+                  <div className="emp-card-actions" style={{ flexShrink: 0 }}>
+                    <Dropdown
+                      menu={{
+                        items: getCardMenuItems(emp),
+                        onClick: ({ key }) => {
+                          handleCardMenuClick(emp, key)
+                        },
+                      }}
+                      trigger={['click']}
+                    >
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EllipsisOutlined />}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </Dropdown>
+                  </div>
+                </div>
+
+                {/* 描述 */}
+                <Paragraph
+                  type="secondary"
+                  ellipsis={{ rows: 2 }}
+                  style={{ fontSize: 12, margin: 0, minHeight: 34, color: token.colorTextTertiary }}
+                >
+                  {emp.description || t('common.noDescription', { defaultValue: '暂无描述' })}
+                </Paragraph>
+
+                {/* 底部统计 */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  paddingTop: 8,
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
+                  fontSize: 12,
+                  color: token.colorTextTertiary,
+                }}>
+                  <Tooltip title={t('digitalEmployees.conversationCount', { count: convCount, defaultValue: '{{count}} 个对话' })}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <MessageOutlined style={{ fontSize: 12 }} />
+                      {convCount}
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={t('digitalEmployees.lastActive', { time: lastActive, defaultValue: '最近活跃：{{time}}' })}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                      <ClockCircleOutlined style={{ fontSize: 12, flexShrink: 0 }} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {lastActive}
+                      </span>
+                    </span>
+                  </Tooltip>
+                  {(emp.is_enabled === false || isRegistered(emp)) && (
+                    <span style={{ marginLeft: 'auto', color: emp.is_enabled === false ? token.colorError : undefined }}>
+                      {emp.is_enabled === false
+                        ? t('digitalEmployees.disabledLabel', { defaultValue: '已禁用' })
+                        : t('digitalEmployees.readonly', { defaultValue: '只读' })}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        /* 列表视图 */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {group.employees.map((emp) => {
+            const color = getAvatarColor(emp.id)
+            const empStats = stats[emp.id]
+            const convCount = empStats?.conversationCount ?? 0
+            const lastActive = formatLastActive(empStats?.lastActiveAt)
+            const badge = getSourceBadge(emp)
+            return (
+              <div
+                key={emp.id}
+                className="emp-list-row"
+                onClick={() => handleCardClick(emp)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 12px',
+                  borderRadius: 6,
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                }}
+              >
+                <Avatar
+                  size={36}
+                  style={{ backgroundColor: color, borderRadius: 6, flexShrink: 0 }}
+                  icon={emp.source === 'builtin' ? <DatabaseOutlined style={{ fontSize: 18 }} /> : <RobotOutlined style={{ fontSize: 18 }} />}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Text strong ellipsis style={{ fontSize: 13 }}>
+                      {emp.name}
+                    </Text>
+                    {badge && (
+                      <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>
+                        {badge.label}
+                      </Text>
+                    )}
+                  </div>
+                  <Text type="secondary" ellipsis style={{ fontSize: 12, display: 'block' }}>
+                    {emp.description || t('common.noDescription', { defaultValue: '暂无描述' })}
+                  </Text>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <MessageOutlined style={{ fontSize: 12 }} />
+                    {convCount}
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 80 }}>
+                    <ClockCircleOutlined style={{ fontSize: 12 }} />
+                    {lastActive}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <Tooltip title={t('digitalEmployees.quickChat', { defaultValue: '快速任务' })}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<MessageOutlined />}
+                      disabled={emp.is_enabled === false}
+                      onClick={(e) => { e.stopPropagation(); handleStartTask(emp) }}
+                    />
+                  </Tooltip>
+                  <Dropdown
+                    menu={{
+                      items: getCardMenuItems(emp),
+                      onClick: ({ key }) => handleCardMenuClick(emp, key),
+                    }}
+                    trigger={['click']}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EllipsisOutlined />}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </Dropdown>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -335,7 +621,7 @@ const Employees: React.FC = () => {
               </Button>
             </Empty>
           </div>
-        ) : filteredEmployees.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Empty
               image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -346,175 +632,8 @@ const Employees: React.FC = () => {
               }
             />
           </div>
-        ) : viewMode === 'grid' ? (
-          <div className="emp-grid" style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: 12,
-          }}>
-            {filteredEmployees.map((emp) => {
-              const color = getAvatarColor(emp.id)
-              const empStats = stats[emp.id]
-              const convCount = empStats?.conversationCount ?? 0
-              const lastActive = formatLastActive(empStats?.lastActiveAt)
-              return (
-                <div
-                  key={emp.id}
-                  className="emp-card"
-                  onClick={() => handleCardClick(emp)}
-                  style={{
-                    border: `1px solid ${token.colorBorderSecondary}`,
-                    borderRadius: 8,
-                    background: token.colorBgContainer,
-                    padding: 16,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  }}
-                >
-                  {/* 头部：头像 + 名称 */}
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                    <Avatar
-                      size={44}
-                      style={{ backgroundColor: color, borderRadius: 8, flexShrink: 0 }}
-                      icon={<RobotOutlined style={{ fontSize: 22 }} />}
-                    />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <Text strong ellipsis style={{ fontSize: 14, display: 'block' }}>
-                        {emp.name}
-                      </Text>
-                    </div>
-                    <div className="emp-card-actions" style={{ flexShrink: 0 }}>
-                      <Dropdown
-                        menu={{
-                          items: getCardMenuItems(),
-                          onClick: ({ key }) => {
-                            handleCardMenuClick(emp, key)
-                          },
-                        }}
-                        trigger={['click']}
-                      >
-                        <Button
-                          type="text"
-                          size="small"
-                          icon={<EllipsisOutlined />}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </Dropdown>
-                    </div>
-                  </div>
-
-                  {/* 描述 */}
-                  <Paragraph
-                    type="secondary"
-                    ellipsis={{ rows: 2 }}
-                    style={{ fontSize: 12, margin: 0, minHeight: 34, color: token.colorTextTertiary }}
-                  >
-                    {emp.description || t('common.noDescription', { defaultValue: '暂无描述' })}
-                  </Paragraph>
-
-                  {/* 底部统计 */}
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    paddingTop: 8,
-                    borderTop: `1px solid ${token.colorBorderSecondary}`,
-                    fontSize: 12,
-                    color: token.colorTextTertiary,
-                  }}>
-                    <Tooltip title={t('digitalEmployees.conversationCount', { count: convCount, defaultValue: '{{count}} 个对话' })}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <MessageOutlined style={{ fontSize: 12 }} />
-                        {convCount}
-                      </span>
-                    </Tooltip>
-                    <Tooltip title={t('digitalEmployees.lastActive', { time: lastActive, defaultValue: '最近活跃：{{time}}' })}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                        <ClockCircleOutlined style={{ fontSize: 12, flexShrink: 0 }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {lastActive}
-                        </span>
-                      </span>
-                    </Tooltip>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
         ) : (
-          /* 列表视图 */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {filteredEmployees.map((emp) => {
-              const color = getAvatarColor(emp.id)
-              const empStats = stats[emp.id]
-              const convCount = empStats?.conversationCount ?? 0
-              const lastActive = formatLastActive(empStats?.lastActiveAt)
-              return (
-                <div
-                  key={emp.id}
-                  className="emp-list-row"
-                  onClick={() => handleCardClick(emp)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '10px 12px',
-                    borderRadius: 6,
-                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                  }}
-                >
-                  <Avatar
-                    size={36}
-                    style={{ backgroundColor: color, borderRadius: 6, flexShrink: 0 }}
-                    icon={<RobotOutlined style={{ fontSize: 18 }} />}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Text strong ellipsis style={{ fontSize: 13, display: 'block' }}>
-                      {emp.name}
-                    </Text>
-                    <Text type="secondary" ellipsis style={{ fontSize: 12, display: 'block' }}>
-                      {emp.description || t('common.noDescription', { defaultValue: '暂无描述' })}
-                    </Text>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 12, color: token.colorTextTertiary, flexShrink: 0 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <MessageOutlined style={{ fontSize: 12 }} />
-                      {convCount}
-                    </span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 80 }}>
-                      <ClockCircleOutlined style={{ fontSize: 12 }} />
-                      {lastActive}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                    <Tooltip title={t('digitalEmployees.quickChat', { defaultValue: '快速任务' })}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<MessageOutlined />}
-                        onClick={(e) => { e.stopPropagation(); handleStartTask(emp) }}
-                      />
-                    </Tooltip>
-                    <Dropdown
-                      menu={{
-                        items: getCardMenuItems(),
-                        onClick: ({ key }) => handleCardMenuClick(emp, key),
-                      }}
-                      trigger={['click']}
-                    >
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EllipsisOutlined />}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </Dropdown>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          groups.map(renderGroup)
         )}
       </div>
 

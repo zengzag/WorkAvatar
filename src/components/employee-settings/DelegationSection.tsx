@@ -21,6 +21,8 @@ interface DelegationSectionProps {
   employeeId: string
   delegation: EmployeeDelegationConfig
   onSaved: () => void
+  /** 只读模式（注册员工）：委托设置由官方/插件声明，禁止修改 */
+  readonly?: boolean
 }
 
 /** 委托能力设置：发起委托（可委托员工选择）+ 接受委托，变更即时保存 */
@@ -28,6 +30,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
   employeeId,
   delegation,
   onSaved,
+  readonly,
 }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -99,6 +102,9 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {readonly && (
+        <Alert type="info" title={t('employeeSettings.delegationReadonlyHint', { defaultValue: '该员工为内置/插件提供，委托设置不可修改' })} showIcon />
+      )}
       <Card
         title={
           <span>
@@ -109,6 +115,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
         extra={
           <Switch
             checked={config.enabled}
+            disabled={readonly}
             onChange={handleToggleEnabled}
             checkedChildren={t('employeeSettings.delegationOn')}
             unCheckedChildren={t('employeeSettings.delegationOff')}
@@ -182,6 +189,7 @@ const DelegationSection: React.FC<DelegationSectionProps> = ({
         extra={
           <Switch
             checked={config.acceptDelegation}
+            disabled={readonly}
             onChange={handleToggleAccept}
             checkedChildren={t('employeeSettings.delegationOn')}
             unCheckedChildren={t('employeeSettings.delegationOff')}

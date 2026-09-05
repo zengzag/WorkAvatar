@@ -7,6 +7,8 @@ import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
+import EmployeeRegistryService from './services/employee-registry.service'
+import WorkspaceManagerService from './services/workspace-manager.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
@@ -495,6 +497,11 @@ app.whenReady().then(() => {
   } catch (err: any) {
     logger.error('PluginHost init failed:', err?.message || err)
   }
+
+  // 注册员工（内置/插件）影子记录落库：保证 conversations 等外键引用有效（幂等，id 跨版本不变）
+  EmployeeRegistryService.getInstance().ensureDbRecords()
+  // 注册员工工作区根目录与普通员工统一（employees/ 内），启动时迁移旧 registry-workspaces 目录
+  WorkspaceManagerService.getInstance().migrateLegacyRegistryWorkspaces()
 
   registerAppFileProtocol()
   registerIpcHandlers()

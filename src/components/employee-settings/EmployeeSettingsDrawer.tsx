@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Drawer, Tabs, Form, App, theme, Checkbox, Typography, Tooltip, Button, Spin,
+  Drawer, Tabs, Form, App, theme, Checkbox, Typography, Tooltip, Button, Spin, Tag, Switch,
 } from 'antd'
 import {
   IdcardOutlined, ToolOutlined, ApiOutlined, AppstoreOutlined,
   DatabaseOutlined, BarChartOutlined, ImportOutlined, TeamOutlined,
-  FolderOutlined, FolderOpenOutlined,
+  FolderOutlined, FolderOpenOutlined, EyeOutlined, PoweroffOutlined,
 } from '@ant-design/icons'
 import {
   BasicInfoSection,
@@ -93,6 +93,10 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [employeeSkills, setEmployeeSkills] = useState<EmployeeSkill[]>([])
   const [installingSkill, setInstallingSkill] = useState(false)
+  const [updatingEnabled, setUpdatingEnabled] = useState(false)
+
+  /** 注册员工（内置/插件）：与正常员工一致展示，但仅记忆开关可编辑 */
+  const readonly = employee?.source === 'builtin' || employee?.source === 'plugin'
 
   useEffect(() => {
     if (open && initialTab) {
@@ -279,14 +283,40 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const handleMemoryEnabledChange = async (enabled: boolean) => {
     if (!employeeId) return
     try {
-      await window.electronAPI.employee.update({
-        id: employeeId,
-        memory_enabled: enabled,
-      })
+      // 注册员工（内置/插件）记忆开关走独立通道（KV 持久化）；user 员工走 update
+      if (readonly) {
+        const ok = await window.electronAPI.employee.setMemoryEnabled({ id: employeeId, enabled })
+        if (!ok) throw new Error('no-op')
+      } else {
+        await window.electronAPI.employee.update({
+          id: employeeId,
+          memory_enabled: enabled,
+        })
+      }
       message.success(t('common.saveSuccess'))
       loadEmployee()
     } catch {
       message.error(t('common.saveFailed'))
+    }
+  }
+
+  /** 启用/禁用员工（开关对 user / 注册员工均生效） */
+  const handleToggleEnabled = async (enabled: boolean) => {
+    if (!employeeId) return
+    setUpdatingEnabled(true)
+    try {
+      const ok = await window.electronAPI.employee.setEnabled({ id: employeeId, enabled })
+      if (!ok) throw new Error('no-op')
+      message.success(
+        enabled
+          ? t('digitalEmployees.enabledSuccess', { defaultValue: '已启用该员工' })
+          : t('digitalEmployees.disabledSuccess', { defaultValue: '已禁用该员工' })
+      )
+      loadEmployee()
+    } catch {
+      message.error(t('digitalEmployees.operationFailed', { defaultValue: '操作失败' }))
+    } finally {
+      setUpdatingEnabled(false)
     }
   }
 
@@ -454,6 +484,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           onDelete={handleDeleteEmployee}
           workspacePath={employee?.workspace_path}
           employeeId={employeeId || ''}
+          readonly={readonly}
         />
       ),
     },
@@ -466,6 +497,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           toolCategories={toolCategories}
           onChangeToolMode={handleChangeToolMode}
           onChangeCategoryMode={handleChangeCategoryMode}
+          readonly={readonly}
         />
       ),
     },
@@ -477,13 +509,14 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           employeeId={employeeId || ''}
           delegation={parseEmployeeDelegation(employee?.delegation_json)}
           onSaved={loadEmployee}
+          readonly={readonly}
         />
       ),
     },
     {
       key: 'mcp',
       label: <span><ApiOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabMcp')}</span>,
-      children: contentWrap(<McpSection employeeId={employeeId || ''} />),
+      children: contentWrap(<McpSection employeeId={employeeId || ''} readonly={readonly} />),
     },
     {
       key: 'skills-market',
@@ -497,6 +530,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           onInstallFromZip={handleInstallSkillFromZip}
           onUninstallSkill={handleUninstallSkill}
           onToggleSkill={handleToggleSkill}
+          readonly={readonly}
         />
       ),
     },
@@ -508,6 +542,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           employeeId={employeeId || ''}
           memoryEnabled={employee?.memory_enabled ?? false}
           onMemoryEnabledChange={handleMemoryEnabledChange}
+          readonly={readonly}
         />
       ),
     },
@@ -522,26 +557,57 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         )
       ),
     },
-    {
-      key: 'export-import',
-      label: <span><ImportOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabExportImport')}</span>,
-      children: contentWrap(
-        <ExportImportSection
-          employeeId={employeeId || ''}
-          employeeName={employee?.name || ''}
-        />
-      ),
-    },
+    // 注册员工（内置/插件）不可导出/导入，隐藏该 Tab
+    ...(readonly
+      ? []
+      : [{
+          key: 'export-import',
+          label: <span><ImportOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabExportImport')}</span>,
+          children: contentWrap(
+            <ExportImportSection
+              employeeId={employeeId || ''}
+              employeeName={employee?.name || ''}
+            />
+          ),
+        }]),
   ]
 
   return (
     <Drawer
-      title={employee ? `${employee.name} - ${t('employeeSettings.subtitle')}` : t('employeeSettings.subtitle')}
+      title={
+        employee ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {`${employee.name} - ${t('employeeSettings.subtitle')}`}
+            {readonly && (
+              <Tag color="default" icon={<EyeOutlined />} style={{ marginInlineEnd: 0 }}>
+                {t('digitalEmployees.readonly', { defaultValue: '只读' })}
+              </Tag>
+            )}
+          </span>
+        ) : t('employeeSettings.subtitle')
+      }
       open={open}
       onClose={onClose}
       size={640}
       styles={{ body: { padding: 0, overflow: 'hidden' } }}
       destroyOnHidden
+      extra={
+        employee ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, color: token.colorTextSecondary }}>
+              {employee.is_enabled === false
+                ? t('digitalEmployees.disabledLabel', { defaultValue: '已禁用' })
+                : t('digitalEmployees.enabledLabel', { defaultValue: '已启用' })}
+            </span>
+            <Switch
+              checked={employee.is_enabled !== false}
+              checkedChildren={<PoweroffOutlined />}
+              loading={updatingEnabled}
+              onChange={handleToggleEnabled}
+            />
+          </div>
+        ) : undefined
+      }
     >
       <Tabs
         activeKey={activeTab}
