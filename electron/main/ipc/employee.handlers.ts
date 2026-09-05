@@ -4,6 +4,7 @@ import type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDeleteResult,
   EmployeeDuplicateParams,
   EmployeeSetEnabledParams,
   EmployeeSetMemoryEnabledParams,
@@ -37,6 +38,18 @@ import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import { safeHandle } from './_shared'
+
+/** 删除某员工所有顶层会话及其子会话，并清理授权缓存和插件关联记录（与 CONVERSATION_DELETE 一致） */
+function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerService, employeeId: string): void {
+  const conversations = workspaceManager.getConversationList(employeeId)
+  for (const conv of conversations) {
+    const allConvIds = workspaceManager.getChildConversationIds(conv.id)
+    for (const cid of allConvIds) {
+      UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+    }
+    try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
+  }
+}
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
@@ -86,15 +99,25 @@ export function registerEmployeeHandlers(
     return result
   })
 
-  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams): EmployeeDeleteResult => {
     // 注册员工（内置/插件）只读，禁止删除
-    if (EmployeeRegistryService.getInstance().isRegistered(params.id)) return false
+    if (EmployeeRegistryService.getInstance().isRegistered(params.id)) return { ok: false, transferred: 0 }
+    let transferred = 0
+    const action = params.conversation_action || 'keep'
+    if (action === 'transfer') {
+      // 转移对话历史到目标员工（含任务工作区迁移），再删除员工
+      if (!params.transfer_to_employee_id || params.transfer_to_employee_id === params.id) return { ok: false, transferred: 0 }
+      transferred = workspaceManager.transferConversations(params.id, params.transfer_to_employee_id)
+    } else if (action === 'delete') {
+      // 删除对话历史（清理授权缓存 + 插件关联记录，与 CONVERSATION_DELETE_ALL 一致）
+      deleteAllConversationsOfEmployee(workspaceManager, params.id)
+    }
     const ok = workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
     if (ok) {
       // 删除员工时清除关联的 Agent 缓存
       try { EmployeeAgentService.getInstance().clearAgentCache(params.id) } catch { /* ignore */ }
     }
-    return ok
+    return { ok, transferred }
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_DUPLICATE, (params: EmployeeDuplicateParams) => {
@@ -150,15 +173,7 @@ export function registerEmployeeHandlers(
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
     // 收集该员工下所有顶层会话及其子会话，清理授权缓存和自动化历史关联记录
-    const conversations = workspaceManager.getConversationList(employeeId)
-    for (const conv of conversations) {
-      const allConvIds = workspaceManager.getChildConversationIds(conv.id)
-      for (const cid of allConvIds) {
-        UnifiedInteractionService.getInstance().clearAllowedSources(cid)
-      }
-      // 同步通知插件清理关联数据（与 CONVERSATION_DELETE 保持一致）
-      try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
-    }
+    deleteAllConversationsOfEmployee(workspaceManager, employeeId)
     return workspaceManager.deleteAllConversations(employeeId)
   })
 

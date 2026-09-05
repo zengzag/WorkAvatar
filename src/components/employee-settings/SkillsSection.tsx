@@ -31,7 +31,7 @@ interface InstalledSkill {
   is_enabled: boolean
   created_at: number
   skillMdContent?: string
-  source?: 'global' | 'project' | 'bundled'
+  source?: 'global' | 'project' | 'bundled' | 'plugin'
 }
 
 interface EmployeeSkill extends InstalledSkill {
@@ -81,6 +81,17 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
 
   const noDescText = t('employeeSettings.noDesc')
 
+  // 技能来源标签颜色：project 绿 / bundled 紫 / plugin 青 / 其余默认灰
+  const sourceColor = (source?: string) => {
+    if (source === 'project') return 'green'
+    if (source === 'bundled') return 'purple'
+    if (source === 'plugin') return 'cyan'
+    return undefined
+  }
+
+  // 仅用户安装的技能可卸载（bundled/plugin 各自随宿主/插件生命周期管理）
+  const canUninstall = (source?: string) => source !== 'bundled' && source !== 'plugin'
+
   // 包装 props 传入的回调，保证稳定引用
   const handleToggle = useCallback((skillId: string, enabled: boolean) => {
     onToggleSkill(skillId, enabled)
@@ -129,7 +140,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                       <Tag color="default" style={{ flexShrink: 0 }}>{skill.author}</Tag>
                       {skill.source && skill.source !== 'global' && (
-                        <Tag color={skill.source === 'project' ? 'green' : 'purple'} style={{ flexShrink: 0 }}>
+                        <Tag color={sourceColor(skill.source)} style={{ flexShrink: 0 }}>
                           {t(`employeeSettings.skillSource_${skill.source}`)}
                         </Tag>
                       )}
@@ -144,7 +155,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                     </Space>
                   </div>
                 </div>
-                {!readonly && skill.source !== 'bundled' && (
+                {!readonly && canUninstall(skill.source) && (
                   <Popconfirm
                     title={t('employeeSettings.confirmUninstallSkill')}
                     description={t('employeeSettings.uninstallSkillDesc')}
@@ -197,7 +208,7 @@ const SkillsSection: React.FC<SkillsSectionProps> = ({
                       <Text strong ellipsis style={{ display: 'inline-block' }}>{skill.name}</Text>
                       <Tag color="blue" style={{ flexShrink: 0 }}>v{skill.version}</Tag>
                       {skill.source && skill.source !== 'global' && (
-                        <Tag color={skill.source === 'project' ? 'green' : 'purple'} style={{ flexShrink: 0 }}>
+                        <Tag color={sourceColor(skill.source)} style={{ flexShrink: 0 }}>
                           {t(`employeeSettings.skillSource_${skill.source}`)}
                         </Tag>
                       )}

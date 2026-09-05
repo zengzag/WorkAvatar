@@ -7,6 +7,7 @@ export type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDeleteResult,
   EmployeeDuplicateParams,
   EmployeeSetEnabledParams,
   EmployeeSetMemoryEnabledParams,

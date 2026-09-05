@@ -344,9 +344,13 @@ class PluginHostService {
   reload(): void {
     // 1. deactivate 全部激活插件
     for (const record of this.records.values()) {
-      if (record.status === 'active' && record.module?.deactivate) {
-        try { record.module.deactivate() } catch (err: any) {
-          logger.warn(`插件 deactivate 失败: ${record.manifest.id}`, err?.message || err)
+      if (record.status === 'active') {
+        // 技能随插件下线（DB 记录保留，重新激活后自动恢复）
+        this.unregisterPluginSkills(record.manifest.id)
+        if (record.module?.deactivate) {
+          try { record.module.deactivate() } catch (err: any) {
+            logger.warn(`插件 deactivate 失败: ${record.manifest.id}`, err?.message || err)
+          }
         }
       }
     }
@@ -437,6 +441,8 @@ class PluginHostService {
       record.statusMessage = undefined
       // 插件激活成功后注册其 manifest 声明的数字员工（异常隔离：单员工声明非法只跳过，不影响插件运行）
       this.registerManifestEmployees(record)
+      // 插件激活成功后注册其内置 skills（<插件根>/skills/，source='plugin'，异常隔离单技能跳过）
+      this.registerPluginSkills(record)
       logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})`)
     } catch (err: any) {
       record.status = 'error'
@@ -509,6 +515,38 @@ class PluginHostService {
     if (employees.length === 0) return
     const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
     EmployeeRegistryService.getInstance().registerPluginEmployees(record.manifest.id, record.manifest.name, employees)
+  }
+
+  /** 注册插件内置 skills（<插件根>/skills/ 目录约定，source='plugin'）。无 skills 目录则直接返回 */
+  private registerPluginSkills(record: PluginRecord): void {
+    const skillsDir = path.join(record.rootDir, 'skills')
+    if (!fs.existsSync(skillsDir)) return
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().registerPluginSkills(record.manifest.id, skillsDir)
+    } catch (err: any) {
+      logger.warn(`插件 ${record.manifest.id} 技能注册失败（跳过，不影响插件运行）:`, err?.message || err)
+    }
+  }
+
+  /** 插件下线（禁用/热重载/删除）时把其技能从可用集合移除（DB 记录保留，员工分配不丢失） */
+  private unregisterPluginSkills(pluginId: string): void {
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().markPluginSkillsInactive(pluginId)
+    } catch (err: any) {
+      logger.warn(`插件 ${pluginId} 技能下线失败（忽略）:`, err?.message || err)
+    }
+  }
+
+  /** 物理删除插件技能（仅插件删除时）：连同员工分配关联级联清除 */
+  private removePluginSkills(pluginId: string): void {
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().removePluginSkills(pluginId)
+    } catch (err: any) {
+      logger.warn(`插件 ${pluginId} 技能删除失败（忽略）:`, err?.message || err)
+    }
   }
 
   /** 校验系统能力特性（capabilities.system.features） */
@@ -1359,6 +1397,7 @@ class PluginHostService {
     if (!enabled) {
       const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
       EmployeeRegistryService.getInstance().unregisterPluginEmployees(pluginId)
+      this.unregisterPluginSkills(pluginId)
     }
     logger.info(`插件${enabled ? '启用' : '禁用'}: ${pluginId}（重启生效）`)
   }
@@ -1366,6 +1405,8 @@ class PluginHostService {
   deletePlugin(pluginId: string): void {
     const record = this.records.get(pluginId)
     if (!record) throw new Error(`插件不存在: ${pluginId}`)
+    // 删除时物理清理插件技能（连同员工分配关联）
+    this.removePluginSkills(pluginId)
     fs.rmSync(record.rootDir, { recursive: true, force: true })
     this.records.delete(pluginId)
     // 删除时卸载插件员工

@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Input, Button, Empty, Spin, App, theme, Typography, Checkbox, Tooltip, Segmented, Dropdown, Avatar } from 'antd'
+import { Input, Button, Empty, Spin, App, theme, Typography, Tooltip, Segmented, Dropdown, Avatar } from 'antd'
 import type { MenuProps } from 'antd'
 import {
   PlusOutlined, RobotOutlined, DeleteOutlined, MessageOutlined, ClockCircleOutlined,
@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import EmployeeSettingsDrawer from '../components/employee-settings/EmployeeSettingsDrawer'
+import DeleteConversationOptions from '../components/employee-settings/DeleteConversationOptions'
+import type { DeleteConversationState } from '../components/employee-settings/DeleteConversationOptions'
 import type { Employee } from '../types'
 
 const { Text, Paragraph } = Typography
@@ -61,6 +63,8 @@ const Employees: React.FC = () => {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | undefined>()
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
+  /** 删除员工确认弹窗中的对话处理选择（供 onOk 读取最新值） */
+  const deleteStateRef = useRef<DeleteConversationState>({ conversationAction: 'keep', transferToEmployeeId: undefined, deleteWorkspace: true })
 
   const loadStats = useCallback(async (list: Employee[]) => {
     const statsMap: Record<string, EmployeeStats> = {}
@@ -156,13 +160,14 @@ const Employees: React.FC = () => {
   }, [message, t, loadEmployees])
 
   const handleDeleteEmployee = useCallback((emp: Employee) => {
-    let deleteWorkspace = true
     const workspacePath = emp.workspace_path
+    const transferTargets = employees.filter(e => e.id !== emp.id)
+    deleteStateRef.current = { conversationAction: 'keep', transferToEmployeeId: undefined, deleteWorkspace: true }
 
     modal.confirm({
       title: t('employeeSettings.confirmDeleteEmployee'),
       icon: null,
-      width: 520,
+      width: 560,
       content: (
         <div>
           <Text>{t('employeeSettings.deleteEmployeeDesc')}</Text>
@@ -199,27 +204,40 @@ const Employees: React.FC = () => {
               />
             </div>
           )}
-          {workspacePath && (
-            <Checkbox
-              defaultChecked
-              onChange={(e) => { deleteWorkspace = e.target.checked }}
-              style={{ marginTop: 12 }}
-            >
-              {t('employeeSettings.alsoDeleteWorkspace')}
-            </Checkbox>
-          )}
+          <div style={{ height: 1, background: token.colorSplit, margin: '12px 0' }} />
+          <DeleteConversationOptions
+            targets={transferTargets}
+            showWorkspace={!!workspacePath}
+            onStateChange={(s) => { deleteStateRef.current = s }}
+          />
         </div>
       ),
       okText: t('common.delete'),
       cancelText: t('common.cancel'),
       okButtonProps: { danger: true },
       onOk: async () => {
+        const state = deleteStateRef.current
+        if (state.conversationAction === 'transfer' && !state.transferToEmployeeId) {
+          message.error(t('employeeSettings.transferRequireTarget'))
+          // 返回 rejected Promise，阻止关闭弹窗
+          return Promise.reject(new Error('transfer target required'))
+        }
         try {
-          await window.electronAPI.employee.delete({
+          const result = await window.electronAPI.employee.delete({
             id: emp.id,
-            delete_workspace: deleteWorkspace,
+            delete_workspace: state.deleteWorkspace,
+            conversation_action: state.conversationAction,
+            transfer_to_employee_id: state.transferToEmployeeId,
           })
-          message.success(t('common.deleted'))
+          if (state.conversationAction === 'transfer' && Number(result?.transferred) > 0) {
+            const target = transferTargets.find(e2 => e2.id === state.transferToEmployeeId)
+            message.success(t('employeeSettings.transferSuccess', {
+              count: result.transferred,
+              name: target?.name || '',
+            }))
+          } else {
+            message.success(t('common.deleted'))
+          }
           // 乐观更新：立即从列表移除，再后台刷新确保数据一致
           setEmployees(prev => prev.filter(e => e.id !== emp.id))
           await loadEmployees()
@@ -228,7 +246,7 @@ const Employees: React.FC = () => {
         }
       },
     })
-  }, [modal, message, t, token, loadEmployees])
+  }, [modal, message, t, token, loadEmployees, employees])
 
   const handleCreate = useCallback(() => {
     navigate('/wizard')

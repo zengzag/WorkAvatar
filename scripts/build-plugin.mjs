@@ -233,6 +233,7 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
   addPath('dist')
   addPath('locale')
   addPath('resources')
+  addPath('skills')
   fs.mkdirSync(outDir, { recursive: true })
   const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.wap`)
   zip.writeZip(outPath)

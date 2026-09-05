@@ -589,6 +589,8 @@ class DatabaseService {
     this.addColumnIfNotExists('installed_skills', 'disable_model_invocation', "BOOLEAN NOT NULL DEFAULT 0")
     this.addColumnIfNotExists('installed_skills', 'user_invocable', "BOOLEAN NOT NULL DEFAULT 1")
     this.addColumnIfNotExists('installed_skills', 'hooks_json', "TEXT DEFAULT '[]'")
+    // 插件来源技能（source='plugin'）：记录所属插件 id，用于按插件生命周期上下线
+    this.addColumnIfNotExists('installed_skills', 'plugin_id', "TEXT DEFAULT ''")
 
     this.migrateEmployeeToolMode()
     this.cleanupObsoleteEmployeeTools()

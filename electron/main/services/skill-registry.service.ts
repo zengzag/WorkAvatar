@@ -10,8 +10,8 @@ import { createLogger } from './logger'
 
 const logger = createLogger('SkillRegistry')
 
-// Skill 来源：global（全局 skillsDir）、project（员工工作区 .workavatar/skills/）、bundled（内置）
-export type SkillSource = 'global' | 'project' | 'bundled'
+// Skill 来源：global（用户安装 skillsDir）、project（员工工作区 .workavatar/skills/）、bundled（内置）、plugin（插件内置）
+export type SkillSource = 'global' | 'project' | 'bundled' | 'plugin'
 
 // 对齐 agentskills.io 开放标准 + Claude Code/CodeBuddy 扩展字段
 export interface ClaudeSkillManifest {
@@ -51,6 +51,8 @@ export interface ClaudeSkill {
   disableModelInvocation: boolean
   userInvocable: boolean
   source: SkillSource
+  /** 插件来源技能（source='plugin'）所属插件 id，缺省为空串 */
+  plugin_id?: string
   installPath: string
   manifest: ClaudeSkillManifest
   skillMdContent: string
@@ -130,6 +132,61 @@ class SkillRegistryService {
     return this.skillsDir
   }
 
+  /** 当前激活插件贡献的技能源（pluginId → skillsDir）：决定 plugin 来源技能的可用性（激活才展示） */
+  private activePluginSkills = new Map<string, string>()
+
+  /**
+   * 注册插件内置技能：扫描 <插件根>/skills/ 下每个含 SKILL.md 的子目录，
+   * 以 source='plugin' 入库。install_path 指向插件目录（只读不复制），id 稳定（`plugin:<插件id>:<技能名>`）
+   * 跨重启不变，保证员工分配记录不因热重载/重启失效。单技能失败仅跳过，不影响其余技能。
+   */
+  registerPluginSkills(pluginId: string, skillsDir: string): void {
+    if (!fs.existsSync(skillsDir)) return
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(skillsDir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      const skillDir = path.join(skillsDir, entry.name)
+      const skillMdPath = path.join(skillDir, 'SKILL.md')
+      if (!fs.existsSync(skillMdPath)) continue
+      try {
+        const skillMdContent = fs.readFileSync(skillMdPath, 'utf-8')
+        const manifest = this.parseSkillMd(skillMdContent)
+        // 插件技能强制要求 SKILL.md 的 name 与目录名一致（对齐 agentskills 约定）
+        this.validateManifest(manifest, entry.name)
+        const skillId = `plugin:${pluginId}:${manifest.name}`
+        this.finalizeSkillRecord({
+          skillDir,
+          installPath: skillDir,
+          skillId,
+          manifest,
+          skillMdContent,
+          source: 'plugin',
+          pluginId,
+        })
+        logger.info(`插件技能已注册: ${pluginId} → ${manifest.name}`)
+      } catch (err: any) {
+        logger.warn(`插件 ${pluginId} 技能 "${entry.name}" 注册失败（已跳过）:`, err?.message || err)
+      }
+    }
+    this.activePluginSkills.set(pluginId, skillsDir)
+  }
+
+  /** 插件下线（禁用/删除/热重载）时调用：技能从可用集合移除，DB 记录保留（员工分配不丢失） */
+  markPluginSkillsInactive(pluginId: string): void {
+    this.activePluginSkills.delete(pluginId)
+  }
+
+  /** 物理删除插件的技能记录（仅插件删除时）：连同员工分配关联级联清除，重装后重新注册 */
+  removePluginSkills(pluginId: string): void {
+    this.activePluginSkills.delete(pluginId)
+    this.db.getDb().prepare('DELETE FROM installed_skills WHERE source = ? AND plugin_id = ?').run('plugin', pluginId)
+  }
+
   async installFromDirectory(sourceDir: string, source: SkillSource = 'global'): Promise<InstallSkillResult> {
     try {
       const skillMdPath = path.join(sourceDir, 'SKILL.md')
@@ -167,39 +224,64 @@ class SkillRegistryService {
       }
       // bundled 不复制目录，installPath 直接指向只读 resources 目录
 
-      const references = this.loadReferences(installPath)
-      const scripts = this.loadScripts(installPath)
-
-      const skill: ClaudeSkill = {
-        id: skillId,
-        name: manifest.name,
-        description: manifest.description,
-        version: manifest.version || '1.0.0',
-        author: manifest.author || 'Unknown',
-        license: manifest.license || '',
-        compatibility: manifest.compatibility || '',
-        tags: manifest.tags || [],
-        allowedTools: manifest.allowedTools || [],
-        metadata: manifest.metadata || {},
-        context: manifest.context || 'inherit',
-        agent: manifest.agent || '',
-        disableModelInvocation: manifest.disableModelInvocation || false,
-        userInvocable: manifest.userInvocable !== false,
-        source,
+      const skill = this.finalizeSkillRecord({
+        skillDir: installPath,
         installPath,
+        skillId,
         manifest,
         skillMdContent,
-        references,
-        scripts,
-        is_enabled: true,
-        created_at: Date.now(),
-      }
-
-      this.saveToDatabase(skill)
+        source,
+      })
       return { success: true, skill }
     } catch (error: any) {
       return { success: false, error: error.message }
     }
+  }
+
+  /** 组装技能记录（解析 references/scripts + 落库），installFromDirectory 与插件技能注册共用 */
+  private finalizeSkillRecord(opts: {
+    /** 读取 references/scripts 的目录（bundled/plugin 指向只读源目录） */
+    skillDir: string
+    /** 记录到库的安装路径 */
+    installPath: string
+    skillId: string
+    manifest: ClaudeSkillManifest
+    skillMdContent: string
+    source: SkillSource
+    pluginId?: string
+  }): ClaudeSkill {
+    const { skillDir, installPath, skillId, manifest, skillMdContent, source, pluginId } = opts
+    const references = this.loadReferences(skillDir)
+    const scripts = this.loadScripts(skillDir)
+
+    const skill: ClaudeSkill = {
+      id: skillId,
+      name: manifest.name,
+      description: manifest.description,
+      version: manifest.version || '1.0.0',
+      author: manifest.author || 'Unknown',
+      license: manifest.license || '',
+      compatibility: manifest.compatibility || '',
+      tags: manifest.tags || [],
+      allowedTools: manifest.allowedTools || [],
+      metadata: manifest.metadata || {},
+      context: manifest.context || 'inherit',
+      agent: manifest.agent || '',
+      disableModelInvocation: manifest.disableModelInvocation || false,
+      userInvocable: manifest.userInvocable !== false,
+      source,
+      plugin_id: pluginId,
+      installPath,
+      manifest,
+      skillMdContent,
+      references,
+      scripts,
+      is_enabled: true,
+      created_at: Date.now(),
+    }
+
+    this.saveToDatabase(skill)
+    return skill
   }
 
   async installFromZip(zipPath: string): Promise<InstallSkillResult> {
@@ -422,8 +504,8 @@ class SkillRegistryService {
       `INSERT INTO installed_skills (
         id, name, description, version, author, tags_json, install_path, manifest_json, skill_md_content,
         license, compatibility, allowed_tools_json, metadata_json, context, agent, source,
-        disable_model_invocation, user_invocable, hooks_json, is_enabled, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        disable_model_invocation, user_invocable, hooks_json, plugin_id, is_enabled, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
@@ -443,6 +525,7 @@ class SkillRegistryService {
         disable_model_invocation = excluded.disable_model_invocation,
         user_invocable = excluded.user_invocable,
         hooks_json = excluded.hooks_json,
+        plugin_id = excluded.plugin_id,
         is_enabled = excluded.is_enabled,
         created_at = excluded.created_at`
     ).run(
@@ -465,6 +548,7 @@ class SkillRegistryService {
       skill.disableModelInvocation ? 1 : 0,
       skill.userInvocable !== false ? 1 : 0,
       JSON.stringify(skill.manifest.hooks || []),
+      skill.plugin_id || '',
       skill.is_enabled ? 1 : 0,
       skill.created_at
     )
@@ -474,7 +558,11 @@ class SkillRegistryService {
     const db = this.db.getDb()
     const rows = db.prepare('SELECT * FROM installed_skills ORDER BY created_at DESC').all() as any[]
 
-    return rows.map((row) => this.rowToSkill(row))
+    // 插件来源技能仅在其插件处于激活状态（activePluginSkills 含该插件）时可见；
+    // 插件禁用/删除后技能从可用池隐藏，但 DB 记录保留（员工分配不丢失，插件重新启用后自动恢复）
+    return rows
+      .filter(row => row.source !== 'plugin' || this.activePluginSkills.has(row.plugin_id || ''))
+      .map(row => this.rowToSkill(row))
   }
 
   getSkillById(id: string): ClaudeSkill | null {
@@ -501,7 +589,8 @@ class SkillRegistryService {
       metadata: JSON.parse(row.metadata_json || '{}'),
       context: (row.context === 'fork' ? 'fork' : 'inherit') as 'inherit' | 'fork',
       agent: row.agent || '',
-      source: (['global', 'project', 'bundled'].includes(row.source) ? row.source : 'global') as SkillSource,
+      source: (['global', 'project', 'bundled', 'plugin'].includes(row.source) ? row.source : 'global') as SkillSource,
+      plugin_id: row.plugin_id || undefined,
       disableModelInvocation: row.disable_model_invocation === 1,
       userInvocable: row.user_invocable !== 0,
       installPath,
@@ -517,6 +606,8 @@ class SkillRegistryService {
   async uninstallSkill(id: string): Promise<boolean> {
     try {
       const skill = this.getSkillById(id)
+      // 插件来源技能由插件生命周期管理（随插件禁用/删除下线），不允许独立卸载
+      if (skill?.source === 'plugin') return false
       // bundled 来源的 skill 目录在只读 resources/ 下，不可删除；仅删除 DB 记录（下次启动会自动重装）
       if (skill && skill.source !== 'bundled' && fs.existsSync(skill.installPath)) {
         fs.rmSync(skill.installPath, { recursive: true, force: true })

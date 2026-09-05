@@ -74,6 +74,16 @@ export interface EmployeeUpdateParams {
 export interface EmployeeDeleteParams {
   id: string
   delete_workspace?: boolean
+  /** 对话历史处理方式：keep 保留 / delete 删除 / transfer 转移 */
+  conversation_action?: 'keep' | 'delete' | 'transfer'
+  /** 转移目标数字员工 id（conversation_action=transfer 时必填） */
+  transfer_to_employee_id?: string
+}
+
+export interface EmployeeDeleteResult {
+  ok: boolean
+  /** transfer 时完成转移的对话数 */
+  transferred: number
 }
 
 /** 内置/插件员工另存为自己的员工副本 */

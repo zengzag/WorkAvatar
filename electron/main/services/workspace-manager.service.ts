@@ -183,6 +183,57 @@ class WorkspaceManagerService {
     return result.changes > 0
   }
 
+  /**
+   * 将员工的全部对话转移到目标员工名下（含委托子会话，避免孤儿记录），
+   * 并把员工工作区根目录整体迁入目标员工工作区，保证转移对话的任务文件仍可用。
+   * 返回转移的对话数。
+   */
+  transferConversations(fromEmployeeId: string, toEmployeeId: string): number {
+    if (!fromEmployeeId || !toEmployeeId || fromEmployeeId === toEmployeeId) return 0
+    const target = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(toEmployeeId) as { id: string; workspace_path: string | null } | undefined
+    if (!target) return 0
+
+    const result = this.db.getDb().prepare(
+      'UPDATE conversations SET employee_id = ?, updated_at = unixepoch() WHERE employee_id = ?'
+    ).run(toEmployeeId, fromEmployeeId)
+    // FTS 员工归属同步（conversations_fts 按 employee_id 过滤检索）
+    this.db.getDb().prepare(
+      'UPDATE conversations_fts SET employee_id = ? WHERE employee_id = ?'
+    ).run(toEmployeeId, fromEmployeeId)
+
+    // 工作区根目录迁移：源员工根 → 目标员工根/原名[-短ID]，避免删除源员工时连带清除已转移对话的任务文件
+    const source = this.db.getDb().prepare('SELECT workspace_path FROM employees WHERE id = ?').get(fromEmployeeId) as { workspace_path: string | null } | undefined
+    const sourceRoot = source?.workspace_path || ''
+    const targetRoot = target.workspace_path
+      ?? (EmployeeRegistryService.getInstance().isRegistered(toEmployeeId) ? this.getRegistryWorkspaceRoot(toEmployeeId) : '')
+    if (sourceRoot && targetRoot && fs.existsSync(sourceRoot) && fs.existsSync(targetRoot)) {
+      const employeesRoot = path.resolve(PathService.getInstance().getDataDir(), 'employees')
+      const fromAbs = path.resolve(sourceRoot)
+      const relative = path.relative(employeesRoot, fromAbs)
+      const isWithinEmployees = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+      if (!isWithinEmployees) {
+        logger.warn(`Refused to move workspace outside employees root: ${sourceRoot}`)
+      } else {
+        let dest = path.join(targetRoot, path.basename(fromAbs))
+        if (fs.existsSync(dest)) dest = path.join(targetRoot, `${path.basename(fromAbs)}-${generateShortId()}`)
+        try {
+          fs.renameSync(fromAbs, dest)
+          // 重写该员工名下所有对话的 workspace_path 前缀（含子会话）
+          const pattern = fromAbs.replace(/[\\%_]/g, (m) => '\\' + m) + '%'
+          this.db.getDb().prepare(
+            "UPDATE conversations SET workspace_path = ? || substr(workspace_path, ?), updated_at = unixepoch() WHERE workspace_path LIKE ? ESCAPE '\\'"
+          ).run(dest, fromAbs.length + 1, pattern)
+        } catch (error) {
+          logger.warn('Failed to move employee workspace root', fromAbs, error)
+        }
+      }
+    }
+
+    this.touchEmployeeLastActive(fromEmployeeId)
+    this.touchEmployeeLastActive(toEmployeeId)
+    return Number(result.changes)
+  }
+
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
