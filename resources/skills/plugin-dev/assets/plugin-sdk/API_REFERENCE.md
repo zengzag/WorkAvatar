@@ -1,6 +1,6 @@
 # WorkAvatar 插件协议 · API 参考
 
-> 类型契约见 [plugin-sdk/src](./src/)，协议规范见 [PROTOCOL.md](./PROTOCOL.md)，能力矩阵见 [CAPABILITY_MATRIX.md](./CAPABILITY_MATRIX.md)。
+> 类型契约见 [plugin-sdk/src](./src/)，协议规范见 [PROTOCOL.md](./PROTOCOL.md)，能力矩阵见 [CAPABILITY\_MATRIX.md](./CAPABILITY_MATRIX.md)。
 
 WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的插件模型。
 插件通过 **capabilities（能力域授权）** 声明可访问的能力，并可使用通用数据访问、统一执行入口、事件总线、UI 注入四类放权能力。
@@ -8,19 +8,30 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 ## 目录
 
 - [1. 插件包结构](#1-插件包结构)
-- [2. manifest.json 字段](#2-manifestjson-字段)
-- [3. 生命周期](#3-生命周期)
-- [4. 主进程入口](#4-主进程入口)
-- [5. ctx（PluginContext）能力](#5-ctxplugincontext能力)
-- [6. 数据访问层（services.data）](#6-数据访问层servicesdata)
-- [7. 宿主能力层（services.execute）](#7-宿主能力层servicesexecute)
-- [8. 系统集成层（services.events）](#8-系统集成层servicesevents)
-- [9. 系统能力（services.system）](#9-系统能力servicessystem)
-- [10. 贡献点（contributions）](#10-贡献点contributions)
-- [11. 渲染端入口](#11-渲染端入口)
-- [12. 渲染端集成（__WA_HOST__ / plugin:// 协议）](#12-渲染端集成)
 
----
+- [2. manifest.json 字段](#2-manifestjson-字段)
+
+- [3. 生命周期](#3-生命周期)
+
+- [4. 主进程入口](#4-主进程入口)
+
+- [5. ctx（PluginContext）能力](#5-ctxplugincontext能力)
+
+- [6. 数据访问层（services.data）](#6-数据访问层servicesdata)
+
+- [7. 宿主能力层（services.execute）](#7-宿主能力层servicesexecute)
+
+- [8. 系统集成层（services.events）](#8-系统集成层servicesevents)
+
+- [9. 系统能力（services.system）](#9-系统能力servicessystem)
+
+- [10. 贡献点（contributions）](#10-贡献点contributions)
+
+- [11. 渲染端入口](#11-渲染端入口)
+
+- [12. 渲染端集成（__WA\_HOST__](#12-渲染端集成) [/ plugin:// 协议）](#12-渲染端集成)
+
+***
 
 ## 1. 插件包结构
 
@@ -38,19 +49,19 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 
 ## 2. manifest.json 字段
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `id` | ✓ | `/^[a-z][a-z0-9-]{1,63}$/`；保留字：`settings` `tasks` `employees` `list` `invoke` `event` |
-| `name` / `version` | ✓ | 展示名 / semver |
-| `engine` | ✓ | 宿主协议 semver range（当前为 `>=0.2.0`），不满足则禁用并提示 |
-| `main` | ✓ | 主进程入口（cjs），相对根目录 |
-| `renderer` | | 渲染端入口（ESM）；纯后台插件可省略 |
-| `locale` | | locale 目录名，默认 `locale` |
-| `ipc` | | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀 |
-| `capabilities` | | 能力域授权声明（见 §5） |
-| `permissions` | | 迁移专用权限（仅保留 `legacyMigration`） |
-| `nav` | | 导航项：`label`、`icon`、`order`、`detachable` |
-| `dependencies` | | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活 |
+| 字段                 | 必填     | 说明                                                                                    |
+| ------------------ | ------ | ------------------------------------------------------------------------------------- |
+| `id`               | ✓      | `/^[a-z][a-z0-9-]{1,63}$/`；保留字：`settings` `tasks` `employees` `list` `invoke` `event` |
+| `name` / `version` | ✓      | 展示名 / semver                                                                          |
+| `engine`           | ✓      | 宿主协议 semver range（当前为 `>=0.2.0`），不满足则禁用并提示                                            |
+| `main`             | ✓      | 主进程入口（cjs），相对根目录                                                                      |
+| `renderer`         | <br /> | 渲染端入口（ESM）；纯后台插件可省略                                                                   |
+| `locale`           | <br /> | locale 目录名，默认 `locale`                                                                |
+| `ipc`              | <br /> | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀                                           |
+| `capabilities`     | <br /> | 能力域授权声明（见 §5）                                                                         |
+| `permissions`      | <br /> | 迁移专用权限（仅保留 `legacyMigration`）                                                         |
+| `nav`              | <br /> | 导航项：`label`、`icon`、`order`、`detachable`                                               |
+| `dependencies`     | <br /> | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活                             |
 
 参考真实示例：开发包 `plugin-template/` 模板工程的 `manifest.json`（最小可构建示例）。
 
@@ -99,8 +110,11 @@ interface PluginContext {
 ```
 
 - `paths.root`：只读安装目录；`paths.data`：可写数据目录；`paths.resources`：只读资源目录。
+
 - `ipc.handle(channel, handler)`：通道强制 `plugin:<id>:` 前缀，且须在 `manifest.ipc` 白名单，越权注册抛错。
+
 - `ipc.broadcast(event, payload)`：推送到本插件所有渲染端（主窗口 + tab 独立窗口 + 插件自建窗口）。
+
 - `storage.openSqlite(name?)`：独立分库（WAL）；`storage.get/set/delete/keys`：插件作用域 KV（存 `plugin_kv` 表，不写内核 settings）。
 
 ## 6. 数据访问层（services.data）
@@ -116,8 +130,11 @@ services.data.mutate<T>(entity, op, payload): Promise<T>
 **操作**：`create` / `update` / `delete`。
 
 **安全**：
+
 - 实体必须在 `capabilities.data.entities` 白名单内，否则拒绝。
+
 - `access=read` 的实体调用 `mutate` 拒绝。
+
 - `llmProviders` 返回前剥离 `api_key`。
 
 **示例**：
@@ -216,8 +233,11 @@ services.events.subscribe(event, callback): () => void   // 订阅，返回取�
 services.events.publish(event, payload): void            // 发布，强制 plugin:<id>: 前缀
 ```
 
-**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`。
+**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`、`agent:event`（数字员工运行时事件桥，见下）。
 **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅（需在 subscribe 白名单声明）。
+
+**`agent:event`（数字员工运行时事件）**：订阅后收到数字员工执行生命周期事件，payload 为 `{ employeeId, conversationId, event, data }`，其中 `event` 是 agent 事件名：
+`run:start / run:end / run:error`、`iteration:start / iteration:end`、`tool:call:start / tool:call:end`、`state:change`、`plan:generated`、`memory:compressed`；`data` 为原始事件数据透传。适用于观测、审计、数据加工。无订阅者时宿主零成本转发。
 
 **示例**：
 
@@ -225,6 +245,11 @@ services.events.publish(event, payload): void            // 发布，强制 plug
 // 订阅对话删除事件
 const unsub = ctx.services.events!.subscribe('conversation:deleted', (id) => {
   console.log('对话被删除:', id)
+})
+
+// 订阅数字员工运行时事件（观测/审计）
+ctx.services.events!.subscribe('agent:event', (p) => {
+  console.log(p.employeeId, p.conversationId, p.event, p.data)
 })
 
 // 发布自己的事件
@@ -235,13 +260,14 @@ ctx.services.events!.publish('data-changed', { ts: Date.now() })
 
 需 `capabilities.system.features` 授权。
 
-| 特性 | 服务 | 说明 |
-|---|---|---|
-| `notification` | `services.notification.notify(payload)` | 系统通知（主窗口激活→推渲染端，失焦→系统通知） |
-| `scheduler` | `services.scheduler.every/cron/cancel` | 定时任务（宿主统一回收） |
-| `windows` | `services.windows.create(options)` | 插件窗口（透明/置顶/无任务栏等） |
-| `native` | `services.native.borrow/modulePath` | 租借宿主原生模块（ABI 一致；**插件禁止自带 .node**） |
-| `globalShortcuts` | `contributions.registerGlobalShortcuts` | 全局快捷键 |
+| 特性                | 服务                                      | 说明                                | <br /> |
+| ----------------- | --------------------------------------- | --------------------------------- | :----- |
+| `notification`    | `services.notification.notify(payload)` | 系统通知（主窗口激活→推渲染端，失焦→系统通知）          | <br /> |
+| `scheduler`       | `services.scheduler.every/cron/cancel`  | 定时任务（宿主统一回收）                      | <br /> |
+| `windows`         | `services.windows.create(options)`      | 插件窗口（透明/置顶/无任务栏等）                 | <br /> |
+| `native`          | `services.native.borrow/modulePath`     | 租借宿主原生模块（ABI 一致；**插件禁止自带 .node**） | <br /> |
+| `globalShortcuts` | `contributions.registerGlobalShortcuts` | 全局快捷键                             | <br /> |
+| `agentMiddleware` | `contributions.registerAgentMiddleware` | 注册数字员工工具调用中间件（执行路径拦截）             | <br /> |
 
 ## 10. 贡献点（contributions）
 
@@ -250,12 +276,23 @@ registerAgentTools(tools: PluginToolDefinition[])        // 进宿主 ToolRegist
 registerMcpTools(tools: PluginToolDefinition[])          // 经内置 MCP 对外暴露
 registerFileAssociations(assocs)                          // 系统"打开方式"→ 路由到插件渲染端
 registerGlobalShortcuts(shortcuts)                        // 需 system.features 含 globalShortcuts
+registerAgentMiddleware(middlewares: PluginToolMiddleware[]) // 数字员工工具调用中间件（需 system.features 含 agentMiddleware）
 registerMessageActions(actions)                           // 对话消息快捷操作
 registerView(view)                                        // 声明 UI 注入意图（需 capabilities.ui.views 授权）
 registerCommand(command)                                  // 注册命令（可被斜杠菜单/宿主调用）
 ```
 
 `PluginToolDefinition` 结构：`id/name/title/description/summary/parameters/handler(second)`，`handler(args, { onProgress, employeeId })`；可选 `permission/timeoutMs/noRetry/onDemand/metadata`。注册时 id 不得与已注册工具冲突（冲突整组拒绝）。
+
+**`PluginToolMiddleware`（工具调用中间件）**：结构 `{ name: string; fn(toolName, args, next): Promise<PluginToolResult> }`。宿主以**链首守卫**挂到数字员工上，先于内置 `logging/retry/timeout/result_size` 执行，可用于：
+
+- **观察**：`const r = await next()` 后读取结果；
+
+- **短路阻断**：不调用 `next()`，直接返回 `{ success: false, error, toolName }`（工具 handler 不再执行）；
+
+- **改写**：调用 `next()` 后改写返回值。
+
+`next()` 返回 `PluginToolResult`（`success/output/error/toolName/generatedFiles`）。中间件异常会被宿主收敛为错误结果，不会中断代理执行。禁用/删除插件后需重启生效（与插件工具一致）。
 
 ## 11. 渲染端入口
 
@@ -275,8 +312,11 @@ export default {
 
 **UI 注入点**：`chat.toolbar`（输入框工具栏）/ `chat.quick`（输入框上方快捷建议区）/ `chat.header`（任务对话页头部）/ `sidebar.footer`（底部导航栏底部）/ `settings.tab`（设置页聚合 Tab）/ `message.menu`（消息操作菜单）/ `message.bubble`（消息气泡操作区，context 含 {role,content,messageId}）。
 
-## 12. 渲染端集成（__WA_HOST__ / plugin:// 协议）
+## 12. 渲染端集成（__WA\_HOST__ / plugin:// 协议）
 
 - **共享库单例**：宿主注入 `globalThis.__WA_HOST__ = { React, ReactDOM, jsxRuntime, antd, icons, i18n, reactI18n }`。插件构建时把 `react/antd` 等 external 并 shim 到 `__WA_HOST__`（见构建脚本），防双 React 实例；插件包内若检出自带 react 则拒绝加载。
+
 - **plugin:// 协议**：`plugin://<id>/<相对路径>` 经 `protocol.handle` 映射到插件目录（主动校验越权：非法路径 403，未启用插件 404）。仅 enabled 插件可访问。
+
 - **路由**：`/plugin/<id>/*` 挂载插件 routes；独立窗口复用同一组路径；导航项合并进 `nav.store`（label 为插件 locale key，icon 为 SVG 字符串，支持排序与 tab 分离）。
+

@@ -14,6 +14,8 @@ const SETTINGS_KEY = 'registered_employees.config'
 export interface RegisteredEmployee extends Employee {
   /** 默认启用的工具 id 列表（含插件工具），空/缺省表示全部按宿主默认模式 */
   defaultTools?: string[]
+  /** 默认启用的技能 id 列表（bundled/plugin 稳定 id），缺省表示不额外启用任何技能 */
+  defaultSkills?: string[]
 }
 
 interface PluginEmployeeGroup {
@@ -81,6 +83,42 @@ class EmployeeRegistryService {
       created_at: 0,
       updated_at: 0,
       defaultTools: ['kms_search', 'kms_get_content', 'kms_list_collections', 'web_search', 'web_fetch'],
+    })
+    register({
+      id: 'builtin:plugin-dev',
+      source: 'builtin',
+      source_key: 'plugin-dev',
+      name: '插件开发助手',
+      description: 'WorkAvatar 插件开发助手：面向最终用户的插件开发向导，从需求分析、能力选型、工程脚手架、manifest 编写、主进程/渲染端编码，到构建打包 .wap 与安装交付全流程指导，内置完整开发资料与模板。',
+      rules: [
+        '你是「插件开发助手」，WorkAvatar 插件（plugin）开发的专属工程师。当用户想要为 WorkAvatar 开发、创建、编写自定义插件，或询问插件开发机制（manifest、capabilities 能力声明、主进程/渲染端入口、构建打包、安装分发）时，由你完成。宿主本身的功能开发（仓库内普通代码）不属于插件开发。',
+        '必做第一步——激活插件开发技能：',
+        '- 任何插件开发任务，先用 activate_skill 工具激活 `plugin-dev` 技能，返回的 SKILL.md 正文给出了从需求分析、能力选型、脚手架、manifest、双入口编码、构建打包到安装交付的完整工作流，是唯一权威步骤来源。',
+        '- 技能自带全部开发资料（协议文档 + 模板源码 + 构建脚本 + SDK 类型契约），无需 WorkAvatar 源码仓库即可完成插件开发。',
+        '工作流（按 plugin-dev 技能指引的顺序执行）：',
+        '- 需求分析：明确插件要做什么，对照技能中的能力选型表确定需要的 capabilities（ipc/storage/services/nav 等）。',
+        '- 环境检查：先用 shell_exec 执行 `node --version` 检查 Node.js ≥ 20 与 npm 是否就绪，未安装先引导用户安装。',
+        '- 脚手架：在当前任务工作区内创建工程，用 read_reference 读取模板文件，经 file_write 复制改写到工程（manifest.json/package.json/build-plugin.mjs/tsconfig.json/src 入口/locale）。',
+        '- 编写 manifest.json：声明 id/version/engine/main/renderer/ipc 通道白名单/capabilities/nav。',
+        '- 安装依赖并构建：shell_exec 执行 `npm install` 与 `node build-plugin.mjs --zip`，产出 `.wap` 安装包。',
+        '- 交付安装：检查产物路径，指导用户导入 `.wap`（或直接打开该文件）并重启应用生效。',
+        '工程约束：',
+        '- 插件工程必须建在**当前任务工作区**内（工作区外写文件需用户逐次确认）。',
+        '- 编码以主进程入口（src/main）为核心，渲染端（src/renderer）为 UI；纯后台插件可省略渲染端。',
+        '- 插件必须是资源闭环的单一文件夹（依赖走依赖声明策略，原生模块只能向宿主借用，禁带 .node）。',
+        '原则：',
+        '- 理解用户需求后再动手，需求不明确先向用户确认；开发过程遇到阻塞（缺依赖、构建报错）先自查修复，无法解决时如实说明原因。',
+        '- 交付时说明插件用途、安装方式与注意事项。',
+      ].join('\n'),
+      profile_json: JSON.stringify({ roleName: '插件开发助手' }),
+      avatar_type: 'default',
+      memory_enabled: false,
+      arch_version: 1,
+      total_tasks: 0,
+      total_approvals: 0,
+      created_at: 0,
+      updated_at: 0,
+      defaultSkills: ['plugin-dev'],
     })
   }
 
@@ -305,6 +343,13 @@ class EmployeeRegistryService {
     const map = new Map<string, 'on' | 'on_demand'>()
     for (const id of emp.defaultTools) map.set(id, 'on')
     return map
+  }
+
+  /** 注册员工默认技能 id 集合：命中声明返回 Set，否则 null */
+  getDefaultSkillIds(employeeId: string): Set<string> | null {
+    const emp = this.getRegistered(employeeId)
+    if (!emp?.defaultSkills || emp.defaultSkills.length === 0) return null
+    return new Set(emp.defaultSkills)
   }
 
   /**

@@ -7,8 +7,9 @@
 // - --zip 产出独立分发包 release/plugins/<id>-v<version>.wap
 //
 // 用法：
-//   node scripts/build-plugins.mjs [pluginId]      # 构建全部或指定插件到 dist/
+//   node scripts/build-plugins.mjs [pluginId]       # 构建全部或指定插件到 dist/
 //   node scripts/build-plugins.mjs [pluginId] --zip # 构建并存放独立分发包 release/plugins/<id>-v<ver>.wap
+//   node scripts/build-plugins.mjs [pluginId] --zip --no-source # 同上，但打包时排除源码（默认含源码）
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -82,6 +83,7 @@ async function main() {
       childArgs.push('--zip')
       // 仓库内统一输出到项目根 release/plugins/（与文档/build.ps1 一致），保证 5 个插件 zip 集中产出
       childArgs.push('--out', path.join(projectRoot, 'release', 'plugins'))
+      if (args.includes('--no-source')) childArgs.push('--no-source')
     }
     const res = spawnSync(process.execPath, childArgs, { stdio: 'inherit' })
     if (res.status === 0) built++

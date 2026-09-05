@@ -30,6 +30,7 @@ export type PluginSystemFeature =
   | 'windows' // 创建插件窗口
   | 'native' // 租借宿主原生模块
   | 'globalShortcuts' // 全局快捷键
+  | 'agentMiddleware' // 注册数字员工工具调用中间件（执行路径拦截）
 
 /** KMS 数据查询类型（services.kms.query 白名单） */
 export type PluginKmsQueryType = 'search' | 'content' | 'collections'
@@ -72,6 +73,24 @@ export interface PluginNavContribution {
   detachable?: boolean
 }
 
+/**
+ * 插件声明的内置数字员工（manifest.employees 元素）。
+ * 插件激活成功后注册进员工库「插件」分组，只读展示，用户可另存副本。
+ */
+export interface PluginManifestEmployee {
+  /** 插件内唯一 key：/^[a-z][a-z0-9-]{1,63}$/，宿主自动拼接为 plugin:<插件id>:<key> */
+  key: string
+  /** 员工名称 */
+  name: string
+  /** 简短描述（复用员工描述规则） */
+  description?: string
+  /** 系统提示词 / 角色规则（复用员工 rules 的权威语义） */
+  systemPrompt: string
+  /** 默认启用的工具 id 列表（含本插件注册的 agent 工具与宿主内置工具），缺省按宿主默认模式 */
+  defaultTools?: string[]
+  avatarType?: string
+}
+
 export interface PluginManifest {
   /** 唯一 id：/^[a-z][a-z0-9-]{1,63}$/，不可用保留字 settings/tasks/employees */
   id: string
@@ -99,5 +118,7 @@ export interface PluginManifest {
   dependencies?: Record<string, string>
   /** 迁移专用权限（v2 仅保留 legacyMigration，用于数据迁出场景） */
   permissions?: Array<'legacyMigration'>
+  /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
+  employees?: PluginManifestEmployee[]
   nav?: PluginNavContribution
 }

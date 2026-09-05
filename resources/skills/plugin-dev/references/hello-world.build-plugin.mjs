@@ -7,8 +7,9 @@
 //      references/hello-world.build-plugin.mjs，供智能体脚手架插件工程时使用
 //
 // 用法（在插件工程根目录，或指定插件目录）：
-//   node build-plugin.mjs [pluginDir]      # 构建主进程 CJS + 渲染端 ESM 到 dist/
+//   node build-plugin.mjs [pluginDir]       # 构建主进程 CJS + 渲染端 ESM 到 dist/
 //   node build-plugin.mjs [pluginDir] --zip # 构建并产出独立分发包 <id>-v<version>.wap
+//   node build-plugin.mjs [pluginDir] --zip --no-source # 产出不含源码的精简分发包
 //
 // 约定：
 //   - 读取 <pluginDir>/manifest.json 的 main / renderer 入口
@@ -16,7 +17,8 @@
 //   - 渲染端入口（dist/renderer/index.js）→ ESM（platform=browser, target=es2020, jsx=automatic）
 //   - 渲染端共享库（react/antd 等）经 __WA_HOST__ 单例 shim 内联，产物不残留裸模块标识符
 //   - CSS 自动内联为 <style> 注入
-//   - zip 仅含运行时必需文件：manifest.json + dist/** + locale/** + resources/**
+//   - zip 默认含源码（src/** + package.json + tsconfig.json），便于在已安装插件基础上二次开发重建；
+//     --no-source 排除源码，仅保留运行时必需文件 manifest.json + dist/** + locale/** + resources/**
 import esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -217,10 +219,11 @@ function formatError(err) {
 }
 
 /**
- * 生成插件分发包（自定义扩展名 .wap，内部仍为 zip 归档）：仅含运行时必需文件（manifest/dist/locale/resources）。
+ * 生成插件分发包（自定义扩展名 .wap，内部仍为 zip 归档）：默认含源码（src/package.json/tsconfig.json），
+ * 便于在已安装插件基础上二次开发重建；--no-source 时仅含运行时必需文件（manifest/dist/locale/resources/skills）。
  * zip 根即为插件内容（解压后顶层是 manifest.json），供应用内直接导入。
  */
-function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
+function packPluginZip(pluginDir, manifest, outDir, AdmZip, includeSource) {
   const zip = new AdmZip()
   const addPath = (rel) => {
     const full = path.join(pluginDir, rel)
@@ -233,6 +236,12 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
   addPath('dist')
   addPath('locale')
   addPath('resources')
+  addPath('skills')
+  if (includeSource) {
+    addPath('src')
+    addPath('package.json')
+    addPath('tsconfig.json')
+  }
   fs.mkdirSync(outDir, { recursive: true })
   const outPath = path.join(outDir, `${manifest.id}-v${manifest.version}.wap`)
   zip.writeZip(outPath)
@@ -242,6 +251,7 @@ function packPluginZip(pluginDir, manifest, outDir, AdmZip) {
 async function main() {
   const args = process.argv.slice(2)
   const zipMode = args.includes('--zip')
+  const includeSource = !args.includes('--no-source')
   const dirArg = args.find((a) => !a.startsWith('--'))
   const pluginDir = path.resolve(dirArg || process.cwd())
   // 可选 --out <dir>：指定 zip 输出目录（仓库内由 build-plugins.mjs 传入项目根 release/plugins；
@@ -308,9 +318,10 @@ async function main() {
   if (zipMode) {
     const outDir = outDirArg ? path.resolve(outDirArg) : path.join(pluginDir, 'release', 'plugins')
     const AdmZip = require('adm-zip')
-    const outPath = packPluginZip(pluginDir, manifest, outDir, AdmZip)
+    const outPath = packPluginZip(pluginDir, manifest, outDir, AdmZip, includeSource)
     const size = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0
-    console.log(`[build-plugin]   📦 ${path.relative(pluginDir, outPath)} (${formatSize(size)})`)
+    const packDetail = includeSource ? '（含源码 src/package.json/tsconfig.json）' : '（精简包：不含源码）'
+    console.log(`[build-plugin]   📦 ${path.relative(pluginDir, outPath)} (${formatSize(size)})${packDetail}`)
   }
 
   console.log(`[build-plugin] 完成`)

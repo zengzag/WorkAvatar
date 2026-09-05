@@ -13,10 +13,13 @@
 │   ├── main/index.cjs     # 主进程入口：export { migrations?, activate, deactivate? }
 │   └── renderer/index.js  # 渲染端入口：export default { routes, views?, navIcon?, init?, dispose? }
 ├── resources/             # 自包含重资源（onnx 模型等），只读
-└── locale/                # zh-CN.json / en-US.json
+├── locale/                # zh-CN.json / en-US.json
+└── src/ + package.json + tsconfig.json   # 开发源码（默认随 .wap 分发的构建输入，便于二次开发重建）
 ```
 
 插件安装到 `userData/plugins/<id>/`，可启停、可删除、可覆盖升级。运行期数据（sqlite 分库、KV）写入 `userData/plugin-data/<id>/`，与安装目录解耦，禁用/重装不丢数据。
+
+**分发包（`.wap`）**：构建脚本 `build-plugin.mjs --zip` 产出。**默认包含源码**（`src/**` + `package.json` + `tsconfig.json`），使已安装插件目录可直接 `npm install` 后修改 `src/` 并重建（AI/用户二次开发）；追加 `--no-source` 可打包为仅含运行时必需文件（`manifest.json` + `dist/**` + `locale/**` + `resources/**`）的精简包。已安装插件可在 `userData/plugins/<id>/` 找到其源码。
 
 ## 2. manifest.json 字段
 
@@ -163,6 +166,7 @@ registerAgentTools(tools)          // 进宿主 ToolRegistry，参与员工三�
 registerMcpTools(tools)            // 经内置 MCP 对外暴露
 registerFileAssociations(assocs)   // 系统"打开方式"→ 路由到插件渲染端
 registerGlobalShortcuts(shortcuts) // 需 system.features 含 globalShortcuts
+registerAgentMiddleware(middles)   // 数字员工工具调用中间件（需 system.features 含 agentMiddleware）
 registerMessageActions(actions)    // 对话消息快捷操作
 registerView(view)                 // 声明 UI 注入意图（需 capabilities.ui.views 授权）
 registerCommand(command)           // 注册命令（可被斜杠菜单/宿主调用）

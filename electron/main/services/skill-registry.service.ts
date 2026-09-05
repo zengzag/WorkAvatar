@@ -5,6 +5,7 @@ import YAML from 'yaml'
 import { execSync } from 'child_process'
 import DatabaseService from './database.service'
 import PathService from './path.service'
+import EmployeeRegistryService from './employee-registry.service'
 import { generateId } from './common-utils'
 import { createLogger } from './logger'
 
@@ -880,9 +881,14 @@ class SkillRegistryService {
       skillStateMap.set(row.skill_id, row.is_enabled === 1)
     }
 
+    // 注册员工（内置/插件）defaultSkills 声明视为默认启用（agent 工具注入与只读设置展示共用）
+    const registryDefaultIds = EmployeeRegistryService.getInstance().getDefaultSkillIds(employeeId)
+    const isEnabledByDefault = (s: ClaudeSkill) =>
+      registryDefaultIds ? registryDefaultIds.has(s.id) : false
+
     return {
-      enabled: mergedSkills.filter((s) => s.source === 'project' || skillStateMap.get(s.id) === true),
-      disabled: mergedSkills.filter((s) => s.source !== 'project' && skillStateMap.get(s.id) !== true),
+      enabled: mergedSkills.filter((s) => s.source === 'project' || skillStateMap.get(s.id) === true || isEnabledByDefault(s)),
+      disabled: mergedSkills.filter((s) => s.source !== 'project' && skillStateMap.get(s.id) !== true && !isEnabledByDefault(s)),
     }
   }
 }

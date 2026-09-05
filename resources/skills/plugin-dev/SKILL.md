@@ -1,7 +1,7 @@
 ---
 name: plugin-dev
-description: "当用户想要为 WorkAvatar 开发、创建、编写插件（plugin），或询问插件开发机制（manifest、capabilities 能力声明、主进程入口、渲染端入口、构建打包 .wap、安装分发）时使用此技能。指导从需求分析、能力选型、工程脚手架、manifest 编写、主进程/渲染端编码、构建打包到安装交付的完整流程。不适用于宿主本身的功能开发（那是仓库内普通代码，不是插件）。"
-version: 1.1.0
+description: "当用户想要为 WorkAvatar 开发、创建、编写插件（plugin），或询问插件开发机制（manifest、capabilities 能力声明、主进程入口、渲染端入口、构建打包 .wap、安装分发），或想要修改已安装插件的功能源码时使用此技能。指导从需求分析、能力选型、工程脚手架、manifest 编写、主进程/渲染端编码、构建打包到安装交付的完整流程，也覆盖对已安装插件（userData/plugins/<id>/，自带源码）的二次开发。不适用于宿主本身的功能开发（那是仓库内普通代码，不是插件）。"
+version: 1.2.0
 license: Proprietary
 ---
 
@@ -215,7 +215,7 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 ```
 
 - 主进程 → CJS（node20）；渲染端 → ESM（共享库自动 shim，CSS 自动内联）
-- `.wap` 内部为 zip 归档，仅含 `manifest.json + dist/** + locale/** + resources/**`
+- `.wap` 内部为 zip 归档，**默认含源码**（`src/**` + `package.json` + `tsconfig.json`，即完整构建输入，便于在已安装插件基础上二次开发重建）；追加 `--no-source` 打包为仅含运行时必需文件（`manifest.json + dist/** + locale/** + resources/**`）的精简包
 - 构建脚本会校验 `nativeDependencies` 是否在宿主白名单内（白名单文件在 SDK 的 `host-native-dependencies.json`，见"类型契约"）
 - 构建失败先看报错：主进程常见是 import 了不存在的模块；渲染端常见是引用了未安装的包（非共享库的包要加进 dependencies）
 
@@ -227,6 +227,8 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 3. **手动放目录**：解压到 `userData/plugins/<id>/`，重启应用
 
 安装后需**重启应用生效**（方式 2 热重载除外）。插件数据在 `userData/plugin-data/<id>/`，升级/禁用不丢数据。
+
+**修改已安装插件（AI 二次开发）**：`.wap` 默认带源码，安装目录 `userData/plugins/<id>/` 下有完整 `src/**` + `package.json`（+ `tsconfig.json`）。找到用户要改造的插件安装目录后：`npm install`（需要网络）→ 直接修改 `src/` 与 `manifest.json` → 用 `build-plugin.mjs` 重建并重新导入覆盖升级即可。
 
 ## 类型契约（可选，用于 typecheck）
 

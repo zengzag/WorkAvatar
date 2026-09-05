@@ -55,7 +55,7 @@
 | `subscribe` | 订阅宿主事件或其他插件事件 | 低（白名单） |
 | `publish` | 发布事件（强制 `plugin:<id>:` 前缀） | 低 |
 
-**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`。
+**宿主事件**：`conversation:created`（{id,employeeId,title,parentConversationId}）、`conversation:updated`（{id,data}）、`conversation:deleted`、`employee:created` / `employee:updated` / `employee:deleted`（{id}）、`model:renamed`、`agent:event`（数字员工运行时事件桥，见事件总线协议）。
 **插件事件**：`plugin:<id>:<event>`，可被其他插件订阅。
 
 ---
