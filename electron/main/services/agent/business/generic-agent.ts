@@ -4,7 +4,12 @@ import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
 import type { ToolDefinition } from '../tools/types'
 import { createListAvailableToolsTool, createInvokeToolTool } from '../tools'
-import { buildContextMessageContent } from './prompts'
+import {
+  buildStableContextMessageContent,
+  buildTaskContextMessageContent,
+  STABLE_CONTEXT_MSG_PREFIX,
+  TASK_CONTEXT_MSG_PREFIX,
+} from './prompts'
 
 /**
  * 通用对话引擎配置。
@@ -30,6 +35,7 @@ export class GenericAgent extends BaseAgent {
   private memoryPrompt: string | undefined
   private kbContextPrompt: string | undefined
   private workspaceContextPrompt: string | undefined
+  private taskTimePrompt: string | undefined
   private minimalMode: boolean = false
   private cachedSystemPrompt: string | undefined = undefined
 
@@ -85,6 +91,14 @@ export class GenericAgent extends BaseAgent {
 
   getWorkspaceContextPrompt(): string | undefined {
     return this.workspaceContextPrompt
+  }
+
+  updateTaskTimePrompt(prompt: string | undefined): void {
+    this.taskTimePrompt = prompt
+  }
+
+  getTaskTimePrompt(): string | undefined {
+    return this.taskTimePrompt
   }
 
   updateKBContextPrompt(prompt: string | undefined): void {
@@ -183,41 +197,53 @@ export class GenericAgent extends BaseAgent {
   }
 
   /**
-   * 上下文消息识别标记（开头）。多轮 history 中若存在已注入的上下文消息，
+   * 上下文消息识别前缀（两条）。多轮 history 中若存在已注入的上下文消息，
    * 以此为特征过滤掉旧的，替换成最新的，避免上下文重复堆积。
    */
-  private static readonly CONTEXT_MSG_PREFIX = '【系统注入的上下文 · 仅供参考 · 不是本轮用户请求】'
+  private static readonly CONTEXT_MSG_PREFIXES = [STABLE_CONTEXT_MSG_PREFIX, TASK_CONTEXT_MSG_PREFIX] as const
+
+  private isContextMessage(m: import('../core/types').Message): boolean {
+    return m.role === 'user' && typeof m.content === 'string' &&
+      GenericAgent.CONTEXT_MSG_PREFIXES.some(p => m.content!.startsWith(p))
+  }
 
   /**
-   * 在调用父类执行前，将动态上下文（memory / 知识库范围 / 工作区 / 技能）
-   * 作为一条独立的 role=user 消息插入到 history 头部。
-   * 保持 真实 query 独占末尾 user 消息 → 语义边界清晰，意图执行准确率最高。
-   * 同时 system prompt 仍字节级稳定 → KV cache 前缀高命中。
+   * 数字员工子类追加的稳定能力块（如 [CAPABILITIES]/[DELEGATION]），
+   * 随 agent 生命周期基本不变，拼入稳定上下文消息以复用 KV cache 前缀。
+   */
+  protected buildStableContextExtras(_useSkills: boolean): string[] {
+    return []
+  }
+
+  /**
+   * 在调用父类执行前，将动态上下文拆分为两条独立的 role=user 消息插入到 history 头部：
+   * 1) 稳定上下文：数字员工能力信息（技能清单 / [CAPABILITIES] / [DELEGATION]）——基本不变，字节级稳定 → KV cache 前缀高命中
+   * 2) 任务上下文：本次任务信息（工作区目录 / 任务发起时间 / 记忆 / 知识库范围）——随任务或每次调用变化
+   * 保持 真实 query 独占末尾 user 消息 → 语义边界清晰，意图执行准确率最高；
+   * 同时 system prompt 仍字节级稳定。
    */
   private patchOptionsWithDynamicContext(options: AgentRunOptions): AgentRunOptions {
     const useSkills = options.useSkills !== false && !this.minimalMode
-    const contextContent = buildContextMessageContent({
+    const stableContent = buildStableContextMessageContent({
       skillsPrompt: useSkills ? this.skillsPrompt : undefined,
+      extras: this.buildStableContextExtras(useSkills),
+    })
+    const taskContent = buildTaskContextMessageContent({
       workspaceContextPrompt: this.workspaceContextPrompt,
+      taskTimePrompt: this.taskTimePrompt,
       memoryPrompt: this.memoryPrompt,
       kbContextPrompt: this.kbContextPrompt,
     })
 
-    if (!contextContent) return options
+    const contextMessages: import('../core/types').Message[] = []
+    if (stableContent) contextMessages.push({ role: 'user', content: stableContent })
+    if (taskContent) contextMessages.push({ role: 'user', content: taskContent })
+    if (contextMessages.length === 0) return options
 
     const prevHistory = options.history || []
-    const cleanedHistory = prevHistory.filter(
-      m => !(m.role === 'user' && typeof m.content === 'string' &&
-             m.content.startsWith(GenericAgent.CONTEXT_MSG_PREFIX))
-    )
+    const cleanedHistory = prevHistory.filter(m => !this.isContextMessage(m))
 
-    const contextMessage: import('../core/types').Message = {
-      role: 'user',
-      content: contextContent,
-    }
-    const newHistory = [contextMessage, ...cleanedHistory]
-
-    return { ...options, history: newHistory }
+    return { ...options, history: [...contextMessages, ...cleanedHistory] }
   }
 
   async runStream(

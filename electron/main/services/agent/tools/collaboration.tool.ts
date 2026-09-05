@@ -12,7 +12,7 @@ export const listEmployeesTool: ToolDefinition = {
   summary: '列出所有可用的数字员工（id、名称）。需要指定执行员工或委派任务时使用。',
   description: `列出所有可用的数字员工，返回 id、name。
 - 需要指定执行任务的数字员工时，调用此工具获取 employee_id
-- 调用后可将所需员工的 id 传入 delegate_to_employee 的 target_employee_id 参数`,
+- 可委托的员工列表以上下文信息 [DELEGATION] 段为准`,
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {

@@ -8,10 +8,11 @@ import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { Message } from './agent/core/types'
+import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -164,6 +165,14 @@ class EmployeeAgentService {
         ) || undefined)
       : undefined
 
+    // 委托能力：由员工委托设置驱动（不再是可配置工具）。
+    // 开启且选择了目标时：委托类工具（串行/并行）注册给 agent，可委托员工列表注入上下文信息 [DELEGATION] 段。
+    // 目标列表过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
+    const delegation = parseEmployeeDelegation(emp.delegation_json)
+    const delegationTargets = delegation.enabled && delegation.targetIds.length > 0
+      ? this.queryDelegationTargets(delegation.targetIds)
+      : []
+
     const agentConfig: EmployeeAgentConfig = {
       employeeId: emp.id,
       name: emp.name,
@@ -177,6 +186,7 @@ class EmployeeAgentService {
       sessionId: conversationId,
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
+      delegationTargets,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         // 稳定不变的环境信息（系统环境）保留在 system prompt；
@@ -219,6 +229,12 @@ class EmployeeAgentService {
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
     const toolModes = this.getEmployeeToolModes(employeeId)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
+
+    // 委托类工具（串行委托 + 并行派发 + 追问）：仅当委托能力开启且存在有效目标时注册，
+    // 不走 employee_tools 三态配置（对应员工设置抽屉的「委托」Tab）
+    if (delegationTargets.length > 0) {
+      agent.registerTools([delegateTool, followupTool, launchAgentsTool, awaitAgentsTool])
+    }
 
     // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置
     const pluginAgentTools = this.getPluginAgentTools()
@@ -273,8 +289,9 @@ class EmployeeAgentService {
       agent.updateMemoryPrompt(memoryPrompt)
     }
 
-    // 注入任务工作区上下文（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
+    // 注入任务工作区上下文与任务发起时间（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
     agent.updateWorkspaceContextPrompt(this.buildWorkspaceContextPrompt(emp, conversationId))
+    agent.updateTaskTimePrompt(this.buildTaskTimePrompt(conversationId))
 
     // 挂插件中间件（链首守卫）：逆序 attach，保证注册优先的插件中间件最先执行（FIFO）
     const pluginMiddlewares = PluginHostService.getInstance().getAgentToolMiddlewares()
@@ -288,6 +305,27 @@ class EmployeeAgentService {
       mcpRelease,
     })
     return { agent, collectionIdsRef }
+  }
+
+  /**
+   * 查询可委托员工列表（按员工委托设置 targetIds 过滤）：
+   * 剔除不存在的员工与明确拒绝被委托（acceptDelegation=false）的员工，按名称排序保持提示词稳定。
+   */
+  private queryDelegationTargets(targetIds: string[]): NonNullable<EmployeeAgentConfig['delegationTargets']> {
+    if (targetIds.length === 0) return []
+    const placeholders = targetIds.map(() => '?').join(',')
+    const rows = this.db.getDb().prepare(
+      `SELECT id, name, description, profile_json, delegation_json FROM employees WHERE id IN (${placeholders})`
+    ).all(...targetIds) as Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>
+    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
+    for (const r of rows) {
+      if (!parseEmployeeDelegation(r.delegation_json).acceptDelegation) continue
+      let role: string | undefined
+      try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: r.id, name: r.name, description: r.description, role })
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name))
+    return out
   }
 
   /**
@@ -314,10 +352,7 @@ class EmployeeAgentService {
       modeMap.set(id, 'on_demand')
     }
 
-    // 协作/编排工具：并行编排（launch/await）默认常驻，多独立子任务可并行；其余（串行委托/平级消息）需按需开启
-    modeMap.set('delegate_to_employee', 'off')
-    modeMap.set('launch_agents', 'on')
-    modeMap.set('await_agents', 'on')
+    // 平级协作消息工具默认关闭（委托类工具不在此列：由员工委托设置驱动注册）
     modeMap.set('send_message', 'off')
     modeMap.set('read_messages', 'off')
 
@@ -385,6 +420,18 @@ class EmployeeAgentService {
       lines.push(`工作区：${emp.workspace_path}（读写授权，增删改直接执行）`)
     }
     return lines.length > 0 ? lines.join('\n') : undefined
+  }
+
+  /** 构建任务发起时间（无会话时回退当前时间，注入 <task_time> 上下文块） */
+  private buildTaskTimePrompt(conversationId?: string): string | undefined {
+    let ts: number | undefined
+    if (conversationId) {
+      const row = this.db.getDb().prepare('SELECT created_at FROM conversations WHERE id = ?').get(conversationId) as { created_at?: number } | undefined
+      ts = row?.created_at
+    }
+    const d = ts ? new Date(ts * 1000) : new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `任务发起时间：${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
   }
 
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
@@ -465,9 +512,10 @@ class EmployeeAgentService {
     minimalMode: boolean,
   ): Promise<boolean> {
     // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
-    //    memory / 知识库范围不再嵌入 system prompt，改为 prepend 到用户 query（见 EmployeeAgent.patchOptionsWithDynamicContext）
-    //    向后兼容：旧缓存中若含 "## 跨任务记忆" / "## 当前对话可使用的资料库合集" 等旧标记，
-    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免 memory/kb 与 <memory>/<knowledge_scope> 重复。
+    //    memory / 知识库范围 / 委托 / 能力清单不再嵌入 system prompt，
+    //    改为经 EmployeeAgent.runStream/run 以独立 role=user 上下文消息注入。
+    //    向后兼容：旧缓存中若含 "[DELEGATION]" / "[CAPABILITIES]" / "<skills>" 等旧标记，
+    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免与上下文注入重复。
     let systemPromptCached = false
     if (conversationId) {
       const conv = this.db.getDb().prepare(
@@ -475,7 +523,9 @@ class EmployeeAgentService {
       ).get(conversationId) as { system_prompt?: string } | undefined
       const cached = conv?.system_prompt
       if (cached) {
-        const isLegacy = cached.includes('## 跨任务记忆')
+        const isLegacy = cached.includes('[DELEGATION]')
+          || cached.includes('[CAPABILITIES]')
+          || cached.includes('## 跨任务记忆')
           || cached.includes('## 当前对话可使用的资料库合集')
           || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
           || cached.includes('<skills>')

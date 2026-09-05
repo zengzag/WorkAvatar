@@ -64,6 +64,8 @@ export interface EmployeeUpdateParams {
   workspace_path?: string
   avatar_type?: string
   memory_enabled?: boolean
+  /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化） */
+  delegation_json?: string
 }
 
 export interface EmployeeDeleteParams {

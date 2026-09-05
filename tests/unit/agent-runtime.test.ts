@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { broadcastRunEvent, fakeDb, chatStream } = vi.hoisted(() => {
+const { broadcastRunEvent, fakeDb, chatStream, setDelegationRows, setSubAgentRuns, resetSubAgentRuns } = vi.hoisted(() => {
+  // 委托设置查询返回行（可被单测覆写），默认：supervisor1 开启委托且 target1 在可委托列表中
+  let delegationRows: Array<{ id: string; delegation_json?: string | null }> = [
+    { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
+    { id: 'target1', delegation_json: '' },
+  ]
+  // sub_agent_runs 内存表：模拟 INSERT/UPDATE/SELECT，供追问（followup）链路读写
+  let subAgentRunRows: Array<{
+    run_id: string; parent_conversation_id: string; employee_id: string; parent_run_id: string
+    conversation_id: string; status: string; inputs_json: string; result_json: string
+    usage_json: string; error: string; started_at: number | null; ended_at: number | null
+  }> = []
   const fakeDb = {
     prepare: vi.fn((sql: string) => ({
       get: (...args: any[]) => {
@@ -10,10 +21,60 @@ const { broadcastRunEvent, fakeDb, chatStream } = vi.hoisted(() => {
         if (sql.includes("SELECT value FROM settings") && sql.includes('sub_agent_max_parallel')) {
           return { value: '3' }
         }
+        if (sql.includes('SELECT COUNT(*) AS n FROM sub_agent_runs')) {
+          return { n: subAgentRunRows.filter(r => r.conversation_id === args[0]).length }
+        }
+        if (sql.includes('FROM sub_agent_runs WHERE run_id = ?')) {
+          const row = subAgentRunRows.find(r => r.run_id === args[0])
+          if (!row) return undefined
+          if (sql.includes('parent_conversation_id')) {
+            // launchFollowup 解析原 run
+            return {
+              run_id: row.run_id, employee_id: row.employee_id, parent_run_id: row.parent_run_id,
+              conversation_id: row.conversation_id, parent_conversation_id: row.parent_conversation_id, status: row.status,
+            }
+          }
+          // persistRun 存在性检查
+          return { run_id: row.run_id }
+        }
         return undefined
       },
-      all: () => [],
-      run: () => ({ changes: 1 }),
+      all: (..._args: any[]) => {
+        if (sql.includes('SELECT id, delegation_json FROM employees')) {
+          return [...delegationRows]
+        }
+        if (sql.includes('FROM sub_agent_runs') && sql.includes('run_id != ?')) {
+          // loadFollowupHistory：按插入顺序（rowid）返回
+          return subAgentRunRows.filter(r => r.conversation_id === _args[0] && r.run_id !== _args[1])
+        }
+        return []
+      },
+      run: (...args: any[]) => {
+        if (sql.includes('INSERT INTO sub_agent_runs')) {
+          subAgentRunRows.push({
+            run_id: args[0], parent_conversation_id: args[1], employee_id: args[2], parent_run_id: args[3] || '',
+            conversation_id: args[4] || '', status: args[5], inputs_json: args[6], result_json: args[7],
+            usage_json: args[8], error: args[9] || '', started_at: args[10] ?? null, ended_at: args[11] ?? null,
+          })
+        } else if (sql.includes("SET status = 'failed'") && sql.includes('执行中断')) {
+          // launchFollowup 僵尸 run 标记失败
+          const row = subAgentRunRows.find(r => r.run_id === args[1])
+          if (row) { row.status = 'failed'; row.error = row.error || '执行中断（应用重启）'; row.ended_at = args[0] }
+        } else if (sql.includes('UPDATE sub_agent_runs')) {
+          // persistRun 更新（12 参：parent_conv, employee, parent_run, conv, status, inputs, result, usage, error, started, ended, runId）
+          const row = subAgentRunRows.find(r => r.run_id === args[11])
+          if (row) {
+            row.conversation_id = args[3] || row.conversation_id
+            row.status = args[4]
+            row.inputs_json = args[5]
+            row.result_json = args[6]
+            row.error = args[8] || ''
+            row.started_at = args[9] ?? null
+            row.ended_at = args[10] ?? null
+          }
+        }
+        return { changes: 1 }
+      },
     })),
   }
   return {
@@ -24,6 +85,9 @@ const { broadcastRunEvent, fakeDb, chatStream } = vi.hoisted(() => {
       callbacks.onToolResult?.({ name: 'report_generated_files', generatedFiles: [{ path: '/tmp/out.docx', name: 'out.docx', ext: 'docx', size: 10, mtime: 1 }], success: true })
       callbacks.onDone?.({ tokenUsage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } })
     }),
+    setDelegationRows: (rows: Array<{ id: string; delegation_json?: string | null }>) => { delegationRows = rows },
+    setSubAgentRuns: (rows: typeof subAgentRunRows) => { subAgentRunRows = rows },
+    resetSubAgentRuns: () => { subAgentRunRows = [] },
   }
 })
 
@@ -67,6 +131,11 @@ describe('SubAgentRuntime', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
+      { id: 'target1', delegation_json: '' },
+    ])
+    resetSubAgentRuns()
     runtime = SubAgentRuntime.getInstance()
   })
 
@@ -100,6 +169,26 @@ describe('SubAgentRuntime', () => {
     const res = runtime.launchSubAgent({ ...baseInput(), targetEmployeeId: 'supervisor1' })
     expect(res.success).toBe(false)
     expect(res.error).toContain('不能委托给自己')
+  })
+
+  it('委托设置校验：主管未开启委托或目标不在可委托列表中直接拒绝', () => {
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['other'], acceptDelegation: true }) },
+      { id: 'target1', delegation_json: '' },
+    ])
+    const res = runtime.launchSubAgent(baseInput())
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('不在当前数字员工的可委托列表中')
+  })
+
+  it('委托设置校验：目标员工拒绝被委托直接拒绝', () => {
+    setDelegationRows([
+      { id: 'supervisor1', delegation_json: JSON.stringify({ enabled: true, targetIds: ['target1'], acceptDelegation: true }) },
+      { id: 'target1', delegation_json: JSON.stringify({ enabled: false, targetIds: [], acceptDelegation: false }) },
+    ])
+    const res = runtime.launchSubAgent(baseInput())
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('不允许被委托任务')
   })
 
   it('context_files 超出白名单数量拒绝', () => {
@@ -298,5 +387,126 @@ describe('SubAgentRuntime', () => {
     for (const id of ids) {
       expect(runtime.getRun(id)?.status).toBe('completed')
     }
+  })
+
+  // ---- 追问（followup）多轮对话 ----
+
+  const followupInput = (followupOfRunId: string) => ({
+    followupOfRunId,
+    parentSessionId: 'parent-session-1',
+    parentEmployeeId: 'supervisor1',
+    parentConversationId: 'conv-supervisor-1',
+    instruction: '表格缺少价格列，请补充完整',
+    delegationDepth: 0,
+    delegationChain: [],
+    parentAbortSignal: undefined,
+    enableThinking: false as const,
+    highPermission: false,
+  })
+
+  it('追问：复用原子会话，历史轮指令与结果注入子智能体上下文', async () => {
+    const first = runtime.launchSubAgent(baseInput())
+    await runtime.awaitRuns([first.runId!], 2000)
+    expect(runtime.getRun(first.runId!)?.status).toBe('completed')
+
+    const fu = runtime.launchFollowup(followupInput(first.runId!))
+    expect(fu.success).toBe(true)
+    expect(fu.runId).toBeTruthy()
+    expect(fu.targetEmployeeName).toBe('资料员工')
+
+    const outcomes = await runtime.awaitRuns([fu.runId!], 2000)
+    expect(outcomes[0].success).toBe(true)
+
+    const fuRun = runtime.getRun(fu.runId!)!
+    expect(fuRun.conversationId).toBe('sub1') // 复用原子会话（mock createConversation 返回 sub1）
+    expect(fuRun.followupOfRunId).toBe(first.runId)
+
+    // 子智能体收到的 messages：历史轮 user/assistant 对 + 本轮追问 user
+    const params = chatStream.mock.calls.at(-1)![0] as any
+    const roles = params.messages.map((m: any) => m.role)
+    expect(roles).toEqual(['user', 'assistant', 'user'])
+    expect(params.messages[0].content).toContain('检索竞品资料并整理表格')
+    expect(params.messages[1].content).toContain('子员工完成了检索')
+    expect(params.messages[2].content).toContain('表格缺少价格列')
+    expect(params.conversation_id).toBe('sub1')
+  })
+
+  it('追问：追问轮的追问（链式），历史累计两轮', async () => {
+    const first = runtime.launchSubAgent(baseInput())
+    await runtime.awaitRuns([first.runId!], 2000)
+    const second = runtime.launchFollowup(followupInput(first.runId!))
+    await runtime.awaitRuns([second.runId!], 2000)
+    const third = runtime.launchFollowup({ ...followupInput(second.runId!), instruction: '再补充毛利率列' })
+    await runtime.awaitRuns([third.runId!], 2000)
+
+    const params = chatStream.mock.calls.at(-1)![0] as any
+    const roles = params.messages.map((m: any) => m.role)
+    expect(roles).toEqual(['user', 'assistant', 'user', 'assistant', 'user'])
+    expect(params.messages[2].content).toContain('表格缺少价格列')
+  })
+
+  it('追问：原委托仍在执行中直接拒绝', async () => {
+    chatStream.mockImplementationOnce(async (_params: any, callbacks: any) => {
+      callbacks.onChunk?.('慢任务')
+      await new Promise<void>((resolve) => setTimeout(resolve, 150))
+      callbacks.onDone?.({})
+    })
+    const first = runtime.launchSubAgent(baseInput())
+    const fu = runtime.launchFollowup(followupInput(first.runId!))
+    expect(fu.success).toBe(false)
+    expect(fu.error).toContain('仍在执行中')
+    await runtime.awaitRuns([first.runId!], 3000)
+  })
+
+  it('追问：不存在的 delegation_id 拒绝', () => {
+    const fu = runtime.launchFollowup(followupInput('no-such-run'))
+    expect(fu.success).toBe(false)
+    expect(fu.error).toContain('未找到委托记录')
+  })
+
+  it('追问：同一子会话累计轮数达上限（5 轮）拒绝', () => {
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      run_id: `r${i}`, parent_conversation_id: 'conv-supervisor-1', employee_id: 'target1', parent_run_id: '',
+      conversation_id: 'convA', status: 'completed', inputs_json: JSON.stringify({ instruction: `t${i}` }),
+      result_json: JSON.stringify({ summary: `s${i}` }), usage_json: '{}', error: '', started_at: i, ended_at: i,
+    }))
+    setSubAgentRuns(rows)
+    const fu = runtime.launchFollowup(followupInput('r4'))
+    expect(fu.success).toBe(false)
+    expect(fu.error).toContain('追问轮数已达上限')
+  })
+
+  it('追问：跨会话委托不可追问', () => {
+    setSubAgentRuns([{
+      run_id: 'rx', parent_conversation_id: 'conv-other', employee_id: 'target1', parent_run_id: '',
+      conversation_id: 'convX', status: 'completed', inputs_json: JSON.stringify({ instruction: 't' }),
+      result_json: JSON.stringify({ summary: 's' }), usage_json: '{}', error: '', started_at: 1, ended_at: 1,
+    }])
+    const fu = runtime.launchFollowup(followupInput('rx'))
+    expect(fu.success).toBe(false)
+    expect(fu.error).toContain('不属于当前会话')
+  })
+
+  it('追问：重启恢复（仅 DB 记录，内存无条目）仍可追问，僵尸 running 标记失败', async () => {
+    // 模拟重启后：内存 entries 为空，仅 DB 有已结束/中断记录
+    setSubAgentRuns([
+      {
+        run_id: 'legacy-run', parent_conversation_id: 'conv-supervisor-1', employee_id: 'target1', parent_run_id: '',
+        conversation_id: 'convLegacy', status: 'running', inputs_json: JSON.stringify({ instruction: '旧任务' }),
+        result_json: JSON.stringify({ summary: '' }), usage_json: '{}', error: '', started_at: 1, ended_at: null,
+      },
+    ])
+    const fu = runtime.launchFollowup(followupInput('legacy-run'))
+    expect(fu.success).toBe(true)
+
+    const outcomes = await runtime.awaitRuns([fu.runId!], 2000)
+    expect(outcomes[0].success).toBe(true)
+    const fuRun = runtime.getRun(fu.runId!)!
+    expect(fuRun.conversationId).toBe('convLegacy')
+
+    // 历史轮包含旧任务指令（失败轮附错误说明）
+    const params = chatStream.mock.calls.at(-1)![0] as any
+    expect(params.messages[0].content).toContain('旧任务')
+    expect(params.messages[1].content).toContain('执行中断（应用重启）')
   })
 })

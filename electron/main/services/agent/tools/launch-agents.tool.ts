@@ -10,8 +10,8 @@ const MAX_TASKS = 5
  * - launch_agents：拆解为多个独立子任务并行派发，立即返回 runIds（不阻塞）
  * - await_agents：等待一组 runIds 完成，聚合结构化结果（摘要 + 文件 + token）
  *
- * 与 delegate_to_employee（单路串行）互补：任务之间相互独立且价值足够高时用并行，
- * 有依赖关系时用串行委托。
+ * 注册方式：与 delegate_to_employee 一样由员工「委托能力设置」驱动注册（见 employee-agent.service）。
+ * 可委托员工列表与编排工作流注入系统提示词 [DELEGATION] 段，本工具描述不再动态拼装。
  */
 export const launchAgentsTool: ToolDefinition = {
   id: 'launch_agents',
@@ -21,7 +21,7 @@ export const launchAgentsTool: ToolDefinition = {
   description: `将一个任务拆解为多个相互独立的子任务，并行派发给不同的数字员工执行。适用于需要多名员工同时分工（如同时调研多份资料、并行生成多个文档）的复杂任务。
 参数：
 - tasks: 子任务数组（1-${MAX_TASKS} 个），每项包含：
-  - target_employee_id: 目标数字员工 id（从可委托员工列表中选择）
+  - target_employee_id: 目标数字员工 id（从系统提示词 [DELEGATION] 段的可委托员工列表中选择）
   - instruction: 该子任务指令
   - context_files: 可选，上下文文件绝对路径列表（最多 10 个）
 返回：runIds 数组 + 各任务派发结果。**调用后立即继续**，随后用 await_agents 等待全部完成并聚合结果。
@@ -35,7 +35,7 @@ export const launchAgentsTool: ToolDefinition = {
         items: {
           type: 'object',
           properties: {
-            target_employee_id: { type: 'string', description: '目标数字员工 id（从可委托员工列表中选择）' },
+            target_employee_id: { type: 'string', description: '目标数字员工 id（从上下文信息 [DELEGATION] 段的可委托员工列表中选择）' },
             instruction: { type: 'string', description: '该子任务指令' },
             context_files: {
               type: 'array',
@@ -84,31 +84,6 @@ export const awaitAgentsTool: ToolDefinition = {
   permission: 'safe',
   noRetry: true,
   timeoutMs: 5 * 60 * 1000,
-}
-
-/** 编排工作流协议（"计划→并行→验证"循环），注入多智能体描述 */
-const ORCHESTRATION_PROTOCOL = `编排工作流（处理复杂任务时按以下循环执行）：
-1. 规划：将大任务拆解为相互独立、边界清晰的子任务。
-2. 并行：调用 launch_agents 一次性派发全部子任务（一次派发一批，不要逐个串行派发）。
-3. 聚合：调用 await_agents 等待并收集每个子任务的结构化结果（摘要 + 生成文件清单 + token 用量）。
-4. 验证：核对各子任务结果与产物文件；对失败或不达标的子任务，用 delegate_to_employee 串行补做，或再次 launch_agents 重新派发。
-5. 汇总：基于结果与文件向用户交付最终结论；不要复述子任务完整执行过程，只给结论、文件与关键依据。`
-
-/** 构造 launch_agents/await_agents 的动态 description（含可委托员工列表） */
-export function buildMultiAgentDescription(employeeId: string, employees: Array<{ id: string; name: string; description?: string; role?: string }>): string {
-  const others = employees.filter(e => e.id !== employeeId)
-  const listText = others.length > 0
-    ? others.map(e => {
-        const desc = e.description?.trim() || e.role?.trim()
-        return `- ${e.name} (id=${e.id})${desc ? `：${desc}` : ''}`
-      }).join('\n')
-    : '（暂无其他数字员工）'
-  return `${launchAgentsTool.description}
-
-可委托员工列表（依据各员工的能力描述判断是否适合派发，为每个子任务选择最匹配的员工）：
-${listText}
-
-${ORCHESTRATION_PROTOCOL}`
 }
 
 async function handleLaunchAgents(args: Record<string, any>): Promise<any> {

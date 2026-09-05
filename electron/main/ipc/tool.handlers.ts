@@ -100,10 +100,9 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'collaboration',
     name: 'collaboration',
     title: '协作',
-    description: '委托给其他数字员工执行子任务，实现多员工协作',
+    description: '数字员工与模型供应商信息查询（任务委托能力见员工设置的「委托」Tab）',
     icon: 'team',
     toolIds: [
-      'delegate_to_employee',
       'list_employees',
       'list_providers',
     ],

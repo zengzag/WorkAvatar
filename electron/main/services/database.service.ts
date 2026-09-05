@@ -340,6 +340,7 @@ class DatabaseService {
         parent_conversation_id TEXT NOT NULL,
         employee_id TEXT NOT NULL DEFAULT '',
         parent_run_id TEXT DEFAULT '',
+        conversation_id TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'queued',
         inputs_json TEXT DEFAULT '{}',
         result_json TEXT DEFAULT '{}',
@@ -350,6 +351,7 @@ class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_parent ON sub_agent_runs(parent_conversation_id);
       CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
 
       -- 日历日程表：用户与智能体创建的日程事件
       CREATE TABLE IF NOT EXISTS calendar_events (
@@ -502,6 +504,8 @@ class DatabaseService {
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
     this.addColumnIfNotExists('employees', 'last_active_at', 'INTEGER')
+    // 委托能力设置：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串表示未配置（全默认）
+    this.addColumnIfNotExists('employees', 'delegation_json', "TEXT DEFAULT ''")
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
@@ -517,6 +521,10 @@ class DatabaseService {
     // 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
     this.addColumnIfNotExists('conversations', 'parent_conversation_id', "TEXT DEFAULT ''")
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id)`)
+
+    // 子会话运行记录关联的子会话 ID：多轮追问（followup）按其加载历史轮次上下文
+    this.addColumnIfNotExists('sub_agent_runs', 'conversation_id', "TEXT DEFAULT ''")
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id)`)
 
     this.migrateConversationLastMessageAt()
 

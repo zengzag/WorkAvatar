@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import type { GeneratedFileInfo, ThinkingLevel } from '../../../shared/types'
+import { parseEmployeeDelegation } from '../../../shared/types'
 import DatabaseService from '../database.service'
 import MemoryRefinementService from '../memory-refinement.service'
 import WorkspaceManagerService from '../workspace-manager.service'
@@ -18,6 +19,7 @@ import type {
   AgentRunEventEntry,
   LaunchSubAgentInput,
   LaunchSubAgentResult,
+  LaunchFollowupInput,
 } from './types'
 
 const logger = createLogger('SubAgentRuntime')
@@ -26,6 +28,10 @@ const logger = createLogger('SubAgentRuntime')
 const MAX_CONTEXT_FILES = 10
 /** 单个 context_file 读取上限（字符），防止超大文件 */
 const MAX_FILE_CHARS = 8000
+/** 同一子会话的追问轮数上限（含首轮委托），防止无限多轮 */
+const MAX_FOLLOWUP_ROUNDS = 5
+/** 追问历史轮中单轮 summary 截断长度（字符），防止历史撑爆子智能体上下文 */
+const MAX_ROUND_SUMMARY_CHARS = 4000
 /** 单 run 事件日志上限（ring buffer），renderer 重载恢复用 */
 const EVENT_LOG_CAP = 500
 /** 工作区目录 diff 最多遍历的文件数，防止超大目录卡死 */
@@ -174,6 +180,39 @@ class SubAgentRuntime {
       content = parts.join('\n')
     }
     return [{ role: 'user', content }]
+  }
+
+  /**
+   * 加载同一子会话的历史轮次（追问上下文持久化）：
+   * 按 run 插入顺序（rowid）还原各轮 user(指令)/assistant(结果) 对，
+   * 失败/取消轮的 assistant 内容附错误说明，让子智能体明确上一轮的问题所在。
+   */
+  private loadFollowupHistory(conversationId: string, excludeRunId: string): Array<{ role: string; content: string }> {
+    try {
+      const db = DatabaseService.getInstance().getDb()
+      const rows = db.prepare(
+        `SELECT run_id, status, inputs_json, result_json, error FROM sub_agent_runs
+         WHERE conversation_id = ? AND run_id != ? ORDER BY rowid`
+      ).all(conversationId, excludeRunId) as Array<{ run_id: string; status: string; inputs_json?: string; result_json?: string; error?: string }>
+      const history: Array<{ role: string; content: string }> = []
+      for (const r of rows) {
+        const inputs = safeParse(r.inputs_json || '')
+        const result = safeParse(r.result_json || '')
+        const instruction = String(inputs.instruction || '').trim()
+        if (!instruction) continue
+        history.push({ role: 'user', content: instruction })
+        let reply = String(result.summary || '').trim()
+        if (r.status === 'failed' || r.status === 'cancelled') {
+          const tail = `（本轮${r.status === 'failed' ? '执行失败' : '被取消'}${r.error ? `：${r.error}` : ''}）`
+          reply = reply ? `${reply}\n${tail}` : tail
+        }
+        history.push({ role: 'assistant', content: reply.slice(0, MAX_ROUND_SUMMARY_CHARS) || '（本轮无文本输出）' })
+      }
+      return history
+    } catch (err: any) {
+      logger.warn(`Failed to load followup history for conversation ${conversationId}:`, err?.message || err)
+      return []
+    }
   }
 
   private snapshotWorkspace(dir: string): Map<string, { size: number; mtime: number }> {
@@ -329,6 +368,8 @@ class SubAgentRuntime {
       targetEmployeeId: run.employeeId,
       targetEmployeeName: run.employeeName,
       targetAvatarType: run.employeeAvatarType,
+      followupOfRunId: run.followupOfRunId,
+      conversationId: run.conversationId,
     }
   }
 
@@ -375,7 +416,8 @@ class SubAgentRuntime {
   private persistRun(run: AgentRun): void {
     try {
       const db = DatabaseService.getInstance().getDb()
-      const inputs = { instruction: run.instruction, contextFiles: run.contextFiles }
+      const inputs: any = { instruction: run.instruction, contextFiles: run.contextFiles }
+      if (run.followupOfRunId) inputs.followupOfRunId = run.followupOfRunId
       const result: any = {
         summary: run.summary,
         generatedFiles: run.generatedFiles,
@@ -384,20 +426,21 @@ class SubAgentRuntime {
       const existing = db.prepare('SELECT run_id FROM sub_agent_runs WHERE run_id = ?').get(run.runId) as { run_id: string } | undefined
       if (existing) {
         db.prepare(
-          `UPDATE sub_agent_runs SET parent_conversation_id = ?, employee_id = ?, parent_run_id = ?, status = ?,
-             inputs_json = ?, result_json = ?, usage_json = ?, error = ?, started_at = ?, ended_at = ? WHERE run_id = ?`
+          `UPDATE sub_agent_runs SET parent_conversation_id = ?, employee_id = ?, parent_run_id = ?, conversation_id = ?,
+             status = ?, inputs_json = ?, result_json = ?, usage_json = ?, error = ?, started_at = ?, ended_at = ? WHERE run_id = ?`
         ).run(
-          run.parentConversationId, run.employeeId, run.parentRunId || '', run.status,
+          run.parentConversationId, run.employeeId, run.parentRunId || '', run.conversationId || '',
+          run.status,
           JSON.stringify(inputs), JSON.stringify(result), JSON.stringify(run.tokenUsage || {}),
           run.error || '', run.startedAt || null, run.endedAt || null, run.runId,
         )
       } else {
         db.prepare(
-          `INSERT INTO sub_agent_runs (run_id, parent_conversation_id, employee_id, parent_run_id, status,
+          `INSERT INTO sub_agent_runs (run_id, parent_conversation_id, employee_id, parent_run_id, conversation_id, status,
              inputs_json, result_json, usage_json, error, started_at, ended_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
-          run.runId, run.parentConversationId, run.employeeId, run.parentRunId || '', run.status,
+          run.runId, run.parentConversationId, run.employeeId, run.parentRunId || '', run.conversationId || '', run.status,
           JSON.stringify(inputs), JSON.stringify(result), JSON.stringify(run.tokenUsage || {}),
           run.error || '', run.startedAt || null, run.endedAt || null,
         )
@@ -428,6 +471,12 @@ class SubAgentRuntime {
       return { success: false, error: `目标员工不存在: ${input.targetEmployeeId}`, targetEmployeeName: targetName }
     }
 
+    // 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托
+    const settingsError = this.validateDelegationSettings(input.parentEmployeeId, input.targetEmployeeId, targetName)
+    if (settingsError) {
+      return { success: false, error: settingsError, targetEmployeeName: targetName }
+    }
+
     const runId = generateId()
     const run: AgentRun = {
       runId,
@@ -443,7 +492,117 @@ class SubAgentRuntime {
       generatedFiles: [],
       autoDetectedFiles: [],
     }
+    this.enqueueRun(run, input)
+    return { success: true, runId, targetEmployeeName: target.name }
+  }
 
+  /** 委托设置校验：主管须开启委托且目标在可委托列表中；目标须允许被委托 */
+  private validateDelegationSettings(parentEmployeeId: string, targetEmployeeId: string, targetName: string): string | undefined {
+    const db = DatabaseService.getInstance().getDb()
+    const delegationRows = db.prepare(
+      'SELECT id, delegation_json FROM employees WHERE id IN (?, ?)'
+    ).all(parentEmployeeId, targetEmployeeId) as Array<{ id: string; delegation_json?: string | null }>
+    const parentDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === parentEmployeeId)?.delegation_json)
+    const targetDelegation = parseEmployeeDelegation(delegationRows.find(r => r.id === targetEmployeeId)?.delegation_json)
+    if (!parentDelegation.enabled || !parentDelegation.targetIds.includes(targetEmployeeId)) {
+      return '目标员工不在当前数字员工的可委托列表中，请从上下文信息 [DELEGATION] 段的可委托员工列表中选择'
+    }
+    if (!targetDelegation.acceptDelegation) {
+      return `目标员工 ${targetName} 已设置为不允许被委托任务`
+    }
+    return undefined
+  }
+
+  /**
+   * 追问：针对已结束委托的同一子会话继续多轮对话。
+   * 复用原子会话与任务工作区，历史各轮（指令/结果/错误）从 sub_agent_runs 加载注入子智能体上下文。
+   * 支持追问链（追问的追问）：按 conversation_id 分组即同一条多轮对话。
+   */
+  launchFollowup(input: LaunchFollowupInput): LaunchSubAgentResult {
+    const db = DatabaseService.getInstance().getDb()
+
+    // 1) 解析原 run：内存优先，回落 DB（重启或内存淘汰后仍可追问）
+    const memEntry = this.entries.get(input.followupOfRunId)
+    let origin: { runId: string; conversationId: string; employeeId: string; parentConversationId: string; parentRunId?: string; status: string }
+    if (memEntry) {
+      const r = memEntry.run
+      origin = {
+        runId: r.runId, conversationId: r.conversationId || '', employeeId: r.employeeId,
+        parentConversationId: r.parentConversationId, parentRunId: r.parentRunId, status: r.status,
+      }
+      if (!isTerminal(r.status)) {
+        return { success: false, error: '原委托仍在执行中，请等待完成后再追问' }
+      }
+    } else {
+      const row = db.prepare(
+        `SELECT run_id, employee_id, parent_run_id, conversation_id, parent_conversation_id, status
+         FROM sub_agent_runs WHERE run_id = ?`
+      ).get(input.followupOfRunId) as
+        | { run_id: string; employee_id: string; parent_run_id?: string; conversation_id?: string; parent_conversation_id?: string; status: string }
+        | undefined
+      if (!row) {
+        return { success: false, error: `未找到委托记录: ${input.followupOfRunId}（请使用 delegate_to_employee / followup_delegation 返回的 delegationId）` }
+      }
+      origin = {
+        runId: row.run_id, conversationId: row.conversation_id || '', employeeId: row.employee_id,
+        parentConversationId: row.parent_conversation_id || '', parentRunId: row.parent_run_id || undefined, status: row.status,
+      }
+      // 重启后内存丢失的僵尸 run（DB 仍为 running/queued）：标记失败后允许追问，子会话历史仍可续用
+      if (origin.status === 'running' || origin.status === 'queued') {
+        db.prepare(
+          `UPDATE sub_agent_runs SET status = 'failed', error = COALESCE(NULLIF(error, ''), '执行中断（应用重启）'), ended_at = ? WHERE run_id = ?`
+        ).run(Math.floor(Date.now() / 1000), origin.runId)
+      }
+    }
+
+    if (!origin.conversationId) {
+      return { success: false, error: '原委托未建立子会话（可能未执行即失败），无法追问，请重新委托' }
+    }
+    if (origin.parentConversationId && origin.parentConversationId !== input.parentConversationId) {
+      return { success: false, error: '原委托不属于当前会话，无法追问' }
+    }
+
+    // 2) 轮数上限（同一子会话累计，含首轮）
+    const cnt = db.prepare('SELECT COUNT(*) AS n FROM sub_agent_runs WHERE conversation_id = ?').get(origin.conversationId) as { n: number } | undefined
+    if ((cnt?.n ?? 0) >= MAX_FOLLOWUP_ROUNDS) {
+      return { success: false, error: `追问轮数已达上限（${MAX_FOLLOWUP_ROUNDS} 轮），如需继续请重新委托` }
+    }
+
+    // 3) 目标员工仍存在且允许被委托；主管委托设置与首轮一致，继续校验保持策略一致
+    const target = db.prepare('SELECT id, name, avatar_type FROM employees WHERE id = ?').get(origin.employeeId) as
+      | { id: string; name: string; avatar_type?: string }
+      | undefined
+    if (!target) {
+      return { success: false, error: `目标员工不存在: ${origin.employeeId}` }
+    }
+    const settingsError = this.validateDelegationSettings(input.parentEmployeeId, origin.employeeId, target.name)
+    if (settingsError) {
+      return { success: false, error: settingsError, targetEmployeeName: target.name }
+    }
+
+    const runId = generateId()
+    const run: AgentRun = {
+      runId,
+      parentConversationId: input.parentConversationId,
+      parentSessionId: input.parentSessionId,
+      parentRunId: origin.parentRunId,
+      employeeId: origin.employeeId,
+      employeeName: target.name,
+      employeeAvatarType: target.avatar_type,
+      status: 'queued',
+      instruction: input.instruction,
+      contextFiles: [],
+      generatedFiles: [],
+      autoDetectedFiles: [],
+      conversationId: origin.conversationId,
+      followupOfRunId: origin.runId,
+    }
+    this.enqueueRun(run, input)
+    return { success: true, runId, targetEmployeeName: target.name }
+  }
+
+  /** 创建 run 条目入队执行（launch 与 followup 共用） */
+  private enqueueRun(run: AgentRun, input: Pick<LaunchSubAgentInput, 'delegationDepth' | 'delegationChain' | 'enableThinking' | 'highPermission' | 'parentAbortSignal' | 'parentEmployeeId'>): void {
     let resolveSettled: () => void = () => {}
     const settled = new Promise<void>((resolve) => { resolveSettled = resolve })
     const entry: RunEntry = {
@@ -460,11 +619,10 @@ class SubAgentRuntime {
       parentEmployeeId: input.parentEmployeeId,
       inbox: [],
     }
-    this.entries.set(runId, entry)
+    this.entries.set(run.runId, entry)
     this.persistRun(run)
-    this.queue.push(runId)
+    this.queue.push(run.runId)
     this.kickQueue()
-    return { success: true, runId, targetEmployeeName: target.name }
   }
 
   /** 派发一个子会话运行。校验失败返回 error；成功立即返回 runId（异步排队执行） */
@@ -590,6 +748,8 @@ class SubAgentRuntime {
           status: r.status,
           instruction: inputs.instruction || '',
           contextFiles: inputs.contextFiles,
+          conversationId: r.conversation_id || undefined,
+          followupOfRunId: inputs.followupOfRunId,
           summary: result.summary,
           generatedFiles: result.generatedFiles || [],
           autoDetectedFiles: result.autoDetectedFiles || [],
@@ -725,6 +885,7 @@ class SubAgentRuntime {
       targetEmployeeName: run.employeeName,
       targetAvatarType: run.employeeAvatarType,
       instruction: run.instruction,
+      followupOfRunId: run.followupOfRunId,
     })
 
     try {
@@ -734,15 +895,27 @@ class SubAgentRuntime {
       } else {
         const { providerId, modelId } = resolved
         const ws = WorkspaceManagerService.getInstance()
-        const subConv = ws.createConversation(targetEmployeeId, undefined, `委托: ${run.instruction.slice(0, 30)}`, true, run.parentConversationId)
-        subConvId = subConv.id
-        run.conversationId = subConvId
-        subWorkspace = subConv.workspace_path || ''
+        if (run.conversationId) {
+          // 追问轮：复用原子会话与任务工作区，历史轮上下文注入 messages
+          subConvId = run.conversationId
+          subWorkspace = ws.getConversationWorkspacePath(subConvId)
+        } else {
+          const subConv = ws.createConversation(targetEmployeeId, undefined, `委托: ${run.instruction.slice(0, 30)}`, true, run.parentConversationId)
+          subConvId = subConv.id
+          run.conversationId = subConvId
+          subWorkspace = subConv.workspace_path || ''
+        }
+        // 立即落库 conversation_id：作为追问锚点（应用重启后仍可追问）
+        this.persistRun(run)
         if (subWorkspace) {
           beforeSnapshot = this.snapshotWorkspace(subWorkspace)
         }
 
-        const subMessages = await this.buildSubMessages(run.instruction, run.contextFiles || [])
+        let subMessages = await this.buildSubMessages(run.instruction, run.contextFiles || [])
+        if (run.followupOfRunId && subConvId) {
+          const history = this.loadFollowupHistory(subConvId, run.runId)
+          subMessages = [...history, ...subMessages]
+        }
 
         await interactionContext.run(
           {

@@ -7,6 +7,8 @@ export interface Employee {
   profile_json: string
   avatar_type: string
   default_skill_id?: string
+  /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化），空串/缺失表示未配置 */
+  delegation_json?: string | null
   memory_enabled: boolean
   arch_version: number
   total_tasks: number
@@ -14,6 +16,33 @@ export interface Employee {
   last_active_at?: number | null
   created_at: number
   updated_at: number
+}
+
+/** 数字员工委托能力设置（存储于 employees.delegation_json） */
+export interface EmployeeDelegationConfig {
+  /** 是否允许本员工将子任务委托给其他数字员工 */
+  enabled: boolean
+  /** 可委托的目标数字员工 id 列表（不含自己） */
+  targetIds: string[]
+  /** 是否允许被其他数字员工委托任务（默认 true，保持旧行为） */
+  acceptDelegation: boolean
+}
+
+/** 解析 delegation_json，容错缺失/非法 JSON，返回默认配置 */
+export function parseEmployeeDelegation(json?: string | null): EmployeeDelegationConfig {
+  if (!json) return { enabled: false, targetIds: [], acceptDelegation: true }
+  try {
+    const o = JSON.parse(json)
+    return {
+      enabled: o?.enabled === true,
+      targetIds: Array.isArray(o?.targetIds)
+        ? o.targetIds.filter((x: unknown): x is string => typeof x === 'string')
+        : [],
+      acceptDelegation: o?.acceptDelegation !== false,
+    }
+  } catch {
+    return { enabled: false, targetIds: [], acceptDelegation: true }
+  }
 }
 
 export interface Skill {

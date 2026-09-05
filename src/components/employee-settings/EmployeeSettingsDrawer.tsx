@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   IdcardOutlined, ToolOutlined, ApiOutlined, AppstoreOutlined,
-  DatabaseOutlined, BarChartOutlined, ImportOutlined,
+  DatabaseOutlined, BarChartOutlined, ImportOutlined, TeamOutlined,
   FolderOutlined, FolderOpenOutlined,
 } from '@ant-design/icons'
 import {
@@ -16,8 +16,10 @@ import {
   ExportImportSection,
   MemorySection,
   McpSection,
+  DelegationSection,
 } from '../employee-settings'
 import type { Employee } from '../../types'
+import { parseEmployeeDelegation } from '../../types'
 
 interface ToolInfo {
   id: string
@@ -464,6 +466,17 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
           toolCategories={toolCategories}
           onChangeToolMode={handleChangeToolMode}
           onChangeCategoryMode={handleChangeCategoryMode}
+        />
+      ),
+    },
+    {
+      key: 'delegation',
+      label: <span><TeamOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabDelegation')}</span>,
+      children: contentWrap(
+        <DelegationSection
+          employeeId={employeeId || ''}
+          delegation={parseEmployeeDelegation(employee?.delegation_json)}
+          onSaved={loadEmployee}
         />
       ),
     },

@@ -19,6 +19,8 @@ export interface EmployeeConfigExport {
     profile_json: string
     memory_enabled: boolean
     default_skill_id: string | null
+    /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化）；可选，旧版文件无此字段。targetIds 跨实例导入时无效引用会被运行时自动剔除 */
+    delegation_json?: string
   }
   skills: Array<{
     type: string
@@ -83,6 +85,7 @@ export class EmployeeExportConfigService {
         profile_json: employee.profile_json || '',
         memory_enabled: !!employee.memory_enabled,
         default_skill_id: employee.default_skill_id || null,
+        delegation_json: employee.delegation_json || '',
       },
       skills: skills.map(s => ({
         type: s.type,
@@ -209,8 +212,8 @@ export class EmployeeExportConfigService {
         ? importData.employee.rules
         : (importData.employee.description || '')
       this.db.getDb().prepare(`
-        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, memory_enabled, default_skill_id, arch_version, total_tasks, total_approvals, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
+        INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, memory_enabled, default_skill_id, delegation_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
       `).run(
         employeeId,
         importData.employee.name,
@@ -220,6 +223,7 @@ export class EmployeeExportConfigService {
         importData.employee.avatar_type || 'default',
         importData.employee.memory_enabled ? 1 : 0,
         importData.employee.default_skill_id || null,
+        importData.employee.delegation_json || '',
         now, now
       )
 
