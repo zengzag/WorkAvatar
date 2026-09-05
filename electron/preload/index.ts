@@ -70,6 +70,7 @@ import type {
   NotifyPayload,
   PluginInfo,
   PluginRendererInfo,
+  PluginChangedPayload,
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
@@ -481,6 +482,13 @@ const electronAPI = {
     remove: (pluginId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DELETE, { pluginId }),
     import: (overwrite?: boolean) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
+    // 插件集合变更通知（导入/启停/删除/重新扫描后主进程广播最新 rendererPlugins，
+    // 渲染端据此增量加载/卸载插件渲染端，免整页 reload）
+    onPluginsChanged: (callback: (payload: PluginChangedPayload) => void) => {
+      const handler = (_event: any, payload: PluginChangedPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.PLUGIN_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.PLUGIN_CHANGED, handler)
+    },
     listMessageActions: () =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
     listViews: () =>

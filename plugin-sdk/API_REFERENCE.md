@@ -83,7 +83,7 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
   → deactivate()（插件释放资源：关定时器、关窗口、关 DB 连接）
 ```
 
-插件变更（启停 / 导入 / 删除 / 升级）后需重启应用生效。
+插件变更（启停 / 导入 / 删除 / 升级）**即时生效，无需重启**（宿主增量激活 + 渲染端增量加载，不打断正在进行的智能体生成）。
 
 ## 4. 主进程入口
 
@@ -292,7 +292,7 @@ registerCommand(command)                                  // 注册命令（可�
 
 - **改写**：调用 `next()` 后改写返回值。
 
-`next()` 返回 `PluginToolResult`（`success/output/error/toolName/generatedFiles`）。中间件异常会被宿主收敛为错误结果，不会中断代理执行。禁用/删除插件后需重启生效（与插件工具一致）。
+`next()` 返回 `PluginToolResult`（`success/output/error/toolName/generatedFiles`）。中间件异常会被宿主收敛为错误结果，不会中断代理执行。禁用/删除插件后**即时生效**（按插件下线后，存量 agent 的中间件链在下一次重建时移除，运行中的任务不受打断）。
 
 ## 11. 渲染端入口
 

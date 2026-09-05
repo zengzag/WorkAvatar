@@ -98,6 +98,7 @@ export type {
   PluginNavItemInfo,
   PluginInfo,
   PluginRendererInfo,
+  PluginChangedPayload,
   PluginInvokeParams,
   PluginEventPayload,
   PluginSetEnabledParams,

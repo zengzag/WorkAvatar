@@ -73,6 +73,8 @@ interface CachedAgentEntry {
   collectionIdsRef: SearchScopeRef
   /** 该 agent 持有的 MCP client 引用释放函数，agent 缓存被清除时调用 */
   mcpRelease?: () => Promise<void>
+  /** 创建时的插件工具集合 epoch（插件增删/升级时由 bumpToolEpoch 递增；运行中的 agent 保留至本轮结束） */
+  toolEpoch: number
 }
 
 class EmployeeAgentService {
@@ -82,6 +84,8 @@ class EmployeeAgentService {
   private memoryService: EmployeeMemoryService
   private mcpRegistry: McpRegistryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
+  /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
+  private toolEpoch = 0
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -114,7 +118,20 @@ class EmployeeAgentService {
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
-      return existing
+      // 插件工具集合已变更（bumpToolEpoch）且该 agent 不在运行 → 丢弃旧缓存按新工具集重建
+      if (existing.toolEpoch !== this.toolEpoch) {
+        if (!existing.agent.isRunning()) {
+          if (existing.mcpRelease) {
+            existing.mcpRelease().catch(() => { /* ignore */ })
+          }
+          this.agentEntries.delete(cacheKey)
+        } else {
+          // 运行中：本次 run 的 tools schema 已快照，保留旧工具集跑完本轮，任务结束后下次访问自然重建
+          return existing
+        }
+      } else {
+        return existing
+      }
     }
 
     const emp = employee
@@ -307,8 +324,9 @@ class EmployeeAgentService {
       agent,
       collectionIdsRef,
       mcpRelease,
+      toolEpoch: this.toolEpoch,
     })
-    return { agent, collectionIdsRef }
+    return { agent, collectionIdsRef, toolEpoch: this.toolEpoch }
   }
 
   /**
@@ -664,25 +682,29 @@ class EmployeeAgentService {
     return entry.agent.getContextStats()
   }
 
+  /** 插件/工具集合变更后调用：递增 epoch 使存量 agent 缓存按工具集失效（运行中的保留至本轮结束） */
+  bumpToolEpoch(): void {
+    this.toolEpoch += 1
+    logger.info(`Agent 工具集 epoch 递增: ${this.toolEpoch}`)
+  }
+
   clearAgentCache(employeeId?: string): void {
+    // 运行中的 agent 跳过：插件/工具热更新时保留正在生成的任务（不打断流式输出），
+    // 其 toolEpoch 已失效，本轮结束后下次访问自动重建（见 getOrCreateAgent）
+    const purge = (key: string, entry: CachedAgentEntry) => {
+      if (entry.agent.isRunning()) return
+      // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
+      if (entry.mcpRelease) {
+        entry.mcpRelease().catch(() => { /* ignore */ })
+      }
+      this.agentEntries.delete(key)
+    }
     if (employeeId) {
       for (const [key, entry] of this.agentEntries.entries()) {
-        if (key.startsWith(`${employeeId}:`)) {
-          // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
-          if (entry.mcpRelease) {
-            entry.mcpRelease().catch(() => { /* ignore */ })
-          }
-          this.agentEntries.delete(key)
-        }
+        if (key.startsWith(`${employeeId}:`)) purge(key, entry)
       }
     } else {
-      // 清空所有缓存：先释放全部 MCP 引用
-      for (const entry of this.agentEntries.values()) {
-        if (entry.mcpRelease) {
-          entry.mcpRelease().catch(() => { /* ignore */ })
-        }
-      }
-      this.agentEntries.clear()
+      for (const [key, entry] of this.agentEntries.entries()) purge(key, entry)
     }
   }
 

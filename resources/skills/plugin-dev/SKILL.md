@@ -26,7 +26,7 @@ WorkAvatar 插件 = **manifest 声明 + 双入口插件包（主进程 CJS + 渲
 5. **编写主进程入口** `src/main/index.ts`：activate/deactivate + IPC + 存储贡献点
 6. **编写渲染端入口** `src/renderer/index.tsx`（纯后台插件可省略）
 7. **npm install + 构建打包**：`npm install` 后执行 `node build-plugin.mjs --zip` 产出 `.wap`
-8. **交付安装**：指导用户导入 `.wap` 并重启应用
+8. **交付安装**：指导用户导入 `.wap` 并即时生效（无需重启）
 
 ## 工程结构
 
@@ -221,12 +221,12 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 
 ## 安装交付
 
-产出 `.wap` 后告知用户三种安装方式（效果一致）：
+产出 `.wap` 后告知用户三种安装方式（效果一致，均**即时生效，无需重启**）：
 1. **应用内导入**：设置 → 插件 → 「导入插件」，选择 `.wap`（推荐，同 id 可覆盖升级）
-2. **双击 `.wap`**：系统打开方式选 WorkAvatar，确认后安装并热重载
-3. **手动放目录**：解压到 `userData/plugins/<id>/`，重启应用
+2. **双击 `.wap`**：系统打开方式选 WorkAvatar，确认后安装并立即加载
+3. **手动放目录**：解压到 `userData/plugins/<id>/`，在设置页插件列表点击「刷新」增量加载
 
-安装后需**重启应用生效**（方式 2 热重载除外）。插件数据在 `userData/plugin-data/<id>/`，升级/禁用不丢数据。
+插件安装/启用/禁用/删除/覆盖升级均即时生效（主进程增量激活 + 渲染端增量加载，不打断正在进行的对话与生成流程）。插件数据在 `userData/plugin-data/<id>/`，升级/禁用不丢数据。
 
 **修改已安装插件（AI 二次开发）**：`.wap` 默认带源码，安装目录 `userData/plugins/<id>/` 下有完整 `src/**` + `package.json`（+ `tsconfig.json`）。找到用户要改造的插件安装目录后：`npm install`（需要网络）→ 直接修改 `src/` 与 `manifest.json` → 用 `build-plugin.mjs` 重建并重新导入覆盖升级即可。
 
@@ -254,7 +254,7 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 - 定时任务用 `ctx.services.scheduler.every/cron`，禁止裸开 `setInterval`
 - 共享库（react/antd/i18next）不安装进 dependencies、不打包，构建脚本自动 shim
 - 宿主不 await `activate`：耗时初始化放后台/scheduler，不要阻塞 activate
-- 每次改完 manifest 结构或 capabilities 后提醒用户：插件变更需重启应用生效
+- 每次改完 manifest 结构或 capabilities 后重新构建导入覆盖升级：插件变更**即时生效**（无需重启，正在进行的对话不受影响）
 
 ## 参考资料（用 read_reference 工具按需读取）
 

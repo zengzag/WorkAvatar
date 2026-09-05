@@ -88,6 +88,11 @@ export abstract class BaseAgent {
     return this.config.name || 'BaseAgent'
   }
 
+  /** 当前是否有正在执行的 run（供宿主热更新时跳过运行中 agent，避免打断生成流程） */
+  isRunning(): boolean {
+    return this._running
+  }
+
   get instructions(): string {
     return this.config.instructions || ''
   }

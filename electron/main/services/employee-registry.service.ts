@@ -101,7 +101,7 @@ class EmployeeRegistryService {
         '- 脚手架：在当前任务工作区内创建工程，用 read_reference 读取模板文件，经 file_write 复制改写到工程（manifest.json/package.json/build-plugin.mjs/tsconfig.json/src 入口/locale）。',
         '- 编写 manifest.json：声明 id/version/engine/main/renderer/ipc 通道白名单/capabilities/nav。',
         '- 安装依赖并构建：shell_exec 执行 `npm install` 与 `node build-plugin.mjs --zip`，产出 `.wap` 安装包。',
-        '- 交付安装：检查产物路径，指导用户导入 `.wap`（或直接打开该文件）并重启应用生效。',
+        '- 交付安装：检查产物路径，指导用户导入 `.wap`（或直接打开该文件）即**即时生效**（无需重启，不打断当前对话）；手动放目录后可在设置页插件列表点击「刷新」增量加载。',
         '工程约束：',
         '- 插件工程必须建在**当前任务工作区**内（工作区外写文件需用户逐次确认）。',
         '- 编码以主进程入口（src/main）为核心，渲染端（src/renderer）为 UI；纯后台插件可省略渲染端。',

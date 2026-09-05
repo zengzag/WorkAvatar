@@ -134,15 +134,7 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
   }
 
   if (result.ok) {
-    // 直接加载生效（热重载插件 + 刷新渲染端）
-    try {
-      host.reload()
-      const { default: EmployeeAgentService } = require('./services/employee-agent.service')
-      EmployeeAgentService.getInstance().clearAgentCache()
-    } catch { /* ignore */ }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.reload()
-    }
+    // 导入即增量加载（importPluginFromPath 内部完成激活与 PLUGIN_CHANGED 广播，无需整页 reload）
     dialog.showMessageBox({
       type: 'info',
       title: '插件已加载',

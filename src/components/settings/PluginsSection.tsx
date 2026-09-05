@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { App, Button, Card, List, Popconfirm, Space, Switch, Tag, Tooltip } from 'antd'
-import { DeleteOutlined, FolderOpenOutlined, PoweroffOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, FolderOpenOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import type { PluginInfo } from '../../../electron/shared/channels/plugin'
+import type { PluginImportResult, PluginInfo } from '../../../electron/shared/channels/plugin'
 
 const STATUS_COLOR: Record<PluginInfo['status'], string> = {
   active: 'success',
@@ -14,14 +14,13 @@ const STATUS_COLOR: Record<PluginInfo['status'], string> = {
 
 /**
  * 插件管理：全部插件统一为用户来源（dev 自动安装 / zip 导入 / 手动放入目录），同一套加载器。
- * 启停、删除、覆盖升级均重启生效。
+ * 启用/禁用/删除/导入/覆盖升级均即时生效（主进程增量激活 + 渲染端增量加载，无需重启应用）。
  */
 const PluginsSection: React.FC = () => {
   const { t } = useTranslation()
   const { message, modal } = App.useApp()
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(false)
-  const [restartHint, setRestartHint] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -40,14 +39,9 @@ const PluginsSection: React.FC = () => {
   const handleToggle = async (plugin: PluginInfo, enabled: boolean) => {
     try {
       await window.electronAPI.plugin.setEnabled(plugin.id, enabled)
-      setRestartHint(true)
-      // 乐观更新列表状态
-      setPlugins(prev => prev.map(p =>
-        p.id === plugin.id
-          ? { ...p, enabled, status: enabled ? p.status : 'disabled' }
-          : p
-      ))
-      message.success(t('settings.plugins.restartRequired'))
+      // 宿主已完成增量激活/下线并广播变更，这里仅刷新列表展示
+      message.success(t(enabled ? 'settings.plugins.enabled' : 'settings.plugins.disabled'))
+      load()
     } catch (err: any) {
       message.error(err?.message || t('settings.plugins.operateFailed'))
     }
@@ -56,20 +50,25 @@ const PluginsSection: React.FC = () => {
   const handleDelete = async (plugin: PluginInfo) => {
     try {
       await window.electronAPI.plugin.remove(plugin.id)
-      setRestartHint(true)
-      setPlugins(prev => prev.filter(p => p.id !== plugin.id))
       message.success(t('settings.plugins.deleted'))
+      load()
     } catch (err: any) {
       message.error(err?.message || t('settings.plugins.operateFailed'))
     }
   }
 
-  const afterImport = (r: { ok: boolean; id?: string; version?: string; message?: string }) => {
+  const afterImport = (r: PluginImportResult, upgraded = false) => {
     if (r.ok) {
-      setRestartHint(true)
-      message.success(t('settings.plugins.importSuccess'))
+      const count = r.count ?? 1
+      if (count > 1) {
+        message.success(t('settings.plugins.importSuccess_other', { count }))
+      } else {
+        message.success(t(upgraded ? 'settings.plugins.upgraded' : 'settings.plugins.importSuccess'))
+      }
       load()
     } else if (r.message && r.message !== 'cancelled') {
+      // 多选导入部分成功时也刷新列表
+      if ((r.count ?? 0) > 0) load()
       message.error(r.message || t('settings.plugins.importFailed'))
     }
   }
@@ -77,21 +76,14 @@ const PluginsSection: React.FC = () => {
   const handleImport = async () => {
     const res = await window.electronAPI.plugin.import(false)
     if (res.needsUpgradeConfirm) {
-      const { existingVersion, newVersion } = res.needsUpgradeConfirm
+      const { existingVersion, newVersion, count } = res.needsUpgradeConfirm
       modal.confirm({
         title: t('settings.plugins.upgradeTitle'),
-        content: `${t('settings.plugins.upgradeConfirm')}\n${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
+        content: `${t('settings.plugins.upgradeConfirm', { count: count ?? 1 })}\n${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
         okText: t('common.confirm'),
         cancelText: t('common.cancel'),
         onOk: async () => {
-          const res2 = await window.electronAPI.plugin.import(true)
-          if (res2.ok) {
-            setRestartHint(true)
-            message.success(t('settings.plugins.upgraded'))
-            load()
-          } else if (res2.message && res2.message !== 'cancelled') {
-            message.error(res2.message || t('settings.plugins.importFailed'))
-          }
+          afterImport(await window.electronAPI.plugin.import(true), true)
         },
       })
     } else {
@@ -99,14 +91,14 @@ const PluginsSection: React.FC = () => {
     }
   }
 
-  const handleRestart = () => {
-    modal.confirm({
-      title: t('settings.plugins.restartTitle'),
-      content: t('settings.plugins.restartConfirm'),
-      okText: t('settings.plugins.restartNow'),
-      cancelText: t('common.cancel'),
-      onOk: () => window.electronAPI.app.restart(),
-    })
+  // 手动放入插件目录场景：重新扫描磁盘并增量加载变更（不整页刷新）
+  const handleRescan = async () => {
+    try {
+      await window.electronAPI.app.restart()
+      load()
+    } catch (err: any) {
+      message.error(err?.message || t('settings.plugins.operateFailed'))
+    }
   }
 
   return (
@@ -118,7 +110,7 @@ const PluginsSection: React.FC = () => {
           <Button size="small" icon={<FolderOpenOutlined />} onClick={() => window.electronAPI.plugin.openPluginsDir()}>
             {t('settings.plugins.openDir')}
           </Button>
-          <Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          <Button size="small" icon={<ReloadOutlined />} onClick={handleRescan} loading={loading}>
             {t('settings.plugins.refresh')}
           </Button>
           <Button size="small" type="primary" icon={<UploadOutlined />} onClick={() => handleImport()}>
@@ -132,14 +124,6 @@ const PluginsSection: React.FC = () => {
           {t('settings.plugins.hint')}
         </span>
       </div>
-      {restartHint && (
-        <div style={{ marginBottom: 12, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Tag color="warning">{t('settings.plugins.restartHint')}</Tag>
-          <Button size="small" type="primary" icon={<PoweroffOutlined />} onClick={handleRestart}>
-            {t('settings.plugins.restartNow')}
-          </Button>
-        </div>
-      )}
       <List
         loading={loading}
         dataSource={plugins}

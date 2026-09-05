@@ -17,7 +17,7 @@ import {
 } from './stores/appearance.store'
 import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
-import { injectHostGlobals, loadPlugins } from './plugins/loader'
+import { injectHostGlobals, loadPlugins, syncPlugins } from './plugins/loader'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
 installConsoleForwarder()
@@ -138,10 +138,16 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   )
 }
 
-// 启动时序：共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配路由 → 挂载
+// 启动时序：共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配静态路由（插件路由为占位动态分发）→ 挂载
 async function bootstrap() {
-  const plugins = await loadPlugins()
-  const router = buildRouter(plugins)
+  await loadPlugins()
+  const router = buildRouter()
+
+  // 插件集合变更订阅：主进程导入/启停/删除/重新扫描后广播最新 rendererPlugins，
+  // 渲染端增量加载/卸载插件渲染端（导航/路由/视图），免整页 reload，不影响进行中的对话
+  window.electronAPI.plugin.onPluginsChanged(({ rendererPlugins }) => {
+    void syncPlugins(rendererPlugins)
+  })
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     <React.StrictMode>
