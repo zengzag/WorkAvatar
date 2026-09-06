@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hello World Window</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f5;
+      --card: #ffffff;
+      --text: #1f1f1f;
+      --muted: #8c8c8c;
+      --accent: #1677ff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141414;
+        --card: #1f1f1f;
+        --text: rgba(255, 255, 255, 0.85);
+        --muted: rgba(255, 255, 255, 0.45);
+        --accent: #1677ff;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    main {
+      max-width: 320px;
+      padding: 24px;
+      background: var(--card);
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p { font-size: 13px; line-height: 1.6; color: var(--muted); margin: 0 0 12px; }
+    code {
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hello World Window</h1>
+    <p>该窗口由插件的 <code>ctx.services.windows.create</code> 创建，
+      <code>contentPath: &quot;resources/demo.html&quot;</code> 加载本页面。</p>
+    <p>窗口已自动纳入宿主广播目标：插件 <code>ctx.ipc.broadcast</code> 的事件也会推送到本窗口渲染端。</p>
+  </main>
+</body>
+</html>

@@ -4,13 +4,13 @@ import { createLogger } from './logger'
 
 const logger = createLogger('PowerSave')
 
-// settings 表中的配置键：应用处于前台时禁止系统自动熄屏/休眠
+// settings 表中的配置键：应用窗口未全部关闭时禁止系统自动熄屏/休眠
 export const PREVENT_SLEEP_SETTING_KEY = 'prevent_sleep_when_foreground'
 
 /**
- * 前台防休眠服务：开启后，只要应用存在可见且聚焦的窗口，
+ * 窗口防休眠服务：开启后，只要应用仍存在开启的窗口（即使被其他窗口覆盖、不在前台），
  * 就通过 powerSaveBlocker 阻止系统自动关闭屏幕和进入休眠。
- * 窗口最小化、隐藏（关闭到托盘）或失焦时自动释放。
+ * 窗口全部隐藏/关闭（仅剩托盘图标）时自动释放。
  */
 class PowerSaveService {
   private static instance: PowerSaveService
@@ -26,14 +26,13 @@ class PowerSaveService {
 
   init(): void {
     this.enabled = this.readEnabled()
-    // 窗口焦点/可见性变化时重新评估是否需要保持唤醒
-    app.on('browser-window-focus', () => this.refresh())
-    app.on('browser-window-blur', () => this.refresh())
+    // 窗口创建后监听显隐/关闭变化，重新评估是否需要保持唤醒（窗口焦点与否不再影响）
     app.on('browser-window-created', (_event, win) => {
       win.on('show', () => this.refresh())
       win.on('hide', () => this.refresh())
       win.on('minimize', () => this.refresh())
       win.on('restore', () => this.refresh())
+      win.on('closed', () => this.refresh())
     })
     this.refresh()
   }
@@ -63,7 +62,7 @@ class PowerSaveService {
         .getDb()
         .prepare('SELECT value FROM settings WHERE key = ?')
         .get(PREVENT_SLEEP_SETTING_KEY) as { value: string } | undefined
-      // 未配置过时默认开启，符合"前台防休眠"的产品预期
+      // 未配置过时默认开启
       return row?.value !== '0'
     } catch {
       return true
@@ -83,15 +82,15 @@ class PowerSaveService {
     }
   }
 
-  /** 是否存在可见且聚焦的前台窗口（最小化/隐藏/失焦均视为不在前台） */
-  private hasForegroundWindow(): boolean {
+  /** 是否存在仍开启的窗口：窗口可见（即使失焦/被覆盖/最小化）即视为开启，全部隐藏（仅剩托盘图标）时返回 false */
+  private hasOpenWindow(): boolean {
     return BrowserWindow.getAllWindows().some(
-      (win) => !win.isDestroyed() && win.isVisible() && win.isFocused() && !win.isMinimized()
+      (win) => !win.isDestroyed() && win.isVisible()
     )
   }
 
   private refresh(): void {
-    const shouldBlock = this.enabled && this.hasForegroundWindow()
+    const shouldBlock = this.enabled && this.hasOpenWindow()
     if (shouldBlock && this.blockerId === null) {
       // prevent-display-sleep：同时阻止屏幕关闭与系统休眠
       this.blockerId = powerSaveBlocker.start('prevent-display-sleep')

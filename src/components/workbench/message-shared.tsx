@@ -83,53 +83,81 @@ const SegmentListInner: React.FC<{
   onToggleSegment: (msgId: string, segId: string) => void
   getToolDisplayName: (name: string) => string
 }> = ({ segments, msgId, isError, onToggleSegment, getToolDisplayName }) => {
-  return (
-    <div style={{ position: 'relative', paddingLeft: 0 }}>
-      {segments.map((seg) => {
-        if (seg.type === 'thinking') {
-          return (
-            <ThinkingSegment
-              key={seg.id}
-              seg={seg}
-              isStreaming={!!seg.isStreaming}
-              onToggle={() => onToggleSegment(msgId, seg.id)}
-            />
-          )
-        }
-        if (seg.type === 'tool_call') {
-          return (
-            <ToolCallSegment
-              key={seg.id}
-              seg={seg}
-              onToggle={() => onToggleSegment(msgId, seg.id)}
-              getToolDisplayName={getToolDisplayName}
-            />
-          )
-        }
-        if (seg.type === 'answer') {
-          return (
-            <AnswerSegment
-              key={seg.id}
-              seg={seg}
-              isError={isError}
-            />
-          )
-        }
-        if (seg.type === 'delegation') {
-          return (
-            <DelegationSegment
-              key={seg.id}
-              seg={seg}
-              msgId={msgId}
-              onToggle={onToggleSegment}
-              getToolDisplayName={getToolDisplayName}
-            />
-          )
-        }
-        return null
-      })}
-    </div>
+  const items: React.ReactNode[] = []
+
+  const waitSeg = (seg: MessageSegment) => (
+    <DelegationSegment
+      key={seg.id}
+      seg={seg}
+      msgId={msgId}
+      onToggle={onToggleSegment}
+      getToolDisplayName={getToolDisplayName}
+    />
   )
+
+  let i = 0
+  while (i < segments.length) {
+    const seg = segments[i]
+    // 并行组：连续且同 groupRunId 的 delegation 段横排为一组卡片
+    if (seg.type === 'delegation' && seg.groupRunId && seg.parallelTotal && seg.parallelTotal > 1) {
+      const group: MessageSegment[] = [seg]
+      let j = i + 1
+      while (j < segments.length) {
+        const s = segments[j]
+        if (s.type === 'delegation' && s.groupRunId === seg.groupRunId) {
+          group.push(s)
+          j++
+        } else {
+          break
+        }
+      }
+      items.push(
+        <div
+          key={`grp_${seg.groupRunId}`}
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 4 }}
+        >
+          {group.map(s => (
+            <div key={s.id} style={{ minWidth: 0 }}>
+              {waitSeg(s)}
+            </div>
+          ))}
+        </div>
+      )
+      i = j
+      continue
+    }
+    if (seg.type === 'thinking') {
+      items.push(
+        <ThinkingSegment
+          key={seg.id}
+          seg={seg}
+          isStreaming={!!seg.isStreaming}
+          onToggle={() => onToggleSegment(msgId, seg.id)}
+        />
+      )
+    } else if (seg.type === 'tool_call') {
+      items.push(
+        <ToolCallSegment
+          key={seg.id}
+          seg={seg}
+          onToggle={() => onToggleSegment(msgId, seg.id)}
+          getToolDisplayName={getToolDisplayName}
+        />
+      )
+    } else if (seg.type === 'answer') {
+      items.push(
+        <AnswerSegment
+          key={seg.id}
+          seg={seg}
+          isError={isError}
+        />
+      )
+    } else if (seg.type === 'delegation') {
+      items.push(waitSeg(seg))
+    }
+    i++
+  }
+  return <div style={{ position: 'relative', paddingLeft: 0 }}>{items}</div>
 }
 
 export const SegmentList = memo(SegmentListInner)

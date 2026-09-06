@@ -93,26 +93,6 @@ class KMSAutoIndexService {
     this.cancelCurrentRun()
   }
 
-  pause(): void {
-    if (this.autoIndexTimer && !this.autoIndexRunning) {
-      clearInterval(this.autoIndexTimer)
-      this.autoIndexTimer = null
-      logger.info('Auto-index timer paused')
-    }
-  }
-
-  resume(): void {
-    if (!this.autoIndexTimer && this.autoIndexConfig.enabled && !this.autoIndexRunning) {
-      const intervalMs = Math.max(1, this.autoIndexConfig.intervalMinutes) * 60 * 1000
-      this.autoIndexTimer = setInterval(() => {
-        this.runCheck().catch((err) => {
-          logger.error('Auto-index check failed:', err)
-        })
-      }, intervalMs)
-      logger.info('Auto-index timer resumed')
-    }
-  }
-
   getStatus(): AutoIndexStatus {
     const nextRunAt = this.autoIndexTimer && this.autoIndexLastRunAt
       ? this.autoIndexLastRunAt + Math.max(1, this.autoIndexConfig.intervalMinutes) * 60
@@ -137,7 +117,7 @@ class KMSAutoIndexService {
     try {
       // 通过 Worker 线程执行自动索引，避免爬虫同步 fs + 文件解析阻塞主线程 UI。
       // autoIndexCheck 是重 IO 任务（爬虫 + 解析 + LLM + embedding），绝不允许 fallback 到主线程，
-      // 否则会卡死 UI（Worker 超时 600s → 主线程降级 → 同步 better-sqlite3 + file2md 阻塞主循环）。
+      // 否则会卡死 UI。Worker 不可用时必须告警并暴露问题，而不是静默空转。
       const KMSIndexWorkerClientService = require('./kms-index-worker-client.service').default
       const result = await KMSIndexWorkerClientService.getInstance().runTask(
         'autoIndexCheck',

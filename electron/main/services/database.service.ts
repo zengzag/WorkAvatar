@@ -155,6 +155,7 @@ class DatabaseService {
         total_tasks INTEGER DEFAULT 0,
         total_approvals INTEGER DEFAULT 0,
         memory_enabled BOOLEAN NOT NULL DEFAULT 0,
+        is_registered INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -334,6 +335,25 @@ class DatabaseService {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_delegate_perm_unique ON employee_delegate_permissions(supervisor_id, target_id);
       CREATE INDEX IF NOT EXISTS idx_delegate_perm_supervisor ON employee_delegate_permissions(supervisor_id);
 
+      -- 子会话运行记录（多智能体运行时）：每次委托/派发一个 run，状态机与结构化结果落库
+      CREATE TABLE IF NOT EXISTS sub_agent_runs (
+        run_id TEXT PRIMARY KEY,
+        parent_conversation_id TEXT NOT NULL,
+        employee_id TEXT NOT NULL DEFAULT '',
+        parent_run_id TEXT DEFAULT '',
+        conversation_id TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'queued',
+        inputs_json TEXT DEFAULT '{}',
+        result_json TEXT DEFAULT '{}',
+        usage_json TEXT DEFAULT '{}',
+        error TEXT,
+        started_at INTEGER,
+        ended_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_parent ON sub_agent_runs(parent_conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_started ON sub_agent_runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id);
+
       -- 日历日程表：用户与智能体创建的日程事件
       CREATE TABLE IF NOT EXISTS calendar_events (
         id TEXT PRIMARY KEY,
@@ -485,6 +505,10 @@ class DatabaseService {
 
     this.addColumnIfNotExists('employees', 'memory_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
     this.addColumnIfNotExists('employees', 'last_active_at', 'INTEGER')
+    // 委托能力设置：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串表示未配置（全默认）
+    this.addColumnIfNotExists('employees', 'delegation_json', "TEXT DEFAULT ''")
+    // 注册员工（内置/插件）在 employees 表的影子记录标记：仅作外键占位，不参与员工列表展示
+    this.addColumnIfNotExists('employees', 'is_registered', 'INTEGER NOT NULL DEFAULT 0')
 
     this.addColumnIfNotExists('conversations', 'summary', "TEXT DEFAULT ''")
     this.addColumnIfNotExists('conversations', 'minimal_mode', 'BOOLEAN NOT NULL DEFAULT 0')
@@ -500,6 +524,10 @@ class DatabaseService {
     // 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤
     this.addColumnIfNotExists('conversations', 'parent_conversation_id', "TEXT DEFAULT ''")
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id)`)
+
+    // 子会话运行记录关联的子会话 ID：多轮追问（followup）按其加载历史轮次上下文
+    this.addColumnIfNotExists('sub_agent_runs', 'conversation_id', "TEXT DEFAULT ''")
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sub_agent_runs_conv ON sub_agent_runs(conversation_id)`)
 
     this.migrateConversationLastMessageAt()
 
@@ -561,6 +589,8 @@ class DatabaseService {
     this.addColumnIfNotExists('installed_skills', 'disable_model_invocation', "BOOLEAN NOT NULL DEFAULT 0")
     this.addColumnIfNotExists('installed_skills', 'user_invocable', "BOOLEAN NOT NULL DEFAULT 1")
     this.addColumnIfNotExists('installed_skills', 'hooks_json', "TEXT DEFAULT '[]'")
+    // 插件来源技能（source='plugin'）：记录所属插件 id，用于按插件生命周期上下线
+    this.addColumnIfNotExists('installed_skills', 'plugin_id', "TEXT DEFAULT ''")
 
     this.migrateEmployeeToolMode()
     this.cleanupObsoleteEmployeeTools()

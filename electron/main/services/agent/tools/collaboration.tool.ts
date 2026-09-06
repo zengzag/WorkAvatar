@@ -12,20 +12,28 @@ export const listEmployeesTool: ToolDefinition = {
   summary: '列出所有可用的数字员工（id、名称）。需要指定执行员工或委派任务时使用。',
   description: `列出所有可用的数字员工，返回 id、name。
 - 需要指定执行任务的数字员工时，调用此工具获取 employee_id
-- 调用后可将所需员工的 id 传入 delegate_to_employee 的 target_employee_id 参数`,
+- 可委托的员工列表以上下文信息 [DELEGATION] 段为准`,
   parameters: { type: 'object', properties: {} },
   handler: async () => {
     try {
       const db = DatabaseService.getInstance().getDb()
-      const rows = db.prepare('SELECT id, name FROM employees ORDER BY name ASC').all() as Array<{ id: string; name: string }>
+      const rows = db.prepare('SELECT id, name, description, rules FROM employees ORDER BY name ASC').all() as Array<{ id: string; name: string; description: string | null; rules: string | null }>
       if (rows.length === 0) {
         return { success: true, output: '暂无可用数字员工。', employees: [] }
       }
-      const formatted = rows.map((r, i) => `[${i + 1}] ${r.name} (id=${r.id})`).join('\n')
+      // 简介优先级：rules > description；仅作选用参考，截断避免撑爆上下文
+      const formatted = rows.map((r, i) => {
+        const intro = (r.rules || r.description || '').trim().replace(/\s+/g, ' ').slice(0, 120)
+        return `[${i + 1}] ${r.name} (id=${r.id})${intro ? `\n    ${intro}` : ''}`
+      }).join('\n')
       return {
         success: true,
-        output: `找到 ${rows.length} 个数字员工：\n${formatted}`,
-        employees: rows,
+        output: `找到 ${rows.length} 个数字员工（以下为简介，用于选择最合适的员工委派任务）：\n${formatted}`,
+        employees: rows.map(r => ({
+          id: r.id,
+          name: r.name,
+          description: (r.rules || r.description || '').trim().slice(0, 500),
+        })),
       }
     } catch (err: any) {
       return { success: false, error: `列出数字员工失败: ${err.message || err}` }

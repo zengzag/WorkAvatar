@@ -1,6 +1,6 @@
 {
   "name": "workavatar",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "本地优先的办公数字员工",
   "main": "dist-electron/main/index.js",
   "scripts": {

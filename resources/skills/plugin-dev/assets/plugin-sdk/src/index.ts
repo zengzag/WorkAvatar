@@ -1,5 +1,6 @@
 export type {
   PluginManifest,
+  PluginManifestEmployee,
   PluginNavContribution,
   PluginCapability,
   PluginDataEntity,
@@ -12,6 +13,8 @@ export type {
 export type {
   PluginToolContext,
   PluginToolDefinition,
+  PluginToolResult,
+  PluginToolMiddleware,
 } from './tool'
 export type {
   PluginDatabase,

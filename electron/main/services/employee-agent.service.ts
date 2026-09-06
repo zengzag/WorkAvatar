@@ -8,10 +8,11 @@ import WorkspaceManagerService from './workspace-manager.service'
 import { EmployeeAgent } from './agent/business/employee-agent'
 import type { EmployeeAgentConfig } from './agent/business/employee-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
-import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, type SearchScopeRef } from './agent/tools'
+import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
 import type { Message } from './agent/core/types'
+import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import type { DBEmployee, DBEmployeeTool } from '../../shared/db-types'
 import type { ToolMode } from '../../shared/channels/tool'
@@ -19,6 +20,7 @@ import type { ToolDefinition } from './agent/tools/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
 import PluginHostService from './plugin/plugin-host.service'
+import EmployeeRegistryService from './employee-registry.service'
 import { interactionContext } from './unified-interaction.service'
 
 const logger = createLogger('AgentEvent')
@@ -71,6 +73,8 @@ interface CachedAgentEntry {
   collectionIdsRef: SearchScopeRef
   /** 该 agent 持有的 MCP client 引用释放函数，agent 缓存被清除时调用 */
   mcpRelease?: () => Promise<void>
+  /** 创建时的插件工具集合 epoch（插件增删/升级时由 bumpToolEpoch 递增；运行中的 agent 保留至本轮结束） */
+  toolEpoch: number
 }
 
 class EmployeeAgentService {
@@ -80,6 +84,8 @@ class EmployeeAgentService {
   private memoryService: EmployeeMemoryService
   private mcpRegistry: McpRegistryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
+  /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
+  private toolEpoch = 0
   private static instance: EmployeeAgentService
 
   private constructor() {
@@ -103,7 +109,8 @@ class EmployeeAgentService {
     modelId?: string,
     enableThinking?: ThinkingLevel,
     conversationId?: string,
-    employee?: DBEmployee
+    employee?: DBEmployee,
+    minimalMode?: boolean
   ): Promise<CachedAgentEntry> {
     // 缓存 key 必须包含 conversationId：不同任务（对话）各自持有独立 agent 实例，
     // 避免并发多任务时共享同一 agent（_running/_currentSignal/MCP 引用）导致互相中断。
@@ -111,10 +118,26 @@ class EmployeeAgentService {
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
-      return existing
+      // 插件工具集合已变更（bumpToolEpoch）且该 agent 不在运行 → 丢弃旧缓存按新工具集重建
+      if (existing.toolEpoch !== this.toolEpoch) {
+        if (!existing.agent.isRunning()) {
+          if (existing.mcpRelease) {
+            existing.mcpRelease().catch(() => { /* ignore */ })
+          }
+          this.agentEntries.delete(cacheKey)
+        } else {
+          // 运行中：本次 run 的 tools schema 已快照，保留旧工具集跑完本轮，任务结束后下次访问自然重建
+          return existing
+        }
+      } else {
+        return existing
+      }
     }
 
-    const emp = employee ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
+    const emp = employee
+      ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
+      // 注册员工（内置/插件）无 DB 记录：回退注册表解析
+      ?? EmployeeRegistryService.getInstance().toDBEmployee(employeeId)
     if (!emp) {
       throw new Error(`Employee ${employeeId} not found`)
     }
@@ -163,6 +186,14 @@ class EmployeeAgentService {
         ) || undefined)
       : undefined
 
+    // 委托能力：由员工委托设置驱动（不再是可配置工具）。
+    // 开启且选择了目标时：委托类工具（串行/并行）注册给 agent，可委托员工列表注入上下文信息 [DELEGATION] 段。
+    // 目标列表过滤：不存在的员工 + 明确拒绝被委托的员工（运行时 launchSubAgent 仍会做最终校验）。
+    const delegation = parseEmployeeDelegation(emp.delegation_json)
+    const delegationTargets = delegation.enabled && delegation.targetIds.length > 0
+      ? this.queryDelegationTargets(delegation.targetIds)
+      : []
+
     const agentConfig: EmployeeAgentConfig = {
       employeeId: emp.id,
       name: emp.name,
@@ -176,6 +207,7 @@ class EmployeeAgentService {
       sessionId: conversationId,
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
+      delegationTargets,
       debug: modelConfig?.debug ?? false,
       workspaceGuidance: (() => {
         // 稳定不变的环境信息（系统环境）保留在 system prompt；
@@ -201,16 +233,29 @@ class EmployeeAgentService {
       toolMaxResultSize: modelConfig?.tool_max_result_size ?? 50000,
       onEvent: (event, data) => {
         logger.info(`${event}`, data)
+        // 事件桥：转发给订阅 'agent:event' 的插件；无订阅者时 notifyKernelEvent 早退，零额外成本
+        PluginHostService.getInstance().notifyAgentEvent(employeeId, conversationId, event, data)
       },
     }
 
     const agent = new EmployeeAgent(agentConfig, agentOptions)
+
+    // 极简模式在 agent 创建时冻结（绑定任务/对话），后续消息不可更改：
+    // 若在缓存命中后仍逐条 setMinimalMode，开启极简的新任务会污染旧任务共享的 agent，
+    // 导致旧任务误判为极简而不再传递工具。设计上极简模式是任务的创建期配置，首次消息后固定。
+    agent.setMinimalMode(!!minimalMode)
 
     // skill 激活统一通过 activate_skill 工具（渐进披露第 2 层），
     // 不再为每个 skill 注册 skill_<name> 工具，避免工具表膨胀。
     // 斜杠菜单 /<skill-name> 由前端转换为 activate_skill 调用指令。
     const toolModes = this.getEmployeeToolModes(employeeId)
     agent.registerTools(this.applyToolModes(allBuiltinTools, toolModes))
+
+    // 委托类工具（串行委托 + 并行派发 + 追问）：仅当委托能力开启且存在有效目标时注册，
+    // 不走 employee_tools 三态配置（对应员工设置抽屉的「委托」Tab）
+    if (delegationTargets.length > 0) {
+      agent.registerTools([delegateTool, followupTool, launchAgentsTool, awaitAgentsTool])
+    }
 
     // 插件贡献的 agent 工具（如日历插件注册的日历待办工具），参与三态配置
     const pluginAgentTools = this.getPluginAgentTools()
@@ -265,15 +310,56 @@ class EmployeeAgentService {
       agent.updateMemoryPrompt(memoryPrompt)
     }
 
-    // 注入任务工作区上下文（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
+    // 注入任务工作区上下文与任务发起时间（随会话稳定，不走 system prompt → 保持 KV cache 前缀稳定）
     agent.updateWorkspaceContextPrompt(this.buildWorkspaceContextPrompt(emp, conversationId))
+    agent.updateTaskTimePrompt(this.buildTaskTimePrompt(conversationId))
+
+    // 挂插件中间件（链首守卫）：逆序 attach，保证注册优先的插件中间件最先执行（FIFO）
+    const pluginMiddlewares = PluginHostService.getInstance().getAgentToolMiddlewares()
+    for (const mw of pluginMiddlewares.reverse()) {
+      agent.useToolMiddleware(mw)
+    }
 
     this.agentEntries.set(cacheKey, {
       agent,
       collectionIdsRef,
       mcpRelease,
+      toolEpoch: this.toolEpoch,
     })
-    return { agent, collectionIdsRef }
+    return { agent, collectionIdsRef, toolEpoch: this.toolEpoch }
+  }
+
+  /**
+   * 查询可委托员工列表（按员工委托设置 targetIds 过滤）：
+   * 剔除不存在的员工与明确拒绝被委托（acceptDelegation=false）的员工，按名称排序保持提示词稳定。
+   */
+  private queryDelegationTargets(targetIds: string[]): NonNullable<EmployeeAgentConfig['delegationTargets']> {
+    if (targetIds.length === 0) return []
+    const placeholders = targetIds.map(() => '?').join(',')
+    const rows = this.db.getDb().prepare(
+      `SELECT id, name, description, profile_json, delegation_json FROM employees WHERE id IN (${placeholders})`
+    ).all(...targetIds) as Array<{ id: string; name: string; description?: string; profile_json?: string; delegation_json?: string | null }>
+    const out: NonNullable<EmployeeAgentConfig['delegationTargets']> = []
+    for (const r of rows) {
+      if (!parseEmployeeDelegation(r.delegation_json).acceptDelegation) continue
+      // 已禁用的员工不参与委托
+      if (!EmployeeRegistryService.getInstance().isEnabled(r.id)) continue
+      let role: string | undefined
+      try { role = r.profile_json ? JSON.parse(r.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: r.id, name: r.name, description: r.description, role })
+    }
+    // 注册员工（内置/插件）无 DB 记录：委托目标回退注册表（接受委托默认开启；已禁用员工不参与）
+    const foundIds = new Set(rows.map(r => r.id))
+    for (const id of targetIds) {
+      if (foundIds.has(id)) continue
+      const reg = EmployeeRegistryService.getInstance().getRegistered(id)
+      if (!reg || reg.is_enabled === false) continue
+      let role: string | undefined
+      try { role = reg.profile_json ? JSON.parse(reg.profile_json)?.roleName : undefined } catch { /* ignore */ }
+      out.push({ id: reg.id, name: reg.name, description: reg.description, role })
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name))
+    return out
   }
 
   /**
@@ -300,8 +386,18 @@ class EmployeeAgentService {
       modeMap.set(id, 'on_demand')
     }
 
-    // 协作工具（delegate_to_employee）默认关闭，需在员工设置中手动启用
-    modeMap.set('delegate_to_employee', 'off')
+    // 平级协作消息工具默认关闭（委托类工具不在此列：由员工委托设置驱动注册）
+    modeMap.set('send_message', 'off')
+    modeMap.set('read_messages', 'off')
+
+    // 注册员工（内置/插件）的默认工具声明：将声明中的工具强制启用，
+    // 使插件员工开箱即用（插件工具默认 off，不覆盖则无法工作）
+    const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(employeeId)
+    if (registryDefaults) {
+      for (const [toolId, mode] of registryDefaults) {
+        if (mode === 'on' || mode === 'on_demand') modeMap.set(toolId, mode)
+      }
+    }
 
     let rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
@@ -369,13 +465,25 @@ class EmployeeAgentService {
     return lines.length > 0 ? lines.join('\n') : undefined
   }
 
+  /** 构建任务发起时间（无会话时回退当前时间，注入 <task_time> 上下文块） */
+  private buildTaskTimePrompt(conversationId?: string): string | undefined {
+    let ts: number | undefined
+    if (conversationId) {
+      const row = this.db.getDb().prepare('SELECT created_at FROM conversations WHERE id = ?').get(conversationId) as { created_at?: number } | undefined
+      ts = row?.created_at
+    }
+    const d = ts ? new Date(ts * 1000) : new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `任务发起时间：${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
   private getModelConfig(config: any, modelId?: string): LLMModelConfig & Record<string, any> | null {
     if (!config?.models_json) return null
     try {
       const models: Array<LLMModelConfig & Record<string, any>> = JSON.parse(config.models_json)
       const matched = modelId
         ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
-        : models.find(m => m.is_default)
+        : models.find(m => (m.category || 'chat') === 'chat') ?? models[0]
       return matched ?? null
     } catch {
       return null
@@ -386,7 +494,7 @@ class EmployeeAgentService {
     const { employee_id, provider_id, model_id, messages, use_skills = true, collection_ids = [], enable_thinking, conversation_id, minimal_mode = false, high_permission = false, system } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
-    const employeeName = employee?.name || 'unknown'
+    const employeeName = employee?.name || EmployeeRegistryService.getInstance().getRegistered(employee_id)?.name || 'unknown'
 
     logger.info(`Chat stream started: employee="${employeeName}"(${employee_id}), conversation=${conversation_id || 'none'}, msgs=${messages.length}, skills=${use_skills}, thinking=${enable_thinking ?? 'auto'}, minimal=${minimal_mode}, highPerm=${high_permission}`)
 
@@ -398,9 +506,8 @@ class EmployeeAgentService {
     }
 
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee)
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode)
       const agent = entry.agent
-      agent.setMinimalMode(minimal_mode)
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
 
       const history: Message[] = this.expandFrontendMessages(messages.slice(0, -1))
@@ -408,9 +515,10 @@ class EmployeeAgentService {
       const query = lastMsg?.content || ''
       const queryImages = lastMsg?.images
 
+      // KB 范围是否注入取决于任务冻结的极简模式（agent.getMinimalMode()），而非传入的 minimal_mode 参数
       const systemPromptCached = system
         ? (agent.setCachedSystemPrompt(system), true)
-        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+        : await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
       const maxIterations = await this.resolveMaxIterations(provider_id, model_id)
 
       await agent.runStream(
@@ -447,9 +555,10 @@ class EmployeeAgentService {
     minimalMode: boolean,
   ): Promise<boolean> {
     // 1) system prompt 稳定前缀优先从 conversations 缓存加载（字节级相同 → KV cache 命中）
-    //    memory / 知识库范围不再嵌入 system prompt，改为 prepend 到用户 query（见 EmployeeAgent.patchOptionsWithDynamicContext）
-    //    向后兼容：旧缓存中若含 "## 跨任务记忆" / "## 当前对话可使用的资料库合集" 等旧标记，
-    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免 memory/kb 与 <memory>/<knowledge_scope> 重复。
+    //    memory / 知识库范围 / 委托 / 能力清单不再嵌入 system prompt，
+    //    改为经 EmployeeAgent.runStream/run 以独立 role=user 上下文消息注入。
+    //    向后兼容：旧缓存中若含 "[DELEGATION]" / "[CAPABILITIES]" / "<skills>" 等旧标记，
+    //    视为 legacy prompt 格式，丢弃并强制按新格式重建，避免与上下文注入重复。
     let systemPromptCached = false
     if (conversationId) {
       const conv = this.db.getDb().prepare(
@@ -457,7 +566,9 @@ class EmployeeAgentService {
       ).get(conversationId) as { system_prompt?: string } | undefined
       const cached = conv?.system_prompt
       if (cached) {
-        const isLegacy = cached.includes('## 跨任务记忆')
+        const isLegacy = cached.includes('[DELEGATION]')
+          || cached.includes('[CAPABILITIES]')
+          || cached.includes('## 跨任务记忆')
           || cached.includes('## 当前对话可使用的资料库合集')
           || cached.includes('调用前务必先调用 list_available_tools 获取详细工具详细使用说明')
           || cached.includes('<skills>')
@@ -496,7 +607,7 @@ class EmployeeAgentService {
       const models: LLMModelConfig[] = JSON.parse(config.models_json)
       const matched = modelId
         ? models.find(m => m.id === modelId) || models.find(m => m.model === modelId)
-        : models.find(m => m.is_default)
+        : models.find(m => (m.category || 'chat') === 'chat') ?? models[0]
       if (matched?.max_retry !== undefined) {
         return matched.max_retry
       }
@@ -533,7 +644,7 @@ class EmployeeAgentService {
     const { employee_id, provider_id, model_id, messages, conversation_id, collection_ids = [], enable_thinking, minimal_mode = false } = params
 
     const employee = this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employee_id) as DBEmployee | undefined
-    const employeeName = employee?.name || 'unknown'
+    const employeeName = employee?.name || EmployeeRegistryService.getInstance().getRegistered(employee_id)?.name || 'unknown'
 
     const logCtx = {
       employeeId: employee_id,
@@ -543,13 +654,13 @@ class EmployeeAgentService {
     }
 
     return LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id)
+      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, undefined, minimal_mode)
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids
 
       const history = this.expandFrontendMessages(messages)
 
-      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, minimal_mode)
+      await this.prepareSystemPrompt(agent, conversation_id, collection_ids, agent.getMinimalMode())
 
       const { summary, stats } = await agent.compactConversation(history)
 
@@ -571,25 +682,29 @@ class EmployeeAgentService {
     return entry.agent.getContextStats()
   }
 
+  /** 插件/工具集合变更后调用：递增 epoch 使存量 agent 缓存按工具集失效（运行中的保留至本轮结束） */
+  bumpToolEpoch(): void {
+    this.toolEpoch += 1
+    logger.info(`Agent 工具集 epoch 递增: ${this.toolEpoch}`)
+  }
+
   clearAgentCache(employeeId?: string): void {
+    // 运行中的 agent 跳过：插件/工具热更新时保留正在生成的任务（不打断流式输出），
+    // 其 toolEpoch 已失效，本轮结束后下次访问自动重建（见 getOrCreateAgent）
+    const purge = (key: string, entry: CachedAgentEntry) => {
+      if (entry.agent.isRunning()) return
+      // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
+      if (entry.mcpRelease) {
+        entry.mcpRelease().catch(() => { /* ignore */ })
+      }
+      this.agentEntries.delete(key)
+    }
     if (employeeId) {
       for (const [key, entry] of this.agentEntries.entries()) {
-        if (key.startsWith(`${employeeId}:`)) {
-          // 释放该 agent 持有的 MCP client 引用，避免连接泄漏
-          if (entry.mcpRelease) {
-            entry.mcpRelease().catch(() => { /* ignore */ })
-          }
-          this.agentEntries.delete(key)
-        }
+        if (key.startsWith(`${employeeId}:`)) purge(key, entry)
       }
     } else {
-      // 清空所有缓存：先释放全部 MCP 引用
-      for (const entry of this.agentEntries.values()) {
-        if (entry.mcpRelease) {
-          entry.mcpRelease().catch(() => { /* ignore */ })
-        }
-      }
-      this.agentEntries.clear()
+      for (const [key, entry] of this.agentEntries.entries()) purge(key, entry)
     }
   }
 

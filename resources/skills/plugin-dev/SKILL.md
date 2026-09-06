@@ -1,7 +1,7 @@
 ---
 name: plugin-dev
-description: "当用户想要为 WorkAvatar 开发、创建、编写插件（plugin），或询问插件开发机制（manifest、capabilities 能力声明、主进程入口、渲染端入口、构建打包 .wap、安装分发）时使用此技能。指导从需求分析、能力选型、工程脚手架、manifest 编写、主进程/渲染端编码、构建打包到安装交付的完整流程。不适用于宿主本身的功能开发（那是仓库内普通代码，不是插件）。"
-version: 1.1.0
+description: "当用户想要为 WorkAvatar 开发、创建、编写插件（plugin），或询问插件开发机制（manifest、capabilities 能力声明、主进程入口、渲染端入口、构建打包 .wap、安装分发），或想要修改已安装插件的功能源码时使用此技能。指导从需求分析、能力选型、工程脚手架、manifest 编写、主进程/渲染端编码、构建打包到安装交付的完整流程，也覆盖对已安装插件（userData/plugins/<id>/，自带源码）的二次开发。不适用于宿主本身的功能开发（那是仓库内普通代码，不是插件）。"
+version: 1.2.0
 license: Proprietary
 ---
 
@@ -26,7 +26,7 @@ WorkAvatar 插件 = **manifest 声明 + 双入口插件包（主进程 CJS + 渲
 5. **编写主进程入口** `src/main/index.ts`：activate/deactivate + IPC + 存储贡献点
 6. **编写渲染端入口** `src/renderer/index.tsx`（纯后台插件可省略）
 7. **npm install + 构建打包**：`npm install` 后执行 `node build-plugin.mjs --zip` 产出 `.wap`
-8. **交付安装**：指导用户导入 `.wap` 并重启应用
+8. **交付安装**：指导用户导入 `.wap` 并即时生效（无需重启）
 
 ## 工程结构
 
@@ -215,18 +215,20 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 ```
 
 - 主进程 → CJS（node20）；渲染端 → ESM（共享库自动 shim，CSS 自动内联）
-- `.wap` 内部为 zip 归档，仅含 `manifest.json + dist/** + locale/** + resources/**`
+- `.wap` 内部为 zip 归档，**默认含源码**（`src/**` + `package.json` + `tsconfig.json`，即完整构建输入，便于在已安装插件基础上二次开发重建）；追加 `--no-source` 打包为仅含运行时必需文件（`manifest.json + dist/** + locale/** + resources/**`）的精简包
 - 构建脚本会校验 `nativeDependencies` 是否在宿主白名单内（白名单文件在 SDK 的 `host-native-dependencies.json`，见"类型契约"）
 - 构建失败先看报错：主进程常见是 import 了不存在的模块；渲染端常见是引用了未安装的包（非共享库的包要加进 dependencies）
 
 ## 安装交付
 
-产出 `.wap` 后告知用户三种安装方式（效果一致）：
+产出 `.wap` 后告知用户三种安装方式（效果一致，均**即时生效，无需重启**）：
 1. **应用内导入**：设置 → 插件 → 「导入插件」，选择 `.wap`（推荐，同 id 可覆盖升级）
-2. **双击 `.wap`**：系统打开方式选 WorkAvatar，确认后安装并热重载
-3. **手动放目录**：解压到 `userData/plugins/<id>/`，重启应用
+2. **双击 `.wap`**：系统打开方式选 WorkAvatar，确认后安装并立即加载
+3. **手动放目录**：解压到 `userData/plugins/<id>/`，在设置页插件列表点击「刷新」增量加载
 
-安装后需**重启应用生效**（方式 2 热重载除外）。插件数据在 `userData/plugin-data/<id>/`，升级/禁用不丢数据。
+插件安装/启用/禁用/删除/覆盖升级均即时生效（主进程增量激活 + 渲染端增量加载，不打断正在进行的对话与生成流程）。插件数据在 `userData/plugin-data/<id>/`，升级/禁用不丢数据。
+
+**修改已安装插件（AI 二次开发）**：`.wap` 默认带源码，安装目录 `userData/plugins/<id>/` 下有完整 `src/**` + `package.json`（+ `tsconfig.json`）。找到用户要改造的插件安装目录后：`npm install`（需要网络）→ 直接修改 `src/` 与 `manifest.json` → 用 `build-plugin.mjs` 重建并重新导入覆盖升级即可。
 
 ## 类型契约（可选，用于 typecheck）
 
@@ -252,7 +254,7 @@ node build-plugin.mjs --zip        # 构建并产出 release/plugins/<id>-v<vers
 - 定时任务用 `ctx.services.scheduler.every/cron`，禁止裸开 `setInterval`
 - 共享库（react/antd/i18next）不安装进 dependencies、不打包，构建脚本自动 shim
 - 宿主不 await `activate`：耗时初始化放后台/scheduler，不要阻塞 activate
-- 每次改完 manifest 结构或 capabilities 后提醒用户：插件变更需重启应用生效
+- 每次改完 manifest 结构或 capabilities 后重新构建导入覆盖升级：插件变更**即时生效**（无需重启，正在进行的对话不受影响）
 
 ## 参考资料（用 read_reference 工具按需读取）
 

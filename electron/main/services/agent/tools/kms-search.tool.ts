@@ -144,7 +144,8 @@ export function createKMSTools(scopeRef?: SearchScopeRef): ToolDefinition[] {
     timeoutMs: 120000,
     handler: async (args: any) => {
       try {
-        const query = String(args.query || '').trim()
+        // 兼容不同模型/文本形式工具调用对查询参数的命名差异（query 为标准 schema 命名，keyword 为部分模型习惯）
+        const query = String(args.query ?? args.keyword ?? '').trim()
         if (!query || query.length < 1) {
           return { success: true, output: '请输入查询内容。' }
         }

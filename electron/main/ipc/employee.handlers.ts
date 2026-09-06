@@ -4,6 +4,10 @@ import type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDeleteResult,
+  EmployeeDuplicateParams,
+  EmployeeSetEnabledParams,
+  EmployeeSetMemoryEnabledParams,
   ConversationListParams,
   ConversationListWithEmployeeParams,
   ConversationCreateParams,
@@ -28,11 +32,24 @@ import type WorkspaceManagerService from '../services/workspace-manager.service'
 import type EmployeeProfilingService from '../services/employee-profiling.service'
 import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
+import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
 import { safeHandle } from './_shared'
+
+/** 删除某员工所有顶层会话及其子会话，并清理授权缓存和插件关联记录（与 CONVERSATION_DELETE 一致） */
+function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerService, employeeId: string): void {
+  const conversations = workspaceManager.getConversationList(employeeId)
+  for (const conv of conversations) {
+    const allConvIds = workspaceManager.getChildConversationIds(conv.id)
+    for (const cid of allConvIds) {
+      UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+    }
+    try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
+  }
+}
 
 export function registerEmployeeHandlers(
   workspaceManager: WorkspaceManagerService,
@@ -41,11 +58,31 @@ export function registerEmployeeHandlers(
   memoryService: EmployeeMemoryService
 ) {
   safeHandle(IPC_CHANNELS.EMPLOYEE_LIST, () => {
-    return workspaceManager.getEmployeeList()
+    // DB 员工（用户创建）在前，注册员工（内置/插件，只读）追加在后；前端按来源分组展示。
+    // 两者统一附加启用状态（KV 持久化），任务界面按 is_enabled 过滤不可选员工
+    const registry = EmployeeRegistryService.getInstance()
+    // 过滤注册员工的影子记录（is_registered=1，仅外键占位），避免与 registry.listRegistered() 重复展示
+    const dbList = workspaceManager.getEmployeeList()
+      .filter(e => !e.is_registered)
+      .map(e => ({ ...e, is_enabled: registry.isEnabled(e.id) }))
+    // 注册员工展示其独立工作区根目录（dataDir/registry-workspaces/<id 摘要>），供打开工作区按钮使用
+    const registered = registry.listRegistered().map(e => ({
+      ...e,
+      workspace_path: workspaceManager.getRegistryWorkspaceRoot(e.id),
+    }))
+    return [...dbList, ...registered]
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_GET, (id: string) => {
-    return workspaceManager.getEmployee(id)
+    // 注册员工（内置/插件）优先返回注册表对象：DB 中仅存影子记录，缺少 source/source_key 等注册属性标记
+    const registered = EmployeeRegistryService.getInstance().getRegistered(id)
+    if (registered) {
+      return { ...registered, workspace_path: workspaceManager.getRegistryWorkspaceRoot(id) }
+    }
+    const emp = workspaceManager.getEmployee(id)
+    return emp
+      ? { ...emp, is_enabled: EmployeeRegistryService.getInstance().isEnabled(id) }
+      : null
   })
 
   safeHandle(IPC_CHANNELS.EMPLOYEE_CREATE, (params: EmployeeCreateParams) => {
@@ -62,13 +99,40 @@ export function registerEmployeeHandlers(
     return result
   })
 
-  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams) => {
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DELETE, (params: EmployeeDeleteParams): EmployeeDeleteResult => {
+    // 注册员工（内置/插件）只读，禁止删除
+    if (EmployeeRegistryService.getInstance().isRegistered(params.id)) return { ok: false, transferred: 0 }
+    let transferred = 0
+    const action = params.conversation_action || 'keep'
+    if (action === 'transfer') {
+      // 转移对话历史到目标员工（含任务工作区迁移），再删除员工
+      if (!params.transfer_to_employee_id || params.transfer_to_employee_id === params.id) return { ok: false, transferred: 0 }
+      transferred = workspaceManager.transferConversations(params.id, params.transfer_to_employee_id)
+    } else if (action === 'delete') {
+      // 删除对话历史（清理授权缓存 + 插件关联记录，与 CONVERSATION_DELETE_ALL 一致）
+      deleteAllConversationsOfEmployee(workspaceManager, params.id)
+    }
     const ok = workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
     if (ok) {
       // 删除员工时清除关联的 Agent 缓存
       try { EmployeeAgentService.getInstance().clearAgentCache(params.id) } catch { /* ignore */ }
     }
-    return ok
+    return { ok, transferred }
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_DUPLICATE, (params: EmployeeDuplicateParams) => {
+    // 另存副本：注册员工（内置/插件）→ 用户员工（DB 落库），副本可自由编辑/删除/导出
+    return EmployeeRegistryService.getInstance().duplicateAsUser(params.id)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_SET_ENABLED, (params: EmployeeSetEnabledParams) => {
+    // 启用/禁用开关：注册员工（内置/插件）与 user 员工均生效（KV 持久化）
+    return EmployeeRegistryService.getInstance().setEnabled(params.id, params.enabled)
+  })
+
+  safeHandle(IPC_CHANNELS.EMPLOYEE_SET_MEMORY_ENABLED, (params: EmployeeSetMemoryEnabledParams) => {
+    // 记忆开关仅对注册员工（内置/插件）生效（user 员工走 update.memory_enabled）
+    return EmployeeRegistryService.getInstance().setMemoryEnabled(params.id, params.enabled)
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_LIST, (params: ConversationListParams) => {
@@ -109,15 +173,7 @@ export function registerEmployeeHandlers(
 
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
     // 收集该员工下所有顶层会话及其子会话，清理授权缓存和自动化历史关联记录
-    const conversations = workspaceManager.getConversationList(employeeId)
-    for (const conv of conversations) {
-      const allConvIds = workspaceManager.getChildConversationIds(conv.id)
-      for (const cid of allConvIds) {
-        UnifiedInteractionService.getInstance().clearAllowedSources(cid)
-      }
-      // 同步通知插件清理关联数据（与 CONVERSATION_DELETE 保持一致）
-      try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
-    }
+    deleteAllConversationsOfEmployee(workspaceManager, employeeId)
     return workspaceManager.deleteAllConversations(employeeId)
   })
 

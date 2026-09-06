@@ -19,6 +19,12 @@ export class ToolMiddlewareChain {
     return this
   }
 
+  /** 插入链首（先于已有中间件执行，适用于 gate/守卫语义） */
+  useFront(middleware: ToolMiddleware): ToolMiddlewareChain {
+    this.middlewares.unshift(middleware)
+    return this
+  }
+
   async execute(
     toolName: string,
     args: Record<string, any>,

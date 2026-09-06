@@ -9,6 +9,7 @@ import type {
 } from '../../shared/ipc-channels'
 import type DatabaseService from '../services/database.service'
 import type SkillRegistryService from '../services/skill-registry.service'
+import EmployeeRegistryService from '../services/employee-registry.service'
 import { allBuiltinTools, createKMSTools, createKMSCollectionTools, javascriptExecTool, shellExecTool } from '../services/agent/tools'
 import { generateId } from '../services/common-utils'
 import { internetSearchService } from '../services/internet-search.service'
@@ -100,10 +101,9 @@ const TOOL_CATEGORY_DEFS: ToolCategoryDef[] = [
     id: 'collaboration',
     name: 'collaboration',
     title: '协作',
-    description: '委托给其他数字员工执行子任务，实现多员工协作',
+    description: '数字员工与模型供应商信息查询（任务委托能力见员工设置的「委托」Tab）',
     icon: 'team',
     toolIds: [
-      'delegate_to_employee',
       'list_employees',
       'list_providers',
     ],
@@ -278,11 +278,14 @@ export function registerToolHandlers(
       rowMap.set(row.tool_id, row)
     }
 
+    // 注册员工（内置/插件）无 employee_tools 配置行：按声明 defaultTools 覆盖默认模式（仅展示）
+    const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(params.employee_id)
+
     return catalog.map(tool => {
       const row = rowMap.get(tool.id)
       const mode: ToolMode = row && isValidToolMode(row.tool_mode)
         ? row.tool_mode
-        : resolveDefaultToolMode(tool.id)
+        : (registryDefaults?.get(tool.id) as ToolMode | undefined) ?? resolveDefaultToolMode(tool.id)
       return {
         ...tool,
         mode,
@@ -306,10 +309,14 @@ export function registerToolHandlers(
 
     const resolveMode = (toolId: string): ToolMode => {
       const row = rowMap.get(toolId)
-      return row && isValidToolMode(row.tool_mode)
-        ? row.tool_mode
-        : resolveDefaultToolMode(toolId)
+      if (row && isValidToolMode(row.tool_mode)) return row.tool_mode
+      // 注册员工（内置/插件）defaultTools 声明覆盖默认模式（仅展示）
+      const registryDefault = registryDefaults?.get(toolId) as ToolMode | undefined
+      return registryDefault ?? resolveDefaultToolMode(toolId)
     }
+
+    // 注册员工（内置/插件）defaultTools 覆盖（仅展示，不落库）
+    const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(params.employee_id)
 
     return buildToolCategoryDefs().map(categoryDef => {
       const tools = categoryDef.toolIds
@@ -357,6 +364,10 @@ export function registerToolHandlers(
   })
 
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, (params: ToolAssignParams) => {
+    // 注册员工（内置/插件）工具配置只读，禁止写入
+    if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) {
+      return { success: false, error: 'registered employee tool config is read-only' }
+    }
     const mode = resolveAssignMode(params)
     const isEnabled = mode !== 'off' ? 1 : 0
     assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode, isEnabled)
@@ -369,6 +380,10 @@ export function registerToolHandlers(
    * 一次性把该分类的工具 ID 全部按传入的 mode 写入
    */
   safeHandle(IPC_CHANNELS.TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE, (params: ToolCategoryAssignParams) => {
+    // 注册员工（内置/插件）工具配置只读，禁止写入
+    if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) {
+      return { success: false, error: 'registered employee tool config is read-only' }
+    }
     const categoryDef = buildToolCategoryDefs().find(c => c.id === params.category_id)
     if (!categoryDef) {
       return { success: false, error: `未知的工具分类: ${params.category_id}` }
@@ -425,18 +440,21 @@ export function registerToolHandlers(
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_ASSIGN_TO_EMPLOYEE, (params: { employee_id: string; skill_id: string }) => {
+    if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.assignSkillToEmployee(params.skill_id, params.employee_id)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_REMOVE_FROM_EMPLOYEE, (params: { employee_id: string; skill_id: string }) => {
+    if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.removeSkillFromEmployee(params.skill_id, params.employee_id)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
 
   safeHandle(IPC_CHANNELS.SKILL_REGISTRY_TOGGLE_FOR_EMPLOYEE, (params: { employee_id: string; skill_id: string; enabled: boolean }) => {
+    if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) return { success: false, error: 'registered employee skill config is read-only' }
     skillRegistry.toggleSkillForEmployee(params.skill_id, params.employee_id, params.enabled)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }

@@ -1,20 +1,42 @@
 /**
  * 插件视图注入：宿主界面在指定注入点渲染插件贡献的组件。
- * loadPlugins 收集各插件渲染端入口的 views，存入本模块；
- * 宿主界面用 <PluginViewSlot view="chat.toolbar" /> 在对应位置渲染。
+ * loader（loadSinglePlugin / unloadPluginById）注册与卸载某插件的全部视图注入，
+ * 变更经版本号通知 PluginViewSlot 重新渲染（增量热加载无需整页刷新）。
  */
-import React from 'react'
+import React, { useSyncExternalStore } from 'react'
 import type { PluginViewDefinition } from '../../plugin-sdk/src/renderer'
 
 /** 已收集的视图注入（pluginId:view → 组件） */
 const viewRegistry = new Map<string, React.ComponentType<{ context?: unknown }>>()
 
-/** 由 loadPlugins 调用，注册某插件的全部视图注入 */
+/** 变更版本号 + 订阅者（视图增删后通知 PluginViewSlot 刷新） */
+let viewVersion = 0
+const subscribers = new Set<() => void>()
+
+function bumpViewVersion(): void {
+  viewVersion += 1
+  for (const fn of subscribers) fn()
+}
+
+/** 由 loader 调用，注册某插件的全部视图注入 */
 export function registerPluginViews(pluginId: string, views?: PluginViewDefinition[]): void {
   if (!views) return
   for (const v of views) {
     viewRegistry.set(`${pluginId}:${v.view}`, v.component)
   }
+  bumpViewVersion()
+}
+
+/** 卸载某插件的全部视图注入（插件禁用/删除/覆盖升级时由 loader 调用） */
+export function unregisterPluginViews(pluginId: string): void {
+  let removed = false
+  for (const key of Array.from(viewRegistry.keys())) {
+    if (key.startsWith(`${pluginId}:`)) {
+      viewRegistry.delete(key)
+      removed = true
+    }
+  }
+  if (removed) bumpViewVersion()
 }
 
 /** 查询指定注入点的所有插件组件 */
@@ -29,8 +51,16 @@ export function getPluginViews(view: string): Array<{ pluginId: string; componen
   return result
 }
 
-/** 宿主界面注入点容器：渲染所有插件贡献到指定 view 的组件 */
+/** 宿主界面注入点容器：渲染所有插件贡献到指定 view 的组件（视图增删后自动重渲染） */
 export function PluginViewSlot({ view, context }: { view: string; context?: unknown }): React.ReactElement | null {
+  useSyncExternalStore(
+    (cb) => {
+      subscribers.add(cb)
+      return () => { subscribers.delete(cb) }
+    },
+    () => viewVersion,
+    () => viewVersion,
+  )
   const views = getPluginViews(view)
   if (views.length === 0) return null
   return (

@@ -28,8 +28,12 @@ import type {
   PluginMessageActionResult,
   PluginViewContribution,
   PluginCommand,
+  PluginToolMiddleware,
 } from '../../../../plugin-sdk/src'
 import { HOST_NATIVE_DEPENDENCIES } from '../../../../plugin-sdk/src'
+import { toToolMiddleware } from './middleware-adapter'
+import type { ToolMiddleware } from '../agent/tools/tool-middleware'
+import type { RegisteredEmployee } from '../employee-registry.service'
 import {
   getCapability,
   canRegisterView,
@@ -55,13 +59,13 @@ const RESERVED_IDS = ['settings', 'tasks', 'employees', 'list', 'invoke', 'event
 const ID_RE = /^[a-z][a-z0-9-]{1,63}$/
 
 /** 极简 semver：解析 x.y.z 与 >=a.b.c / ^x.y.z / * 组合范围，满足插件 engine 校验需求 */
-function parseVersion(v: string): number[] | null {
+export function parseVersion(v: string): number[] | null {
   const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim())
   if (!m) return null
   return [Number(m[1]), Number(m[2]), Number(m[3])]
 }
 
-function engineSatisfies(engine: string, host: string): boolean {
+export function engineSatisfies(engine: string, host: string): boolean {
   const range = engine.trim()
   if (range === '*' || range === '') return true
   const hostV = parseVersion(host)
@@ -72,21 +76,37 @@ function engineSatisfies(engine: string, host: string): boolean {
     const [, op, ver] = m
     if (ver === '*') continue
     const target = parseVersion(ver)!
-    const cmp = hostV[0] !== target[0] ? hostV[0] - target[0]
-      : hostV[1] !== target[1] ? hostV[1] - target[1]
-      : hostV[2] - target[2]
+    const cmp = compareVersions(hostV, target)
     let ok: boolean
     switch (op || '>=') {
       case '>=': ok = cmp >= 0; break
       case '<=': ok = cmp <= 0; break
       case '>': ok = cmp > 0; break
       case '<': ok = cmp < 0; break
-      case '^': ok = hostV[0] === target[0] && cmp >= 0; break
+      case '^': ok = caretSatisfies(hostV, target); break
       default: ok = cmp >= 0
     }
     if (!ok) return false
   }
   return true
+}
+
+/** 三版本号逐段比较 */
+function compareVersions(a: number[], b: number[]): number {
+  return a[0] !== b[0] ? a[0] - b[0]
+    : a[1] !== b[1] ? a[1] - b[1]
+    : a[2] - b[2]
+}
+
+/** ^（npm caret）语义：>0.0.0 锁定主版本；0.x 锁定次版本；0.0.x 锁定补丁。
+ * （旧实现仅校验主版本相等，导致 ^0.2.0 错误接受 0.3.0） */
+function caretSatisfies(hostV: number[], target: number[]): boolean {
+  if (compareVersions(hostV, target) < 0) return false
+  let upper: number[]
+  if (target[0] > 0) upper = [target[0] + 1, 0, 0]
+  else if (target[1] > 0) upper = [0, target[1] + 1, 0]
+  else upper = [0, 0, target[2] + 1]
+  return compareVersions(hostV, upper) < 0
 }
 
 interface PluginRecord {
@@ -101,12 +121,19 @@ interface PluginRecord {
   statusMessage?: string
   /** activate 成功后的主进程模块（含 deactivate） */
   module?: { deactivate?: () => void | Promise<void> }
+  /** 激活期间注册的 ctx 级资源清理函数（事件订阅取消等），下线时统一调用 */
+  disposers?: Set<() => void>
 }
+
+/** manifest 员工 key 命名规则（与插件 id 一致） */
+const EMPLOYEE_KEY_RE = /^[a-z][a-z0-9-]{1,63}$/
 
 interface CollectedContributions {
   agentTools: unknown[]
   mcpTools: unknown[]
   fileAssociations: Map<string, string> // 扩展名(小写含点) → pluginId
+  /** 插件注册的数字员工工具调用中间件（agentMiddleware 能力门控） */
+  agentMiddlewares: PluginToolMiddleware[]
 }
 
 const SETTINGS_KEY = 'plugins.config'
@@ -125,16 +152,16 @@ class PluginHostService {
   /** plugin:<id>:<channel> → handler */
   private handlers = new Map<string, (payload: unknown) => Promise<unknown> | unknown>()
   private contributions = new Map<string, CollectedContributions>()
-  /** 本宿主注册的全局快捷键（退出时统一注销） */
-  private registeredShortcuts = new Set<string>()
+  /** 本宿主注册的全局快捷键（pluginId → accelerators，退出/下线时按插件注销） */
+  private registeredShortcuts = new Map<string, Set<string>>()
   /** 插件渲染端窗口集合（主窗口 + tab 独立窗口），broadcast 时遍历 */
   private targets = new Set<BrowserWindow>()
-  /** 插件经 ctx.services.windows 创建的窗口（退出/禁用时统一回收） */
-  private pluginWindows = new Set<BrowserWindow>()
+  /** 插件经 ctx.services.windows 创建的窗口（pluginId → 窗口集合，退出/禁用/下线时按插件回收） */
+  private pluginWindows = new Map<string, Set<BrowserWindow>>()
   /** 插件经 ctx.services.scheduler 注册的定时任务清理函数（pluginId:id → dispose） */
   private schedulerJobs = new Map<string, () => void>()
-  /** 最近一次待导入的 zip 路径（已装同 id 插件引导覆盖时复用，避免二次弹文件选择） */
-  private pendingImportZip = ''
+  /** 最近一次待导入的 zip 路径列表（多选导入；已装同 id 插件引导覆盖时复用，避免二次弹文件选择） */
+  private pendingImportZips: string[] = []
   /** 插件注册的对话消息快捷操作（pluginId → actions，供前端清单查询与 IPC 路由） */
   private messageActions = new Map<string, PluginMessageAction[]>()
   /** 跨插件 RPC 的响应式方法（fully-qualified 'pluginId:method' → handler） */
@@ -251,17 +278,31 @@ class PluginHostService {
     this.scanAndActivate(disabled)
   }
 
-  /** 扫描目录 → 校验 → 激活。init 与 reload 复用 */
+  /** 扫描目录 → 校验 → 激活。init 与 reload 复用（全量重建 records） */
   private scanAndActivate(disabled: Set<string>): void {
+    this.records = this.scanRecords(disabled)
+    this.validateAndActivateRecords()
+  }
+
+  /**
+   * 纯扫描：从磁盘读取全部插件 manifest 并做静态校验，产出 records（不激活、不比对内存）。
+   * 扫描目录顺序 = 优先级（dev 在前 → 与用户目录撞 id 时优先加载 dev 插件，不拷贝不覆盖用户安装）。
+   */
+  private scanRecords(disabled: Set<string>): Map<string, PluginRecord> {
+    const records = new Map<string, PluginRecord>()
     const userDir = this.getUserDir()
-    // 扫描目录（顺序 = 优先级，同 id 只保留先发现的）：
-    //   dev：项目 plugins/ 作为开发插件源，仅非打包时扫描；release 不加载
-    //   user：用户安装目录 userData/plugins
-    // dev 在前 → 用户目录与 dev 插件目录撞 id 时优先加载 dev 插件（不拷贝、不覆盖用户已安装包，避免开发误伤 release 安装）
     const scanDirs: Array<{ label: string; dir: string }> = []
     if (!app.isPackaged) {
       const devDir = this.getDevPluginSourceDir()
-      if (fs.existsSync(devDir)) scanDirs.push({ label: 'dev', dir: devDir })
+      if (fs.existsSync(devDir)) {
+        scanDirs.push({ label: 'dev', dir: devDir })
+        // dev 模式额外把 plugins/examples/*（含 manifest.json 的示例插件）纳入开发源，
+        // 便于直接改动并调试参考模板插件；优先级在 plugins/* 之后、用户目录之前。
+        const examplesDir = path.join(devDir, 'examples')
+        if (fs.existsSync(examplesDir)) {
+          scanDirs.push({ label: 'dev-examples', dir: examplesDir })
+        }
+      }
     }
     scanDirs.push({ label: 'user', dir: userDir })
     logger.info(`插件扫描: isPackaged=${app.isPackaged} ${scanDirs.map(d => `${d.label}=${d.dir} (存在=${fs.existsSync(d.dir)})`).join(' | ')}`)
@@ -275,15 +316,18 @@ class PluginHostService {
           .map(e => e.name)
       } catch { /* 目录不存在则跳过 */ }
       for (const name of entries) {
-        this.scanPlugin(path.join(dir, name), disabled)
+        this.scanPluginInto(records, path.join(dir, name), disabled)
       }
     }
-    logger.info(`插件扫描完成: 共 ${this.records.size} 个插件，${Array.from(this.records.values()).filter(r => r.status === 'invalid').length} 个无效`)
-    for (const [id, r] of this.records) {
+    logger.info(`插件扫描完成: 共 ${records.size} 个插件，${Array.from(records.values()).filter(r => r.status === 'invalid').length} 个无效`)
+    for (const [id, r] of records) {
       if (r.status === 'invalid') logger.warn(`插件无效 ${id}: ${r.statusMessage ?? ''}`)
     }
+    return records
+  }
 
-    // 依赖满足性校验 + 拓扑顺序激活
+  /** 依赖满足性校验 + 拓扑顺序激活（对 records 中 enabled 且未激活的插件） */
+  private validateAndActivateRecords(): void {
     const candidates = Array.from(this.records.values()).filter(r => r.enabled && r.status !== 'invalid')
     for (const r of candidates) {
       const reason = this.checkDependencies(r)
@@ -311,6 +355,189 @@ class PluginHostService {
     }
   }
 
+  /**
+   * 增量激活单插件（含依赖拓扑）：先激活缺失的依赖，再激活本体。
+   * 用于导入新插件 / 启用插件等"只动一个插件"的场景，不影响其他已激活插件。
+   * activating 为当前递归路径（激活链），用于检测依赖循环，避免无限递归。
+   */
+  private activateSingle(id: string, activating = new Set<string>()): { ok: boolean; reason?: string } {
+    const record = this.records.get(id)
+    if (!record || record.status === 'invalid') return { ok: false, reason: record?.statusMessage }
+    if (record.status === 'active') return { ok: true }
+    if (!record.enabled) return { ok: false, reason: '插件已禁用' }
+    if (activating.has(id)) {
+      return { ok: false, reason: `依赖循环: ${Array.from(activating).concat(id).join(' → ')}` }
+    }
+    activating.add(id)
+    const reason = this.checkDependencies(record)
+    if (reason) return { ok: false, reason }
+    // 依赖未激活时先激活依赖（递归，天然拓扑序）
+    for (const depId of Object.keys(record.manifest.dependencies ?? {})) {
+      const dep = this.records.get(depId)
+      if (!dep || dep.status === 'invalid') return { ok: false, reason: this.checkDependencies(record) }
+      if (dep.status !== 'active') {
+        const r = this.activateSingle(depId, activating)
+        if (!r.ok) return r
+      }
+    }
+    this.activateRecord(record)
+    // activateRecord 内部赋值 status，绕过前面的收窄断言实际状态
+    return { ok: (record.status as PluginRecord['status']) === 'active', reason: record.statusMessage }
+  }
+
+  /**
+   * 单插件完整下线：技能/员工/主进程 deactivate/require 缓存/快捷键/窗口/调度任务/
+   * 事件订阅/IPC handler/贡献点全部按插件清理，不触碰其他插件。
+   * 不修改 record.status（由调用方决定 disabled/invalid）。
+   */
+  private deactivateRecord(record: PluginRecord): void {
+    const id = record.manifest.id
+    this.unregisterPluginSkills(id)
+    try {
+      const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+      EmployeeRegistryService.getInstance().unregisterPluginEmployees(id)
+    } catch { /* ignore */ }
+    if (record.module?.deactivate) {
+      try { record.module.deactivate() } catch (err: any) {
+        logger.warn(`插件 deactivate 失败: ${id}`, err?.message || err)
+      }
+    }
+    record.module = undefined
+    // 清 require 缓存（插件主进程模块是 CJS，require 有缓存，重新加载前必须删除）
+    const entry = path.join(record.rootDir, record.manifest.main)
+    try { delete require.cache[require.resolve(entry)] } catch { /* ignore */ }
+    // 按插件清理宿主状态
+    for (const acc of this.registeredShortcuts.get(id) ?? []) {
+      try { globalShortcut.unregister(acc) } catch { /* ignore */ }
+    }
+    this.registeredShortcuts.delete(id)
+    for (const win of this.pluginWindows.get(id) ?? []) {
+      if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
+    }
+    this.pluginWindows.delete(id)
+    for (const [jobId, dispose] of [...this.schedulerJobs]) {
+      if (jobId.startsWith(`${id}:`)) {
+        try { dispose() } catch { /* ignore */ }
+        this.schedulerJobs.delete(jobId)
+      }
+    }
+    for (const key of [...this.handlers.keys()]) {
+      if (key.startsWith(`plugin:${id}:`)) this.handlers.delete(key)
+    }
+    this.contributions.delete(id)
+    this.messageActions.delete(id)
+    for (const key of [...this.viewContributions.keys()]) {
+      if (key.startsWith(`${id}:`)) this.viewContributions.delete(key)
+    }
+    for (const key of [...this.commands.keys()]) {
+      if (key.startsWith(`${id}:`)) this.commands.delete(key)
+    }
+    for (const key of [...this.busResponders.keys()]) {
+      if (key.startsWith(`${id}:`)) this.busResponders.delete(key)
+    }
+    for (const dispose of record.disposers ?? []) {
+      try { dispose() } catch { /* ignore */ }
+    }
+    record.disposers?.clear()
+    logger.info(`插件已下线: ${id}`)
+  }
+
+  /** 收集直接/间接依赖指定插件的已激活插件 id（下线时需连带下线） */
+  private collectDependents(pluginId: string): string[] {
+    const result = new Set<string>()
+    const visit = (id: string) => {
+      for (const [pid, r] of this.records) {
+        if (result.has(pid) || r.status !== 'active') continue
+        if (Object.keys(r.manifest.dependencies ?? {}).includes(id)) {
+          result.add(pid)
+          visit(pid)
+        }
+      }
+    }
+    visit(pluginId)
+    return Array.from(result)
+  }
+
+  /**
+   * 增量 reconcile：重新扫描磁盘并与内存 records 对比，仅对发生变化的插件做增量下线/激活，
+   * 不重建未变化的插件（近似热插拔）。返回受影响的插件 id 列表。
+   */
+  reconcile(): string[] {
+    const next = this.scanRecords(this.readDisabledList())
+    const changed = new Set<string>()
+    // 1. 已下线/已删除：内存有、磁盘无 → 下线（不删本地文件）
+    for (const [id, record] of this.records) {
+      if (!next.has(id)) {
+        if (record.status === 'active') this.deactivateRecord(record)
+        this.records.delete(id)
+        changed.add(id)
+      }
+    }
+    // 2. 新增/变更（版本/启停/engine 变化）→ 下线旧贡献后纳入新记录
+    for (const [id, nextRecord] of next) {
+      const current = this.records.get(id)
+      const replaced = !current
+        || current.manifest.version !== nextRecord.manifest.version
+        || current.enabled !== nextRecord.enabled
+        || current.engineOk !== nextRecord.engineOk
+        || (current.status === 'invalid' && nextRecord.status !== 'invalid')
+      if (replaced) {
+        if (current?.status === 'active') this.deactivateRecord(current)
+        this.records.set(id, nextRecord)
+        changed.add(id)
+      }
+    }
+    // 3. 依赖校验 + 拓扑激活（仅对新增/变更/未激活的候选）
+    if (changed.size > 0 || Array.from(this.records.values()).some(r => r.enabled && r.status === 'error')) {
+      this.validateAndActivateRecords()
+    }
+    // 4. 依赖者传播：被下线插件（禁用/删除）的依赖者连同下线
+    for (const id of changed) {
+      const r = this.records.get(id)
+      if (!r || !r.enabled) {
+        for (const depId of this.collectDependents(id)) {
+          const dep = this.records.get(depId)
+          if (dep?.status === 'active') {
+            this.deactivateRecord(dep)
+            dep.status = 'invalid'
+            dep.statusMessage = `依赖插件 ${id} 已不可用`
+            dep.enabled = false
+            changed.add(depId)
+          }
+        }
+        if (r && r.status !== 'invalid') r.status = 'disabled'
+      }
+    }
+    // 5. 有变更时统一收尾：工具集 epoch 递增（运行中 agent 保留旧工具集）+ 广播渲染端增量刷新
+    // 与 setEnabled/deletePlugin/importPlugin 路径一致，保证"重新扫描"发现的工具/员工/技能变化即时生效
+    if (changed.size > 0) this.afterPluginChanged()
+    logger.info(`插件增量 reconcile 完成，变更: ${changed.size > 0 ? Array.from(changed).join(', ') : '无'}`)
+    return Array.from(changed)
+  }
+
+  /** 插件影响主进程工具/员工/技能集合的变更后调用：清 agent 缓存（跳过运行中的任务） + 广播渲染端变更 */
+  private afterPluginChanged(): void {
+    try {
+      const { default: EmployeeAgentService } = require('../employee-agent.service') as typeof import('../employee-agent.service')
+      const agentService = EmployeeAgentService.getInstance()
+      // 工具集 epoch 递增：运行中的 agent 保留旧工具集跑完本轮（tools schema 已快照），不打断生成；
+      // 本轮结束后下次访问自动重建，新插件工具/员工/技能即时对后续对话生效
+      agentService.bumpToolEpoch()
+      agentService.clearAgentCache()
+    } catch { /* ignore */ }
+    this.notifyRendererChanged()
+  }
+
+  /** 广播渲染端插件集合变更（payload=全量 rendererPlugins 快照，前端 diff 后增量刷新） */
+  notifyRendererChanged(): void {
+    const payload = { rendererPlugins: this.getRendererPlugins() }
+    for (const win of this.targets) {
+      if (!win.isDestroyed()) {
+        try { win.webContents.send(IPC_CHANNELS.PLUGIN_CHANGED, payload) } catch { /* ignore */ }
+      }
+    }
+  }
+
   /** 校验某插件的依赖是否满足（缺失/未启用/无效/版本不满足均返回错误文案） */
   private checkDependencies(r: PluginRecord): string | undefined {
     const deps = r.manifest.dependencies ?? {}
@@ -333,20 +560,11 @@ class PluginHostService {
    * EmployeeAgentService.clearAgentCache 刷新员工工具列表；渲染端由调用方 reload 窗口重建。
    */
   reload(): void {
-    // 1. deactivate 全部激活插件
+    // 1. deactivate 全部激活插件（单点下线逻辑：技能/员工/贡献点/资源按插件清理）
     for (const record of this.records.values()) {
-      if (record.status === 'active' && record.module?.deactivate) {
-        try { record.module.deactivate() } catch (err: any) {
-          logger.warn(`插件 deactivate 失败: ${record.manifest.id}`, err?.message || err)
-        }
-      }
+      if (record.status === 'active') this.deactivateRecord(record)
     }
-    // 2. 清 require 缓存（插件主进程模块是 CJS，require 有缓存，必须删除才能重新加载）
-    for (const record of this.records.values()) {
-      const entry = path.join(record.rootDir, record.manifest.main)
-      try { delete require.cache[require.resolve(entry)] } catch { /* ignore */ }
-    }
-    // 3. 清宿主状态
+    // 2. 清宿主状态（deactivateRecord 已按插件清理，这里防御性兜底共享状态）
     this.records.clear()
     this.handlers.clear()
     this.contributions.clear()
@@ -356,23 +574,18 @@ class PluginHostService {
     this.commands.clear()
     this.busResponders.clear()
     this.schedulerJobs.clear()
-    for (const accelerator of this.registeredShortcuts) {
-      try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
-    }
-    this.registeredShortcuts.clear()
-    for (const win of this.pluginWindows) {
-      if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
-    }
-    this.pluginWindows.clear()
-    // 4. 重新扫描激活
+    // 插件员工随热重载整体下线，重新激活后按新声明重建（内置员工不受影响）
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().resetPluginEmployees()
+    // 3. 重新扫描激活
     this.scanAndActivate(this.readDisabledList())
     logger.info('插件已热重载')
   }
 
-  private scanPlugin(rootDir: string, disabled: Set<string>): void {
+  private scanPluginInto(records: Map<string, PluginRecord>, rootDir: string, disabled: Set<string>): void {
     // 无效插件统一以 id（目录名）为 key，与有效插件一致，保证可被删除/管理
     const fail = (id: string, message: string) => {
-      this.records.set(id, {
+      records.set(id, {
         manifest: { id, name: id, version: '0.0.0', engine: '*', main: '' },
         source: 'user', rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
       })
@@ -394,12 +607,12 @@ class PluginHostService {
     if (!engineOk) return fail(manifest.id, `engine 不兼容: 需要 ${manifest.engine}，宿主协议 ${PLUGIN_PROTOCOL_VERSION}`)
     const capCheck = validateCapabilities(manifest.capabilities)
     if (!capCheck.ok) return fail(manifest.id, `capabilities 非法: ${capCheck.reason}`)
-    if (this.records.has(manifest.id)) {
+    if (records.has(manifest.id)) {
       logger.warn(`插件 id 冲突，忽略后发现的: ${manifest.id} (${rootDir})`)
       return
     }
     const enabled = !disabled.has(manifest.id)
-    this.records.set(manifest.id, {
+    records.set(manifest.id, {
       manifest, source: 'user', rootDir, enabled, engineOk,
       status: enabled ? 'error' : 'disabled',
       statusMessage: enabled ? '尚未激活' : undefined,
@@ -423,11 +636,18 @@ class PluginHostService {
       record.module = { deactivate: mod.deactivate }
       record.status = 'active'
       record.statusMessage = undefined
+      // 插件激活成功后注册其 manifest 声明的数字员工（异常隔离：单员工声明非法只跳过，不影响插件运行）
+      this.registerManifestEmployees(record)
+      // 插件激活成功后注册其内置 skills（<插件根>/skills/，source='plugin'，异常隔离单技能跳过）
+      this.registerPluginSkills(record)
       logger.info(`插件已激活: ${manifest.id} v${manifest.version} (${record.source})`)
     } catch (err: any) {
       record.status = 'error'
       record.statusMessage = err?.message || String(err)
       logger.error(`插件激活失败: ${manifest.id}:`, record.statusMessage)
+      // 激活中途抛错时 buildContext/activate 可能已注册部分 handler/贡献点/订阅，
+      // 走单插件下线清理残留（deactivateRecord 不修改 status，此处保留 error 供重试）
+      this.deactivateRecord(record)
     }
   }
 
@@ -459,6 +679,74 @@ class PluginHostService {
   /** 校验 legacyMigration 权限（v2 保留在 permissions 数组，仅迁移专用） */
   private hasPermission(record: PluginRecord, permission: string): boolean {
     return (record.manifest.permissions ?? []).includes(permission as never)
+  }
+
+  /** 将插件 manifest.employees 声明注册进员工注册表（激活成功后调用） */
+  private registerManifestEmployees(record: PluginRecord): void {
+    const list = record.manifest.employees
+    if (!list || list.length === 0) return
+    const employees: RegisteredEmployee[] = []
+    for (const e of list) {
+      if (!e || typeof e.key !== 'string' || !EMPLOYEE_KEY_RE.test(e.key)) {
+        logger.warn(`插件 ${record.manifest.id} 员工 key 非法，已跳过: ${e?.key}`)
+        continue
+      }
+      if (!e.name || typeof e.systemPrompt !== 'string') {
+        logger.warn(`插件 ${record.manifest.id} 员工缺少 name/systemPrompt，已跳过: ${e.key}`)
+        continue
+      }
+      employees.push({
+        id: e.key,
+        source_key: e.key,
+        name: e.name,
+        description: e.description || '',
+        rules: e.systemPrompt,
+        profile_json: '',
+        avatar_type: e.avatarType || 'default',
+        memory_enabled: false,
+        arch_version: 1,
+        total_tasks: 0,
+        total_approvals: 0,
+        created_at: 0,
+        updated_at: 0,
+        defaultTools: e.defaultTools,
+      })
+    }
+    if (employees.length === 0) return
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().registerPluginEmployees(record.manifest.id, record.manifest.name, employees)
+  }
+
+  /** 注册插件内置 skills（<插件根>/skills/ 目录约定，source='plugin'）。无 skills 目录则直接返回 */
+  private registerPluginSkills(record: PluginRecord): void {
+    const skillsDir = path.join(record.rootDir, 'skills')
+    if (!fs.existsSync(skillsDir)) return
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().registerPluginSkills(record.manifest.id, skillsDir)
+    } catch (err: any) {
+      logger.warn(`插件 ${record.manifest.id} 技能注册失败（跳过，不影响插件运行）:`, err?.message || err)
+    }
+  }
+
+  /** 插件下线（禁用/热重载/删除）时把其技能从可用集合移除（DB 记录保留，员工分配不丢失） */
+  private unregisterPluginSkills(pluginId: string): void {
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().markPluginSkillsInactive(pluginId)
+    } catch (err: any) {
+      logger.warn(`插件 ${pluginId} 技能下线失败（忽略）:`, err?.message || err)
+    }
+  }
+
+  /** 物理删除插件技能（仅插件删除时）：连同员工分配关联级联清除 */
+  private removePluginSkills(pluginId: string): void {
+    try {
+      const { default: SkillRegistryService } = require('../skill-registry.service') as typeof import('../skill-registry.service')
+      SkillRegistryService.getInstance().removePluginSkills(pluginId)
+    } catch (err: any) {
+      logger.warn(`插件 ${pluginId} 技能删除失败（忽略）:`, err?.message || err)
+    }
   }
 
   /** 校验系统能力特性（capabilities.system.features） */
@@ -797,7 +1085,26 @@ class PluginHostService {
 
     // ====== 系统集成层（services.events，需 capabilities.events 授权） ======
     if (getCapability(record.manifest.capabilities, 'events')) {
-      services.events = createEventBus(this.kernelEventListeners, manifest.id, pluginLogger)
+      const base = createEventBus(this.kernelEventListeners, manifest.id, pluginLogger)
+      if (!record.disposers) record.disposers = new Set()
+      // 包装 subscribe：记录取消函数到 record.disposers，单插件下线时统一取消其全部事件订阅
+      const disposers = record.disposers
+      services.events = {
+        ...base,
+        subscribe: ((event: string, callback: (payload: unknown) => void) => {
+          const dispose = base.subscribe(event, callback)
+          // cleanup 同时注册进 record.disposers 与返回给插件：任一触发都取消订阅并修剪空监听集合
+          const cleanup = () => {
+            disposers.delete(cleanup)
+            dispose()
+            const set = this.kernelEventListeners.get(event)
+            if (set && set.size === 0) this.kernelEventListeners.delete(event)
+          }
+          disposers.add(cleanup)
+          return cleanup
+        }) as typeof base.subscribe,
+        publish: base.publish,
+      }
     }
 
     // ====== KMS 数据查询层（services.kms，需 capabilities.kms 授权） ======
@@ -915,10 +1222,21 @@ class PluginHostService {
     if (this.hasSystemFeature(record, 'scheduler')) {
       const jobMap = this.schedulerJobs
       const pluginId = manifest.id
+      // 回调异常隔离：单插件定时回调抛错不允许冒泡为 uncaughtException 导致宿主退出
+      const safeFn = (fn: (...args: any[]) => any) => (...args: any[]) => {
+        try {
+          const ret = fn(...args)
+          if (ret && typeof ret.catch === 'function') {
+            ret.catch((err: any) => logger.error(`Plugin ${pluginId} scheduler callback rejected:`, err))
+          }
+        } catch (err) {
+          logger.error(`Plugin ${pluginId} scheduler callback threw:`, err)
+        }
+      }
       services.scheduler = {
         every: (intervalMs, fn) => {
           const id = `${pluginId}:every:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
-          const timer = setInterval(fn, intervalMs)
+          const timer = setInterval(safeFn(fn), intervalMs)
           if (timer.unref) timer.unref()
           jobMap.set(id, () => clearInterval(timer))
           return id
@@ -933,6 +1251,7 @@ class PluginHostService {
               throw new Error(`cron 表达式仅支持 * 或单个数值（不支持 */n、区间、列表）: ${expression}`)
             }
           }
+          const safe = safeFn(fn)
           // 简单实现：每分钟检查一次 cron 表达式
           const check = () => {
             const now = new Date()
@@ -941,7 +1260,7 @@ class PluginHostService {
             const matchDay = parts[2] === '*' || parts[2] === String(now.getDate())
             const matchMonth = parts[3] === '*' || parts[3] === String(now.getMonth() + 1)
             const matchDow = parts[4] === '*' || parts[4] === String(now.getDay())
-            if (matchMin && matchHour && matchDay && matchMonth && matchDow) fn()
+            if (matchMin && matchHour && matchDay && matchMonth && matchDow) safe()
           }
           // 先对齐到下一分钟边界再启动，避免 setInterval 从注册时刻起算导致漏触发/重复触发
           const msToNextMinute = 60_000 - (Date.now() % 60_000)
@@ -999,10 +1318,12 @@ class PluginHostService {
 
           const win = new BrowserWindow(winOptions)
           win.once('ready-to-show', () => win.show())
-          this.pluginWindows.add(win)
+          // 窗口按插件归属记录（下线时仅销毁该插件创建的窗口）
+          if (!this.pluginWindows.has(manifest.id)) this.pluginWindows.set(manifest.id, new Set())
+          this.pluginWindows.get(manifest.id)!.add(win)
           // 窗口纳入广播目标；closed 时统一从两个集合清理
           this.targets.add(win)
-          win.on('closed', () => { this.pluginWindows.delete(win); this.targets.delete(win) })
+          win.on('closed', () => { this.pluginWindows.get(manifest.id)?.delete(win); this.targets.delete(win) })
 
           // 加载内容
           if (options.contentPath) {
@@ -1046,7 +1367,7 @@ class PluginHostService {
     }
 
     const contributions: CollectedContributions = {
-      agentTools: [], mcpTools: [], fileAssociations: new Map(),
+      agentTools: [], mcpTools: [], fileAssociations: new Map(), agentMiddlewares: [],
     }
     this.contributions.set(manifest.id, contributions)
 
@@ -1103,6 +1424,12 @@ class PluginHostService {
           }
           contributions.agentTools.push(...tools)
         },
+        registerAgentMiddleware: (middlewares) => {
+          if (!this.hasSystemFeature(record_, 'agentMiddleware')) {
+            throw new Error('未声明 agentMiddleware 能力')
+          }
+          contributions.agentMiddlewares.push(...middlewares)
+        },
         registerMcpTools: (tools) => { contributions.mcpTools.push(...tools) },
         registerFileAssociations: (assocs) => {
           for (const a of assocs) contributions.fileAssociations.set(a.extension.toLowerCase(), manifest.id)
@@ -1111,6 +1438,7 @@ class PluginHostService {
           if (!this.hasSystemFeature(record_, 'globalShortcuts')) {
             throw new Error('未声明 globalShortcuts 能力')
           }
+          if (!this.registeredShortcuts.has(manifest.id)) this.registeredShortcuts.set(manifest.id, new Set())
           for (const s of shortcuts) {
             const accelerator = s.accelerator
             const ok = globalShortcut.register(accelerator, () => Promise.resolve(s.handler()).catch(e => pluginLogger.error('快捷键执行失败:', e)))
@@ -1118,7 +1446,7 @@ class PluginHostService {
               pluginLogger.warn(`全局快捷键注册失败（可能已被占用）: ${accelerator}`)
               continue
             }
-            this.registeredShortcuts.add(accelerator)
+            this.registeredShortcuts.get(manifest.id)!.add(accelerator)
           }
         },
         registerMessageActions: (actions) => {
@@ -1264,6 +1592,7 @@ class PluginHostService {
       result.push({
         id: r.manifest.id,
         name: r.manifest.name,
+        version: r.manifest.version,
         entry: r.manifest.renderer,
         nav: r.manifest.nav ? {
           label: r.manifest.nav.label,
@@ -1287,15 +1616,82 @@ class PluginHostService {
     else disabled.add(pluginId)
     this.writeDisabledList(disabled)
     record.enabled = enabled
-    logger.info(`插件${enabled ? '启用' : '禁用'}: ${pluginId}（重启生效）`)
+    if (!enabled) {
+      // 禁用：连带下线依赖它的已激活插件，再单插件下线（不触碰其他插件）
+      for (const depId of this.collectDependents(pluginId)) {
+        const dep = this.records.get(depId)
+        if (dep?.status === 'active') {
+          this.deactivateRecord(dep)
+          dep.status = 'invalid'
+          dep.statusMessage = `依赖插件 ${pluginId} 已禁用`
+          dep.enabled = false
+        }
+      }
+      if (record.status === 'active') {
+        this.deactivateRecord(record)
+      }
+      if (record.status !== 'invalid') {
+        record.status = 'disabled'
+        record.statusMessage = undefined
+      }
+      logger.info(`插件已禁用: ${pluginId}（即时生效）`)
+    } else {
+      // 已激活插件重复启用：直接返回，避免二次 activate（重复注册 handler/定时任务/订阅）
+      if (record.status === 'active') {
+        logger.info(`插件已处于启用状态: ${pluginId}`)
+        return
+      }
+      // 启用：重置被连带禁用的"依赖问题"（dependents 下线时标记），重新校验并即时拓扑激活
+      if (record.status === 'invalid' && !record.statusMessage?.startsWith('依赖插件')) {
+        // 静态校验失败（manifest/engine/capabilities 非法）不随启用绕过
+        logger.warn(`插件启用被拒绝（静态校验失败）: ${pluginId} — ${record.statusMessage}`)
+        this.afterPluginChanged()
+        return
+      }
+      record.enabled = true
+      record.status = 'error'
+      record.statusMessage = undefined
+      const reason = this.checkDependencies(record)
+      if (reason) {
+        record.status = 'invalid'
+        record.statusMessage = reason
+        logger.warn(`插件启用被拒绝: ${pluginId} — ${reason}`)
+        this.afterPluginChanged()
+        return
+      }
+      const r = this.activateSingle(pluginId)
+      if (!r.ok && !record.statusMessage) {
+        record.statusMessage = r.reason
+      }
+      logger.info(`插件已启用: ${pluginId}（即时生效）`)
+    }
+    this.afterPluginChanged()
   }
 
   deletePlugin(pluginId: string): void {
     const record = this.records.get(pluginId)
     if (!record) throw new Error(`插件不存在: ${pluginId}`)
+    // 删除时物理清理插件技能（连同员工分配关联）
+    this.removePluginSkills(pluginId)
+    // 连带下线依赖它的已激活插件
+    for (const depId of this.collectDependents(pluginId)) {
+      const dep = this.records.get(depId)
+      if (dep?.status === 'active') {
+        this.deactivateRecord(dep)
+        dep.status = 'invalid'
+        dep.statusMessage = `依赖插件 ${pluginId} 已删除`
+        dep.enabled = false
+      }
+    }
+    // 单插件完整下线（贡献点/handler/事件/窗口等按插件清理）
+    if (record.status === 'active') this.deactivateRecord(record)
     fs.rmSync(record.rootDir, { recursive: true, force: true })
     this.records.delete(pluginId)
-    logger.info(`插件已删除: ${pluginId}（重启生效）`)
+    // 删除时卸载插件员工
+    const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
+    EmployeeRegistryService.getInstance().unregisterPluginEmployees(pluginId)
+    logger.info(`插件已删除: ${pluginId}（即时生效）`)
+    this.afterPluginChanged()
   }
 
   // ====== 插件包导入 ======
@@ -1318,23 +1714,91 @@ class PluginHostService {
   }
 
   /**
-   * 导入插件包：选择文件 → 读取 manifest 校验 → 解压到 userData/plugins/<id>。
+   * 导入插件包（支持多选）：选文件 → 预扫描已安装冲突 → 逐个校验/解压到 userData/plugins/<id>。
    * 已安装相同 id 插件且未指定 overwrite 时返回 needsUpgradeConfirm（前端二次确认），
-   * 确认后再以 overwrite=true 重装（复用上次 zip 路径，不再弹选择框）。
+   * 确认后再以 overwrite=true 批量重装（复用上次多选路径，不再弹选择框）。
    */
   async importPlugin(overwrite?: boolean): Promise<PluginImportResult> {
-    let zipPath = overwrite ? this.pendingImportZip : ''
-    if (!zipPath || !fs.existsSync(zipPath)) {
+    let zipPaths = overwrite ? this.pendingImportZips : []
+    if (zipPaths.length === 0) {
       const res = await dialog.showOpenDialog({
         title: '导入 WorkAvatar 插件',
-        properties: ['openFile'],
+        properties: ['openFile', 'multiSelections'],
         filters: [{ name: 'WorkAvatar 插件包', extensions: [PLUGIN_PACKAGE_EXT] }],
       })
-      if (res.canceled || !res.filePaths[0]) return { ok: false, message: 'cancelled' }
-      zipPath = res.filePaths[0]
-      this.pendingImportZip = zipPath
+      if (res.canceled || res.filePaths.length === 0) return { ok: false, message: 'cancelled' }
+      zipPaths = res.filePaths
+      this.pendingImportZips = zipPaths
     }
-    return this.importPluginFromPath(zipPath, overwrite)
+
+    // 预扫描：存在已安装冲突时先整体返回 needsUpgradeConfirm（不先导入部分文件），确认后再批量覆盖
+    if (!overwrite) {
+      const conflicts: Array<{ id: string; version: string }> = []
+      for (const zipPath of zipPaths) {
+        const manifest = this.readZipManifest(zipPath)
+        if (!manifest) continue
+        if (fs.existsSync(path.join(this.getUserDir(), manifest.id))) {
+          conflicts.push({ id: manifest.id, version: manifest.version })
+        }
+      }
+      if (conflicts.length > 0) {
+        const first = conflicts[0]
+        const destDir = path.join(this.getUserDir(), first.id)
+        const existing = this.records.get(first.id)
+        return {
+          ok: false,
+          needsUpgradeConfirm: {
+            existingVersion: existing?.manifest.version ?? this.readLocalManifestVersion(destDir),
+            newVersion: first.version,
+            count: conflicts.length,
+          },
+        }
+      }
+    }
+
+    // 逐个导入（冲突已在预扫描阶段确认，此处全部按覆盖处理），聚合成功/失败结果
+    const errors: string[] = []
+    let okCount = 0
+    let lastId = ''
+    let lastVersion = ''
+    for (const zipPath of zipPaths) {
+      const r = await this.importPluginFromPath(zipPath, true)
+      if (r.ok) {
+        okCount++
+        if (r.id) lastId = r.id
+        if (r.version) lastVersion = r.version
+      } else if (r.message && r.message !== 'cancelled') {
+        errors.push(`${path.basename(zipPath)}: ${r.message}`)
+      }
+    }
+    this.pendingImportZips = []
+    if (errors.length > 0) {
+      return {
+        ok: false,
+        count: okCount,
+        message:
+          okCount > 0
+            ? `${okCount} 个插件导入成功，${errors.length} 个失败：${errors.join('；')}`
+            : `插件导入失败：${errors.join('；')}`,
+      }
+    }
+    return { ok: true, count: okCount, id: lastId, version: lastVersion }
+  }
+
+  /** 读取 zip 包内 manifest 的关键字段（预扫描冲突用；非法包返回 null） */
+  private readZipManifest(zipPath: string): { id: string; version: string } | null {
+    try {
+      const zip = new AdmZip(zipPath)
+      const manifestEntry = zip.getEntries().find(e =>
+        e.entryName.replace(/\\/g, '/').toLowerCase() === 'manifest.json'
+      )
+      if (!manifestEntry) return null
+      const manifest = JSON.parse(manifestEntry.getData().toString('utf-8'))
+      if (!manifest.id || !manifest.version) return null
+      return { id: manifest.id, version: manifest.version }
+    } catch {
+      return null
+    }
   }
 
   /** 从指定路径导入插件包（系统"打开方式"直接加载 / 应用内导入复用） */
@@ -1343,7 +1807,7 @@ class PluginHostService {
     try {
       zip = new AdmZip(zipPath)
     } catch (err: any) {
-      this.pendingImportZip = ''
+      this.pendingImportZips = []
       return { ok: false, message: `无法读取插件包: ${err?.message || err}` }
     }
 
@@ -1351,18 +1815,18 @@ class PluginHostService {
       e.entryName.replace(/\\/g, '/').toLowerCase() === 'manifest.json'
     )
     if (!manifestEntry) {
-      this.pendingImportZip = ''
+      this.pendingImportZips = []
       return { ok: false, message: '插件包缺少 manifest.json' }
     }
     let manifest: PluginManifest
     try {
       manifest = JSON.parse(manifestEntry.getData().toString('utf-8'))
     } catch {
-      this.pendingImportZip = ''
+      this.pendingImportZips = []
       return { ok: false, message: 'manifest.json 解析失败' }
     }
     if (!manifest.id || !manifest.main || !manifest.version) {
-      this.pendingImportZip = ''
+      this.pendingImportZips = []
       return { ok: false, message: 'manifest 缺少 id/main/version 字段' }
     }
 
@@ -1379,6 +1843,12 @@ class PluginHostService {
       }
     }
 
+    // 覆盖升级已激活插件：先完整下线旧贡献（贡献点/handler/事件/员工/技能等），
+    // 再执行 rmSync+解压，避免旧实例 deactivate/文件句柄与替换中的新包目录互相干扰
+    if (existing?.status === 'active') {
+      this.deactivateRecord(existing)
+    }
+
     try {
       if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true })
       this.extractPluginZip(zip, destDir)
@@ -1387,21 +1857,26 @@ class PluginHostService {
         throw new Error(`解压后主进程入口不存在: ${manifest.main}`)
       }
     } catch (err: any) {
-      this.pendingImportZip = ''
+      this.pendingImportZips = []
       return { ok: false, message: `导入失败: ${err?.message || err}` }
     }
 
-    // 纳入记录（若此前是 invalid 状态也一并重建），供列表即时展示；激活需重启生效
+    // 纳入记录（若此前是 invalid 状态也一并重建），导入成功即增量激活，无需重启
     this.records.delete(manifest.id)
-    this.scanPlugin(destDir, this.readDisabledList())
+    const disabled = this.readDisabledList()
+    this.scanPluginInto(this.records, destDir, disabled)
     const installed = this.records.get(manifest.id)
-    if (installed && installed.status === 'error') {
-      // 已安装但尚未重启激活 → 用独立状态 pending（前端展示"待重启生效"，避免误显失败）
-      installed.enabled = true
-      installed.status = 'pending'
-      installed.statusMessage = undefined
+    if (installed && installed.enabled) {
+      const depsReason = this.checkDependencies(installed)
+      if (!depsReason) {
+        this.activateSingle(manifest.id)
+      } else {
+        installed.status = 'invalid'
+        installed.statusMessage = depsReason
+      }
     }
     logger.info(`插件已导入: ${manifest.id} v${manifest.version}`)
+    this.afterPluginChanged()
     return { ok: true, id: manifest.id, version: manifest.version }
   }
 
@@ -1447,6 +1922,17 @@ class PluginHostService {
     const tools: unknown[] = []
     for (const c of this.contributions.values()) tools.push(...c.agentTools)
     return tools
+  }
+
+  /** 全部插件注册并已适配为宿主格式的数字员工工具中间件（供新建 agent 时挂载；仅激活成功插件） */
+  getAgentToolMiddlewares(): ToolMiddleware[] {
+    const middlewares: ToolMiddleware[] = []
+    for (const [pluginId, c] of this.contributions) {
+      const record = this.records.get(pluginId)
+      if (!record || record.status !== 'active') continue
+      for (const m of c.agentMiddlewares) middlewares.push(toToolMiddleware(m, pluginId))
+    }
+    return middlewares
   }
 
   /** 按插件分组的 agent 工具（仅激活成功且贡献了工具的插件），供工具分类按插件聚合 */
@@ -1496,6 +1982,14 @@ class PluginHostService {
   /** 内核删除 conversation 时通知所有订阅插件（v2 事件名 conversation:deleted） */
   notifyConversationDeleted(conversationId: string): void {
     this.notifyKernelEvent('conversation:deleted', conversationId)
+  }
+
+  /**
+   * 数字员工运行时事件桥：把 agent 事件广播给订阅 'agent:event' 的插件。
+   * data 透传 agent 原始事件数据；无订阅者时 notifyKernelEvent 早退，零额外成本。
+   */
+  notifyAgentEvent(employeeId: string, conversationId: string | undefined, event: string, data: unknown): void {
+    this.notifyKernelEvent('agent:event', { employeeId, conversationId, event, data })
   }
 
   /** 插件注册的 UI 视图注入清单（供渲染端查询渲染） */
@@ -1564,8 +2058,10 @@ class PluginHostService {
   // ====== 退出清理 ======
 
   shutdown(): void {
-    for (const accelerator of this.registeredShortcuts) {
-      try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
+    for (const accelerators of this.registeredShortcuts.values()) {
+      for (const accelerator of accelerators) {
+        try { globalShortcut.unregister(accelerator) } catch { /* ignore */ }
+      }
     }
     this.registeredShortcuts.clear()
     this.busResponders.clear()
@@ -1580,8 +2076,10 @@ class PluginHostService {
       this.sharedDb = null
     }
     // 清理插件创建的窗口
-    for (const win of this.pluginWindows) {
-      if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
+    for (const wins of this.pluginWindows.values()) {
+      for (const win of wins) {
+        if (!win.isDestroyed()) try { win.destroy() } catch { /* ignore */ }
+      }
     }
     this.pluginWindows.clear()
     for (const record of this.records.values()) {

@@ -8,6 +8,8 @@ export interface DBEmployee {
   status: string
   default_skill_id: string | null
   profile_json: string
+  /** 委托能力设置 JSON：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串未配置 */
+  delegation_json?: string | null
   memory_enabled: number
   arch_version: number
   total_tasks: number

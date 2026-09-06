@@ -3,11 +3,12 @@ import path from 'path'
 import fs from 'fs'
 import { Readable } from 'stream'
 import DatabaseService from './services/database.service'
-import KMSIndexManagerService from './services/kms/kms-index-manager.service'
 import LLMLoggerService from './services/llm-logger.service'
 import NotificationService from './services/notification.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
+import EmployeeRegistryService from './services/employee-registry.service'
+import WorkspaceManagerService from './services/workspace-manager.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
@@ -133,15 +134,7 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
   }
 
   if (result.ok) {
-    // 直接加载生效（热重载插件 + 刷新渲染端）
-    try {
-      host.reload()
-      const { default: EmployeeAgentService } = require('./services/employee-agent.service')
-      EmployeeAgentService.getInstance().clearAgentCache()
-    } catch { /* ignore */ }
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.reload()
-    }
+    // 导入即增量加载（importPluginFromPath 内部完成激活与 PLUGIN_CHANGED 广播，无需整页 reload）
     dialog.showMessageBox({
       type: 'info',
       title: '插件已加载',
@@ -416,22 +409,6 @@ async function createWindow() {
     }
   })
 
-  // 窗口失焦时暂停 KMS 自动索引定时器，获焦时恢复（避免后台 CPU 占用）
-  mainWindow.on('blur', () => {
-    try {
-      KMSIndexManagerService.getInstance().pauseAutoIndex()
-    } catch {
-      // KMS 服务可能尚未初始化，忽略
-    }
-  })
-  mainWindow.on('focus', () => {
-    try {
-      KMSIndexManagerService.getInstance().resumeAutoIndex()
-    } catch {
-      // KMS 服务可能尚未初始化，忽略
-    }
-  })
-
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -512,6 +489,11 @@ app.whenReady().then(() => {
   } catch (err: any) {
     logger.error('PluginHost init failed:', err?.message || err)
   }
+
+  // 注册员工（内置/插件）影子记录落库：保证 conversations 等外键引用有效（幂等，id 跨版本不变）
+  EmployeeRegistryService.getInstance().ensureDbRecords()
+  // 注册员工工作区根目录与普通员工统一（employees/ 内），启动时迁移旧 registry-workspaces 目录
+  WorkspaceManagerService.getInstance().migrateLegacyRegistryWorkspaces()
 
   registerAppFileProtocol()
   registerIpcHandlers()

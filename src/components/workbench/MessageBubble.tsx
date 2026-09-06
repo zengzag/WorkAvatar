@@ -14,6 +14,7 @@ import {
   ForkOutlined,
   SearchOutlined,
   CompressOutlined,
+  ApartmentOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -26,6 +27,8 @@ import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
+import SubTaskDrawer from './SubTaskDrawer'
+import type { MessageSegment } from './types'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS } from '../../utils/llm'
 import type { PluginMessageActionInfo } from '../../../electron/shared/channels/plugin'
 import { PluginViewSlot } from '../../plugins/view-slot'
@@ -197,6 +200,7 @@ const MessageBubble: React.FC<{
   const { message: messageApi } = App.useApp()
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [subTaskDrawerOpen, setSubTaskDrawerOpen] = useState(false)
   const bubbleRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -254,6 +258,11 @@ const MessageBubble: React.FC<{
       ? ensureSegments({ ...msg, content: displayContent, segments: displaySegments, thought: displayThought, isError: displayIsError, isStreaming: displayIsStreaming })
       : msg
   , [msg, displayContent, displaySegments, displayThought, displayIsError, displayIsStreaming])
+
+  // 本消息内包含的子任务（delegation 段），用于消息底部的子任务入口图标
+  const delegationSegs = useMemo<MessageSegment[]>(() =>
+    (displaySegments || []).filter(s => s.type === 'delegation')
+  , [displaySegments])
 
   // 插件贡献的对话消息快捷操作（通用插件能力，如笔记插件"保存到笔记"）
   const [messageActions, setMessageActions] = useState<PluginMessageActionInfo[]>([])
@@ -515,6 +524,19 @@ const MessageBubble: React.FC<{
                       <Button type="text" size="small" icon={<ForkOutlined style={{ fontSize: 12 }} />}
                         onClick={() => onBranch(msg.id)} title={t('workbench.branchMessage')} />
                     )}
+                    {delegationSegs.length > 0 && (
+                      <Tooltip title={t('workbench.delegationView')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<ApartmentOutlined style={{ fontSize: 13 }} />}
+                          onClick={() => setSubTaskDrawerOpen(true)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 22, padding: '0 6px', borderRadius: 4 }}
+                        >
+                          <Text style={{ fontSize: 12, color: token.colorTextSecondary }}>{delegationSegs.length}</Text>
+                        </Button>
+                      </Tooltip>
+                    )}
                     <Popconfirm title={t('workbench.confirmDeleteMsg')} onConfirm={() => onDeleteMessage(msg.id)}
                       okText={t('common.confirm')} cancelText={t('common.cancel')}>
                       <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 12 }} />} />
@@ -522,16 +544,16 @@ const MessageBubble: React.FC<{
                   </>
                 )}
               </Space>
-            )}
-            {!displayIsStreaming && (
-              <div style={{
-                marginTop: 4,
-                marginLeft: 2,
-                display: 'flex',
-                gap: 16,
-                alignItems: 'center',
-                flexWrap: 'wrap',
-              }}>
+          )}
+          {!displayIsStreaming && (
+            <div style={{
+              marginTop: 4,
+              marginLeft: 2,
+              display: 'flex',
+              gap: 16,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}>
                 {currentBranchModelLabel && (
                   <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0, cursor: 'pointer' }}
                     onClick={() => onOpenComparison(msg.id)}>
@@ -551,6 +573,14 @@ const MessageBubble: React.FC<{
           </div>
         )}
       </div>
+      {delegationSegs.length > 0 && (
+        <SubTaskDrawer
+          open={subTaskDrawerOpen}
+          onClose={() => setSubTaskDrawerOpen(false)}
+          segments={delegationSegs}
+          getToolDisplayName={getToolDisplayName}
+        />
+      )}
     </div>
     </div>
   )

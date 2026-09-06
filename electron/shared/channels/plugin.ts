@@ -8,6 +8,8 @@ export const PLUGIN_CHANNELS = {
   PLUGIN_INVOKE: 'plugin-host:invoke',
   /** 主进程 → 插件渲染端事件推送（payload: PluginEventPayload） */
   PLUGIN_EVENT: 'plugin-host:event',
+  /** 主进程 → 渲染端插件集合变更通知（payload: PluginChangedPayload，前端据此增量刷新导航/路由/视图，免整页 reload） */
+  PLUGIN_CHANGED: 'plugin-host:changed',
   /** 启用/禁用插件（重启生效） */
   PLUGIN_SET_ENABLED: 'plugin-host:set-enabled',
   /** 删除插件 */
@@ -60,11 +62,18 @@ export interface PluginInfo {
 export interface PluginRendererInfo {
   id: string
   name: string
+  /** 插件版本（渲染端据此识别覆盖升级，动态 import 时作为 cache-bust 参数） */
+  version: string
   /** 渲染端入口相对路径（渲染端经 plugin://<id>/<entry> 加载） */
   entry: string
   nav?: PluginNavItemInfo
   /** locale 文件内容（宿主代为注册，namespace = 插件 id） */
   locales: Record<string, Record<string, unknown>>
+}
+
+/** 插件集合变更广播：携带最新 rendererPlugins 快照，渲染端 diff 后增量加载/卸载 */
+export interface PluginChangedPayload {
+  rendererPlugins: PluginRendererInfo[]
 }
 
 export interface PluginInvokeParams {
@@ -95,14 +104,18 @@ export interface PluginImportParams {
 
 export interface PluginImportResult {
   ok: boolean
-  /** 导入/重装成功的插件 id */
+  /** 导入/重装成功的插件 id（最后一个成功项） */
   id?: string
-  /** 本次导入的插件版本 */
+  /** 本次导入的插件版本（最后一个成功项） */
   version?: string
+  /** 本次成功导入的插件包数量（多选导入聚合；单文件导入为 1） */
+  count?: number
   /** 检测到已安装相同 id 插件且未携带 overwrite：需要前端二次确认是否覆盖 */
   needsUpgradeConfirm?: {
     existingVersion?: string
     newVersion?: string
+    /** 本次多选待导入中检测到已安装的插件包数量 */
+    count?: number
   }
   message?: string
 }

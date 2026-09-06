@@ -1,9 +1,11 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import { BrowserWindow } from 'electron'
 import type { Employee, Conversation } from '../../shared/types'
 import DatabaseService from './database.service'
 import PathService from './path.service'
+import EmployeeRegistryService from './employee-registry.service'
 import { generateId, generateShortId, extractMessagePreview, moveToTrash } from './common-utils'
 import { createLogger } from './logger'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
@@ -113,6 +115,7 @@ class WorkspaceManagerService {
     workspace_path?: string | null
     memory_enabled?: boolean
     avatar_type?: string
+    delegation_json?: string
   }): Employee | null {
     const employee = this.getEmployee(id)
     if (!employee) return null
@@ -123,7 +126,8 @@ class WorkspaceManagerService {
     const ALLOWED_COLUMNS = [
       'name', 'description', 'rules', 'profile_json',
       'default_skill_id',
-      'memory_enabled', 'workspace_path', 'avatar_type'
+      'memory_enabled', 'workspace_path', 'avatar_type',
+      'delegation_json'
     ]
 
     Object.entries(data).forEach(([key, value]) => {
@@ -179,6 +183,57 @@ class WorkspaceManagerService {
     return result.changes > 0
   }
 
+  /**
+   * 将员工的全部对话转移到目标员工名下（含委托子会话，避免孤儿记录），
+   * 并把员工工作区根目录整体迁入目标员工工作区，保证转移对话的任务文件仍可用。
+   * 返回转移的对话数。
+   */
+  transferConversations(fromEmployeeId: string, toEmployeeId: string): number {
+    if (!fromEmployeeId || !toEmployeeId || fromEmployeeId === toEmployeeId) return 0
+    const target = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(toEmployeeId) as { id: string; workspace_path: string | null } | undefined
+    if (!target) return 0
+
+    const result = this.db.getDb().prepare(
+      'UPDATE conversations SET employee_id = ?, updated_at = unixepoch() WHERE employee_id = ?'
+    ).run(toEmployeeId, fromEmployeeId)
+    // FTS 员工归属同步（conversations_fts 按 employee_id 过滤检索）
+    this.db.getDb().prepare(
+      'UPDATE conversations_fts SET employee_id = ? WHERE employee_id = ?'
+    ).run(toEmployeeId, fromEmployeeId)
+
+    // 工作区根目录迁移：源员工根 → 目标员工根/原名[-短ID]，避免删除源员工时连带清除已转移对话的任务文件
+    const source = this.db.getDb().prepare('SELECT workspace_path FROM employees WHERE id = ?').get(fromEmployeeId) as { workspace_path: string | null } | undefined
+    const sourceRoot = source?.workspace_path || ''
+    const targetRoot = target.workspace_path
+      ?? (EmployeeRegistryService.getInstance().isRegistered(toEmployeeId) ? this.getRegistryWorkspaceRoot(toEmployeeId) : '')
+    if (sourceRoot && targetRoot && fs.existsSync(sourceRoot) && fs.existsSync(targetRoot)) {
+      const employeesRoot = path.resolve(PathService.getInstance().getDataDir(), 'employees')
+      const fromAbs = path.resolve(sourceRoot)
+      const relative = path.relative(employeesRoot, fromAbs)
+      const isWithinEmployees = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+      if (!isWithinEmployees) {
+        logger.warn(`Refused to move workspace outside employees root: ${sourceRoot}`)
+      } else {
+        let dest = path.join(targetRoot, path.basename(fromAbs))
+        if (fs.existsSync(dest)) dest = path.join(targetRoot, `${path.basename(fromAbs)}-${generateShortId()}`)
+        try {
+          fs.renameSync(fromAbs, dest)
+          // 重写该员工名下所有对话的 workspace_path 前缀（含子会话）
+          const pattern = fromAbs.replace(/[\\%_]/g, (m) => '\\' + m) + '%'
+          this.db.getDb().prepare(
+            "UPDATE conversations SET workspace_path = ? || substr(workspace_path, ?), updated_at = unixepoch() WHERE workspace_path LIKE ? ESCAPE '\\'"
+          ).run(dest, fromAbs.length + 1, pattern)
+        } catch (error) {
+          logger.warn('Failed to move employee workspace root', fromAbs, error)
+        }
+      }
+    }
+
+    this.touchEmployeeLastActive(fromEmployeeId)
+    this.touchEmployeeLastActive(toEmployeeId)
+    return Number(result.changes)
+  }
+
   getConversationList(employeeId?: string): Conversation[] {
     if (employeeId) {
       return this.db.getDb().prepare(
@@ -218,7 +273,13 @@ class WorkspaceManagerService {
       sql += ` OFFSET ?`
       values.push(params.offset)
     }
-    return this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string }>
+    const rows = this.db.getDb().prepare(sql).all(...values) as Array<Conversation & { employee_name: string | null }>
+    // 注册员工（内置/插件）无 DB 记录，LEFT JOIN 拿不到名称：回退注册表补齐
+    return rows.map(row => {
+      if (row.employee_name) return row as Conversation & { employee_name: string }
+      const reg = EmployeeRegistryService.getInstance().getRegistered(row.employee_id)
+      return reg ? { ...row, employee_name: reg.name } : (row as Conversation & { employee_name: string })
+    })
   }
 
   getConversation(id: string): Conversation | null {
@@ -226,8 +287,15 @@ class WorkspaceManagerService {
   }
 
   createConversation(employeeId: string, skillId?: string, title: string = '', minimalMode?: boolean, parentConversationId?: string, reuseWorkspacePath?: string): Conversation {
+    // 注册员工（内置/插件）提前同步影子记录到 employees 表，保证 conversations 外键引用有效（id 稳定不变）
+    if (EmployeeRegistryService.getInstance().isRegistered(employeeId)) {
+      EmployeeRegistryService.getInstance().ensureDbRecords()
+    }
     const employee = this.db.getDb().prepare('SELECT id, workspace_path FROM employees WHERE id = ?').get(employeeId) as { id: string; workspace_path: string | null } | undefined
-    if (!employee) {
+    // 注册员工（内置/插件）无 DB 记录：回退注册表，工作区落在独立的注册员工工作区根目录
+    const employeeWorkspace = employee?.workspace_path
+      ?? (EmployeeRegistryService.getInstance().isRegistered(employeeId) ? this.getRegistryWorkspaceRoot(employeeId) : undefined)
+    if (!employee && !employeeWorkspace) {
       throw new Error(`Employee not found: ${employeeId}`)
     }
 
@@ -246,7 +314,7 @@ class WorkspaceManagerService {
       const parentWs = parent?.workspace_path || ''
       workspacePath = parentWs ? this.createTaskWorkspace(parentWs) : ''
     } else {
-      workspacePath = employee.workspace_path ? this.createTaskWorkspace(employee.workspace_path) : ''
+      workspacePath = employeeWorkspace ? this.createTaskWorkspace(employeeWorkspace) : ''
     }
 
     this.db.getDb().prepare(`
@@ -278,6 +346,68 @@ class WorkspaceManagerService {
     }
     fs.mkdirSync(dir, { recursive: true })
     return dir
+  }
+
+  /** 注册员工（内置/插件）的工作区根目录：与用户员工一致置于 dataDir/employees/<8位稳定ID>（id 哈希派生，跨版本不变） */
+  getRegistryWorkspaceRoot(employeeId: string): string {
+    // 注册员工 id 含 ':' 等路径非法字符，用稳定哈希派生目录名（sha1 前 8 hex，与 generateShortId 同构、可复现）
+    const dirName = crypto.createHash('sha1').update(employeeId).digest('hex').slice(0, 8)
+    const root = path.join(PathService.getInstance().getDataDir(), 'employees', dirName)
+    fs.mkdirSync(root, { recursive: true })
+    return root
+  }
+
+  /** 旧版注册员工工作区目录名（dataDir/registry-workspaces/<id 摘要>，与旧 getRegistryWorkspaceRoot 一致） */
+  private legacyRegistryDirName(employeeId: string): string {
+    return employeeId.replace(/[^\w-]/g, '_').slice(0, 60)
+  }
+
+  /**
+   * 一次性迁移：旧版注册员工工作区根（dataDir/registry-workspaces/<id 摘要>）→ 与用户员工一致的新根（employees/ 内）。
+   * 仅迁移当前注册员工名下非空的旧目录（任务子目录移至新根后删除旧目录），未匹配的旧目录保留不动。
+   */
+  migrateLegacyRegistryWorkspaces(): void {
+    try {
+      const legacyRoot = path.join(PathService.getInstance().getDataDir(), 'registry-workspaces')
+      if (!fs.existsSync(legacyRoot)) return
+      const items = fs.readdirSync(legacyRoot, { withFileTypes: true })
+      if (items.length === 0) return
+      const registry = EmployeeRegistryService.getInstance()
+      const registeredIds = new Set(registry.listRegistered().map(e => e.id))
+      for (const item of items) {
+        if (!item.isDirectory()) continue
+        const legacyDir = path.join(legacyRoot, item.name)
+        // 反向匹配：目录名来自注册员工 id 摘要，仅能对应当前已知 id
+        const empId = [...registeredIds].find(id => this.legacyRegistryDirName(id) === item.name)
+        if (!empId) continue
+        const entries = fs.existsSync(legacyDir) ? fs.readdirSync(legacyDir) : []
+        if (entries.length === 0) {
+          fs.rmdirSync(legacyDir)
+          continue
+        }
+        const newRoot = this.getRegistryWorkspaceRoot(empId)
+        for (const entry of entries) {
+          const src = path.join(legacyDir, entry)
+          const dest = path.join(newRoot, entry)
+          if (fs.existsSync(dest)) continue
+          try {
+            fs.renameSync(src, dest)
+          } catch {
+            // 跨卷等场景回退为复制后删除
+            fs.cpSync(src, dest, { recursive: true })
+            fs.rmSync(src, { recursive: true, force: true })
+          }
+        }
+        fs.rmdirSync(legacyDir)
+      }
+      const rest = fs.readdirSync(legacyRoot)
+      if (rest.length === 0) {
+        fs.rmdirSync(legacyRoot)
+      }
+      logger.info('注册员工工作区目录已迁移至 employees/ 根目录')
+    } catch (err: any) {
+      logger.warn('注册员工工作区目录迁移失败:', err?.message || err)
+    }
   }
 
   /** 获取对话的任务工作区目录（未分配返回空字符串） */
@@ -386,6 +516,14 @@ class WorkspaceManagerService {
     })
     delTx()
     const ok = toDelete.length > 0
+
+    // 清理子会话运行记录并中止在途 run（懒加载避免循环依赖）
+    if (ok) {
+      try {
+        const { default: SubAgentRuntime } = require('./agent-runtime/runtime')
+        SubAgentRuntime.getInstance().clearRunsByConversations(toDelete)
+      } catch { /* ignore */ }
+    }
 
     // 任务目录处理：空目录直接删除；非空目录保留并上报，由前端决定是否删除
     // 子会话的工作区目录位于主会话目录下，删除主会话目录时会一并清理子目录

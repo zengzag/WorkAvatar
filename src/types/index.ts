@@ -9,7 +9,10 @@ export type {
   LLMProvider,
   GeneratedFileInfo,
   ThinkingLevel,
+  EmployeeDelegationConfig,
 } from '../../electron/shared/types'
+
+export { parseEmployeeDelegation } from '../../electron/shared/types'
 
 export interface Message {
   id: string

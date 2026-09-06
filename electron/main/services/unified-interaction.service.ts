@@ -75,8 +75,6 @@ export interface SessionContext {
   abortSignal?: AbortSignal
   /** 主管会话的思考模式设置，委托时传给子员工保持一致 */
   enableThinking?: ThinkingLevel
-  /** 子员工 token 用量累计（主管会话级），onDone 时合并到 metadata.tokenUsage */
-  childTokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cachedTokens?: number }
 }
 
 export const interactionContext = new AsyncLocalStorage<SessionContext>()

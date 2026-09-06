@@ -506,6 +506,8 @@ class KMSDatabaseService {
         status TEXT NOT NULL DEFAULT 'active',
         pinned INTEGER NOT NULL DEFAULT 0,
         search_count INTEGER NOT NULL DEFAULT 0,
+        requirement TEXT DEFAULT '',
+        last_trace_json TEXT DEFAULT '[]',
         embedding BLOB,
         dimension INTEGER DEFAULT 0,
         embedding_model TEXT DEFAULT '',
@@ -679,6 +681,16 @@ class KMSDatabaseService {
     }
     if (!colNames.includes('parse_mode')) {
       this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN parse_mode TEXT DEFAULT ''")
+    }
+
+    // 知识卡片：卡片独立的生成要求（用户可在卡片内单独设置，刷新时使用）
+    const cardCols = this.db.prepare("PRAGMA table_info(kms_knowledge_cards)").all() as any[]
+    const cardColNames = cardCols.map(c => c.name)
+    if (!cardColNames.includes('requirement')) {
+      this.db.exec("ALTER TABLE kms_knowledge_cards ADD COLUMN requirement TEXT DEFAULT ''")
+    }
+    if (!cardColNames.includes('last_trace_json')) {
+      this.db.exec("ALTER TABLE kms_knowledge_cards ADD COLUMN last_trace_json TEXT DEFAULT '[]'")
     }
 
     const collCols = this.db.prepare("PRAGMA table_info(kms_collection_summaries)").all() as any[]

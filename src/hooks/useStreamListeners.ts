@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageWithThought } from '../components/workbench'
 import type { MessageSegment } from '../components/workbench/types'
+import type { GeneratedFileInfo } from '../types'
 import type { LRUCache } from '../utils/lru-cache'
 import {
   type ConversationStreamState,
@@ -194,12 +195,41 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           // delegate_to_employee 特殊处理：创建 delegation segment 而非普通 tool_call
           if (name === 'delegate_to_employee') {
             // 移除 delta 阶段残留的 tool_call segment（通过 toolCallId 或 toolName 匹配）
-            const filteredSegs = segs.filter(s => {
+            let filteredSegs = segs.filter(s => {
               if (s.type !== 'tool_call' || !s.isToolArgsStreaming) return true
               if (toolCallId && s.toolCallId === toolCallId) return false
               if (s.toolName === name) return false
               return true
             })
+
+            // 防御：run start 事件可能先于 onToolCall 到达并已建卡（start 早到时已带 runId/名称）。
+            // 若已存在同一委托的绑定卡，则复用并把工具参数补全上去，不再新建裸卡，避免出现
+            // "正常委托卡 + 委托给未知员工卡"的重复卡。
+            // 匹配优先级：toolCallId / targetEmployeeId / 尚未绑定工具调用的 start 裸卡（当前委托只此一张）。
+            const existingIdx = filteredSegs.findIndex(s =>
+              s.type === 'delegation' &&
+              (s.runId || s.delegationId) &&
+              (
+                s.toolCallId === toolCallId ||
+                (args?.target_employee_id && s.targetEmployeeId === args.target_employee_id) ||
+                (!s.toolCallId && (s.delegationStatus === 'queued' || s.delegationStatus === 'streaming'))
+              )
+            )
+            if (existingIdx !== -1) {
+              filteredSegs[existingIdx] = {
+                ...filteredSegs[existingIdx],
+                toolCallId,
+                toolName: name,
+                toolArgs: args,
+                instruction: args?.instruction ?? filteredSegs[existingIdx].instruction,
+                targetEmployeeId: args?.target_employee_id ?? filteredSegs[existingIdx].targetEmployeeId,
+              }
+              return { ...m, segments: filteredSegs }
+            }
+
+            // 清理本 toolCall 残留的"未绑定 runId"裸 delegation 卡（start 先到又未被复用的脏数据），
+            // 保证任意时序下同一次委托只存在一张卡。
+            filteredSegs = filteredSegs.filter(s => !(s.type === 'delegation' && s.toolCallId === toolCallId))
 
             // 关闭正在流式输出的 answer/thinking 段
             const lastSeg = filteredSegs[filteredSegs.length - 1]
@@ -278,15 +308,67 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
+          // launch_agents 特殊处理：按 runIds 建立/更新并行组 delegation 段（同组横排渲染）
+          if (name === 'launch_agents') {
+            // 收尾 launch_agents 自身的工具调用卡（并行派发立即返回，不代表子任务完成；
+            // 各子任务状态由 run 事件独立驱动），避免该卡片永远停留在"执行中"
+            const wrapperIdx = segs.findIndex(s => s.type === 'tool_call' && s.toolName === 'launch_agents' && !s.isToolComplete)
+            if (wrapperIdx !== -1) {
+              segs[wrapperIdx] = {
+                ...segs[wrapperIdx],
+                toolResult: result,
+                isToolComplete: true,
+                toolError: undefined,
+                collapsed: true,
+                completedAt: Date.now(),
+              }
+            }
+            const runIds: string[] = Array.isArray(rawResult?.runIds) ? rawResult.runIds : []
+            if (runIds.length > 0) {
+              const groupRunId = `grp_${streamState.assistantMessageId}_${streamState.groupSeq++}`
+              const parallelTotal = runIds.length
+              for (let gi = 0; gi < runIds.length; gi++) {
+                const rid = runIds[gi]
+                const existingIdx = segs.findIndex(s => s.type === 'delegation' && (s.runId === rid || s.delegationId === rid))
+                if (existingIdx !== -1) {
+                  segs[existingIdx] = { ...segs[existingIdx], groupRunId, runGroupIndex: gi, parallelTotal }
+                } else {
+                  const lastSeg = segs[segs.length - 1]
+                  if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+                    segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+                  }
+                  if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+                    segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+                  }
+                  segs.push({
+                    type: 'delegation',
+                    id: `${streamState.assistantMessageId}_run_${streamState.runCounter++}`,
+                    runId: rid,
+                    delegationId: rid,
+                    runGroupIndex: gi,
+                    parallelTotal,
+                    groupRunId,
+                    delegationStatus: 'queued',
+                    subSegments: [],
+                    isToolComplete: false,
+                    collapsed: false,
+                    timestamp: Date.now(),
+                  })
+                }
+              }
+              return { ...m, segments: segs }
+            }
+          }
+
           // delegate_to_employee 特殊处理：从 rawResult 提取 delegationId/tokenUsage/targetEmployeeName
           if (name === 'delegate_to_employee') {
             const delId = rawResult?.delegationId
             let delIdx = delId
-              ? segs.findIndex(s => s.type === 'delegation' && s.delegationId === delId)
+              ? segs.findIndex(s => s.type === 'delegation' && (s.delegationId === delId || s.runId === delId))
               : -1
             if (delIdx === -1) {
-              // fallback：取最后一个 streaming 的 delegation segment
-              delIdx = segs.findIndex(s => s.type === 'delegation' && s.delegationStatus === 'streaming')
+              // fallback：取最后一个尚未收尾的 delegation segment
+              delIdx = segs.findIndex(s => s.type === 'delegation' && (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued'))
             }
             if (delIdx === -1) return m
             // delegate 业务成功判断：优先从 rawResult.success（delegate.tool 返回的业务结果）
@@ -365,7 +447,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
     // ---- 委托事件路由：将子员工 chatStream 事件写入对应 delegation segment 的 subSegments ----
 
     /** 将子员工事件应用到 delegation segment 的 subSegments 数组（复用主管事件处理逻辑，目标改为 subSegments） */
-    const applyDelegationSubEvent = (
+    const applyRunSubEvent = (
       subSegs: MessageSegment[],
       eventType: string,
       data: any,
@@ -593,13 +675,13 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       }
     }
 
-    const delegationCleanup = window.electronAPI.llm.onDelegationEvent((event: {
+    const runCleanup = window.electronAPI.llm.onRunEvent((event: {
       parentSessionId: string
-      delegationId: string
+      runId: string
       eventType: string
       data: any
     }) => {
-      const { parentSessionId, delegationId, eventType, data: eventData } = event
+      const { parentSessionId, runId, eventType, data: eventData } = event
       const streamState = streamStatesRef.current.get(parentSessionId)
       if (!streamState) return
 
@@ -608,53 +690,136 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (m.id !== streamState.assistantMessageId) return m
           const segs = [...(m.segments || [])]
 
-          // 定位 delegation segment：优先按 delegationId 匹配，首次事件时关联到 streaming 段
-          let idx = segs.findIndex(s => s.type === 'delegation' && s.delegationId === delegationId)
-          if (idx === -1) {
-            idx = segs.findIndex(s => s.type === 'delegation' && s.delegationStatus === 'streaming' && !s.delegationId)
-            if (idx === -1) return m
-            segs[idx] = {
-              ...segs[idx],
-              delegationId,
-              targetEmployeeName: eventData?.targetEmployeeName || segs[idx].targetEmployeeName,
-              targetAvatarType: eventData?.targetAvatarType || segs[idx].targetAvatarType,
+          // 定位 run 段：优先按 runId（delegationId 兼容）；start 事件到达时兜底
+          let idx = segs.findIndex(s => s.type === 'delegation' && (s.runId === runId || s.delegationId === runId))
+          if (idx === -1 && eventType === 'start') {
+            // 先尝试绑定 toolCall 阶段预创建的 delegation 段（无 runId 的 streaming/queued 段），
+            // 避免 delegate_to_employee 出现"工具调用卡片 + run 事件卡片"重复卡片
+            const pendingIdx = segs.findIndex(s =>
+              s.type === 'delegation' && !s.runId && !s.delegationId &&
+              (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued')
+            )
+            if (pendingIdx !== -1) {
+              idx = pendingIdx
+              segs[pendingIdx] = {
+                ...segs[pendingIdx],
+                runId,
+                delegationId: runId,
+                targetEmployeeId: eventData?.targetEmployeeId || segs[pendingIdx].targetEmployeeId,
+                targetEmployeeName: eventData?.targetEmployeeName || segs[pendingIdx].targetEmployeeName,
+                targetAvatarType: eventData?.targetAvatarType || segs[pendingIdx].targetAvatarType,
+                instruction: eventData?.instruction || segs[pendingIdx].instruction,
+              }
+            } else {
+              const lastSeg = segs[segs.length - 1]
+              if (lastSeg && lastSeg.type === 'answer' && lastSeg.isStreaming) {
+                segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
+              }
+              if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
+                segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+              }
+              segs.push({
+                type: 'delegation',
+                id: `${streamState.assistantMessageId}_run_${streamState.runCounter++}`,
+                runId,
+                delegationId: runId,
+                targetEmployeeId: eventData?.targetEmployeeId,
+                targetEmployeeName: eventData?.targetEmployeeName || tt('workbench.delegationUnknown'),
+                targetAvatarType: eventData?.targetAvatarType,
+                instruction: eventData?.instruction,
+                delegationStatus: 'queued',
+                subSegments: [],
+                isToolComplete: false,
+                collapsed: false,
+                timestamp: Date.now(),
+              })
+              idx = segs.length - 1
             }
           }
+          if (idx === -1) return m
 
-          // start 事件仅初始化 target 信息，不操作 subSegments
+          const cur = segs[idx]
+
+          // start：回填目标信息，叠加到现有段（并行组信息在 launch 工具 result 中补充）
           if (eventType === 'start') {
             segs[idx] = {
-              ...segs[idx],
-              targetEmployeeName: eventData?.targetEmployeeName || segs[idx].targetEmployeeName,
-              targetAvatarType: eventData?.targetAvatarType || segs[idx].targetAvatarType,
-              instruction: eventData?.instruction || segs[idx].instruction,
+              ...cur,
+              targetEmployeeId: eventData?.targetEmployeeId || cur.targetEmployeeId,
+              targetEmployeeName: eventData?.targetEmployeeName || cur.targetEmployeeName,
+              targetAvatarType: eventData?.targetAvatarType || cur.targetAvatarType,
+              instruction: eventData?.instruction || cur.instruction,
+              delegationStatus: cur.delegationStatus === 'queued' ? cur.delegationStatus : cur.delegationStatus,
             }
             return { ...m, segments: segs }
           }
 
-          // done 事件额外更新 tokenUsage
-          if (eventType === 'done') {
+          // status：状态迁移（queued → running → ...）
+          if (eventType === 'status') {
             segs[idx] = {
-              ...segs[idx],
-              delegationTokenUsage: eventData?.tokenUsage || segs[idx].delegationTokenUsage,
+              ...cur,
+              delegationStatus: eventData?.status === 'running' ? 'streaming' : cur.delegationStatus,
             }
+            return { ...m, segments: segs }
           }
 
-          // error 事件兜底标记 delegation 失败（最终状态由 onToolResult 确认）
+          // result：结构化结果收尾（独立于工具 result，双通道幂等）
+          if (eventType === 'result') {
+            const st = eventData?.status
+            const finalStatus = st === 'completed' ? 'completed' : st === 'cancelled' ? 'cancelled' : 'failed'
+            const gen: GeneratedFileInfo[] = eventData?.generatedFiles || []
+            const auto: GeneratedFileInfo[] = eventData?.autoDetectedFiles || []
+            segs[idx] = {
+              ...cur,
+              delegationStatus: finalStatus,
+              resultSummary: eventData?.summary || cur.resultSummary,
+              runResult: {
+                summary: eventData?.summary,
+                generatedFiles: gen,
+                autoDetectedFiles: auto,
+                references: eventData?.references,
+              },
+              generatedFiles: [...gen, ...auto],
+              delegationTokenUsage: eventData?.tokenUsage || cur.delegationTokenUsage,
+              toolError: finalStatus === 'failed' ? (eventData?.error || cur.toolError) : cur.toolError,
+              isToolComplete: true,
+              collapsed: true,
+              completedAt: Date.now(),
+            }
+            return { ...m, segments: segs }
+          }
+
+          // cancelled：显示已取消
+          if (eventType === 'cancelled') {
+            segs[idx] = {
+              ...cur,
+              delegationStatus: 'cancelled',
+              toolError: eventData?.error || cur.toolError,
+              isToolComplete: true,
+              collapsed: true,
+              completedAt: Date.now(),
+            }
+            return { ...m, segments: segs }
+          }
+
+          // error：记录错误（最终状态由后续 result 确认；若进程中断则展示失败）
           if (eventType === 'error') {
-            segs[idx] = {
-              ...segs[idx],
-              delegationStatus: 'failed',
-              toolError: eventData?.error,
+            segs[idx] = { ...cur, toolError: eventData?.error || cur.toolError }
+            if (cur.delegationStatus !== 'completed' && cur.delegationStatus !== 'cancelled' && !segs[idx].isToolComplete) {
+              segs[idx] = { ...segs[idx], delegationStatus: 'failed' }
             }
           }
 
-          // 更新 subSegments
-          const updatedSubSegs = applyDelegationSubEvent(
+          // done：更新 tokenUsage
+          if (eventType === 'done') {
+            segs[idx] = { ...segs[idx], delegationTokenUsage: eventData?.tokenUsage || segs[idx].delegationTokenUsage }
+          }
+
+          // 其余子会话内层事件 → subSegments
+          const updatedSubSegs = applyRunSubEvent(
             segs[idx].subSegments || [],
             eventType,
             eventData,
-            delegationId
+            runId
           )
           segs[idx] = { ...segs[idx], subSegments: updatedSubSegs }
           return { ...m, segments: segs }
@@ -691,13 +856,14 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               collapsed: true,
             }
           }
-          // delegation 段兜底：主管会话结束时若委托仍在进行中，标记为失败
-          if (s.type === 'delegation' && s.delegationStatus === 'streaming') {
+          // delegation 段兜底：主管会话结束时若委托仍在进行中，标记为失败（排队中则标记取消）
+          if (s.type === 'delegation' && (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued')) {
+            const cancelled = s.delegationStatus === 'queued'
             return {
               ...s,
-              delegationStatus: 'failed' as const,
+              delegationStatus: cancelled ? 'cancelled' as const : 'failed' as const,
               isToolComplete: true,
-              toolError: s.toolError || tt('workbench.toolCancelled'),
+              toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolCancelled'),
               completedAt,
               collapsed: true,
               subSegments: (s.subSegments || []).map(ss => ({
@@ -797,13 +963,14 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                       collapsed: true,
                     }
                   }
-                  // delegation 段兜底：主管出错时若委托仍在进行中，标记为失败
-                  if (s.type === 'delegation' && s.delegationStatus === 'streaming') {
+                  // delegation 段兜底：主管出错时若委托仍在进行中，标记为失败（排队中则标记取消）
+                  if (s.type === 'delegation' && (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued')) {
+                    const cancelled = s.delegationStatus === 'queued'
                     return {
                       ...s,
-                      delegationStatus: 'failed' as const,
+                      delegationStatus: cancelled ? 'cancelled' as const : 'failed' as const,
                       isToolComplete: true,
-                      toolError: s.toolError || tt('workbench.toolFailed'),
+                      toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolFailed'),
                       completedAt: s.completedAt || Date.now(),
                       collapsed: true,
                       subSegments: (s.subSegments || []).map(ss => ({
@@ -844,7 +1011,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       toolCallCleanup()
       toolResultCleanup()
       toolProgressCleanup()
-      delegationCleanup()
+      runCleanup()
       doneCleanup()
       errorCleanup()
     }

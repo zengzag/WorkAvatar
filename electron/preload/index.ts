@@ -6,6 +6,9 @@ import type {
   EmployeeCreateParams,
   EmployeeUpdateParams,
   EmployeeDeleteParams,
+  EmployeeDuplicateParams,
+  EmployeeSetEnabledParams,
+  EmployeeSetMemoryEnabledParams,
   ConversationListParams,
   ConversationListWithEmployeeParams,
   ConversationCreateParams,
@@ -67,6 +70,7 @@ import type {
   NotifyPayload,
   PluginInfo,
   PluginRendererInfo,
+  PluginChangedPayload,
   PluginEventPayload,
   PluginImportResult,
   PluginMessageActionInfo,
@@ -84,6 +88,9 @@ const electronAPI = {
     create: (params: EmployeeCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_CREATE, params),
     update: (params: EmployeeUpdateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_UPDATE, params),
     delete: (params: EmployeeDeleteParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DELETE, params),
+    duplicate: (params: EmployeeDuplicateParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_DUPLICATE, params),
+    setEnabled: (params: EmployeeSetEnabledParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SET_ENABLED, params),
+    setMemoryEnabled: (params: EmployeeSetMemoryEnabledParams) => ipcRenderer.invoke(IPC_CHANNELS.EMPLOYEE_SET_MEMORY_ENABLED, params),
     onChanged: (callback: (data: { ts: number }) => void) => {
       const handler = (_event: any, data: { ts: number }) => callback(data)
       ipcRenderer.on(IPC_CHANNELS.EMPLOYEE_ON_CHANGED, handler)
@@ -191,11 +198,14 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_TOOL_PROGRESS, handler)
     },
-    onDelegationEvent: (callback: (data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => void) => {
-      const handler = (_event: any, data: { parentSessionId: string; delegationId: string; eventType: string; data: any }) => callback(data)
-      ipcRenderer.on(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_DELEGATION_EVENT, handler)
+    onRunEvent: (callback: (data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => void) => {
+      const handler = (_event: any, data: { parentSessionId: string; runId: string; eventType: string; data: any; parentConversationId?: string }) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.AGENT_RUN_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_RUN_EVENT, handler)
     },
+    listActiveRuns: (params?: { employeeId?: string; parentConversationId?: string }) => ipcRenderer.invoke(IPC_CHANNELS.LLM_LIST_ACTIVE_RUNS, params),
+    abortRun: (runId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_ABORT_RUN, runId),
+    getRunConversation: (runId: string) => ipcRenderer.invoke(IPC_CHANNELS.LLM_GET_RUN_CONVERSATION, runId),
   },
 
   settings: {
@@ -212,7 +222,7 @@ const electronAPI = {
     openLogDir: () => ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_LOG_DIR),
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.APP_CLEAR_ALL_DATA),
     restart: () => ipcRenderer.invoke(IPC_CHANNELS.APP_RESTART),
-    // 前台防休眠：查询/设置"应用处于前台时禁止系统熄屏/休眠"
+    // 防休眠：查询/设置"窗口未全部关闭时禁止系统熄屏/休眠"
     getPreventSleep: () => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_GET),
     setPreventSleep: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POWER_SAVE_SET, enabled),
     // 渲染进程日志转发（fire-and-forget），把 console 输出写入主进程日志文件
@@ -395,7 +405,7 @@ const electronAPI = {
     getKeywordStats: (params?: { limit?: number; minCount?: number; recentDays?: number }) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KEYWORD_STATS, params || {}),
     getKnowledgeCards: (params: KMSGetKnowledgeCardsParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARDS, params),
     getKnowledgeCard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_KNOWLEDGE_CARD, id),
-    generateKnowledgeCard: (keyword: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, keyword),
+    generateKnowledgeCard: (keyword: string, requirement?: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GENERATE_KNOWLEDGE_CARD, keyword, requirement),
     onKnowledgeCardProgress: (callback: (step: { phase: string; action: string; detail?: string; durationMs?: number; type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result' }) => void) => {
       const handler = (_event: any, step: any) => callback(step)
       ipcRenderer.on(IPC_CHANNELS.KMS_KNOWLEDGE_CARD_PROGRESS, handler)
@@ -472,6 +482,13 @@ const electronAPI = {
     remove: (pluginId: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DELETE, { pluginId }),
     import: (overwrite?: boolean) =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_IMPORT, { overwrite: !!overwrite }) as Promise<PluginImportResult>,
+    // 插件集合变更通知（导入/启停/删除/重新扫描后主进程广播最新 rendererPlugins，
+    // 渲染端据此增量加载/卸载插件渲染端，免整页 reload）
+    onPluginsChanged: (callback: (payload: PluginChangedPayload) => void) => {
+      const handler = (_event: any, payload: PluginChangedPayload) => callback(payload)
+      ipcRenderer.on(IPC_CHANNELS.PLUGIN_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.PLUGIN_CHANGED, handler)
+    },
     listMessageActions: () =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_LIST_MESSAGE_ACTIONS) as Promise<PluginMessageActionInfo[]>,
     listViews: () =>

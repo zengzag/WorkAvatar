@@ -4,6 +4,9 @@ export const EMPLOYEE_CHANNELS = {
   EMPLOYEE_CREATE: 'employee:create',
   EMPLOYEE_UPDATE: 'employee:update',
   EMPLOYEE_DELETE: 'employee:delete',
+  EMPLOYEE_DUPLICATE: 'employee:duplicate',
+  EMPLOYEE_SET_ENABLED: 'employee:set-enabled',
+  EMPLOYEE_SET_MEMORY_ENABLED: 'employee:set-memory-enabled',
   EMPLOYEE_ON_CHANGED: 'employee:on-changed',
 
   CONVERSATION_LIST: 'conversation:list',
@@ -64,11 +67,40 @@ export interface EmployeeUpdateParams {
   workspace_path?: string
   avatar_type?: string
   memory_enabled?: boolean
+  /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化） */
+  delegation_json?: string
 }
 
 export interface EmployeeDeleteParams {
   id: string
   delete_workspace?: boolean
+  /** 对话历史处理方式：keep 保留 / delete 删除 / transfer 转移 */
+  conversation_action?: 'keep' | 'delete' | 'transfer'
+  /** 转移目标数字员工 id（conversation_action=transfer 时必填） */
+  transfer_to_employee_id?: string
+}
+
+export interface EmployeeDeleteResult {
+  ok: boolean
+  /** transfer 时完成转移的对话数 */
+  transferred: number
+}
+
+/** 内置/插件员工另存为自己的员工副本 */
+export interface EmployeeDuplicateParams {
+  id: string
+}
+
+/** 内置/插件员工启用/禁用开关 */
+export interface EmployeeSetEnabledParams {
+  id: string
+  enabled: boolean
+}
+
+/** 内置/插件员工记忆开关 */
+export interface EmployeeSetMemoryEnabledParams {
+  id: string
+  enabled: boolean
 }
 
 export interface ConversationListParams {

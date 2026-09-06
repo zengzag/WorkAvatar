@@ -8,7 +8,6 @@ import {
   Select,
   Space,
   Avatar,
-  Divider,
   Row,
   Col,
   App,
@@ -34,6 +33,8 @@ interface BasicInfoSectionProps {
   onDelete: (workspacePath?: string) => void
   workspacePath?: string
   employeeId: string
+  /** 只读模式（注册员工）：表单禁用、隐藏保存/删除/生成等操作 */
+  readonly?: boolean
 }
 
 const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
@@ -43,6 +44,7 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
   onDelete,
   workspacePath,
   employeeId,
+  readonly,
 }) => {
   const { t } = useTranslation()
   const { message } = App.useApp()
@@ -120,12 +122,12 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               label={t('employeeSettings.employeeName')}
               rules={[{ required: true, message: t('employeeSettings.enterName') }]}
             >
-              <Input placeholder={t('employeeSettings.namePlaceholder')} />
+              <Input placeholder={t('employeeSettings.namePlaceholder')} disabled={readonly} />
             </Form.Item>
           </Col>
           <Col span={8}>
             <Form.Item name="avatar_type" label={t('employeeSettings.avatarStyle')}>
-              <Select>
+              <Select disabled={readonly}>
                 {avatarOptions.map((opt) => (
                   <Select.Option key={opt.value} value={opt.value}>
                     <Space>
@@ -146,25 +148,27 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
           label={
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               {t('employeeSettings.descriptionLabel')}
-              <Button
-                type="link"
-                size="small"
-                htmlType="button"
-                icon={<ThunderboltOutlined />}
-                loading={generating}
-                onClick={handleGenerateDescription}
-                style={{ padding: 0, height: 'auto' }}
-              >
-                {t('employeeSettings.autoGenerate')}
-              </Button>
+              {!readonly && (
+                <Button
+                  type="link"
+                  size="small"
+                  htmlType="button"
+                  icon={<ThunderboltOutlined />}
+                  loading={generating}
+                  onClick={handleGenerateDescription}
+                  style={{ padding: 0, height: 'auto' }}
+                >
+                  {t('employeeSettings.autoGenerate')}
+                </Button>
+              )}
             </span>
           }
         >
-          <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} />
+          <TextArea rows={3} placeholder={t('employeeSettings.descPlaceholder')} disabled={readonly} />
         </Form.Item>
 
         <Form.Item name="rules" label={t('employeeSettings.rulesLabel')}>
-          <TextArea rows={8} placeholder={t('employeeSettings.rulesPlaceholder')} />
+          <TextArea rows={8} placeholder={t('employeeSettings.rulesPlaceholder')} disabled={readonly} />
         </Form.Item>
 
         <Form.Item label={t('employeeSettings.workspacePath')}>
@@ -174,39 +178,43 @@ const BasicInfoSection: React.FC<BasicInfoSectionProps> = ({
               readOnly
               placeholder={t('employeeSettings.workspacePathPlaceholder')}
             />
-            <Button
-              icon={<FolderOpenOutlined />}
-              onClick={handleChangeWorkspacePath}
-            >
-              {t('employeeSettings.changeWorkspaceDir')}
-            </Button>
-            {workspacePath && (
-              <Button
-                icon={<FolderOpenOutlined />}
-                onClick={handleOpenInExplorer}
-              >
-                {t('employeeSettings.openInExplorer')}
-              </Button>
+            {!readonly && (
+              <>
+                <Button
+                  icon={<FolderOpenOutlined />}
+                  onClick={handleChangeWorkspacePath}
+                >
+                  {t('employeeSettings.changeWorkspaceDir')}
+                </Button>
+                {workspacePath && (
+                  <Button
+                    icon={<FolderOpenOutlined />}
+                    onClick={handleOpenInExplorer}
+                  >
+                    {t('employeeSettings.openInExplorer')}
+                  </Button>
+                )}
+              </>
             )}
           </Space.Compact>
         </Form.Item>
 
-        <Divider />
-
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
-              {t('employeeSettings.saveBasic')}
-            </Button>
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => onDelete(workspacePath)}
-            >
-              {t('employeeSettings.deleteEmployee')}
-            </Button>
-          </Space>
-        </Form.Item>
+        {!readonly && (
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
+                {t('employeeSettings.saveBasic')}
+              </Button>
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => onDelete(workspacePath)}
+              >
+                {t('employeeSettings.deleteEmployee')}
+              </Button>
+            </Space>
+          </Form.Item>
+        )}
       </Form>
     </Card>
   )

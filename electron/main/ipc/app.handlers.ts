@@ -102,7 +102,7 @@ export function registerAppHandlers(
     return { success: true }
   })
 
-  // 前台防休眠开关：查询当前是否开启（开启时应用处于前台禁止系统熄屏/休眠）
+  // 防休眠开关：查询当前是否开启（开启时窗口未全部关闭则禁止系统熄屏/休眠）
   safeHandle(IPC_CHANNELS.POWER_SAVE_GET, () => {
     return PowerSaveService.getInstance().getEnabled()
   })
@@ -151,22 +151,14 @@ export function registerAppHandlers(
     return { success: true }
   })
 
-  // 重启应用：插件启停/导入/删除等变更后一键生效。
-  // 采用插件热重载（PluginHostService.reload）而非 app.relaunch()：
-  // dev 模式下 relaunch 会杀掉 vite 启动的 electron 后端导致白屏，热重载在进程内重建插件并刷新渲染端。
+  // 插件变更生效入口（"重新扫描"按钮）：增量 reconcile 磁盘与内存差异，仅加载/卸载受影响插件。
+  // 不再全量 deactivate + webContents.reload：运行中的对话/生成流程不受影响，
+  // 渲染端经 PLUGIN_CHANGED 广播增量刷新导航/路由/视图。
   safeHandle(IPC_CHANNELS.APP_RESTART, () => {
-    // 1. 热重载插件（deactivate → 清缓存 → 重新扫描激活）
-    PluginHostService.getInstance().reload()
-    // 2. 插件贡献的 agent 工具已变化，清空员工 agent 缓存使下次对话重建工具列表
-    try {
-      const { default: EmployeeAgentService } = require('../services/employee-agent.service')
-      EmployeeAgentService.getInstance().clearAgentCache()
-    } catch { /* ignore */ }
-    // 3. 刷新渲染端：重建插件路由/导航/locale
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.reload()
-    }
-    return { success: true }
+    const host = PluginHostService.getInstance()
+    // reconcile 内部在有变更时统一 bumpToolEpoch + 广播 PLUGIN_CHANGED（渲染端增量加载/卸载）
+    const changed = host.reconcile()
+    return { success: true, changed }
   })
 
   // === 窗口控制（自定义标题栏）===

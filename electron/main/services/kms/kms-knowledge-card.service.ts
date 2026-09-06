@@ -42,6 +42,10 @@ export interface KnowledgeCard {
   keyPoints: KnowledgeCardKeyPoint[]
   citations: KnowledgeCardCitation[]
   relatedFileIds: string[]
+  /** 用户为该卡片单独设置的生成要求，刷新时作为补充方向提交给 LLM */
+  requirement: string
+  /** 最近一次生成/刷新的执行轨迹，用于事后排查是否真正检索到资料库内容 */
+  trace: SearchTraceStep[]
   status: 'active' | 'stale' | 'archived' | 'disabled'
   pinned: boolean
   searchCount: number
@@ -76,6 +80,8 @@ class KMSKnowledgeCardService {
       keyPoints: (() => { try { return JSON.parse(row.key_points_json || '[]') } catch { return [] } })(),
       citations: (() => { try { return JSON.parse(row.citations_json || '[]') } catch { return [] } })(),
       relatedFileIds: (() => { try { return JSON.parse(row.related_file_ids_json || '[]') } catch { return [] } })(),
+      requirement: row.requirement || '',
+      trace: (() => { try { return JSON.parse(row.last_trace_json || '[]') } catch { return [] } })(),
       status: row.status,
       pinned: !!row.pinned,
       searchCount: row.search_count || 0,
@@ -210,9 +216,14 @@ class KMSKnowledgeCardService {
   async generateCard(
     keyword: string,
     displayKeyword?: string,
-    options?: { onProgress?: (step: SearchTraceStep) => void; signal?: AbortSignal },
+    options?: { onProgress?: (step: SearchTraceStep) => void; signal?: AbortSignal; requirement?: string },
   ): Promise<{ success: boolean; card?: KnowledgeCard; error?: string }> {
-    const addStep = (step: SearchTraceStep) => { options?.onProgress?.(step) }
+    // 本地收集完整执行轨迹，用于持久化到卡片供事后查看
+    const trace: SearchTraceStep[] = []
+    const addStep = (step: SearchTraceStep) => {
+      trace.push(step)
+      options?.onProgress?.(step)
+    }
     const signal = options?.signal
     const keywordStats = KMSKeywordStatsService.getInstance()
     const normalized = keywordStats.normalizeKeyword(keyword)
@@ -244,9 +255,9 @@ class KMSKnowledgeCardService {
     // === Agent Loop: LLM 自主调用 kms_search / kms_get_content 工具 ===
     const agentResult = await generateCardViaAgentLoop(
       dispKeyword,
-      searchCount,
       addStep,
       signal,
+      options?.requirement,
     )
 
     if (!agentResult.success) {
@@ -264,9 +275,9 @@ class KMSKnowledgeCardService {
 
     this.db.prepare(`
       INSERT OR IGNORE INTO kms_knowledge_cards
-        (id, keyword, display_keyword, summary, key_points_json, citations_json, related_file_ids_json, status, pinned, search_count, created_at, updated_at, last_refreshed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?)
-    `).run(cardId, normalized, dispKeyword, result.summary, JSON.stringify(result.keyPoints), JSON.stringify(citations), JSON.stringify(relatedFileIds), searchCount, now, now, now)
+        (id, keyword, display_keyword, summary, key_points_json, citations_json, related_file_ids_json, requirement, status, pinned, search_count, created_at, updated_at, last_refreshed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?)
+    `).run(cardId, normalized, dispKeyword, result.summary, '[]', JSON.stringify(citations), JSON.stringify(relatedFileIds), options?.requirement || '', searchCount, now, now, now)
 
     // === 生成向量嵌入 ===
     addStep({ phase: 'card', action: '生成向量嵌入', type: 'info' })
@@ -278,8 +289,11 @@ class KMSKnowledgeCardService {
       logger.warn(`Card embedding generation failed for "${keyword}":`, err?.message || err)
     }
 
-    const card = this.getCard(cardId)
     addStep({ phase: 'card', action: '卡片生成完成', type: 'result', detail: `${result.summary.length} 字摘要, ${citations.length} 条引用, ${result.iterations} 轮迭代, 总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s` })
+    // 持久化执行轨迹（保留最近流程尾部，避免过大），供详情查看定位问题
+    const savedTrace = trace.slice(-300)
+    this.db.prepare('UPDATE kms_knowledge_cards SET last_trace_json = ? WHERE id = ?').run(JSON.stringify(savedTrace), cardId)
+    const card = this.getCard(cardId)
     logger.info(`Knowledge card generated for "${keyword}": ${result.summary.length} chars, ${citations.length} citations, ${result.iterations} iterations`)
     return { success: true, card: card || undefined }
     } finally {
@@ -289,15 +303,10 @@ class KMSKnowledgeCardService {
 
   private async generateCardEmbedding(cardId: string, signal?: AbortSignal): Promise<boolean> {
     try {
-      const card = this.db.prepare('SELECT summary, key_points_json FROM kms_knowledge_cards WHERE id = ?').get(cardId) as any
+      const card = this.db.prepare('SELECT summary FROM kms_knowledge_cards WHERE id = ?').get(cardId) as any
       if (!card || !card.summary) return false
 
-      const keyPoints: string[] = (() => {
-        try { const arr = JSON.parse(card.key_points_json || '[]'); return Array.isArray(arr) ? arr.map((kp: any) => kp?.point || '').filter(Boolean) : [] }
-        catch { return [] }
-      })()
-
-      const text = `${card.summary} ${keyPoints.join(' ')}`.trim()
+      const text = card.summary.trim()
       if (!text) return false
 
       const embConfig = getKmsEmbeddingConfig()
@@ -321,7 +330,7 @@ class KMSKnowledgeCardService {
     if (!card) return { success: false, error: 'CARD_NOT_FOUND' }
 
     this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(cardId)
-    const result = await this.generateCard(card.keyword, card.displayKeyword, { ...options, signal })
+    const result = await this.generateCard(card.keyword, card.displayKeyword, { ...options, signal, requirement: card.requirement })
 
     if (!result.success) {
       // 恢复旧卡片（INSERT OR IGNORE 防止并发冲突）
@@ -329,9 +338,9 @@ class KMSKnowledgeCardService {
       try {
         this.db.prepare(`
           INSERT OR IGNORE INTO kms_knowledge_cards
-            (id, keyword, display_keyword, summary, key_points_json, citations_json, related_file_ids_json, status, pinned, search_count, created_at, updated_at, last_refreshed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'stale', ?, ?, ?, ?, ?)
-        `).run(cardId, card.keyword, card.displayKeyword, card.summary, JSON.stringify(card.keyPoints), JSON.stringify(card.citations), JSON.stringify(card.relatedFileIds), card.pinned ? 1 : 0, card.searchCount, card.createdAt, now, card.lastRefreshedAt)
+            (id, keyword, display_keyword, summary, key_points_json, citations_json, related_file_ids_json, requirement, last_trace_json, status, pinned, search_count, created_at, updated_at, last_refreshed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stale', ?, ?, ?, ?, ?)
+        `).run(cardId, card.keyword, card.displayKeyword, card.summary, JSON.stringify(card.keyPoints), JSON.stringify(card.citations), JSON.stringify(card.relatedFileIds), card.requirement, JSON.stringify(card.trace), card.pinned ? 1 : 0, card.searchCount, card.createdAt, now, card.lastRefreshedAt)
       } catch {}
       return { success: false, error: result.error }
     }
@@ -342,7 +351,7 @@ class KMSKnowledgeCardService {
     return { success: true, card: result.card }
   }
 
-  updateCard(params: { id: string; summary?: string; keyPoints?: KnowledgeCardKeyPoint[]; pinned?: boolean }): { success: boolean; error?: string } {
+  updateCard(params: { id: string; summary?: string; keyPoints?: KnowledgeCardKeyPoint[]; requirement?: string; pinned?: boolean }): { success: boolean; error?: string } {
     const card = this.getCard(params.id)
     if (!card) return { success: false, error: 'CARD_NOT_FOUND' }
 
@@ -351,6 +360,7 @@ class KMSKnowledgeCardService {
 
     if (params.summary !== undefined) { sets.push('summary = ?'); sqlParams.push(params.summary) }
     if (params.keyPoints !== undefined) { sets.push('key_points_json = ?'); sqlParams.push(JSON.stringify(params.keyPoints)) }
+    if (params.requirement !== undefined) { sets.push('requirement = ?'); sqlParams.push(params.requirement) }
     if (params.pinned !== undefined) { sets.push('pinned = ?'); sqlParams.push(params.pinned ? 1 : 0) }
 
     if (sets.length === 0) return { success: true }

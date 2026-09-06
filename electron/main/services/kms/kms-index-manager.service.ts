@@ -374,14 +374,6 @@ class KMSIndexManagerService {
     KMSAutoIndexService.getInstance().stop()
   }
 
-  pauseAutoIndex(): void {
-    KMSAutoIndexService.getInstance().pause()
-  }
-
-  resumeAutoIndex(): void {
-    KMSAutoIndexService.getInstance().resume()
-  }
-
   getAutoIndexStatus(): AutoIndexStatus {
     return KMSAutoIndexService.getInstance().getStatus()
   }

@@ -5,6 +5,7 @@ import {
 } from 'antd'
 import {
   ThunderboltOutlined, ReloadOutlined, PushpinFilled, BookOutlined, StopOutlined,
+  DownOutlined, RightOutlined,
 } from '@ant-design/icons'
 import KnowledgeCardDetail from './KnowledgeCardDetail'
 import KMSStopWordsPanel from './KMSStopWordsPanel'
@@ -12,6 +13,7 @@ import type { KnowledgeCard, SearchTraceStep } from './KnowledgeCardDetail'
 import { formatRelativeTimeShort } from '../../utils/format'
 
 const { Text, Paragraph } = Typography
+const { TextArea } = Input
 
 interface KMSKnowledgeCardsViewProps {
   onOpenFile?: (filePath: string) => void
@@ -27,6 +29,8 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
   const [filterStatus, setFilterStatus] = useState<'active' | 'stale' | 'archived' | 'disabled' | undefined>(undefined)
   const [generatingKeyword, setGeneratingKeyword] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [requirementExpanded, setRequirementExpanded] = useState(false)
+  const [requirement, setRequirement] = useState('')
   const [refreshingStale, setRefreshingStale] = useState(false)
 
   const [detailCard, setDetailCard] = useState<KnowledgeCard | null>(null)
@@ -90,6 +94,8 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
       keyPoints: [],
       citations: [],
       relatedFileIds: [],
+      requirement: requirement.trim(),
+      trace: [],
       status: 'generating',
       pinned: false,
       searchCount: 0,
@@ -105,10 +111,12 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
     subscribeProgress()
 
     try {
-      const result = await window.electronAPI.kms.generateKnowledgeCard(kw)
+      const result = await window.electronAPI.kms.generateKnowledgeCard(kw, requirement.trim() || undefined)
       if (result?.success) {
         message.success(t('kms.knowledgeCards.generateSuccess'))
         setGeneratingKeyword('')
+        setRequirement('')
+        setRequirementExpanded(false)
         // 用最终卡片替换占位卡片
         if (result.card) {
           setDetailCard(result.card as KnowledgeCard)
@@ -139,7 +147,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
       unsubscribeProgress()
       setGenerating(false)
     }
-  }, [t, message, loadCards, subscribeProgress, unsubscribeProgress])
+  }, [t, message, loadCards, subscribeProgress, unsubscribeProgress, requirement])
 
   const handleRefreshStale = useCallback(async () => {
     setRefreshingStale(true)
@@ -260,6 +268,14 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
               style={{ width: 280 }}
             />
             <Button
+              size="small"
+              type="text"
+              icon={requirementExpanded ? <DownOutlined /> : <RightOutlined />}
+              onClick={() => setRequirementExpanded(v => !v)}
+            >
+              {t('kms.knowledgeCards.requirement')}
+            </Button>
+            <Button
               icon={<ThunderboltOutlined />}
               onClick={handleRefreshStale}
               loading={refreshingStale}
@@ -282,6 +298,20 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
               {t('common.refresh')}
             </Button>
           </div>
+
+          {/* 高级要求：指引 LLM 生成方向的补充输入 */}
+          {requirementExpanded && (
+            <div style={{ marginBottom: 12 }}>
+              <TextArea
+                value={requirement}
+                onChange={e => setRequirement(e.target.value)}
+                placeholder={t('kms.knowledgeCards.requirementPlaceholder')}
+                autoSize={{ minRows: 2, maxRows: 5 }}
+                style={{ marginBottom: 4 }}
+              />
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('kms.knowledgeCards.requirementHint')}</Text>
+            </div>
+          )}
 
           {/* 卡片网格 */}
           <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>

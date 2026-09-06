@@ -257,6 +257,8 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
       assistantMessageId: assistantMessage.id,
       segCounter: 0,
       toolCallCounter: 0,
+      runCounter: 0,
+      groupSeq: 0,
     }
 
     try {

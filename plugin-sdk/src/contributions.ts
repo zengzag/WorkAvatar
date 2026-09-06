@@ -3,7 +3,7 @@
  * 与 manifest 的分工：manifest 只放静态元数据（nav/能力/IPC 范围），
  * 带回调的逻辑贡献一律在此注册，保证 handler 与注册同源。
  */
-import type { PluginToolDefinition } from './tool'
+import type { PluginToolDefinition, PluginToolMiddleware } from './tool'
 import type { PluginViewPoint } from './manifest'
 
 export interface PluginFileAssociation {
@@ -69,6 +69,8 @@ export interface PluginCommand {
 export interface PluginContributionsApi {
   /** 注册 agent 工具（进入宿主 ToolRegistry，参与员工三态配置） */
   registerAgentTools(tools: PluginToolDefinition[]): void
+  /** 注册数字员工工具调用中间件（需 capabilities.system.features.agentMiddleware；宿主以链首守卫挂载） */
+  registerAgentMiddleware(middlewares: PluginToolMiddleware[]): void
   /** 注册 KMS MCP 服务对外暴露的工具 */
   registerMcpTools(tools: PluginToolDefinition[]): void
   /** 声明可打开的文件类型（宿主收到关联文件后路由到本插件渲染端） */

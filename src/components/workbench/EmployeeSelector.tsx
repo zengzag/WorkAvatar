@@ -35,9 +35,11 @@ const EmployeeSelector: React.FC<EmployeeSelectorProps> = ({
   const [contextMenu, setContextMenu] = useState<{ emp: Employee; x: number; y: number } | null>(null)
 
   const filteredEmployees = useMemo(() => {
-    if (!searchText.trim()) return employees
+    // 过滤已禁用的注册员工（user 员工无 is_enabled 字段，视为启用）
+    const enabled = employees.filter(emp => emp.is_enabled !== false)
+    if (!searchText.trim()) return enabled
     const search = searchText.toLowerCase()
-    return employees.filter(emp => emp.name.toLowerCase().includes(search))
+    return enabled.filter(emp => emp.name.toLowerCase().includes(search))
   }, [employees, searchText])
 
   const handleOpenChange = useCallback((newOpen: boolean) => {
@@ -76,7 +78,8 @@ const EmployeeSelector: React.FC<EmployeeSelectorProps> = ({
                 onSelect(emp.id)
               }}
               onContextMenu={(e) => {
-                if (isActive) return
+                // 当前活跃员工与注册员工（内置/插件，只读）不可删除
+                if (isActive || emp.source === 'builtin' || emp.source === 'plugin') return
                 e.preventDefault()
                 setContextMenu({ emp, x: e.clientX, y: e.clientY })
               }}

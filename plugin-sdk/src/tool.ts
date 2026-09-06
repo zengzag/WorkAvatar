@@ -36,3 +36,29 @@ export interface PluginToolDefinition {
   onDemand?: boolean
   metadata?: Record<string, unknown>
 }
+
+/** 插件视角的工具调用最小结果结构（不依赖宿主内部 ToolCallResult） */
+export interface PluginToolResult {
+  success?: boolean
+  output?: any
+  error?: string
+  toolName?: string
+  generatedFiles?: unknown[]
+}
+
+/** 工具调用前后拦截器（registerAgentMiddleware）：宿主以链首守卫挂到数字员工上 */
+export interface PluginToolMiddleware {
+  /** 中间件名（插件内唯一，用于日志/识别） */
+  name: string
+  /**
+   * 拦截包裹：在工具 handler 执行前/后注入逻辑。
+   * - 观察：await next() 后访问结果
+   * - 短路/阻断：不调用 next()，直接返回结果
+   * - 改写：调用 next() 后改写返回的值
+   */
+  fn(
+    toolName: string,
+    args: Record<string, any>,
+    next: () => Promise<PluginToolResult>
+  ): Promise<PluginToolResult> | PluginToolResult
+}
