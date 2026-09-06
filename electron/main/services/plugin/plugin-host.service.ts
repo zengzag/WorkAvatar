@@ -294,7 +294,15 @@ class PluginHostService {
     const scanDirs: Array<{ label: string; dir: string }> = []
     if (!app.isPackaged) {
       const devDir = this.getDevPluginSourceDir()
-      if (fs.existsSync(devDir)) scanDirs.push({ label: 'dev', dir: devDir })
+      if (fs.existsSync(devDir)) {
+        scanDirs.push({ label: 'dev', dir: devDir })
+        // dev 模式额外把 plugins/examples/*（含 manifest.json 的示例插件）纳入开发源，
+        // 便于直接改动并调试参考模板插件；优先级在 plugins/* 之后、用户目录之前。
+        const examplesDir = path.join(devDir, 'examples')
+        if (fs.existsSync(examplesDir)) {
+          scanDirs.push({ label: 'dev-examples', dir: examplesDir })
+        }
+      }
     }
     scanDirs.push({ label: 'user', dir: userDir })
     logger.info(`插件扫描: isPackaged=${app.isPackaged} ${scanDirs.map(d => `${d.label}=${d.dir} (存在=${fs.existsSync(d.dir)})`).join(' | ')}`)

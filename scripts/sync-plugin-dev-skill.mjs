@@ -81,6 +81,8 @@ function main() {
   copyFile(path.join(tpl, 'tsconfig.json'), path.join(refsDir, 'hello-world.tsconfig.json'))
   copyFile(path.join(tpl, 'locale', 'zh-CN.json'), path.join(refsDir, 'hello-world.locale.zh-CN.json'))
   copyFile(path.join(tpl, 'locale', 'en-US.json'), path.join(refsDir, 'hello-world.locale.en-US.json'))
+  // 窗口演示页（services.windows contentPath 引用的静态资源）
+  copyFile(path.join(tpl, 'resources', 'demo.html'), path.join(refsDir, 'hello-world.demo.html'))
   copyFile(path.join(projectRoot, 'scripts', 'build-plugin.mjs'), path.join(refsDir, 'hello-world.build-plugin.mjs'))
 
   // 2. assets/plugin-sdk/：完整 SDK 类型契约（不进 DB，脚手架时用 shell_exec 复制到插件工程旁）

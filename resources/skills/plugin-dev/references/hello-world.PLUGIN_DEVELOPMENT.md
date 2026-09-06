@@ -71,12 +71,14 @@ my-plugin/
   "locale": "locale",
   "ipc": ["list-things", "create-thing"],
   "capabilities": [
-    { "domain": "data", "entities": ["conversations"], "access": "read" },
-    { "domain": "execute", "kinds": ["llm-stream"] },
+    { "domain": "data", "entities": ["conversations", "employees"], "access": "read" },
+    { "domain": "execute", "kinds": ["llm-chat", "llm-stream"] },
     { "domain": "events", "subscribe": ["conversation:deleted"], "publish": true },
-    { "domain": "ui", "views": ["chat.toolbar"] },
-    { "domain": "system", "features": ["notification", "scheduler"] }
+    { "domain": "ui", "views": ["chat.toolbar", "settings.tab"] },
+    { "domain": "system", "features": ["notification", "scheduler", "windows", "native"] },
+    { "domain": "collaboration", "shared": { "write": true }, "call": ["example-hello-world:echo"] }
   ],
+  "dependencies": { "base-plugin": "^1.0.0" },
   "nav": {
     "label": "navLabel",
     "icon": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.2\"><circle cx=\"8\" cy=\"8\" r=\"6.5\"/></svg>",
@@ -92,9 +94,15 @@ my-plugin/
 
 * `engine` 声明与宿主协议的兼容范围（当前为 `>=0.2.0`），不满足会被禁用（不崩溃）。
 
-* `ipc` 列出你会在主进程注册的通道短名（配合 `ctx.ipc.handle`）。
+* `ipc` 列出你会在主进程 `ctx.ipc.handle` 注册的通道短名（宿主自动加 `plugin:<id>:` 前缀并做范围校验）。**`registerCommand` 的命令不需要在此声明**（见 §4）。
 
 * `capabilities` 声明你需要的能力域（见 §6 能力选型），未声明则对应服务为 `undefined`。
+
+  * **`events` 的前缀规则**：`subscribe` 用原始事件名（订阅宿主内核事件如 `conversation:deleted`），`publish` 由宿主强制加 `plugin:<id>:` 前缀。A 插件 `publish('x')` 实际写入 `plugin:A:x`，B 插件要 `subscribe('plugin:A:x')` 才能收到。
+
+  * **`collaboration.call`** 是"我能调哪些目标方法"的白名单，形如 `目标插件id:方法名`；与之对应，被调用方需在激活期 `services.bus.respond('方法名')` 注册 handler。示例里用 `example-hello-world:echo` 自调用来闭环演示（真实场景由其他插件调用）。
+
+  * `collaboration.shared.write` 只授予写**本插件**命名空间；`getFrom`/`keysAll` 读取其他插件数据需要 `read: true`。
 
 * `nav` 只对"要有页面"的插件有意义；纯后台插件可整体省略。
 
@@ -178,6 +186,57 @@ export function deactivate(): void {
 
 * 原生模块用 `ctx.services.native.borrow('better-sqlite3')` 租借，禁止自带 `.node`。
 
+* **`events.publish` 推不到渲染端**：publish 只投递给主进程侧订阅者（插件间协作/宿主内核订阅）。要让渲染端刷新必须用 `ctx.ipc.broadcast`（渲染端 `bridge.onEvent` 接收）——两条是独立链路。
+
+* **命令免白名单**：`registerCommand` 的命令挂在 `plugin:<id>:command:<id>`，渲染端 `bridge.invoke('command:hello')` 可直接调用，**无需在 manifest.ipc 声明**（该白名单只约束 `ctx.ipc.handle`）。
+
+* **单测注意**：直接调用 `activate` 时宿主不会自动执行 `migrations`，测试需先手动 `for (const m of migrations) m.run({ storage, legacy: null, logger })`。
+
+### 4.1 更多能力速查（完整的闭链示例见 `examples/hello-world/src/main/index.ts`）
+
+```ts
+// 插件 KV（无需能力；存于插件自己的库，不写内核 settings）
+await ctx.storage.set('k', v)
+const v = await ctx.storage.get('k')
+
+// 定时任务（需 capabilities.system.features.scheduler）：every / cron，按需启停
+const jobId = ctx.services.scheduler?.every(30_000, () => ctx.ipc.broadcast('tick', { ts: Date.now() }))
+ctx.services.scheduler?.cancel(jobId)
+
+// 系统通知（需 notification）：主窗口失焦弹系统通知，激活时推渲染端
+ctx.services.notification?.notify({ title, body })
+
+// 子窗口（需 windows）：contentPath 相对插件根目录；窗口自动纳入广播目标
+const win = ctx.services.windows?.create({ width: 420, height: 320, contentPath: 'resources/demo.html' })
+
+// 原生模块租借（需 native）：只能借宿主白名单（host-native-dependencies.json）内的模块，
+// 运行时可用 ctx.services.host.listNativeModules() 查询
+const Database = ctx.services.native?.borrow('better-sqlite3')
+if (typeof Database === 'function') { /* 宿主白名单内，可 new 使用 */ }
+
+// 共享 KV（需 collaboration.shared.write）：只写本插件命名空间
+await ctx.services.shared?.set('k', v)
+await ctx.services.shared?.get('k')
+
+// 跨插件 RPC（需 collaboration.call）：respond 注册方法，call 调用（目标须在白名单）
+ctx.services.bus?.respond('echo', (p: any) => ({ pong: p?.message }))
+
+// 消息快捷操作（对话消息气泡操作菜单；target: assistant/user/all）
+ctx.contributions.registerMessageActions([{
+  id: 'extract-todo', title: '提取待办', target: 'assistant',
+  handler: () => ({ success: 'myPlugin.extracted' }),
+}])
+
+// 文件关联（系统"打开方式"路由到本插件；渲染端用 hostCapabilities.subscribeExternalFiles 接收路径）
+ctx.contributions.registerFileAssociations([{ extension: '.wahello', description: '示例文件' }])
+
+// 全局快捷键（需 globalShortcuts；accelerator 被占用时注册被宿主忽略并 warn）
+ctx.contributions.registerGlobalShortcuts([{
+  accelerator: 'CommandOrControl+Shift+H',
+  handler: () => ctx.ipc.broadcast('shortcut-pressed', { ts: Date.now() }),
+}])
+```
+
 ### 5.1 内置 Skills（可选，纯目录约定）
 
 插件可将自己擅长的领域知识以内置 Skill 形式随插件分发：**无需任何代码与 manifest 声明**，只需在插件根目录放 `skills/<技能名>/SKILL.md`（对齐 [agentskills.io](https://agentskills.io/) 开放标准格式，要求 `name` 与目录名一致）：
@@ -221,13 +280,29 @@ export default entry
 页面里调用主进程：
 
 ```tsx
-const list = await window.electronAPI.plugin.invoke('my-plugin', 'list-things')
 const bridge = host.bridge            // 或从 init 保存的 bridge 调用
 bridge.invoke('create-thing', { name })
-bridge.onEvent('data-changed', () => load())   // 返回取消订阅函数
+bridge.onEvent('data-changed', () => load())   // 订阅主进程广播，返回取消订阅函数
+// 命令直接调用（挂在 plugin:<id>:command:<id>，无需 manifest.ipc 声明）
+bridge.invoke('command:hello')
+```
+
+**宿主通用能力（hostCapabilities，可选字段按需使用）**：主题/语言、剪贴板、文件对话框、外部文件订阅、关闭守卫等，见 `examples/hello-world/src/renderer/index.tsx`：
+
+```tsx
+const caps = host.hostCapabilities
+caps.getTheme()                       // 读取当前主题 'light' | 'dark'
+caps.onThemeChange((isDark) => {})    // 订阅主题切换
+caps.getLocale()                      // 当前语言
+caps.onLocaleChange((lng) => {})      // 订阅语言切换
+caps.clipboard.readText() / writeText(text)
+const paths = await caps.showOpenDialog()
+caps.subscribeExternalFiles((absPath) => {})  // 系统"打开方式"打开关联文件时回调
 ```
 
 * 路由挂载于 `/plugin/my-plugin/`；`nav` 存在时导航项自动出现在侧边栏。
+
+* **UI 注入**：渲染端 `views`（如 `chat.toolbar`）在宿主对话输入框等注入点渲染组件，需 `capabilities.ui.views` 授权；主进程 `contributions.registerView` 可声明另一种注入路径（需在 CJS 主进程传 React 组件，示例采用渲染端 `views` 路径）。
 
 * 明/暗主题：只用 antd token / CSS 变量，自动继承宿主主题。
 
@@ -276,6 +351,8 @@ node build-plugin.mjs my-plugin --zip
 * `dependencies` 会被打包进 `dist/`，随包分发；`nativeDependencies` 不打包、由宿主借用；`devDependencies` 不随分发。
 
 * 分发包（`.wap`，内部仍为 zip 归档）**默认包含源码**：`src/**` + `package.json` + `tsconfig.json` 随包分发。已安装插件目录（`userData/plugins/<id>/`）因此自带源码与依赖声明，可 `npm install` 后直接修改 `src/` 再用构建脚本重建（AI / 用户二次开发）；如需分发仅含运行时必需文件（`manifest.json` + `dist/**` + `locale/**` + `resources/**` + `skills/**`）的精简包，在 `--zip` 基础上追加 `--no-source`。
+
+* **`resources/` 目录**：存放自包含重资源（onnx 模型、`sub-window` 用的演示 HTML 等），**不参与构建**（原样保留、随包分发），经 `ctx.storage.resourcesDir` / `services.windows.create({ contentPath: 'resources/xxx.html' })` 引用。
 
 本教程面向**脱离 WorkAvatar 源码仓库**的开发者：构建脚本 `build-plugin.mjs` 随本技能提供，复制到插件工程根目录即可使用。ship 产物是单个 `<id>-v<version>.wap`。
 
