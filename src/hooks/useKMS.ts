@@ -285,6 +285,11 @@ export function useKMS() {
     }
   }, [loadSearchDirs])
 
+  const clearSearch = useCallback(() => {
+    setSearchQuery('')
+    setSearchResults([])
+  }, [])
+
   const search = useCallback(async (query: string, mode?: SearchMode, filters?: SearchFilters) => {
     if (!query.trim()) {
       setSearchResults([])
@@ -643,6 +648,7 @@ export function useKMS() {
     updateSearchDir,
     deleteSearchDir,
     search,
+    clearSearch,
     getFileContent,
     getFileFullContent,
     getFileSummary,

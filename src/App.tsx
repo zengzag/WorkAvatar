@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useState } from 'react'
+import { useMemo, useCallback, useEffect, useState, useRef, useLayoutEffect } from 'react'
 import { Layout, Menu, Dropdown, theme } from 'antd'
 import type { MenuProps } from 'antd'
 import { PluginViewSlot } from './plugins/view-slot'
@@ -12,6 +12,7 @@ import {
   ExpandAltOutlined,
   HomeOutlined,
   AppstoreOutlined,
+  MoreOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -155,6 +156,22 @@ const App: React.FC = () => {
     navigate(key.includes('/') ? key : `/${key}`)
   }, [navigate, detachedTabs])
 
+  // 折叠图标栏单个菜单项的高度（留余量，宁少勿溢）
+  const MENU_ITEM_HEIGHT = 48
+
+  // 测量主菜单可用高度，超出时把多余插件收进"更多"子菜单
+  const mainMenuRef = useRef<HTMLDivElement>(null)
+  const [mainMenuHeight, setMainMenuHeight] = useState(0)
+  useLayoutEffect(() => {
+    const el = mainMenuRef.current
+    if (!el) return
+    const update = () => setMainMenuHeight(el.clientHeight)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   // 所有导航项的定义（icon + label + onClick）；已分离的 tab 图标视觉降级
   // icon 外层包 data-nav-key，供侧边栏右键菜单识别目标 tab
   const navItemDefs = useMemo(() => {
@@ -176,10 +193,23 @@ const App: React.FC = () => {
   }, [t, navigate, handleNavClick, detachedTabs])
 
   // 按统一配置（config 已含插件项）的完整顺序构建菜单（内置 + 插件混合排序）
+  // 折叠图标栏高度有限：插件图标超出可用高度时，多余项收进"更多"弹出子菜单
   const allMenuItems = useMemo<NonNullable<MenuProps['items']>>(() => {
     const visibleConfig = getVisibleNavItems(navConfig)
+    // settings 固定在底部，不参与"更多"折叠
+    const rootConfig = visibleConfig.filter((c) => c.key !== 'settings')
+    const builtinCount = rootConfig.filter((c) => navItemDefs[c.key as NavItemKey]).length
+    const pluginCount = rootConfig.length - builtinCount
+    // 根级图标可容纳数；超出时才为"更多"图标预留 1 个位置
+    const rootBudget = Math.max(builtinCount, Math.floor(mainMenuHeight / MENU_ITEM_HEIGHT))
+    const pluginInlineCap = pluginCount > rootBudget - builtinCount
+      ? Math.max(0, rootBudget - builtinCount - 1)
+      : rootBudget - builtinCount
+
     const items: NonNullable<MenuProps['items']> = []
-    for (const item of visibleConfig) {
+    const moreChildren: NonNullable<MenuProps['items']> = []
+    let placedPlugins = 0
+    for (const item of rootConfig) {
       const def = navItemDefs[item.key as NavItemKey]
       if (def) {
         items.push({ key: item.key, ...def })
@@ -194,15 +224,36 @@ const App: React.FC = () => {
         : plugin.icon
           ? <span style={{ display: 'inline-flex', width: 16, height: 16 }} dangerouslySetInnerHTML={{ __html: plugin.icon }} />
           : <AppstoreOutlined />
-      items.push({
+      const menuItem: NonNullable<MenuProps['items']>[number] = {
         key: plugin.key,
         icon: <span data-nav-key={plugin.key}>{wrapDetachedIcon(baseIcon, detachedTabs.includes(plugin.key))}</span>,
         label: t(plugin.label, { ns: plugin.key }),
         onClick: () => handleNavClick(`plugin/${plugin.key}`),
+      }
+      if (placedPlugins < pluginInlineCap) {
+        items.push(menuItem)
+        placedPlugins++
+      } else {
+        moreChildren.push(menuItem)
+      }
+    }
+    if (moreChildren.length > 0) {
+      items.push({
+        key: 'more',
+        icon: <span data-nav-key="more"><MoreOutlined /></span>,
+        label: t('nav.more'),
+        // 弹层最大高度 + 内部滚动（.nav-more-popup 样式见 index.css）
+        popupClassName: 'nav-more-popup',
+        children: moreChildren,
       })
     }
+    // settings 固定在底部：不参与"更多"折叠，但仍在 items 中供 mainMenu/settings 拆分
+    const settingsDef = navItemDefs['settings']
+    if (settingsDef && visibleConfig.some((c) => c.key === 'settings')) {
+      items.push({ key: 'settings', ...settingsDef })
+    }
     return items
-  }, [navConfig, pluginNavItems, navItemDefs, t, location.pathname, handleNavClick, detachedTabs])
+  }, [navConfig, pluginNavItems, navItemDefs, t, location.pathname, handleNavClick, detachedTabs, mainMenuHeight])
 
   // 分离 settings 到最底部，其余保持统一配置的排序
   const mainMenuItems = useMemo(
@@ -306,20 +357,22 @@ const App: React.FC = () => {
           }}
         >
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <Menu
-              mode="inline"
-              selectedKeys={[getSelectedKey()]}
-              items={mainMenuItems}
-              inlineCollapsed={true}
-              onContextMenu={handleNavContextMenu}
-              style={{
-                borderRight: 'none',
-                marginTop: 4,
-                flex: 1,
-                background: 'transparent',
-              }}
-              theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
-            />
+            <div ref={mainMenuRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <Menu
+                mode="inline"
+                selectedKeys={[getSelectedKey()]}
+                items={mainMenuItems}
+                inlineCollapsed={true}
+                onContextMenu={handleNavContextMenu}
+                style={{
+                  borderRight: 'none',
+                  marginTop: 4,
+                  flex: 1,
+                  background: 'transparent',
+                }}
+                theme={effectiveTheme === 'dark' ? 'dark' : 'light'}
+              />
+            </div>
             {settingsMenuItem.length > 0 && (
               <Menu
                 mode="inline"

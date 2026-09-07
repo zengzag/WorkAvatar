@@ -41,6 +41,10 @@ const FILE_TOKEN_CLASS = 'chat-input-file-token'
 /** 从 File 对象生成唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
+/** XML 转义，避免路径本身含 &、<、> 时破坏 <path> 标签闭合 */
+const xmlEscape = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 /**
  * 将包含文件令牌的编辑器内容，转换为最终发送给 LLM 的纯文本（文件令牌替换为绝对路径）
  *
@@ -61,7 +65,7 @@ const extractContentFromEditor = (editor: HTMLElement): string => {
         const el = node as HTMLElement
         if (el.classList?.contains(FILE_TOKEN_CLASS)) {
           const path = el.getAttribute('data-path') || ''
-          if (path) result += path
+          if (path) result += `<path>${xmlEscape(path)}</path>`
           // 跳过子节点（图标、文件名、×按钮等内容不参与 prompt 拼接）
           continue
         }

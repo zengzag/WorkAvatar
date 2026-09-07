@@ -281,6 +281,12 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   height: 100%;
 }
 
+/* 「更多」弹出菜单：最大高度限制（视口 60%，不超过 480px），超出内部滚动 */
+.nav-more-popup .ant-menu {
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+
 /* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
 @keyframes nav-rec-pulse {
   0% { opacity: 1; transform: scale(1); }

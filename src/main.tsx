@@ -85,6 +85,9 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
           itemBorderRadius: 4,
           iconSize: 16,
           darkSubMenuItemBg: '#1a1a1a',
+          // 折叠子菜单弹出层背景与侧边栏保持一致（避免暗色下走 antd 默认偏色）
+          popupBg: '#ffffff',
+          darkPopupBg: '#1a1a1a',
           // 悬停时给图标一个更明显的背景，类似选中的交互感
           itemHoverBg: 'rgba(0, 0, 0, 0.06)',
           darkItemHoverBg: 'rgba(255, 255, 255, 0.10)',
