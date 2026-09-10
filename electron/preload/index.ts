@@ -139,7 +139,7 @@ const electronAPI = {
     listAll: (params?: ConversationListWithEmployeeParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_LIST_ALL, params),
     get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_GET, id),
     create: (params: ConversationCreateParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_CREATE, params),
-    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string }) =>
+    update: (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_UPDATE, params),
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
@@ -383,6 +383,11 @@ const electronAPI = {
     createCollection: (params: KMSCreateCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_CREATE_COLLECTION, params),
     updateCollection: (params: KMSUpdateCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_UPDATE_COLLECTION, params),
     deleteCollection: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_DELETE_COLLECTION, id),
+    onCollectionsChanged: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.KMS_COLLECTIONS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.KMS_COLLECTIONS_CHANGED, handler)
+    },
     getCollection: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.KMS_GET_COLLECTION, id),
     addFileToCollection: (params: KMSAddFileToCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_FILE_TO_COLLECTION, params),
     addFilesToCollection: (params: KMSAddFilesToCollectionParams) => ipcRenderer.invoke(IPC_CHANNELS.KMS_ADD_FILES_TO_COLLECTION, params),

@@ -277,16 +277,28 @@ export function registerKMSHandlers(): void {
     return kmsService.listCollections()
   })
 
+  // 合集增删改后广播，通知任务输入框等订阅方实时刷新合集列表
+  function broadcastCollectionsChanged(): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(IPC_CHANNELS.KMS_COLLECTIONS_CHANGED)
+    }
+  }
+
   safeHandle(IPC_CHANNELS.KMS_CREATE_COLLECTION, async (params: KMSCreateCollectionParams) => {
-    return kmsService.createCollection(params.name, params.description || '')
+    const result = kmsService.createCollection(params.name, params.description || '')
+    broadcastCollectionsChanged()
+    return result
   })
 
   safeHandle(IPC_CHANNELS.KMS_UPDATE_COLLECTION, async (params: KMSUpdateCollectionParams) => {
-    return kmsService.updateCollection(params.id, params)
+    const result = kmsService.updateCollection(params.id, params)
+    broadcastCollectionsChanged()
+    return result
   })
 
   safeHandle(IPC_CHANNELS.KMS_DELETE_COLLECTION, async (id: string) => {
     kmsService.deleteCollection(id)
+    broadcastCollectionsChanged()
     return { success: true }
   })
 

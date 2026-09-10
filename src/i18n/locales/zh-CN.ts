@@ -1165,7 +1165,7 @@ export default {
     // 视图切换
     searchView: '搜索',
     knowledgeView: '文档管理',
-    collectionsView: '专题资料',
+    collectionsView: '合集',
     knowledgeCardsView: '知识卡片',
     // 搜索历史（嵌入搜索框下拉，不再单独页面）
     searchHistory: '搜索历史',

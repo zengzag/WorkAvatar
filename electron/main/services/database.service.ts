@@ -519,6 +519,8 @@ class DatabaseService {
     this.addColumnIfNotExists('conversations', 'context_stats_json', "TEXT DEFAULT '{}'")
     // 对话绑定的默认模型（输入框模型按钮）：各任务独立，JSON 形如 {"providerId":"","modelId":""}
     this.addColumnIfNotExists('conversations', 'default_model_json', "TEXT DEFAULT ''")
+    // 对话绑定的资料库合集 ID 列表：各任务独立，JSON 形如 ["id1","id2"]，空数组表示不限范围
+    this.addColumnIfNotExists('conversations', 'collection_ids_json', "TEXT DEFAULT ''")
     // 任务工作区目录（每个任务独立子目录），空字符串表示未分配（旧对话回退到员工工作区）
     this.addColumnIfNotExists('conversations', 'workspace_path', "TEXT DEFAULT ''")
     // 父会话 ID：委托产生的子会话记录其主管会话 ID，用于级联删除与列表过滤

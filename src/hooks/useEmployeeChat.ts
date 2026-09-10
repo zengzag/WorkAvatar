@@ -73,6 +73,9 @@ const _persistentModels = new Map<string, ModelSelection[]>()
 // 按 conversationId 绑定输入框默认模型（模型按钮）：各任务独立，切换对话时恢复各自绑定的模型
 const _persistentDefaultModels = new Map<string, { providerId: string; modelId: string }>()
 
+// 按 conversationId 缓存输入框选中的资料库合集：各任务独立，切换对话时恢复各自选择，避免跨任务串扰
+const _persistentCollectionIds = new Map<string, string[]>()
+
 // 解析对话绑定的默认模型（default_model_json，DB 持久化），无效/空返回 null
 const parseConvDefaultModel = (conv: any): { providerId: string; modelId: string } | null => {
   const raw = conv?.default_model_json
@@ -84,6 +87,18 @@ const parseConvDefaultModel = (conv: any): { providerId: string; modelId: string
     // JSON 解析失败忽略
   }
   return null
+}
+
+// 解析对话绑定的资料库合集（collection_ids_json，DB 持久化），无效/空返回空数组
+const parseConvCollectionIds = (conv: any): string[] => {
+  const raw = conv?.collection_ids_json
+  if (!raw) return []
+  try {
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr.filter((x: any) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 // 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
@@ -460,6 +475,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         inputDefaultModelRef.current = _persistentDefaultModels.get(cachedActiveConvId) || (convData ? parseConvDefaultModel(convData) : null) || null
         setInputDefaultModelState(inputDefaultModelRef.current)
+        // 恢复该对话绑定的资料库合集（优先内存缓存，其次 DB 持久化），避免上一个任务的合集选择串扰
+        const kbIds = _persistentCollectionIds.get(cachedActiveConvId) || (convData ? parseConvCollectionIds(convData) : [])
+        setSelectedCollectionIds(kbIds)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
         }
@@ -516,6 +534,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           inputDefaultModelRef.current = dbModel
           setInputDefaultModelState(dbModel)
         }
+      }
+
+      // 从 convList 恢复各对话绑定的资料库合集（仅本会话未显式设置过的）
+      for (const conv of convList) {
+        if (_persistentCollectionIds.has(conv.id)) continue
+        const dbIds = parseConvCollectionIds(conv)
+        if (dbIds.length > 0) _persistentCollectionIds.set(conv.id, dbIds)
+      }
+      // 当前激活对话若尚未恢复合集（selectConversation 早于 convList 加载），从缓存补齐
+      if (activeConversationIdRef.current) {
+        const cachedIds = _persistentCollectionIds.get(activeConversationIdRef.current)
+        if (cachedIds) setSelectedCollectionIds(cachedIds)
       }
 
       // 从 convList 恢复所有对话的 contextStats
@@ -695,6 +725,14 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         inputDefaultModelRef.current = null
         setInputDefaultModelState(null)
       }
+      // 新对话绑定资料库合集持久化到 DB（新任务模式选中的合集作为该任务的知识检索范围）
+      if (selectedCollectionIds.length > 0) {
+        _persistentCollectionIds.set(convId, selectedCollectionIds)
+        window.electronAPI.conversation.update({
+          id: convId,
+          collection_ids_json: JSON.stringify(selectedCollectionIds),
+        }).catch(() => {})
+      }
       forceScrollToBottom()
 
       refreshConversationList()
@@ -749,6 +787,16 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const defaultModelConvData = allConversations.find(c => c.id === convId)
     inputDefaultModelRef.current = cachedDefaultModel || parseConvDefaultModel(defaultModelConvData) || null
     setInputDefaultModelState(inputDefaultModelRef.current)
+    // 切换对话时恢复该对话绑定的资料库合集（优先内存缓存，其次 DB 持久化），避免上一个任务的合集选择串扰
+    const cachedKbIds = _persistentCollectionIds.get(convId)
+    const collectionConvData = allConversations.find(c => c.id === convId)
+    if (cachedKbIds) {
+      setSelectedCollectionIds(cachedKbIds)
+    } else {
+      const dbIds = collectionConvData ? parseConvCollectionIds(collectionConvData) : []
+      setSelectedCollectionIds(dbIds)
+      if (dbIds.length > 0) _persistentCollectionIds.set(convId, dbIds)
+    }
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -897,6 +945,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
       _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -924,6 +973,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         _persistentDrafts.delete(convId)
         _persistentModels.delete(convId)
         _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -959,6 +1009,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         _persistentDrafts.delete(conv.id)
         _persistentModels.delete(conv.id)
         _persistentDefaultModels.delete(conv.id)
+        _persistentCollectionIds.delete(conv.id)
       }
 
       await window.electronAPI.conversation.deleteAll(id)
@@ -991,6 +1042,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
       _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
 
       await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -1637,6 +1689,20 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setInputDefaultModelState(value)
   }, [])
 
+  // 对话模式下资料库合集选择更新：绑定到当前对话，各任务独立存储，切换对话/重启后恢复各自选择
+  const setPersistentCollectionIds = useCallback((ids: string[]) => {
+    setSelectedCollectionIds(ids)
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentCollectionIds.set(convId, ids)
+      // 持久化到 DB，保证重启/切换任务后仍按对话恢复各自的合集选择
+      window.electronAPI.conversation.update({
+        id: convId,
+        collection_ids_json: JSON.stringify(ids),
+      }).catch(() => {})
+    }
+  }, [setSelectedCollectionIds])
+
   // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
   const clearActiveConversation = useCallback(() => {
     setActiveConversationId(null)
@@ -1724,11 +1790,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (defaultModelJson) {
         _persistentDefaultModels.set(newConvId, JSON.parse(defaultModelJson))
       }
+      // 继承原任务的资料库合集绑定（collection_ids_json），保证分支任务检索范围一致
+      const collectionIdsJson = origConv.collection_ids_json
+        || (selectedCollectionIds.length > 0 ? JSON.stringify(selectedCollectionIds) : undefined)
+      if (collectionIdsJson) {
+        _persistentCollectionIds.set(newConvId, JSON.parse(collectionIdsJson))
+      }
       await window.electronAPI.conversation.update({
         id: newConvId,
         messages_json: JSON.stringify(prefix),
         message_count: prefix.length,
         default_model_json: defaultModelJson,
+        collection_ids_json: collectionIdsJson,
         minimal_mode: !!origConv.minimal_mode,
       }).catch(() => {})
 
@@ -2272,6 +2345,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setEnableThinking,
     selectedCollectionIds,
     setSelectedCollectionIds,
+    setPersistentCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     showSidePanel,
