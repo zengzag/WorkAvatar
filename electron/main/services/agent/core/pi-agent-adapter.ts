@@ -36,6 +36,7 @@ import type {
 } from './types'
 import { createLogger } from '../../logger'
 import { getProviderCompat } from '../llm/provider-compat'
+import { buildPiStreamOptions } from '../llm/pi-stream-options'
 import LLMLoggerService from '../../llm-logger.service'
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
@@ -44,8 +45,10 @@ const logger = createLogger('PiAgentAdapter')
 /** 构造 pi-ai 合成 Model<"openai-completions">，compat 配置由 provider-compat.ts 统一管理 */
 function createPiModel(config: AgentConfig): Model<'openai-completions'> {
   const providerType = config.providerType
-  const compat = getProviderCompat(providerType)
-  const reasoning = !!config.enableThinking || !!compat.thinkingFormat
+  const compat = getProviderCompat(providerType, config.model)
+  // thinkingFormat / alwaysReasoning provider 的 reasoning 必须始终为 true，
+  // 否则 pi-ai 的 thinking 分支不执行、思考开关失效（alwaysReasoning 更不允许缺省 reasoning 参数）
+  const reasoning = !!config.enableThinking || !!compat.thinkingFormat || !!compat.alwaysReasoning
 
   return {
     id: config.model,
@@ -71,6 +74,7 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
         sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
       } : {}),
       ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
+      ...(compat.zaiToolStream ? { zaiToolStream: true } : {}),
       ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   }
@@ -102,17 +106,20 @@ function createStreamFn(config: AgentConfig): StreamFn {
       messages: [...context.messages],
       ...(context.tools ? { tools: context.tools } : {}),
     }
-    const innerStream = openaiCompletionsStream(piModel, context, {
+    // 采样 / 传输设置：AgentConfig.stream（模型/供应商配置派生）优先，其次尊重 pi-agent-core 透传的 options
+    const stream = config.stream || {}
+    const innerStream = openaiCompletionsStream(piModel, context, buildPiStreamOptions({
+      providerType: config.providerType,
+      modelId: config.model,
       apiKey,
-      ...(options?.signal ? { signal: options.signal } : {}),
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-      // pi-ai stream 函数通过 reasoningEffort 决定 deepseek/qwen thinkingFormat 的开关
-      // pi-agent-core 传的 options.reasoning 是 ThinkingLevel 类型，直接复用
-      ...(options?.reasoning ? { reasoningEffort: options.reasoning } : {}),
-      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
-      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
-    } as any)
+      sessionId: options?.sessionId ?? config.sessionId,
+      signal: options?.signal,
+      streaming: true,
+      enableThinking: config.enableThinking,
+      ...stream,
+      temperature: stream.temperature ?? options?.temperature,
+      maxTokens: stream.maxTokens ?? options?.maxTokens,
+    }) as any)
     return wrapStreamWithLogging(innerStream, {
       model: config.model,
       providerType: config.providerType,

@@ -42,6 +42,7 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string
   { value: 'azure', label: 'Azure OpenAI', group: 'international' },
   { value: 'vertex', label: 'Google Vertex AI', group: 'international' },
   { value: 'bedrock', label: 'AWS Bedrock', group: 'international' },
+  { value: 'opencode-go', label: 'OpenCode Go', group: 'international' },
   { value: 'deepseek', label: 'DeepSeek (深度求索)', labelKey: 'settings.providerDeepseek', group: 'domestic' },
   { value: 'qwen', label: '通义千问 (Qwen)', labelKey: 'settings.providerQwen', group: 'domestic' },
   { value: 'zhipu', label: '智谱 AI (GLM)', labelKey: 'settings.providerZhipu', group: 'domestic' },
@@ -70,6 +71,7 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   vertex: { baseURL: '' },
   bedrock: { baseURL: '' },
   xai: { baseURL: 'https://api.x.ai/v1' },
+  'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1' },
 }
 
 // 解析 provider 的 models_json 字符串，统一处理异常与 category 默认值
@@ -269,6 +271,7 @@ const LLMSettings: React.FC = () => {
       presence_penalty: model.presence_penalty,
       max_retry: model.max_retry ?? 100,
       context_window: model.context_window,
+      thinking_budget: model.thinking_budget,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -290,6 +293,7 @@ const LLMSettings: React.FC = () => {
           presence_penalty: values.presence_penalty,
           max_retry: values.max_retry,
           context_window: values.context_window,
+          thinking_budget: values.thinking_budget,
         } : {}),
       }
 
@@ -597,6 +601,11 @@ const LLMSettings: React.FC = () => {
                   <span>{t('settings.contextWindow')} <Tooltip title={t('settings.contextWindowTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={1024} max={2000000} step={1024} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name="thinking_budget" label={
+                  <span>{t('settings.thinkingBudget')} <Tooltip title={t('settings.thinkingBudgetTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder={t('settings.thinkingBudgetPlaceholder')} />
                 </Form.Item>
               </div>
             </>

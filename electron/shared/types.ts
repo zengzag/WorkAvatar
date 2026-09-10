@@ -103,7 +103,7 @@ export interface Conversation {
   parent_conversation_id?: string
 }
 
-export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
+export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai' | 'opencode-go'
 
 /** 思考级别：false=关闭，'low'/'medium'/'high'=开启并指定强度 */
 export type ThinkingLevel = false | 'low' | 'medium' | 'high'

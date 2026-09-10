@@ -351,6 +351,8 @@ export abstract class BaseAgent {
         enableThinking: this.config.enableThinking,
         providerType: this.config.providerType,
         sessionId: this.config.sessionId,
+        // 采样 / 传输设置（temperature、max_tokens、top_p、penalties、thinking budget、超时、附加头/体）
+        ...this.config.stream,
       },
     })
   }

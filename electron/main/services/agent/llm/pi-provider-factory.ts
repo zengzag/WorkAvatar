@@ -1,5 +1,5 @@
 import LLMClientService from '../../llm-client.service'
-import { getModelConfig, resolveModelName } from '../../llm-request-builder'
+import { getModelConfig, resolveModelName, parseJsonRecord } from '../../llm-request-builder'
 import { PiAIProvider } from './pi-ai-provider'
 
 /**
@@ -28,6 +28,13 @@ export async function createPiProvider(providerId: string, modelId?: string): Pr
       temperature: modelConfig?.temperature ?? config.temperature,
       maxTokens: modelConfig?.max_tokens ?? config.max_tokens,
       enableThinking: modelConfig?.enable_thinking ?? false,
+      topP: modelConfig?.top_p,
+      frequencyPenalty: modelConfig?.frequency_penalty,
+      presencePenalty: modelConfig?.presence_penalty,
+      thinkingBudget: modelConfig?.thinking_budget,
+      timeoutMs: config.timeout_ms,
+      extraHeaders: parseJsonRecord(config.extra_headers_json),
+      extraBody: parseJsonRecord(config.extra_body_json),
     },
   })
 }

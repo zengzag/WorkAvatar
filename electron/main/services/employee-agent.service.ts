@@ -1,6 +1,7 @@
 import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
+import { parseJsonRecord } from './llm-request-builder'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
@@ -110,11 +111,17 @@ class EmployeeAgentService {
     enableThinking?: ThinkingLevel,
     conversationId?: string,
     employee?: DBEmployee,
-    minimalMode?: boolean
+    minimalMode?: boolean,
+    /** 单次调用级采样覆盖（前端 options.temperature / max_tokens），优先于模型与供应商配置 */
+    streamOverrides?: { temperature?: number; maxTokens?: number }
   ): Promise<CachedAgentEntry> {
     // 缓存 key 必须包含 conversationId：不同任务（对话）各自持有独立 agent 实例，
     // 避免并发多任务时共享同一 agent（_running/_currentSignal/MCP 引用）导致互相中断。
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}:${conversationId || 'no-conv'}`
+    // 采样覆盖同样计入 key：不同采样参数需要各自的 provider 配置快照。
+    const overrideKey = streamOverrides
+      ? `${streamOverrides.temperature ?? 'd'}/${streamOverrides.maxTokens ?? 'd'}`
+      : 'd/d'
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}:${conversationId || 'no-conv'}:${overrideKey}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
@@ -205,6 +212,18 @@ class EmployeeAgentService {
       providerType: config.provider_type,
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
+      // 采样 / 传输设置：单次调用覆盖 > 模型配置 > 供应商配置
+      stream: {
+        temperature: streamOverrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
+        maxTokens: streamOverrides?.maxTokens ?? modelConfig?.max_tokens ?? config.max_tokens,
+        topP: modelConfig?.top_p,
+        frequencyPenalty: modelConfig?.frequency_penalty,
+        presencePenalty: modelConfig?.presence_penalty,
+        thinkingBudget: modelConfig?.thinking_budget,
+        timeoutMs: config.timeout_ms,
+        extraHeaders: parseJsonRecord(config.extra_headers_json),
+        extraBody: parseJsonRecord(config.extra_body_json),
+      },
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       delegationTargets,
@@ -506,7 +525,10 @@ class EmployeeAgentService {
     }
 
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode)
+      const entry = await this.getOrCreateAgent(
+        employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode,
+        params.options ? { temperature: params.options.temperature, maxTokens: params.options.max_tokens } : undefined
+      )
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
 

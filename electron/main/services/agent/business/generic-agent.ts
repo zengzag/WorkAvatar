@@ -2,7 +2,7 @@ import { BaseAgent } from '../core/base-agent'
 import type { AgentConfig, AgentRunOptions } from '../core/types'
 import type { BaseAgentOptions } from '../core/base-agent'
 import { SkillManager } from '../skill-manager'
-import type { ToolDefinition } from '../tools/types'
+import type { ToolDefinition, OpenAIToolDefinition } from '../tools/types'
 import { createListAvailableToolsTool, createInvokeToolTool } from '../tools'
 import {
   buildStableContextMessageContent,
@@ -111,6 +111,17 @@ export class GenericAgent extends BaseAgent {
 
   getMinimalMode(): boolean {
     return this.minimalMode
+  }
+
+  /**
+   * 极简模式：纯对话智能体，不向 LLM 传递任何工具（含元工具），
+   * 退化为仅基础系统提示词的对话。非极简模式不受影响。
+   */
+  protected async resolveActiveTools(runtimeToolNames?: string[]): Promise<OpenAIToolDefinition[]> {
+    if (this.minimalMode) {
+      return []
+    }
+    return super.resolveActiveTools(runtimeToolNames)
   }
 
   setCachedSystemPrompt(prompt: string | undefined): void {
@@ -228,7 +239,8 @@ export class GenericAgent extends BaseAgent {
       skillsPrompt: useSkills ? this.skillsPrompt : undefined,
       extras: this.buildStableContextExtras(useSkills),
     })
-    const taskContent = buildTaskContextMessageContent({
+    // 极简模式：不注入工作区/任务时间/记忆等任务上下文，仅保留基础系统提示词的纯对话
+    const taskContent = this.minimalMode ? undefined : buildTaskContextMessageContent({
       workspaceContextPrompt: this.workspaceContextPrompt,
       taskTimePrompt: this.taskTimePrompt,
       memoryPrompt: this.memoryPrompt,

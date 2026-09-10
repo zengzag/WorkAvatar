@@ -27,6 +27,26 @@ export interface MessageMetadata {
   finishReason?: string
 }
 
+/**
+ * 传给 pi-ai stream 的采样与传输设置（由供应商 / 模型配置派生）。
+ * 键名与 LLMCallOptions 保持一致，便于直接展开进 PiAIProvider.defaultOptions 或 pi-ai StreamOptions。
+ */
+export interface AgentStreamSettings {
+  temperature?: number
+  maxTokens?: number
+  topP?: number
+  frequencyPenalty?: number
+  presencePenalty?: number
+  /** 思考 token 预算（映射到 pi-ai thinkingBudgets） */
+  thinkingBudget?: number
+  /** 单次请求超时（毫秒，映射到 pi-ai timeoutMs） */
+  timeoutMs?: number
+  /** 供应商级附加请求头（映射到 pi-ai options.headers） */
+  extraHeaders?: Record<string, string>
+  /** 供应商级附加请求体字段（映射到 pi-ai options.onPayload） */
+  extraBody?: Record<string, any>
+}
+
 export interface AgentConfig {
   name?: string
   instructions?: string
@@ -41,6 +61,8 @@ export interface AgentConfig {
   logLevel?: LogLevel
   /** 会话 ID，用于支持 prompt caching 的 provider 最大化 cache 命中 */
   sessionId?: string
+  /** 采样 / 传输设置（temperature、max_tokens、top_p、penalties、thinking budget、超时、附加头/体） */
+  stream?: AgentStreamSettings
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'

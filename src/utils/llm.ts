@@ -4,10 +4,10 @@ export const DOMESTIC_PROVIDERS = new Set(['deepseek', 'qwen', 'zhipu', 'volceng
 export const LOCAL_PROVIDERS = new Set(['lmstudio', 'openai-compatible'])
 
 /** 支持 reasoning_effort 的 provider（可多级思考强度） */
-const REASONING_EFFORT_PROVIDERS = new Set(['openai', 'deepseek', 'azure'])
+const REASONING_EFFORT_PROVIDERS = new Set(['openai', 'deepseek', 'azure', 'opencode-go'])
 
 /** 支持思考模式的 provider */
-const THINKING_PROVIDERS = new Set(['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu', 'xiaomi'])
+const THINKING_PROVIDERS = new Set(['deepseek', 'qwen', 'lmstudio', 'volcengine', 'zhipu', 'xiaomi', 'opencode-go'])
 
 export function supportsReasoningEffort(providerType?: string): boolean {
   return !!providerType && REASONING_EFFORT_PROVIDERS.has(providerType)
