@@ -24,6 +24,7 @@ import type {
   StreamFn,
 } from '@earendil-works/pi-agent-core'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
+import { TextLoopDetector, type LoopHit } from './loop-detector'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
 import { ToolRegistry } from '../tools/tool-registry'
 import { AgentEventEmitter } from './agent-events'
@@ -108,12 +109,19 @@ function createStreamFn(config: AgentConfig): StreamFn {
     }
     // 采样 / 传输设置：AgentConfig.stream（模型/供应商配置派生）优先，其次尊重 pi-agent-core 透传的 options
     const stream = config.stream || {}
+    // 循环检测中断控制器：与外部 signal 级联（外部中止 → 一并中止），
+    // 检测触发时仅中止本次 LLM 调用，不影响外层 agent 循环的中断语义
+    const loopAbort = new AbortController()
+    if (options?.signal) {
+      if (options.signal.aborted) loopAbort.abort()
+      else options.signal.addEventListener('abort', () => loopAbort.abort(), { once: true })
+    }
     const innerStream = openaiCompletionsStream(piModel, context, buildPiStreamOptions({
       providerType: config.providerType,
       modelId: config.model,
       apiKey,
       sessionId: options?.sessionId ?? config.sessionId,
-      signal: options?.signal,
+      signal: loopAbort.signal,
       streaming: true,
       enableThinking: config.enableThinking,
       ...stream,
@@ -126,7 +134,7 @@ function createStreamFn(config: AgentConfig): StreamFn {
       context: contextSnapshot,
       options,
       startTime,
-    })
+    }, loopAbort)
   }
 }
 
@@ -194,6 +202,9 @@ function piUsageToLogUsage(usage: PiUsage | undefined): any | undefined {
 /**
  * 包装 AssistantMessageEventStream，窃听事件累积响应信息，
  * 在流结束（done/error/消费者退出）后写入 LLM 日志。
+ * 同时对流式输出做循环检测（正文/思考/工具参数各自独立），
+ * 检测命中后中止底层请求并停止转发，result() 返回合成的错误消息，
+ * 走 pi-agent-core turn_end stopReason=error → handleAgentEvent 抛错的既有链路。
  * 保留 [Symbol.asyncIterator] 与 result() 契约，对 pi-agent-core 透明。
  */
 function wrapStreamWithLogging(
@@ -205,6 +216,7 @@ function wrapStreamWithLogging(
     options?: any
     startTime: number
   },
+  loopAbort?: AbortController,
 ): AssistantMessageEventStream {
   let content = ''
   let reasoningContent = ''
@@ -212,6 +224,34 @@ function wrapStreamWithLogging(
   let usage: PiUsage | undefined
   let errorMessage: string | undefined
   let logged = false
+  // 循环检测：正文 / 思考 / 每个工具参数流独立检测（跨流重复属合法引用，不算循环）
+  const textDetector = new TextLoopDetector()
+  const thinkingDetector = new TextLoopDetector()
+  const toolArgDetectors = new Map<number, TextLoopDetector>()
+  let loopError: string | undefined
+
+  const formatLoopError = (stream: string, hit: LoopHit): string => {
+    const unit = hit.unit.replace(/\s+/g, ' ').slice(0, 60)
+    return `检测到循环输出（${stream}）：内容 "${unit}"（周期 ${hit.period} 字符）持续重复，已自动中断`
+  }
+
+  /** 循环中断时合成的错误 AssistantMessage（含已产出的部分内容，与 pi-ai 错误事件行为一致） */
+  const buildLoopErrorResult = (): PiAssistantMessage => {
+    const contentParts: (TextContent | ThinkingContent)[] = []
+    if (content) contentParts.push({ type: 'text', text: content })
+    if (reasoningContent) contentParts.push({ type: 'thinking', thinking: reasoningContent })
+    return {
+      role: 'assistant',
+      content: contentParts,
+      api: 'openai-completions',
+      provider: logMeta.providerType || 'openai',
+      model: logMeta.model,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'error',
+      errorMessage: loopError,
+      timestamp: Date.now(),
+    }
+  }
 
   const writeLog = () => {
     if (logged) return
@@ -224,14 +264,15 @@ function wrapStreamWithLogging(
       max_tokens: logMeta.options?.maxTokens,
       stream: true as const,
     }
-    if (errorMessage) {
+    const error = loopError || errorMessage
+    if (error) {
       LLMLoggerService.getInstance().logCall({
         type: 'chatStream',
         source: 'agent',
         model: logMeta.model,
         providerType: logMeta.providerType,
         request,
-        error: errorMessage,
+        error,
       })
     } else {
       LLMLoggerService.getInstance().logCall({
@@ -255,52 +296,76 @@ function wrapStreamWithLogging(
     async *[Symbol.asyncIterator]() {
       try {
         for await (const event of innerStream) {
-          switch (event.type) {
-            case 'text_delta':
-              content += event.delta
-              break
-            case 'thinking_delta':
-              reasoningContent += event.delta
-              break
-            case 'toolcall_end':
-              toolCalls.push({
-                id: event.toolCall.id,
-                type: 'function',
-                function: {
-                  name: event.toolCall.name,
-                  arguments: JSON.stringify(event.toolCall.arguments),
-                },
-              })
-              break
-            case 'done': {
-              // done 携带 finalMessage，从中提取完整 content/usage，比 delta 累积更准确
-              const msg = event.message
-              usage = msg.usage
-              let text = ''
-              let reasoning = ''
-              const tcs: any[] = []
-              for (const c of msg.content) {
-                if (c.type === 'text') text += c.text
-                else if (c.type === 'thinking') reasoning += c.thinking
-                else if (c.type === 'toolCall') {
-                  tcs.push({
-                    id: c.id,
-                    type: 'function',
-                    function: { name: c.name, arguments: JSON.stringify(c.arguments) },
-                  })
+          if (!loopError) {
+            switch (event.type) {
+              case 'text_delta': {
+                content += event.delta
+                const hit = textDetector.push(event.delta)
+                if (hit) loopError = formatLoopError('正文', hit)
+                break
+              }
+              case 'thinking_delta': {
+                reasoningContent += event.delta
+                const hit = thinkingDetector.push(event.delta)
+                if (hit) loopError = formatLoopError('思考', hit)
+                break
+              }
+              case 'toolcall_delta': {
+                let det = toolArgDetectors.get(event.contentIndex)
+                if (!det) {
+                  det = new TextLoopDetector()
+                  toolArgDetectors.set(event.contentIndex, det)
                 }
+                const hit = det.push(event.delta)
+                if (hit) loopError = formatLoopError('工具参数', hit)
+                break
               }
-              content = text
-              reasoningContent = reasoning
-              if (tcs.length > 0) {
-                toolCalls.length = 0
-                toolCalls.push(...tcs)
+              case 'toolcall_end':
+                toolCalls.push({
+                  id: event.toolCall.id,
+                  type: 'function',
+                  function: {
+                    name: event.toolCall.name,
+                    arguments: JSON.stringify(event.toolCall.arguments),
+                  },
+                })
+                break
+              case 'done': {
+                // done 携带 finalMessage，从中提取完整 content/usage，比 delta 累积更准确
+                const msg = event.message
+                usage = msg.usage
+                let text = ''
+                let reasoning = ''
+                const tcs: any[] = []
+                for (const c of msg.content) {
+                  if (c.type === 'text') text += c.text
+                  else if (c.type === 'thinking') reasoning += c.thinking
+                  else if (c.type === 'toolCall') {
+                    tcs.push({
+                      id: c.id,
+                      type: 'function',
+                      function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+                    })
+                  }
+                }
+                content = text
+                reasoningContent = reasoning
+                if (tcs.length > 0) {
+                  toolCalls.length = 0
+                  toolCalls.push(...tcs)
+                }
+                break
               }
+              case 'error':
+                errorMessage = (event.error as PiAssistantMessage)?.errorMessage || 'LLM 流式请求失败'
+                break
+            }
+            if (loopError) {
+              // 命中循环：中止底层请求并停止转发；result() 返回合成错误消息
+              logger.warn(`Agent stream loop detected, aborting: ${loopError} (model=${logMeta.model}, latencyMs=${Date.now() - logMeta.startTime})`)
+              loopAbort?.abort()
               break
             }
-            case 'error':
-              errorMessage = (event.error as PiAssistantMessage)?.errorMessage || 'LLM 流式请求失败'
-              break
           }
           yield event
         }
@@ -309,6 +374,7 @@ function wrapStreamWithLogging(
       }
     },
     result() {
+      if (loopError) return Promise.resolve(buildLoopErrorResult())
       return innerStream.result()
     },
   }
