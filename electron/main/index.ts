@@ -39,7 +39,10 @@ process.on('uncaughtException', (error) => {
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
-  app.quit()
+  // 第二实例：argv 已在 requestSingleInstanceLock 时转发给首实例（second-instance）。
+  // ready 前调用 app.quit() 在初始化较重时不能保证终止（第二实例仍会走到 ready，
+  // 导致 .wap 双击时弹两次加载确认框、创建第二个窗口），必须用 app.exit 立即退出。
+  app.exit(0)
 }
 
 // ====== 外部文件打开（系统右键"打开方式" / 拖到应用图标） ======
@@ -152,18 +155,21 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
 }
 
 // macOS: 通过 open-file 事件接收文件（Finder 拖到 Dock 图标 / Spotlight 打开）
-app.on('open-file', (event, filePath) => {
-  const lower = filePath.toLowerCase()
-  if (lower.endsWith(`.${PLUGIN_PACKAGE_EXT}`) && fs.existsSync(filePath)) {
-    event.preventDefault()
-    handleOpenPluginFile(path.resolve(filePath))
-    return
-  }
-  if (lower.endsWith('.md') && fs.existsSync(filePath)) {
-    event.preventDefault()
-    sendOpenExternalFile(path.resolve(filePath))
-  }
-})
+// 仅锁持有实例注册，避免第二实例重复响应（第二实例应直接退出）
+if (gotTheLock) {
+  app.on('open-file', (event, filePath) => {
+    const lower = filePath.toLowerCase()
+    if (lower.endsWith(`.${PLUGIN_PACKAGE_EXT}`) && fs.existsSync(filePath)) {
+      event.preventDefault()
+      handleOpenPluginFile(path.resolve(filePath))
+      return
+    }
+    if (lower.endsWith('.md') && fs.existsSync(filePath)) {
+      event.preventDefault()
+      sendOpenExternalFile(path.resolve(filePath))
+    }
+  })
+}
 
 // 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
 app.setName('WorkAvatar')
@@ -475,6 +481,11 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  // 双保险：未拿到锁的第二实例必须立即退出，不得执行任何初始化（app.exit 之外的兜底）
+  if (!gotTheLock) {
+    app.exit(0)
+    return
+  }
   logger.info('App ready, registering IPC handlers and creating window')
 
   // 插件协议：plugin://<id>/<相对路径> → 插件目录内文件（宿主校验启停与路径越权）
@@ -589,20 +600,22 @@ app.on('activate', () => {
   }
 })
 
-app.on('second-instance', (_event, argv) => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  }
-  // Windows/Linux: 第二实例启动时从 argv 提取 .md 文件（系统右键"打开方式"）
-  const mdFiles = extractMdFilesFromArgv(argv)
-  for (const file of mdFiles) {
-    sendOpenExternalFile(file)
-  }
-  // 第二实例传入的 .wap 插件包 → 弹确认框加载
-  const pluginFiles = extractPluginFilesFromArgv(argv)
-  for (const file of pluginFiles) {
-    handleOpenPluginFile(file)
-  }
-})
+if (gotTheLock) {
+  app.on('second-instance', (_event, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
+    // Windows/Linux: 第二实例启动时从 argv 提取 .md 文件（系统右键"打开方式"）
+    const mdFiles = extractMdFilesFromArgv(argv)
+    for (const file of mdFiles) {
+      sendOpenExternalFile(file)
+    }
+    // 第二实例传入的 .wap 插件包 → 弹确认框加载
+    const pluginFiles = extractPluginFilesFromArgv(argv)
+    for (const file of pluginFiles) {
+      handleOpenPluginFile(file)
+    }
+  })
+}

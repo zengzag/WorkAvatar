@@ -1,12 +1,17 @@
 import type { ToolDefinition } from './types'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
-import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
+import FilePermissionService from '../../file-permission.service'
+import { getWorkspacePath } from './fs-tools'
+import {
+  decideCommandAccess,
+  isFileDeletionCommand,
+  isFileWriteCommand,
+} from './command-analyzer'
 import {
   IS_WINDOWS,
   parseHeredoc,
   runCommandPlatform,
   truncateOutput,
-  extractAbsolutePaths,
 } from './exec-shared'
 
 // 不可逆系统破坏类：硬拦截，不提供确认机会
@@ -20,44 +25,7 @@ const dangerousPatterns = [
   /\bperl\s+-e\b/i,
 ]
 
-// 删除类命令模式：走用户确认流程（rm -rf / Remove-Item -Recurse 等均由 isFileDeletionCommand 命中后弹确认框）
-const fileDeletionPatterns = [
-  /\brm\s+/i, /\bdel\s+/i, /\brmdir\s+/i, /\berase\s+/i,
-  /\bRemove-Item\b/i, /\brd\s+\/s/i, /\brd\s+\/q/i,
-]
-
-// 写入/新建/移动/复制类命令模式
-const fileWritePatterns = [
-  /\bcopy\s+/i, /\bcp\s+/i,                          // 复制
-  /\bmove\s+/i, /\bmv\s+/i,                          // 移动/重命名
-  /\bxcopy\s+/i, /\brobocopy\s+/i,                   // Windows 批量复制
-  /\bCopy-Item\b/i, /\bMove-Item\b/i,                // PowerShell 复制/移动
-  /\bSet-Content\b/i, /\bAdd-Content\b/i,            // PowerShell 写入
-  /\bOut-File\b/i,                                   // PowerShell 输出到文件
-  /\bNew-Item\b/i,                                   // PowerShell 新建
-  /\bmkdir\s+/i, /\bmd\s+/i,                         // 新建目录
-  /\btouch\s+/i,                                     // 新建空文件
-  /\btee\s+/i,                                       // 写入
-]
-
-function isFileDeletionCommand(command: string): boolean {
-  return fileDeletionPatterns.some(p => p.test(command))
-}
-
-/** 检测重定向写入（> file, >> file），避免误匹配比较运算符 */
-function hasRedirection(command: string): boolean {
-  // 匹配 > 或 >> 后紧跟路径首字符（盘符/斜杠/引号/点），排除 2>&1 等句柄重定向
-  return /(^|[\s|&;(])>>?\s*(?=[A-Za-z"'/])/.test(command)
-}
-
-function isFileWriteCommand(command: string): boolean {
-  return fileWritePatterns.some(p => p.test(command)) || hasRedirection(command)
-}
-
-/** 从命令中提取绝对路径（用于非工作区确认） */
-function extractPathsFromCommand(command: string): string[] {
-  return extractAbsolutePaths(command)
-}
+const filePermission = FilePermissionService.getInstance()
 
 /** 构造命令失败时的结构化错误上下文 */
 function buildErrorContext(params: {
@@ -193,45 +161,56 @@ export const shellExecTool: ToolDefinition = {
       const ctx = interactionContext.getStore()
       const highPermission = !!ctx?.highPermission
 
-      if (isModify && !highPermission) {
-        const paths = extractPathsFromCommand(scriptContentForCheck)
-        const nonWorkspacePaths = paths.filter(p => !isPathInWorkspace(p))
+      const employeeWorkspace = getWorkspacePath()
+      const cwd = args.working_dir || employeeWorkspace || process.cwd()
 
-        if (nonWorkspacePaths.length > 0) {
+      if (isModify && !highPermission) {
+        // 纯函数决策：区外字面路径批量授权 / cwd 区外目录授权 / 变量目标保守确认 / 区内放行
+        const decision = decideCommandAccess({
+          command: scriptContentForCheck,
+          cwd,
+          isDeletion,
+          isWrite,
+          boundary: {
+            isInside: p => filePermission.isPathInWorkspace(p),
+            isAuthorized: p => filePermission.isPathAuthorized(p),
+          },
+        })
+
+        if (decision.kind === 'authorize-paths') {
+          const result = await filePermission.authorizeFileOperation(decision.operation, decision.paths)
+          if (!result.allowed) return { success: false, error: result.error }
+        } else if (decision.kind === 'authorize-dir') {
+          // 授权范围就是 cwd 本身（含子树），不能取其父目录
+          const result = await filePermission.authorizeFileOperation(
+            decision.operation, [decision.dir], { scopeDir: decision.dir },
+          )
+          if (!result.allowed) return { success: false, error: result.error }
+        } else if (decision.kind === 'confirm-command') {
+          // 目标含变量/波浪线无法静态归类，或删除命令无具体目标，逐条命令保守确认
           if (!ctx) {
-            const op = isDeletion ? '删除' : '修改'
-            return { success: false, error: `文件${op}操作涉及工作区外路径，但当前无交互上下文（可能是后台任务），已拒绝执行` }
-          }
-          const operation = isDeletion ? '删除' : '修改'
-          for (const p of nonWorkspacePaths) {
-            const result = await confirmOutsideWorkspace(operation, p)
-            if (!result.ok) return { success: false, error: result.error }
-          }
-        } else if (isDeletion) {
-          if (!ctx) {
-            return { success: false, error: '删除类命令需要用户确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
+            return { success: false, error: `${decision.operation}类命令需要用户确认，但当前无交互上下文（可能是后台任务），已拒绝执行` }
           }
           try {
             const interactionService = UnifiedInteractionService.getInstance()
             const displayCmd = command.length > 200 ? command.substring(0, 200) + '...' : command
             const response = await interactionService.request({
               type: 'confirm',
-              title: '确认执行删除命令',
-              message: `即将执行可能删除文件的命令：\n\n${displayCmd}\n\n此操作不可撤销，是否确认执行？`,
+              title: `确认执行${decision.operation}命令`,
+              message: `即将执行可能${decision.operation === '删除' ? '删除文件' : '写入/修改文件'}的命令，其目标路径含变量引用或无法静态解析，无法判定是否位于工作区内：\n\n${displayCmd}\n\n此操作不可撤销，是否确认执行？`,
               danger: true,
               source: 'security:shell_delete',
             })
             if (response.cancelled || response.confirmed !== true) {
-              return { success: false, error: '用户取消了删除命令的执行' }
+              return { success: false, error: `用户取消了${decision.operation}命令的执行` }
             }
           } catch {
-            return { success: false, error: '删除命令确认失败，操作已取消' }
+            return { success: false, error: `${decision.operation}命令确认失败，操作已取消` }
           }
         }
+        // kind === 'allow'：工作区内删除/写入自动放行（工作区即用户授权的沙箱边界）
       }
 
-      const employeeWorkspace = getWorkspacePath()
-      const cwd = args.working_dir || employeeWorkspace || process.cwd()
       const timeoutSec = Math.min(Math.max(Number(args.timeout) || 30, 1), 300)
       const timeoutMs = timeoutSec * 1000
 

@@ -1029,6 +1029,7 @@ export default {
     confirm: 'Confirm',
     reject: 'Reject',
     allowAlways: 'Always allow in this task',
+    allowAlwaysDir: 'Always allow this folder',
     danger: 'Danger',
     securityWarning: 'This operation involves security risks, please confirm carefully',
     inputPlaceholder: 'Please enter...',

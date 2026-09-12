@@ -1029,6 +1029,7 @@ export default {
     confirm: '确认',
     reject: '拒绝',
     allowAlways: '本次任务始终允许',
+    allowAlwaysDir: '始终允许此文件夹',
     danger: '危险',
     securityWarning: '此操作涉及安全风险，请仔细确认',
     inputPlaceholder: '请输入...',

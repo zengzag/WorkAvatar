@@ -1,9 +1,8 @@
 import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
-import UnifiedInteractionService, { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
-import { interactionContext } from '../../unified-interaction.service'
-import DatabaseService from '../../database.service'
+import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
+import FilePermissionService from '../../file-permission.service'
 
 /**
  * 文件操作工具（已简化，仅保留核心读写编辑与成品声明）：
@@ -16,67 +15,15 @@ import DatabaseService from '../../database.service'
  *
  * 说明：创建/删除/移动/复制/重命名/列目录/搜索/查看信息等文件操作
  * 已移除，统一由 shell_exec 覆盖。
+ *
+ * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责。
  */
+
+const filePermission = FilePermissionService.getInstance()
 
 /** 当前任务的有效工作区目录：优先任务独立目录，旧对话（无任务目录）回退到员工工作区 */
 export function getWorkspacePath(): string | null {
-  try {
-    const ctx = interactionContext.getStore()
-    if (!ctx || !ctx.employeeId) return null
-    const db = DatabaseService.getInstance().getDb()
-    // 优先使用当前对话的任务工作区（沙箱边界）
-    if (ctx.conversationId) {
-      const conv = db.prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(ctx.conversationId) as { workspace_path?: string } | undefined
-      if (conv?.workspace_path) return conv.workspace_path
-    }
-    // 通用对话（无 DB 会话记录）直接使用注入的任务工作区
-    if (ctx.workspacePath) return ctx.workspacePath
-    const employee = db.prepare('SELECT workspace_path FROM employees WHERE id = ?').get(ctx.employeeId) as { workspace_path: string | null } | undefined
-    return employee?.workspace_path || null
-  } catch {
-    return null
-  }
-}
-
-export function isPathInWorkspace(filePath: string): boolean {
-  const workspacePath = getWorkspacePath()
-  if (!workspacePath) return false
-  const resolved = path.resolve(filePath)
-  const workspaceRoot = path.resolve(workspacePath)
-  return resolved.startsWith(workspaceRoot + path.sep) || resolved === workspaceRoot
-}
-
-/** 工作区外写/删除操作需用户确认，高权限模式下跳过 */
-export async function confirmOutsideWorkspace(operation: string, targetPath: string): Promise<{ ok: boolean; error?: string }> {
-  if (isPathInWorkspace(targetPath)) return { ok: true }
-
-  const ctx = interactionContext.getStore()
-  // 无交互上下文时默认拒绝，防止自动化任务等后台场景绕过工作区边界
-  if (!ctx) return { ok: false, error: `${operation}工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝` }
-
-  if (ctx.highPermission) return { ok: true }
-
-  try {
-    const interactionService = UnifiedInteractionService.getInstance()
-    const response = await interactionService.request({
-      type: 'confirm',
-      title: `确认${operation}工作区外文件`,
-      message: `即将${operation}工作区外的路径：\n\n${targetPath}\n\n此操作可能影响工作区外的文件，是否确认？`,
-      danger: true,
-      source: `security:fs_${operation}_outside_workspace`,
-      pathScope: targetPath,
-    })
-
-    if (response.cancelled || response.confirmed !== true) {
-      const reason = response.timedOut
-        ? `用户在5分钟内未响应${operation}确认，可能不在电脑旁，操作已取消`
-        : `用户取消了${operation}工作区外文件的操作`
-      return { ok: false, error: reason }
-    }
-    return { ok: true }
-  } catch {
-    return { ok: false, error: `${operation}确认失败，操作已取消` }
-  }
+  return filePermission.getWorkspacePath()
 }
 
 const PARSABLE_EXTENSIONS = new Set([
@@ -374,8 +321,8 @@ async function writeFile(args: any) {
   const resolved = path.resolve(filePath)
   const append = args.append === true
 
-  const confirm = await confirmOutsideWorkspace(append ? '追加' : '写入', resolved)
-  if (!confirm.ok) return { success: false, error: confirm.error }
+  const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved])
+  if (!confirm.allowed) return { success: false, error: confirm.error }
 
   const dir = path.dirname(resolved)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -403,8 +350,8 @@ async function readEditTarget(args: any): Promise<{ content: string; resolved: s
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
   if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  const confirm = await confirmOutsideWorkspace('编辑', resolved)
-  if (!confirm.ok) return { success: false, error: confirm.error || '编辑操作已取消' }
+  const confirm = await filePermission.authorizeFileOperation('编辑', [resolved])
+  if (!confirm.allowed) return { success: false, error: confirm.error || '编辑操作已取消' }
 
   const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
   return { content, resolved }

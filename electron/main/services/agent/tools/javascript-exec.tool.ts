@@ -2,9 +2,11 @@ import type { ToolDefinition } from './types'
 import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
-import { isPathInWorkspace, confirmOutsideWorkspace, getWorkspacePath } from './fs-tools'
+import FilePermissionService from '../../file-permission.service'
+import { getWorkspacePath } from './fs-tools'
 import { moveToTrash } from '../../common-utils'
-import { interactionContext } from '../../unified-interaction.service'
+
+const filePermission = FilePermissionService.getInstance()
 
 const OFFICE_MODULES: Record<string, any> = {}
 const MODULE_LOAD_ERRORS: Record<string, string> = {}
@@ -54,6 +56,12 @@ function extractWritePathsFromCode(code: string): string[] {
   // 3. pptxgenjs writeFile({ fileName: "..." })
   const pptxWriteRe = /\.writeFile\s*\(\s*\{[^}]*fileName\s*:\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
   while ((m = pptxWriteRe.exec(code)) !== null) {
+    if (!m[1].includes('node_modules')) paths.push(m[1])
+  }
+
+  // 4. adm-zip writeZip / writeZipPromise
+  const admZipWriteRe = /\.writeZip(?:Promise)?\s*\(\s*["'`]([A-Za-z]:[\\/][^"'`\n]*|\/[^"'`\n]+)["'`]/g
+  while ((m = admZipWriteRe.exec(code)) !== null) {
     if (!m[1].includes('node_modules')) paths.push(m[1])
   }
 
@@ -164,78 +172,89 @@ function createSandboxedReadOnlyFs(): any {
 
 /**
  * 创建异步 `file` 对象：沙箱代码用 `await file.save(path, content)` 等异步方法写文件。
- * 内部先 await confirmOutsideWorkspace（统一弹窗），再调用真实 fs。
+ * 内部经 FilePermissionService 统一授权（区内自动通过，区外弹窗确认）。
+ * 相对路径以沙箱工作目录（注入给脚本的 __dirname/__workspaceDir）为基准解析。
  */
-function createSandboxedFile(workspacePath: string, authorizedPaths: Set<string>): any {
-  const workspaceRoot = path.resolve(workspacePath)
-
+function createSandboxedFile(authorizedPaths: Set<string>, workingDir: string): any {
   const checkAndAuthorize = async (operation: string, targetPath: string): Promise<void> => {
     if (typeof targetPath !== 'string') return
     let resolved: string
-    try { resolved = path.resolve(targetPath) } catch { return }
-    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) return
+    try { resolved = path.resolve(workingDir, targetPath) } catch { return }
     if (authorizedPaths.has(resolved.toLowerCase())) return
-    const result = await confirmOutsideWorkspace(operation, resolved)
-    if (!result.ok) {
+    const result = await filePermission.authorizeFileOperation(operation, [resolved])
+    if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
     authorizedPaths.add(resolved.toLowerCase())
   }
 
+  /** 相对路径统一基于工作目录解析，授权判定与实际 fs 调用必须使用同一路径 */
+  const resolveInWorkspace = (p: string): string => path.resolve(workingDir, p)
+
   return {
     save: async (filePath: string, content: string | Buffer): Promise<void> => {
       await checkAndAuthorize('写入', filePath)
-      fs.writeFileSync(filePath, content)
+      fs.writeFileSync(resolveInWorkspace(filePath), content)
     },
     append: async (filePath: string, content: string | Buffer): Promise<void> => {
       await checkAndAuthorize('追加', filePath)
-      fs.appendFileSync(filePath, content)
+      fs.appendFileSync(resolveInWorkspace(filePath), content)
     },
     copy: async (src: string, dest: string): Promise<void> => {
       await checkAndAuthorize('复制至', dest)
-      fs.copyFileSync(src, dest)
+      fs.copyFileSync(resolveInWorkspace(src), resolveInWorkspace(dest))
     },
     move: async (src: string, dest: string): Promise<void> => {
       await checkAndAuthorize('移动至', dest)
-      fs.renameSync(src, dest)
+      fs.renameSync(resolveInWorkspace(src), resolveInWorkspace(dest))
     },
     delete: async (filePath: string): Promise<void> => {
       await checkAndAuthorize('删除', filePath)
-      await moveToTrash(filePath)
+      await moveToTrash(resolveInWorkspace(filePath))
     },
     createFolder: async (folderPath: string): Promise<void> => {
       await checkAndAuthorize('创建文件夹于', folderPath)
-      fs.mkdirSync(folderPath, { recursive: true })
+      fs.mkdirSync(resolveInWorkspace(folderPath), { recursive: true })
     },
     exists: (filePath: string): boolean => {
-      return fs.existsSync(filePath)
+      return fs.existsSync(resolveInWorkspace(filePath))
     },
   }
 }
 
 /**
- * 包装 xlsx / pptxgenjs 模块：写函数改为异步，内部先 await confirmOutsideWorkspace。
+ * 包装 xlsx / pptxgenjs / adm-zip 模块：写函数经 FilePermissionService 统一授权。
+ * 相对路径以沙箱工作目录为基准；adm-zip 的同步写无法 await 弹窗，
+ * 由执行前预扫描授权字面量路径，运行时仅做同步边界校验（未授权即拒）。
  */
-function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<string>, sandboxFile: any) {
+function createSandboxedRequire(authorizedPaths: Set<string>, sandboxFile: any, workingDir: string) {
   let cachedFs: any = null
   let cachedXlsx: any = null
   let cachedPptxgenjs: any = null
+  let cachedAdmZip: any = null
 
   /** 检查路径权限，工作区外路径异步弹窗确认 */
   const checkAndAuthorize = async (operation: string, targetPath: string): Promise<void> => {
     if (typeof targetPath !== 'string') return
     let resolved: string
-    try { resolved = path.resolve(targetPath) } catch { return }
-    const workspaceRoot = path.resolve(workspacePath)
-    const isInWorkspace = resolved === workspaceRoot || resolved.startsWith(workspaceRoot + path.sep)
-    if (isInWorkspace) return
+    try { resolved = path.resolve(workingDir, targetPath) } catch { return }
     if (authorizedPaths.has(resolved.toLowerCase())) return
-    const result = await confirmOutsideWorkspace(operation, resolved)
-    if (!result.ok) {
+    const result = await filePermission.authorizeFileOperation(operation, [resolved])
+    if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
     authorizedPaths.add(resolved.toLowerCase())
+  }
+
+  /** 同步写场景的边界校验：区内或已授权放行，否则直接拒绝（引导走预扫描/ file.save） */
+  const assertSyncWriteAllowed = (targetPath: unknown): void => {
+    if (typeof targetPath !== 'string') return
+    const resolved = path.resolve(workingDir, targetPath)
+    if (authorizedPaths.has(resolved.toLowerCase())) return
+    if (filePermission.isPathAuthorized(resolved)) return
+    throw new Error(
+      `写入工作区外路径需先获得授权: ${resolved}。请将输出路径以字符串字面量直接传入 writeZip（执行前会弹窗确认），或改用 await file.save() 写入`,
+    )
   }
 
   return (moduleName: string) => {
@@ -247,12 +266,14 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
         const originalWriteFileSync = rawXlsx.writeFileSync || rawXlsx.writeFile
         cachedXlsx = { ...rawXlsx }
         cachedXlsx.writeFile = async (wb: any, filename: string, opts?: any) => {
-          await checkAndAuthorize('写入', filename)
-          return originalWriteFile.call(rawXlsx, wb, filename, opts)
+          const target = path.resolve(workingDir, filename)
+          await checkAndAuthorize('写入', target)
+          return originalWriteFile.call(rawXlsx, wb, target, opts)
         }
         cachedXlsx.writeFileSync = async (wb: any, filename: string, opts?: any) => {
-          await checkAndAuthorize('写入', filename)
-          return originalWriteFileSync.call(rawXlsx, wb, filename, opts)
+          const target = path.resolve(workingDir, filename)
+          await checkAndAuthorize('写入', target)
+          return originalWriteFileSync.call(rawXlsx, wb, target, opts)
         }
       }
       return cachedXlsx
@@ -263,14 +284,40 @@ function createSandboxedRequire(workspacePath: string, authorizedPaths: Set<stri
         cachedPptxgenjs = class extends OFFICE_MODULES['pptxgenjs'] {
           writeFile(options: any) {
             const fileName = typeof options === 'string' ? options : options?.fileName
-            return checkAndAuthorize('写入', fileName).then(() => super.writeFile(options))
+            const target = path.resolve(workingDir, fileName)
+            return checkAndAuthorize('写入', target).then(() => {
+              const finalOptions = typeof options === 'string' ? target : { ...options, fileName: target }
+              return super.writeFile(finalOptions)
+            })
           }
         }
       }
       return cachedPptxgenjs
     }
+    // adm-zip：模块导出是工厂函数（调用后返回带自有 writeZip 方法的对象字面量，非原型方法），
+    // class extends 会被父构造器返回的原始对象整体遮蔽，必须直接包装工厂返回的实例。
+    // writeZip/writeZipPromise 同步落盘：执行前预扫描授权字面量路径，运行时同步边界校验
+    if (moduleName === 'adm-zip' && OFFICE_MODULES['adm-zip']) {
+      if (!cachedAdmZip) {
+        const RawAdmZip = OFFICE_MODULES['adm-zip']
+        cachedAdmZip = function (this: unknown, ...args: any[]) {
+          const instance: any = RawAdmZip(...args)
+          const rawWriteZip = instance.writeZip.bind(instance)
+          const rawWriteZipPromise = instance.writeZipPromise.bind(instance)
+          const guard = (targetPath: unknown) => {
+            assertSyncWriteAllowed(targetPath)
+            return typeof targetPath === 'string' ? path.resolve(workingDir, targetPath) : targetPath
+          }
+          instance.writeZip = (targetPath: any, ...rest: any[]) => rawWriteZip(guard(targetPath), ...rest)
+          instance.writeZipPromise = (targetPath: any, ...rest: any[]) => rawWriteZipPromise(guard(targetPath), ...rest)
+          return instance
+        }
+      }
+      return cachedAdmZip
+    }
     // 其他 OFFICE_MODULES 直接返回（不涉及文件写入）
-    if (OFFICE_MODULES[moduleName] && moduleName !== 'xlsx' && moduleName !== 'pptxgenjs') {
+    if (OFFICE_MODULES[moduleName]
+      && moduleName !== 'xlsx' && moduleName !== 'pptxgenjs' && moduleName !== 'adm-zip') {
       return OFFICE_MODULES[moduleName]
     }
     if (moduleName === 'fs') {
@@ -364,30 +411,20 @@ export const javascriptExecTool: ToolDefinition = {
 
     const consoleOutput: string[] = []
 
-    const ctx = interactionContext.getStore()
-    const highPermission = !!ctx?.highPermission
-
-    // 执行前预扫描：提取代码中**写/删上下文**的绝对路径，对非工作区路径弹窗确认
-    // 注意：只提取写入/删除路径，不提取读取路径（如 inspect/readFileSync 的参数）
-    // 高权限模式下跳过预扫描确认
+    // 执行前预扫描：提取代码中**写/删上下文**的绝对路径，对区外未授权路径合并为一次弹窗确认
+    // 注意：只提取写入/删除路径，不提取读取路径（如 readFileSync 的参数）
     const authorizedPaths = new Set<string>()
     const writePaths = extractWritePathsFromCode(code)
-    if (!highPermission) {
+    if (writePaths.length > 0) {
+      const result = await filePermission.authorizeFileOperation('修改', writePaths)
+      if (!result.allowed) return { success: false, error: result.error }
       for (const p of writePaths) {
-        if (!isPathInWorkspace(p)) {
-          const result = await confirmOutsideWorkspace('修改', p)
-          if (!result.ok) return { success: false, error: result.error }
-          try { authorizedPaths.add(path.resolve(p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
-        }
-      }
-    } else {
-      for (const p of writePaths) {
-        try { authorizedPaths.add(path.resolve(p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
+        try { authorizedPaths.add(path.resolve(workingDir, p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
       }
     }
 
-    const sandboxFile = createSandboxedFile(workingDir, authorizedPaths)
-    const sandboxedRequire = createSandboxedRequire(workingDir, authorizedPaths, sandboxFile)
+    const sandboxFile = createSandboxedFile(authorizedPaths, workingDir)
+    const sandboxedRequire = createSandboxedRequire(authorizedPaths, sandboxFile, workingDir)
 
     // 追踪沙箱内创建的定时器，执行结束后统一清理，避免事件循环无法退出
     const trackedTimers: NodeJS.Timeout[] = []

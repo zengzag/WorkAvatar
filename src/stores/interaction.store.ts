@@ -20,6 +20,8 @@ export interface InteractionRequest {
   danger?: boolean
   timeout?: number
   source?: string
+  /** 目录级授权范围：存在时弹窗展示"始终允许此文件夹"按钮 */
+  dirScope?: string
 }
 
 interface InteractionState {
@@ -29,7 +31,7 @@ interface InteractionState {
 
 interface InteractionActions {
   enqueue: (request: InteractionRequest) => void
-  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) => void
+  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean }) => void
   cancelCurrent: () => void
 }
 

@@ -54,6 +54,11 @@ const UnifiedInteractionModal: React.FC = () => {
     respond({ confirmed: true, cancelled: false, allowAlways: true })
   }, [currentRequest, respond])
 
+  const handleAllowAlwaysDir = useCallback(() => {
+    if (!currentRequest) return
+    respond({ confirmed: true, cancelled: false, allowAlwaysDir: true })
+  }, [currentRequest, respond])
+
   const handleCancel = useCallback(() => {
     respond({ cancelled: true })
   }, [respond])
@@ -153,9 +158,14 @@ const UnifiedInteractionModal: React.FC = () => {
           <Button onClick={handleCancel}>
             {currentRequest.type === 'confirm' ? t('interaction.reject') : t('common.cancel')}
           </Button>
-          {currentRequest.type === 'confirm' && isSecurityConfirm && (
+          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.dirScope && (
             <Button onClick={handleAllowAlways}>
               {t('interaction.allowAlways')}
+            </Button>
+          )}
+          {currentRequest.type === 'confirm' && isSecurityConfirm && currentRequest.dirScope && (
+            <Button onClick={handleAllowAlwaysDir}>
+              {t('interaction.allowAlwaysDir')}
             </Button>
           )}
           <Button

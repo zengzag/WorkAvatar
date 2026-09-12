@@ -327,14 +327,3 @@ export function truncateOutput(text: string, maxChars: number): string {
     + `\n\n... (中间 ${text.length - maxChars} 字符已截断) ...\n\n`
     + text.substring(text.length - half)
 }
-
-/** 从脚本代码中提取绝对路径（通用） */
-export function extractAbsolutePaths(text: string): string[] {
-  const paths: string[] = []
-  let m: RegExpExecArray | null
-  const quotedRe = /["']([A-Za-z]:[\\/][^"'\n]*|\/[^"'\n]+)["']/g
-  while ((m = quotedRe.exec(text)) !== null) paths.push(m[1])
-  const unquotedRe = /\b([A-Za-z]:[\\/][^\s|&;,\n]+|\/(?:home|tmp|usr|var|etc|root|opt|mnt|srv|Users|ProgramData|Windows)[^\s|&;,\n]*)/g
-  while ((m = unquotedRe.exec(text)) !== null) paths.push(m[1])
-  return [...new Set(paths)]
-}

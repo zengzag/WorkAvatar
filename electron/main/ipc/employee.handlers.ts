@@ -34,6 +34,7 @@ import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
+import FilePermissionService from '../services/file-permission.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
@@ -46,6 +47,7 @@ function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerServ
     const allConvIds = workspaceManager.getChildConversationIds(conv.id)
     for (const cid of allConvIds) {
       UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+      FilePermissionService.getInstance().clearAuthorizations(cid)
     }
     try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
   }
@@ -164,6 +166,7 @@ export function registerEmployeeHandlers(
       // 清理该会话及其所有子会话的 allowAlways 授权缓存，避免授权残留
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+        FilePermissionService.getInstance().clearAuthorizations(cid)
       }
       // 同步通知插件清理关联数据（如自动化执行历史：conversation 删除 → run 记录删除）
       try { PluginHostService.getInstance().notifyConversationDeleted(id) } catch { /* ignore */ }

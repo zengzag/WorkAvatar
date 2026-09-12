@@ -26,8 +26,8 @@ export interface InteractionRequest {
   danger?: boolean
   timeout?: number
   source?: string
-  /** 路径级去重：同一会话内该路径被确认后，后续相同路径自动通过 */
-  pathScope?: string
+  /** 目录级授权范围：前端据此展示"始终允许此文件夹"按钮，授权结果由 FilePermissionService 缓存 */
+  dirScope?: string
 }
 
 export interface InteractionResponse {
@@ -37,6 +37,8 @@ export interface InteractionResponse {
   inputValue?: string
   cancelled: boolean
   allowAlways?: boolean
+  /** 用户选择"始终允许此文件夹"：授权 dirScope 目录子树，缓存由 FilePermissionService 管理 */
+  allowAlwaysDir?: boolean
   /** 超时触发（非用户主动取消） */
   timedOut?: boolean
 }
@@ -47,8 +49,6 @@ interface PendingRequest {
   source?: string
   /** allowAlways 授权的缓存 key，优先为 conversationId，降级为 sessionId */
   allowKey?: string
-  /** 路径级去重缓存 key */
-  pathScope?: string
 }
 
 interface SessionInfo {
@@ -88,8 +88,6 @@ class UnifiedInteractionService {
    * 作用：使"本次任务始终允许"覆盖整个会话的后续消息，而非仅当前一条消息。
    */
   private allowedSourcesByKey: Map<string, Set<string>> = new Map()
-  /** 路径级去重缓存，key 为 conversationId（优先）或 sessionId（降级）。用户确认某路径后，同会话内该路径自动通过 */
-  private allowedPathsByKey: Map<string, Set<string>> = new Map()
   private ipcRegistered = false
 
   private constructor() {}
@@ -140,15 +138,6 @@ class UnifiedInteractionService {
       }
     }
 
-    // 路径级去重：同会话内已确认的路径自动通过
-    if (request.pathScope && this.isPathAllowed(allowKey, request.pathScope)) {
-      return {
-        id: '',
-        confirmed: true,
-        cancelled: false,
-      }
-    }
-
     const id = generateId()
     const fullRequest: InteractionRequest = { ...request, id }
     const timeout = request.timeout || INTERACTION_TIMEOUT_MS
@@ -163,7 +152,7 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
-      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey, pathScope: request.pathScope })
+      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey })
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
@@ -196,12 +185,11 @@ class UnifiedInteractionService {
   }
 
   /**
-   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存和路径去重缓存。
-   * 应在 conversation 删除时调用，避免内存泄漏与授权残留。
+   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存。
+   * 应在 conversation 删除时调用；文件授权缓存由 FilePermissionService.clearAuthorizations 同步清理。
    */
   clearAllowedSources(allowKey: string): void {
     this.allowedSourcesByKey.delete(allowKey)
-    this.allowedPathsByKey.delete(allowKey)
   }
 
   private isSourceAllowed(allowKey: string, source: string): boolean {
@@ -215,19 +203,6 @@ class UnifiedInteractionService {
       this.allowedSourcesByKey.set(allowKey, set)
     }
     set.add(source)
-  }
-
-  private isPathAllowed(allowKey: string, pathScope: string): boolean {
-    return this.allowedPathsByKey.get(allowKey)?.has(pathScope) || false
-  }
-
-  private allowPath(allowKey: string, pathScope: string): void {
-    let set = this.allowedPathsByKey.get(allowKey)
-    if (!set) {
-      set = new Set()
-      this.allowedPathsByKey.set(allowKey, set)
-    }
-    set.add(pathScope)
   }
 
   private createDeniedResponse(request: Omit<InteractionRequest, 'id'>, _reason: string): InteractionResponse {
@@ -251,10 +226,6 @@ class UnifiedInteractionService {
           // 用户点击"本次任务始终允许"时，缓存授权到 conversation 级别
           if (response.allowAlways && pending.source && pending.allowKey) {
             this.allowSource(pending.allowKey, pending.source)
-          }
-          // 用户确认后，缓存路径级去重（同会话内该路径后续操作自动通过）
-          if (response.confirmed && pending.pathScope && pending.allowKey) {
-            this.allowPath(pending.allowKey, pending.pathScope)
           }
           pending.resolve(response)
           return { success: true }
