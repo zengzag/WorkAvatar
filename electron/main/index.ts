@@ -175,6 +175,86 @@ if (gotTheLock) {
 app.setName('WorkAvatar')
 app.setAppUserModelId('com.workavatar.desktop')
 
+/**
+ * 内嵌网页权限策略：默认授权。
+ *
+ * Electron 在未配置 handler 时本就自动批准全部权限请求；这里显式写出来，是为了留一个
+ * 明确的收口点，而不是依赖「恰好没配」这一隐式行为。
+ *
+ * 唯一例外是 `display-capture`（录屏 / 屏幕共享）——内嵌的第三方网页没有理由抓取你的屏幕。
+ * 若要连这条也放开，把 `DENIED_WEBVIEW_PERMISSIONS` 清空即可。
+ *
+ * 只作用于 webview 所在的命名分区会话（partition: persist:xxx）；
+ * 第一方 UI 与系统音频录制（getDisplayMedia）走 defaultSession，不受影响。
+ */
+const DENIED_WEBVIEW_PERMISSIONS = new Set<string>(['display-capture'])
+
+const guardedSessions = new WeakSet<Electron.Session>()
+
+/** 给 webview 所用会话挂上权限策略（幂等，同一会话只挂一次） */
+function attachWebviewPermissionPolicy(ses: Electron.Session): void {
+  if (guardedSessions.has(ses)) return
+  guardedSessions.add(ses)
+
+  // 检查阶段直接放行，避免部分 Web API 因 check 被拒而降级或反复发起 request
+  ses.setPermissionCheckHandler(() => true)
+
+  ses.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(!DENIED_WEBVIEW_PERMISSIONS.has(permission))
+  })
+}
+
+/**
+ * 内嵌网页视图（<webview>）安全守卫。
+ *
+ * 主窗口已开启 webviewTag，任何渲染端都可创建 <webview>，因此必须在这里统一收口：
+ *  1. 剥离 guest 的 preload / preloadURL —— 否则被嵌入的第三方页面可经恶意 preload 拿到 Node 能力；
+ *  2. 强制 nodeIntegration=false / contextIsolation=true / sandbox=true / webSecurity=true；
+ *  3. src 必须命中「已启用插件 webview 能力域」声明的 https 域名白名单，未声明一律拒绝；
+ *  4. guest 的 window.open 收敛为受加固的应用内子窗口（保留站点登录弹窗流程，如微信/短信验证）；
+ *  5. 权限策略：默认授权（与 Electron 默认一致），仅拒绝内嵌网页录屏。
+ */
+function registerWebviewGuard(): void {
+  app.on('web-contents-created', (_event, contents) => {
+    // 4) guest 的弹窗：加固 webPreferences，放行站点自身的登录弹窗流程
+    if (contents.getType() === 'webview') {
+      // 5) 权限策略：默认授权（仅拒绝 display-capture）
+      attachWebviewPermissionPolicy(contents.session)
+      contents.setWindowOpenHandler(() => ({
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+          },
+        },
+      }))
+      return
+    }
+
+    // 1)~3) 嵌入方（主窗口 / 独立窗口）创建 <webview> 时校验
+    contents.on('will-attach-webview', (event, webPreferences, params) => {
+      delete webPreferences.preload
+      delete (webPreferences as { preloadURL?: string }).preloadURL
+      webPreferences.nodeIntegration = false
+      ;(webPreferences as { nodeIntegrationInSubFrames?: boolean }).nodeIntegrationInSubFrames = false
+      webPreferences.contextIsolation = true
+      webPreferences.sandbox = true
+      webPreferences.webSecurity = true
+
+      if (!PluginHostService.getInstance().isWebviewUrlAllowed(params.src)) {
+        event.preventDefault()
+        logger.warn(`拒绝内嵌网页: ${params.src}（未命中已启用插件的 webview 白名单）`)
+      }
+    })
+  })
+}
+
+registerWebviewGuard()
+
 const isDev = !app.isPackaged
 
 // 注册 app-file:// 特权协议，让渲染进程能通过 URL 访问本地文件（用于 file-viewer 预览）
@@ -394,7 +474,12 @@ async function createWindow() {
       preload: getPreloadPath(),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: true
+      webSecurity: true,
+      // 内嵌第三方网页（如豆包 / DeepSeek 网页版）依赖 <webview>。
+      // 全局放开创建能力，但 guest 侧由 registerWebviewGuard 统一收口：
+      // 强制剥离 preload、关闭 nodeIntegration、开启 contextIsolation/sandbox，
+      // 且 src 必须命中「已启用插件 webview 能力域」声明的 https 白名单。
+      webviewTag: true
     },
     autoHideMenuBar: true,
     frame: false,

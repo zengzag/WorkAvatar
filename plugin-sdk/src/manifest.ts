@@ -35,6 +35,9 @@ export type PluginSystemFeature =
 /** KMS 数据查询类型（services.kms.query 白名单） */
 export type PluginKmsQueryType = 'search' | 'content' | 'collections'
 
+/** 内嵌网页视图的站点白名单条目（capabilities.webview.origins） */
+export type PluginWebviewOrigin = string
+
 /** UI 注入点（capabilities.ui.views） */
 export type PluginViewPoint =
   | 'chat.toolbar' // 对话输入框工具栏
@@ -53,6 +56,19 @@ export type PluginCapability =
   | { domain: 'events'; subscribe?: string[]; publish?: boolean }
   | { domain: 'ui'; views: PluginViewPoint[] }
   | { domain: 'system'; features: PluginSystemFeature[] }
+  | {
+      /**
+       * 内嵌网页视图：允许插件在主窗口内用 `<webview>` 内嵌第三方网页。
+       * 宿主据此收口 `will-attach-webview`：src 必须命中 origins 白名单（仅 https），
+       * 且强制剥离 preload、禁止 nodeIntegration、开启 contextIsolation/sandbox。
+       */
+      domain: 'webview'
+      /**
+       * 允许嵌入的站点白名单。每项为主机名精确匹配（`chat.deepseek.com`）
+       * 或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）。协议恒为 https。
+       */
+      origins: PluginWebviewOrigin[]
+    }
   | {
       // 插件协作：共享 KV + 跨插件 RPC
       domain: 'collaboration'

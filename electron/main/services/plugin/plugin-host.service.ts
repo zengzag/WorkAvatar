@@ -43,6 +43,8 @@ import {
   getSharedCapability,
   canCallPlugin,
   validateCapabilities,
+  getWebviewOrigins,
+  matchWebviewOrigin,
 } from './plugin-capability'
 import { createDataAccessService } from './plugin-data-access'
 import { createExecuteService } from './plugin-execute'
@@ -1916,6 +1918,31 @@ class PluginHostService {
   /** tab 分离窗口用：内核 tab 或插件的 detachable 均可分离 */
   isDetachable(tabKey: string): boolean {
     return this.getPluginNavItem(tabKey)?.detachable === true
+  }
+
+  /**
+   * 汇总所有「已启用」插件声明的内嵌网页站点白名单。
+   * 主窗口 `<webview>` 守卫（will-attach-webview）据此判定 src 是否放行。
+   */
+  getAllowedWebviewOrigins(): string[] {
+    const out = new Set<string>()
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.status === 'invalid') continue
+      for (const origin of getWebviewOrigins(record.manifest.capabilities)) out.add(origin)
+    }
+    return Array.from(out)
+  }
+
+  /** 判断某个 `<webview>` 的 src 是否被许可（仅 https，且命中已启用插件的白名单） */
+  isWebviewUrlAllowed(rawUrl: string): boolean {
+    let parsed: URL
+    try {
+      parsed = new URL(rawUrl)
+    } catch {
+      return false
+    }
+    if (parsed.protocol !== 'https:') return false
+    return this.getAllowedWebviewOrigins().some(o => matchWebviewOrigin(o, parsed.hostname))
   }
 
   getAgentTools(): unknown[] {

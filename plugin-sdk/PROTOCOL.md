@@ -68,6 +68,7 @@ manifest `capabilities` 数组声明插件可访问的能力域，宿主在服�
 | `execute` | `{ domain:'execute', kinds:[...] }` | `services.execute.execute` | 统一执行入口（agent-task/agent-chat/llm-chat/llm-stream） |
 | `events` | `{ domain:'events', subscribe?:[...], publish?:boolean }` | `services.events.subscribe/publish` | 事件总线（订阅白名单 + 发布开关） |
 | `ui` | `{ domain:'ui', views:[...] }` | 渲染端 `views` + `contributions.registerView` | UI 注入（注入点白名单） |
+| `webview` | `{ domain:'webview', origins:[...] }` | 渲染端 `<webview>` | 在主窗口内嵌第三方网页（域名白名单 + guest 强制加固） |
 | `system` | `{ domain:'system', features:[...] }` | `services.notification/scheduler/windows/native` | 系统能力（特性白名单） |
 | `collaboration` | `{ domain:'collaboration', shared?:{read?,write}, call?:[...] }` | `services.shared` + `services.bus` | 插件协作：共享 KV + 跨插件 RPC |
 
@@ -75,6 +76,8 @@ manifest `capabilities` 数组声明插件可访问的能力域，宿主在服�
 **执行类型**：`agent-task` / `agent-chat` / `llm-chat` / `llm-stream`。
 **系统特性**：`notification` / `scheduler` / `windows` / `native` / `globalShortcuts`。
 **UI 注入点**：`chat.toolbar` / `chat.quick` / `chat.header` / `sidebar.footer` / `settings.tab` / `message.menu` / `message.bubble`。
+
+**内嵌网页域名**（`webview.origins`）：每个元素为主机名（`chat.deepseek.com`）或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）；恒要求 https，不接受协议/端口/路径。宿主在 `will-attach-webview` 处校验 src 是否命中**所有已启用插件**该声明的并集。
 
 **基础能力**（无需声明）：`logger` / `host` / `ipc` / `storage` / `contributions` / `paths`。
 
@@ -172,6 +175,29 @@ registerView(view)                 // 声明 UI 注入意图（需 capabilities.
 registerCommand(command)           // 注册命令（可被斜杠菜单/宿主调用）
 ```
 
+### 8.3 内嵌第三方网页（webview）
+
+需 `capabilities.webview` 授权。插件在渲染端直接使用 `<webview>` 标签，把第三方网页嵌进主窗口页面：
+
+```ts
+// 渲染端：这三个属性必须在元素挂载进 DOM 之前设置（partition 首次导航后不可更改）
+const wv = document.createElement('webview')
+wv.setAttribute('partition', 'persist:my-plugin-xxx')  // 持久化会话，保住登录态
+wv.setAttribute('useragent', DESKTOP_CHROME_UA)         // 见下方「运行环境检测」
+wv.setAttribute('allowpopups', '')                      // 放行站点自身登录弹窗
+wv.setAttribute('src', 'https://example.com/')
+container.appendChild(wv)
+```
+
+- **必须开启 `webviewTag`**：宿主主窗口已在 `webPreferences` 中开启；插件无需也不应重复配置。
+- **guest 强制加固**：宿主在 `will-attach-webview` 统一剥离 `preload`/`preloadURL`，并强制 `nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`，插件无法放宽。
+- **权限默认授权**：guest 所在分区会话上装了显式 handler，策略与 Electron 默认一致——除 `display-capture`（录屏 / 屏幕共享）一律拒绝外，`media`（摄像头 / 麦克风）、`geolocation`、`notifications`、`clipboard-read`、`midi` 等全部自动批准，**不会向用户弹窗**。宿主显式写出这条策略是为了留一个明确收口点，而不是依赖「恰好没配 handler」。
+- **域名白名单**：src 必须命中 `webview.origins`，否则 `preventDefault` 且 host 记 warn。被拒绝时 guest 根本不会创建，**不会触发任何事件**——插件应设超时兜底提示，而不是等待 `did-fail-load`。
+- **`<webview>` 不受站点 `frame-ancestors` / `X-Frame-Options` 限制**：它是独立 guest（OOPIF），不是普通 iframe，因此 `frame-ancestors 'none'` 的站点也能内嵌；同一场景下 `<iframe>` 会被明确拒绝。
+- **运行环境检测**：部分站点（如 DeepSeek）会识别 Electron 特征 UA 并弹出「使用环境异常」拒绝服务，需要显式设置 `useragent` 伪装为桌面 Chrome。
+- **guest 内导航不在白名单校验范围内**：首次 attach 后的站内跳转与登录重定向（含第三方 OAuth 域）必须放行，否则登录流程会被打断；这是有意的取舍。
+- **布局**：`<webview>` 内部依赖 `display:flex`，不要覆写该属性（可用 `display:inline-flex`）。DOM 浮层（下拉、弹窗）可以正常盖在 `<webview>` 之上。
+
 ## 9. IPC 约定
 
 - preload 只暴露通用桥：`window.electronAPI.plugin.invoke(pluginId, channel, payload)` / `onEvent(pluginId, cb)`。
@@ -200,5 +226,7 @@ registerCommand(command)           // 注册命令（可被斜杠菜单/宿主�
 ## 13. 安全边界
 
 - 启动时静态扫描：拒绝自带 `.node`、拒绝 manifest 通道越权、拒绝 capabilities 越权。
-- 能力域授权：data/execute/events/ui/system 各域在服务入口统一校验。
+- 能力域授权：data/execute/events/ui/system/webview 各域在服务入口统一校验。
+- 内嵌网页收口（`will-attach-webview`）：guest 一律剥离 preload 并强制 `nodeIntegration=false` / `contextIsolation=true` / `sandbox=true`；src 必须命中已启用插件的 https 域名白名单。未声明 `webview` 能力域的插件所在应用不会放行任何内嵌。
+- 内嵌网页权限策略（guest 分区会话）：默认授权（除 `display-capture` 拒绝外全部自动批准，与 Electron 默认行为一致）。仅作用于 webview 命名分区，第一方 UI 与 `defaultSession` 的 `getDisplayMedia`（系统音频录制）不受影响。
 - 敏感数据剥离：llmProviders 的 api_key 不暴露给插件。

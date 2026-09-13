@@ -9,6 +9,7 @@ export type {
   PluginKmsQueryType,
   PluginSystemFeature,
   PluginViewPoint,
+  PluginWebviewOrigin,
 } from './manifest'
 export type {
   PluginToolContext,

@@ -118,6 +118,9 @@ class TabWindowService {
         nodeIntegration: false,
         contextIsolation: true,
         webSecurity: true,
+        // 与主窗口保持一致：插件 tab 分离为独立窗口后仍需支持 <webview> 内嵌网页
+        // （guest 侧的加固与域名白名单校验由 main 的 registerWebviewGuard 统一收口）
+        webviewTag: true,
       },
       autoHideMenuBar: true,
       frame: false,
