@@ -168,7 +168,9 @@ export const shellExecTool: ToolDefinition = {
       const isModify = isDeletion || isWrite
 
       const ctx = interactionContext.getStore()
+      // 单条消息级高权限 或 本轮任务级高权限（确认弹窗中用户选择"本轮任务不再提醒"）
       const highPermission = !!ctx?.highPermission
+        || UnifiedInteractionService.getInstance().isTaskHighPermission()
 
       const employeeWorkspace = getWorkspacePath()
       const cwd = args.working_dir || employeeWorkspace || process.cwd()

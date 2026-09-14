@@ -446,8 +446,11 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.INTERACTION_REQUEST, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.INTERACTION_REQUEST, handler)
     },
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean }) =>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) =>
       ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_RESPONSE, response),
+    /** 关闭/开启"本轮任务不再提醒"高权限模式（conversationId 优先，无 DB 会话时传 sessionId） */
+    setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) =>
+      ipcRenderer.invoke(IPC_CHANNELS.INTERACTION_SET_TASK_PERMISSION, params),
   },
 
   // 宿主通用通知（自动化完成 / ask_user 交互等）：插件通知（日历提醒）经插件桥广播，不占宿主通道
@@ -515,7 +518,8 @@ export type ElectronAPI = typeof electronAPI & {
   getPathForFile: (file: File) => string
   interaction: {
     onRequest: (callback: (request: any) => void) => () => void
-    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean }) => Promise<{ success: boolean }>
+    respond: (response: { id: string; confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) => Promise<{ success: boolean }>
+    setTaskHighPermission: (params: { conversationId?: string; sessionId?: string; enabled: boolean }) => Promise<{ success: boolean; error?: string }>
   }
 }
 

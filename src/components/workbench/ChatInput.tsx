@@ -5,6 +5,7 @@ import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { isColorDark } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
+import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -305,6 +306,9 @@ const ChatInput: React.FC<{
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
   const [highPermission, setHighPermission] = useState(false)
+  /** 本轮任务高权限模式（确认弹窗中选择"本轮任务不再提醒"后开启，跨消息持续到任务结束或手动关闭） */
+  const taskHighPermission = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
+  const disableTaskHighPermission = useTaskPermissionStore((s) => s.disable)
   const editorRef = useRef<HTMLDivElement>(null)
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
@@ -491,14 +495,14 @@ const ChatInput: React.FC<{
     // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
     // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
     // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
-    const sendHighPermission = highPermission
+    const sendHighPermission = highPermission || taskHighPermission
     onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
     setHighPermission(false)
-  }, [hasEditorContent, attachedImages, selectedModels, highPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, highPermission, taskHighPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
@@ -1380,13 +1384,25 @@ const ChatInput: React.FC<{
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
-                <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
+                <Tooltip title={
+                  taskHighPermission
+                    ? t('workbench.highPermissionTaskOn')
+                    : (highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff'))
+                }>
                   <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => setHighPermission(!highPermission)}
+                    onClick={() => {
+                      // 任务级高权限：点击关闭（同步撤销主进程登记），避免界面显示关闭但后端继续放行
+                      if (taskHighPermission) {
+                        disableTaskHighPermission(conversationId)
+                        setHighPermission(false)
+                        return
+                      }
+                      setHighPermission(!highPermission)
+                    }}
                     style={{
-                      color: highPermission ? token.colorWarning : token.colorTextQuaternary,
+                      color: highPermission || taskHighPermission ? token.colorWarning : token.colorTextQuaternary,
                       padding: '0 2px', height: 20, minWidth: 20,
-                      background: highPermission ? token.colorWarningBg : 'transparent',
+                      background: highPermission || taskHighPermission ? token.colorWarningBg : 'transparent',
                     }} />
                 </Tooltip>
               )}

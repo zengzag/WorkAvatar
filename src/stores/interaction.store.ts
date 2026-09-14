@@ -22,6 +22,8 @@ export interface InteractionRequest {
   source?: string
   /** 目录级授权范围：存在时弹窗展示"始终允许此文件夹"按钮 */
   dirScope?: string
+  /** 发起请求的会话 id：弹窗据此把"本轮任务不再提醒"状态标记到对应会话 */
+  conversationId?: string
 }
 
 interface InteractionState {
@@ -31,7 +33,7 @@ interface InteractionState {
 
 interface InteractionActions {
   enqueue: (request: InteractionRequest) => void
-  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean }) => void
+  respond: (response: { confirmed?: boolean; selectedValue?: string; inputValue?: string; cancelled: boolean; allowAlways?: boolean; allowAlwaysDir?: boolean; taskHighPermission?: boolean }) => void
   cancelCurrent: () => void
 }
 

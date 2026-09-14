@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag } from 'antd'
+import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag, Popconfirm, App } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useInteractionStore, type InteractionRequest } from '../../stores/interaction.store'
+import { useTaskPermissionStore } from '../../stores/task-permission.store'
 
 const { TextArea } = Input
 const { Text, Paragraph } = Typography
 
 const UnifiedInteractionModal: React.FC = () => {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const currentRequest = useInteractionStore((s) => s.currentRequest)
   const respond = useInteractionStore((s) => s.respond)
   const enqueue = useInteractionStore((s) => s.enqueue)
@@ -58,6 +60,17 @@ const UnifiedInteractionModal: React.FC = () => {
     if (!currentRequest) return
     respond({ confirmed: true, cancelled: false, allowAlwaysDir: true })
   }, [currentRequest, respond])
+
+  /**
+   * "本轮任务不再提醒"：开启任务级高权限模式（Popconfirm 已做高危二次确认）。
+   * 主进程登记随确认响应（taskHighPermission）完成；本地仅同步界面状态，供 ChatInput 高权限按钮显示并支持关闭。
+   */
+  const handleTaskHighPermission = useCallback(() => {
+    if (!currentRequest) return
+    useTaskPermissionStore.getState().enable(currentRequest.conversationId)
+    respond({ confirmed: true, cancelled: false, taskHighPermission: true })
+    message.warning(t('interaction.taskHighPermissionEnabled'), 5)
+  }, [currentRequest, respond, message, t])
 
   const handleCancel = useCallback(() => {
     respond({ cancelled: true })
@@ -167,6 +180,28 @@ const UnifiedInteractionModal: React.FC = () => {
             <Button onClick={handleAllowAlwaysDir}>
               {t('interaction.allowAlwaysDir')}
             </Button>
+          )}
+          {currentRequest.type === 'confirm' && isSecurityConfirm && (
+            <Popconfirm
+              title={t('interaction.taskHighPermissionTitle')}
+              description={
+                <div style={{ maxWidth: 300 }}>
+                  <Text type="danger" style={{ display: 'block', marginBottom: 8 }}>
+                    {t('interaction.taskHighPermissionDesc')}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('interaction.taskHighPermissionCloseHint')}
+                  </Text>
+                </div>
+              }
+              icon={<WarningOutlined style={{ color: '#ff4d4f' }} />}
+              okText={t('interaction.taskHighPermissionOk')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ danger: true }}
+              onConfirm={handleTaskHighPermission}
+            >
+              <Button danger>{t('interaction.taskHighPermission')}</Button>
+            </Popconfirm>
           )}
           <Button
             type="primary"

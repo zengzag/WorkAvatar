@@ -1,6 +1,6 @@
 import type { ToolDefinition } from './types'
 import SubAgentRuntime from '../../agent-runtime/runtime'
-import { interactionContext } from '../../unified-interaction.service'
+import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
 
 /** 单次并行派发的最大子任务数 */
 const MAX_TASKS = 5
@@ -125,7 +125,8 @@ async function handleLaunchAgents(args: Record<string, any>): Promise<any> {
       delegationChain: store.delegationChain ?? [],
       parentAbortSignal: store.abortSignal,
       enableThinking: store.enableThinking,
-      highPermission: store.highPermission,
+      // 任务级高权限（确认弹窗中"本轮任务不再提醒"）随委托下传：子员工在自身工作区外操作同样免确认
+      highPermission: store.highPermission || UnifiedInteractionService.getInstance().isTaskHighPermission(),
     })
     if (launched.success && launched.runId) {
       runIds.push(launched.runId)

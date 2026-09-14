@@ -8,6 +8,7 @@ import PathService from './path.service'
  * - 工作区边界判定（路径规范化后前缀匹配，兼容大小写/斜杠/符号链接/8.3 短名）
  * - 会话级授权缓存：目录级（"始终允许此文件夹"，含子树）+ 精确路径级（仅本次确认）
  * - 批量确认：多个区外路径按公共父目录归并，单次弹窗完成授权
+ * - 任务级高权限（"本轮任务不再提醒"，登记在 UnifiedInteractionService）：本轮任务后续区外操作直接放行
  *
  * 所有需要文件权限判定的工具（file_write/file_edit/shell_exec/javascript_exec）
  * 统一通过 authorizeFileOperation 走本服务，不再各自实现边界判定与弹窗。
@@ -148,7 +149,8 @@ class FilePermissionService {
     if (!ctx) {
       return { allowed: false, error: `${operation}工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝` }
     }
-    if (ctx.highPermission) return { allowed: true }
+    // 高权限模式：单条消息级（ctx.highPermission）或本轮任务级（用户在确认弹窗选择"本轮任务不再提醒"）
+    if (ctx.highPermission || UnifiedInteractionService.getInstance().isTaskHighPermission()) return { allowed: true }
 
     // "始终允许此文件夹"的授权范围：显式 scopeDir 优先（目标本身是目录），否则取公共父目录
     let dirScope = (options?.scopeDir ? normalizePath(options.scopeDir) : null)

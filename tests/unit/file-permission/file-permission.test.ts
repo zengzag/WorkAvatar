@@ -14,6 +14,7 @@ interface TestCtx {
   sessionId: string
   employeeId: string
   workspacePath: string
+  conversationId?: string
 }
 
 function withCtx<T>(ctx: TestCtx, fn: () => Promise<T>): Promise<T> {
@@ -179,5 +180,46 @@ describe('FilePermissionService', () => {
 
       req.mockRestore()
     })
+  })
+
+  it('本轮任务高权限模式：开启后区外路径直接通过，清理后恢复弹窗', async () => {
+    const interactionService = UnifiedInteractionService.getInstance()
+    const ctx: TestCtx = { sessionId: 's11', employeeId: 'e1', workspacePath: root, conversationId: 'conv-task-hp' }
+    const outside = path.join(root, '..', 'task-hp', 'a.txt')
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false })
+
+      interactionService.setTaskHighPermission('conv-task-hp', true)
+      const allowed = await service.authorizeFileOperation('写入', [outside])
+      expect(allowed.allowed).toBe(true)
+      expect(req).not.toHaveBeenCalled()
+
+      // 会话删除：clearAllowedSources 撤销任务级高权限后恢复弹窗
+      interactionService.clearAllowedSources('conv-task-hp')
+      service.clearAuthorizations('conv-task-hp')
+      const asked = await service.authorizeFileOperation('写入', [outside])
+      expect(asked.allowed).toBe(true)
+      expect(req).toHaveBeenCalledTimes(1)
+
+      req.mockRestore()
+    })
+  })
+
+  it('本轮任务高权限模式：仅作用于登记会话，不波及其他会话', async () => {
+    const interactionService = UnifiedInteractionService.getInstance()
+    interactionService.setTaskHighPermission('conv-hp-a', true)
+    const ctx: TestCtx = { sessionId: 's12', employeeId: 'e1', workspacePath: root, conversationId: 'conv-hp-b' }
+    await withCtx(ctx, async () => {
+      // 未登记的会话仍走弹窗（开关打开时 isTaskHighPermission 才为 true）
+      expect(interactionService.isTaskHighPermission()).toBe(false)
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false })
+      await service.authorizeFileOperation('写入', [path.join(root, '..', 'task-hp-b.txt')])
+      expect(req).toHaveBeenCalledTimes(1)
+      req.mockRestore()
+    })
+    // 会话 A 的上下文仍视为高权限
+    expect(interactionService.isTaskHighPermission('conv-hp-a')).toBe(true)
+    interactionService.clearAllowedSources('conv-hp-a')
+    expect(interactionService.isTaskHighPermission('conv-hp-a')).toBe(false)
   })
 })
