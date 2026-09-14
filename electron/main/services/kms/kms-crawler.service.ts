@@ -191,12 +191,15 @@ class KMSCrawlerService {
   private async applyChanges(changes: DirChanges, signal?: AbortSignal): Promise<{ newFiles: number; modifiedFiles: number; deletedFiles: number }> {
     const { deletedFileIds, newFiles, modifiedFiles, dirId } = changes
 
-    // 1) 批量删除已删除文件的索引和记录
+    // 1) 批量删除已删除文件的索引和记录（分批防超 SQLITE 参数上限 999）
     if (deletedFileIds.length > 0) {
       const t = Date.now()
       KMSSearchEngineService.getInstance().deleteIndexByFiles(deletedFileIds)
-      const placeholders = deletedFileIds.map(() => '?').join(',')
-      this.db.prepare(`DELETE FROM kms_files WHERE id IN (${placeholders})`).run(...deletedFileIds)
+      for (let i = 0; i < deletedFileIds.length; i += 500) {
+        const batch = deletedFileIds.slice(i, i + 500)
+        const placeholders = batch.map(() => '?').join(',')
+        this.db.prepare(`DELETE FROM kms_files WHERE id IN (${placeholders})`).run(...batch)
+      }
       logger.info(`Apply: deleted ${deletedFileIds.length} files in ${Date.now() - t}ms`)
     }
 

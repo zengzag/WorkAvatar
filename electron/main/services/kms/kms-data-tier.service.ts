@@ -90,10 +90,14 @@ class KMSDataTierService {
     const updateTierBatch = (ids: string[], tier: 'cold' | 'hot') => {
       if (ids.length === 0) return
       const tx = this.db.transaction((fileIds: string[], targetTier: string) => {
-        const placeholders = fileIds.map(() => '?').join(',')
-        this.db.prepare(
-          `UPDATE kms_files SET data_tier = ?, updated_at = unixepoch() WHERE id IN (${placeholders})`
-        ).run(targetTier, ...fileIds)
+        // 分批防超 SQLITE 参数上限（999）
+        for (let i = 0; i < fileIds.length; i += 500) {
+          const batch = fileIds.slice(i, i + 500)
+          const placeholders = batch.map(() => '?').join(',')
+          this.db.prepare(
+            `UPDATE kms_files SET data_tier = ?, updated_at = unixepoch() WHERE id IN (${placeholders})`
+          ).run(targetTier, ...batch)
+        }
       })
       tx(ids, tier)
     }

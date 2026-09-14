@@ -802,13 +802,15 @@ class KMSDatabaseService {
   public checkpoint(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'PASSIVE'): { wal_pages: number; wal_frames: number; checkpointed: number } {
     const result = this.db.pragma(`wal_checkpoint(${mode})`) as any[]
     const row = result[0] || {}
-    // 同步对向量库做 checkpoint
+    // wal_checkpoint 返回三列：(busy, log, checkpointed)
+    // busy: 是否被阻塞（0/1）；log: WAL 帧数；checkpointed: 已写回主库的帧数
     this.vectorDb.pragma(`wal_checkpoint(${mode})`)
     return {
-      wal_pages: Number(row.busy ?? 0),
+      wal_pages: Number(row.log ?? 0),
       wal_frames: Number(row.log ?? 0),
       checkpointed: Number(row.checkpointed ?? 0),
-    }
+      // busy 标志不映射到 wal_pages：busy=1 表示本次 checkpoint 被阻塞，非页数
+    } as { wal_pages: number; wal_frames: number; checkpointed: number }
   }
 
   /**
