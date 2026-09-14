@@ -79,6 +79,21 @@ export class LRUBoundedCache<V> {
       this.totalBytes -= newSize
       this.cache.delete(key)
       this.bytesMap.delete(key)
+      return
+    }
+
+    // 更新视为「最近使用」：移到队尾，保证淘汰时不会误删刚更新的条目
+    this.cache.delete(key)
+    this.cache.set(key, value)
+
+    // 原地增量写入同样可能撑爆上限（如多次追加 embedding），
+    // 与 set 一致从最旧条目开始淘汰，避免 update 路径绕过 maxBytes 约束导致内存无界增长
+    while (this.totalBytes > this.maxBytes && this.cache.size > 1) {
+      const oldestKey = this.cache.keys().next().value as string
+      if (oldestKey === key) break
+      this.totalBytes -= this.bytesMap.get(oldestKey) || 0
+      this.cache.delete(oldestKey)
+      this.bytesMap.delete(oldestKey)
     }
   }
 

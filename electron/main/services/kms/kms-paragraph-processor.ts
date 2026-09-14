@@ -412,11 +412,11 @@ export function validateTocEntries(text: string, entries: LLMTocEntry[]): Valida
   return validated
 }
 
-/** 构建已识别 TOC 上下文（取最近5条，按层级缩进）供 LLM 续识别参考 */
+/** 构建已识别 TOC 上下文（取最近5条，按层级缩进）供 LLM 续识别参考；[Ln] 前缀为行号（与 addLineNumbers 语义一致） */
 export function buildTocContext(entries: LLMTocEntry[]): string {
   if (entries.length === 0) return ''
   const recentEntries = entries.slice(-5)
-  const contextLines = recentEntries.map(e => `${'  '.repeat(e.level - 1)}[L${e.level}] ${e.title}`)
+  const contextLines = recentEntries.map(e => `${'  '.repeat(Math.max(0, e.level - 1))}[L${e.lineNumber}] ${e.title}`)
   return contextLines.join('\n')
 }
 

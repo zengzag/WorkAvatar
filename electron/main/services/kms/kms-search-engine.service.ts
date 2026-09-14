@@ -1576,26 +1576,32 @@ class KMSSearchEngineService {
 
     // 批量查询缺失的索引条目，避免 N+1（原实现每条向量命中都执行 2 次查询）
     if (missingEntries.length > 0) {
-      const conditions = missingEntries.map(() => '(source_type = ? AND source_id = ?)').join(' OR ')
-      const params = missingEntries.flatMap(m => [m.vs.sourceType, m.vs.sourceId])
-      const indexRows = this.db.prepare(
-        `SELECT source_type, source_id, file_id, title, content, start_offset, end_offset FROM kms_search_index WHERE ${conditions}`
-      ).all(...params) as any[]
-
-      const fileIds = [...new Set(indexRows.map(r => r.file_id).filter(Boolean))]
-      const fileMap = new Map<string, { file_name: string; file_path: string; modified_time?: number }>()
-      if (fileIds.length > 0) {
-        const fileRows = this.db.prepare(
-          `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
-        ).all(...fileIds) as any[]
-        for (const row of fileRows) {
-          fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path, modified_time: row.modified_time })
-        }
-      }
-
       const indexMap = new Map<string, any>()
-      for (const row of indexRows) {
-        indexMap.set(`${row.source_type}-${row.source_id}`, row)
+      // fileMap 提到分批循环外：后续结果装配统一引用
+      const fileMap = new Map<string, { file_name: string; file_path: string; modified_time?: number }>()
+      // 分批查询防超 SQLITE 参数上限（每条 2 个参数，大 topK 时可能超 999）
+      const batchSize = 400
+      for (let i = 0; i < missingEntries.length; i += batchSize) {
+        const batch = missingEntries.slice(i, i + batchSize)
+        const conditions = batch.map(() => '(source_type = ? AND source_id = ?)').join(' OR ')
+        const params = batch.flatMap(m => [m.vs.sourceType, m.vs.sourceId])
+        const indexRows = this.db.prepare(
+          `SELECT source_type, source_id, file_id, title, content, start_offset, end_offset FROM kms_search_index WHERE ${conditions}`
+        ).all(...params) as any[]
+
+        const fileIds = [...new Set(indexRows.map(r => r.file_id).filter(Boolean))]
+        if (fileIds.length > 0) {
+          const fileRows = this.db.prepare(
+            `SELECT id, file_name, file_path, modified_time FROM kms_files WHERE id IN (${fileIds.map(() => '?').join(', ')})`
+          ).all(...fileIds) as any[]
+          for (const row of fileRows) {
+            fileMap.set(row.id, { file_name: row.file_name, file_path: row.file_path, modified_time: row.modified_time })
+          }
+        }
+
+        for (const row of indexRows) {
+          indexMap.set(`${row.source_type}-${row.source_id}`, row)
+        }
       }
 
       for (const entry of missingEntries) {
@@ -1608,7 +1614,7 @@ class KMSSearchEngineService {
               file_name: file?.file_name || '',
               file_path: file?.file_path || '',
               modified_time: file?.modified_time,
-              paragraph_id: entry.vs.sourceType === 'paragraph' ? entry.vs.sourceId : undefined,
+              paragraph_id: (entry.vs.sourceType === 'paragraph' || entry.vs.sourceType === 'content_paragraph') ? entry.vs.sourceId : undefined,
               paragraph_title: indexEntry.title,
               text: (indexEntry.content || '').substring(0, 300),
               match_type: 'hybrid',
@@ -1961,6 +1967,9 @@ class KMSSearchEngineService {
             file_name: fileInfo.name,
             file_path: fileInfo.path,
             modified_time: fileInfo.modified_time,
+            // 段落自身 id（kms_search_index.source_id）：与向量侧键（sourceType-sourceId）
+            // 保持一致，hybridSearch RRF 才能把同一段落的 FTS/向量命中融合为一条
+            paragraph_id: row.source_id,
             text: (row.content || '').substring(0, 400),
             match_type: 'content_paragraph',
             start_offset: row.start_offset,
