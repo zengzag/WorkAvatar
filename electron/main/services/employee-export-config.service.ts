@@ -13,14 +13,14 @@ export interface EmployeeConfigExport {
   employee: {
     name: string
     description: string
-    /** 规则（系统提示词）；1.1.0 起导出，旧版文件无此字段 */
-    rules?: string
+    /** 规则（系统提示词） */
+    rules: string
     avatar_type: string
     profile_json: string
     memory_enabled: boolean
     default_skill_id: string | null
-    /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化）；可选，旧版文件无此字段。targetIds 跨实例导入时无效引用会被运行时自动剔除 */
-    delegation_json?: string
+    /** 委托能力设置 JSON（EmployeeDelegationConfig 序列化）。targetIds 跨实例导入时无效引用会被运行时自动剔除 */
+    delegation_json: string
   }
   skills: Array<{
     type: string
@@ -39,7 +39,6 @@ export interface EmployeeConfigExport {
     tool_id: string
     /** 工具模式：on / on_demand / off */
     mode: 'on' | 'on_demand' | 'off'
-    is_enabled: boolean
     config_json: string
   }>
   installedSkills: Array<{
@@ -65,7 +64,7 @@ export class EmployeeExportConfigService {
     ).all(employeeId) as any[]
 
     const employeeTools = this.db.getDb().prepare(
-      'SELECT tool_id, is_enabled, tool_mode, config_json FROM employee_tools WHERE employee_id = ?'
+      'SELECT tool_id, tool_mode, config_json FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as any[]
 
     const installedSkills = this.db.getDb().prepare(
@@ -102,10 +101,7 @@ export class EmployeeExportConfigService {
       })),
       tools: employeeTools.map(t => ({
         tool_id: t.tool_id,
-        mode: (t.tool_mode === 'on' || t.tool_mode === 'on_demand' || t.tool_mode === 'off')
-          ? t.tool_mode
-          : (t.is_enabled ? 'on' : 'off'),
-        is_enabled: !!t.is_enabled,
+        mode: t.tool_mode as 'on' | 'on_demand' | 'off',
         config_json: t.config_json || '{}',
       })),
       installedSkills: installedSkills.map(sk => ({
@@ -158,11 +154,6 @@ export class EmployeeExportConfigService {
         return { success: false, error: 'Invalid file: not a WorkAvatar employee config export' }
       }
 
-      const versionCheck = this.checkVersionCompatibility(importData.version)
-      if (!versionCheck.compatible) {
-        return { success: false, error: versionCheck.message }
-      }
-
       const savedChecksum = importData.checksum
       const computedChecksum = this.computeChecksum(importData)
       if (savedChecksum && computedChecksum !== savedChecksum) {
@@ -207,10 +198,6 @@ export class EmployeeExportConfigService {
     const now = Math.floor(Date.now() / 1000)
 
     this.db.getDb().transaction(() => {
-      // 旧版（<1.1.0）文件无 rules 字段：description 兼作系统提示词，导入时回填到 rules
-      const rulesValue = importData.employee.rules !== undefined
-        ? importData.employee.rules
-        : (importData.employee.description || '')
       this.db.getDb().prepare(`
         INSERT INTO employees (id, name, description, rules, profile_json, avatar_type, memory_enabled, default_skill_id, delegation_json, arch_version, total_tasks, total_approvals, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?)
@@ -218,7 +205,7 @@ export class EmployeeExportConfigService {
         employeeId,
         importData.employee.name,
         importData.employee.description || '',
-        rulesValue,
+        importData.employee.rules || '',
         importData.employee.profile_json || '',
         importData.employee.avatar_type || 'default',
         importData.employee.memory_enabled ? 1 : 0,
@@ -242,9 +229,6 @@ export class EmployeeExportConfigService {
       }
 
       for (const tool of importData.tools || []) {
-        const mode = (tool.mode === 'on' || tool.mode === 'on_demand' || tool.mode === 'off')
-          ? tool.mode
-          : (tool.is_enabled ? 'on' : 'off')
         const existingTool = this.db.getDb().prepare(
           'SELECT id FROM employee_tools WHERE employee_id = ? AND tool_id = ?'
         ).get(employeeId, tool.tool_id) as any
@@ -252,19 +236,19 @@ export class EmployeeExportConfigService {
         if (existingTool) {
           if (conflictStrategy === 'overwrite') {
             this.db.getDb().prepare(
-              'UPDATE employee_tools SET tool_mode = ?, is_enabled = ?, config_json = ? WHERE employee_id = ? AND tool_id = ?'
-            ).run(mode, mode !== 'off' ? 1 : 0, tool.config_json || '{}', employeeId, tool.tool_id)
+              'UPDATE employee_tools SET tool_mode = ?, config_json = ? WHERE employee_id = ? AND tool_id = ?'
+            ).run(tool.mode, tool.config_json || '{}', employeeId, tool.tool_id)
           } else if (conflictStrategy === 'merge') {
             this.db.getDb().prepare(
-              'UPDATE employee_tools SET tool_mode = ?, is_enabled = ? WHERE employee_id = ? AND tool_id = ?'
-            ).run(mode, mode !== 'off' ? 1 : 0, employeeId, tool.tool_id)
+              'UPDATE employee_tools SET tool_mode = ? WHERE employee_id = ? AND tool_id = ?'
+            ).run(tool.mode, employeeId, tool.tool_id)
           }
         } else {
           const etId = generateId()
           this.db.getDb().prepare(`
-            INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled, config_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).run(etId, employeeId, tool.tool_id, mode, mode !== 'off' ? 1 : 0, tool.config_json || '{}', now)
+            INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, config_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(etId, employeeId, tool.tool_id, tool.mode, tool.config_json || '{}', now)
         }
       }
 
@@ -292,20 +276,6 @@ export class EmployeeExportConfigService {
     })()
 
     return warnings
-  }
-
-  checkVersionCompatibility(version: string, currentVersion: string = EXPORT_CONFIG_VERSION): { compatible: boolean; message?: string } {
-    const [major] = version.split('.').map(Number)
-    const [currentMajor] = currentVersion.split('.').map(Number)
-
-    if (major > currentMajor) {
-      return {
-        compatible: false,
-        message: `Incompatible version: export version ${version} is newer than current version ${currentVersion}. Please update the application.`
-      }
-    }
-
-    return { compatible: true }
   }
 
   validateConfig(data: EmployeeConfigExport): { valid: boolean; errors: string[] } {
