@@ -23,17 +23,6 @@ import type { DeleteConversationState } from './DeleteConversationOptions'
 import type { Employee } from '../../types'
 import { parseEmployeeDelegation } from '../../types'
 
-interface ToolInfo {
-  id: string
-  name: string
-  title: string
-  description: string
-  category: string
-  mode?: 'on' | 'on_demand' | 'off'
-  is_enabled: boolean
-  is_assigned: boolean
-}
-
 interface ToolCategoryInfo {
   id: string
   name: string
@@ -49,7 +38,6 @@ interface ToolCategoryInfo {
     mode: 'on' | 'on_demand' | 'off'
   }>
   mode: 'on' | 'on_demand' | 'off'
-  is_enabled: boolean
   enabled_count: number
   total_count: number
 }
@@ -90,7 +78,6 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
 
-  const [employeeTools, setEmployeeTools] = useState<ToolInfo[]>([])
   const [toolCategories, setToolCategories] = useState<ToolCategoryInfo[]>([])
   const [installedSkills, setInstalledSkills] = useState<InstalledSkill[]>([])
   const [employeeSkills, setEmployeeSkills] = useState<EmployeeSkill[]>([])
@@ -134,12 +121,7 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
   const loadTools = useCallback(async () => {
     if (!employeeId) return
     try {
-      // 同时加载平铺的工具列表（兼容）和分类聚合列表（新）
-      const [toolsResult, categoriesResult] = await Promise.all([
-        window.electronAPI.tool.getEmployeeTools({ employee_id: employeeId }),
-        window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId }),
-      ])
-      setEmployeeTools(toolsResult || [])
+      const categoriesResult = await window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId })
       setToolCategories(categoriesResult || [])
     } catch {
       console.error('加载工具失败')
@@ -442,7 +424,6 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         tool_id: toolId,
         mode,
       })
-      setEmployeeTools(prev => prev.map(t => t.id === toolId ? { ...t, mode, is_enabled: mode !== 'off', is_assigned: true } : t))
       // 切换单个工具后重新加载分类，保持分类状态同步
       const categoriesResult = await window.electronAPI.tool.getEmployeeToolCategories({ employee_id: employeeId })
       setToolCategories(categoriesResult || [])
@@ -469,17 +450,10 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
         return {
           ...cat,
           mode,
-          is_enabled: mode !== 'off',
           enabled_count: mode === 'off' ? 0 : cat.total_count,
           tools: cat.tools.map(tool => ({ ...tool, mode })),
         }
       }))
-      setEmployeeTools(prev => {
-        const targetCat = toolCategories.find(c => c.id === categoryId)
-        if (!targetCat) return prev
-        const affectedIds = new Set(targetCat.tool_ids)
-        return prev.map(t => affectedIds.has(t.id) ? { ...t, mode, is_enabled: mode !== 'off', is_assigned: true } : t)
-      })
       message.success(
         t('employeeSettings.categoryModeSet', {
           name: t(`employeeSettings.toolCategory_${categoryId}`, { defaultValue: categoryId }),
@@ -519,7 +493,6 @@ const EmployeeSettingsDrawer: React.FC<EmployeeSettingsDrawerProps> = ({
       label: <span><ToolOutlined style={{ marginRight: 4 }} />{t('employeeSettings.tabTools')}</span>,
       children: contentWrap(
         <ToolsSection
-          employeeTools={employeeTools}
           toolCategories={toolCategories}
           onChangeToolMode={handleChangeToolMode}
           onChangeCategoryMode={handleChangeCategoryMode}

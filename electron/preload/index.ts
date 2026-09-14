@@ -272,7 +272,6 @@ const electronAPI = {
   tool: {
     listBuiltin: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_LIST_BUILTIN),
     getCategories: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_CATEGORIES),
-    getEmployeeTools: (params: { employee_id: string }) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, params),
     assignToEmployee: (params: ToolAssignParams) => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ASSIGN_TO_EMPLOYEE, params),
     getEmployeeToolCategories: (params: { employee_id: string }) =>
       ipcRenderer.invoke(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, params) as Promise<ToolCategoryInfo[]>,

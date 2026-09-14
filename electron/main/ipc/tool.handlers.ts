@@ -229,13 +229,7 @@ function resolveDefaultToolMode(toolId: string): ToolMode {
   return lookup?.onDemand ? 'on_demand' : 'on'
 }
 
-/** 分配参数 → 工具模式：优先 mode；缺失时按 is_enabled 兼容推断 */
-function resolveAssignMode(params: { mode?: ToolMode; is_enabled?: boolean; tool_id?: string }): ToolMode {
-  if (params.mode === 'on' || params.mode === 'on_demand' || params.mode === 'off') return params.mode
-  if (params.is_enabled === false) return 'off'
-  return params.tool_id ? resolveDefaultToolMode(params.tool_id) : 'on'
-}
-
+/** 分配参数 → 工具模式校验 */
 function isValidToolMode(mode: string | undefined): mode is ToolMode {
   return mode === 'on' || mode === 'on_demand' || mode === 'off'
 }
@@ -246,10 +240,10 @@ export function registerToolHandlers(
 ) {
   // 缓存 prepared statement，避免每次调用都重新编译 SQL
   const getEmployeeToolsStmt = db.prepare(
-    'SELECT tool_id, is_enabled, tool_mode FROM employee_tools WHERE employee_id = ?'
+    'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
   )
   const assignToolStmt = db.prepare(
-    'INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled) VALUES (?, ?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode, is_enabled = excluded.is_enabled'
+    'INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode) VALUES (?, ?, ?, ?) ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode'
   )
 
   safeHandle(IPC_CHANNELS.TOOL_LIST_BUILTIN, () => {
@@ -268,40 +262,13 @@ export function registerToolHandlers(
     }))
   })
 
-  safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOLS, (params: { employee_id: string }) => {
-    const catalog = getUnifiedBuiltinToolCatalog()
-
-    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as any[]
-
-    const rowMap = new Map<string, { is_enabled: number; tool_mode?: string }>()
-    for (const row of enabledRows) {
-      rowMap.set(row.tool_id, row)
-    }
-
-    // 注册员工（内置/插件）无 employee_tools 配置行：按声明 defaultTools 覆盖默认模式（仅展示）
-    const registryDefaults = EmployeeRegistryService.getInstance().getDefaultToolModes(params.employee_id)
-
-    return catalog.map(tool => {
-      const row = rowMap.get(tool.id)
-      const mode: ToolMode = row && isValidToolMode(row.tool_mode)
-        ? row.tool_mode
-        : (registryDefaults?.get(tool.id) as ToolMode | undefined) ?? resolveDefaultToolMode(tool.id)
-      return {
-        ...tool,
-        mode,
-        is_enabled: mode !== 'off',
-        is_assigned: !!row,
-      }
-    })
-  })
-
   /**
    * 获取按分类聚合的员工工具列表
    * 返回：每个分类包含总开关 + 分类包含的工具明细 + 模式聚合（on/on_demand/off/mixed）
    */
   safeHandle(IPC_CHANNELS.TOOL_GET_EMPLOYEE_TOOL_CATEGORIES, (params: { employee_id: string }) => {
-    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; is_enabled: number; tool_mode?: string }>
-    const rowMap = new Map<string, { is_enabled: number; tool_mode?: string }>()
+    const enabledRows = getEmployeeToolsStmt.all(params.employee_id) as Array<{ tool_id: string; tool_mode: string }>
+    const rowMap = new Map<string, { tool_id: string; tool_mode: string }>()
     for (const row of enabledRows) {
       rowMap.set(row.tool_id, row)
     }
@@ -342,8 +309,6 @@ export function registerToolHandlers(
       }
       // 分类聚合模式：按分类内所有工具的最高状态显示（on > on_demand > off）
       const mode: ToolMode = modeSet.has('on') ? 'on' : modeSet.has('on_demand') ? 'on_demand' : 'off'
-      // 兼容旧字段：全开启才为 true（前端通过 enabled_count / total_count 表达部分开启）
-      const isEnabled = enabledCount === totalCount && totalCount > 0
 
       return {
         id: categoryDef.id,
@@ -356,7 +321,6 @@ export function registerToolHandlers(
         tool_ids: categoryDef.toolIds,
         tools,
         mode,
-        is_enabled: isEnabled,
         enabled_count: enabledCount,
         total_count: totalCount,
       }
@@ -368,9 +332,8 @@ export function registerToolHandlers(
     if (EmployeeRegistryService.getInstance().isRegistered(params.employee_id)) {
       return { success: false, error: 'registered employee tool config is read-only' }
     }
-    const mode = resolveAssignMode(params)
-    const isEnabled = mode !== 'off' ? 1 : 0
-    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode, isEnabled)
+    const mode = params.mode
+    assignToolStmt.run(generateId(), params.employee_id, params.tool_id, mode)
     EmployeeAgentService.getInstance().clearAgentCache(params.employee_id)
     return { success: true }
   })
@@ -391,7 +354,7 @@ export function registerToolHandlers(
 
     const rows = categoryDef.toolIds.map(toolId => ({
       tool_id: toolId,
-      mode: resolveAssignMode({ mode: params.mode, is_enabled: params.is_enabled, tool_id: toolId }),
+      mode: params.mode,
     }))
 
     // 批量 SQL 写入：因为预编译语句最多支持 20 组 values，按批处理
@@ -399,11 +362,11 @@ export function registerToolHandlers(
       const batch = rows.slice(offset, offset + 20)
       const bindParams: any[] = []
       for (const r of batch) {
-        bindParams.push(generateId(), params.employee_id, r.tool_id, r.mode, r.mode !== 'off' ? 1 : 0)
+        bindParams.push(generateId(), params.employee_id, r.tool_id, r.mode)
       }
       // 动态构造该批次大小的 SQL
-      const placeholders = batch.map(() => '(?, ?, ?, ?, ?)').join(', ')
-      const sql = `INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode, is_enabled) VALUES ${placeholders} ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode, is_enabled = excluded.is_enabled`
+      const placeholders = batch.map(() => '(?, ?, ?, ?)').join(', ')
+      const sql = `INSERT INTO employee_tools (id, employee_id, tool_id, tool_mode) VALUES ${placeholders} ON CONFLICT(employee_id, tool_id) DO UPDATE SET tool_mode = excluded.tool_mode`
       db.prepare(sql).run(...bindParams)
     }
 

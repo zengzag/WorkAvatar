@@ -108,7 +108,7 @@ export class ToolDispatcher {
       }
     }
 
-    parts.push('建议：检查参数是否符合工具 schema；若代码执行类工具（如 office_exec），检查生成的代码语法与运行时逻辑。')
+    parts.push('建议：检查参数是否符合工具 schema；若代码执行类工具（如 javascript_exec），检查生成的代码语法与运行时逻辑。')
     return parts.join('\n')
   }
 

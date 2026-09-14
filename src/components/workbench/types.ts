@@ -30,7 +30,7 @@ export interface MessageSegment {
   toolError?: string
   /** 工具执行中间进度步骤（仅UI展示，不进入LLM上下文） */
   toolProgress?: any[]
-  /** 工具生成的文件列表（office_exec 等），用于弹窗预览 */
+  /** 工具生成的文件列表（javascript_exec 等），用于弹窗预览 */
   generatedFiles?: GeneratedFileInfo[]
   // ---- delegation 段专用字段 ----
   /** 委托 id（路由子员工事件用；与后端 runId 一致） */
