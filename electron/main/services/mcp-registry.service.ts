@@ -149,7 +149,14 @@ class McpRegistryService {
   }
 
   /** 删除 MCP server */
-  delete(id: string): { success: boolean } {
+  delete(id: string, employeeId?: string): { success: boolean } {
+    // 与 update 一致的归属校验：防止跨员工删除
+    if (employeeId) {
+      const existing = this.getById(id)
+      if (!existing || existing.employee_id !== employeeId) {
+        throw new Error('MCP server 不存在或不属于该员工')
+      }
+    }
     this.db.getDb().prepare('DELETE FROM employee_mcp_servers WHERE id = ?').run(id)
     this.closeActiveClient(id).catch(() => { /* ignore */ })
     logger.info(`Deleted MCP server id=${id}`)
@@ -157,7 +164,14 @@ class McpRegistryService {
   }
 
   /** 启用 / 禁用 MCP server */
-  toggle(id: string, enabled: boolean): McpServerInfo {
+  toggle(id: string, enabled: boolean, employeeId?: string): McpServerInfo {
+    // 与 update 一致的归属校验：防止跨员工启用/禁用
+    if (employeeId) {
+      const existing = this.getById(id)
+      if (!existing || existing.employee_id !== employeeId) {
+        throw new Error('MCP server 不存在或不属于该员工')
+      }
+    }
     const now = Math.floor(Date.now() / 1000)
     this.db.getDb().prepare(
       `UPDATE employee_mcp_servers SET is_enabled = ?, updated_at = ? WHERE id = ?`
