@@ -1040,6 +1040,7 @@ export default {
     taskHighPermissionEnabled: 'Task high-permission mode enabled: file operations will no longer prompt. Turn it off via the high-permission button below the input box.',
     danger: 'Danger',
     securityWarning: 'This operation involves security risks, please confirm carefully',
+    scriptTruncatedHint: 'Script content truncated; see the tool call arguments for the full text',
     inputPlaceholder: 'Please enter...',
     ctrlEnterHint: 'Press Ctrl+Enter to submit',
   },

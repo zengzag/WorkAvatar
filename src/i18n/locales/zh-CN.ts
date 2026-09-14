@@ -1040,6 +1040,7 @@ export default {
     taskHighPermissionEnabled: '已开启本轮任务高权限模式：后续文件操作不再提醒，可点击输入框下方高权限按钮关闭',
     danger: '危险',
     securityWarning: '此操作涉及安全风险，请仔细确认',
+    scriptTruncatedHint: '脚本内容过长已截断，完整内容见本次工具调用参数',
     inputPlaceholder: '请输入...',
     ctrlEnterHint: '按 Ctrl+Enter 提交',
   },

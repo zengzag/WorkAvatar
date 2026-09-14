@@ -1,12 +1,64 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag, Popconfirm, App } from 'antd'
+import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag, Popconfirm, App, theme } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useInteractionStore, type InteractionRequest } from '../../stores/interaction.store'
+import { useInteractionStore, type InteractionRequest, type ScriptDisclosure } from '../../stores/interaction.store'
 import { useTaskPermissionStore } from '../../stores/task-permission.store'
 
 const { TextArea } = Input
 const { Text, Paragraph } = Typography
+const { useToken } = theme
+
+/** 脚本原文展示：等宽字体 + 独立滚动区，长脚本不撑破弹窗（脚本触发的确认才有） */
+const ScriptPreview: React.FC<{ script: ScriptDisclosure }> = ({ script }) => {
+  const { t } = useTranslation()
+  const { token } = useToken()
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div
+        style={{
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: token.borderRadius,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            padding: '2px 12px',
+            background: token.colorFillQuaternary,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            color: token.colorTextTertiary,
+            fontSize: 12,
+            lineHeight: '20px',
+          }}
+        >
+          {script.language}
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: 12,
+            maxHeight: 220,
+            overflow: 'auto',
+            background: token.colorFillQuaternary,
+            fontFamily: token.fontFamilyCode,
+            fontSize: 12,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {script.content}
+        </pre>
+      </div>
+      {script.truncated && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+          {t('interaction.scriptTruncatedHint')}
+        </Text>
+      )}
+    </div>
+  )
+}
 
 const UnifiedInteractionModal: React.FC = () => {
   const { t } = useTranslation()
@@ -95,6 +147,7 @@ const UnifiedInteractionModal: React.FC = () => {
             <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
               {currentRequest.message}
             </Paragraph>
+            {currentRequest.script && <ScriptPreview script={currentRequest.script} />}
           </div>
         )
 
@@ -165,7 +218,12 @@ const UnifiedInteractionModal: React.FC = () => {
       }
       closable={false}
       mask={{ closable: false }}
-      width={currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480}
+      width={
+        currentRequest.script ? 560
+          : currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480
+      }
+      // 正文超高时整体滚动：长路径列表 + 脚本代码块都可能超出视口
+      styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
       footer={
         <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <Button onClick={handleCancel}>

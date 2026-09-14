@@ -8,6 +8,15 @@ export interface InteractionOption {
   danger?: boolean
 }
 
+/** 脚本触发确认时的原始脚本内容（主进程按上限截断后下发） */
+export interface ScriptDisclosure {
+  /** 脚本语言标识（powershell / bash / javascript），仅用于代码块标注 */
+  language: string
+  content: string
+  /** 内容是否已截断 */
+  truncated: boolean
+}
+
 export interface InteractionRequest {
   id: string
   type: 'confirm' | 'select' | 'input'
@@ -22,6 +31,8 @@ export interface InteractionRequest {
   source?: string
   /** 目录级授权范围：存在时弹窗展示"始终允许此文件夹"按钮 */
   dirScope?: string
+  /** 脚本执行确认：弹窗在正文下方以可滚动代码块展示原始脚本内容 */
+  script?: ScriptDisclosure
   /** 发起请求的会话 id：弹窗据此把"本轮任务不再提醒"状态标记到对应会话 */
   conversationId?: string
 }
