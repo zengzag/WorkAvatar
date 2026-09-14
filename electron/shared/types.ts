@@ -152,6 +152,19 @@ export interface GeneratedFileInfo {
   mtime: number
 }
 
+/**
+ * 脚本触发权限确认时下发给渲染端的原始脚本内容。
+ * 单独成字段而不拼进 message：长脚本会撑爆弹窗与系统通知文案，渲染端改用可滚动代码块展示。
+ */
+export interface ScriptDisclosure {
+  /** 脚本语言标识（powershell / bash / javascript），仅用于代码块标注 */
+  language: string
+  /** 原始脚本内容 */
+  content: string
+  /** 内容是否已按上限截断（渲染端据此提示查看完整内容） */
+  truncated: boolean
+}
+
 export interface ParseResult {
   type: string
   fullText: string

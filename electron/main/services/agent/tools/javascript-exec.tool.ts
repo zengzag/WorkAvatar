@@ -2,9 +2,12 @@ import type { ToolDefinition } from './types'
 import * as vm from 'vm'
 import * as path from 'path'
 import * as fs from 'fs'
-import FilePermissionService from '../../file-permission.service'
+import FilePermissionService, { type ScriptConfirmInput } from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
 import { isFileDeletionCommand } from './command-analyzer'
+
+/** 脚本触发确认时下发给弹窗的语言标识 */
+const SCRIPT_LANGUAGE = 'javascript'
 
 /**
  * 脚本内删除被拒绝时的提示：删除统一走 file_delete 工具。
@@ -204,13 +207,17 @@ function createSandboxedReadOnlyFs(): any {
  * 内部经 FilePermissionService 统一授权（区内自动通过，区外弹窗确认）。
  * 相对路径以沙箱工作目录（注入给脚本的 __dirname/__workspaceDir）为基准解析。
  */
-function createSandboxedFile(authorizedPaths: Set<string>, workingDir: string): any {
+function createSandboxedFile(
+  authorizedPaths: Set<string>,
+  workingDir: string,
+  script: ScriptConfirmInput,
+): any {
   const checkAndAuthorize = async (operation: string, targetPath: string): Promise<void> => {
     if (typeof targetPath !== 'string') return
     let resolved: string
     try { resolved = path.resolve(workingDir, targetPath) } catch { return }
     if (authorizedPaths.has(resolved.toLowerCase())) return
-    const result = await filePermission.authorizeFileOperation(operation, [resolved])
+    const result = await filePermission.authorizeFileOperation(operation, [resolved], { script })
     if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
@@ -256,7 +263,12 @@ function createSandboxedFile(authorizedPaths: Set<string>, workingDir: string): 
  * 相对路径以沙箱工作目录为基准；adm-zip 的同步写无法 await 弹窗，
  * 由执行前预扫描授权字面量路径，运行时仅做同步边界校验（未授权即拒）。
  */
-function createSandboxedRequire(authorizedPaths: Set<string>, sandboxFile: any, workingDir: string) {
+function createSandboxedRequire(
+  authorizedPaths: Set<string>,
+  sandboxFile: any,
+  workingDir: string,
+  script: ScriptConfirmInput,
+) {
   let cachedFs: any = null
   let cachedXlsx: any = null
   let cachedPptxgenjs: any = null
@@ -268,7 +280,7 @@ function createSandboxedRequire(authorizedPaths: Set<string>, sandboxFile: any, 
     let resolved: string
     try { resolved = path.resolve(workingDir, targetPath) } catch { return }
     if (authorizedPaths.has(resolved.toLowerCase())) return
-    const result = await filePermission.authorizeFileOperation(operation, [resolved])
+    const result = await filePermission.authorizeFileOperation(operation, [resolved], { script })
     if (!result.allowed) {
       throw new Error(result.error || `用户取消了${operation}工作区外文件的操作`)
     }
@@ -448,20 +460,23 @@ export const javascriptExecTool: ToolDefinition = {
 
     const consoleOutput: string[] = []
 
+    // 脚本触发：弹窗按"即将执行脚本 + 脚本原文"呈现，不再按单个文件/文件夹措辞
+    const scriptInput: ScriptConfirmInput = { language: SCRIPT_LANGUAGE, content: code }
+
     // 执行前预扫描：提取代码中**写/删上下文**的绝对路径，对区外未授权路径合并为一次弹窗确认
     // 注意：只提取写入/删除路径，不提取读取路径（如 readFileSync 的参数）
     const authorizedPaths = new Set<string>()
     const writePaths = extractWritePathsFromCode(code)
     if (writePaths.length > 0) {
-      const result = await filePermission.authorizeFileOperation('修改', writePaths)
+      const result = await filePermission.authorizeFileOperation('修改', writePaths, { script: scriptInput })
       if (!result.allowed) return { success: false, error: result.error }
       for (const p of writePaths) {
         try { authorizedPaths.add(path.resolve(workingDir, p).toLowerCase()) } catch { /* 忽略解析失败的路径 */ }
       }
     }
 
-    const sandboxFile = createSandboxedFile(authorizedPaths, workingDir)
-    const sandboxedRequire = createSandboxedRequire(authorizedPaths, sandboxFile, workingDir)
+    const sandboxFile = createSandboxedFile(authorizedPaths, workingDir, scriptInput)
+    const sandboxedRequire = createSandboxedRequire(authorizedPaths, sandboxFile, workingDir, scriptInput)
 
     // 追踪沙箱内创建的定时器，执行结束后统一清理，避免事件循环无法退出
     const trackedTimers: NodeJS.Timeout[] = []

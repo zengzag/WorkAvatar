@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import FilePermissionService from '../../../electron/main/services/file-permission.service'
+import FilePermissionService, { buildScriptConfirmMessage } from '../../../electron/main/services/file-permission.service'
 import { normalizePath } from '../../../electron/main/services/path-normalize'
 import UnifiedInteractionService, { interactionContext } from '../../../electron/main/services/unified-interaction.service'
 
@@ -120,6 +120,69 @@ describe('FilePermissionService', () => {
 
       req.mockRestore()
     })
+  })
+
+  it('文件工具触发：仍按文件视角措辞，不下发脚本内容', async () => {
+    const ctx: TestCtx = { sessionId: 's15', employeeId: 'e1', workspacePath: root }
+    const outside = path.join(root, '..', 'fs-view', 'a.txt')
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false })
+
+      await service.authorizeFileOperation('修改', [outside])
+      const request = req.mock.calls[0][0]
+      expect(request.title).toBe('确认修改工作区外文件')
+      expect(request.message).toContain('即将修改工作区外的路径')
+      expect(request.script).toBeUndefined()
+
+      req.mockRestore()
+    })
+  })
+
+  it('脚本触发：按脚本视角措辞并携带原始脚本内容', async () => {
+    const ctx: TestCtx = { sessionId: 's16', employeeId: 'e1', workspacePath: root }
+    const outside = path.join(root, '..', 'script-view', 'a.txt')
+    const code = 'Set-Content -Path "$out\\a.txt" -Value hi'
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false })
+
+      const result = await service.authorizeFileOperation('修改', [outside], {
+        script: { language: 'powershell', content: code },
+      })
+      expect(result.allowed).toBe(true)
+
+      const request = req.mock.calls[0][0]
+      expect(request.title).toBe('确认执行脚本')
+      expect(request.message).toContain('即将执行脚本，疑似会修改或删除')
+      expect(request.message).toContain('共 1 个')
+      expect(request.message).toContain('script-view')
+      expect(request.message).not.toContain('即将修改工作区外的路径')
+      expect(request.script).toEqual({ language: 'powershell', content: code, truncated: false })
+
+      req.mockRestore()
+    })
+  })
+
+  it('脚本原文超过展示上限时截断并标记', async () => {
+    const ctx: TestCtx = { sessionId: 's17', employeeId: 'e1', workspacePath: root }
+    const outside = path.join(root, '..', 'script-long', 'a.txt')
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false })
+
+      await service.authorizeFileOperation('修改', [outside], {
+        script: { language: 'javascript', content: 'x'.repeat(20001) },
+      })
+      const request = req.mock.calls[0][0]
+      expect(request.script?.truncated).toBe(true)
+      expect(request.script?.content.length).toBe(20000)
+
+      req.mockRestore()
+    })
+  })
+
+  it('脚本目标无法静态判定：文案说明无法判定且不含路径列表', async () => {
+    expect(buildScriptConfirmMessage([])).toContain('无法判定是否位于工作区内')
+    expect(buildScriptConfirmMessage([])).toContain('原始脚本内容如下')
+    expect(buildScriptConfirmMessage([])).not.toContain('- ')
   })
 
   it('scopeDir：目标本身是目录时"始终允许"授权该目录自身（非其父目录）', async () => {

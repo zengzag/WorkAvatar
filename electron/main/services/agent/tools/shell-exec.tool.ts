@@ -2,7 +2,12 @@ import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
 import UnifiedInteractionService, { interactionContext } from '../../unified-interaction.service'
-import FilePermissionService from '../../file-permission.service'
+import FilePermissionService, {
+  SCRIPT_CONFIRM_TITLE,
+  buildScriptConfirmMessage,
+  toScriptDisclosure,
+  type ScriptConfirmInput,
+} from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
 import {
   decideCommandAccess,
@@ -223,6 +228,11 @@ export const shellExecTool: ToolDefinition = {
       }
 
       if (isWrite && !highPermission) {
+        // 脚本触发：弹窗按"即将执行脚本 + 脚本原文"呈现，不再按单个文件/文件夹措辞
+        const scriptInput: ScriptConfirmInput = {
+          language: IS_WINDOWS ? 'powershell' : 'bash',
+          content: scriptContentForCheck,
+        }
         // 纯函数决策：区外字面路径批量授权 / cwd 区外目录授权 / 变量目标保守确认 / 区内放行
         const decision = decideCommandAccess({
           command: scriptContentForCheck,
@@ -235,34 +245,34 @@ export const shellExecTool: ToolDefinition = {
         })
 
         if (decision.kind === 'authorize-paths') {
-          const result = await filePermission.authorizeFileOperation('修改', decision.paths)
+          const result = await filePermission.authorizeFileOperation('修改', decision.paths, { script: scriptInput })
           if (!result.allowed) return { success: false, error: result.error }
         } else if (decision.kind === 'authorize-dir') {
           // 授权范围就是 cwd 本身（含子树），不能取其父目录
           const result = await filePermission.authorizeFileOperation(
-            '修改', [decision.dir], { scopeDir: decision.dir },
+            '修改', [decision.dir], { scopeDir: decision.dir, script: scriptInput },
           )
           if (!result.allowed) return { success: false, error: result.error }
         } else if (decision.kind === 'confirm-command') {
           // 目标含变量/波浪线/斜杠开关无法静态归类，逐条命令保守确认
           if (!ctx) {
-            return { success: false, error: '写入/修改类命令需要用户确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
+            return { success: false, error: '脚本写入工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝执行' }
           }
           try {
             const interactionService = UnifiedInteractionService.getInstance()
-            const displayCmd = command.length > 200 ? command.substring(0, 200) + '...' : command
             const response = await interactionService.request({
               type: 'confirm',
-              title: '确认执行写入/修改命令',
-              message: `即将执行可能写入/修改文件的命令，其目标路径含变量引用或无法静态解析，无法判定是否位于工作区内：\n\n${displayCmd}\n\n此操作不可撤销，是否确认执行？`,
+              title: SCRIPT_CONFIRM_TITLE,
+              message: buildScriptConfirmMessage([]),
               danger: true,
               source: 'security:shell_write',
+              script: toScriptDisclosure(scriptInput),
             })
             if (response.cancelled || response.confirmed !== true) {
-              return { success: false, error: '用户取消了写入/修改命令的执行' }
+              return { success: false, error: '用户取消了脚本的执行' }
             }
           } catch {
-            return { success: false, error: '写入/修改命令确认失败，操作已取消' }
+            return { success: false, error: '脚本执行确认失败，操作已取消' }
           }
         }
         // kind === 'allow'：工作区内写入自动放行（工作区即用户授权的沙箱边界）
