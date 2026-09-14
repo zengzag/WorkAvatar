@@ -93,6 +93,10 @@ export function registerAppHandlers(
   })
 
   safeHandle(IPC_CHANNELS.SETTINGS_GET, (params: SettingsGetParams) => {
+    // API Key 由 SecureKeyStorage 专管（加密存储 + 后端解密），不开放给渲染层直读
+    if (params.key.startsWith('llm_api_key_')) {
+      return null
+    }
     const row = settingsGetStmt.get(params.key) as any
     return row?.value || null
   })
@@ -142,6 +146,10 @@ export function registerAppHandlers(
       for (const table of USER_DATA_TABLES) {
         db.exec(`DELETE FROM ${table}`)
       }
+      // FTS 虚拟表为独立内容存储（非 external-content），须一并清空，
+      // 否则已删除对话/记忆的全文残留其中（隐私残留 + 搜索幽灵结果）
+      db.exec('DELETE FROM conversations_fts')
+      db.exec('DELETE FROM employee_memories_fts')
       // 清理 settings 表，但保留应用级配置键
       const preserved = Array.from(PRESERVED_SETTINGS_KEYS)
       const placeholders = preserved.map(() => '?').join(',')
@@ -190,16 +198,31 @@ export function registerAppHandlers(
   })
 
   // 推送最大化状态变化事件给渲染进程
+  // 按窗口去重注册系统监听器（渲染端组件多次挂载/HMR 会重复 send 订阅消息）；
+  // 同窗口多个 webContents（如 devtools/webview）各自订阅、各自接收推送
+  const maximizedWatchers = new Map<BrowserWindow, Set<Electron.WebContents>>()
   ipcMain.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return
-    const sendState = () => {
-      if (!win.isDestroyed()) {
-        event.sender.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+    let senders = maximizedWatchers.get(win)
+    if (!senders) {
+      senders = new Set()
+      maximizedWatchers.set(win, senders)
+      const sendState = () => {
+        if (win.isDestroyed()) return
+        for (const wc of senders!) {
+          if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+        }
       }
+      win.on('maximize', sendState)
+      win.on('unmaximize', sendState)
+      win.once('closed', () => maximizedWatchers.delete(win))
     }
-    win.on('maximize', sendState)
-    win.on('unmaximize', sendState)
+    // 新订阅者：登记并回发当前状态完成初始同步
+    if (!senders.has(event.sender)) {
+      senders.add(event.sender)
+      event.sender.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+    }
   })
 
   // === Tab 独立窗口 ===
