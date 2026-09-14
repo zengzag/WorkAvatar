@@ -348,8 +348,13 @@ class RuntimeEnvService {
     this.cancelled = true
     if (this.currentChild) {
       try {
-        // 杀掉整个进程树（Windows 下需 /T 才能杀子进程）
-        this.currentChild.kill(IS_WINDOWS ? 'SIGKILL' : 'SIGTERM')
+        if (IS_WINDOWS) {
+          // Windows 必须用 taskkill /T 杀整个进程树，child.kill 只杀顶层，
+          // powershell/winget 派生的 msiexec 等会继续以孤儿进程跑完安装
+          require('child_process').execSync(`taskkill /PID ${this.currentChild.pid} /T /F`, { stdio: 'ignore' })
+        } else {
+          this.currentChild.kill('SIGTERM')
+        }
       } catch {
         // noop
       }
