@@ -22,13 +22,16 @@ export const dateTimeTool: ToolDefinition = {
   handler: (args: any) => {
     const now = new Date()
     const operation = args.operation || 'now'
+    // 日期/时间统一取本地时区（toISOString 是 UTC，UTC+8 在 0:00-8:00 会给出昨天的日期）
+    const localDate = formatDate(now, 'YYYY-MM-DD')
+    const localTime = formatDate(now, 'HH:mm:ss')
     if (operation === 'now') {
       return {
         success: true,
-        output: `当前日期: ${now.toISOString().split('T')[0]}, 时间: ${now.toTimeString().split(' ')[0]}, 完整时间: ${now.toISOString()}, 时间戳: ${now.getTime()}`,
+        output: `当前日期: ${localDate}, 时间: ${localTime}, 完整时间: ${now.toISOString()}, 时间戳: ${now.getTime()}`,
         raw: {
-          date: now.toISOString().split('T')[0],
-          time: now.toTimeString().split(' ')[0],
+          date: localDate,
+          time: localTime,
           datetime: now.toISOString(),
           timestamp: now.getTime()
         }
@@ -40,7 +43,7 @@ export const dateTimeTool: ToolDefinition = {
     }
     if (operation === 'add_days' && typeof args.days === 'number') {
       const target = new Date(now.getTime() + args.days * 24 * 60 * 60 * 1000)
-      return { success: true, output: target.toISOString().split('T')[0] }
+      return { success: true, output: formatDate(target, 'YYYY-MM-DD') }
     }
     return { success: false, error: `Unknown operation: ${operation}` }
   },

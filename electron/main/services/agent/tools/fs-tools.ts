@@ -265,6 +265,11 @@ async function readFile(args: any) {
     const fullText = result.fullText
     const totalChars = fullText.length
 
+    // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
+    if (totalChars === 0) {
+      return { success: true, output: '(文件为空 — 0 字符)' }
+    }
+
     if (offset >= totalChars) {
       return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
     }
@@ -284,6 +289,11 @@ async function readFile(args: any) {
 
   const content = (await fs.promises.readFile(resolved, 'utf-8')).replace(/\r\n/g, '\n')
   const totalChars = content.length
+
+  // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
+  if (totalChars === 0) {
+    return { success: true, output: '(文件为空 — 0 字符)' }
+  }
 
   if (offset >= totalChars) {
     return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
