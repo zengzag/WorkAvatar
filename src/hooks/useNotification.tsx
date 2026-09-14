@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { notification, Button } from 'antd'
+import { App, Button } from 'antd'
 import { useTranslation } from 'react-i18next'
 
 /** 宿主通用通知载荷（自动化完成 / ask_user 交互等） */
@@ -29,6 +29,8 @@ export interface NotifyClickPayload {
  */
 export function useNotification(onClick?: (payload: NotifyPayload) => void): void {
   const { t } = useTranslation()
+  // 必须用 App 上下文的实例：antd 静态 notification.open 不消费 ConfigProvider 主题，暗色下会渲染成白底
+  const { notification } = App.useApp()
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.notification.onNotify((payload: NotifyPayload) => {
@@ -52,16 +54,16 @@ export function useNotification(onClick?: (payload: NotifyPayload) => void): voi
       )
       notification.open({
         key,
-        message: payload.title,
+        title: payload.title,
         description: displayBody,
-        btn,
+        actions: btn,
         duration: 8,
         onClick: () => onClick?.(payload),
         placement: 'topRight',
       })
     })
     return () => { unsubscribe() }
-  }, [t, onClick])
+  }, [t, onClick, notification])
 }
 
 /**

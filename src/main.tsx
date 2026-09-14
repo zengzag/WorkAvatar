@@ -132,6 +132,12 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     [effectiveTheme, fontSizeLevel]
   )
 
+  // antd 静态 API（notification.open / message.xxx / Modal.confirm）渲染在独立 root，不消费 React 树的
+  // ConfigProvider 主题（插件侧提醒、提示均为静态调用），把同一份 theme 注入全局配置，暗色下弹窗才是暗色
+  useEffect(() => {
+    ConfigProvider.config({ theme: themeConfig })
+  }, [themeConfig])
+
   return (
     <ConfigProvider locale={antLocale} theme={themeConfig}>
       <AntApp>
