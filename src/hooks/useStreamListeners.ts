@@ -748,7 +748,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               targetEmployeeName: eventData?.targetEmployeeName || cur.targetEmployeeName,
               targetAvatarType: eventData?.targetAvatarType || cur.targetAvatarType,
               instruction: eventData?.instruction || cur.instruction,
-              delegationStatus: cur.delegationStatus === 'queued' ? cur.delegationStatus : cur.delegationStatus,
             }
             return { ...m, segments: segs }
           }

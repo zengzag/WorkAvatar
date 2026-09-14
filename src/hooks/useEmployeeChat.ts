@@ -995,14 +995,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteAllConversations = async () => {
     if (!id) return
     try {
-      // 中止所有活跃流式会话
+      // 仅中止并清理属于当前员工对话的流式会话：
+      // streamStatesRef 是模块级共享（按 sessionId 索引），无差别 abort/clear
+      // 会误伤其他员工后台自动续跑的会话（其占位消息将永久卡在 isStreaming）
+      const currentConvIds = new Set(allConversations.map(c => c.id))
       for (const [sessionId, ss] of streamStatesRef.current) {
-        if (ss.isStreaming) {
+        if (currentConvIds.has(ss.conversationId) && ss.isStreaming) {
           ss.isStreaming = false
           try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
         }
       }
-      streamStatesRef.current.clear()
+      for (const [sessionId, ss] of streamStatesRef.current) {
+        if (currentConvIds.has(ss.conversationId)) {
+          streamStatesRef.current.delete(sessionId)
+        }
+      }
       conversationMessagesRef.current.clear()
       // 清理当前员工所有对话的草稿
       for (const conv of allConversations) {
@@ -1168,10 +1175,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       return
     }
 
+    // 防重发：既查流式状态，也查 isStreamingRef——IPC 返回 sessionId 前的窗口期
+    // streamState 尚未注册，仅查 streamStatesRef 时 Enter 可重复触发并发两条流。
+    // 置位后由 sendMessage 内部（成功流结束/失败 catch）复位
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === currentConvId && s.isStreaming)
-    if (hasActiveStream) return
+    if (hasActiveStream || isStreamingRef.current) return
 
-    sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
+    isStreamingRef.current = true
+    await sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
+    // sendMessage 发起失败（未进入流）的路径在其 catch 中复位；此处同步兜底
+    // （按当前对话过滤：其他员工后台续跑流不应阻止本对话复位）
+    const stillStreaming = Array.from(streamStatesRef.current.values())
+      .some(s => s.conversationId === currentConvId && s.isStreaming)
+    if (!stillStreaming) {
+      isStreamingRef.current = false
+    }
   }
 
   // 实际执行模型：优先当前对话绑定的默认模型（输入框模型按钮），其次员工级默认/第一个 provider
@@ -1241,7 +1259,16 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           comparisonModelId: sel.modelId,
         }
         updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
+      }
 
+      if (targetConvId === activeConversationIdRef.current) {
+        setIsStreaming(true)
+        isStreamingRef.current = true
+      }
+
+      // 单个模型的发起（IPC 返回 sessionId 后注册 streamState，
+      // 发起窗口期由 handleSend 的 isStreamingRef 守卫兜底防重发）
+      const startOne = async (sel: { providerId: string; modelId: string }, assistantMessageId: string) => {
         const streamState: ConversationStreamState = {
           isStreaming: true,
           conversationId: targetConvId,
@@ -1251,12 +1278,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           runCounter: 0,
           groupSeq: 0,
         }
-
-        if (targetConvId === activeConversationIdRef.current) {
-          setIsStreaming(true)
-          isStreamingRef.current = true
-        }
-
         try {
           const messageHistory = buildEnrichedHistory(
             updatedMessagesRef
@@ -1287,6 +1308,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           }
         }
       }
+
+      // 多模型对比并行发起：原 for 内 await 串行启动 N 个模型，对比耗时 N 倍
+      await Promise.all(targetModels.map((sel, idx) => startOne(sel, assistantIds[idx])))
 
       if (targetConvId === activeConversationIdRef.current && assistantIds.length > 0) {
         setIsComparisonMode(true)
