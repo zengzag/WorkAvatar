@@ -207,7 +207,8 @@ const LLMSettings: React.FC = () => {
         delete (providerData as any).api_key
       }
       if (editingProvider) {
-        await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
+        const res: any = await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
+        if (res?.error) throw new Error(res.error)
         // 模型ID变更后同步 localStorage 中的引用（主进程已级联更新 settings/automation 表）
         syncModelRenamesInStorage(
           editingProvider.id,
@@ -215,7 +216,8 @@ const LLMSettings: React.FC = () => {
         )
         message.success(t('settings.updated'))
       } else {
-        await window.electronAPI.llm.createProvider(providerData)
+        const res: any = await window.electronAPI.llm.createProvider(providerData)
+        if (res?.error) throw new Error(res.error)
         message.success(t('settings.added'))
       }
       setModalVisible(false)

@@ -148,6 +148,11 @@ class LLMClientService {
       this.db.getDb().prepare('UPDATE llm_providers SET is_default = 0').run()
     }
 
+    // 先加密落库 API Key：加密不可用时抛错，避免留下无密钥的供应商记录
+    if (apiKeyValue) {
+      await this.keyStorage.saveApiKey(id, apiKeyValue)
+    }
+
     this.db.getDb().prepare(`
       INSERT INTO llm_providers (id, name, provider_type, base_url, model, embedding_model, temperature, max_tokens, timeout_ms, extra_headers_json, extra_body_json, is_default, models_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -167,10 +172,6 @@ class LLMClientService {
       params.models_json || '[]',
       now,
     )
-
-    if (apiKeyValue) {
-      await this.keyStorage.saveApiKey(id, apiKeyValue)
-    }
 
     this.notifyProviderChanged()
     return this.getProvider(id)
