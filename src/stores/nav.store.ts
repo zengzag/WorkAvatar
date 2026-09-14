@@ -77,15 +77,14 @@ function reindex(config: NavItemConfig[]): NavItemConfig[] {
     .map((item, idx) => ({ ...item, order: idx }))
 }
 
-/** 合并插件项到 config：保留已保存的排序/显隐，新增插件按 manifest order 插入 */
+/** 合并插件项到 config：保留内置项与当前插件项的排序/显隐，移除已卸载插件项，新增插件按 manifest order 插入 */
 function mergePluginsIntoConfig(config: NavItemConfig[], plugins: PluginNavItem[]): NavItemConfig[] {
-  const pluginKeys = new Set(plugins.map((p) => p.key))
-  // 保留已持久化的 config（含插件项），移除已卸载的插件项
-  const merged = config.filter((c) => !pluginKeys.has(c.key) || plugins.some((p) => p.key === c.key))
+  const builtinKeys = new Set(DEFAULT_NAV_CONFIG.map((c) => c.key))
+  // 仅保留内置项；插件项统一由下方循环按当前插件列表重建（卸载项移除且不重复）
+  const merged = config.filter((c) => builtinKeys.has(c.key))
   for (const p of plugins) {
-    if (!merged.some((c) => c.key === p.key)) {
-      merged.push({ key: p.key, visible: true, order: p.order })
-    }
+    const saved = config.find((c) => c.key === p.key)
+    merged.push(saved ? { ...saved } : { key: p.key, visible: true, order: p.order })
   }
   return reindex(merged)
 }
