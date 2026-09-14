@@ -58,12 +58,12 @@ export function safeCalculate(expression: string): number {
 export function formatDate(date: Date, format: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return format
-    .replace('YYYY', String(date.getFullYear()))
-    .replace('MM', pad(date.getMonth() + 1))
-    .replace('DD', pad(date.getDate()))
-    .replace('HH', pad(date.getHours()))
-    .replace('mm', pad(date.getMinutes()))
-    .replace('ss', pad(date.getSeconds()))
+    .replace(/YYYY/g, String(date.getFullYear()))
+    .replace(/MM/g, pad(date.getMonth() + 1))
+    .replace(/DD/g, pad(date.getDate()))
+    .replace(/HH/g, pad(date.getHours()))
+    .replace(/mm/g, pad(date.getMinutes()))
+    .replace(/ss/g, pad(date.getSeconds()))
 }
 
 export function getDefaultProviderId(db: { getDb(): any }): string | null {
@@ -78,7 +78,7 @@ export function extractMessagePreview(messagesJson: string): string {
     const parts: string[] = []
     for (const m of messages) {
       if (m.role === 'user' && typeof m.content === 'string') {
-        parts.push(m.content)
+        if (m.content.trim()) parts.push(m.content)
       } else if (m.role === 'assistant') {
         // assistant content 可能是纯文本，也可能拆分到 segments
         if (typeof m.content === 'string' && m.content.trim()) {

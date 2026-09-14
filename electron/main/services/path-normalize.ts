@@ -19,7 +19,10 @@ function stripExtendedPrefix(p: string): string {
  */
 export function normalizePath(p: string): string {
   if (!p || typeof p !== 'string') return ''
-  let resolved = path.resolve(p.trim())
+  const trimmed = p.trim()
+  // 纯空白路径静默解析为 cwd（resolve('')），权限边界比较会拿到非预期根，直接拒绝
+  if (!trimmed) return ''
+  let resolved = path.resolve(trimmed)
   if (IS_WINDOWS) resolved = resolved.replace(/\//g, '\\')
   let cur = resolved
   for (let guard = 0; guard < 64; guard++) {
