@@ -73,6 +73,12 @@ class KMSIndexManagerService {
     onProgress?: ProgressCallback,
     options: { providerId?: string; withEmbedding?: boolean; dirId?: string; resetHotData?: boolean } = {},
   ): Promise<void> {
+    // 并发防护：增量/全量/合集深处理并发触发时，直接覆盖 abortController 会让
+    // 前一管线失去取消能力，且两条管线并发写同一批状态机互相踩踏
+    if (this.abortController && !this.abortController.signal.aborted) {
+      onProgress?.({ phase: 'error', current: 0, total: 0, message: '已有索引任务在进行中，请等待完成或取消后再试' })
+      throw new Error('INDEX_PIPELINE_RUNNING')
+    }
     const { withEmbedding = true, dirId, resetHotData = false } = options
     this.abortController = new AbortController()
     const signal = this.abortController.signal
@@ -778,7 +784,9 @@ class KMSIndexManagerService {
       const embedding = await llmClient.createEmbedding(embConfig.providerId, text, embConfig.modelName)
       if (signal?.aborted) return false
 
-      const buffer = Buffer.from(embedding.buffer)
+      // 与全库一致的 subarray 视图防御：Buffer.from(embedding.buffer) 会忽略
+      // byteOffset/byteLength，若 embedding 是大缓冲的视图会存入错误向量
+      const buffer = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength)
       this.db.prepare(`
         UPDATE kms_collection_summaries
         SET embedding = ?, dimension = ?, embedding_model = ?, updated_at = unixepoch()
@@ -1177,7 +1185,7 @@ class KMSIndexManagerService {
       return p && p.content && countWords(p.content) >= MIN_CONTENT_WORDS
     })
 
-    const paragraphSummaries: Array<{ title: string; summary: string; keywords: string[] }> = []
+    const paragraphSummaries: Array<{ title: string; summary: string; keywords: string[]; paragraphIndex?: number }> = []
 
     if (summaryCandidates.length === 0 || !providerId || !modelId) {
       return paragraphSummaries
@@ -1209,7 +1217,7 @@ class KMSIndexManagerService {
         const summary = await generateParagraphSummary(
           p.content, p.title || fileName, providerId, modelId, signal, enableThinking
         )
-        paragraphSummaries.push(summary)
+        paragraphSummaries.push({ ...summary, paragraphIndex: sp.paragraphIndex })
       } catch (err: any) {
         if (err?.name === 'AbortError' || signal?.aborted) {
           if (paragraphSummaries.length > 0) {
@@ -1218,7 +1226,7 @@ class KMSIndexManagerService {
           return paragraphSummaries
         }
         logger.warn(`Paragraph summary failed for ${p.title}:`, err?.message || err)
-        paragraphSummaries.push({ title: p.title, summary: '', keywords: [] })
+        paragraphSummaries.push({ title: p.title, summary: '', keywords: [], paragraphIndex: sp.paragraphIndex })
       }
 
       processed++

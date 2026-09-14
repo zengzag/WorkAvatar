@@ -211,7 +211,7 @@ export function updateParagraphSummaries(
   fileId: string,
   paragraphs: Array<{ title: string; titlePath: string; level: number; paragraphIndex: number; startOffset: number; endOffset: number; content?: string }>,
   savedParagraphs: Array<{ id: string; paragraphIndex: number }>,
-  summaries: Array<{ title: string; summary: string; keywords: string[] }>,
+  summaries: Array<{ title: string; summary: string; keywords: string[]; paragraphIndex?: number }>,
   searchEngine: KMSSearchEngineService,
 ): void {
   const paraById = new Map<number, string>()
@@ -223,12 +223,15 @@ export function updateParagraphSummaries(
     const summary = summaries[i]
     if (!summary.summary && summary.keywords.length === 0) continue
 
-    const paraId = paraById.get(i)
+    // 摘要数组的下标对应的是摘要候选（savedParagraphs 的过滤子集），
+    // 不能把数组下标直接当 paragraphIndex，否则候选跳号时摘要整体错位写入错误段落
+    const targetParaIndex = summary.paragraphIndex ?? i
+    const paraId = paraById.get(targetParaIndex)
     if (!paraId) continue
 
     searchEngine.updateParagraphSummary(paraId, summary.summary, summary.keywords)
 
-    const p = paraByIndex.get(i)
+    const p = paraByIndex.get(targetParaIndex)
     if (p) {
       searchEngine.indexParagraph(
         fileId,
