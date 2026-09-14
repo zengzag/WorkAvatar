@@ -397,19 +397,38 @@ export function useKMS() {
   const buildIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.buildIndex(providerId, withEmbedding, resetHotData)
+    try {
+      await window.electronAPI.kms.buildIndex(providerId, withEmbedding, resetHotData)
+    } catch (err) {
+      // IPC 直接失败时后端进度事件可能不来，主动复位避免进度条永久卡死
+      setIsIndexing(false)
+      setIndexProgress(null)
+      throw err
+    }
   }, [])
 
   const incrementalIndex = useCallback(async (providerId?: string, withEmbedding: boolean = true) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.incrementalIndex(providerId, withEmbedding)
+    try {
+      await window.electronAPI.kms.incrementalIndex(providerId, withEmbedding)
+    } catch (err) {
+      setIsIndexing(false)
+      setIndexProgress(null)
+      throw err
+    }
   }, [])
 
   const rebuildDirIndex = useCallback(async (dirId: string, providerId?: string, withEmbedding: boolean = true, resetHotData: boolean = false) => {
     setIsIndexing(true)
     setIndexProgress({ phase: 'crawling', current: 0, total: 0, message: '' })
-    await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData)
+    try {
+      await window.electronAPI.kms.rebuildDirIndex(dirId, providerId, withEmbedding, resetHotData)
+    } catch (err) {
+      setIsIndexing(false)
+      setIndexProgress(null)
+      throw err
+    }
   }, [])
 
   const cancelIndex = useCallback(async () => {
@@ -552,13 +571,19 @@ export function useKMS() {
       progressUnsubscribe.current()
     }
     const PROGRESS_THROTTLE_MS = 300
+    const doneResetTimers = new Set<ReturnType<typeof setTimeout>>()
     const flushProgress = (progress: IndexProgress) => {
       progressLastFlushAt.current = Date.now()
       progressPendingRef.current = null
       setIndexProgress(progress)
       if (progress.phase === 'done' || progress.phase === 'error') {
         setIsIndexing(false)
-        setTimeout(() => setIndexProgress(null), 3000)
+        // 延迟清空进度条：卸载/重订阅时统一清理，避免组件卸载后仍 setState
+        const t = setTimeout(() => {
+          doneResetTimers.delete(t)
+          setIndexProgress(null)
+        }, 3000)
+        doneResetTimers.add(t)
         loadDirs()
         loadStats()
         loadAutoIndexStatus()
@@ -604,6 +629,9 @@ export function useKMS() {
         clearTimeout(progressFlushTimer.current)
         progressFlushTimer.current = null
       }
+      // 清空 done 阶段的延迟清屏定时器
+      for (const t of doneResetTimers) clearTimeout(t)
+      doneResetTimers.clear()
     }
   }, [loadDirs, loadStats, loadAutoIndexStatus])
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getCachedSceneDefaultModel } from '../utils/default-model'
 import type { ThinkingLevel } from '../types'
 
@@ -55,34 +55,40 @@ export function useLlmSettings(employeeId: string | undefined) {
   }, [])
 
   // 当 key 变化（如 employeeId 切换）时，从 localStorage 重新读取对应的值
-  // 避免 useState 初始化只执行一次导致切换员工/重启程序后模型不恢复的问题
+  // 避免 useState 初始化只执行一次导致切换员工/重启程序后模型不恢复的问题。
+  // 无条件重置：新 key 无存储且无默认值时置空，防止旧员工的模型残留并回写串扰
   useEffect(() => {
     const storedProvider = localStorage.getItem(providerKey)
     const fallback = getCachedSceneDefaultModel('workbench')
-    if (storedProvider || fallback?.provider_id) {
-      setSelectedLlmProviderId(storedProvider || fallback?.provider_id || '')
-    }
+    setSelectedLlmProviderId(storedProvider || fallback?.provider_id || '')
     const storedModel = localStorage.getItem(modelKey)
-    if (storedModel || fallback?.model_id) {
-      setSelectedLlmModelId(storedModel || fallback?.model_id || '')
-    }
+    setSelectedLlmModelId(storedModel || fallback?.model_id || '')
     const storedThinking = localStorage.getItem(thinkingKey)
-    if (storedThinking !== null) {
-      if (storedThinking === 'true') setEnableThinking('high')
-      else if (storedThinking === 'false') setEnableThinking(false)
-      else if (storedThinking === 'low' || storedThinking === 'medium' || storedThinking === 'high') setEnableThinking(storedThinking)
-    }
+    if (storedThinking === 'true') setEnableThinking('high')
+    else if (storedThinking === 'false') setEnableThinking(false)
+    else if (storedThinking === 'low' || storedThinking === 'medium' || storedThinking === 'high') setEnableThinking(storedThinking)
+    else setEnableThinking(false)
+    // 恢复完成标记：持久化 effect 据此跳过 key 刚切换、state 尚未恢复的窗口期
+    syncedKeysRef.current = providerKey + '|' + modelKey + '|' + thinkingKey
   }, [providerKey, modelKey, thinkingKey])
 
+  const syncedKeysRef = useRef('')
+  const currentKeys = providerKey + '|' + modelKey + '|' + thinkingKey
+
   useEffect(() => {
+    // key 刚切换（恢复 effect 尚未把新值写入 state）时跳过持久化，
+    // 否则旧员工的 provider/model 会被写入新员工的 key
+    if (syncedKeysRef.current !== currentKeys) return
     localStorage.setItem(providerKey, selectedLlmProviderId)
-  }, [selectedLlmProviderId, providerKey])
+  }, [selectedLlmProviderId, currentKeys, providerKey])
   useEffect(() => {
+    if (syncedKeysRef.current !== currentKeys) return
     localStorage.setItem(modelKey, selectedLlmModelId)
-  }, [selectedLlmModelId, modelKey])
+  }, [selectedLlmModelId, currentKeys, modelKey])
   useEffect(() => {
+    if (syncedKeysRef.current !== currentKeys) return
     localStorage.setItem(thinkingKey, String(enableThinking))
-  }, [enableThinking, thinkingKey])
+  }, [enableThinking, currentKeys, thinkingKey])
 
   const loadProviders = async () => {
     if (_cachedProviders && Date.now() - _cachedProvidersTime < PROVIDERS_CACHE_TTL) {
