@@ -132,40 +132,55 @@ function checkCodeSyntax(code: string): SyntaxCheckResult {
 }
 
 /**
- * 创建沙箱只读 fs：保留读方法，写方法替换为抛错提示用 `file` 对象。
- * 写操作不再走 fs（同步方法无法 await 异步弹窗），改由注入的 `file` 异步对象处理。
+ * 创建沙箱只读 fs：仅放行读类方法（白名单制，防止未来 fs API 漂移产生绕过），
+ * 其余方法（写/删/改元数据/open 系列）统一替换为抛错提示用 `file` 对象。
+ * 写操作不走 fs（同步方法无法 await 异步弹窗），由注入的 `file` 异步对象处理。
  */
 function createSandboxedReadOnlyFs(): any {
   const realFs = require('fs')
   const wrappedFs: any = {}
-  // 写/删方法黑名单：这些方法不暴露给沙箱
-  const blockedMethods = new Set([
-    'writeFileSync', 'appendFileSync', 'unlinkSync', 'rmSync', 'rmdirSync',
-    'mkdirSync', 'copyFileSync', 'renameSync', 'createWriteStream',
-    'truncateSync', 'ftruncateSync',
-    'writeFile', 'appendFile', 'unlink', 'rm', 'rmdir',
-    'mkdir', 'copyFile', 'rename', 'truncate',
+  // 读类白名单：只有这些方法暴露给沙箱
+  const allowedMethods = new Set([
+    'readFileSync', 'existsSync', 'statSync', 'lstatSync', 'fstatSync',
+    'readdirSync', 'readlinkSync', 'realpathSync', 'opendirSync',
+    'accessSync', 'constants', 'Stats', 'Dir', 'Dirent',
+    'createReadStream',
   ])
   const blockedMsg = 'javascript_exec 沙箱中 fs 不支持写/删操作。请使用注入的 `file` 对象（如 await file.save(path, content)）进行文件写入。'
   for (const key of Object.keys(realFs)) {
-    if (blockedMethods.has(key)) {
-      wrappedFs[key] = () => { throw new Error(blockedMsg) }
-    } else {
+    if (allowedMethods.has(key)) {
       wrappedFs[key] = realFs[key]
     }
   }
-  // fs.promises：写方法同样替换
+  // createReadStream 特殊处理：固定只读 flag。options.flags 可传 'w' 以 O_TRUNC
+  // 打开目标文件（随后 read 报 EBADF 但文件已被清空），构成任意路径文件破坏
+  wrappedFs.createReadStream = (p: any, opts: any) => realFs.createReadStream(p, { ...opts, flags: 'r' })
+  // fs.promises：同样只放行读类方法
   if (realFs.promises) {
     const realPromises = realFs.promises
     const wrappedPromises: any = {}
+    const allowedPromiseMethods = new Set([
+      'readFile', 'stat', 'lstat', 'readdir', 'readlink', 'realpath',
+      'opendir', 'access', 'constants',
+    ])
     for (const key of Object.keys(realPromises)) {
-      if (blockedMethods.has(key)) {
-        wrappedPromises[key] = () => Promise.reject(new Error(blockedMsg))
-      } else {
+      if (allowedPromiseMethods.has(key)) {
         wrappedPromises[key] = realPromises[key]
       }
     }
     wrappedFs.promises = wrappedPromises
+  }
+  // 占位抛错：避免 LLM 生成的代码调用写方法时得到 undefined is not a function 而难以定位
+  for (const key of ['writeFile', 'writeFileSync', 'appendFile', 'appendFileSync', 'unlink', 'unlinkSync',
+    'rm', 'rmSync', 'rmdir', 'rmdirSync', 'mkdir', 'mkdirSync', 'copyFile', 'copyFileSync',
+    'rename', 'renameSync', 'truncate', 'truncateSync', 'ftruncate', 'ftruncateSync',
+    'open', 'openSync', 'write', 'writeSync', 'writev', 'writevSync',
+    'chmod', 'chmodSync', 'chown', 'chownSync', 'utimes', 'utimesSync',
+    'link', 'linkSync', 'symlink', 'symlinkSync', 'createWriteStream']) {
+    wrappedFs[key] = () => { throw new Error(blockedMsg) }
+    if (realFs.promises) {
+      wrappedFs.promises[key] = () => Promise.reject(new Error(blockedMsg))
+    }
   }
   return wrappedFs
 }
@@ -350,7 +365,8 @@ export const javascriptExecTool: ToolDefinition = {
 
 短代码(<800字)传 code；长代码用 file_write 写 .js 后传 code_file。
 文件写入用 await file.save(path, content)，不要用 fs 写方法。
-执行前语法预检查，精确行号+修复建议。`,
+执行前语法预检查，精确行号+修复建议。
+字符串↔字节编码用 Buffer（require('buffer') 或全局 Buffer），沙箱内没有 TextEncoder/TextDecoder。`,
   parameters: {
     type: 'object',
     properties: {
@@ -467,61 +483,26 @@ export const javascriptExecTool: ToolDefinition = {
         nextTick: process.nextTick,
       },
       Buffer,
-      Uint8Array,
-      ArrayBuffer,
-      Int8Array,
-      Uint16Array,
-      Int16Array,
-      Uint32Array,
-      Int32Array,
-      Float32Array,
-      Float64Array,
-      DataView,
+      // 注意：刻意不注入 TextEncoder/TextDecoder——它们是宿主类，其实例 constructor
+      // 链可达宿主 Function（codeGeneration:false 只禁沙箱内编译，不禁宿主 realm）。
+      // 编码需求用 Buffer（require('buffer')）替代；其余 TypedArray/JSON/Math 等为
+      // V8 intrinsic，沙箱自带
       setTimeout: wrapTimer(setTimeout),
       clearTimeout: clearTracked,
       setInterval: wrapTimer(setInterval),
       clearInterval: clearTracked,
       setImmediate: wrapImmediate(setImmediate),
       clearImmediate: clearTracked,
-      Promise,
-      JSON,
-      Math,
-      Date,
-      Error,
-      TypeError,
-      RangeError,
-      SyntaxError,
-      ReferenceError,
-      URIError,
-      EvalError,
-      Object,
-      Array,
-      String,
-      Number,
-      Boolean,
-      Symbol,
-      Map,
-      Set,
-      WeakMap,
-      WeakSet,
-      RegExp,
-      parseInt,
-      parseFloat,
-      isNaN,
-      isFinite,
-      encodeURIComponent,
-      decodeURIComponent,
-      encodeURI,
-      decodeURI,
-      TextEncoder,
-      TextDecoder,
-      undefined,
-      NaN,
-      Infinity,
     }
 
     try {
-      const context = vm.createContext(sandbox)
+      // codeGeneration.strings=false：禁用 eval / new Function 的字符串编译。
+      // 即使沙箱代码经 x.constructor.constructor 拿到宿主 realm 的 Function 构造器，
+      // 也无法用它编译新代码，逃逸链在编译环节被切断（host intrinsics 也不再注入，
+      // 沙箱使用自己 realm 的 Object/Promise/Array 等，避免跨 realm 混淆）。
+      const context = vm.createContext(sandbox, {
+        codeGeneration: { strings: false, wasm: false },
+      })
 
       const wrappedCode = `(async () => {\n${code}\n})()`
       const script = new vm.Script(wrappedCode, { filename: 'js-exec.js' })
@@ -595,7 +576,8 @@ export const javascriptExecTool: ToolDefinition = {
   },
   source: 'builtin',
   onDemand: true,
-  timeoutMs: 120000,
+  // timeout 参数上限 300s，工具级超时须不小于该上限（否则中间件默认超时/此值会先截断用户指定的长任务）
+  timeoutMs: 310_000,
 }
 
 export function getJavascriptModuleStatus(): Record<string, { loaded: boolean; error?: string }> {

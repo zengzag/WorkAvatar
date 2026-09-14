@@ -18,12 +18,21 @@ import {
 const dangerousPatterns = [
   /\bformat\s+[a-z]:/i, /\bdiskpart\b/i, /\bdd\s+if=/i,
   /\bshutdown\b/i, /\breboot\b/i, /:.*?\(\)\s*\{.*?\};\s*:/,
-  // 编码/混淆执行（绕过检测）
-  /\bpowershell\s+.*-enc\b/i, /\bpowershell\s+.*-EncodedCommand\b/i,
+  // 编码/混淆执行（绕过检测）：PowerShell 完整形式与别名（-enc/-en 均为 -EncodedCommand 官方缩写；
+  // 不拦 -e，避免误伤 -ExecutionPolicy）
+  /\b(powershell|pwsh)(\.exe)?\s+[^|;&]*-(encodedcommand|enc|en)\b/i,
+  // base64 解码管道执行（Unix 侧编码混淆）
+  /\bbase64\s+(?:--|-)?(decode|d)\b[^|]*\|\s*(ba)?sh\b/i,
+  /\becho\b[^|]*\|\s*\bbase64\s+(?:--|-)?(decode|d)\b[^|]*\|\s*(ba)?sh\b/i,
   /\bcmd\s+\/c\s+.*\becho\b.*\|.*\bclip\b/i,
   // 危险解释器执行（python/node 已被释放，允许智能体使用系统环境）
   /\bperl\s+-e\b/i,
 ]
+
+/** 命令是否命中不可逆危险操作（含编码混淆执行），供 handler 与测试共用 */
+export function matchesDangerousPattern(scriptContent: string): boolean {
+  return dangerousPatterns.some((pattern) => pattern.test(scriptContent))
+}
 
 const filePermission = FilePermissionService.getInstance()
 
