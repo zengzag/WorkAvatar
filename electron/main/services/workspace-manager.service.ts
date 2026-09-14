@@ -132,6 +132,16 @@ class WorkspaceManagerService {
 
     Object.entries(data).forEach(([key, value]) => {
       if (value !== undefined && ALLOWED_COLUMNS.includes(key)) {
+        // workspace_path 是 FilePermissionService 的授权边界，必须位于 employees/ 下，
+        // 防止渲染层被注入后把员工授权根指到任意目录（null/空串表示重置，放行）
+        if (key === 'workspace_path') {
+          if (value === null || value === '') {
+            // 允许重置
+          } else if (typeof value !== 'string' || !this.isWithinEmployeesRoot(value)) {
+            logger.warn(`Rejected employee workspace_path outside employees root: ${value}`)
+            return
+          }
+        }
         if (key === 'memory_enabled') {
           updates.push(`${key} = ?`)
           values.push(value ? 1 : 0)
@@ -161,13 +171,13 @@ class WorkspaceManagerService {
     if (deleteWorkspace) {
       const employee = this.getEmployee(id)
       if (employee && employee.workspace_path) {
-        // 安全校验：workspace_path 必须位于数据目录的 employees/ 子目录下，
-        // 防止 DB 被篡改后通过 workspace_path 递归删除任意系统目录
+        // 安全校验：workspace_path 必须位于数据目录的 employees/ 子目录下（且不能是
+        // employees 根自身——防止 DB 被篡改后递归删除全部员工工作区）
         const basePath = PathService.getInstance().getDataDir()
         const employeesRoot = path.resolve(basePath, 'employees')
         const workspaceRoot = path.resolve(employee.workspace_path)
         const relative = path.relative(employeesRoot, workspaceRoot)
-        const isWithinEmployees = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+        const isWithinEmployees = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
         if (!isWithinEmployees) {
           logger.warn(`Refused to delete workspace outside employees root: ${employee.workspace_path}`)
         } else if (fs.existsSync(workspaceRoot)) {
@@ -220,9 +230,12 @@ class WorkspaceManagerService {
           fs.renameSync(fromAbs, dest)
           // 重写该员工名下所有对话的 workspace_path 前缀（含子会话）
           const pattern = fromAbs.replace(/[\\%_]/g, (m) => '\\' + m) + '%'
+          // SQLite substr 按字符（code point）计数，不能用 JS 的 UTF-16 长度，
+          // 路径含代理对字符（emoji）时偏移会错位；[...str].length 即 code point 数
+          const fromAbsCharCount = [...fromAbs].length
           this.db.getDb().prepare(
             "UPDATE conversations SET workspace_path = ? || substr(workspace_path, ?), updated_at = unixepoch() WHERE workspace_path LIKE ? ESCAPE '\\'"
-          ).run(dest, fromAbs.length + 1, pattern)
+          ).run(dest, fromAbsCharCount + 1, pattern)
         } catch (error) {
           logger.warn('Failed to move employee workspace root', fromAbs, error)
         }
@@ -307,8 +320,14 @@ class WorkspaceManagerService {
     // - 无 parentConversationId（顶层会话）：在员工工作区下创建独立目录
     let workspacePath = ''
     if (reuseWorkspacePath) {
-      // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）
-      workspacePath = reuseWorkspacePath
+      // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）。
+      // 安全校验：路径必须位于数据目录 employees/ 下（该路径是 FilePermissionService
+      // 的授权边界），非法路径直接忽略并回退正常创建，防止把授权根指到任意目录
+      if (this.isWithinEmployeesRoot(reuseWorkspacePath)) {
+        workspacePath = reuseWorkspacePath
+      } else {
+        logger.warn(`Rejected reuseWorkspacePath outside employees root: ${reuseWorkspacePath}`)
+      }
     } else if (parentConversationId) {
       const parent = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string } | undefined
       const parentWs = parent?.workspace_path || ''
@@ -416,6 +435,15 @@ class WorkspaceManagerService {
     return row?.workspace_path || ''
   }
 
+  /** 路径是否位于数据目录 employees/ 下（任务工作区的合法边界，deleteTaskWorkspace 与 workspace_path 复用共用） */
+  isWithinEmployeesRoot(p: string): boolean {
+    const basePath = PathService.getInstance().getDataDir()
+    const employeesRoot = path.resolve(basePath, 'employees')
+    const target = path.resolve(p)
+    const relative = path.relative(employeesRoot, target)
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+  }
+
   private syncConversationFTS(id: string, employeeId: string, title: string, summary: string, messagesJson: string): void {
     this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(id)
     const preview = extractMessagePreview(messagesJson)
@@ -508,14 +536,17 @@ class WorkspaceManagerService {
 
     const conv = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(id) as { workspace_path?: string } | undefined
 
+    // 以实际删除行数为准：传入不存在的 id 不再误报成功（避免调用方误清缓存并通知插件）
+    let deletedCount = 0
     const delTx = this.db.getDb().transaction(() => {
       for (const cid of toDelete) {
         this.db.getDb().prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(cid)
-        this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(cid)
+        const r = this.db.getDb().prepare('DELETE FROM conversations WHERE id = ?').run(cid)
+        deletedCount += r.changes
       }
     })
     delTx()
-    const ok = toDelete.length > 0
+    const ok = deletedCount > 0
 
     // 清理子会话运行记录并中止在途 run（懒加载避免循环依赖）
     if (ok) {
@@ -575,7 +606,7 @@ class WorkspaceManagerService {
    * 删除任务工作区目录（移至回收站）。安全校验：必须位于数据目录 employees/ 下，
    * 防止 DB 被篡改后通过任意路径递归删除系统目录。
    */
-  deleteTaskWorkspace(taskDirPath: string): boolean {
+  async deleteTaskWorkspace(taskDirPath: string): Promise<boolean> {
     const basePath = PathService.getInstance().getDataDir()
     const employeesRoot = path.resolve(basePath, 'employees')
     const target = path.resolve(taskDirPath)
@@ -587,7 +618,8 @@ class WorkspaceManagerService {
     }
     if (!fs.existsSync(target)) return true
     try {
-      moveToTrash(target)
+      // moveToTrash 回退路径（rmSync）可能抛真实错误，必须 await 才能捕获到失败
+      await moveToTrash(target)
       return true
     } catch (error) {
       logger.warn('Failed to remove task workspace directory', target, error)
@@ -643,7 +675,9 @@ class WorkspaceManagerService {
         : ''
       const employeeParams = employeeIds
 
-      results = this.db.getDb().prepare(`
+      // FTS 异常（语法/表损坏）时降级 Phase 2 的 LIKE 检索，不让搜索整体失败
+      try {
+        results = this.db.getDb().prepare(`
         SELECT
           c.id, c.employee_id, e.name as employee_name,
           c.title, c.summary, c.last_message_at, c.message_count,
@@ -659,6 +693,9 @@ class WorkspaceManagerService {
         ORDER BY title_score DESC, f.rank ASC
         LIMIT ?
       `).all(queryNoSpace, titleStartPattern, titleLikePattern, ftsQuery, ...employeeParams, limit) as any[]
+      } catch (err: any) {
+        logger.warn('FTS5 搜索失败，降级 LIKE 检索:', err?.message || err)
+      }
     }
 
     // Phase 2: FTS 无结果降级 LIKE（逐 token AND）
@@ -725,9 +762,11 @@ class WorkspaceManagerService {
  * - 英文 token 追加 * 实现前缀匹配
  * - 中文 token 逐字拆分后用空格连接（FTS5 隐式 AND，要求所有字出现但不要求连续）
  *   避免 FTS5 将整个中文串当作 phrase（要求连续）导致短查询结果反常偏少
+ * - 仅保留字母/数字/CJK，剔除全部 FTS5 语法字符（: , ; { } [ ] < > ~ & | ! " * ^ - 等），
+ *   防止含标点查询触发 fts5 syntax error
  */
 function buildFtsQuery(query: string): string {
-  const cleaned = query.replace(/["*()^+\-]/g, '').trim()
+  const cleaned = query.replace(/[^\p{L}\p{N}\s]/gu, '').trim()
   if (!cleaned) return ''
   const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0)
   return tokens
