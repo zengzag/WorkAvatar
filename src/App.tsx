@@ -196,7 +196,10 @@ const App: React.FC = () => {
   // 按统一配置（config 已含插件项）的完整顺序构建菜单（内置 + 插件混合排序）
   // 折叠图标栏高度有限：插件图标超出可用高度时，多余项收进"更多"弹出子菜单
   const allMenuItems = useMemo<NonNullable<MenuProps['items']>>(() => {
-    const visibleConfig = getVisibleNavItems(navConfig)
+    // 过滤已停用插件保留的排序条目（不在 pluginItems 中），避免占用"更多"折叠预算
+    const visibleConfig = getVisibleNavItems(navConfig).filter(
+      (c) => navItemDefs[c.key as NavItemKey] || pluginNavItems.some((p) => p.key === c.key),
+    )
     // settings 固定在底部，不参与"更多"折叠
     const rootConfig = visibleConfig.filter((c) => c.key !== 'settings')
     const builtinCount = rootConfig.filter((c) => navItemDefs[c.key as NavItemKey]).length

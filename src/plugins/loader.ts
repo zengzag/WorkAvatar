@@ -15,7 +15,7 @@ import type {
   PluginRendererHost,
   PluginViewDefinition,
 } from '../../plugin-sdk/src/renderer'
-import type { PluginRendererInfo } from '../../electron/shared/channels/plugin'
+import type { PluginInfo, PluginRendererInfo } from '../../electron/shared/channels/plugin'
 
 /** 已加载的插件渲染端描述（路由 + 导航贡献） */
 export interface LoadedPlugin {
@@ -121,8 +121,13 @@ export function getLoadedPlugins(): LoadedPlugin[] {
   return Array.from(loadedPlugins.values())
 }
 
-/** 把插件导航项注入 nav store（App 侧与内置导航合并渲染；按 order 排序交给 store） */
-function syncNav(): void {
+/**
+ * 把插件导航项注入 nav store（App 侧与内置导航合并渲染；按 order 排序交给 store）。
+ * 只在整轮 syncPlugins 结束后调用：逐个插件加载时注入会传入"部分插件列表"，
+ * 尚未加载的插件会被 store 当成已卸载删除并写盘，用户保存的插件排序随之丢失。
+ * installedIds 为已安装插件 id（含停用插件），store 据此区分"停用"与"卸载"，停用插件保留排序。
+ */
+function syncNav(installedIds?: string[]): void {
   useNavConfigStore.getState().setPlugins(
     Array.from(loadedPlugins.values())
       .filter(p => p.nav)
@@ -132,7 +137,8 @@ function syncNav(): void {
         icon: p.nav!.icon,
         order: p.nav!.order,
         detachable: p.nav!.detachable,
-      }))
+      })),
+    installedIds,
   )
 }
 
@@ -148,7 +154,7 @@ function createBridge(pluginId: string): PluginBridge {
   }
 }
 
-/** 卸载单个插件的渲染端：调用 dispose → 移除 locale/导航图标/视图注入/路由，并从 nav.store 摘除 */
+/** 卸载单个插件的渲染端：调用 dispose → 移除 locale/导航图标/视图注入/路由（导航由 syncPlugins 整轮同步后统一刷新） */
 export function unloadPluginById(id: string): void {
   const plugin = loadedPlugins.get(id)
   if (!plugin) return
@@ -159,7 +165,6 @@ export function unloadPluginById(id: string): void {
   pluginNavIcons.delete(id)
   unregisterPluginViews(id)
   loadedPlugins.delete(id)
-  syncNav()
 }
 
 /**
@@ -284,7 +289,6 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
       localeLngs,
       dispose: def.dispose,
     })
-    syncNav()
   } catch (err) {
     fail(err)
   }
@@ -310,14 +314,15 @@ let syncChain: Promise<void> = Promise.resolve()
  * 增量同步插件渲染端集合（与主进程广播的最新 rendererPlugins 做 diff）：
  * 已加载但主进程已不可用的 → 卸载；缺失或版本变化的 → 加载；其余保持不动（幂等）。
  * 主进程全量 reload / 整页刷新期间由启动期 loadPlugins 使用同一路径。
+ * installedIds：已安装插件 id（含停用插件），用于保留停用插件的导航排序/显隐。
  */
-export function syncPlugins(rendererPlugins: PluginRendererInfo[]): Promise<void> {
+export function syncPlugins(rendererPlugins: PluginRendererInfo[], installedIds?: string[]): Promise<void> {
   syncChain = syncChain.catch(() => { /* 单次同步失败不阻塞后续队列 */ })
-    .then(() => syncPluginsNow(rendererPlugins))
+    .then(() => syncPluginsNow(rendererPlugins, installedIds))
   return syncChain
 }
 
-async function syncPluginsNow(rendererPlugins: PluginRendererInfo[]): Promise<void> {
+async function syncPluginsNow(rendererPlugins: PluginRendererInfo[], installedIds?: string[]): Promise<void> {
   const target = new Set(rendererPlugins.map(p => p.id))
   for (const id of Array.from(loadedPlugins.keys())) {
     if (!target.has(id)) unloadPluginById(id)
@@ -325,14 +330,21 @@ async function syncPluginsNow(rendererPlugins: PluginRendererInfo[]): Promise<vo
   for (const info of rendererPlugins) {
     await loadSinglePlugin(info)
   }
+  // 整轮加载/卸载结束后统一刷新导航：此处插件集合才是完整的，避免中途把未加载插件当成已卸载
+  syncNav(installedIds)
+}
+
+/** 已安装插件 id 清单（含停用/未激活插件）；清单不可用时返回 undefined，由 store 退回保守合并 */
+function installedPluginIds(plugins?: PluginInfo[]): string[] | undefined {
+  return Array.isArray(plugins) && plugins.length > 0 ? plugins.map(p => p.id) : undefined
 }
 
 /**
- * 启动期加载全部已启用插件的渲染端：
- * 拉清单 → 逐个加载（locale/路由/导航/视图）→ 注入 nav store。
+ * 从主进程拉取插件清单并增量同步渲染端（启动期与插件集合变更广播共用）：
+ * 拉清单 → 逐个加载/卸载（locale/路由/导航/视图）→ 注入 nav store。
  */
 export async function loadPlugins(): Promise<LoadedPlugin[]> {
-  const { rendererPlugins } = await window.electronAPI.plugin.list()
-  await syncPlugins(rendererPlugins)
+  const { plugins, rendererPlugins } = await window.electronAPI.plugin.list()
+  await syncPlugins(rendererPlugins, installedPluginIds(plugins))
   return getLoadedPlugins()
 }

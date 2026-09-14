@@ -17,7 +17,7 @@ import {
 } from './stores/appearance.store'
 import { useNavConfigStore } from './stores/nav.store'
 import { installConsoleForwarder } from './utils/logger'
-import { injectHostGlobals, loadPlugins, syncPlugins } from './plugins/loader'
+import { injectHostGlobals, loadPlugins } from './plugins/loader'
 
 // 尽早挂载 console 转发，把渲染进程日志写入主进程日志文件
 installConsoleForwarder()
@@ -141,15 +141,18 @@ const AppWithTheme: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   )
 }
 
-// 启动时序：共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配静态路由（插件路由为占位动态分发）→ 挂载
+// 启动时序：读取导航配置 → 共享库注入 → 加载插件（locale/路由/导航贡献）→ 装配静态路由（插件路由为占位动态分发）→ 挂载
 async function bootstrap() {
+  // 必须先读完持久化导航配置再加载插件：插件注入导航项时才能保留用户已保存的排序/显隐
+  await useNavConfigStore.getState().initialize()
   await loadPlugins()
   const router = buildRouter()
 
-  // 插件集合变更订阅：主进程导入/启停/删除/重新扫描后广播最新 rendererPlugins，
-  // 渲染端增量加载/卸载插件渲染端（导航/路由/视图），免整页 reload，不影响进行中的对话
-  window.electronAPI.plugin.onPluginsChanged(({ rendererPlugins }) => {
-    void syncPlugins(rendererPlugins)
+  // 插件集合变更订阅：主进程导入/启停/删除/重新扫描后广播变更，
+  // 渲染端重新拉取清单并增量加载/卸载（导航/路由/视图），免整页 reload，不影响进行中的对话。
+  // 重新拉取而非直接用广播载荷：需同时拿到安装清单（含停用插件），停用插件的导航排序才能保留
+  window.electronAPI.plugin.onPluginsChanged(() => {
+    void loadPlugins()
   })
 
   ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

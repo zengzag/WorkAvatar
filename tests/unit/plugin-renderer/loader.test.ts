@@ -249,11 +249,16 @@ describe('loadPlugins（启动期加载）', () => {
     store.loadRendererModule.mockResolvedValueOnce(entry)
     globalThis.window = {
       electronAPI: {
-        plugin: { list: vi.fn(async () => ({ rendererPlugins: [info()] })) },
+        plugin: { list: vi.fn(async () => ({ plugins: [{ id: 'demo' }], rendererPlugins: [info()] })) },
       },
     } as any
     const list = await loadPlugins()
     expect(list.map(p => p.id)).toEqual(['demo'])
     expect(entry.default.init).toHaveBeenCalledTimes(1)
+    // 安装清单（含停用插件）透传给 nav store：停用插件据此保留排序，不被当成已卸载
+    expect(store.setPlugins).toHaveBeenLastCalledWith(
+      [expect.objectContaining({ key: 'demo' })],
+      ['demo'],
+    )
   })
 })

@@ -121,6 +121,78 @@ describe('stores/nav.store', () => {
     expect(config.find(c => c.key === 'plugin:notes')).toBeTruthy()
   })
 
+  it('启动期插件先于 initialize 注入时，不得用 manifest 顺序覆盖已保存排序/显隐', async () => {
+    settingsCalls.push({
+      op: 'set',
+      key: 'nav_items_config',
+      value: JSON.stringify([
+        { key: 'tasks', visible: true, order: 0 },
+        { key: 'kms', visible: true, order: 1 },
+        { key: 'employees', visible: true, order: 2 },
+        { key: 'plugin:voice', visible: true, order: 3 },
+        { key: 'plugin:notes', visible: false, order: 4 },
+        { key: 'settings', visible: true, order: 5 },
+      ]),
+    })
+    // 启动时序：loadPlugins 早于 UI 挂载触发的 initialize；manifest order 与用户排序相反
+    useNavConfigStore.getState().setPlugins([
+      { key: 'plugin:voice', label: '语音', order: 20, detachable: false },
+      { key: 'plugin:notes', label: '笔记', order: 10, detachable: false },
+    ])
+    await useNavConfigStore.getState().initialize()
+
+    const config = useNavConfigStore.getState().config
+    const keys = config.slice().sort((a, b) => a.order - b.order).map((c) => c.key)
+    expect(keys.indexOf('plugin:voice')).toBeLessThan(keys.indexOf('plugin:notes'))
+    expect(config.find((c) => c.key === 'plugin:notes')?.visible).toBe(false)
+  })
+
+  it('无持久化时 initialize 保留启动期已注入的插件项', async () => {
+    useNavConfigStore.getState().setPlugins([{ key: 'plugin:notes', label: '笔记', order: 10, detachable: false }])
+    await useNavConfigStore.getState().initialize()
+    expect(useNavConfigStore.getState().config.some((c) => c.key === 'plugin:notes')).toBe(true)
+  })
+
+  it('initialize 完成后 setPlugins 合并结果才写盘', async () => {
+    await useNavConfigStore.getState().initialize()
+    settingsCalls.length = 0
+    useNavConfigStore.getState().setPlugins([{ key: 'plugin:notes', label: '笔记', order: 10, detachable: false }])
+    const persisted = settingsCalls.filter((c) => c.op === 'set' && c.key === 'nav_items_config')
+    expect(persisted.length).toBeGreaterThan(0)
+    const saved = JSON.parse(persisted[persisted.length - 1].value!)
+    expect(saved.some((c: any) => c.key === 'plugin:notes')).toBe(true)
+  })
+
+  it('setPlugins 传入安装清单时：停用插件保留排序/显隐，卸载插件移除', async () => {
+    await useNavConfigStore.getState().initialize()
+    useNavConfigStore.getState().setPlugins([
+      { key: 'plugin:notes', label: '笔记', order: 10, detachable: false },
+      { key: 'plugin:voice', label: '语音', order: 20, detachable: false },
+    ], ['plugin:notes', 'plugin:voice'])
+    useNavConfigStore.getState().moveUp('plugin:voice')
+    useNavConfigStore.getState().toggleVisible('plugin:notes')
+
+    // voice 停用（仍在安装清单）：条目保留，排序/显隐不变
+    useNavConfigStore.getState().setPlugins(
+      [{ key: 'plugin:notes', label: '笔记', order: 10, detachable: false }],
+      ['plugin:notes', 'plugin:voice'],
+    )
+    let config = useNavConfigStore.getState().config
+    const keys = config.slice().sort((a, b) => a.order - b.order).map((c) => c.key)
+    expect(keys).toContain('plugin:voice')
+    expect(keys.indexOf('plugin:voice')).toBeLessThan(keys.indexOf('plugin:notes'))
+    expect(config.find((c) => c.key === 'plugin:notes')?.visible).toBe(false)
+
+    // voice 卸载（安装清单里也没有）：条目移除
+    useNavConfigStore.getState().setPlugins(
+      [{ key: 'plugin:notes', label: '笔记', order: 10, detachable: false }],
+      ['plugin:notes'],
+    )
+    config = useNavConfigStore.getState().config
+    expect(config.some((c) => c.key === 'plugin:voice')).toBe(false)
+    expect(config.some((c) => c.key === 'plugin:notes')).toBe(true)
+  })
+
   it('getVisibleNavItems 过滤不可见并按 order 排序', () => {
     const items = getVisibleNavItems([
       { key: 'b', visible: true, order: 2 },
