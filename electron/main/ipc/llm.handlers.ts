@@ -318,6 +318,7 @@ export function registerLLMHandlers(
     provider_id: string
     model_id?: string
     enable_thinking?: ThinkingLevel
+    conversation_id?: string
   }) => {
     return employeeAgent.getContextStats(params)
   })

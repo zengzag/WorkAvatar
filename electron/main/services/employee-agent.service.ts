@@ -85,6 +85,8 @@ class EmployeeAgentService {
   private memoryService: EmployeeMemoryService
   private mcpRegistry: McpRegistryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
+  /** 进行中的 agent 构建（按 cacheKey 去重），防止并发重复创建与 MCP 连接泄漏 */
+  private agentCreationInFlight: Map<string, Promise<CachedAgentEntry>> = new Map()
   /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
   private toolEpoch = 0
   private static instance: EmployeeAgentService
@@ -141,6 +143,34 @@ class EmployeeAgentService {
       }
     }
 
+    // 并发去重：同一 cacheKey 的创建请求复用进行中的构建，
+    // 避免重复建 agent + 先建者的 mcpRelease 永不释放（MCP 连接泄漏）
+    const inFlight = this.agentCreationInFlight.get(cacheKey)
+    if (inFlight) return inFlight
+
+    const creation = this.doCreateAgent(
+      cacheKey, employeeId, providerId, modelId, enableThinking,
+      conversationId, employee, minimalMode, streamOverrides
+    )
+    this.agentCreationInFlight.set(cacheKey, creation)
+    try {
+      return await creation
+    } finally {
+      this.agentCreationInFlight.delete(cacheKey)
+    }
+  }
+
+  private async doCreateAgent(
+    cacheKey: string,
+    employeeId: string,
+    providerId: string,
+    modelId?: string,
+    enableThinking?: ThinkingLevel,
+    conversationId?: string,
+    employee?: DBEmployee,
+    minimalMode?: boolean,
+    streamOverrides?: { temperature?: number; maxTokens?: number }
+  ): Promise<CachedAgentEntry> {
     const emp = employee
       ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
       // 注册员工（内置/插件）无 DB 记录：回退注册表解析
@@ -695,13 +725,20 @@ class EmployeeAgentService {
     provider_id: string
     model_id?: string
     enable_thinking?: ThinkingLevel
+    conversation_id?: string
   }): any {
-    const { employee_id, provider_id, model_id, enable_thinking } = params
-    // 与 getOrCreateAgent 的缓存 key 保持一致（无 conversationId 时用 no-conv 兜底）
-    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}:no-conv`
-    const entry = this.agentEntries.get(cacheKey)
-    if (!entry) return null
-    return entry.agent.getContextStats()
+    const { employee_id, provider_id, model_id, enable_thinking, conversation_id } = params
+    // getOrCreateAgent 的 key 含 conversationId 与采样覆盖段（overrideKey）。
+    // 本查询无法预知 overrideKey，故按前缀匹配：优先返回无采样覆盖（override='d/d'）的条目。
+    const base = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}:${conversation_id || 'no-conv'}:`
+    let fallbackEntry: CachedAgentEntry | null = null
+    for (const [key, entry] of this.agentEntries) {
+      if (!key.startsWith(base)) continue
+      if (key.endsWith(':d/d')) return entry.agent.getContextStats()
+      fallbackEntry = entry
+    }
+    if (!fallbackEntry) return null
+    return fallbackEntry.agent.getContextStats()
   }
 
   /** 插件/工具集合变更后调用：递增 epoch 使存量 agent 缓存按工具集失效（运行中的保留至本轮结束） */
