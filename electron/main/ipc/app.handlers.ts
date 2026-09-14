@@ -21,11 +21,11 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'kms_auto_index',
   'web_search_engine',
   'web_search_result_count',
-  'calendar_settings',
   'prevent_sleep_when_foreground',
 ])
 
-// 需要清空的用户数据表（按依赖顺序，受外键约束）
+// 需要清空的用户数据表（按依赖顺序，受外键约束）。
+// calendar_* 仅存在于早期版本的库中，新库不再建表，清空前按实际存在的表过滤。
 const USER_DATA_TABLES = [
   'calendar_reminders',
   'calendar_todos',
@@ -142,8 +142,12 @@ export function registerAppHandlers(
   // 清除所有用户数据（保留应用级 settings 配置），需重启应用生效
   safeHandle(IPC_CHANNELS.APP_CLEAR_ALL_DATA, () => {
     const tx = db.transaction(() => {
-      // 按外键依赖顺序清空用户数据表
+      // 按外键依赖顺序清空用户数据表（遗留日历表仅存在于升级库，按实际存在的表过滤）
+      const existingTables = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(r => r.name)
+      )
       for (const table of USER_DATA_TABLES) {
+        if (!existingTables.has(table)) continue
         db.exec(`DELETE FROM ${table}`)
       }
       // FTS 虚拟表为独立内容存储（非 external-content），须一并清空，

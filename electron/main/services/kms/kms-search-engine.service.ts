@@ -126,17 +126,7 @@ class KMSSearchEngineService {
       return
     }
 
-    const countRow = this.vectorDb.prepare(
-      'SELECT COUNT(*) as count, dimension FROM kms_embeddings GROUP BY dimension ORDER BY count DESC LIMIT 1'
-    ).get() as any
-    if (!countRow || countRow.count === 0) {
-      logger.info('kms_embeddings 表为空，vec0 虚表将延迟到首次写入时创建')
-      return
-    }
-
-    const dimension = countRow.dimension
-    this.createVecTable(dimension)
-    this.migrateExistingEmbeddings(dimension)
+    logger.info('vec0 虚表尚未创建，将延迟到首次写入时创建')
   }
 
   private createVecTable(dimension: number): void {
@@ -153,34 +143,6 @@ class KMSSearchEngineService {
     } catch (err: any) {
       logger.error('vec0 虚表创建失败:', err?.message || err)
       this.vecReady = false
-    }
-  }
-
-  private migrateExistingEmbeddings(dimension: number): void {
-    try {
-      const rows = this.vectorDb.prepare(
-        'SELECT rowid, embedding, file_id, source_type FROM kms_embeddings WHERE dimension = ?'
-      ).all(dimension) as any[]
-
-      if (rows.length === 0) return
-
-      const insertStmt = this.vectorDb.prepare(
-        'INSERT INTO vec_kms_embeddings(rowid, embedding, file_id, source_type) VALUES (?, ?, ?, ?)'
-      )
-      const migrate = this.vectorDb.transaction(() => {
-        for (const row of rows) {
-          try {
-            // rowid 必须以 BigInt 绑定以避开 sqlite-vec 0.1.x 在加载了原生扩展时的类型校验回归
-            insertStmt.run(BigInt(row.rowid), row.embedding, row.file_id, row.source_type)
-          } catch (err: any) {
-            logger.warn(`迁移 rowid=${row.rowid} 失败:`, err?.message || err)
-          }
-        }
-      })
-      migrate()
-      logger.info(`vec0 迁移完成，共迁移 ${rows.length} 条向量`)
-    } catch (err: any) {
-      logger.error('vec0 数据迁移失败:', err?.message || err)
     }
   }
 

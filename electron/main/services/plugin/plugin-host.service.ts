@@ -239,43 +239,6 @@ class PluginHostService {
     fs.mkdirSync(this.dataDir, { recursive: true })
     fs.mkdirSync(this.getUserDir(), { recursive: true })
 
-    // 一次性迁移：旧 userData/plugin-data → 新 dataDir/plugin-data
-    const oldDataDir = path.join(app.getPath('userData'), 'plugin-data')
-    if (fs.existsSync(oldDataDir) && oldDataDir !== this.dataDir) {
-      try {
-        for (const id of fs.readdirSync(oldDataDir)) {
-          const src = path.join(oldDataDir, id)
-          if (!fs.statSync(src).isDirectory()) continue
-          const dst = path.join(this.dataDir, id)
-          if (!fs.existsSync(dst)) {
-            fs.mkdirSync(dst, { recursive: true })
-            for (const f of fs.readdirSync(src)) {
-              try { fs.copyFileSync(path.join(src, f), path.join(dst, f)) } catch { /* ignore */ }
-            }
-          }
-        }
-        logger.info(`插件数据已从旧目录迁移: ${oldDataDir} → ${this.dataDir}`)
-      } catch (err: any) {
-        logger.warn('插件数据迁移失败（忽略，新位置会重建）:', err?.message || err)
-      }
-    }
-
-    // 一次性迁移：旧 userData/plugins（用户插件）→ 新 dataDir/plugins
-    const oldUserPlugins = path.join(app.getPath('userData'), 'plugins')
-    const newUserPlugins = this.getUserDir()
-    if (fs.existsSync(oldUserPlugins) && oldUserPlugins !== newUserPlugins) {
-      try {
-        for (const name of fs.readdirSync(oldUserPlugins)) {
-          const src = path.join(oldUserPlugins, name)
-          const dst = path.join(newUserPlugins, name)
-          if (!fs.existsSync(dst)) fs.cpSync(src, dst, { recursive: true })
-        }
-        logger.info(`用户插件已从旧目录迁移: ${oldUserPlugins} → ${newUserPlugins}`)
-      } catch (err: any) {
-        logger.warn('用户插件迁移失败（忽略）:', err?.message || err)
-      }
-    }
-
     const disabled = this.readDisabledList()
     this.scanAndActivate(disabled)
   }
@@ -666,7 +629,6 @@ class PluginHostService {
       const run = db.transaction(() => {
         migration.run({
           storage: ctx.storage,
-          legacy: this.hasPermission(record, 'legacyMigration') ? this.buildLegacyReader() : null,
           logger: ctx.services.logger,
         })
         db.prepare('INSERT INTO plugin_migrations (version, applied_at) VALUES (?, ?)')
@@ -677,11 +639,6 @@ class PluginHostService {
   }
 
   // ====== ctx 组装 ======
-
-  /** 校验 legacyMigration 权限（v2 保留在 permissions 数组，仅迁移专用） */
-  private hasPermission(record: PluginRecord, permission: string): boolean {
-    return (record.manifest.permissions ?? []).includes(permission as never)
-  }
 
   /** 将插件 manifest.employees 声明注册进员工注册表（激活成功后调用） */
   private registerManifestEmployees(record: PluginRecord): void {
@@ -1491,37 +1448,6 @@ class PluginHostService {
       if (c.agentTools.some(t => (t as { id: string }).id === toolId)) return id
     }
     return undefined
-  }
-
-  private buildLegacyReader() {
-    const db = DatabaseService.getInstance().getDb()
-    const isSelect = (sql: string) => /^\s*select/i.test(sql)
-    const makeReader = (sourceDb: any) => ({
-      listTables: () =>
-        (sourceDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name),
-      all: (sql: string, ...params: unknown[]) => {
-        if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return sourceDb.prepare(sql).all(...params)
-      },
-      get: (sql: string, ...params: unknown[]) => {
-        if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return sourceDb.prepare(sql).get(...params)
-      },
-    })
-    let kmsReader: ReturnType<typeof makeReader> | null = null
-    try {
-      // KMS 向量库（kms_voice_tasks 等历史遗留表所在）；库未初始化时惰性访问失败置 null
-      const { default: KMSDatabaseService } = require('../kms/kms-database.service')
-      kmsReader = makeReader(KMSDatabaseService.getInstance().getDb())
-    } catch {
-      kmsReader = null
-    }
-    return {
-      ...makeReader(db),
-      getSetting: (key: string) =>
-        (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value,
-      kms: kmsReader,
-    }
   }
 
   // ====== IPC 通用桥 ======

@@ -5,8 +5,6 @@ import * as sqliteVec from 'sqlite-vec'
 import PathService from '../path.service'
 import KMSSearchEngineService from './kms-search-engine.service'
 import { createLogger } from '../logger'
-// 【LEGACY】日历/语音迁出遗留兼容（见 services/plugin/legacy，可整体移除）
-import { cleanupVoiceLegacy, ensureVoiceLegacyColumns } from '../plugin/legacy'
 
 const logger = createLogger('KMS-DB')
 
@@ -27,15 +25,7 @@ class KMSDatabaseService {
     this.db = this.openKmsDb(kmsDbPath)
     this.vectorDb = this.openKmsDb(vectorDbPath)
 
-    // 主库加载 sqlite-vec（兼容旧代码访问主库的 vec 虚表，如 vec_kms_collection_summaries）
-    try {
-      this.loadSqliteVec(this.db)
-      logger.info('sqlite-vec 扩展加载成功（主库）')
-    } catch (err: any) {
-      logger.error('sqlite-vec 扩展加载失败（主库）:', err?.message || err)
-    }
-
-    // 向量库加载 sqlite-vec（kms_embeddings + vec_kms_embeddings 在此库）
+    // sqlite-vec 仅向量库需要（kms_embeddings + vec_kms_embeddings 在此库）
     try {
       this.loadSqliteVec(this.vectorDb)
       logger.info('sqlite-vec 扩展加载成功（向量库）')
@@ -45,7 +35,6 @@ class KMSDatabaseService {
 
     this.initializeSchema()
     this.initializeVectorSchema()
-    this.migrateEmbeddingsToVectorDb()
     this.autoCleanup()
     // 异步清理孤儿记录：跨库删除（FTS5/embedding）非事务，崩溃后可能残留孤儿
     // 延迟到下一个 tick 执行，避免阻塞构造函数（大库下扫描 embedding 较慢）
@@ -137,9 +126,7 @@ class KMSDatabaseService {
   /**
    * 启动时自动清理过期数据，防止数据库日益庞大。
    * - kms_access_log：删除 30 天前记录（访问日志仅用于近 30 天冷热数据判定）
-   * - kms_search_history.result_data：清空废弃字段（项目规范要求只保存元数据）
    * - kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
-   * - kms_voice_tasks：渐进式清理——30 天前已完成/失败任务清空大文本字段，180 天前的整条删除
    *
    * 注意：此方法在构造函数中调用，此时 KMSDatabaseService.instance 尚未赋值，
    * 因此不能通过 KMSKeywordStatsService.getInstance() 调用（会触发循环依赖），
@@ -159,17 +146,7 @@ class KMSDatabaseService {
       logger.warn('启动自动清理访问日志失败:', err?.message || err)
     }
 
-    // 2. kms_search_history.result_data：清空废弃字段
-    try {
-      const result = this.db.prepare("UPDATE kms_search_history SET result_data = NULL WHERE result_data IS NOT NULL").run()
-      if (result.changes > 0) {
-        logger.info(`启动自动清理：清空 ${result.changes} 条废弃的 search_history.result_data`)
-      }
-    } catch (err: any) {
-      logger.warn('启动自动清理 result_data 失败:', err?.message || err)
-    }
-
-    // 3. kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
+    // 2. kms_keyword_stats：删除 90 天未搜索且 search_count < 3 的低频关键词
     try {
       const cutoff = now - 90 * 86400
       const result = this.db.prepare(
@@ -181,9 +158,6 @@ class KMSDatabaseService {
     } catch (err: any) {
       logger.warn('启动自动清理 keyword_stats 失败:', err?.message || err)
     }
-
-    // 4. kms_voice_tasks：渐进式清理（语音迁出遗留，见 plugin/legacy）
-    cleanupVoiceLegacy(this.db, now)
   }
 
   /**
@@ -241,14 +215,6 @@ class KMSDatabaseService {
       KMSDatabaseService.instance = new KMSDatabaseService()
     }
     return KMSDatabaseService.instance
-  }
-
-  public addColumnIfNotExists(table: string, column: string, definition: string): void {
-    const result = this.db.prepare(`PRAGMA table_info(${table})`).all() as any[]
-    const columnExists = result.some((c) => c.name === column)
-    if (!columnExists) {
-      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
-    }
   }
 
   private initializeSchema(): void {
@@ -313,7 +279,8 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_files_dir ON kms_files(dir_id);
-      -- file_hash 唯一索引由 enforceUniqueFileHash() 迁移建立
+      -- file_hash 唯一索引：同一物理文件（内容哈希相同）不重复索引
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash);
       CREATE INDEX IF NOT EXISTS idx_kms_files_status ON kms_files(index_status);
       CREATE INDEX IF NOT EXISTS idx_kms_files_tier ON kms_files(data_tier);
       CREATE INDEX IF NOT EXISTS idx_kms_files_modified ON kms_files(modified_time);
@@ -348,6 +315,9 @@ class KMSDatabaseService {
         id TEXT PRIMARY KEY,
         file_id TEXT NOT NULL UNIQUE REFERENCES kms_files(id) ON DELETE CASCADE,
         summary TEXT NOT NULL DEFAULT '',
+        light_summary TEXT DEFAULT '',
+        preview_text TEXT DEFAULT '',
+        parse_mode TEXT DEFAULT '',
         toc_json TEXT DEFAULT '[]',
         keywords_json TEXT DEFAULT '[]',
         main_topics_json TEXT DEFAULT '[]',
@@ -425,13 +395,12 @@ class KMSDatabaseService {
 
       CREATE INDEX IF NOT EXISTS idx_kms_dir_summaries_dir ON kms_dir_summaries(dir_id);
 
-      -- 搜索历史表（记录关键词搜索和AI搜索的历史）
+      -- 搜索历史表（记录关键词搜索和AI搜索的历史，仅保存元数据）
       CREATE TABLE IF NOT EXISTS kms_search_history (
         id TEXT PRIMARY KEY,
         query TEXT NOT NULL,
         search_mode TEXT NOT NULL,
         result_count INTEGER NOT NULL DEFAULT 0,
-        result_data TEXT,
         filters_json TEXT DEFAULT '{}',
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -461,12 +430,16 @@ class KMSDatabaseService {
       CREATE INDEX IF NOT EXISTS idx_kms_file_collections_collection ON kms_file_collections(collection_id);
 
       -- 合集级摘要表（对应原 KB 的 kb_global_summaries）
+      -- embedding/dimension/embedding_model 存储摘要向量，用于语义匹配
       CREATE TABLE IF NOT EXISTS kms_collection_summaries (
         id TEXT PRIMARY KEY,
         collection_id TEXT NOT NULL UNIQUE REFERENCES kms_collections(id) ON DELETE CASCADE,
         summary TEXT NOT NULL DEFAULT '',
         key_topics_json TEXT DEFAULT '[]',
         vector_id TEXT,
+        embedding BLOB,
+        dimension INTEGER DEFAULT 0,
+        embedding_model TEXT DEFAULT '',
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
@@ -531,37 +504,7 @@ class KMSDatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_kms_stop_words_word ON kms_stop_words(word);
-
-      -- 语音识别录音任务表
-      CREATE TABLE IF NOT EXISTS kms_voice_tasks (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL DEFAULT '',
-        description TEXT DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'created',
-        audio_path TEXT,
-        audio_format TEXT DEFAULT 'webm',
-        duration INTEGER DEFAULT 0,
-        audio_size INTEGER DEFAULT 0,
-        audio_channels INTEGER DEFAULT 0,
-        sample_rate INTEGER DEFAULT 0,
-        transcript TEXT DEFAULT '',
-        transcript_segments_json TEXT DEFAULT '[]',
-        transcript_language TEXT DEFAULT '',
-        minutes TEXT DEFAULT '',
-        minutes_type TEXT DEFAULT '',
-        error_message TEXT,
-        stt_mode TEXT DEFAULT '',
-        stt_model TEXT DEFAULT '',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        recorded_at INTEGER
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_kms_voice_tasks_status ON kms_voice_tasks(status);
-      CREATE INDEX IF NOT EXISTS idx_kms_voice_tasks_created ON kms_voice_tasks(created_at DESC);
     `)
-
-    this.migrateSchema()
 
     this.recoverStuckFiles()
   }
@@ -599,167 +542,6 @@ class KMSDatabaseService {
       -- 覆盖索引：支持 anti-join 查询的 index-only scan（避免回表取 id）
       CREATE INDEX IF NOT EXISTS idx_kms_embeddings_source_covering ON kms_embeddings(source_type, source_id, id);
     `)
-  }
-
-  /**
-   * 一次性迁移：把主库中的 kms_embeddings 数据迁移到独立的向量库。
-   *
-   * 迁移完成后删除主库中的 kms_embeddings 表和 vec_kms_embeddings 虚表，
-   * 释放主库空间（VACUUM 需手动触发，避免启动时阻塞）。
-   */
-  private migrateEmbeddingsToVectorDb(): void {
-    // 检查主库是否还有 kms_embeddings 表
-    const mainTable = this.db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='kms_embeddings'"
-    ).get() as any
-
-    if (!mainTable) return
-
-    // 检查主库 kms_embeddings 是否有数据
-    const countRow = this.db.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
-    const mainCount = countRow?.cnt ?? 0
-
-    if (mainCount > 0) {
-      // 检查向量库是否已有数据（避免重复迁移）
-      const vecCountRow = this.vectorDb.prepare('SELECT COUNT(*) as cnt FROM kms_embeddings').get() as any
-      const vecCount = vecCountRow?.cnt ?? 0
-
-      if (vecCount === 0) {
-        logger.info(`开始迁移 ${mainCount} 条 embedding 从主库到向量库...`)
-        // 分批迁移，避免大事务卡死
-        const BATCH = 500
-        let migrated = 0
-        const insertStmt = this.vectorDb.prepare(`
-          INSERT INTO kms_embeddings (id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        while (true) {
-          const batch = this.db.prepare(
-            'SELECT id, source_type, source_id, file_id, embedding, model, dimension, created_at, updated_at FROM kms_embeddings LIMIT ? OFFSET ?'
-          ).all(BATCH, migrated) as any[]
-          if (batch.length === 0) break
-          const tx = this.vectorDb.transaction(() => {
-            for (const row of batch) insertStmt.run(row.id, row.source_type, row.source_id, row.file_id, row.embedding, row.model, row.dimension, row.created_at, row.updated_at)
-          })
-          tx()
-          migrated += batch.length
-          if (batch.length < BATCH) break
-        }
-        logger.info(`迁移完成：${migrated} 条 embedding`)
-      } else {
-        logger.info(`向量库已有 ${vecCount} 条 embedding，跳过迁移`)
-      }
-    }
-
-    // 删除主库的 kms_embeddings 表和 vec_kms_embeddings 虚表（无论有无数据，避免后续代码误用）
-    try {
-      this.db.exec('DROP TABLE IF EXISTS vec_kms_embeddings')
-    } catch (err: any) {
-      logger.warn('删除主库 vec_kms_embeddings 失败:', err?.message || err)
-    }
-    try {
-      this.db.exec('DROP TABLE IF EXISTS kms_embeddings')
-    } catch (err: any) {
-      logger.warn('删除主库 kms_embeddings 失败:', err?.message || err)
-    }
-    // 释放主库的旧索引（DROP TABLE 会自动清理，这里防御性清理）
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_source')
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_file')
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_dimension')
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_updated')
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_embeddings_source_covering')
-  }
-
-  private migrateSchema(): void {
-    const cols = this.db.prepare("PRAGMA table_info(kms_file_summaries)").all() as any[]
-    const colNames = cols.map(c => c.name)
-    if (!colNames.includes('light_summary')) {
-      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN light_summary TEXT DEFAULT ''")
-    }
-    if (!colNames.includes('preview_text')) {
-      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN preview_text TEXT DEFAULT ''")
-    }
-    if (!colNames.includes('parse_mode')) {
-      this.db.exec("ALTER TABLE kms_file_summaries ADD COLUMN parse_mode TEXT DEFAULT ''")
-    }
-
-    // 知识卡片：卡片独立的生成要求（用户可在卡片内单独设置，刷新时使用）
-    const cardCols = this.db.prepare("PRAGMA table_info(kms_knowledge_cards)").all() as any[]
-    const cardColNames = cardCols.map(c => c.name)
-    if (!cardColNames.includes('requirement')) {
-      this.db.exec("ALTER TABLE kms_knowledge_cards ADD COLUMN requirement TEXT DEFAULT ''")
-    }
-    if (!cardColNames.includes('last_trace_json')) {
-      this.db.exec("ALTER TABLE kms_knowledge_cards ADD COLUMN last_trace_json TEXT DEFAULT '[]'")
-    }
-
-    const collCols = this.db.prepare("PRAGMA table_info(kms_collection_summaries)").all() as any[]
-    const collColNames = collCols.map(c => c.name)
-    if (!collColNames.includes('embedding')) {
-      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding BLOB")
-    }
-    if (!collColNames.includes('dimension')) {
-      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN dimension INTEGER DEFAULT 0")
-    }
-    if (!collColNames.includes('embedding_model')) {
-      this.db.exec("ALTER TABLE kms_collection_summaries ADD COLUMN embedding_model TEXT DEFAULT ''")
-    }
-
-    this.enforceUniqueFileHash()
-
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_access_log_file')
-
-    // kms_voice_tasks 列兼容（语音迁出遗留，见 plugin/legacy）
-    ensureVoiceLegacyColumns(this.db)
-  }
-
-  private enforceUniqueFileHash(): void {
-    const idxExists = this.db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_kms_files_hash_unique'"
-    ).get() as any
-    if (idxExists) return
-
-    const dupes = this.db.prepare(`
-      SELECT file_hash, COUNT(*) as cnt FROM kms_files GROUP BY file_hash HAVING cnt > 1
-    `).all() as any[]
-
-    if (dupes.length > 0) {
-      const keepIds = this.db.prepare(`
-        SELECT id FROM kms_files WHERE file_hash = ? ORDER BY created_at ASC LIMIT 1
-      `)
-      const findDupes = this.db.prepare(`
-        SELECT id FROM kms_files WHERE file_hash = ? AND id != ? ORDER BY created_at ASC
-      `)
-      const migrateRefs = this.db.transaction((dupeIds: string[], keepId: string) => {
-        const placeholders = dupeIds.map(() => '?').join(',')
-        this.db.prepare(
-          `INSERT OR IGNORE INTO kms_file_collections (file_id, collection_id, added_at)
-           SELECT ?, collection_id, added_at FROM kms_file_collections WHERE file_id IN (${placeholders})`
-        ).run(keepId, ...dupeIds)
-        this.db.prepare(
-          `DELETE FROM kms_file_collections WHERE file_id IN (${placeholders})`
-        ).run(...dupeIds)
-        this.db.prepare(
-          `UPDATE kms_access_log SET file_id = ? WHERE file_id IN (${placeholders})`
-        ).run(keepId, ...dupeIds)
-      })
-      for (const dup of dupes) {
-        const keepRow = keepIds.get(dup.file_hash) as any
-        if (!keepRow) continue
-        const dupeRows = findDupes.all(dup.file_hash, keepRow.id) as any[]
-        const dupeIds = dupeRows.map(r => r.id)
-        if (dupeIds.length > 0) migrateRefs(dupeIds, keepRow.id)
-        const delPlaceholders = dupeIds.map(() => '?').join(',')
-        this.db.prepare(
-          `DELETE FROM kms_files WHERE id IN (${delPlaceholders})`
-        ).run(...dupeIds)
-      }
-      logger.info(`Deduplicated ${dupes.length} file_hash group(s) before enforcing unique constraint`)
-    }
-
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash')
-    this.db.exec('DROP INDEX IF EXISTS idx_kms_files_hash_unique')
-    this.db.exec('CREATE INDEX IF NOT EXISTS idx_kms_files_hash_unique ON kms_files(file_hash)')
   }
 
   private recoverStuckFiles(): void {
@@ -933,7 +715,6 @@ class KMSDatabaseService {
     cleanedEmbeddings: number
     cleanedFiles: number
     cleanedAccessLog: number
-    cleanedResultData: number
   } {
     const before = this.getDatabaseStats()
     let cleanedFts = 0
@@ -1036,19 +817,6 @@ class KMSDatabaseService {
       logger.warn('清理访问日志失败:', err?.message || err)
     }
 
-    // 3.6 清空 kms_search_history.result_data：该字段已废弃（项目规范要求只保存元数据不存储搜索结果），
-    // 旧数据可能仍占用空间，清空后不再写入
-    let cleanedResultData = 0
-    try {
-      const result = this.db.prepare("UPDATE kms_search_history SET result_data = NULL WHERE result_data IS NOT NULL").run()
-      cleanedResultData = result.changes
-      if (cleanedResultData > 0) {
-        logger.info(`清空废弃的 search_history.result_data: ${cleanedResultData} 条`)
-      }
-    } catch (err: any) {
-      logger.warn('清空 result_data 失败:', err?.message || err)
-    }
-
     // 3.7 重建 FTS5 虚表内部 segment：VACUUM 无法回收 FTS5 空间，必须用 FTS5 专有命令
     // 重建索引时大量 DELETE+INSERT 会在 FTS5 segment 中累积已删除文档残留，VACUUM 对 FTS5 无效
     this.optimizeFts5Index('rebuild')
@@ -1095,7 +863,6 @@ class KMSDatabaseService {
       cleanedEmbeddings,
       cleanedFiles,
       cleanedAccessLog,
-      cleanedResultData,
     }
   }
 
