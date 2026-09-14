@@ -22,6 +22,7 @@ import TitleBar from './components/common/TitleBar'
 import { useAppearanceStore, getEffectiveTheme } from './stores/appearance.store'
 import { useNavConfigStore, getVisibleNavItems, type NavItemKey } from './stores/nav.store'
 import { getPluginNavIcon } from './plugins/loader'
+import { sanitizePluginIconHtml } from './utils/sanitize-icon'
 import { useNotification, useNotificationClick } from './hooks/useNotification'
 
 const { Sider, Content } = Layout
@@ -222,7 +223,7 @@ const App: React.FC = () => {
       const baseIcon = NavIconComp
         ? <NavIconComp active={active} />
         : plugin.icon
-          ? <span style={{ display: 'inline-flex', width: 16, height: 16 }} dangerouslySetInnerHTML={{ __html: plugin.icon }} />
+          ? <span style={{ display: 'inline-flex', width: 16, height: 16 }} dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(plugin.icon) }} />
           : <AppstoreOutlined />
       const menuItem: NonNullable<MenuProps['items']>[number] = {
         key: plugin.key,

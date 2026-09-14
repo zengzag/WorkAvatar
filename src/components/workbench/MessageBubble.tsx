@@ -25,6 +25,7 @@ import { useState, useCallback, useMemo, memo, useRef, useEffect } from 'react'
 import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
+import { sanitizePluginIconHtml } from '../../utils/sanitize-icon'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
@@ -505,7 +506,7 @@ const MessageBubble: React.FC<{
                       key={`${action.pluginId}:${action.id}`}
                       type="text"
                       size="small"
-                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: action.icon }} style={{ display: 'inline-flex' }} /> : undefined}
+                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
                       title={t(action.title, { ns: action.pluginId, defaultValue: action.title })}
                       onClick={() => runMessageAction(action)}
                     />
