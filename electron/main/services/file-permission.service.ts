@@ -1,5 +1,7 @@
+import os from 'os'
 import { normalizePath, isWithinPath, commonParentDir } from './path-normalize'
 import UnifiedInteractionService, { interactionContext } from './unified-interaction.service'
+import PathService from './path.service'
 
 /**
  * 文件权限管理服务（统一门面）：
@@ -104,6 +106,18 @@ class FilePermissionService {
     this.allowedPathsByKey.delete(allowKey)
   }
 
+  /** "始终允许此文件夹"范围是否过宽（覆盖应用数据根 / 用户主目录），过宽则不提供该选项 */
+  private isDirScopeTooBroad(dirScope: string): boolean {
+    // PathService 依赖 electron.app，测试/无 electron 环境下跳过 dataDir 判定
+    try {
+      const dataDirNorm = normalizePath(PathService.getInstance().getDataDir())
+      if (dataDirNorm && isWithinPath(dataDirNorm, dirScope)) return true
+    } catch { /* ignore */ }
+    const homeNorm = normalizePath(os.homedir())
+    if (homeNorm && isWithinPath(homeNorm, dirScope)) return true
+    return false
+  }
+
   /**
    * 核心入口：校验一组目标路径的文件操作权限。
    * - 工作区内 / 已授权路径自动通过（高权限模式同样直接通过）
@@ -137,9 +151,14 @@ class FilePermissionService {
     if (ctx.highPermission) return { allowed: true }
 
     // "始终允许此文件夹"的授权范围：显式 scopeDir 优先（目标本身是目录），否则取公共父目录
-    const dirScope = (options?.scopeDir ? normalizePath(options.scopeDir) : null)
+    let dirScope = (options?.scopeDir ? normalizePath(options.scopeDir) : null)
       || commonParentDir(outside)
       || undefined
+    // 防过宽授权：agent 一次请求互不相关路径时公共父目录可能收敛到盘根/用户主目录，
+    // 此时"始终允许"等于静默授权整盘。此类过宽范围不提供该选项（仅一次性确认）。
+    if (dirScope && this.isDirScopeTooBroad(dirScope)) {
+      dirScope = undefined
+    }
     const message = this.buildConfirmMessage(operation, outside)
 
     try {
