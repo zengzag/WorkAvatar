@@ -95,12 +95,18 @@ class DatabaseService {
         'UPDATE conversations SET messages_json = ?, message_count = ? WHERE id = ?'
       )
       const trimTx = this.db.transaction(() => {
+        const ftsUpdate = this.db.prepare(
+          `UPDATE conversations_fts SET content_preview = ? WHERE conversation_id = ?`
+        )
         for (const c of oldConvos) {
           try {
             const messages = JSON.parse(c.messages_json)
             if (Array.isArray(messages) && messages.length > 50) {
               const trimmedMessages = messages.slice(-50)
-              updateStmt.run(JSON.stringify(trimmedMessages), trimmedMessages.length, c.id)
+              const trimmedJson = JSON.stringify(trimmedMessages)
+              updateStmt.run(trimmedJson, trimmedMessages.length, c.id)
+              // 同步 FTS 摘要预览，避免搜索结果展示与实际内容永久不一致
+              ftsUpdate.run(extractMessagePreview(trimmedJson), c.id)
               trimmed++
             }
           } catch { /* skip invalid JSON */ }
@@ -709,14 +715,23 @@ class DatabaseService {
     const hasProjectId = tableInfo.some((c) => c.name === 'project_id')
     if (hasProjectId) {
       logger.info('Migrating employees: removing project_id column...')
-      // 事务保护：DROP TABLE + RENAME 中途崩溃会导致数据丢失
-      const migrateTx = this.db.transaction(() => {
-        this.db.exec(`
+      // 事务保护：DROP TABLE + RENAME 中途崩溃会导致数据丢失；
+      // foreign_keys 需在事务外关闭（事务内该 pragma 无效），否则 DROP 被子表外键阻断
+      this.db.pragma('foreign_keys = OFF')
+      try {
+        const migrateTx = this.db.transaction(() => {
+          // 重建表必须包含当前完整 schema（含此前 addColumnIfNotExists 加列产生的
+          // rules/last_active_at/delegation_json/is_registered），否则 DROP 后这些列
+          // 消失且不再补列：既丢用户数据（rules/delegation），后续迁移查询 last_active_at
+          // 也会抛 "no such column" 导致启动失败
+          this.db.exec(`
+          DROP TABLE IF EXISTS employees_new;
           CREATE TABLE IF NOT EXISTS employees_new (
             id TEXT PRIMARY KEY,
             workspace_path TEXT DEFAULT '',
             name TEXT NOT NULL,
             description TEXT DEFAULT '',
+            rules TEXT DEFAULT '',
             avatar_type TEXT DEFAULT 'default',
             default_skill_id TEXT,
             profile_json TEXT DEFAULT '',
@@ -724,16 +739,43 @@ class DatabaseService {
             total_tasks INTEGER DEFAULT 0,
             total_approvals INTEGER DEFAULT 0,
             memory_enabled BOOLEAN NOT NULL DEFAULT 0,
+            last_active_at INTEGER,
+            delegation_json TEXT DEFAULT '',
+            is_registered INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL DEFAULT (unixepoch()),
             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
           );
-          INSERT INTO employees_new (id, workspace_path, name, description, avatar_type, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at)
-            SELECT id, '', name, description, avatar_type, default_skill_id, profile_json, arch_version, total_tasks, total_approvals, memory_enabled, created_at, updated_at FROM employees;
-          DROP TABLE employees;
-          ALTER TABLE employees_new RENAME TO employees;
         `)
-      })
-      migrateTx()
+        // 源表列集动态对齐：超旧库可能缺 arch_version/total_tasks 等，缺省用安全默认值
+        const sourceCols = new Set(tableInfo.map((c) => c.name))
+        const col = (name: string, fallback: string) => sourceCols.has(name) ? name : fallback
+        const selectCols = [
+          'id',
+          `'' AS workspace_path`,
+          'name',
+          col('description', `''`) + ' AS description',
+          col('rules', `''`) + ' AS rules',
+          col('avatar_type', `'default'`) + ' AS avatar_type',
+          col('default_skill_id', 'NULL') + ' AS default_skill_id',
+          col('profile_json', `''`) + ' AS profile_json',
+          col('arch_version', '1') + ' AS arch_version',
+          col('total_tasks', '0') + ' AS total_tasks',
+          col('total_approvals', '0') + ' AS total_approvals',
+          col('memory_enabled', '0') + ' AS memory_enabled',
+          col('last_active_at', 'NULL') + ' AS last_active_at',
+          col('delegation_json', `''`) + ' AS delegation_json',
+          col('is_registered', '0') + ' AS is_registered',
+          col('created_at', 'unixepoch()') + ' AS created_at',
+          col('updated_at', 'unixepoch()') + ' AS updated_at',
+        ].join(', ')
+        this.db.exec(`INSERT INTO employees_new SELECT ${selectCols} FROM employees`)
+        this.db.exec('DROP TABLE employees')
+        this.db.exec('ALTER TABLE employees_new RENAME TO employees')
+        })
+        migrateTx()
+      } finally {
+        this.db.pragma('foreign_keys = ON')
+      }
       logger.info('Migration completed: employees.project_id removed, workspace_path added')
     }
   }
