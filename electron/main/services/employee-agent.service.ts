@@ -192,20 +192,13 @@ class EmployeeAgentService {
         if (profile.roleName) {
           role = profile.roleName
         }
-        // 旧数据兼容：无 rules 时回退到画像中的 roleDescription
-        if (!emp.rules?.trim() && profile.roleDescription) {
-          instructions = profile.roleDescription
-        }
       } catch (error) {
         logger.warn('Failed to parse employee profile_json, using default instructions', error)
       }
     }
+    // 规则（系统提示词）：唯一权威来源
     if (emp.rules?.trim()) {
-      // 规则（系统提示词）：唯一权威来源
       instructions = emp.rules
-    } else if (!emp.profile_json && emp.description) {
-      // 兼容未迁移的旧数据（description 曾兼作系统提示词）
-      instructions = emp.description
     }
 
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
@@ -414,7 +407,7 @@ class EmployeeAgentService {
   /**
    * 工具三态（on/on_demand/off）映射：
    * - 无配置行 → 按工具定义默认模式（onDemand 标志：常驻=on，否则 on_demand）
-   * - 有配置行 → 使用 tool_mode 列值（旧数据 tool_mode 缺失时回退默认）
+   * - 有配置行 → 使用 tool_mode 列值
    */
   private getEmployeeToolModes(employeeId: string): Map<string, ToolMode> {
     const modeMap = new Map<string, ToolMode>()
@@ -448,17 +441,9 @@ class EmployeeAgentService {
       }
     }
 
-    let rows = this.db.getDb().prepare(
+    const rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
-
-    rows = rows.map(row => ({
-      ...row,
-      tool_id: row.tool_id === 'office_exec' ? 'javascript_exec'
-        : row.tool_id === 'automation_list_employees' ? 'list_employees'
-        : row.tool_id === 'automation_list_providers' ? 'list_providers'
-        : row.tool_id,
-    }))
 
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {

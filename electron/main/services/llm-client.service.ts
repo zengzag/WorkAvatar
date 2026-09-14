@@ -264,19 +264,6 @@ class LLMClientService {
         } catch { /* 忽略非法 JSON */ }
       }
 
-      // 语音纪要模型（嵌套在 voice_settings.minutesModel）
-      const voiceRow = db.prepare("SELECT value FROM settings WHERE key = 'voice_settings'").get() as any
-      if (voiceRow?.value) {
-        try {
-          const voiceSettings = JSON.parse(voiceRow.value)
-          const mm = voiceSettings?.minutesModel
-          if (mm?.provider_id === providerId && typeof mm.model_id === 'string' && renames.has(mm.model_id)) {
-            mm.model_id = renames.get(mm.model_id)
-            updateSetting('voice_settings', voiceSettings)
-          }
-        } catch { /* 忽略非法 JSON */ }
-      }
-
       // 自动化任务与执行历史（已插件化，经内核事件通知 automation 插件更新其分库）
       try {
         const { default: PluginHostService } = require('./plugin/plugin-host.service')

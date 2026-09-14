@@ -243,7 +243,6 @@ class EmployeeRegistryService {
       description: emp.description,
       rules: emp.rules,
       avatar_type: emp.avatar_type,
-      status: 'active',
       default_skill_id: emp.default_skill_id || null,
       profile_json: emp.profile_json,
       delegation_json: null,

@@ -5,7 +5,6 @@ export interface DBEmployee {
   description: string
   rules: string
   avatar_type: string
-  status: string
   default_skill_id: string | null
   profile_json: string
   /** 委托能力设置 JSON：{"enabled":bool,"targetIds":[],"acceptDelegation":bool}，空串未配置 */
@@ -22,9 +21,8 @@ export interface DBEmployeeTool {
   id: string
   employee_id: string
   tool_id: string
-  is_enabled: number
-  /** 工具启用模式：on / on_demand / off（旧数据可能缺失） */
-  tool_mode?: string
+  /** 工具启用模式：on / on_demand / off */
+  tool_mode: string
   config_json: string
   created_at: number
 }

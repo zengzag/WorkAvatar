@@ -376,59 +376,6 @@ class WorkspaceManagerService {
     return root
   }
 
-  /** 旧版注册员工工作区目录名（dataDir/registry-workspaces/<id 摘要>，与旧 getRegistryWorkspaceRoot 一致） */
-  private legacyRegistryDirName(employeeId: string): string {
-    return employeeId.replace(/[^\w-]/g, '_').slice(0, 60)
-  }
-
-  /**
-   * 一次性迁移：旧版注册员工工作区根（dataDir/registry-workspaces/<id 摘要>）→ 与用户员工一致的新根（employees/ 内）。
-   * 仅迁移当前注册员工名下非空的旧目录（任务子目录移至新根后删除旧目录），未匹配的旧目录保留不动。
-   */
-  migrateLegacyRegistryWorkspaces(): void {
-    try {
-      const legacyRoot = path.join(PathService.getInstance().getDataDir(), 'registry-workspaces')
-      if (!fs.existsSync(legacyRoot)) return
-      const items = fs.readdirSync(legacyRoot, { withFileTypes: true })
-      if (items.length === 0) return
-      const registry = EmployeeRegistryService.getInstance()
-      const registeredIds = new Set(registry.listRegistered().map(e => e.id))
-      for (const item of items) {
-        if (!item.isDirectory()) continue
-        const legacyDir = path.join(legacyRoot, item.name)
-        // 反向匹配：目录名来自注册员工 id 摘要，仅能对应当前已知 id
-        const empId = [...registeredIds].find(id => this.legacyRegistryDirName(id) === item.name)
-        if (!empId) continue
-        const entries = fs.existsSync(legacyDir) ? fs.readdirSync(legacyDir) : []
-        if (entries.length === 0) {
-          fs.rmdirSync(legacyDir)
-          continue
-        }
-        const newRoot = this.getRegistryWorkspaceRoot(empId)
-        for (const entry of entries) {
-          const src = path.join(legacyDir, entry)
-          const dest = path.join(newRoot, entry)
-          if (fs.existsSync(dest)) continue
-          try {
-            fs.renameSync(src, dest)
-          } catch {
-            // 跨卷等场景回退为复制后删除
-            fs.cpSync(src, dest, { recursive: true })
-            fs.rmSync(src, { recursive: true, force: true })
-          }
-        }
-        fs.rmdirSync(legacyDir)
-      }
-      const rest = fs.readdirSync(legacyRoot)
-      if (rest.length === 0) {
-        fs.rmdirSync(legacyRoot)
-      }
-      logger.info('注册员工工作区目录已迁移至 employees/ 根目录')
-    } catch (err: any) {
-      logger.warn('注册员工工作区目录迁移失败:', err?.message || err)
-    }
-  }
-
   /** 获取对话的任务工作区目录（未分配返回空字符串） */
   getConversationWorkspacePath(conversationId: string): string {
     const row = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(conversationId) as { workspace_path?: string } | undefined

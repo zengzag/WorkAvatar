@@ -40,9 +40,6 @@ export function useLlmSettings(employeeId: string | undefined) {
   })
   const [enableThinking, setEnableThinking] = useState<ThinkingLevel>(() => {
     const stored = localStorage.getItem(thinkingKey)
-    // 兼容旧版 boolean: 'true' → 'high', 'false' → false
-    if (stored === 'true') return 'high'
-    if (stored === 'false') return false
     if (stored === 'low' || stored === 'medium' || stored === 'high') return stored
     return false
   })
@@ -64,9 +61,7 @@ export function useLlmSettings(employeeId: string | undefined) {
     const storedModel = localStorage.getItem(modelKey)
     setSelectedLlmModelId(storedModel || fallback?.model_id || '')
     const storedThinking = localStorage.getItem(thinkingKey)
-    if (storedThinking === 'true') setEnableThinking('high')
-    else if (storedThinking === 'false') setEnableThinking(false)
-    else if (storedThinking === 'low' || storedThinking === 'medium' || storedThinking === 'high') setEnableThinking(storedThinking)
+    if (storedThinking === 'low' || storedThinking === 'medium' || storedThinking === 'high') setEnableThinking(storedThinking)
     else setEnableThinking(false)
     // 恢复完成标记：持久化 effect 据此跳过 key 刚切换、state 尚未恢复的窗口期
     syncedKeysRef.current = providerKey + '|' + modelKey + '|' + thinkingKey
