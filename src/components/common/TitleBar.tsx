@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router-dom'
-import { useAppearanceStore } from '../../stores/appearance.store'
+import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 import { useNavConfigStore } from '../../stores/nav.store'
 
 /** 可分离为独立窗口的内置 tab key（与后端 DETACHABLE_TABS 对齐，排除 settings；插件 tab 走 nav.store 的 detachable） */
@@ -31,7 +31,8 @@ const TitleBar: React.FC = () => {
 
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
-  const isDark = themeMode === 'dark'
+  // system 模式下按系统偏好判定，否则图标展示与 toggle 行为都会错
+  const isDark = getEffectiveTheme(themeMode) === 'dark'
 
   // 当前已分离为独立窗口的 tab 列表
   const [detachedTabs, setDetachedTabs] = useState<string[]>([])
