@@ -138,8 +138,8 @@ class NotificationService {
     this.ipcRegistered = true
     // 渲染进程主动请求系统通知（如前端在某些场景下也想触发系统通知）
     ipcMain.handle(IPC_CHANNELS.NOTIFY_SEND, (_event, payload: NotifyPayload) => {
-      this.notify(payload)
-      return { ok: true }
+      const sent = this.notify(payload)
+      return { ok: sent }
     })
   }
 }
