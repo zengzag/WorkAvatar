@@ -8,6 +8,7 @@ import NotificationService from './services/notification.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import EmployeeRegistryService from './services/employee-registry.service'
+import WindowStateService from './services/window-state.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
@@ -461,13 +462,22 @@ function getAppIconPath(): string {
   return getResourcePath('resources', 'icons', 'icon.png')
 }
 
+/** 主窗口默认尺寸（首次启动 / 无法还原历史状态时使用） */
+const MAIN_WINDOW_DEFAULTS = { width: 1160, height: 720, minWidth: 1024, minHeight: 640 }
+
 async function createWindow() {
+  // 还原上次退出时的窗口尺寸/位置/最大化状态（首次启动或显示器变更时用默认值）
+  const windowState = WindowStateService.getInstance().restore(MAIN_WINDOW_DEFAULTS)
+
   mainWindow = new BrowserWindow({
     title: 'WorkAvatar 数字员工',
-    width: 1160,
-    height: 720,
-    minWidth: 1024,
-    minHeight: 640,
+    ...(windowState.x !== undefined && windowState.y !== undefined
+      ? { x: windowState.x, y: windowState.y }
+      : {}),
+    width: windowState.width,
+    height: windowState.height,
+    minWidth: MAIN_WINDOW_DEFAULTS.minWidth,
+    minHeight: MAIN_WINDOW_DEFAULTS.minHeight,
     icon: getAppIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
@@ -485,7 +495,13 @@ async function createWindow() {
     show: false
   })
 
+  WindowStateService.getInstance().track(mainWindow)
+
   mainWindow.on('ready-to-show', () => {
+    // 先最大化再显示，避免窗口以正常尺寸闪现后再跳变
+    if (windowState.maximized) {
+      mainWindow?.maximize()
+    }
     mainWindow?.show()
     if (isDev) {
       mainWindow?.webContents.openDevTools()
