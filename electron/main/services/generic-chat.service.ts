@@ -93,12 +93,41 @@ class GenericChatService {
     }
   }
 
+  /** 进行中的 agent 构建（按 cacheKey 去重） */
+  private agentCreationInFlight = new Map<string, Promise<CachedAgentEntry>>()
+
   private async getOrCreateAgent(config: GenericChatConfig): Promise<CachedAgentEntry> {
-    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}`
+    // 配置指纹：systemPrompt/tools/minimalMode/skills 等创建期参数变化时必须重建 agent，
+    // 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节）
+    const cfgFingerprint = [
+      config.systemPrompt?.length ?? 0,
+      config.systemPrompt || '',
+      config.tools?.length ?? 0,
+      config.minimalMode ? 1 : 0,
+      config.allowedSkillPaths?.length ?? 0,
+      config.memoryPrompt?.length ?? 0,
+      config.workspaceContextPrompt?.length ?? 0,
+      config.kbContextPrompt?.length ?? 0,
+    ].join('|')
+    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}:${cfgFingerprint}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) return existing
 
+    // 并发去重：避免同一配置并发请求重复建 agent（先建者被孤立覆盖）
+    const inFlight = this.agentCreationInFlight.get(cacheKey)
+    if (inFlight) return inFlight
+
+    const creation = this.doCreateAgent(cacheKey, config)
+    this.agentCreationInFlight.set(cacheKey, creation)
+    try {
+      return await creation
+    } finally {
+      this.agentCreationInFlight.delete(cacheKey)
+    }
+  }
+
+  private async doCreateAgent(cacheKey: string, config: GenericChatConfig): Promise<CachedAgentEntry> {
     const providerConfig = await this.llmClient.getProviderConfig(config.providerId)
     if (!providerConfig) {
       throw new Error(`Provider ${config.providerId} not found`)
