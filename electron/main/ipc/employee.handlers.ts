@@ -67,7 +67,7 @@ export function registerEmployeeHandlers(
     const dbList = workspaceManager.getEmployeeList()
       .filter(e => !e.is_registered)
       .map(e => ({ ...e, is_enabled: registry.isEnabled(e.id) }))
-    // 注册员工展示其独立工作区根目录（dataDir/registry-workspaces/<id 摘要>），供打开工作区按钮使用
+    // 注册员工展示其独立工作区根目录（dataDir/employees/<sha1 前 8 位>，getRegistryWorkspaceRoot），供打开工作区按钮使用
     const registered = registry.listRegistered().map(e => ({
       ...e,
       workspace_path: workspaceManager.getRegistryWorkspaceRoot(e.id),
