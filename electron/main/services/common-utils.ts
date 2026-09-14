@@ -3,17 +3,20 @@ import * as fs from 'fs'
 
 /**
  * 将文件/文件夹移至操作系统回收站（可找回），回收站不可用时回退到永久删除。
+ * 返回实际采用的方式，供调用方如实告知用户是否可恢复。
  * 仅在主进程可用（内部 lazy require electron.shell）。
  */
-export async function moveToTrash(filePath: string): Promise<void> {
+export async function moveToTrash(filePath: string): Promise<'trash' | 'permanent'> {
   const { shell } = require('electron')
   try {
     await shell.trashItem(filePath)
+    return 'trash'
   } catch {
     // 回收站不可用（如某些 Linux 环境）时回退到永久删除
     if (fs.existsSync(filePath)) {
       fs.rmSync(filePath, { recursive: true, force: true })
     }
+    return 'permanent'
   }
 }
 

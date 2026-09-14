@@ -46,6 +46,14 @@ describe('agent/business/prompts / buildEmployeeSystemPrompt', () => {
     expect(without).not.toContain('report_generated_files')
   })
 
+  it('hasFileDelete 时包含"删除必须走 file_delete"规则', () => {
+    const withFlag = buildEmployeeSystemPrompt({ name: 'A', instructions: '', hasFileDelete: true })
+    const without = buildEmployeeSystemPrompt({ name: 'A', instructions: '' })
+    expect(withFlag).toContain('file_delete')
+    expect(withFlag).toContain('禁止')
+    expect(without).not.toContain('file_delete')
+  })
+
   it('workspaceGuidance 注入 [CONTEXT] 段', () => {
     const p = buildEmployeeSystemPrompt({ name: 'A', instructions: '', workspaceGuidance: '工作区说明' })
     expect(p).toContain('[CONTEXT]')

@@ -259,6 +259,7 @@ export default {
       file_read: '读取文件',
       file_write: '写入文件',
       file_edit: '编辑文件',
+      file_delete: '删除文件/文件夹',
       report_generated_files: '展示生成文件',
       ocr_image: '图片识别',
       web_search: '网络搜索',

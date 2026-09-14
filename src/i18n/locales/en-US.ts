@@ -259,6 +259,7 @@ export default {
       file_read: 'Read File',
       file_write: 'Write File',
       file_edit: 'Edit File',
+      file_delete: 'Delete File/Folder',
       report_generated_files: 'Show Generated Files',
       ocr_image: 'Image OCR',
       web_search: 'Web Search',

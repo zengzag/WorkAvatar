@@ -5,6 +5,7 @@ export function buildEmployeeSystemPrompt(options: {
   workspaceGuidance?: string
   minimalMode?: boolean
   hasReportGeneratedFiles?: boolean
+  hasFileDelete?: boolean
 }): string {
   if (options.minimalMode) {
     return [
@@ -40,6 +41,9 @@ export function buildEmployeeSystemPrompt(options: {
   parts.push('- 回复力求简洁、重点突出，采用 Markdown 分点呈现；除非用户明确要求，不添加冗余的开场白或总结。')
   parts.push('- 小任务或常识性问题直接执行或直接回答，避免过度规划与不必要的工具调用。')
   parts.push('- 注意系统运行环境差异（如路径分隔符、脚本语法等）。')
+  if (options.hasFileDelete) {
+    parts.push('- 删除文件/目录一律调用 file_delete 工具，禁止用 shell_exec 执行删除命令（rm/del/Remove-Item 等），也禁止在任何脚本（javascript_exec、python/node 脚本）中写删除逻辑——这些方式会被安全策略拒绝。')
+  }
   if (options.hasReportGeneratedFiles) {
     parts.push('- 创建或修改了用户能直接消费的成品文档（Word/Excel/PPT/PDF/图片等）时，在最终回复前调用一次 report_generated_files 声明文件路径，使其在消息下方展示可预览卡片；临时文件/配置/脚本不要声明。')
   }

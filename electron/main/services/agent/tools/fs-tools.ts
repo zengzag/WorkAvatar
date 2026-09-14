@@ -3,18 +3,22 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
 import FilePermissionService from '../../file-permission.service'
+import { moveToTrash } from '../../common-utils'
+import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
 
 /**
- * 文件操作工具（已简化，仅保留核心读写编辑与成品声明）：
+ * 文件操作工具（仅保留核心读写编辑与成品声明/删除）：
  *
  * 常驻工具（加入 LLM tools 数组，对话全程不变）：
- *   file_read   读取文件内容
- *   file_write  写入文件（覆盖/追加）
- *   file_edit   编辑文件部分内容（replace/insert/delete 三种模式）
+ *   file_read    读取文件内容
+ *   file_write   写入文件（覆盖/追加）
+ *   file_edit    编辑文件部分内容（replace/insert/delete 三种模式）
+ *   file_delete  删除文件/目录（移入回收站）
  *   report_generated_files  声明需要展示给用户的成品文件
  *
- * 说明：创建/删除/移动/复制/重命名/列目录/搜索/查看信息等文件操作
- * 已移除，统一由 shell_exec 覆盖。
+ * 说明：创建/移动/复制/重命名/列目录/搜索/查看信息等文件操作已移除，统一由 shell_exec 覆盖；
+ * 删除是唯一例外——shell_exec / javascript_exec 中的删除一律被拒绝，必须走 file_delete
+ * （路径可静态判定、移入回收站可恢复、操作可审计）。
  *
  * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责。
  */
@@ -142,6 +146,38 @@ export const fileEditTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
+// ====== file_delete：删除文件/目录（移入回收站） ======
+
+export const fileDeleteTool: ToolDefinition = {
+  id: 'file_delete',
+  name: 'file_delete',
+  title: '删除文件/文件夹',
+  summary: '删除文件或文件夹（移入回收站，可恢复）。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
+  description: `删除文件或目录（移入系统回收站，可恢复，非永久删除）。
+- 删除文件/目录一律使用 file_delete：不要用 shell_exec（rm/del/Remove-Item 等）或 javascript_exec 等脚本删除，这些方式会被安全策略拒绝。
+- 目录需显式传 recursive=true 才会删除其内容；非空目录未传时返回错误而非静默删除。
+- 盘根（C:\\、/）与工作区根目录及其上级目录禁止删除。
+- 工作区外删除需用户确认。`,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标文件或目录路径（绝对路径；相对路径按当前工作区解析）' },
+      recursive: { type: 'boolean', description: '删除目录时是否递归删除其内容（默认false）' },
+    },
+    required: ['path'],
+  },
+  handler: async (args: any) => {
+    try {
+      return await deleteFile(args)
+    } catch (error: any) {
+      return { success: false, error: `删除失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
+}
+
 // ====== report_generated_files：声明需要展示给用户的成品文件 ======
 
 /** 可预览文件扩展名白名单（与前端 GeneratedFilesBar 展示范围一致） */
@@ -225,11 +261,12 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   noRetry: true,
 }
 
-/** 常驻文件工具：读/写/编辑/成品声明，对话全程加入 LLM tools 数组 */
+/** 常驻文件工具：读/写/编辑/删除/成品声明，对话全程加入 LLM tools 数组 */
 export const residentFileTools: ToolDefinition[] = [
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  fileDeleteTool,
   reportGeneratedFilesTool,
 ]
 
@@ -347,6 +384,51 @@ async function writeFile(args: any) {
 
   const mode = append ? '追加' : '写入'
   return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符` }
+}
+
+// ====== file_delete 实现 ======
+
+async function deleteFile(args: any) {
+  const raw = String(args.path || '').trim()
+  if (!raw) return { success: false, error: '文件路径不能为空' }
+
+  const recursive = args.recursive === true
+  const workspacePath = getWorkspacePath() || process.cwd()
+  // 相对路径按工作区解析（与 report_generated_files / 沙箱 file 对象一致），避免落到主进程 cwd
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw)
+  const norm = normalizePath(resolved)
+  if (!norm) return { success: false, error: `路径无效: ${raw}` }
+
+  // 盘根等于整盘，工作区根（及其上级）会摧毁任务工作区，二者都属于"绝不允许"的删除目标
+  if (isFsRoot(norm)) return { success: false, error: `不允许删除盘根/文件系统根目录: ${resolved}` }
+  const workspaceNorm = normalizePath(workspacePath)
+  if (workspaceNorm && isWithinPath(workspaceNorm, norm)) {
+    return { success: false, error: `不允许删除工作区根目录或其上级目录: ${resolved}` }
+  }
+
+  if (!fs.existsSync(resolved)) return { success: false, error: `路径不存在: ${resolved}` }
+  const stat = fs.lstatSync(resolved)
+  if (stat.isDirectory() && !recursive) {
+    const count = fs.readdirSync(resolved).length
+    return {
+      success: false,
+      error: count > 0
+        ? `目录非空（${count} 项），确认要连同内容一起删除时传 recursive=true: ${resolved}`
+        : `目录删除需显式传 recursive=true: ${resolved}`,
+    }
+  }
+
+  const confirm = await filePermission.authorizeFileOperation('删除', [resolved])
+  if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
+
+  const via = await moveToTrash(resolved)
+  const kind = stat.isDirectory() ? '目录' : '文件'
+  return {
+    success: true,
+    output: via === 'trash'
+      ? `✓ 已删除${kind}（移入回收站，可恢复）: ${resolved}`
+      : `✓ 已删除${kind}（系统回收站不可用，已永久删除，不可恢复）: ${resolved}`,
+  }
 }
 
 // ====== file_edit 各操作实现 ======

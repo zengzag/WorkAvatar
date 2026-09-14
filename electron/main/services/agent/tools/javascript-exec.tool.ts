@@ -4,7 +4,21 @@ import * as path from 'path'
 import * as fs from 'fs'
 import FilePermissionService from '../../file-permission.service'
 import { getWorkspacePath } from './fs-tools'
-import { moveToTrash } from '../../common-utils'
+import { isFileDeletionCommand } from './command-analyzer'
+
+/**
+ * 脚本内删除被拒绝时的提示：删除统一走 file_delete 工具。
+ * 与 shell-exec.tool.ts 的 DELETION_FORBIDDEN_HINT 保持同一引导方向。
+ */
+const DELETION_FORBIDDEN_IN_CODE =
+  '删除操作已被安全策略禁止通过脚本执行（含 file.delete 与 fs.unlink/rm/rmdir 等删除原语）：' +
+  '请改用 file_delete 工具删除文件或目录（path 传绝对路径，删除非空目录加 recursive=true；删除会移入回收站，可恢复）。' +
+  '请从代码中移除删除逻辑，临时文件在脚本结束后用 file_delete 删除。'
+
+/** 删除类代码检测：复用命令分类器，并补充沙箱独有的 file.delete / file["delete"] */
+function hasDeletionCode(code: string): boolean {
+  return isFileDeletionCommand(code) || /\bfile\s*(?:\.\s*delete|\[\s*['"`]delete['"`]\s*\])\s*\(/.test(code)
+}
 
 const filePermission = FilePermissionService.getInstance()
 
@@ -146,7 +160,7 @@ function createSandboxedReadOnlyFs(): any {
     'accessSync', 'constants', 'Stats', 'Dir', 'Dirent',
     'createReadStream',
   ])
-  const blockedMsg = 'javascript_exec 沙箱中 fs 不支持写/删操作。请使用注入的 `file` 对象（如 await file.save(path, content)）进行文件写入。'
+  const blockedMsg = 'javascript_exec 沙箱中 fs 不支持写/删操作。写入请使用注入的 `file` 对象（如 await file.save(path, content)）；删除请使用 file_delete 工具。'
   for (const key of Object.keys(realFs)) {
     if (allowedMethods.has(key)) {
       wrappedFs[key] = realFs[key]
@@ -223,9 +237,9 @@ function createSandboxedFile(authorizedPaths: Set<string>, workingDir: string): 
       await checkAndAuthorize('移动至', dest)
       fs.renameSync(resolveInWorkspace(src), resolveInWorkspace(dest))
     },
-    delete: async (filePath: string): Promise<void> => {
-      await checkAndAuthorize('删除', filePath)
-      await moveToTrash(resolveInWorkspace(filePath))
+    // 脚本内删除一律拒绝：删除必须走 file_delete 工具（路径可静态判定、移入回收站可恢复、操作可审计）
+    delete: async (_filePath: string): Promise<void> => {
+      throw new Error(DELETION_FORBIDDEN_IN_CODE)
     },
     createFolder: async (folderPath: string): Promise<void> => {
       await checkAndAuthorize('创建文件夹于', folderPath)
@@ -365,6 +379,7 @@ export const javascriptExecTool: ToolDefinition = {
 
 短代码(<800字)传 code；长代码用 file_write 写 .js 后传 code_file。
 文件写入用 await file.save(path, content)，不要用 fs 写方法。
+删除文件/目录用 file_delete 工具；脚本内不要写删除逻辑（file.delete、fs.unlink/rm/rmdir 等会被拒绝）。
 执行前语法预检查，精确行号+修复建议。
 字符串↔字节编码用 Buffer（require('buffer') 或全局 Buffer），沙箱内没有 TextEncoder/TextDecoder。`,
   parameters: {
@@ -418,6 +433,12 @@ export const javascriptExecTool: ToolDefinition = {
         success: false,
         error: errorLines.join('\n'),
       }
+    }
+
+    // 删除统一走 file_delete：脚本内出现删除原语（file.delete / fs.unlink / fs.rm / rmdir …）直接拒绝，
+    // 与 shell_exec 的策略一致，同样不受高权限模式影响
+    if (hasDeletionCode(code)) {
+      return { success: false, error: DELETION_FORBIDDEN_IN_CODE }
     }
 
     // 优先使用数字员工工作区目录，其次 LLM 传入的 working_dir，最后 process.cwd()

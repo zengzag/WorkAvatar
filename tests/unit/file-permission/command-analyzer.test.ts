@@ -4,11 +4,13 @@ import * as path from 'path'
 import * as fs from 'fs'
 import {
   analyzeCommandPaths,
+  extractInvokedScriptPaths,
   extractRelativePathTokens,
   hasUnresolvedDynamicTarget,
   hasRedirection,
   isFileWriteCommand,
   isFileDeletionCommand,
+  isSwitchLikeSlashToken,
   decideCommandAccess,
   type PathBoundary,
 } from '../../../electron/main/services/agent/tools/command-analyzer'
@@ -35,12 +37,14 @@ function makeBoundary(root: string, authorized: string[] = []): PathBoundary {
   }
 }
 
-/** 用真实命令分类器跑完整决策（模拟 shell-exec 调用方式） */
+/**
+ * 用真实命令分类器跑完整决策（模拟 shell-exec 调用方式）。
+ * 删除类命令不再经过决策函数（shell_exec 直接拒绝），故仅按写入类判断。
+ */
 function decide(command: string, cwd: string, boundary: PathBoundary) {
   return decideCommandAccess({
     command,
     cwd,
-    isDeletion: isFileDeletionCommand(command),
     isWrite: isFileWriteCommand(command),
     boundary,
   })
@@ -59,6 +63,36 @@ describe('extractRelativePathTokens', () => {
     expect(tokens.join(' ')).not.toContain('https://')
     expect(tokens.join(' ')).not.toContain('-Force')
     expect(tokens.join(' ')).not.toContain('--save-dev')
+  })
+
+  it('isSwitchLikeSlashToken：斜杠开关外形判定（与平台无关）', () => {
+    // 外形 = 单个分隔符起头且其后不再有分隔符
+    for (const token of ['/c', '/s', '/q', '/b', '/mir', '/a:-d', '/', '/home']) {
+      expect(isSwitchLikeSlashToken(token), token).toBe(true)
+    }
+    // 含第二段分隔符 → 真实路径，不参与开关过滤
+    for (const token of ['/c/Users/x', '/var/log', '//server/share', 'build/out', 'C:\\a\\b', '-Force', 'page-*.png']) {
+      expect(isSwitchLikeSlashToken(token), token).toBe(false)
+    }
+  })
+
+  it('Windows 斜杠开关不算路径 token（POSIX 上 /s 是合法绝对路径，不能过滤）', () => {
+    if (!IS_WINDOWS) {
+      expect(extractRelativePathTokens('rd /s /q build')).toContain('/s')
+      return
+    }
+    // 回归：/c、/b 曾被 path.resolve 展开成 C:\c、C:\b，把区内 glob 写入误判为操作工作区外盘根
+    expect(extractRelativePathTokens('Copy-Item "report-*.csv" "backup/" -ErrorAction SilentlyContinue; cmd /c dir /b')).toEqual(['backup/'])
+    expect(extractRelativePathTokens('robocopy src dst /mir /xo')).toEqual([])
+    // 有第二段的斜杠路径（MSYS 风格）与 UNC 仍按真实路径处理
+    expect(extractRelativePathTokens('rm -rf /c/Users/x/tmp')).toContain('/c/Users/x/tmp')
+    expect(extractRelativePathTokens('rm -rf //server/share/a')).toContain('//server/share/a')
+  })
+
+  it('Windows 斜杠开关作为"无法静态归类"上报，不被静默丢弃（switchLikeTokens）', () => {
+    if (!IS_WINDOWS) return
+    expect(analyzeCommandPaths('robocopy src dst /mir /xo', tempRoot()).switchLikeTokens).toEqual(['/mir', '/xo'])
+    expect(analyzeCommandPaths('cd sub && cp data/tmp/a.log out/', tempRoot()).switchLikeTokens).toEqual([])
   })
 })
 
@@ -174,11 +208,17 @@ describe('decideCommandAccess - 智能体典型脚本决策矩阵', () => {
     fs.rmSync(other, { recursive: true, force: true })
   })
 
-  it('区内字面路径写入/删除 → allow', () => {
+  it('区内字面路径写入 → allow', () => {
     const b = makeBoundary(ws)
     expect(decide('Set-Content sub/a.txt -Value 1', ws, b).kind).toBe('allow')
-    expect(decide('Remove-Item -Recurse build/cache', ws, b).kind).toBe('allow')
+    expect(decide('Copy-Item -Force build/cache out/', ws, b).kind).toBe('allow')
     expect(decide('echo x > log.txt', ws, b).kind).toBe('allow')
+  })
+
+  it('区内写入且解析不出具体目标（裸词/通配）→ allow（工作区即授权沙箱）', () => {
+    const b = makeBoundary(ws)
+    expect(decide('Copy-Item a.txt b.txt', ws, b).kind).toBe('allow')
+    expect(decide('Set-Content out.log -Value x', ws, b).kind).toBe('allow')
   })
 
   it('区外绝对路径 → authorize-paths 且聚合全部区外路径', () => {
@@ -187,41 +227,73 @@ describe('decideCommandAccess - 智能体典型脚本决策矩阵', () => {
     const d = decide(`Copy-Item a.txt "${outsideAbs}"`, ws, b)
     expect(d.kind).toBe('authorize-paths')
     if (d.kind === 'authorize-paths') {
-      expect(d.operation).toBe('修改')
       expect(d.paths.some(p => normalizePath(p) === normalizePath(outsideAbs))).toBe(true)
     }
   })
 
   it('相对路径 .. 逃逸工作区 → authorize-paths', () => {
     const b = makeBoundary(ws)
-    const d = decide('rm -rf ../../../secret', ws, b)
+    const d = decide('cp a.txt ../../../secret', ws, b)
     expect(d.kind).toBe('authorize-paths')
   })
 
-  it('变量引用的写入命令（历史漏报：仅删除有兜底）→ confirm-command', () => {
+  it('变量引用的写入命令（历史漏报）→ confirm-command', () => {
     const b = makeBoundary(ws)
     expect(decide('Set-Content "$env:TEMP\\a.txt" -Value x', ws, b).kind).toBe('confirm-command')
     expect(decide('echo x > $HOME/x.txt', ws, b).kind).toBe('confirm-command')
     expect(decide('echo x > %APPDATA%\\a.txt', ws, b).kind).toBe('confirm-command')
   })
 
-  it('rm -rf ~/.ssh 无引号（历史完全漏检）→ confirm-command', () => {
+  it('无引号 ~ 家目录写入无法静态归类（历史完全漏检）→ confirm-command', () => {
     const b = makeBoundary(ws)
-    const d = decide('rm -rf ~/.ssh', ws, b)
-    expect(d.kind).toBe('confirm-command')
-    if (d.kind === 'confirm-command') expect(d.operation).toBe('删除')
+    expect(decide('cp x.txt ~/.ssh/authorized_keys', ws, b).kind).toBe('confirm-command')
+  })
+
+  it('引号包裹 ~ 家目录写入 → authorize-paths（展开到家目录且在工作区外）', () => {
+    const b = makeBoundary(ws)
+    const d = decide('cp x.txt "~/.ssh/authorized_keys"', ws, b)
+    expect(d.kind).toBe('authorize-paths')
+    if (d.kind === 'authorize-paths') {
+      expect(d.paths.some(p => isWithinPath(p, normalizePath(os.homedir())))).toBe(true)
+    }
   })
 
   it('cd 到变量目录后操作裸词 → confirm-command', () => {
     const b = makeBoundary(ws)
-    expect(decide('Set-Location $env:TEMP; Remove-Item a.txt', ws, b).kind).toBe('confirm-command')
+    expect(decide('Set-Location $env:TEMP; Set-Content a.txt -Value x', ws, b).kind).toBe('confirm-command')
     expect(decide('cd $APP_DIR; echo x > a.log', ws, b).kind).toBe('confirm-command')
   })
 
-  it('工作区内无具体目标的删除（glob/裸词）→ confirm-command', () => {
+  it('回归：写命令混入 cmd /c dir /b 不再造出盘根路径', () => {
     const b = makeBoundary(ws)
-    expect(decide('rm -rf *', ws, b).kind).toBe('confirm-command')
-    expect(decide('del *.tmp', ws, b).kind).toBe('confirm-command')
+    const d = decide('Copy-Item "report-*.csv" "backup/" -ErrorAction SilentlyContinue; cmd /c dir /b', ws, b)
+    if (IS_WINDOWS) {
+      // 区内写入 + 斜杠开关 → 单条命令确认，而非"即将修改工作区外路径"的批量授权弹窗
+      expect(d.kind).toBe('confirm-command')
+    } else {
+      // POSIX 上 /c、/b 是真实绝对路径，仍按区外路径处理
+      expect(d.kind).toBe('authorize-paths')
+    }
+  })
+
+  it('回归：写命令的斜杠开关不产生盘根目标，也不退化为静默放行（Windows）', () => {
+    if (!IS_WINDOWS) return
+    const b = makeBoundary(ws)
+    expect(decide('xcopy /e /y src dst', ws, b).kind).toBe('confirm-command')
+    expect(decide('robocopy src dst /mir /xo', ws, b).kind).toBe('confirm-command')
+    expect(decide('Copy-Item a.txt /dst', ws, b).kind).toBe('confirm-command')
+  })
+
+  it('同一目标的字面量与解析结果不重复列出', () => {
+    const b = makeBoundary(ws)
+    const outsideAbs = path.join(other, 'dup', 'x.txt')
+    const d = decide(`Copy-Item a.txt "${outsideAbs}"`, ws, b)
+    expect(d.kind).toBe('authorize-paths')
+    if (d.kind === 'authorize-paths') {
+      const keys = d.paths.map(normalizePath)
+      expect(keys.length).toBe(new Set(keys).size)
+      expect(d.paths.length).toBe(1)
+    }
   })
 
   it('cwd 在区外 + 无具体目标 → authorize-dir 且授权目录就是 cwd 本身', () => {
@@ -282,33 +354,49 @@ describe('decideCommandAccess - 智能体典型脚本决策矩阵', () => {
     expect(d.kind).toBe('authorize-paths')
   })
 
-  it('Python os.remove 区外字面路径 → 删除决策', () => {
-    const b = makeBoundary(ws)
+  it('脚本内删除原语由 isFileDeletionCommand 识别（决策函数不再处理删除）', () => {
     const outsideAbs = path.join(other, 'gone.txt')
-    const d = decide(`python -c "import os; os.remove(r'${outsideAbs}')"`, ws, b)
-    expect(d.kind).toBe('authorize-paths')
-    if (d.kind === 'authorize-paths') expect(d.operation).toBe('删除')
+    expect(isFileDeletionCommand(`python -c "import os; os.remove(r'${outsideAbs}')"`)).toBe(true)
+    expect(isFileDeletionCommand(`node -e "fs.unlinkSync('${outsideAbs}')"`)).toBe(true)
+    expect(isFileDeletionCommand(`node -e "require('fs').unlinkSync('${outsideAbs}')"`)).toBe(true)
+    expect(isFileDeletionCommand(`node -e "require('node:fs').rm('${outsideAbs}')"`)).toBe(true)
+    expect(isFileDeletionCommand('Remove-Item -Recurse build/cache')).toBe(true)
+    // 仅写入/读取的脚本不误判
+    expect(isFileDeletionCommand('python -c "open(\'out.json\',\'w\').write(\'x\')"')).toBe(false)
+    expect(isFileDeletionCommand('node -e "fs.writeFileSync(\'a.txt\', \'x\')"')).toBe(false)
   })
 
-  it('纯读取脚本（open 默认 r 模式）不触发写/删分类 → allow', () => {
+  it('纯读取脚本（open 默认 r 模式）不触发写入分类 → allow', () => {
     const b = makeBoundary(ws)
     const script = `python - <<'PY'\nwith open("data/in.json") as f:\n    print(f.read())\nPY\n`
     expect(decide(script, ws, b).kind).toBe('allow')
   })
 })
 
-describe('decideCommandAccess - 决策优先级与操作类型', () => {
-  it('删除操作 operation 为删除，写入为修改', () => {
-    const ws = makeDir('wa-dc-op-')
-    const b = makeBoundary(ws)
-    const outsideAbs = path.join(path.dirname(ws), `wa-dc-op-out-${Date.now()}`, 'x')
-    const del = decide(`rm "${outsideAbs}"`, ws, b)
-    expect(del.kind).toBe('authorize-paths')
-    if (del.kind === 'authorize-paths') expect(del.operation).toBe('删除')
-    const write = decide(`cp a "${outsideAbs}2"`, ws, b)
-    if (write.kind === 'authorize-paths') expect(write.operation).toBe('修改')
+describe('extractInvokedScriptPaths - 交给解释器执行的脚本文件', () => {
+  it('提取解释器后紧跟的脚本路径', () => {
+    expect(extractInvokedScriptPaths('python cleanup.py')).toEqual(['cleanup.py'])
+    expect(extractInvokedScriptPaths('node -e "1" && node build.js')).toEqual(['build.js'])
+    expect(extractInvokedScriptPaths('pwsh -File "gen.ps1"')).toEqual(['gen.ps1'])
+    expect(extractInvokedScriptPaths('cmd /c cleanup.bat')).toEqual(['cleanup.bat'])
+    expect(extractInvokedScriptPaths('/usr/bin/python3 run/step.py --fast')).toEqual(['run/step.py'])
   })
 
+  it('不把普通引用/选项当待执行脚本（避免误扫误拦）', () => {
+    expect(extractInvokedScriptPaths('git add src/cleanup.py')).toEqual([])
+    expect(extractInvokedScriptPaths('grep -n unlink build/cleanup.js')).toEqual([])
+    expect(extractInvokedScriptPaths('node --version')).toEqual([])
+    expect(extractInvokedScriptPaths('python -m pytest tests/')).toEqual([])
+    expect(extractInvokedScriptPaths('npm run clean')).toEqual([])
+  })
+
+  it('多段命令逐一检查解释器段', () => {
+    expect(extractInvokedScriptPaths('cd out && python a.py; echo done')).toEqual(['a.py'])
+    expect(extractInvokedScriptPaths('echo x > b.log | node c.mjs')).toEqual(['c.mjs'])
+  })
+})
+
+describe('decideCommandAccess - 基础健全性', () => {
   it('SEP 健全性', () => {
     expect(SEP).toBe(path.sep)
   })
