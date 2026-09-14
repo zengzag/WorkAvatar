@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { normalizePath, isWithinPath, commonParentDir } from '../../../electron/main/services/path-normalize'
+import { normalizePath, isWithinPath, commonParentDir, isFsRoot } from '../../../electron/main/services/path-normalize'
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -143,5 +143,25 @@ describe('path-normalize / commonParentDir', () => {
   it('不同盘符（Windows）返回 null', () => {
     if (!IS_WINDOWS) return
     expect(commonParentDir(['C:\\a\\b', 'D:\\a\\b'])).toBeNull()
+  })
+})
+
+describe('path-normalize / isFsRoot', () => {
+  it('识别盘根与文件系统根', () => {
+    expect(isFsRoot('c:\\')).toBe(true)
+    expect(isFsRoot('C:\\')).toBe(true)
+    expect(isFsRoot('/')).toBe(true)
+  })
+
+  it('盘根下的子路径不是根', () => {
+    expect(isFsRoot('c:\\users')).toBe(false)
+    expect(isFsRoot('/tmp')).toBe(false)
+    expect(isFsRoot('c:')).toBe(false) // 缺分隔符的盘符相对写法
+    expect(isFsRoot('')).toBe(false)
+  })
+
+  it('规范化后的盘根仍被识别', () => {
+    const root = path.parse(os.tmpdir()).root
+    expect(isFsRoot(normalizePath(root))).toBe(true)
   })
 })

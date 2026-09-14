@@ -11,6 +11,15 @@ function stripExtendedPrefix(p: string): string {
 }
 
 /**
+ * 是否为盘根/文件系统根（`C:\`、`/`）。
+ * 授权这个范围等于授权整盘，权限判定中一律视为过宽，与所在盘是否与应用数据目录相同无关。
+ */
+export function isFsRoot(normPath: string): boolean {
+  if (!normPath) return false
+  return normPath === '/' || /^[a-z]:\\$/i.test(normPath)
+}
+
+/**
  * 规范化路径用于权限边界比较：
  * - path.resolve 展开相对路径与正斜杠
  * - 对最长存在祖先做 realpath（展开符号链接/junction/OneDrive 重定向/8.3 短名）
@@ -29,8 +38,7 @@ export function normalizePath(p: string): string {
     try {
       const realRaw = stripExtendedPrefix(fs.realpathSync.native(cur))
       // 根目录（C:\ 或 /）去尾分隔符会变成 C: 或空串，必须保留分隔符
-      const isFsRoot = IS_WINDOWS ? /^[A-Za-z]:\\$/.test(realRaw) : realRaw === '/'
-      const real = isFsRoot ? realRaw : realRaw.replace(/[\\/]+$/, '')
+      const real = isFsRoot(realRaw) ? realRaw : realRaw.replace(/[\\/]+$/, '')
       // 不存在的末段以"存在祖先的 realpath + 剩余片段"拼接，保证幂等
       const suffix = resolved.slice(cur.length)
       // Windows 不区分大小写，suffix 一并小写，保证同一文件不同写法缓存键一致

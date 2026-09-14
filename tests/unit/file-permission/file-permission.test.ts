@@ -10,6 +10,8 @@ function makeTempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'wa-perm-'))
 }
 
+const IS_WINDOWS = process.platform === 'win32'
+
 interface TestCtx {
   sessionId: string
   employeeId: string
@@ -149,6 +151,37 @@ describe('FilePermissionService', () => {
       const req = mockInteraction({ id: '', confirmed: true, cancelled: false, allowAlwaysDir: true })
       await service.authorizeFileOperation('写入', [file])
       expect(normalizePath(req.mock.calls[0][0].dirScope)).toBe(normalizePath(path.dirname(file)))
+      req.mockRestore()
+    })
+  })
+
+  it('授权范围为盘根/文件系统根时视为过宽，不提供"始终允许此文件夹"', async () => {
+    const ctx: TestCtx = { sessionId: 's13', employeeId: 'e1', workspacePath: root }
+    const fsRoot = path.parse(root).root
+    const target = path.join(fsRoot, 'wa-perm-root-out.txt')
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false, allowAlwaysDir: true })
+
+      const result = await service.authorizeFileOperation('删除', [target], { scopeDir: fsRoot })
+      expect(result.allowed).toBe(true)
+      expect(req.mock.calls[0][0].dirScope).toBeUndefined()
+
+      // 未落目录授权：仅缓存该精确路径，同盘其他路径仍需再次确认
+      expect(service.isPathAuthorized(target)).toBe(true)
+      expect(service.isPathAuthorized(path.join(fsRoot, 'wa-perm-root-other.txt'))).toBe(false)
+
+      req.mockRestore()
+    })
+  })
+
+  it('过宽判定只看路径形状：与 dataDir/home 不同盘的盘根同样过宽（Windows）', async () => {
+    if (!IS_WINDOWS) return
+    const ctx: TestCtx = { sessionId: 's14', employeeId: 'e1', workspacePath: root }
+    await withCtx(ctx, async () => {
+      const req = mockInteraction({ id: '', confirmed: true, cancelled: false, allowAlwaysDir: true })
+      // 不存在的盘符：dataDir/home（都在系统盘）不可能是它的子路径，只能由路径形状拦下
+      await service.authorizeFileOperation('删除', ['Z:\\wa-perm-z.txt'], { scopeDir: 'Z:\\' })
+      expect(req.mock.calls[0][0].dirScope).toBeUndefined()
       req.mockRestore()
     })
   })

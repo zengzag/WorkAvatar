@@ -1,5 +1,5 @@
 import os from 'os'
-import { normalizePath, isWithinPath, commonParentDir } from './path-normalize'
+import { normalizePath, isWithinPath, commonParentDir, isFsRoot } from './path-normalize'
 import UnifiedInteractionService, { interactionContext } from './unified-interaction.service'
 import PathService from './path.service'
 
@@ -10,7 +10,7 @@ import PathService from './path.service'
  * - 批量确认：多个区外路径按公共父目录归并，单次弹窗完成授权
  * - 任务级高权限（"本轮任务不再提醒"，登记在 UnifiedInteractionService）：本轮任务后续区外操作直接放行
  *
- * 所有需要文件权限判定的工具（file_write/file_edit/shell_exec/javascript_exec）
+ * 所有需要文件权限判定的工具（file_write/file_edit/file_delete/shell_exec/javascript_exec）
  * 统一通过 authorizeFileOperation 走本服务，不再各自实现边界判定与弹窗。
  */
 
@@ -107,16 +107,19 @@ class FilePermissionService {
     this.allowedPathsByKey.delete(allowKey)
   }
 
-  /** "始终允许此文件夹"范围是否过宽（覆盖应用数据根 / 用户主目录），过宽则不提供该选项 */
+  /** "始终允许此文件夹"范围是否过宽（盘根/文件系统根、应用数据根、用户主目录），过宽则不提供该选项 */
   private isDirScopeTooBroad(dirScope: string): boolean {
+    const scope = normalizePath(dirScope)
+    // 盘根（C:\、/）：授权它等于静默授权整盘。必须按路径形状判定，
+    // 不能只比对 dataDir/home —— 二者都在 C 盘时，D:\ 之类的盘根会被漏判
+    if (isFsRoot(scope)) return true
     // PathService 依赖 electron.app，测试/无 electron 环境下跳过 dataDir 判定
     try {
       const dataDirNorm = normalizePath(PathService.getInstance().getDataDir())
-      if (dataDirNorm && isWithinPath(dataDirNorm, dirScope)) return true
+      if (dataDirNorm && isWithinPath(dataDirNorm, scope)) return true
     } catch { /* ignore */ }
     const homeNorm = normalizePath(os.homedir())
-    if (homeNorm && isWithinPath(homeNorm, dirScope)) return true
-    return false
+    return !!homeNorm && isWithinPath(homeNorm, scope)
   }
 
   /**
