@@ -30,20 +30,18 @@ export class ToolMiddlewareChain {
     args: Record<string, any>,
     handler: () => Promise<ToolCallResult>
   ): Promise<ToolCallResult> {
-    let index = 0
-
-    const next = async (): Promise<ToolCallResult> => {
-      if (index >= this.middlewares.length) {
-        return handler()
-      }
-
-      const middleware = this.middlewares[index]
-      index++
-
-      return middleware.fn(toolName, args, next)
+    // 按位置递归组合：每个中间件拿到的 next 只负责「其后」的中间件，
+    // 重复调用 next()（如 retry 的第二次尝试）会从该位置重新完整走一遍下游链，
+    // 保证每次尝试都经过 timeout / result_size。若用单一 index 游标推进，
+    // 重试时游标已到链尾会直接命中 handler，导致超时保护与结果截断被跳过。
+    const middlewares = this.middlewares
+    const dispatch = (index: number): Promise<ToolCallResult> => {
+      if (index >= middlewares.length) return handler()
+      const middleware = middlewares[index]
+      return middleware.fn(toolName, args, () => dispatch(index + 1))
     }
 
-    return next()
+    return dispatch(0)
   }
 }
 
@@ -51,8 +49,10 @@ export function createTimeoutMiddleware(defaultTimeoutMs: number = 30000): ToolM
   return {
     name: 'timeout',
     fn: async (toolName, _args, next) => {
+      // 不删除 _timeoutMs：retry 的后续尝试会重新进入本中间件，
+      // 删除会导致自定义超时（如交互工具 305s）在第二次尝试时丢失、回退到默认 30s。
+      // 该字段仅存在于派发给中间件的参数副本上，不会传给工具 handler。
       const timeoutMs = _args._timeoutMs ?? defaultTimeoutMs
-      delete _args._timeoutMs
 
       let timer: NodeJS.Timeout | undefined
       try {
@@ -90,37 +90,38 @@ export function createRetryMiddleware(maxRetries: number = 2, baseDelayMs: numbe
     fn: async (toolName, _args, next) => {
       // 交互类工具（ask_user/fs 确认）标记 noRetry，超时或取消不重试
       if (_args._noRetry) {
-        delete _args._noRetry
         try {
-          const result = await next()
-          return result.success ? result : { success: false, error: result.error, toolName }
+          return await next()
         } catch (error: any) {
           return { success: false, error: error?.message || String(error), toolName }
         }
       }
 
+      let lastResult: ToolCallResult | undefined
       let lastError: Error | null = null
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const result = await next()
           if (result.success) return result
-
-          // 仅对可重试的错误（瞬时故障）进行重试，参数错误/权限拒绝等不重试
-          if (attempt < maxRetries && isRetryableToolError(new Error(result.error || ''))) {
-            const delay = baseDelayMs * Math.pow(2, attempt)
-            await new Promise(resolve => setTimeout(resolve, delay))
-          }
-          lastError = new Error(result.error || 'Tool execution failed')
+          lastResult = result
+          // 仅对瞬时故障继续重试；参数错误/权限拒绝/文件不存在等直接返回原始结果，
+          // 避免重复执行造成副作用，同时保留 output/generatedFiles 等诊断字段
+          if (!isRetryableToolError(new Error(result.error || ''))) return result
         } catch (error: any) {
           lastError = error
-          if (attempt < maxRetries && isRetryableToolError(error)) {
-            const delay = baseDelayMs * Math.pow(2, attempt)
-            await new Promise(resolve => setTimeout(resolve, delay))
+          if (!isRetryableToolError(error)) {
+            return { success: false, error: error?.message || String(error), toolName }
           }
+        }
+
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, baseDelayMs * Math.pow(2, attempt)))
         }
       }
 
+      // 重试耗尽：优先返回最后一次的工具结果（保留结构化字段），否则回退错误信息
+      if (lastResult) return lastResult
       return {
         success: false,
         error: lastError?.message || 'Max retries reached',
@@ -178,7 +179,13 @@ export function createResultSizeMiddleware(maxResultSize: number = 50000): ToolM
       const result = await next()
 
       if (result.success && result.output) {
-        const outputStr = typeof result.output === 'string' ? result.output : JSON.stringify(result.output)
+        let outputStr: string
+        try {
+          outputStr = typeof result.output === 'string' ? result.output : JSON.stringify(result.output)
+        } catch {
+          // 循环引用/BigInt 等无法序列化：回退 String()，避免丢掉本应成功的结果
+          outputStr = String(result.output)
+        }
         if (outputStr.length > maxResultSize) {
           const truncated = outputStr.substring(0, maxResultSize)
           return {

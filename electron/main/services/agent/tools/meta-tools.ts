@@ -303,5 +303,10 @@ export function createInvokeToolTool(
     },
     source: 'builtin',
     permission: 'safe',
+    // 外层超时必须大于所有可按需调用的工具自身超时（shell_exec 310s 为最大），
+    // 否则 base-agent 的默认 30s 会先触发并截断内层长任务。
+    timeoutMs: 610_000,
+    // 内层 dispatcher.dispatch 已套用目标工具自身的 timeout/retry 链，外层不再重试，避免双重重试
+    noRetry: true,
   }
 }
