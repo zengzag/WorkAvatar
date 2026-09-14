@@ -124,7 +124,7 @@
 | 插件路径 | `ctx.paths` | root/data/resources |
 | IPC | `ctx.ipc.handle/broadcast` | 插件私有通道 |
 | 存储 | `ctx.storage` | 独立分库 + KV |
-| 迁移 | `migrations` + `ctx.legacy` | 数据迁出（需 legacyMigration） |
+| 迁移 | `migrations` | 插件分库自身的 schema/数据变更（原子事务 + 版本记录） |
 
 ---
 
@@ -132,7 +132,7 @@
 
 | 插件 | 使用的能力域 |
 |---|---|
-| notes | ui（message.menu）、storage、ipc、legacyMigration |
+| notes | ui（message.menu）、storage、ipc |
 | calendar | system（notification/scheduler/windows）、registerAgentTools、storage、ipc |
 | voice | execute（llm-stream）、system（windows/native）、storage、ipc |
 | automation | data（conversations write）、execute（agent-chat）、events（subscribe）、system（notification/scheduler）、registerAgentTools |

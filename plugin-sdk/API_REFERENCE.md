@@ -59,7 +59,6 @@ WorkAvatar 采用 **manifest 声明 + 双入口插件包 + 宿主扩展点** 的
 | `locale`           | <br /> | locale 目录名，默认 `locale`                                                                |
 | `ipc`              | <br /> | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀                                           |
 | `capabilities`     | <br /> | 能力域授权声明（见 §5）                                                                         |
-| `permissions`      | <br /> | 迁移专用权限（仅保留 `legacyMigration`）                                                         |
 | `nav`              | <br /> | 导航项：`label`、`icon`、`order`、`detachable`                                               |
 | `dependencies`     | <br /> | 插件依赖（pluginId → semver range），缺失/不满足/未启用则标记 invalid，按拓扑激活                             |
 

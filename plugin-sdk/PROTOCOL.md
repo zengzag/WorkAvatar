@@ -33,7 +33,6 @@
 | `locale` | | locale 目录名，默认 `locale` |
 | `ipc` | | 允许注册的通道名列表（`'*'` 全开）；宿主强制 `plugin:<id>:` 前缀 |
 | `capabilities` | | 能力域授权声明（见 §4） |
-| `permissions` | | 迁移专用权限（仅保留 `legacyMigration`） |
 | `nav` | | 导航项：`label`（文案或 i18n key）、`icon`（SVG 字符串）、`order`（默认 100）、`detachable` |
 | `dependencies` | | 插件依赖（pluginId → semver range）。缺失/未启用/无效/版本不满足都会标记 invalid 并提示，激活按拓扑顺序先激活依赖方 |
 
@@ -209,7 +208,7 @@ container.appendChild(wv)
 
 - 插件一律使用 `ctx.storage.openSqlite()` 获得独立分库（WAL），**禁止直连内核主库**。
 - 原生模块只能 `borrow('better-sqlite3')` 等租借，禁止自带 .node（启动扫描拒绝）。
-- 迁出内核旧数据：`migrations: [{ version, run(ctx) }]`，宿主保证原子事务 + 幂等 + 失败回滚禁用。
+- 插件数据完全自包含：`migrations: [{ version, run(ctx) }]` 用于插件分库自身的 schema/数据变更，宿主保证原子事务 + 幂等 + 失败回滚禁用；插件无任何内核库访问通道。
 
 ## 11. 渲染端约定
 

@@ -125,15 +125,13 @@ export interface PluginManifest {
   locale?: string
   /** 允许注册的 IPC 通道名列表（通配 '*'）；宿主强制 plugin:<id>: 前缀并做范围校验 */
   ipc?: string[]
-  /** 能力域授权声明（v2，取代 v1 permissions 的多数能力） */
+  /** 能力域授权声明（v2，取代 v1 的 permissions 布尔开关） */
   capabilities?: PluginCapability[]
   /**
    * 插件依赖（pluginId → semver range）。宿主激活前校验：
    * 依赖必须已安装、已启用、版本满足，并按拓扑顺序先激活依赖方。
    */
   dependencies?: Record<string, string>
-  /** 迁移专用权限（v2 仅保留 legacyMigration，用于数据迁出场景） */
-  permissions?: Array<'legacyMigration'>
   /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
   employees?: PluginManifestEmployee[]
   nav?: PluginNavContribution

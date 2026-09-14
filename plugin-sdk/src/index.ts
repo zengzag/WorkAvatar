@@ -21,7 +21,6 @@ export type {
   PluginDatabase,
   PluginSqlStatement,
   PluginStorage,
-  PluginLegacyDatabase,
   PluginMigration,
   PluginMigrationContext,
 } from './storage'
