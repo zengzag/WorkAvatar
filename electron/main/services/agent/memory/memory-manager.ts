@@ -10,9 +10,16 @@ import { createLogger } from '../../logger'
 
 const logger = createLogger('MemoryManager')
 
+/** 单张图片的 token 估算（对齐主流视觉模型单图典型开销，防止图片对话压缩触发滞后） */
+const IMAGE_ESTIMATE_TOKENS = 1500
+
 export class MemoryManager implements IMemoryManager {
   private config: MemoryConfig
   private lastStats: MemoryStats | null = null
+  /** 摘要缓存：长会话同一批历史不随每轮 run 重复调 LLM 摘要 */
+  private lastSummaryKey: string | null = null
+  private lastSummaryText = ''
+  private lastSummaryPromise: Promise<string> | null = null
 
   constructor(config?: Partial<MemoryConfig>) {
     this.config = { ...DEFAULT_MEMORY_CONFIG, ...config }
@@ -68,6 +75,7 @@ export class MemoryManager implements IMemoryManager {
 
   estimateTokens(messages: Message[]): number {
     let totalChars = 0
+    let imageCount = 0
     for (const msg of messages) {
       // 每条消息的结构开销（role、分隔符、JSON 包装），
       // OpenAI 系列 chat template 平均每条额外 4-6 token，这里按 5 token ≈ 17 字符估算
@@ -88,8 +96,10 @@ export class MemoryManager implements IMemoryManager {
           totalChars += (tc.function.arguments?.length ?? 0)
         }
       }
+      // 图片按视觉模型的典型单图开销估算，避免 base64 对话压缩触发滞后
+      imageCount += (msg.images?.length ?? 0)
     }
-    return Math.ceil(totalChars / 3.5)
+    return Math.ceil(totalChars / 3.5) + imageCount * IMAGE_ESTIMATE_TOKENS
   }
 
   getStats(): MemoryStats | null {
@@ -210,18 +220,88 @@ export class MemoryManager implements IMemoryManager {
       }
     }
 
-    return result
+    return this.repairToolCallPairing(result)
+  }
+
+  /**
+   * 修复截断造成的 tool_call 配对破坏：OpenAI 协议要求 assistant.tool_calls 与其
+   * tool 结果消息必须成对出现，拆开发给 API 直接 400。
+   * - 段首是孤儿 tool 消息 → 把所属 assistant(toolCalls) 补回段首
+   * - 段尾是孤立 assistant(toolCalls)（其 tool 结果在段外）→ 丢弃该 assistant
+   */
+  private repairToolCallPairing(messages: Message[]): Message[] {
+    if (messages.length === 0) return messages
+
+    // 段首孤儿 tool：回退起点至所属 assistant(toolCalls)
+    let start = 0
+    while (start < messages.length && messages[start].role === 'tool') {
+      const ownerId = messages[start].toolCallId
+      let ownerIdx = -1
+      for (let i = start - 1; i >= 0; i--) {
+        const m = messages[i]
+        if (m.role === 'assistant' && (m.toolCalls ?? []).some((tc) => tc.id === ownerId)) {
+          ownerIdx = i
+          break
+        }
+      }
+      if (ownerIdx >= 0) {
+        start = ownerIdx
+      } else {
+        // 找不到所属 assistant（异常序列），丢弃该孤儿 tool
+        start++
+      }
+    }
+
+    // 段尾孤立 assistant(toolCalls)：其后无对应 tool 结果则丢弃
+    let end = messages.length
+    while (end > start) {
+      const last = messages[end - 1]
+      if (last.role !== 'assistant' || !(last.toolCalls?.length)) break
+      const keptToolIds = new Set(
+        messages.slice(start, end - 1).filter(m => m.role === 'tool').map(m => m.toolCallId)
+      )
+      const allMatched = last.toolCalls.every((tc) => keptToolIds.has(tc.id))
+      if (allMatched) break
+      end--
+    }
+
+    return messages.slice(start, end)
   }
 
   private async generateSummary(messages: Message[]): Promise<string> {
-    if (this.config.summarizeFn) {
-      try {
-        return await this.config.summarizeFn(messages)
-      } catch (err) {
-        logger.warn('LLM摘要失败，回退到简单摘要', err)
-      }
+    // 同一批历史（条数一致 + 首尾内容一致）复用上轮摘要，避免长会话每轮 run 重复调 LLM
+    const cacheKey = `${messages.length}:${(messages[0]?.content ?? '').slice(0, 50)}:${(messages[messages.length - 1]?.content ?? '').slice(0, 50)}`
+    if (this.lastSummaryKey === cacheKey && this.lastSummaryText) {
+      return this.lastSummaryText
     }
-    return this.generateSimpleSummary(messages)
+    // 进行中的同 key 摘要调用直接复用
+    if (this.lastSummaryPromise && this.lastSummaryKey === cacheKey) {
+      return this.lastSummaryPromise
+    }
+
+    this.lastSummaryKey = cacheKey
+    this.lastSummaryPromise = (async () => {
+      if (this.config.summarizeFn) {
+        try {
+          return await this.config.summarizeFn(messages)
+        } catch (err) {
+          logger.warn('LLM摘要失败，回退到简单摘要', err)
+        }
+      }
+      return this.generateSimpleSummary(messages)
+    })().then((text) => {
+      // 仅当 key 仍匹配才写缓存：并发调用不同 key 时后完成者不得污染前者的缓存条目
+      if (this.lastSummaryKey === cacheKey) {
+        this.lastSummaryText = text
+      }
+      this.lastSummaryPromise = null
+      return text
+    }).catch((err) => {
+      this.lastSummaryKey = null
+      this.lastSummaryPromise = null
+      throw err
+    })
+    return this.lastSummaryPromise
   }
 
   private generateSimpleSummary(messages: Message[]): string {
@@ -230,9 +310,10 @@ export class MemoryManager implements IMemoryManager {
 
     const topics: string[] = []
     for (const msg of userMessages) {
-      const preview = msg.content.substring(0, 100).trim()
+      const content = msg.content ?? ''
+      const preview = content.substring(0, 100).trim()
       if (preview) {
-        topics.push(`- 用户询问: ${preview}${msg.content.length > 100 ? '...' : ''}`)
+        topics.push(`- 用户询问: ${preview}${content.length > 100 ? '...' : ''}`)
       }
     }
 

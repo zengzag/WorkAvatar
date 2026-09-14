@@ -401,20 +401,28 @@ function toPiMessages(
     }
 
     if (m.role === 'user') {
-      const content: string | (TextContent | ImageContent)[] = m.images && m.images.length > 0
+      // HTTP 图片 URL 无法作为 base64 data 直接发送（伪造 data 字段是损坏数据，会静默丢失）。
+      // toPiMessages 为同步函数无法下载转码，改为丢弃并在文本中显式告知模型，
+      // 避免模型误以为图片已发送。
+      const httpImageUrls: string[] = []
+      const imageParts: ImageContent[] = []
+      for (const url of m.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType })
+        } else {
+          httpImageUrls.push(parsed.url)
+        }
+      }
+      const skipNote = httpImageUrls.length > 0
+        ? `\n\n[注意：${httpImageUrls.length} 张图片（HTTP 链接）未能随消息发送，仅支持内嵌 data URL 图片。链接如下：${httpImageUrls.join('、')}]`
+        : ''
+      const content: string | (TextContent | ImageContent)[] = imageParts.length > 0
         ? [
-            ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
-            ...m.images.map(url => {
-              const parsed = parseImageDataUrl(url)
-              if ('data' in parsed) {
-                return { type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType }
-              }
-              // HTTP URL：pi-ai 仅支持 base64 data，HTTP 图需下载后转 base64
-              // 此处保留 url 形式，provider 不识别时会忽略
-              return { type: 'image' as const, data: parsed.url, mimeType: 'image/png' }
-            }),
+            ...(((m.content || '') || httpImageUrls.length > 0) ? [{ type: 'text' as const, text: (m.content || '') + skipNote }] : []),
+            ...imageParts,
           ]
-        : m.content
+        : (m.content || '') + skipNote
       const userMsg: UserMessage = { role: 'user', content, timestamp: ts }
       piMessages.push(userMsg)
       continue
@@ -749,7 +757,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
         abortReason = '用户主动停止（signal 已中止）'
         break
       }
-      handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
+      await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
         totalTokenUsage = {
           promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
           completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
@@ -787,7 +795,23 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted, abortReason }
 }
 
-function handleAgentEvent(
+/**
+ * 从 partial content 中按 contentIndex 定位工具调用块。
+ * contentIndex 指示参数增量所属的工具调用块（text/thinking 也占 content 下标）。
+ * 不能用 find 取「第一个 toolCall」：同一 assistant 消息含多个工具调用时，
+ * 后续工具的参数增量会被错误归到第一张卡片，前端流式参数展示错位。
+ * 越界/类型不符时回退 find（对异常事件保持旧行为的兜底）。
+ */
+export function findToolCallByContentIndex(
+  content: any[],
+  contentIndex: number | undefined,
+): PiToolCall | undefined {
+  const indexed = contentIndex === undefined ? undefined : content[contentIndex]
+  if (indexed && indexed.type === 'toolCall') return indexed as PiToolCall
+  return content.find((c): c is PiToolCall => c.type === 'toolCall')
+}
+
+async function handleAgentEvent(
   event: AgentEvent,
   callbacks: AgentRunStreamCallbacks,
   eventEmitter: AgentEventEmitter,
@@ -797,7 +821,7 @@ function handleAgentEvent(
   toolArgsCache: Map<string, any>,
   toolStartTime: Map<string, number>,
   onUsage: (usage: TokenUsage) => void,
-): void {
+): Promise<void> {
   switch (event.type) {
     case 'agent_start':
       // 不在此处 emit run:start，base-agent.runStream 已统一 emit，避免重复
@@ -844,7 +868,7 @@ function handleAgentEvent(
           break
         case 'toolcall_delta': {
           const partial = asstEvent.partial
-          const tc = partial.content.find((c): c is PiToolCall => c.type === 'toolCall')
+          const tc = findToolCallByContentIndex(partial.content, asstEvent.contentIndex)
           callbacks.onToolCallDelta?.({
             index: asstEvent.contentIndex,
             id: tc?.id,
@@ -914,7 +938,7 @@ function handleAgentEvent(
         try {
           // tool_execution_end 不含 args，从 tool_execution_start 缓存中取
           const args = toolArgsCache.get(event.toolCallId) ?? {}
-          onToolCallExecuted(event.toolName, args, result)
+          await onToolCallExecuted(event.toolName, args, result)
         } catch (err: any) {
           logger.error(`onToolCallExecuted hook error for "${event.toolName}": ${err?.message || err}`)
         } finally {

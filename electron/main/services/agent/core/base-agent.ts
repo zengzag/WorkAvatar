@@ -528,7 +528,8 @@ export abstract class BaseAgent {
 
   private generateFallbackSummary(messages: Message[]): string {
     const userMessages = messages.filter(m => m.role === 'user')
-    const topics = userMessages.map(m => `- ${m.content.substring(0, 80).trim()}`).slice(0, 10)
+    // content 可能为 undefined（LLM 空回复/工具消息），与 formatMessagesForSummary/estimateTokens 保持一致做空值兜底
+    const topics = userMessages.map(m => `- ${(m.content || '').substring(0, 80).trim()}`).slice(0, 10)
     return `讨论了 ${topics.length} 个话题：\n${topics.join('\n')}`
   }
 
