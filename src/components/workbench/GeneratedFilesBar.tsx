@@ -1,5 +1,5 @@
-import { theme, Tooltip } from 'antd'
-import { EyeOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { App, theme, Tooltip } from 'antd'
+import { EyeOutlined, ExportOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import React, { useState, memo, useMemo, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { GeneratedFileInfo } from '../../types'
@@ -21,6 +21,7 @@ interface GeneratedFilesBarProps {
 
 const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
   const { token } = theme.useToken()
+  const { message } = App.useApp()
   const { t } = useTranslation()
   const [previewFile, setPreviewFile] = useState<GeneratedFileInfo | null>(null)
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set())
@@ -65,6 +66,11 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
     : generatedFiles.filter(f => !missingPaths.has(f.path))
 
   if (visibleFiles.length === 0) return null
+
+  const openWithSystem = async (filePath: string) => {
+    const res = await window.electronAPI.kms.openFile(filePath)
+    if (res?.error) message.error(`${t('workbench.openWithSystemFailed')}: ${res.error}`)
+  }
 
   return (
     <>
@@ -130,6 +136,15 @@ const GeneratedFilesBar: React.FC<GeneratedFilesBarProps> = ({ segments }) => {
               </div>
               <Tooltip title={t('workbench.previewFile')}>
                 <EyeOutlined style={{ color: token.colorPrimary, fontSize: 14, flexShrink: 0 }} />
+              </Tooltip>
+              <Tooltip title={t('workbench.openWithSystem')}>
+                <ExportOutlined
+                  style={{ color: token.colorTextTertiary, fontSize: 14, flexShrink: 0 }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openWithSystem(file.path)
+                  }}
+                />
               </Tooltip>
               <Tooltip title={t('workbench.openInExplorer')}>
                 <FolderOpenOutlined
