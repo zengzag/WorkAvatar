@@ -23,6 +23,8 @@ export interface LoadedPlugin {
   name: string
   /** 插件版本（增量同步时识别覆盖升级；也作为动态 import 的 cache-bust 参数） */
   version: string
+  /** 内容指纹（同版本覆盖重装时据此识别变化并强制重新加载入口模块） */
+  rev?: string
   nav?: {
     /** 文案或 i18n key（App 侧以 namespace=插件 id 解析，语言切换自动生效） */
     label: string
@@ -170,13 +172,14 @@ export function unloadPluginById(id: string): void {
 /**
  * 加载单个插件的渲染端（增量热加载核心）：
  * 注册 locale → 动态 import plugin:// 入口 → init(host) → 收集路由/导航/视图 → 登记 registry。
- * 版本相同已加载则跳过（幂等）；覆盖升级时**新版本就绪后原子替换**旧 registry
- * （不预先把旧渲染端摘除，插件页面升级不闪断、不跳转）。
+ * 版本 + 内容指纹（rev）都相同才跳过（幂等）；用户手动导入的插件 rev 必定变化，
+ * 因此同版本覆盖重装也会重新加载新入口，不会被内存 registry 或 ESM 模块缓存挡住。
+ * 覆盖升级时**新版本就绪后原子替换**旧 registry（不预先把旧渲染端摘除，插件页面升级不闪断、不跳转）。
  * 单插件失败仅跳过自身（主进程已隔离激活，这里兜底渲染端异常）。
  */
 async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
   const existing = loadedPlugins.get(info.id)
-  if (existing && existing.version === info.version) return
+  if (existing && existing.version === info.version && existing.rev === info.rev) return
 
   const localeLngs: string[] = []
   // 升级前旧 bundle 快照：新版本加载失败时恢复（避免 removeResourceBundle 把旧版本仍显示的文案整体清掉）
@@ -203,8 +206,8 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
       localeLngs.push(lng)
     }
 
-    // cache-bust：ESM 动态 import 按 URL 缓存模块，插件升级后必须带 version 参数防加载旧模块
-    const cacheBust = `?v=${encodeURIComponent(info.version)}`
+    // cache-bust：ESM 动态 import 按 URL 缓存模块，插件升级/同版本覆盖重装后必须换 URL 防加载旧模块
+    const cacheBust = `?v=${encodeURIComponent(info.version)}${info.rev ? `&r=${encodeURIComponent(info.rev)}` : ''}`
     const entry = await rendererModuleLoader.load(`plugin://${info.id}/${info.entry}${cacheBust}`)
     const def = entry.default
     if (!def || !Array.isArray(def.routes)) {
@@ -279,6 +282,7 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
       id: info.id,
       name: info.name,
       version: info.version,
+      rev: info.rev,
       nav: info.nav,
       navIcon: def.navIcon,
       views: def.views,

@@ -118,6 +118,8 @@ interface PluginRecord {
   rootDir: string
   enabled: boolean
   engineOk: boolean
+  /** 内容指纹（入口文件 size-mtime[#导入序号]）：同版本覆盖重装/换包时识别变化并刷新渲染端 */
+  rev: string
   /** active: activate 成功；error: 激活抛错；invalid: manifest/engine 校验失败；pending: 已安装未重启激活 */
   status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
@@ -178,6 +180,8 @@ class PluginHostService {
   private commands = new Map<string, PluginCommand>()
   private dataDir = ''
   private initialized = false
+  /** 导入序号：保证用户每次手动导入都产生新的 rev（同一包重复导入也刷新渲染端） */
+  private importSeq = 0
 
   private constructor() {}
 
@@ -438,11 +442,12 @@ class PluginHostService {
         changed.add(id)
       }
     }
-    // 2. 新增/变更（版本/启停/engine 变化）→ 下线旧贡献后纳入新记录
+    // 2. 新增/变更（版本/内容指纹/启停/engine 变化）→ 下线旧贡献后纳入新记录
     for (const [id, nextRecord] of next) {
       const current = this.records.get(id)
       const replaced = !current
         || current.manifest.version !== nextRecord.manifest.version
+        || current.rev !== nextRecord.rev
         || current.enabled !== nextRecord.enabled
         || current.engineOk !== nextRecord.engineOk
         || (current.status === 'invalid' && nextRecord.status !== 'invalid')
@@ -552,7 +557,7 @@ class PluginHostService {
     const fail = (id: string, message: string) => {
       records.set(id, {
         manifest: { id, name: id, version: '0.0.0', engine: '*', main: '' },
-        source: 'user', rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
+        source: 'user', rootDir, enabled: false, engineOk: false, rev: '', status: 'invalid', statusMessage: message,
       })
     }
     const manifestPath = path.join(rootDir, 'manifest.json')
@@ -578,10 +583,26 @@ class PluginHostService {
     }
     const enabled = !disabled.has(manifest.id)
     records.set(manifest.id, {
-      manifest, source: 'user', rootDir, enabled, engineOk,
+      manifest, source: 'user', rootDir, enabled, engineOk, rev: this.computePluginRev(rootDir, manifest),
       status: enabled ? 'error' : 'disabled',
       statusMessage: enabled ? '尚未激活' : undefined,
     })
+  }
+
+  /**
+   * 插件内容指纹：入口文件（优先渲染端）size + mtime。
+   * 插件版本号不变但文件被替换（覆盖重装/直接从磁盘换包）时指纹变化，
+   * 用于主进程增量重建与渲染端 cache-bust，避免加载内存/ESM 缓存的旧模块。
+   */
+  private computePluginRev(rootDir: string, manifest: PluginManifest): string {
+    const entry = manifest.renderer || manifest.main
+    if (!entry) return ''
+    try {
+      const stat = fs.statSync(path.join(rootDir, entry))
+      return `${stat.size}-${Math.floor(stat.mtimeMs)}`
+    } catch {
+      return ''
+    }
   }
 
   private activateRecord(record: PluginRecord): void {
@@ -1521,6 +1542,7 @@ class PluginHostService {
         id: r.manifest.id,
         name: r.manifest.name,
         version: r.manifest.version,
+        rev: r.rev,
         entry: r.manifest.renderer,
         nav: r.manifest.nav ? {
           label: r.manifest.nav.label,
@@ -1794,6 +1816,8 @@ class PluginHostService {
     const disabled = this.readDisabledList()
     this.scanPluginInto(this.records, destDir, disabled)
     const installed = this.records.get(manifest.id)
+    // 用户手动导入一律视为一次新安装：rev 追加导入序号，保证同版本重装也刷新渲染端（ESM 按 URL 缓存）
+    if (installed) installed.rev = `${installed.rev}#${++this.importSeq}`
     if (installed && installed.enabled) {
       const depsReason = this.checkDependencies(installed)
       if (!depsReason) {

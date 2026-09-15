@@ -1,7 +1,7 @@
 /**
  * 渲染端插件 loader 增量热加载单测：
  * - 加载单个插件（locale 注册 / 路由归一化 / init(host) 桥 / nav 注入 / 视图注册）
- * - 幂等（同版本跳过）、覆盖升级（v1→v2 原子替换 + dispose 旧实例 + cache-bust URL）
+ * - 幂等（同版本 + 同 rev 跳过）、同版本重新导入（rev 变化 → 强制重载）、覆盖升级（v1→v2 原子替换 + dispose 旧实例 + cache-bust URL）
  * - 升级失败保留旧渲染端与旧 locale（回归）
  * - 增删 diff（syncPlugins 卸载已移除插件）
  * - 多播并发竞态：多次广播串行执行，不重复 import/init（回归）
@@ -152,6 +152,22 @@ describe('loadSinglePlugin / syncPlugins（增量加载）', () => {
     await syncPlugins([info()])
     expect(store.loadRendererModule).not.toHaveBeenCalled()
     expect(entry.default.init).toHaveBeenCalledTimes(1)
+  })
+
+  it('同版本但 rev 变化（用户重新导入同一版本包）→ 重新加载并更新 cache-bust URL', async () => {
+    const oldEntry = makeEntry()
+    store.loadRendererModule.mockResolvedValueOnce(oldEntry)
+    await syncPlugins([info({ rev: '100-1' })])
+    store.loadRendererModule.mockClear()
+
+    const newEntry = makeEntry()
+    store.loadRendererModule.mockResolvedValueOnce(newEntry)
+    await syncPlugins([info({ rev: '100-2' })])
+
+    expect(store.loadRendererModule).toHaveBeenCalledWith('plugin://demo/index.js?v=1.0.0&r=100-2')
+    expect(oldEntry.default.dispose).toHaveBeenCalledTimes(1)
+    expect(newEntry.default.init).toHaveBeenCalledTimes(1)
+    expect(getLoadedPlugin('demo')!.rev).toBe('100-2')
   })
 
   it('覆盖升级：dispose 旧实例 + 新版本 atomic 替换，cache-bust 版本号更新', async () => {

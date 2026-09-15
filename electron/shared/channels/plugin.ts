@@ -64,6 +64,8 @@ export interface PluginRendererInfo {
   name: string
   /** 插件版本（渲染端据此识别覆盖升级，动态 import 时作为 cache-bust 参数） */
   version: string
+  /** 内容指纹（入口文件 size-mtime[#导入序号]）：同版本覆盖重装也能被渲染端识别并重新加载 */
+  rev?: string
   /** 渲染端入口相对路径（渲染端经 plugin://<id>/<entry> 加载） */
   entry: string
   nav?: PluginNavItemInfo
