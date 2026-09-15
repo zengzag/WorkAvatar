@@ -23,10 +23,14 @@ export function resolveModelLabel(
   providers: any[]
 ): string {
   if (!ids.comparisonProviderId || !ids.comparisonModelId) return ''
+  // providers 可能尚未加载完成（undefined/非数组）→ 直接回退模型 id
+  if (!Array.isArray(providers)) return ids.comparisonModelId
   const provider = providers.find((p: any) => p.id === ids.comparisonProviderId)
   if (!provider) return ids.comparisonModelId
-  let models: any[] = []
-  try { models = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { models = [] }
+  let parsed: any
+  try { parsed = provider.models_json ? JSON.parse(provider.models_json) : [] } catch { parsed = [] }
+  // 解析结果可能是对象/null/字符串，非数组时 find 会抛 TypeError → 非法时按空列表兜底
+  const models: any[] = Array.isArray(parsed) ? parsed : []
   const model = models.find((m: any) => m.model === ids.comparisonModelId)
   return model?.name || ids.comparisonModelId
 }

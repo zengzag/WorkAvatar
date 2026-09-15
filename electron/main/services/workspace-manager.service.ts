@@ -319,15 +319,15 @@ class WorkspaceManagerService {
     // - 有 parentConversationId（委托子会话）：在主管会话的工作区目录下创建子目录
     // - 无 parentConversationId（顶层会话）：在员工工作区下创建独立目录
     let workspacePath = ''
-    if (reuseWorkspacePath) {
-      // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）。
-      // 安全校验：路径必须位于数据目录 employees/ 下（该路径是 FilePermissionService
-      // 的授权边界），非法路径直接忽略并回退正常创建，防止把授权根指到任意目录
-      if (this.isWithinEmployeesRoot(reuseWorkspacePath)) {
-        workspacePath = reuseWorkspacePath
-      } else {
-        logger.warn(`Rejected reuseWorkspacePath outside employees root: ${reuseWorkspacePath}`)
-      }
+    // 分支任务：直接复用原任务工作区路径，不新建目录（保证 KV cache 前缀一致）。
+    // 安全校验：路径必须位于数据目录 employees/ 下（该路径是 FilePermissionService
+    // 的授权边界），非法路径直接忽略并回退正常创建，防止把授权根指到任意目录
+    const canReuseWorkspace = !!reuseWorkspacePath && this.isWithinEmployeesRoot(reuseWorkspacePath)
+    if (reuseWorkspacePath && !canReuseWorkspace) {
+      logger.warn(`Rejected reuseWorkspacePath outside employees root: ${reuseWorkspacePath}`)
+    }
+    if (canReuseWorkspace) {
+      workspacePath = reuseWorkspacePath!
     } else if (parentConversationId) {
       const parent = this.db.getDb().prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(parentConversationId) as { workspace_path?: string } | undefined
       const parentWs = parent?.workspace_path || ''

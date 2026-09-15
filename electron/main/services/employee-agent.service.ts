@@ -344,7 +344,7 @@ class EmployeeAgentService {
 
     // 注册元工具（常驻 LLM tools 数组）：list_available_tools + invoke_tool
     agent.registerTools([
-      createListAvailableToolsTool(agent.getToolRegistry(), emp.workspace_path || ''),
+      createListAvailableToolsTool(agent.getToolRegistry()),
       createInvokeToolTool(agent.getToolDispatcher(), agent.getToolRegistry()),
     ])
 

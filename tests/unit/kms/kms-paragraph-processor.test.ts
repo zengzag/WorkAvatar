@@ -13,7 +13,9 @@ import {
   identifyParagraphsFromLLMToc,
   filterTocByContentVolume,
   parseJSON,
+  generateFileToc,
 } from '../../../electron/main/services/kms/kms-paragraph-processor'
+import type KMSSearchEngineService from '../../../electron/main/services/kms/kms-search-engine.service'
 
 describe('kms-paragraph-processor / countWords', () => {
   it('空文本返回 0', () => {
@@ -302,5 +304,356 @@ describe('kms-paragraph-processor / parseJSON', () => {
 
   it('数组顶层 JSON（无 {} 时）原样解析', () => {
     expect(parseJSON('[1,2,3]', null)).toEqual([1, 2, 3])
+  })
+})
+
+describe('kms-paragraph-processor / countWords 边界补充', () => {
+  it('emoji 等非 CJK 字符按空白分组计 1 个词', () => {
+    expect(countWords('😀😀')).toBe(1)
+    expect(countWords('😀 知识')).toBe(3) // emoji(1) + 知(1) + 识(1)
+  })
+
+  it('连字符、下划线不断词', () => {
+    expect(countWords('a-b_c')).toBe(1)
+  })
+
+  it('全角空格可被 trim', () => {
+    expect(countWords('\u3000知识\u3000')).toBe(2)
+  })
+
+  it('null/undefined 抛错（无防御）', () => {
+    expect(() => countWords(undefined as unknown as string)).toThrow(TypeError)
+  })
+})
+
+describe('kms-paragraph-processor / splitParagraphs 边界补充', () => {
+  it('空文本走分块并返回单条空内容段落', () => {
+    const paras = splitParagraphs('', 'empty.md')
+    expect(paras).toHaveLength(1)
+    expect(paras[0].title).toBe('段落 1')
+    expect(paras[0].content).toBe('')
+    expect(paras[0].startOffset).toBe(0)
+  })
+
+  it('超长（≥100 字符）的行不被识别为标题', () => {
+    const longLine = '# ' + 'x'.repeat(120)
+    const paras = splitParagraphs(`${longLine}\n正文行`, 'long.md')
+    expect(paras[0].title).toBe('段落 1')
+  })
+
+  it('含句末分号的行不被识别为标题', () => {
+    const paras = splitParagraphs('# 标题；\n正文行', 'semi.md')
+    expect(paras[0].title).toBe('段落 1')
+  })
+
+  it('标题占比恰好 25% 时保留标题切分', () => {
+    const body = (n: number) => Array.from({ length: n }, (_, i) => `正文内容第 ${i} 行，用于凑足最小词数阈值。`).join('\n')
+    // 4 非空行中 1 个标题 → ratio = 0.25，不触发降级（需 > 0.25）
+    const text = `# A\n${body(3)}`
+    const paras = splitParagraphs(text, 'ratio.md')
+    expect(paras.map(p => p.title)).toEqual(['A'])
+  })
+
+  it('标题占比超过 25% 时降级为分块', () => {
+    const short = Array.from({ length: 4 }, (_, i) => `第 ${i} 行正文，词数足够。`).join('\n')
+    const text = `# A\n# B\n# C\n${short}`
+    const paras = splitParagraphs(text, 'over.md')
+    expect(paras[0].title).toBe('段落 1')
+  })
+
+  it('重叠分块的偏移量在重复内容下仍准确（按切分过程累积，不用 indexOf 反查）', () => {
+    const body = (n: number) => '字'.repeat(n)
+    const text = `# 长段落\n${body(2000)}\n${body(2000)}\n${body(2000)}`
+    const paras = splitParagraphs(text, 'repeat.md')
+    expect(paras).toHaveLength(2)
+    // 第二块起点 = 标题行 offset 0 + 窗口 4500（重叠 500 字符）
+    expect(paras[1].startOffset).toBe(4500)
+    // 偏移必须与内容自洽：按偏移切原文即得该块内容
+    expect(text.slice(paras[1].startOffset, paras[1].endOffset).trim()).toBe(paras[1].content)
+  })
+
+  it('重叠分块的偏移量在无标题重复内容下同样准确', () => {
+    const text = 'A'.repeat(6005)
+    const paras = splitParagraphs(text, 'repeat2.txt')
+    expect(paras).toHaveLength(2)
+    expect(paras[1].startOffset).toBe(4500)
+  })
+
+  it('超长前言被二次切分并按序号命名', () => {
+    const preface = ['前'.repeat(2000), '前'.repeat(2000), '前'.repeat(2000)].join('\n')
+    const text = `${preface}\n# 标题\n正文`
+    const paras = splitParagraphs(text, 'preface.md')
+    expect(paras[0].title).toBe('前言 (1)')
+    expect(paras[1].title).toBe('前言 (2)')
+  })
+})
+
+describe('kms-paragraph-processor / needsTocRestoration 边界补充', () => {
+  it('空文本返回 true', () => {
+    expect(needsTocRestoration('')).toBe(true)
+  })
+
+  it('密度恰好等于阈值（8000）时不触发恢复', () => {
+    const text = `# A\n${'x'.repeat(8000 - 4)}`
+    expect(text.length).toBe(8000)
+    expect(needsTocRestoration(text)).toBe(false)
+  })
+
+  it('密度超过阈值 1 个字符即触发恢复', () => {
+    const text = `# A\n${'x'.repeat(8001 - 4)}`
+    expect(text.length).toBe(8001)
+    expect(needsTocRestoration(text)).toBe(true)
+  })
+})
+
+describe('kms-paragraph-processor / generateFileToc', () => {
+  it('过滤前言与空标题并无正文内容写入，仅保存标题结构', () => {
+    const saved: Array<{ fileId: string; json: string }> = []
+    generateFileToc('f1', [
+      { title: '前言', titlePath: '前言', level: 1, paragraphIndex: 0, startOffset: 0, endOffset: 10 },
+      { title: '', titlePath: '', level: 1, paragraphIndex: 1, startOffset: 10, endOffset: 20 },
+      { title: '章 A', titlePath: '章 A', level: 1, paragraphIndex: 2, startOffset: 20, endOffset: 30 },
+      { title: '节 A1', titlePath: '章 A > 节 A1', level: 2, paragraphIndex: 3, startOffset: 30, endOffset: 40 },
+    ], {
+      saveFileToc: (fileId: string, json: string) => saved.push({ fileId, json }),
+    } as unknown as KMSSearchEngineService)
+
+    expect(saved).toHaveLength(1)
+    expect(saved[0].fileId).toBe('f1')
+    const toc = JSON.parse(saved[0].json)
+    expect(toc).toEqual([
+      { id: 2, title: '章 A', titlePath: '章 A', level: 1, paragraphIndex: 2, startOffset: 20, endOffset: 30 },
+      { id: 3, title: '节 A1', titlePath: '章 A > 节 A1', level: 2, paragraphIndex: 3, startOffset: 30, endOffset: 40 },
+    ])
+  })
+
+  it('全部条目被过滤时仍写入空数组', () => {
+    let json = ''
+    generateFileToc('f1', [
+      { title: '前言', titlePath: '前言', level: 1, paragraphIndex: 0, startOffset: 0, endOffset: 1 },
+    ], {
+      saveFileToc: (_fileId: string, j: string) => { json = j },
+    } as unknown as KMSSearchEngineService)
+    expect(json).toBe('[]')
+  })
+})
+
+describe('kms-paragraph-processor / deduplicateTocEntries 边界补充', () => {
+  it('乱序输入先按行号排序', () => {
+    const out = deduplicateTocEntries([
+      { title: '第三章', level: 1, lineNumber: 300 },
+      { title: '第一章', level: 1, lineNumber: 1 },
+      { title: '第二章', level: 1, lineNumber: 200 },
+    ])
+    expect(out.map(e => e.lineNumber)).toEqual([1, 200, 300])
+  })
+
+  it('同行号同标题完全重复只保留一条', () => {
+    const out = deduplicateTocEntries([
+      { title: '标题', level: 1, lineNumber: 5 },
+      { title: '标题', level: 1, lineNumber: 5 },
+    ])
+    expect(out).toHaveLength(1)
+  })
+
+  it('同行号但标题不相似时都保留', () => {
+    const out = deduplicateTocEntries([
+      { title: '完全不同的甲', level: 1, lineNumber: 5 },
+      { title: '毫无关联的乙', level: 1, lineNumber: 5 },
+    ])
+    expect(out).toHaveLength(2)
+  })
+
+  it('空标题条目不被视为重复（当前行为）', () => {
+    const out = deduplicateTocEntries([
+      { title: '', level: 1, lineNumber: 1 },
+      { title: '', level: 1, lineNumber: 2 },
+    ])
+    expect(out).toHaveLength(2)
+  })
+})
+
+describe('kms-paragraph-processor / validateTocEntries 边界补充', () => {
+  const text = ['第 1 行内容', '# 目标标题', '第 3 行内容'].join('\n')
+
+  it('level 为 0 的条目被过滤', () => {
+    expect(validateTocEntries(text, [{ title: '目标标题', level: 0, lineNumber: 2 }])).toHaveLength(0)
+  })
+
+  it('lineNumber 为 0 时退化为全文搜索仍可命中', () => {
+    const out = validateTocEntries(text, [{ title: '目标标题', level: 1, lineNumber: 0 }])
+    expect(out).toHaveLength(1)
+    expect(out[0].lineNumber).toBe(2)
+  })
+
+  it('lineNumber 超出总行数且全文无匹配时返回空', () => {
+    expect(validateTocEntries(text, [{ title: '不存在的标题甲', level: 1, lineNumber: 999 }])).toHaveLength(0)
+  })
+
+  it('纯空白标题不是有效条目', () => {
+    expect(validateTocEntries(text, [{ title: '   ', level: 1, lineNumber: 1 }])).toHaveLength(0)
+  })
+
+  it('同一标题多次出现时行号漂移可能命中更早的出现位置（当前行为）', () => {
+    const dup = ['# 重复标题', '中间内容行', '# 重复标题', '尾部内容'].join('\n')
+    // 目标第 4 行与标题无关，但 ±5 漂移从 delta=-5 起搜索 → 命中第 1 行而非第 3 行
+    const out = validateTocEntries(dup, [{ title: '重复标题', level: 1, lineNumber: 4 }])
+    expect(out[0].lineNumber).toBe(1)
+  })
+})
+
+describe('kms-paragraph-processor / buildTocContext 边界补充', () => {
+  it('level 为 0 或负数不产生负缩进', () => {
+    const ctx = buildTocContext([{ title: 'T', level: 0, lineNumber: 1 }])
+    expect(ctx).toBe('[L1] T')
+  })
+
+  it('level=3 缩进 4 个空格', () => {
+    const ctx = buildTocContext([{ title: 'T', level: 3, lineNumber: 9 }])
+    expect(ctx).toBe('    [L9] T')
+  })
+})
+
+describe('kms-paragraph-processor / identifyParagraphsFromLLMToc 边界补充', () => {
+  it('乱序条目按 offset 排序后切分', () => {
+    const body = (n: number) => Array.from({ length: n }, (_, i) => `正文内容第 ${i} 行，词数需要足够多。`).join('\n')
+    const a = `# A\n${body(6)}`
+    const text = `${a}\n# B\n${body(6)}`
+    const offsetB = text.indexOf('# B')
+    const paras = identifyParagraphsFromLLMToc(text, [
+      { title: 'B', level: 1, lineNumber: 9, offset: offsetB },
+      { title: 'A', level: 1, lineNumber: 1, offset: 0 },
+    ])
+    expect(paras.map(p => p.title)).toEqual(['A', 'B'])
+  })
+
+  it('首条 offset 之前的正文作为前言', () => {
+    const body = (n: number) => Array.from({ length: n }, (_, i) => `前言正文第 ${i} 行，词数足够。`).join('\n')
+    const preface = body(8)
+    const text = `${preface}\n# 章 A\n${body(8)}`
+    const paras = identifyParagraphsFromLLMToc(text, [
+      { title: '章 A', level: 1, lineNumber: 9, offset: text.indexOf('# 章 A') },
+    ])
+    expect(paras[0].title).toBe('前言')
+    expect(paras[1].title).toBe('章 A')
+  })
+
+  it('所有段落内容不足最小词数时返回空数组', () => {
+    const text = 'A\nB\nC'
+    const paras = identifyParagraphsFromLLMToc(text, [
+      { title: 'A', level: 1, lineNumber: 1, offset: 0 },
+      { title: 'B', level: 1, lineNumber: 2, offset: 2 },
+    ])
+    expect(paras).toEqual([])
+  })
+
+  it('两条条目 offset 相同：前一条内容为空被跳过，仅保留后一条', () => {
+    const body = Array.from({ length: 10 }, (_, i) => `重复偏移正文 ${i}，词数足够。`).join('\n')
+    const text = `# A\n${body}`
+    const paras = identifyParagraphsFromLLMToc(text, [
+      { title: 'A', level: 1, lineNumber: 1, offset: 0 },
+      { title: 'B', level: 1, lineNumber: 1, offset: 0 },
+    ])
+    expect(paras).toHaveLength(1)
+    // A 的切片区间为 [0, 0) → 内容为空被丢弃；B 独占全文 → 保留
+    expect(paras[0].title).toBe('B')
+  })
+
+  it('超长段落按最大长度二次切分', () => {
+    const text = `# 长\n${'字'.repeat(MAX_PARAGRAPH_CHARS + 2000)}`
+    const paras = identifyParagraphsFromLLMToc(text, [
+      { title: '长', level: 1, lineNumber: 1, offset: 0 },
+    ])
+    expect(paras.length).toBeGreaterThan(1)
+    expect(paras[0].content.length).toBeLessThanOrEqual(MAX_PARAGRAPH_CHARS)
+  })
+})
+
+describe('kms-paragraph-processor / filterTocByContentVolume 边界补充', () => {
+  it('乱序条目按 offset 排序后再按内容量过滤', () => {
+    const body = Array.from({ length: 10 }, (_, i) => `内容充足的一行 ${i}，词数足够。`).join('\n')
+    const text = `# 满足\n${body}\n# 空洞\n短`
+    const entries = [
+      { title: '空洞', level: 1, lineNumber: 13, offset: text.indexOf('# 空洞') },
+      { title: '满足', level: 1, lineNumber: 1, offset: 0 },
+    ]
+    const out = filterTocByContentVolume(text, entries)
+    expect(out.map(e => e.title)).toEqual(['满足'])
+  })
+
+  it('末条目内容范围延伸到文末', () => {
+    const text = `# A\n${'字'.repeat(MIN_CONTENT_WORDS)}`
+    const out = filterTocByContentVolume(text, [{ title: 'A', level: 1, lineNumber: 1, offset: 0 }])
+    expect(out).toHaveLength(1)
+  })
+})
+
+describe('kms-paragraph-processor / buildTocWithPath 边界补充', () => {
+  it('空数组返回空', () => {
+    expect(buildTocWithPath([])).toEqual([])
+  })
+
+  it('乱序输入按 offset 排序', () => {
+    const out = buildTocWithPath([
+      { title: 'B', level: 1, lineNumber: 2, offset: 100 },
+      { title: 'A', level: 1, lineNumber: 1, offset: 0 },
+    ])
+    expect(out.map(o => o.path)).toEqual(['A', 'B'])
+  })
+
+  it('层级跳跃（1→3→2）时路径正确回退', () => {
+    const out = buildTocWithPath([
+      { title: 'A', level: 1, lineNumber: 1, offset: 0 },
+      { title: 'C', level: 3, lineNumber: 2, offset: 10 },
+      { title: 'D', level: 2, lineNumber: 3, offset: 20 },
+    ])
+    expect(out.map(o => o.path)).toEqual(['A', 'A > C', 'A > D'])
+  })
+})
+
+describe('kms-paragraph-processor / parseJSON 边界补充', () => {
+  it('空字符串返回 fallback', () => {
+    expect(parseJSON('', { fb: 1 })).toEqual({ fb: 1 })
+  })
+
+  it('无语言标记的代码块', () => {
+    expect(parseJSON('```\n{"a":1}\n```', null)).toEqual({ a: 1 })
+  })
+
+  it('代码块前有说明文本（多行匹配）', () => {
+    expect(parseJSON('分析结果：\n```json\n{"a":1}\n```\n以上', null)).toEqual({ a: 1 })
+  })
+
+  it('只有右花括号时解析失败返回 fallback', () => {
+    expect(parseJSON('}', { fb: true })).toEqual({ fb: true })
+  })
+
+  it('顶层数字与 null 可解析', () => {
+    expect(parseJSON('123', null)).toBe(123)
+    expect(parseJSON('null', { fb: true })).toBeNull()
+  })
+
+  it('字符串值内部含花括号不影响提取', () => {
+    expect(parseJSON('{"a":"}"}', null)).toEqual({ a: '}' })
+  })
+
+  it('嵌套对象保留完整结构', () => {
+    expect(parseJSON('{"a":{"b":[1,{"c":2}]}}', null)).toEqual({ a: { b: [1, { c: 2 }] } })
+  })
+
+  it('制表符/回车在字符串内被修复', () => {
+    expect(parseJSON('{"a":"x\ty"}', null)).toEqual({ a: 'x\ty' })
+    expect(parseJSON('{"a":"x\ry"}', null)).toEqual({ a: 'x\ry' })
+  })
+
+  it('已转义的反斜杠不被二次转义', () => {
+    const raw = '{"a":"C:\\\\path\\\\n"}'
+    expect(parseJSON(raw, null)).toEqual({ a: 'C:\\path\\n' })
+  })
+
+  it('fallback 可为 null / 0 / 空数组', () => {
+    expect(parseJSON('bad', null)).toBeNull()
+    expect(parseJSON('bad', 0)).toBe(0)
+    expect(parseJSON('bad', [])).toEqual([])
   })
 })

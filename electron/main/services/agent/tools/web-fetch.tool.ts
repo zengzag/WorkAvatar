@@ -94,16 +94,19 @@ async function readBodyLimited(response: Response): Promise<string> {
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-    total += value.byteLength
-    if (total <= MAX_FETCH_BYTES) {
-      text += decoder.decode(value, { stream: true })
-    }
+    // 单块超限时按剩余可用长度截取（整块丢弃会得到空内容），并保证累计不超过上限
+    const usable = value.byteLength > MAX_FETCH_BYTES - total
+      ? value.subarray(0, MAX_FETCH_BYTES - total)
+      : value
+    total += usable.byteLength
+    text += decoder.decode(usable, { stream: true })
     if (total >= MAX_FETCH_BYTES) {
       reader.cancel().catch(() => { /* ignore */ })
       break
     }
   }
-  return text
+  // flush 流式解码器：跨块的最后一个多字节字符只有在此处才会输出，否则尾部字符被静默丢弃
+  return text + decoder.decode()
 }
 
 export const webFetchTool: ToolDefinition = {
@@ -153,22 +156,29 @@ export const webFetchTool: ToolDefinition = {
         return { success: true, output: text.length > maxChars ? text.substring(0, maxChars) + '\n\n(内容已截断)' : text, contentType: 'json' }
       }
 
-      const html = await readBodyLimited(response)
-      let text = html
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/\s+/g, ' ')
-        .trim()
+      const raw = await readBodyLimited(response)
+      // 仅 HTML 走标签剥离；纯文本/其它类型原样返回，避免把内容中的 <> 当标签删掉
+      const isHtml = contentType.includes('html') || contentType === '' || contentType.includes('xml')
+      let text = raw
+      if (isHtml) {
+        text = raw
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/\s+/g, ' ')
+          .trim()
+      } else {
+        text = raw.trim()
+      }
 
       const truncated = text.length > maxChars
       const output = truncated ? text.substring(0, maxChars) + '\n\n(内容已截断)' : text
-      return { success: true, output, truncated, contentType: 'html' }
+      return { success: true, output, truncated, contentType: isHtml ? 'html' : 'text' }
     } catch (error: any) {
       return { success: false, error: `获取网页失败: ${error.message || error}` }
     }

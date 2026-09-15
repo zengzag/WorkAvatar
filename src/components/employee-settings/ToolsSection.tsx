@@ -23,6 +23,7 @@ import {
   MessageOutlined,
   BulbOutlined,
   AppstoreOutlined,
+  CodeOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
 import { resolveToolLabel, resolveToolDescription } from '../../utils/tool-display'
@@ -66,6 +67,7 @@ const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
   'file-document': <FileTextOutlined />,
   message: <MessageOutlined />,
   tool: <BulbOutlined />,
+  code: <CodeOutlined />,
   plugin: <AppstoreOutlined />,
   team: <TeamOutlined />,
 }

@@ -86,20 +86,20 @@ export class SkillManager {
     const normalized = referencePath.replace(/\\/g, '/').replace(/^\.?\//, '')
     const basename = normalized.split('/').pop() || normalized
 
-    // 1. 精确匹配
+    // 1. 精确匹配（用 != null 判定：参考文件内容可能为空串，空串也是有效命中）
     let content = skill.references.get(referencePath)
     // 2. 去掉 references/ 前缀后匹配
-    if (!content) content = skill.references.get(normalized)
+    if (content == null) content = skill.references.get(normalized)
     // 3. 仅用文件名匹配（兼容 LLM 传入 references/xxx.md 的情况）
-    if (!content) content = skill.references.get(basename)
+    if (content == null) content = skill.references.get(basename)
     // 4. 大小写不敏感匹配
-    if (!content) {
+    if (content == null) {
       const lower = basename.toLowerCase()
       const hit = availableNames.find(n => n.toLowerCase() === lower)
       if (hit) content = skill.references.get(hit)
     }
 
-    if (!content) {
+    if (content == null) {
       const list = availableNames.length > 0
         ? availableNames.map(n => `- ${n}`).join('\n')
         : '(无参考文件)'

@@ -49,15 +49,25 @@ const FILE_WRITE_PATTERNS = [
   // Node.js fs 写原语
   /\bfs(?:\.promises)?\.(?:writeFile|appendFile|mkdir|rename|copyFile|createWriteStream|truncate)\w*\s*\(/,
   /\bfs\.(?:writeFileSync|appendFileSync|mkdirSync|renameSync|copyFileSync)\s*\(/,
+  /require\(['"](?:node:)?fs['"]\)\s*\.\s*(?:promises\s*\.\s*)?(?:writeFile|appendFile|mkdir|rename|copyFile|createWriteStream|truncate)\w*\s*\(/,
+  /\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\s*\(/,
 ]
 
+/** 包管理器 rm 子命令（npm rm / yarn rm / pnpm rm / bun rm）只改依赖清单，不删除本地文件，不应按删除拦截 */
+const PKG_MANAGER_RM_RE = /\b(?:npm|yarn|pnpm|bun)\s+rm\b/gi
+
 export function isFileDeletionCommand(command: string): boolean {
-  return FILE_DELETION_PATTERNS.some(p => p.test(command))
+  const cleaned = command.replace(PKG_MANAGER_RM_RE, ' ')
+  return FILE_DELETION_PATTERNS.some(p => p.test(cleaned))
 }
 
-/** 检测重定向写入（> file, >> file）；目标首字符支持变量/波浪线/相对路径点，排除 2>&1 句柄重定向 */
+/**
+ * 检测重定向写入（> file, >> file）；目标首字符支持变量/波浪线/相对路径点，排除 2>&1 句柄重定向。
+ * `>` 前不加空白也视为重定向（`echo x>out.txt`），否则该写法会绕过写入判定；
+ * `2>&1`、`>&2` 因目标首字符是 `&` 仍被排除，`a >= b` 因 `>` 后是 `=` 不命中。
+ */
 export function hasRedirection(command: string): boolean {
-  return /(^|[\s|&;(])>>?\s*(?=[A-Za-z"'/$~%.])/.test(command)
+  return /(?:^|[^<>])>>?\s*(?=[A-Za-z"'/$~%.])/.test(command)
 }
 
 export function isFileWriteCommand(command: string): boolean {
@@ -96,10 +106,11 @@ export function extractAbsolutePaths(text: string): string[] {
   let m: RegExpExecArray | null
   const quotedRe = /["']([A-Za-z]:[\\/][^"'\n]*|\/[^"'\n]+)["']/g
   while ((m = quotedRe.exec(text)) !== null) paths.push(m[1])
-  // 排除引号：无引号正则在引号路径内部也会命中（\b 边界在引号与盘符之间成立），
-  // 不排除会把闭合引号吞进路径，产生 `ok.txt"` 脏路径
+  // 先挖掉引号片段（含引号本身）再做无引号扫描：否则正则会命中引号路径内部，
+  // 产出被空格截断的脏路径（`"D:\my docs\a.txt"` 额外得到 `D:\my`）
+  const unquotedText = text.replace(/["'][^"'\n]*["']/g, ' ')
   const unquotedRe = /\b([A-Za-z]:[\\/][^\s|&;,\n"']+|\/(?:home|tmp|usr|var|etc|root|opt|mnt|srv|Users|ProgramData|Windows)[^\s|&;,\n"']*)/g
-  while ((m = unquotedRe.exec(text)) !== null) paths.push(m[1])
+  while ((m = unquotedRe.exec(unquotedText)) !== null) paths.push(m[1])
   return [...new Set(paths)]
 }
 

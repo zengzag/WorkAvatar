@@ -60,7 +60,9 @@ interface NavConfigState {
 
 function persist(config: NavItemConfig[]): void {
   try {
-    window.electronAPI.settings.set({ key: SETTINGS_KEY, value: JSON.stringify(config) })
+    const result = window.electronAPI.settings.set({ key: SETTINGS_KEY, value: JSON.stringify(config) })
+    // IPC 返回 rejected promise 时避免未处理的 Promise 拒绝（写盘失败不影响界面状态）
+    void Promise.resolve(result).catch(() => { /* ignore */ })
   } catch { /* ignore */ }
 }
 
@@ -124,11 +126,15 @@ export const useNavConfigStore = create<NavConfigState>()(
 
     toggleVisible: (key) => {
       if (LOCKED_KEYS.includes(key as NavItemKey)) return
+      let changed = false
       set((state) => {
         const item = state.config.find((c) => c.key === key)
-        if (item) item.visible = !item.visible
+        if (item) {
+          item.visible = !item.visible
+          changed = true
+        }
       })
-      persist(get().config)
+      if (changed) persist(get().config)
     },
 
     moveUp: (key) => {
@@ -178,7 +184,11 @@ export const useNavConfigStore = create<NavConfigState>()(
         if (Array.isArray(saved)) {
           parsed = saved as NavItemConfig[]
         } else if (typeof saved === 'string' && saved.trim()) {
-          try { parsed = JSON.parse(saved) } catch { /* ignore */ }
+          try {
+            const decoded = JSON.parse(saved)
+            // 持久化内容被外部改写为非数组（对象/数字等）时按无持久化处理，避免 find 抛错中断启动流程
+            if (Array.isArray(decoded)) parsed = decoded as NavItemConfig[]
+          } catch { /* ignore */ }
         }
       } catch { /* 读取失败按无持久化处理 */ }
       set((state) => {

@@ -43,7 +43,7 @@ class KMSKeywordStatsService {
       .trim()
       .replace(/[\u3000\u2002\u2003]/g, ' ')  // 全角/特殊空格转半角
       .replace(/\s+/g, ' ')                    // 压缩连续空白
-      .replace(/[a-z]+/g, m => m.toLowerCase()) // 英文转小写（中文不动）
+      .replace(/[A-Z]+/g, m => m.toLowerCase()) // 英文转小写（仅匹配大写字母；中文不动）
   }
 
   /** 判断关键词是否有效（非空、非停用词、长度>=2） */

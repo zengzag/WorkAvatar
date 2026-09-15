@@ -110,6 +110,8 @@ export const useAppearanceStore = create<AppearanceState>()(
       } catch {
         set((state) => {
           state.initialized = true
+          // 失败时 DOM/i18n 已复位为 'zh-CN'，state 必须同步回写，否则三者不一致
+          state.locale = 'zh-CN'
         })
         applyThemeToDOM('dark')
         applyFontSizeToDOM('medium')

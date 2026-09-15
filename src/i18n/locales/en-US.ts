@@ -68,7 +68,6 @@ export default {
     tasks: '{{count}} tasks',
     approvals: '{{count}} likes',
     messages: '{{count}} msgs',
-    unit: '',
     optional: ' (Optional)',
   },
   nav: {

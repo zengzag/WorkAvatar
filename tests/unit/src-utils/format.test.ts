@@ -76,9 +76,9 @@ describe('src/utils/format / formatMessageTime', () => {
     expect(formatMessageTime(ts, t)).toBe('2024年12月31日 23:59')
   })
 
-  it('未来时间（60 秒内）也显示"刚刚"', () => {
+  it('未来时间不显示"刚刚"（按日期规则退化为今天的 HH:mm）', () => {
     const ts = new Date(2026, 8, 13, 12, 0, 30).getTime()
-    expect(formatMessageTime(ts, t)).toBe('刚刚')
+    expect(formatMessageTime(ts, t)).toBe('12:00')
   })
 })
 

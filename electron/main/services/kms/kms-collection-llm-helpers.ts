@@ -82,7 +82,8 @@ ${fileSummaries.join('\n')}
         { role: 'user', content: prompt },
       ],
       { summary: '', keyTopics: [] },
-      { temperature: 0.7, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking ? 'high' : false },
+      // 失败必须抛出：否则 catch 分支永不执行，真实失败原因（超时/4xx/用户取消）会退化成空摘要报错
+      { temperature: 0.7, maxTokens: 800, signal, logSource: 'kms_collection_summary', enable_thinking: llmConfig.enableThinking ? 'high' : false, throwOnError: true },
     )
 
     if (signal?.aborted) return { error: 'ABORTED' }

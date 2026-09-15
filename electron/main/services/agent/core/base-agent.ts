@@ -63,6 +63,8 @@ export abstract class BaseAgent {
   private _running: boolean = false
   /** 当前 runStream 的 AbortSignal，用于检测 stale lock（前端已停止但后端工具未响应 abort） */
   private _currentSignal?: AbortSignal
+  /** runStream 令牌：finally 仅在自己仍是最新 run 时才清锁（signal 引用对比在复用同一 signal 时会误判） */
+  private _runToken: number = 0
   private _lastKnownPromptTokens: number | undefined
 
   constructor(config: AgentConfig, options?: BaseAgentOptions) {
@@ -162,6 +164,7 @@ export abstract class BaseAgent {
     }
     this._running = true
     this._currentSignal = undefined
+    ++this._runToken
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -246,9 +249,10 @@ export abstract class BaseAgent {
     }
     this._running = true
     this._currentSignal = signal
-    // 捕获本次 run 的 signal，finally 中仅当 _currentSignal 仍是本次时才清除
+    // 本次 run 令牌：finally 中仅当自己仍是最新 run 时才清锁，
     // 避免旧 run（stale）的 finally 覆盖新 run 的 _running/_currentSignal
-    const runSignal = signal
+    // （不用 signal 引用对比：调用方可能复用同一个 AbortSignal 实例）
+    const runToken = ++this._runToken
     const startTime = Date.now()
     const maxIterations = options.maxIterations ?? this.config.maxIterations ?? DEFAULT_MAX_ITERATIONS
 
@@ -320,9 +324,8 @@ export abstract class BaseAgent {
       this.eventEmitter.emit('run:error', { error: error.message })
       callbacks.onError?.(error.message)
     } finally {
-      // 仅当 _currentSignal 仍是本次 run 的 signal 时才清除
-      // 避免被 stale run 的 finally 覆盖新 run 的状态
-      if (this._currentSignal === runSignal) {
+      // 仅当自己仍是最新一次 runStream 时才清除锁（旧 run 的 finally 不得释放新 run 的锁）
+      if (this._runToken === runToken) {
         this._running = false
         this._currentSignal = undefined
       }
@@ -457,8 +460,6 @@ export abstract class BaseAgent {
     callbacks: AgentRunStreamCallbacks,
     signal?: AbortSignal
   ): Promise<AgentResponseMetadata & { aborted?: boolean; abortReason?: string }> {
-    this.context.setState('running')
-
     const { tokenUsage, aborted, abortReason } = await runPiAgentLoop({
       config: this.config,
       messages,

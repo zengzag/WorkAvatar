@@ -156,14 +156,19 @@ function createBridge(pluginId: string): PluginBridge {
   }
 }
 
+/** 移除插件在指定语言上注册的资源（卸载 / 覆盖升级共用，避免旧 bundle 残留） */
+function removeLocaleBundles(lngs: string[], pluginId: string): void {
+  for (const lng of lngs) {
+    i18n.removeResourceBundle(lng, pluginId)
+  }
+}
+
 /** 卸载单个插件的渲染端：调用 dispose → 移除 locale/导航图标/视图注入/路由（导航由 syncPlugins 整轮同步后统一刷新） */
 export function unloadPluginById(id: string): void {
   const plugin = loadedPlugins.get(id)
   if (!plugin) return
   try { plugin.dispose?.() } catch (err) { console.error(`[PluginLoader] 插件 dispose 失败: ${id}`, err) }
-  for (const lng of plugin.localeLngs) {
-    i18n.removeResourceBundle(lng, id)
-  }
+  removeLocaleBundles(plugin.localeLngs, id)
   pluginNavIcons.delete(id)
   unregisterPluginViews(id)
   loadedPlugins.delete(id)
@@ -172,21 +177,29 @@ export function unloadPluginById(id: string): void {
 /**
  * 加载单个插件的渲染端（增量热加载核心）：
  * 注册 locale → 动态 import plugin:// 入口 → init(host) → 收集路由/导航/视图 → 登记 registry。
- * 版本 + 内容指纹（rev）都相同才跳过（幂等）；用户手动导入的插件 rev 必定变化，
+ * 版本 + 内容指纹（rev，规范化后比较）都相同才跳过（幂等）；用户手动导入的插件 rev 必定变化，
  * 因此同版本覆盖重装也会重新加载新入口，不会被内存 registry 或 ESM 模块缓存挡住。
- * 覆盖升级时**新版本就绪后原子替换**旧 registry（不预先把旧渲染端摘除，插件页面升级不闪断、不跳转）。
+ * 覆盖升级时**新版本就绪后原子替换**旧 registry（不预先把旧渲染端摘除，插件页面升级不闪断、不跳转）；
+ * 但旧 locale bundle 需先移除再按新版本注册（否则新版本不再声明的语言永久残留），失败时按快照回滚。
  * 单插件失败仅跳过自身（主进程已隔离激活，这里兜底渲染端异常）。
  */
 async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
   const existing = loadedPlugins.get(info.id)
-  if (existing && existing.version === info.version && existing.rev === info.rev) return
+  // rev 规范化后比较：undefined 与 '' 表示同一内容，避免被判为变化而触发无谓的 import/init/dispose
+  if (existing && existing.version === info.version && (existing.rev ?? '') === (info.rev ?? '')) return
 
   const localeLngs: string[] = []
-  // 升级前旧 bundle 快照：新版本加载失败时恢复（避免 removeResourceBundle 把旧版本仍显示的文案整体清掉）
+  // 升级前旧 bundle 快照：加载失败时恢复（避免移除/覆盖把旧版本仍显示的文案整体清掉）
   const prevBundles = new Map<string, Record<string, unknown>>()
+  /** 本轮触碰过的语言（旧语言移除 + 新语言注册），失败回滚时据此还原 */
+  const affectedLngs = new Set<string>()
+  const snapshotBundle = (lng: string) => {
+    const prev = i18n.getResourceBundle(lng, info.id) as Record<string, unknown> | undefined
+    if (prev && Object.keys(prev).length > 0) prevBundles.set(lng, prev)
+  }
   const fail = (err: unknown) => {
     console.error(`[PluginLoader] 插件渲染端加载失败: ${info.id}`, err)
-    for (const lng of localeLngs) {
+    for (const lng of affectedLngs) {
       const prev = prevBundles.get(lng)
       if (prev) {
         i18n.removeResourceBundle(lng, info.id)
@@ -198,10 +211,19 @@ async function loadSinglePlugin(info: PluginRendererInfo): Promise<void> {
   }
 
   try {
+    // 覆盖升级：先移除旧版本注册的语言（新版本不再声明的语言若不清理会永久残留），再注册新版本声明的语言
+    if (existing) {
+      for (const lng of existing.localeLngs) {
+        snapshotBundle(lng)
+        affectedLngs.add(lng)
+      }
+      removeLocaleBundles(existing.localeLngs, info.id)
+    }
+
     // 宿主代为注册插件 locale（namespace = 插件 id；与旧版本同 ns 直接 merge 覆盖）
     for (const [lng, resources] of Object.entries(info.locales ?? {})) {
-      const prev = i18n.getResourceBundle(lng, info.id) as Record<string, unknown> | undefined
-      if (prev && Object.keys(prev).length > 0) prevBundles.set(lng, prev)
+      snapshotBundle(lng)
+      affectedLngs.add(lng)
       i18n.addResourceBundle(lng, info.id, resources as Record<string, unknown>, true, true)
       localeLngs.push(lng)
     }

@@ -68,7 +68,6 @@ export default {
     tasks: '{{count}} 任务',
     approvals: '{{count}} 赞',
     messages: '{{count}} 条',
-    unit: '个',
     optional: '（可选）',
   },
   nav: {

@@ -1,27 +1,15 @@
-import { ToolDefinition, OpenAIToolDefinition, ToolInfo, ToolParameter } from './types'
+import { ToolDefinition, OpenAIToolDefinition } from './types'
 
 export class ToolRegistry {
   private functionMappings: Map<string, ToolDefinition> = new Map()
-  private functionInfo: Map<string, ToolInfo> = new Map()
   private openaiFunctionSchemas: OpenAIToolDefinition[] = []
 
-  registerTool(tool: ToolDefinition, toolInfo?: ToolInfo): boolean {
+  registerTool(tool: ToolDefinition): boolean {
     if (this.functionMappings.has(tool.name)) {
       return false
     }
 
     this.functionMappings.set(tool.name, tool)
-
-    if (toolInfo) {
-      this.functionInfo.set(tool.name, toolInfo)
-    } else {
-      this.functionInfo.set(tool.name, {
-        tool_name: tool.name,
-        tool_title: tool.title,
-        tool_description: tool.description,
-        tool_params: this.convertToToolParameters(tool.parameters)
-      })
-    }
 
     // 按需工具不加入 LLM API 的 tools 数组，通过 list_available_tools + invoke_tool 发现和调用
     if (!tool.onDemand) {
@@ -54,12 +42,17 @@ export class ToolRegistry {
   }
 
   getOpenAISchemas(): OpenAIToolDefinition[] {
-    return [...this.openaiFunctionSchemas]
+    // 连 function 一层一起浅拷贝：调用方就地改 function.name 不会污染注册表内部 schema；
+    // parameters 保持引用共享，避免每次调用深拷贝整个 schema 的开销
+    return this.openaiFunctionSchemas.map(s => ({ ...s, function: { ...s.function } }))
   }
 
   getOpenAISchemasByNames(names: string[]): OpenAIToolDefinition[] {
     const nameSet = new Set(names)
-    return this.openaiFunctionSchemas.filter(s => nameSet.has(s.function.name))
+    // 与 getOpenAISchemas 一致：返回副本，避免调用方就地修改污染注册表内部 schema
+    return this.openaiFunctionSchemas
+      .filter(s => nameSet.has(s.function.name))
+      .map(s => ({ ...s, function: { ...s.function } }))
   }
 
   unregisterTool(name: string): boolean {
@@ -68,36 +61,10 @@ export class ToolRegistry {
     }
 
     this.functionMappings.delete(name)
-    this.functionInfo.delete(name)
     this.openaiFunctionSchemas = this.openaiFunctionSchemas.filter(
       s => s.function.name !== name
     )
     return true
-  }
-
-  private convertToToolParameters(params: Record<string, any>): ToolParameter[] {
-    const result: ToolParameter[] = []
-    const properties = params.properties || {}
-    const required = new Set(params.required || [])
-
-    for (const [name, prop] of Object.entries(properties)) {
-      const p = prop as any
-      result.push({
-        name,
-        description: p.description || '',
-        type: p.type || 'string',
-        required: required.has(name),
-        items: p.items,
-        properties: p.properties,
-        enum: p.enum,
-        minimum: p.minimum,
-        maximum: p.maximum,
-        minLength: p.minLength,
-        maxLength: p.maxLength
-      })
-    }
-
-    return result
   }
 
   private toOpenAISchema(tool: ToolDefinition): OpenAIToolDefinition {

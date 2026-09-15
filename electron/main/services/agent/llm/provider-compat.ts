@@ -277,7 +277,9 @@ const PROVIDER_COMPAT: Record<string, ProviderCompatConfig> = {
  * 对有 thinkingFormat / alwaysReasoning 的 provider，reasoning 必须始终为 true（见调用方）。
  */
 export function getProviderCompat(providerType?: string, modelId?: string): ProviderCompatConfig {
-  const base = PROVIDER_COMPAT[providerType || ''] || DEFAULT
+  // provider_type 来自 DB 配置，大小写可能不一致：统一小写查表，避免落回 DEFAULT 丢失差异配置
+  const key = (providerType || '').toLowerCase()
+  const base = PROVIDER_COMPAT[key] || DEFAULT
   if (!modelId || !base.modelOverrides?.length) return base
   for (const override of base.modelOverrides) {
     if (override.match.test(modelId)) return { ...base, ...override.patch }

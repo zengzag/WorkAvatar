@@ -96,9 +96,9 @@ class GenericChatService {
   /** 进行中的 agent 构建（按 cacheKey 去重） */
   private agentCreationInFlight = new Map<string, Promise<CachedAgentEntry>>()
 
-  private async getOrCreateAgent(config: GenericChatConfig): Promise<CachedAgentEntry> {
-    // 配置指纹：systemPrompt/tools/minimalMode/skills 等创建期参数变化时必须重建 agent，
-    // 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节）
+  /** 配置指纹：systemPrompt/tools/minimalMode/skills 等创建期参数变化时必须重建 agent，
+   * 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节） */
+  private buildCacheKey(config: GenericChatConfig): string {
     const cfgFingerprint = [
       config.systemPrompt?.length ?? 0,
       config.systemPrompt || '',
@@ -109,7 +109,11 @@ class GenericChatService {
       config.workspaceContextPrompt?.length ?? 0,
       config.kbContextPrompt?.length ?? 0,
     ].join('|')
-    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}:${cfgFingerprint}`
+    return `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}:${cfgFingerprint}`
+  }
+
+  private async getOrCreateAgent(config: GenericChatConfig): Promise<CachedAgentEntry> {
+    const cacheKey = this.buildCacheKey(config)
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) return existing
@@ -312,8 +316,7 @@ class GenericChatService {
   }
 
   getContextStats(config: GenericChatConfig): any {
-    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}`
-    const entry = this.agentEntries.get(cacheKey)
+    const entry = this.agentEntries.get(this.buildCacheKey(config))
     if (!entry) return null
     return entry.agent.getContextStats()
   }

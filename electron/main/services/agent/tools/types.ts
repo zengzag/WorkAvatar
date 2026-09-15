@@ -1,26 +1,5 @@
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
-export interface ToolParameter {
-  name: string
-  description: string
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
-  required?: boolean
-  items?: any
-  properties?: any
-  enum?: string[]
-  minimum?: number
-  maximum?: number
-  minLength?: number
-  maxLength?: number
-}
-
-export interface ToolInfo {
-  tool_name: string
-  tool_title: string
-  tool_description: string
-  tool_params: ToolParameter[]
-}
-
 export type ToolPermission = 'safe' | 'requires_confirmation' | 'dangerous'
 
 /**

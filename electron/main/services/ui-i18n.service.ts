@@ -1,6 +1,7 @@
 /**
  * 主进程 UI 文案：系统托盘、原生对话框、系统通知等无法交给渲染端本地化的文案。
- * 语言取自渲染端写入的 settings KV `appearance_locale`，变更时通知订阅者刷新（如托盘菜单）。
+ * 语言初始取自渲染端写入的 settings KV `appearance_locale`；渲染端调用 setLocale 后以显式设置为准
+ * （否则"先 setLocale 后写库"期间会被库中旧语言覆盖），变更时通知订阅者刷新（如托盘菜单）。
  */
 import { EventEmitter } from 'node:events'
 import DatabaseService from './database.service'
@@ -95,6 +96,8 @@ export type MainUiTextKey = keyof typeof STRINGS
 class MainUiI18n {
   private emitter = new EventEmitter()
   private locale: MainLocale = 'zh-CN'
+  /** 渲染端显式设置的语言覆盖：优先于 settings，避免"先 setLocale 后写库"期间被库中旧值覆盖 */
+  private localeOverride: MainLocale | null = null
 
   private readLocaleFromDb(): MainLocale | null {
     try {
@@ -109,6 +112,7 @@ class MainUiI18n {
   }
 
   getLocale(): MainLocale {
+    if (this.localeOverride) return this.localeOverride
     const saved = this.readLocaleFromDb()
     if (saved) this.locale = saved
     return this.locale
@@ -116,8 +120,10 @@ class MainUiI18n {
 
   /** 渲染端切换语言后调用：更新缓存并通知订阅者重刷 UI */
   setLocale(locale: MainLocale): void {
-    if (locale === this.locale) return
+    const previous = this.getLocale()
+    this.localeOverride = locale
     this.locale = locale
+    if (locale === previous) return
     this.emitter.emit('locale-change', locale)
   }
 

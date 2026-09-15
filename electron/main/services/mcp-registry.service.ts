@@ -62,6 +62,8 @@ class McpRegistryService {
   private static instance: McpRegistryService
   /** serverId → 活跃 client */
   private activeClients: Map<string, ActiveClientEntry> = new Map()
+  /** serverId → 进行中的 client 创建（并发去重，避免重复 spawn 与连接泄漏） */
+  private clientCreationInFlight: Map<string, Promise<McpClient>> = new Map()
 
   private constructor() {
     this.db = DatabaseService.getInstance()
@@ -363,14 +365,41 @@ class McpRegistryService {
 
   private async getOrCreateClient(row: DBMcpServerRow): Promise<McpClient> {
     const existing = this.activeClients.get(row.id)
-    if (existing) {
-      existing.refCount++
-      if (existing.idleTimer) {
-        clearTimeout(existing.idleTimer)
-        existing.idleTimer = null
-      }
-      return existing.client
+    if (existing) return this.acquireRef(existing)
+
+    // 并发去重：同一 server 并发创建时复用进行中的 Promise，
+    // 否则会 spawn 多个 client，后建的覆盖 map 中先建者且先建者无人 close（连接泄漏）
+    const inFlight = this.clientCreationInFlight.get(row.id)
+    if (inFlight) {
+      await inFlight
+      const reused = this.activeClients.get(row.id)
+      if (reused) return this.acquireRef(reused)
+      // 创建完成后 client 已被并发关闭（配置变更/禁用）：重走创建流程
+      return this.getOrCreateClient(row)
     }
+
+    const creation = this.createClient(row)
+    this.clientCreationInFlight.set(row.id, creation)
+    try {
+      return await creation
+    } finally {
+      // 成功或失败都清理 in-flight 记录，避免失败结果被后续调用永久复用
+      this.clientCreationInFlight.delete(row.id)
+    }
+  }
+
+  /** 复用已有活跃 client：引用 +1 并取消空闲关闭定时器 */
+  private acquireRef(entry: ActiveClientEntry): McpClient {
+    entry.refCount++
+    if (entry.idleTimer) {
+      clearTimeout(entry.idleTimer)
+      entry.idleTimer = null
+    }
+    return entry.client
+  }
+
+  /** 真正创建 client 并登记活跃表（首次引用 refCount=1） */
+  private async createClient(row: DBMcpServerRow): Promise<McpClient> {
     const config: McpServerConfig = {
       id: row.id,
       name: row.name,

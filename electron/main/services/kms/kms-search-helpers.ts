@@ -53,12 +53,13 @@ export function buildLikeWhereClause(options?: SearchOptions): { whereClause: st
     params.push(...options.sourceTypes)
   }
 
-  if (options?.timeRangeStart || options?.timeRangeEnd) {
-    if (options.timeRangeStart) {
+  // 用 !== undefined 判定：0（epoch 起点）也是合法的时间边界
+  if (options?.timeRangeStart !== undefined || options?.timeRangeEnd !== undefined) {
+    if (options.timeRangeStart !== undefined) {
       whereClause += ' AND f.modified_time >= ?'
       params.push(options.timeRangeStart)
     }
-    if (options.timeRangeEnd) {
+    if (options.timeRangeEnd !== undefined) {
       whereClause += ' AND f.modified_time <= ?'
       params.push(options.timeRangeEnd)
     }
@@ -101,13 +102,14 @@ export function buildFtsWhereClause(options?: SearchOptions): { whereClause: str
     params.push(...options.sourceTypes)
   }
 
-  if (options?.timeRangeStart || options?.timeRangeEnd) {
+  // 用 !== undefined 判定：0（epoch 起点）也是合法的时间边界
+  if (options?.timeRangeStart !== undefined || options?.timeRangeEnd !== undefined) {
     whereClause += ' AND f.id = kms_fts.file_id'
-    if (options.timeRangeStart) {
+    if (options.timeRangeStart !== undefined) {
       whereClause += ' AND f.modified_time >= ?'
       params.push(options.timeRangeStart)
     }
-    if (options.timeRangeEnd) {
+    if (options.timeRangeEnd !== undefined) {
       whereClause += ' AND f.modified_time <= ?'
       params.push(options.timeRangeEnd)
     }

@@ -65,8 +65,9 @@ export class LRUBoundedCache<V> {
   }
 
   update(key: string, mutator: (value: V) => void): void {
-    const value = this.cache.get(key)
-    if (!value) return
+    // 用 has() 判存在性：falsy 值（0/''/false）是合法缓存内容，用 !value 判定会静默跳过更新
+    if (!this.cache.has(key)) return
+    const value = this.cache.get(key)!
 
     const oldSize = this.bytesMap.get(key) || 0
     mutator(value)

@@ -274,7 +274,8 @@ export async function generateFileSummary(
       { role: 'user', content: summaryPrompt },
     ],
     { summary: '', keywords: [], main_topics: [] },
-    { temperature: 0.7, maxTokens: 500, signal, enable_thinking: enableThinking ? 'high' : false },
+    // 失败必须抛出：静默返回空 fallback 会让调用方用空摘要覆盖已有摘要
+    { temperature: 0.7, maxTokens: 500, signal, enable_thinking: enableThinking ? 'high' : false, throwOnError: true },
   )
 
   if (signal?.aborted) return

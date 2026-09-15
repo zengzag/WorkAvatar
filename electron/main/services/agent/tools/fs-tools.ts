@@ -30,6 +30,11 @@ export function getWorkspacePath(): string | null {
   return filePermission.getWorkspacePath()
 }
 
+/** 解析工具入参路径：绝对路径原样；相对路径按工作区解析（无工作区时回退主进程 cwd），不落到应用目录 */
+function resolveToolPath(raw: string): string {
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
+}
+
 const PARSABLE_EXTENSIONS = new Set([
   'pdf', 'doc', 'docx', 'xlsx', 'xls', 'csv', 'pptx',
   'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp'
@@ -215,14 +220,13 @@ export const reportGeneratedFilesTool: ToolDefinition = {
     if (input.length === 0) {
       return { success: false, error: '参数 files 不能为空' }
     }
-    const workspacePath = getWorkspacePath() || process.cwd()
     const generatedFiles: Array<{ path: string; name: string; ext: string; size: number; mtime: number }> = []
     const skipped: string[] = []
     for (const raw of input) {
       if (typeof raw !== 'string' || !raw.trim()) continue
       let resolved: string
       try {
-        resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw)
+        resolved = resolveToolPath(raw)
       } catch {
         skipped.push(raw)
         continue
@@ -276,7 +280,7 @@ async function readFile(args: any) {
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   let stat: fs.Stats
   try {
     stat = await fs.promises.stat(resolved)
@@ -365,7 +369,7 @@ async function writeFile(args: any) {
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   const append = args.append === true
 
   const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved])
@@ -393,15 +397,13 @@ async function deleteFile(args: any) {
   if (!raw) return { success: false, error: '文件路径不能为空' }
 
   const recursive = args.recursive === true
-  const workspacePath = getWorkspacePath() || process.cwd()
-  // 相对路径按工作区解析（与 report_generated_files / 沙箱 file 对象一致），避免落到主进程 cwd
-  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw)
+  const resolved = resolveToolPath(raw)
   const norm = normalizePath(resolved)
   if (!norm) return { success: false, error: `路径无效: ${raw}` }
 
   // 盘根等于整盘，工作区根（及其上级）会摧毁任务工作区，二者都属于"绝不允许"的删除目标
   if (isFsRoot(norm)) return { success: false, error: `不允许删除盘根/文件系统根目录: ${resolved}` }
-  const workspaceNorm = normalizePath(workspacePath)
+  const workspaceNorm = normalizePath(getWorkspacePath() || process.cwd())
   if (workspaceNorm && isWithinPath(workspaceNorm, norm)) {
     return { success: false, error: `不允许删除工作区根目录或其上级目录: ${resolved}` }
   }
@@ -438,7 +440,7 @@ async function readEditTarget(args: any): Promise<{ content: string; resolved: s
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
   if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 

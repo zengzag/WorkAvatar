@@ -41,7 +41,11 @@ export const dateTimeTool: ToolDefinition = {
       const fmt = args.format || 'YYYY-MM-DD HH:mm:ss'
       return { success: true, output: formatDate(now, fmt) }
     }
-    if (operation === 'add_days' && typeof args.days === 'number') {
+    if (operation === 'add_days') {
+      // 单独校验参数：缺 days 时不能落到「未知操作」分支，否则提示误导 LLM
+      if (typeof args.days !== 'number') {
+        return { success: false, error: 'add_days 需要 days 参数（数字）' }
+      }
       const target = new Date(now.getTime() + args.days * 24 * 60 * 60 * 1000)
       return { success: true, output: formatDate(target, 'YYYY-MM-DD') }
     }

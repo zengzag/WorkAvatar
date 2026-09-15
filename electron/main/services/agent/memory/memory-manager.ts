@@ -280,7 +280,7 @@ export class MemoryManager implements IMemoryManager {
     }
 
     this.lastSummaryKey = cacheKey
-    this.lastSummaryPromise = (async () => {
+    const pending = (async () => {
       if (this.config.summarizeFn) {
         try {
           return await this.config.summarizeFn(messages)
@@ -294,14 +294,22 @@ export class MemoryManager implements IMemoryManager {
       if (this.lastSummaryKey === cacheKey) {
         this.lastSummaryText = text
       }
-      this.lastSummaryPromise = null
+      // 仅清理自己的引用：期间可能有其它 key 的摘要正在进行中
+      if (this.lastSummaryPromise === pending) {
+        this.lastSummaryPromise = null
+      }
       return text
     }).catch((err) => {
-      this.lastSummaryKey = null
-      this.lastSummaryPromise = null
+      if (this.lastSummaryKey === cacheKey) {
+        this.lastSummaryKey = null
+      }
+      if (this.lastSummaryPromise === pending) {
+        this.lastSummaryPromise = null
+      }
       throw err
     })
-    return this.lastSummaryPromise
+    this.lastSummaryPromise = pending
+    return pending
   }
 
   private generateSimpleSummary(messages: Message[]): string {

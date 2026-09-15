@@ -10,6 +10,9 @@ const logger = createLogger('EmployeeRegistry')
 /** 注册员工配置存储 key（settings KV）：{ disabled: string[], memoryEnabled: string[] } */
 const SETTINGS_KEY = 'registered_employees.config'
 
+/** 名称已带副本后缀（追加用的「（副本）」或用户自带的裸「副本」）→ 再次另存时不再叠加 */
+const COPY_SUFFIX_PATTERN = /(（副本）|副本)$/
+
 /** 内置员工静态声明（随应用发布，运行时注册不落库，用户改动通过另存副本沉淀） */
 export interface RegisteredEmployee extends Employee {
   /** 默认启用的工具 id 列表（含插件工具），空/缺省表示全部按宿主默认模式 */
@@ -267,14 +270,17 @@ class EmployeeRegistryService {
   /** 插件激活成功时注册其 manifest 声明的员工（重复注册以最新为准） */
   registerPluginEmployees(pluginId: string, pluginName: string, employees: RegisteredEmployee[]): void {
     if (!employees || employees.length === 0) return
-    for (const emp of employees) {
-      emp.id = `plugin:${pluginId}:${emp.source_key || emp.id}`
-      emp.source = 'plugin'
-      emp.plugin_id = pluginId
-      emp.plugin_name = pluginName
-    }
-    this.pluginGroups.set(pluginId, { pluginName, employees })
-    logger.info(`插件员工注册: ${pluginId} 共 ${employees.length} 个`)
+    // 基于副本计算注册 id：不原地改写入参（调用方复用同一对象再次注册时，
+    // 缺失 source_key 会让 id 叠加出 plugin:p:plugin:p:key 这类脏 id）
+    const registered = employees.map((emp) => ({
+      ...emp,
+      id: `plugin:${pluginId}:${emp.source_key || emp.id}`,
+      source: 'plugin' as const,
+      plugin_id: pluginId,
+      plugin_name: pluginName,
+    }))
+    this.pluginGroups.set(pluginId, { pluginName, employees: registered })
+    logger.info(`插件员工注册: ${pluginId} 共 ${registered.length} 个`)
     this.syncRegisteredToDb()
     this.broadcastEmployeeChanged()
   }
@@ -360,7 +366,7 @@ class EmployeeRegistryService {
     if (!emp) return null
     const { default: WorkspaceManagerService } = require('./workspace-manager.service') as typeof import('./workspace-manager.service')
     const workspace = WorkspaceManagerService.getInstance()
-    const copyName = /副本$/.test(emp.name) ? emp.name : `${emp.name}（副本）`
+    const copyName = COPY_SUFFIX_PATTERN.test(emp.name) ? emp.name : `${emp.name}（副本）`
     return workspace.createEmployee(copyName, emp.description, emp.profile_json, emp.rules)
   }
 }

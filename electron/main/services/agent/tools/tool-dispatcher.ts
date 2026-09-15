@@ -114,7 +114,8 @@ export class ToolDispatcher {
 
   private serializeResult(result: any, excludeKeys: string[] = []): any {
     if (result === null || result === undefined) {
-      return 'Tool executed successfully (no output)'
+      // 与 formatToolMessageContent 的无输出占位保持同一文案（工具结果面向 LLM，统一中文）
+      return '(工具执行成功，无输出)'
     }
 
     if (typeof result === 'string') {
@@ -135,7 +136,7 @@ export class ToolDispatcher {
             }
           }
           if (Object.keys(filtered).length === 0) {
-            return 'Tool executed successfully'
+            return '(工具执行成功，无输出)'
           }
           return JSON.stringify(filtered, null, 2)
         }

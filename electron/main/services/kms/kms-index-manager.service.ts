@@ -1291,7 +1291,13 @@ class KMSIndexManagerService {
         fileName,
         startedAt: Math.floor(Date.now() / 1000),
       })
-      await generateFileSummaryViaLLM(fileId, fullText, providerId, modelId, searchEngine, signal, enableThinking, (fid, summary, keywords, mainTopics) => this.saveFileSummary(fid, summary, keywords, mainTopics))
+      try {
+        await generateFileSummaryViaLLM(fileId, fullText, providerId, modelId, searchEngine, signal, enableThinking, (fid, summary, keywords, mainTopics) => this.saveFileSummary(fid, summary, keywords, mainTopics))
+      } catch (err: any) {
+        // LLM 失败时保留已有摘要（勿用空摘要覆盖），与段落/文档摘要分支一致
+        if (err?.name === 'AbortError' || signal?.aborted) return
+        logger.warn(`File summary generation failed for ${fileName}:`, err?.message || err)
+      }
     }
   }
 

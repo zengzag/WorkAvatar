@@ -142,9 +142,6 @@ async function handleLaunchAgents(args: Record<string, any>): Promise<any> {
   if (failures.length > 0) {
     parts.push(`以下子任务派发失败：\n${failures.map(f => `${f.index + 1}. ${f.error}`).join('\n')}`)
   }
-  if (parts.length === 0) {
-    parts.push('全部子任务派发失败')
-  }
   return {
     success: runIds.length > 0,
     output: parts.join('\n\n'),

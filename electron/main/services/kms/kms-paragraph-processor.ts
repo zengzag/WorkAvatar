@@ -45,33 +45,40 @@ export function countWords(text: string): number {
   return cjkCount + latinWords
 }
 
-function splitIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
-  if (text.length <= chunkSize) return [text]
-  const chunks: string[] = []
+/**
+ * 按固定窗口切分文本，并返回每块在原文中的起始偏移。
+ * 偏移由切分过程直接累积得出，不用 `text.indexOf(chunk)` 反查——重复文本下 indexOf 会命中
+ * 首次出现位置，导致后续分块的偏移错位（高亮/定位落到前一块内部）。
+ */
+function splitIntoChunksWithOffsets(text: string, chunkSize: number, overlap: number): Array<{ text: string; start: number }> {
+  if (text.length <= chunkSize) return [{ text, start: 0 }]
+  const chunks: Array<{ text: string; start: number }> = []
   let start = 0
   while (start < text.length) {
     const end = Math.min(start + chunkSize, text.length)
-    chunks.push(text.substring(start, end))
+    const chunk = text.substring(start, end)
+    if (chunk.length > 50) chunks.push({ text: chunk, start })
     if (end >= text.length) break
     start = end - overlap
   }
-  return chunks.filter(c => c.length > 50)
+  return chunks
+}
+
+function splitIntoChunks(text: string, chunkSize: number, overlap: number): string[] {
+  return splitIntoChunksWithOffsets(text, chunkSize, overlap).map(c => c.text)
 }
 
 function chunkParagraphs(text: string): ParagraphSlice[] {
-  const chunks = splitIntoChunks(text, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
-  return chunks.map((chunk, i) => {
-    const startOff = text.indexOf(chunk)
-    return {
-      title: `段落 ${i + 1}`,
-      titlePath: `段落 ${i + 1}`,
-      level: 1,
-      paragraphIndex: i,
-      startOffset: startOff >= 0 ? startOff : i * (MAX_PARAGRAPH_CHARS - PARAGRAPH_OVERLAP_CHARS),
-      endOffset: startOff >= 0 ? startOff + chunk.length : (i + 1) * MAX_PARAGRAPH_CHARS,
-      content: chunk,
-    }
-  })
+  const chunks = splitIntoChunksWithOffsets(text, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
+  return chunks.map((chunk, i) => ({
+    title: `段落 ${i + 1}`,
+    titlePath: `段落 ${i + 1}`,
+    level: 1,
+    paragraphIndex: i,
+    startOffset: chunk.start,
+    endOffset: chunk.start + chunk.text.length,
+    content: chunk.text,
+  }))
 }
 
 /**
@@ -224,18 +231,18 @@ export function splitParagraphs(fullText: string, fileName: string): ParagraphSl
     if (countWords(content) < MIN_CONTENT_WORDS) continue
 
     if (content.length > MAX_PARAGRAPH_CHARS) {
-      const subChunks = splitIntoChunks(content, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
+      const subChunks = splitIntoChunksWithOffsets(content, MAX_PARAGRAPH_CHARS, PARAGRAPH_OVERLAP_CHARS)
       for (let si = 0; si < subChunks.length; si++) {
-        const subStartInContent = content.indexOf(subChunks[si])
-        const absStartOff = startOff + (subStartInContent >= 0 ? subStartInContent : si * (MAX_PARAGRAPH_CHARS - PARAGRAPH_OVERLAP_CHARS))
+        const sub = subChunks[si]
+        const absStartOff = startOff + sub.start
         paragraphs.push({
           title: subChunks.length > 1 ? `${heading.title} (${si + 1})` : heading.title,
           titlePath: subChunks.length > 1 ? `${titlePath} (${si + 1})` : titlePath,
           level: heading.level,
           paragraphIndex: paraIdx++,
           startOffset: absStartOff,
-          endOffset: absStartOff + subChunks[si].length,
-          content: subChunks[si],
+          endOffset: absStartOff + sub.text.length,
+          content: sub.text,
         })
       }
     } else {
@@ -358,7 +365,8 @@ export function validateTocEntries(text: string, entries: LLMTocEntry[]): Valida
   const validated: ValidatedTocEntry[] = []
 
   for (const entry of entries) {
-    if (!entry.title || entry.lineNumber == null || entry.level == null) continue
+    // 纯空白标题不是有效标题（会被原样写入目录）
+    if (!entry.title?.trim() || entry.lineNumber == null || entry.level == null) continue
     if (entry.level < 1 || entry.level > 3) continue
 
     const targetLineIndex = entry.lineNumber - 1

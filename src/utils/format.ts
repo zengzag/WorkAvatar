@@ -9,7 +9,9 @@ export function formatFileSize(bytes: number): string {
 }
 
 export function isColorDark(hex: string): boolean {
-  const h = hex.replace('#', '')
+  let h = hex.replace('#', '')
+  // 展开 3 位 shorthand（#rgb → #rrggbb），否则 #000 会因 g/b 为 NaN 被判成亮色
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('')
   const r = parseInt(h.substring(0, 2), 16)
   const g = parseInt(h.substring(2, 4), 16)
   const b = parseInt(h.substring(4, 6), 16)
@@ -35,8 +37,8 @@ export function formatMessageTime(timestamp: number, t: (key: string, options?: 
   const minutes = date.getMinutes().toString().padStart(2, '0')
   const timeStr = `${hours}:${minutes}`
 
-  // 1分钟内显示"刚刚"
-  if (diffMin < 1) {
+  // 1分钟内显示"刚刚"；仅对已过去的时间生效，未来时间戳（diffMs < 0）按日期展示，避免与刚发出的消息混淆
+  if (diffMs >= 0 && diffMin < 1) {
     return t('workbench.justNow')
   }
 
@@ -78,7 +80,8 @@ export function shouldShowTimeSeparator(prevTimestamp: number, currentTimestamp:
  * @param lang 当前语言代码
  */
 export function formatRelativeTimeShort(timestampSec: number, lang: string = 'zh-CN'): string {
-  if (!timestampSec) return '-'
+  // 非有限值（NaN/Infinity）与 ≤0 的时间戳均视为无效，直接返回占位符，避免输出 1970 前后的日期
+  if (!Number.isFinite(timestampSec) || timestampSec <= 0) return '-'
   const now = Math.floor(Date.now() / 1000)
   const diff = now - timestampSec
   if (diff < 0) return '-'

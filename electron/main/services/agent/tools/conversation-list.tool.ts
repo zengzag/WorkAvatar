@@ -189,7 +189,10 @@ export function createConversationListTool(employeeId: string): ToolDefinition[]
         const offset = Math.max(Math.floor(args.offset ?? 0) || 0, 0)
         const includeAll = args.include_all_employees === true
         const rawIds = Array.isArray(args.employee_ids) ? args.employee_ids : []
-        const employeeIds = rawIds.map((x: any) => String(x).trim()).filter(Boolean)
+        // 只保留非空字符串：null/数字经 String() 会变成 'null'/'3' 参与 SQL IN，导致过滤结果错误
+        const employeeIds = rawIds
+          .filter((x: any): x is string => typeof x === 'string' && x.trim().length > 0)
+          .map((x: string) => x.trim())
 
         // 解析员工过滤范围
         let empFilterSql = ''

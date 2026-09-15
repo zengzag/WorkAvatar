@@ -135,12 +135,13 @@ class KMSDatabaseService {
   private autoCleanup(): void {
     const now = Math.floor(Date.now() / 1000)
 
-    // 1. kms_access_log：删除 30 天前记录
+    // 1. kms_access_log：删除 90 天前记录（保留窗口须 ≥ 冷数据降级阈值 90 天，
+    //    否则 hot 文件的最后访问时间会因日志被清而查不到，降级永远不触发）
     try {
-      const cutoff = now - 30 * 86400
+      const cutoff = now - 90 * 86400
       const result = this.db.prepare('DELETE FROM kms_access_log WHERE accessed_at < ?').run(cutoff)
       if (result.changes > 0) {
-        logger.info(`启动自动清理：删除 ${result.changes} 条 30 天前访问日志`)
+        logger.info(`启动自动清理：删除 ${result.changes} 条 90 天前访问日志`)
       }
     } catch (err: any) {
       logger.warn('启动自动清理访问日志失败:', err?.message || err)

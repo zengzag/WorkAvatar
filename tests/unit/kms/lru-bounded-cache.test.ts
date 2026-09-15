@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { LRUBoundedCache } from '../../../electron/main/services/kms/lru-bounded-cache'
 
 const byteSize = (s: string) => s.length
@@ -120,5 +120,95 @@ describe('LRUBoundedCache', () => {
       c.set(`k${i}`, 'xxx')
       expect(c.getBytes()).toBeLessThanOrEqual(6)
     }
+  })
+})
+
+describe('LRUBoundedCache 边界补充', () => {
+  it('maxBytes = 0 时非空条目被拒绝、零字节条目可缓存', () => {
+    const c = new LRUBoundedCache<string>(0, byteSize)
+    c.set('a', 'x')
+    expect(c.has('a')).toBe(false)
+
+    const zero = new LRUBoundedCache<string>(0, () => 0)
+    zero.set('a', 'x')
+    expect(zero.get('a')).toBe('x')
+    expect(zero.getBytes()).toBe(0)
+  })
+
+  it('maxBytes 为负数时所有条目（含零字节）都被拒绝', () => {
+    const c = new LRUBoundedCache<string>(-1, () => 0)
+    c.set('a', 'x')
+    expect(c.has('a')).toBe(false)
+    expect(c.getBytes()).toBe(0)
+  })
+
+  it('get 未命中 key 不改变字节统计与顺序', () => {
+    const c = new LRUBoundedCache<string>(10, byteSize)
+    c.set('a', 'aaa')
+    expect(c.get('missing')).toBeUndefined()
+    expect(c.getBytes()).toBe(3)
+    c.set('b', 'bbbbbb') // 3 + 6 = 9
+    c.set('c', 'cc') // 11 > 10 → 淘汰 a
+    expect(c.has('a')).toBe(false)
+  })
+
+  it('重复 set 超过上限的新值会移除原条目', () => {
+    const c = new LRUBoundedCache<string>(10, byteSize)
+    c.set('a', 'aa')
+    c.set('b', 'bb')
+    c.set('a', 'x'.repeat(11))
+    expect(c.has('a')).toBe(false)
+    expect(c.getBytes()).toBe(2)
+  })
+
+  it('delete 不存在的 key 是 no-op', () => {
+    const c = new LRUBoundedCache<string>(10, byteSize)
+    c.set('a', 'aa')
+    c.delete('missing')
+    expect(c.getBytes()).toBe(2)
+  })
+
+  it('空缓存 clear 不抛错', () => {
+    const c = new LRUBoundedCache<string>(10, byteSize)
+    expect(() => c.clear()).not.toThrow()
+    expect(c.getBytes()).toBe(0)
+  })
+
+  it('update 对 falsy 值（0/空串/false）同样生效（存在性用 has() 判定）', () => {
+    // 修复前用 !value 判定存在性，falsy 值会被当成「不存在」而静默跳过更新
+    const zero = new LRUBoundedCache<number>(10, () => 1)
+    zero.set('a', 0)
+    const mZero = vi.fn()
+    zero.update('a', mZero)
+    expect(mZero).toHaveBeenCalledWith(0)
+
+    const empty = new LRUBoundedCache<string>(10, () => 1)
+    empty.set('a', '')
+    const mEmpty = vi.fn()
+    empty.update('a', mEmpty)
+    expect(mEmpty).toHaveBeenCalledWith('')
+
+    const falsy = new LRUBoundedCache<boolean>(10, () => 1)
+    falsy.set('a', false)
+    const mBool = vi.fn()
+    falsy.update('a', mBool)
+    expect(mBool).toHaveBeenCalledWith(false)
+  })
+
+  it('update 传入的 mutator 抛错时缓存状态可能不一致（当前行为）', () => {
+    const c = new LRUBoundedCache<{ buf: string }>(100, v => v.buf.length)
+    c.set('a', { buf: 'aa' })
+    expect(() => c.update('a', () => { throw new Error('boom') })).toThrow('boom')
+    expect(c.getBytes()).toBe(2) // mutator 抛错时字节数未被修改
+  })
+
+  it('utf8 字节计算下超长 value 仍受上限约束', () => {
+    const utf8 = (s: string) => Buffer.byteLength(s, 'utf8')
+    const c = new LRUBoundedCache<string>(100, utf8)
+    c.set('a', '中'.repeat(30)) // 90 字节
+    expect(c.getBytes()).toBe(90)
+    c.set('b', '中'.repeat(4)) // 12 → 102 > 100 → 淘汰 a
+    expect(c.has('a')).toBe(false)
+    expect(c.getBytes()).toBe(12)
   })
 })

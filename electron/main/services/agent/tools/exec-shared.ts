@@ -325,7 +325,10 @@ function cleanupTempFile(tempFile?: string): void {
 export function truncateOutput(text: string, maxChars: number): string {
   if (!text || text.length <= maxChars) return text || ''
   const half = Math.floor(maxChars / 2)
-  return text.substring(0, half)
+  const head = text.substring(0, half)
+  // 按码元切分可能把 emoji 等代理对切成两半（末尾孤立高代理），再退 1 个码元保证前缀是完整字符
+  const safeHead = /[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head
+  return safeHead
     + `\n\n... (中间 ${text.length - maxChars} 字符已截断) ...\n\n`
     + text.substring(text.length - half)
 }
