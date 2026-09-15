@@ -316,6 +316,7 @@ caps.subscribeExternalFiles((absPath) => {})  // 系统"打开方式"打开关�
 | 委派数字员工 / 调用 LLM        | `execute` | `services.execute.execute`               |
 | 订阅/发布事件（含插件间协作）        | `events`  | `services.events.subscribe/publish`      |
 | 在宿主界面注入组件              | `ui`      | 渲染端 `views`                              |
+| 在主窗口内嵌第三方网页（`<webview>`） | `webview` | 渲染端 `<webview>` + `capabilities.webview.origins` |
 | 系统通知                   | `system`  | `services.notification`                  |
 | 定时任务                   | `system`  | `services.scheduler`                     |
 | 创建窗口                   | `system`  | `services.windows`                       |

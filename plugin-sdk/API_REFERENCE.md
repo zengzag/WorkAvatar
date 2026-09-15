@@ -116,6 +116,19 @@ interface PluginContext {
 
 - `storage.openSqlite(name?)`：独立分库（WAL）；`storage.get/set/delete/keys`：插件作用域 KV（存 `plugin_kv` 表，不写内核 settings）。
 
+**文案本地化（始终可用，无能力要求）**：
+
+```ts
+services.logger.info/warn/error(msg, ...args)        // 自动加插件 id 前缀
+services.i18n.t(key, params?)                        // 按当前应用语言解析插件 locale
+```
+
+- `services.i18n.t`：查找顺序为「当前语言 → zh-CN → key 本身」，`{{name}}` 占位符由 `params` 替换。用于主进程侧**展示给用户**的文案：返回渲染端展示的 `error`、广播给渲染端的进度/状态文案、默认实体名、系统通知标题与正文。
+- 日志与面向 LLM 的提示词/工具描述不做本地化（保持中文）。
+- 子线程（如 worker_threads）拿不到 ctx：以「文案 key + params」postMessage 回主进程，再在接收处用 `services.i18n.t` 解析。
+- locale 文件须同时提供 `zh-CN.json` / `en-US.json`，且 **key 集合完全一致**（缺键会回退中文）。
+- 通知载荷支持 `i18nKey`（正文）/`i18nTitleKey`（标题）/`i18nParams`，并保留 `title`/`body` 作为系统通知兜底原文（宿主会按插件 locale 解析后再展示）。
+
 ## 6. 数据访问层（services.data）
 
 需 `capabilities.data` 授权。

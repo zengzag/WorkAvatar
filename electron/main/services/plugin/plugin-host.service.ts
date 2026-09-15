@@ -6,6 +6,7 @@ import fs from 'fs'
 import Database from 'better-sqlite3'
 import { createLogger } from '../logger'
 import DatabaseService from '../database.service'
+import mainUiI18n from '../ui-i18n.service'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../../../shared/channels/plugin'
 import type {
@@ -361,6 +362,10 @@ class PluginHostService {
    */
   private deactivateRecord(record: PluginRecord): void {
     const id = record.manifest.id
+    // 插件下线后其 locale 可能被覆盖升级：清掉缓存，下次激活重新读取
+    for (const key of [...this.pluginLocaleCache.keys()]) {
+      if (key.startsWith(`${id}:`)) this.pluginLocaleCache.delete(key)
+    }
     this.unregisterPluginSkills(id)
     try {
       const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
@@ -780,6 +785,51 @@ class PluginHostService {
     }
   }
 
+  /** 插件 locale 缓存（key = 插件 id:版本号，升级后自动失效） */
+  private pluginLocaleCache = new Map<string, Record<string, Record<string, unknown>>>()
+
+  /** 读取插件 locale 目录下的语言包（缺失或解析失败返回空对象） */
+  private loadPluginLocales(record: PluginRecord): Record<string, Record<string, unknown>> {
+    const cacheKey = `${record.manifest.id}:${record.rev}`
+    const cached = this.pluginLocaleCache.get(cacheKey)
+    if (cached) return cached
+    const locales: Record<string, Record<string, unknown>> = {}
+    const localeDir = path.join(record.rootDir, record.manifest.locale ?? 'locale')
+    try {
+      for (const file of fs.readdirSync(localeDir)) {
+        const m = /^([\w-]+)\.json$/.exec(file)
+        if (!m) continue
+        try { locales[m[1]] = JSON.parse(fs.readFileSync(path.join(localeDir, file), 'utf-8')) } catch { /* 忽略坏文件 */ }
+      }
+    } catch { /* 无 locale 目录 */ }
+    this.pluginLocaleCache.set(cacheKey, locales)
+    return locales
+  }
+
+  /**
+   * 主进程侧插件文案解析（ctx.services.i18n.t）：
+   * 用当前应用语言查插件 locale，缺失回退 zh-CN，再回退 key 本身。
+   */
+  private translatePluginText(record: PluginRecord, key: string, params?: Record<string, string | number>): string {
+    const locales = this.loadPluginLocales(record)
+    const lookup = (lng: string): unknown => {
+      const bundle = locales[lng]
+      if (!bundle) return undefined
+      return key.split('.').reduce<unknown>(
+        (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+        bundle,
+      )
+    }
+    const resolved = lookup(mainUiI18n.getLocale()) ?? lookup('zh-CN')
+    let text = typeof resolved === 'string' ? resolved : key
+    if (params) {
+      for (const [name, value] of Object.entries(params)) {
+        text = text.split(`{{${name}}}`).join(String(value))
+      }
+    }
+    return text
+  }
+
   private buildContext(record: PluginRecord): PluginContext {
     const { manifest } = record
     const pluginLogger = createLogger(`Plugin:${manifest.id}`)
@@ -792,6 +842,9 @@ class PluginHostService {
           return PathService.getInstance().getDataDir()
         },
         listNativeModules: () => ({ ...HOST_NATIVE_DEPENDENCIES }),
+      },
+      i18n: {
+        t: (key, params) => this.translatePluginText(record, key, params),
       },
     }
 
@@ -1186,16 +1239,26 @@ class PluginHostService {
     if (this.hasSystemFeature(record, 'notification')) {
       const { default: NotificationService } = require('../notification.service')
       services.notification = {
-        notify: (payload: PluginNotificationPayload) => NotificationService.getInstance().notify({
-          title: payload.title,
-          body: payload.body,
-          clickTarget: payload.clickTarget as any,
-          clickId: payload.clickId,
-          source: `plugin:${manifest.id}`,
-          silent: payload.silent,
-          i18nKey: payload.i18nKey,
-          i18nParams: payload.i18nParams,
-        } as any),
+        // 系统通知由主进程直接展示，需在此按当前语言解析插件文案（渲染端通知会再次用 i18nKey 本地化）；
+        // 文案键在插件 locale 中缺失时保留插件传入的兜底文案
+        notify: (payload: PluginNotificationPayload) => {
+          const resolve = (key?: string, fallback?: string): string => {
+            if (!key) return fallback || ''
+            const text = this.translatePluginText(record, key, payload.i18nParams)
+            return text === key ? (fallback || '') : text
+          }
+          return NotificationService.getInstance().notify({
+            title: resolve(payload.i18nTitleKey, payload.title),
+            body: resolve(payload.i18nKey, payload.body),
+            clickTarget: payload.clickTarget as any,
+            clickId: payload.clickId,
+            source: `plugin:${manifest.id}`,
+            silent: payload.silent,
+            i18nKey: payload.i18nKey,
+            i18nTitleKey: payload.i18nTitleKey,
+            i18nParams: payload.i18nParams,
+          } as any)
+        },
       }
     }
 

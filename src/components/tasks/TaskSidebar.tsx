@@ -49,16 +49,16 @@ interface TaskSidebarProps {
   onLoadMore?: () => void
 }
 
-const formatTime = (timestamp: number | null): string => {
+const formatTime = (timestamp: number | null, t: (key: string, options?: Record<string, any>) => string): string => {
   if (!timestamp) return ''
   const now = dayjs()
   const time = dayjs(timestamp * 1000)
   const diffMin = now.diff(time, 'minute')
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin}分钟前`
+  if (diffMin < 1) return t('workbench.justNow')
+  if (diffMin < 60) return t('workbench.minutesAgo', { count: diffMin })
   if (now.isSame(time, 'day')) return time.format('HH:mm')
-  if (now.subtract(1, 'day').isSame(time, 'day')) return '昨天'
-  if (now.isSame(time, 'year')) return time.format('M月D日')
+  if (now.subtract(1, 'day').isSame(time, 'day')) return t('workbench.yesterday')
+  if (now.isSame(time, 'year')) return t('workbench.monthDay', { month: time.month() + 1, day: time.date() })
   return time.format('YYYY/M/D')
 }
 
@@ -265,7 +265,7 @@ const TaskItem = memo(({
             <RobotOutlined style={{ fontSize: 10 }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.employee_name}</span>
             <span>·</span>
-            <span style={{ flexShrink: 0 }}>{formatTime(task.last_message_at ?? task.created_at)}</span>
+            <span style={{ flexShrink: 0 }}>{formatTime(task.last_message_at ?? task.created_at, t)}</span>
           </div>
         </div>
         <div

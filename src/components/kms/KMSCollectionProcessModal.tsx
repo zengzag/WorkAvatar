@@ -136,7 +136,7 @@ const KMSCollectionProcessModal: React.FC<KMSCollectionProcessModalProps> = ({
       if (progress.phase === 'error') {
         setIsError(true)
         setIsDone(true)
-        setErrorMessage(progress.message || 'Unknown error')
+        setErrorMessage(progress.message || t('kms.unknownError'))
         setStages((prev) => {
           const next = { ...prev }
           for (const stage of STAGES) {

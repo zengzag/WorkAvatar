@@ -25,7 +25,7 @@ import {
   AppstoreOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
-import { resolveToolLabel } from '../../utils/tool-display'
+import { resolveToolLabel, resolveToolDescription } from '../../utils/tool-display'
 
 const { Text } = Typography
 
@@ -308,8 +308,11 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                                     }}
                                     ellipsis
                                   >
-                                    {tool.description ||
-                                      t('employeeSettings.noDesc')}
+                                    {resolveToolDescription(
+                                      tool.name,
+                                      tool.description,
+                                      cat.is_plugin ? cat.plugin_id : undefined,
+                                    ) || t('employeeSettings.noDesc')}
                                   </Text>
                                 </div>
                                 {onChangeToolMode && (

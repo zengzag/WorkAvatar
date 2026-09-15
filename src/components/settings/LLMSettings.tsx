@@ -572,7 +572,7 @@ const LLMSettings: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 12px' }}>
                 <Form.Item name="temperature" label={
-                  <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                  <span>{t('settings.temperatureParam')} <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
                 </Form.Item>

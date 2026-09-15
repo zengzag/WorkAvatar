@@ -18,7 +18,18 @@ export interface PluginNotificationPayload {
   silent?: boolean
   /** 渲染端可用 t() 本地化的文案键与参数（可选用） */
   i18nKey?: string
+  /** 标题的本地化文案键（title 作为系统通知兜底文案） */
+  i18nTitleKey?: string
   i18nParams?: Record<string, string | number>
+}
+
+/** 插件文案本地化（主进程侧）：按当前应用语言解析插件 locale 目录中的文案 */
+export interface PluginI18nService {
+  /**
+   * 取插件 locale（plugin.manifest.locale，默认 locale/）中 key 对应的文案。
+   * 查找顺序：当前语言 → zh-CN → 返回 key 本身；{{name}} 占位符由 params 替换。
+   */
+  t(key: string, params?: Record<string, string | number>): string
 }
 
 export interface PluginNotificationService {
@@ -270,6 +281,8 @@ export interface PluginServices {
   logger: PluginLogger
   /** 宿主路径（始终可用，无能力要求） */
   host: PluginHostPathsService
+  /** 插件文案本地化（始终可用，无能力要求） */
+  i18n: PluginI18nService
   /** 通用数据访问（需 capabilities.data 授权） */
   data?: PluginDataService
   /** KMS 数据查询（需 capabilities.kms 授权） */

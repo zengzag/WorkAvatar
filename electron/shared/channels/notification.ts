@@ -24,5 +24,6 @@ export interface NotifyPayload {
   source?: string
   /** 渲染端可用 t() 本地化的文案键与参数 */
   i18nKey?: string
+  i18nTitleKey?: string
   i18nParams?: Record<string, string | number>
 }

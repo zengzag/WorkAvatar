@@ -280,16 +280,32 @@ class KMSKnowledgeCardService {
     `).run(cardId, normalized, dispKeyword, result.summary, '[]', JSON.stringify(citations), JSON.stringify(relatedFileIds), options?.requirement || '', searchCount, now, now, now)
 
     // === 生成向量嵌入 ===
-    addStep({ phase: 'card', action: '生成向量嵌入', type: 'info' })
+    addStep({ phase: 'card', action: '生成向量嵌入', actionKey: 'kms.knowledgeCards.trace.embedding', type: 'info' })
     const embStart = Date.now()
     try {
       await this.generateCardEmbedding(cardId, signal)
-      addStep({ phase: 'card', action: '生成向量嵌入', type: 'info', detail: '完成', durationMs: Date.now() - embStart })
+      addStep({
+        phase: 'card',
+        action: '生成向量嵌入',
+        actionKey: 'kms.knowledgeCards.trace.embedding',
+        type: 'info',
+        detail: '完成',
+        detailKey: 'kms.knowledgeCards.trace.embeddingDone',
+        durationMs: Date.now() - embStart,
+      })
     } catch (err: any) {
       logger.warn(`Card embedding generation failed for "${keyword}":`, err?.message || err)
     }
 
-    addStep({ phase: 'card', action: '卡片生成完成', type: 'result', detail: `${result.summary.length} 字摘要, ${citations.length} 条引用, ${result.iterations} 轮迭代, 总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s` })
+    addStep({
+      phase: 'card',
+      action: '卡片生成完成',
+      actionKey: 'kms.knowledgeCards.trace.cardCompleted',
+      type: 'result',
+      detail: `${result.summary.length} 字摘要, ${citations.length} 条引用, ${result.iterations} 轮迭代, 总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+      detailKey: 'kms.knowledgeCards.trace.cardCompletedDetail',
+      detailParams: { summary: result.summary.length, citations: citations.length, iterations: result.iterations, seconds: ((Date.now() - t0) / 1000).toFixed(1) },
+    })
     // 持久化执行轨迹（保留最近流程尾部，避免过大），供详情查看定位问题
     const savedTrace = trace.slice(-300)
     this.db.prepare('UPDATE kms_knowledge_cards SET last_trace_json = ? WHERE id = ?').run(JSON.stringify(savedTrace), cardId)

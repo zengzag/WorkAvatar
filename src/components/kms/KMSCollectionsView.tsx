@@ -94,7 +94,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       // safeHandle 错误时返回 { error }（truthy），需 Array.isArray 兜底
       setCollections(Array.isArray(result) ? result : [])
     } catch (err: any) {
-      message.error(err?.message || 'Failed to load collections')
+      message.error(err?.message || t('kms.collections.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -232,7 +232,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       loadCollections()
       loadAllSummaryAndStats()
     } catch (err: any) {
-      message.error(err?.message || 'Failed to save collection')
+      message.error(err?.message || t('kms.collections.saveFailed'))
     } finally {
       setSaving(false)
     }
@@ -245,7 +245,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       loadCollections()
       loadAllSummaryAndStats()
     } catch (err: any) {
-      message.error(err?.message || 'Failed to delete collection')
+      message.error(err?.message || t('kms.collections.deleteFailed'))
     }
   }
 
@@ -350,7 +350,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       setFiles(Array.isArray(fileList) ? fileList : [])
       setFilesStats(stats && !stats.error ? stats : null)
     } catch (err: any) {
-      message.error(err?.message || 'Failed to load files')
+      message.error(err?.message || t('kms.collections.loadFilesFailed'))
     } finally {
       setFilesLoading(false)
     }
@@ -444,7 +444,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         loadAllSummaryAndStats()
       }
     } catch (err: any) {
-      message.error(err?.message || 'Failed to add files')
+      message.error(err?.message || t('kms.collections.addFilesFailed'))
       setAddingFiles(false)
     }
   }
@@ -486,7 +486,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
         loadAllSummaryAndStats()
       }
     } catch (err: any) {
-      message.error(err?.message || 'Failed to add folder')
+      message.error(err?.message || t('kms.collections.addFolderFailed'))
       setAddingFiles(false)
     }
   }
@@ -503,7 +503,7 @@ const KMSCollectionsView: React.FC<KMSCollectionsViewProps> = ({ onSearchInColle
       loadCollections()
       loadAllSummaryAndStats()
     } catch (err: any) {
-      message.error(err?.message || 'Failed to remove file')
+      message.error(err?.message || t('kms.collections.removeFileFailed'))
     }
   }, [drawerCollection, t, loadCollectionFiles, loadCollections, loadAllSummaryAndStats])
 

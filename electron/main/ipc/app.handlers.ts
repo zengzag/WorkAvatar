@@ -14,6 +14,7 @@ import { LoggerBackend } from '../services/logger'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import PowerSaveService from '../services/power-save.service'
+import mainUiI18n from '../services/ui-i18n.service'
 import { WINDOW_STATE_SETTING_KEY } from '../services/window-state.service'
 import { safeHandle } from './_shared'
 
@@ -105,6 +106,10 @@ export function registerAppHandlers(
 
   safeHandle(IPC_CHANNELS.SETTINGS_SET, (params: SettingsSetParams) => {
     settingsSetStmt.run(params.key, params.value)
+    // 语言变更需同步刷新主进程 UI（托盘菜单等）
+    if (params.key === 'appearance_locale' && (params.value === 'zh-CN' || params.value === 'en-US')) {
+      mainUiI18n.setLocale(params.value)
+    }
     return { success: true }
   })
 

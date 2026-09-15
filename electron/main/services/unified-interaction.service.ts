@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'async_hooks'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
+import mainUiI18n from './ui-i18n.service'
 import type { ThinkingLevel, ScriptDisclosure } from '../../shared/types'
 
 /** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
@@ -197,7 +198,7 @@ class UnifiedInteractionService {
     try {
       const notificationService = require('./notification.service').default.getInstance()
       if (!notificationService.isMainWindowInactive()) return
-      const title = request.title || '数字员工需要您的确认'
+      const title = request.title || mainUiI18n.t('askUserNotifyTitle')
       const body = (request.message || '').slice(0, 200)
       notificationService.notify({
         title,

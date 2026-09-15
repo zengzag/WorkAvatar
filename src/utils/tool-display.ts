@@ -44,6 +44,18 @@ export function resolveToolLabel(name: string, fallbackTitle?: string, pluginId?
   return fallbackTitle || name
 }
 
+/**
+ * 按当前语言解析工具说明（仅界面展示用；后端 description 面向 LLM，作为兜底）。
+ * 与 resolveToolLabel 同源：宿主 locale workbench.toolDescriptions.<name>，
+ * 插件工具走插件命名空间 toolDescriptions.<name>。
+ */
+export function resolveToolDescription(name: string, fallbackDescription?: string, pluginId?: string): string {
+  const byName = pluginId
+    ? i18n.t(`toolDescriptions.${name}`, { ns: pluginId, defaultValue: '' })
+    : i18n.t(`workbench.toolDescriptions.${name}`, { defaultValue: '' })
+  return byName || fallbackDescription || ''
+}
+
 export function getToolDisplayName(name: string): string {
   const info = catalogByName?.get(name)
   return resolveToolLabel(name, info?.title, info?.pluginId)

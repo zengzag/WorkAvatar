@@ -455,9 +455,9 @@ const ChatInput: React.FC<{
     const validSkillNames = new Set(invocableSkills.map(s => s.name))
     return raw.replace(/(^|\s)\/([a-z0-9-]+)/g, (m, pre, name) => {
       if (!validSkillNames.has(name)) return m
-      return `${pre}使用 ${name} 技能`
+      return `${pre}${t('workbench.skillCommand', { name })}`
     })
-  }, [invocableSkills])
+  }, [invocableSkills, t])
 
   // 斜杠菜单 / 下拉按钮选中处理：插入 `/<name> `，保留已有内容与 undo 历史
   const handleSlashSelect = useCallback((cmd: { key: string }) => {

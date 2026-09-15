@@ -35,6 +35,9 @@ export type PluginSystemFeature =
 /** KMS 数据查询类型（services.kms.query 白名单） */
 export type PluginKmsQueryType = 'search' | 'content' | 'collections'
 
+/** 内嵌网页视图的站点白名单条目（capabilities.webview.origins） */
+export type PluginWebviewOrigin = string
+
 /** UI 注入点（capabilities.ui.views） */
 export type PluginViewPoint =
   | 'chat.toolbar' // 对话输入框工具栏
@@ -53,6 +56,19 @@ export type PluginCapability =
   | { domain: 'events'; subscribe?: string[]; publish?: boolean }
   | { domain: 'ui'; views: PluginViewPoint[] }
   | { domain: 'system'; features: PluginSystemFeature[] }
+  | {
+      /**
+       * 内嵌网页视图：允许插件在主窗口内用 `<webview>` 内嵌第三方网页。
+       * 宿主据此收口 `will-attach-webview`：src 必须命中 origins 白名单（仅 https），
+       * 且强制剥离 preload、禁止 nodeIntegration、开启 contextIsolation/sandbox。
+       */
+      domain: 'webview'
+      /**
+       * 允许嵌入的站点白名单。每项为主机名精确匹配（`chat.deepseek.com`）
+       * 或 `*.` 前缀通配（`*.doubao.com` 命中该域及其任意子域）。协议恒为 https。
+       */
+      origins: PluginWebviewOrigin[]
+    }
   | {
       // 插件协作：共享 KV + 跨插件 RPC
       domain: 'collaboration'
@@ -109,15 +125,13 @@ export interface PluginManifest {
   locale?: string
   /** 允许注册的 IPC 通道名列表（通配 '*'）；宿主强制 plugin:<id>: 前缀并做范围校验 */
   ipc?: string[]
-  /** 能力域授权声明（v2，取代 v1 permissions 的多数能力） */
+  /** 能力域授权声明（v2，取代 v1 的 permissions 布尔开关） */
   capabilities?: PluginCapability[]
   /**
    * 插件依赖（pluginId → semver range）。宿主激活前校验：
    * 依赖必须已安装、已启用、版本满足，并按拓扑顺序先激活依赖方。
    */
   dependencies?: Record<string, string>
-  /** 迁移专用权限（v2 仅保留 legacyMigration，用于数据迁出场景） */
-  permissions?: Array<'legacyMigration'>
   /** 内置数字员工声明（激活成功后注册进员工库「插件」分组，用户可另存副本） */
   employees?: PluginManifestEmployee[]
   nav?: PluginNavContribution

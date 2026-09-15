@@ -9,6 +9,7 @@ import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import EmployeeRegistryService from './services/employee-registry.service'
 import WindowStateService from './services/window-state.service'
+import mainUiI18n from './services/ui-i18n.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
@@ -107,10 +108,10 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
   }
   const { response } = await dialog.showMessageBox({
     type: 'question',
-    title: '加载插件',
-    message: '是否加载这个插件？',
-    detail: `${path.basename(filePath)}\n确认后将安装并加载该插件。`,
-    buttons: ['加载', '取消'],
+    title: mainUiI18n.t('pluginLoadTitle'),
+    message: mainUiI18n.t('pluginLoadMessage'),
+    detail: mainUiI18n.t('pluginLoadDetail', { name: path.basename(filePath) }),
+    buttons: [mainUiI18n.t('pluginLoadConfirm'), mainUiI18n.t('pluginCancel')],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
@@ -124,10 +125,10 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
     const { existingVersion, newVersion } = result.needsUpgradeConfirm
     const { response: upgradeResponse } = await dialog.showMessageBox({
       type: 'warning',
-      title: '插件已存在',
-      message: '已安装相同插件，是否覆盖升级？',
+      title: mainUiI18n.t('pluginExistsTitle'),
+      message: mainUiI18n.t('pluginExistsMessage'),
       detail: `${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
-      buttons: ['覆盖升级', '取消'],
+      buttons: [mainUiI18n.t('pluginUpgradeConfirm'), mainUiI18n.t('pluginCancel')],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -140,16 +141,16 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
     // 导入即增量加载（importPluginFromPath 内部完成激活与 PLUGIN_CHANGED 广播，无需整页 reload）
     dialog.showMessageBox({
       type: 'info',
-      title: '插件已加载',
-      message: `插件 ${result.id} v${result.version} 已加载`,
-      buttons: ['确定'],
+      title: mainUiI18n.t('pluginLoadedTitle'),
+      message: mainUiI18n.t('pluginLoadedMessage', { id: result.id ?? '', version: result.version ?? '' }),
+      buttons: [mainUiI18n.t('pluginOk')],
     })
   } else if (result.message && result.message !== 'cancelled') {
     dialog.showMessageBox({
       type: 'error',
-      title: '加载失败',
+      title: mainUiI18n.t('pluginLoadFailedTitle'),
       message: result.message,
-      buttons: ['确定'],
+      buttons: [mainUiI18n.t('pluginOk')],
     })
   }
 }
@@ -544,15 +545,13 @@ async function createWindow() {
   DatabaseService.getInstance()
 }
 
-function createTray() {
-  const iconPath = getResourcePath('resources', 'icons', 'icon.png')
-  const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
-  tray = new Tray(trayIcon)
-  tray.setToolTip('WorkAvatar 数字员工')
-
-  const contextMenu = Menu.buildFromTemplate([
+/** 按当前语言重建托盘菜单（语言切换时刷新） */
+function updateTrayMenu(): void {
+  if (!tray) return
+  tray.setToolTip(mainUiI18n.t('trayTooltip'))
+  tray.setContextMenu(Menu.buildFromTemplate([
     {
-      label: '显示窗口',
+      label: mainUiI18n.t('trayShowWindow'),
       click: () => {
         if (mainWindow) {
           mainWindow.show()
@@ -562,15 +561,21 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: '退出程序',
+      label: mainUiI18n.t('trayQuit'),
       click: () => {
         isQuitting = true
         app.quit()
       },
     },
-  ])
+  ]))
+}
 
-  tray.setContextMenu(contextMenu)
+function createTray() {
+  const iconPath = getResourcePath('resources', 'icons', 'icon.png')
+  const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
+  tray = new Tray(trayIcon)
+  updateTrayMenu()
+  mainUiI18n.onLocaleChange(() => updateTrayMenu())
 
   tray.on('double-click', () => {
     if (mainWindow) {
