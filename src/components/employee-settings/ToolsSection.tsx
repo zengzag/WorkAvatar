@@ -25,6 +25,7 @@ import {
   AppstoreOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
+import { resolveToolLabel } from '../../utils/tool-display'
 
 const { Text } = Typography
 
@@ -290,11 +291,15 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                                   }}
                                 >
                                   <Text
-                                    style={{ fontSize: 13 }}
-                                    ellipsis
-                                  >
-                                    {tool.title || tool.name}
-                                  </Text>
+                                  style={{ fontSize: 13 }}
+                                  ellipsis
+                                >
+                                  {resolveToolLabel(
+                                    tool.name,
+                                    tool.title,
+                                    cat.is_plugin ? cat.plugin_id : undefined,
+                                  )}
+                                </Text>
                                   <Text
                                     type="secondary"
                                     style={{

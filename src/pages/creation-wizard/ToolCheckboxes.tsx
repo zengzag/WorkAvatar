@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Checkbox, Typography, Space, Tag, theme } from 'antd'
+import { resolveToolLabel } from '../../utils/tool-display'
 import {
   FileOutlined,
   DatabaseOutlined,
@@ -51,14 +52,6 @@ const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
   code: <CodeOutlined />,
   plugin: <AppstoreOutlined />,
   team: <TeamOutlined />,
-}
-
-/** 将工具名/标题映射为更简短的中文标签 */
-function toolShortLabel(tool: ToolItem, t: any): string {
-  const i18nKey = `workbench.toolNames.${tool.name}` as any
-  const translated = t(i18nKey, { defaultValue: '' })
-  if (translated) return translated
-  return tool.title || tool.name
 }
 
 /** 工具多选列表（按分类分组，分类来自后端含插件分类） */
@@ -174,7 +167,7 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, categories, sele
                     style={{ marginInlineEnd: 0 }}
                   >
                     <span style={{ fontSize: 13 }}>
-                      {toolShortLabel(tool, t)}
+                      {resolveToolLabel(tool.name, tool.title, cat.is_plugin ? cat.plugin_id : undefined)}
                     </span>
                   </Checkbox>
                 ))}

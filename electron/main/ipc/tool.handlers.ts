@@ -188,17 +188,21 @@ function getUnifiedBuiltinToolCatalog() {
     idToTool.set(tool.id, tool)
   }
 
-  // 插件贡献的 agent 工具（如日历插件工具），纳入统一目录（分类归属由插件分类 toolIds 决定）
-  const pluginTools = (PluginHostService.getInstance().getAgentTools() as Array<{
-    id: string; name: string; title: string; description: string; onDemand?: boolean
-  }>).map(t => ({
-    id: t.id,
-    name: t.name,
-    title: t.title,
-    description: t.description,
-    category: 'plugin' as const,
-    onDemand: t.onDemand ?? false,
-  }))
+  // 插件贡献的 agent 工具（如日历插件工具），纳入统一目录（分类归属由插件分类 toolIds 决定）；
+  // pluginId 供渲染端以插件 locale 命名空间解析工具文案
+  const pluginTools = PluginHostService.getInstance().getPluginAgentToolGroups().flatMap(g =>
+    (g.tools as Array<{
+      id: string; name: string; title: string; description: string; onDemand?: boolean
+    }>).map(t => ({
+      id: t.id,
+      name: t.name,
+      title: t.title,
+      description: t.description,
+      category: 'plugin' as const,
+      onDemand: t.onDemand ?? false,
+      pluginId: g.pluginId,
+    }))
+  )
   for (const tool of pluginTools) {
     idToTool.set(tool.id, tool)
   }

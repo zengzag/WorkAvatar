@@ -7,6 +7,7 @@ import type { MessageSegment } from '../components/workbench/types'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
+import { getToolDisplayName } from '../utils/tool-display'
 import { useChatScroll } from './useChatScroll'
 import { useLlmSettings } from './useLlmSettings'
 import { getSceneDefaultModel } from '../utils/default-model'
@@ -117,27 +118,6 @@ const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, 
 
 const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
-
-  const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
-    date_time: t('workbench.toolNames.date_time'),
-    shell_exec: t('workbench.toolNames.shell_exec'),
-    file: t('workbench.toolNames.file'),
-    web_search: t('workbench.toolNames.web_search'),
-    web_fetch: t('workbench.toolNames.web_fetch'),
-    activate_skill: t('workbench.toolNames.activate_skill'),
-    read_reference: t('workbench.toolNames.read_reference'),
-    ask_user: t('workbench.toolNames.ask_user'),
-    calendar_event_list: t('workbench.toolNames.calendar_event_list'),
-    calendar_event_create: t('workbench.toolNames.calendar_event_create'),
-    calendar_event_update: t('workbench.toolNames.calendar_event_update'),
-    calendar_event_delete: t('workbench.toolNames.calendar_event_delete'),
-    calendar_todo_list: t('workbench.toolNames.calendar_todo_list'),
-    calendar_todo_create: t('workbench.toolNames.calendar_todo_create'),
-    calendar_todo_update: t('workbench.toolNames.calendar_todo_update'),
-    calendar_todo_delete: t('workbench.toolNames.calendar_todo_delete'),
-    calendar_todo_complete: t('workbench.toolNames.calendar_todo_complete'),
-    calendar_todo_stats: t('workbench.toolNames.calendar_todo_stats'),
-  }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -355,7 +335,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
               delegationStatus: (run.status === 'running' || run.status === 'queued') ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
               subSegments: recoverSubSegmentsFromLog(log, run.runId),
               isToolComplete: false,
-              collapsed: false,
+              collapsed: true,
               timestamp: Date.now(),
             }
           })
@@ -2187,7 +2167,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
   }
 
-  const getToolDisplayName = useCallback((name: string) => TOOL_DISPLAY_NAMES[name] || name, [TOOL_DISPLAY_NAMES])
+  // 工具文案与数字员工设置一致（后端工具目录 title），见 utils/tool-display
 
   const handleToggleSegment = useCallback((msgId: string, segId: string) => {
     const convId = activeConversationIdRef.current
