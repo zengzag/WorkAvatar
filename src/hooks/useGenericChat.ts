@@ -119,7 +119,7 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
                   id: `${streamState.assistantMessageId}_seg_${segCounterRef.current++}`,
                   content: event.thought,
                   isStreaming: true,
-                  collapsed: false,
+                  collapsed: true,
                   timestamp: Date.now(),
                 })
               }
@@ -180,7 +180,6 @@ export const useGenericChat = ({ send, subscribe, persist, conversationId: exter
               ...s,
               isStreaming: false,
               completedAt: s.completedAt || Date.now(),
-              ...(s.type === 'thinking' ? { collapsed: true } : {}),
             }))
             const savedMsg: MessageWithThought = {
               ...assistantMsg,

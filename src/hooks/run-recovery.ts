@@ -24,7 +24,7 @@ export function recoverSubSegmentsFromLog(
           id: `${idPrefix}_rec_th_${segs.length}`,
           content: thought,
           isStreaming: true,
-          collapsed: false,
+          collapsed: true,
           timestamp: Date.now(),
         })
       }

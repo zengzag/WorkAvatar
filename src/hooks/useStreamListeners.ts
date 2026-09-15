@@ -68,7 +68,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
 
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].type === 'thinking' && segs[i].isStreaming) {
-              segs[i] = { ...segs[i], isStreaming: false, collapsed: true, completedAt: Date.now() }
+              segs[i] = { ...segs[i], isStreaming: false, completedAt: Date.now() }
             }
           }
 
@@ -113,7 +113,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               id: `${streamState.assistantMessageId}_seg_${streamState.segCounter++}`,
               content: thought,
               isStreaming: true,
-              collapsed: false,
+              collapsed: true,
               timestamp: Date.now(),
             })
           }
@@ -152,7 +152,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
             if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
 
             if (targetIndex !== -1) {
@@ -172,7 +172,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 isToolArgsStreaming: true,
                 toolArgsRaw: argsText,
                 isToolComplete: false,
-                collapsed: false,
+                collapsed: true,
                 timestamp: Date.now(),
               })
             }
@@ -237,7 +237,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               filteredSegs[filteredSegs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
             if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-              filteredSegs[filteredSegs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+              filteredSegs[filteredSegs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
             filteredSegs.push({
               type: 'delegation',
@@ -250,7 +250,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'streaming',
               subSegments: [],
               isToolComplete: false,
-              collapsed: false,
+              collapsed: true,
               timestamp: Date.now(),
             })
             return { ...m, segments: filteredSegs }
@@ -271,7 +271,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolArgsStreaming: false,
               toolCallId,
               isToolComplete: false,
-              collapsed: true,
             }
           } else {
             // 无 delta 预创建的 segment，走原有逻辑
@@ -280,7 +279,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
             if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+              segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
             }
             segs.push({
               type: 'tool_call',
@@ -319,7 +318,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 toolResult: result,
                 isToolComplete: true,
                 toolError: undefined,
-                collapsed: true,
                 completedAt: Date.now(),
               }
             }
@@ -338,7 +336,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
                   }
                   if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-                    segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+                    segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
                   }
                   segs.push({
                     type: 'delegation',
@@ -351,7 +349,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     delegationStatus: 'queued',
                     subSegments: [],
                     isToolComplete: false,
-                    collapsed: false,
+                    collapsed: true,
                     timestamp: Date.now(),
                   })
                 }
@@ -385,7 +383,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolComplete: true,
               toolError: isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined)),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
-              collapsed: true,
               completedAt: Date.now(),
             }
             return { ...m, segments: segs }
@@ -403,7 +400,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             toolResult: result,
             isToolComplete: true,
             toolError: toolSuccess ? undefined : (typeof result === 'string' ? result : (rawResult?.error || undefined)),
-            collapsed: true,
             completedAt: Date.now(),
             generatedFiles: generatedFiles && generatedFiles.length > 0 ? generatedFiles : undefined,
           }
@@ -476,7 +472,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               id: `${idPrefix}_th_${Date.now()}`,
               content: thought,
               isStreaming: true,
-              collapsed: false,
+              collapsed: true,
               timestamp: Date.now(),
             })
           }
@@ -488,7 +484,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
           if (!chunk) return segs
           for (let i = 0; i < segs.length; i++) {
             if (segs[i].isStreaming && segs[i].type === 'thinking') {
-              segs[i] = { ...segs[i], isStreaming: false, collapsed: true, completedAt: Date.now() }
+              segs[i] = { ...segs[i], isStreaming: false, completedAt: Date.now() }
             }
           }
           const last = segs[segs.length - 1]
@@ -514,7 +510,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
           }
           if (last && last.type === 'thinking' && last.isStreaming) {
-            segs[segs.length - 1] = { ...last, isStreaming: false, collapsed: true, completedAt: Date.now() }
+            segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
           }
           for (const delta of deltas) {
             const { index, id, name, arguments: argsText } = delta
@@ -545,7 +541,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 isToolArgsStreaming: true,
                 toolArgsRaw: argsText,
                 isToolComplete: false,
-                collapsed: false,
+                collapsed: true,
                 timestamp: Date.now(),
               })
             }
@@ -568,7 +564,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolArgsStreaming: false,
               toolCallId,
               isToolComplete: false,
-              collapsed: true,
             }
           } else {
             const last = segs[segs.length - 1]
@@ -576,7 +571,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
             }
             if (last && last.type === 'thinking' && last.isStreaming) {
-              segs[segs.length - 1] = { ...last, isStreaming: false, collapsed: true, completedAt: Date.now() }
+              segs[segs.length - 1] = { ...last, isStreaming: false, completedAt: Date.now() }
             }
             segs.push({
               type: 'tool_call',
@@ -604,7 +599,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             toolResult: result,
             isToolComplete: true,
             toolError: undefined,
-            collapsed: true,
             completedAt: Date.now(),
           }
           return segs
@@ -643,7 +637,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 isToolArgsStreaming: false,
                 isToolComplete: segs[i].isToolComplete ?? true,
                 completedAt: segs[i].completedAt || Date.now(),
-                ...(segs[i].type === 'thinking' ? { collapsed: true } : {}),
               }
             }
           }
@@ -716,7 +709,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
               }
               if (lastSeg && lastSeg.type === 'thinking' && lastSeg.isStreaming) {
-                segs[segs.length - 1] = { ...lastSeg, isStreaming: false, collapsed: true, completedAt: Date.now() }
+                segs[segs.length - 1] = { ...lastSeg, isStreaming: false, completedAt: Date.now() }
               }
               segs.push({
                 type: 'delegation',
@@ -730,7 +723,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 delegationStatus: 'queued',
                 subSegments: [],
                 isToolComplete: false,
-                collapsed: false,
+                collapsed: true,
                 timestamp: Date.now(),
               })
               idx = segs.length - 1
@@ -781,7 +774,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationTokenUsage: eventData?.tokenUsage || cur.delegationTokenUsage,
               toolError: finalStatus === 'failed' ? (eventData?.error || cur.toolError) : cur.toolError,
               isToolComplete: true,
-              collapsed: true,
               completedAt: Date.now(),
             }
             return { ...m, segments: segs }
@@ -794,7 +786,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'cancelled',
               toolError: eventData?.error || cur.toolError,
               isToolComplete: true,
-              collapsed: true,
               completedAt: Date.now(),
             }
             return { ...m, segments: segs }
@@ -864,14 +855,12 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolComplete: true,
               toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolCancelled'),
               completedAt,
-              collapsed: true,
               subSegments: (s.subSegments || []).map(ss => ({
                 ...ss,
                 isStreaming: false,
                 isToolArgsStreaming: false,
                 isToolComplete: ss.isToolComplete ?? true,
                 completedAt: ss.completedAt || completedAt,
-                ...(ss.type === 'thinking' ? { collapsed: true } : {}),
               })),
             }
           }
@@ -879,7 +868,6 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
             ...s,
             isStreaming: false,
             completedAt: s.isStreaming ? completedAt : s.completedAt,
-            ...(s.type === 'thinking' ? { collapsed: true } : {}),
           }
         })
         const apiTokenUsage = metadata?.tokenUsage || metadata?.usage
@@ -971,14 +959,12 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                       isToolComplete: true,
                       toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolFailed'),
                       completedAt: s.completedAt || Date.now(),
-                      collapsed: true,
                       subSegments: (s.subSegments || []).map(ss => ({
                         ...ss,
                         isStreaming: false,
                         isToolArgsStreaming: false,
                         isToolComplete: ss.isToolComplete ?? true,
                         completedAt: ss.completedAt || Date.now(),
-                        ...(ss.type === 'thinking' ? { collapsed: true } : {}),
                       })),
                     }
                   }

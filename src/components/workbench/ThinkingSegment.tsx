@@ -1,5 +1,5 @@
 import { Typography, theme } from 'antd'
-import { BulbOutlined } from '@ant-design/icons'
+import { BulbOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
@@ -92,6 +92,7 @@ const ThinkingSegmentInner: React.FC<{
   const [elapsed, setElapsed] = useState(0)
   const { containerRef: stepsWrapperRef, onScroll: stepsOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const fallbackRef = useRef<number | undefined>(undefined)
+  const previewRef = useRef<HTMLDivElement>(null)
   const [stepsExpanded, setStepsExpanded] = useState(false)
   const [stepsOverflow, setStepsOverflow] = useState(false)
 
@@ -121,106 +122,125 @@ const ThinkingSegmentInner: React.FC<{
 
   useEffect(() => {
     if (stepsWrapperRef.current) {
-      setStepsOverflow(stepsWrapperRef.current.scrollHeight > 320)
+      setStepsOverflow(stepsWrapperRef.current.scrollHeight > 240)
     }
   }, [steps, stepsExpanded])
 
+  // 折叠态预览：单行横向滚动跟随最新思考内容
+  useEffect(() => {
+    const el = previewRef.current
+    if (el) el.scrollLeft = el.scrollWidth
+  }, [seg.content])
+
+  const isExpanded = !seg.collapsed
   const duration = seg.timestamp ? elapsed : 0
   const durationText = duration > 0 ? t('workbench.thoughtFor', { time: duration.toFixed(1) }) : ''
+  const content = seg.content || ''
 
-  const gradientBg = `linear-gradient(135deg, ${token.colorPrimaryBg}, ${token.colorBgLayout})`
-
-  return (
-    <div style={{ marginBottom: 0 }}>
-      <div
-        style={{
-          borderRadius: 8,
-          background: gradientBg,
-          border: `1px solid ${token.colorPrimaryBorder}`,
-          borderLeft: `3px solid ${token.colorPrimary}`,
-          overflow: 'hidden',
-        }}
-      >
+  const header = (
+    <div
+      onClick={onToggle}
+      style={{
+        padding: '5px 0',
+        cursor: 'pointer',
+        userSelect: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}
+    >
+      {isExpanded ? (
+        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+      ) : (
+        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+      )}
+      <BulbOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />
+      <Text style={{ fontSize: 12, color: token.colorTextSecondary }}>
+        {t('workbench.thinkingProcess')}
+      </Text>
+      {isStreaming && (
+        <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>
+      )}
+      {!isExpanded && isStreaming && content && (
         <div
-          onClick={() => {
-            if (!isStreaming) {
-              onToggle()
-            }
-          }}
+          ref={previewRef}
+          className="dm-preview-line"
           style={{
-            padding: '8px 14px',
-            cursor: isStreaming ? 'default' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
+            flex: 1,
+            minWidth: 0,
+            fontSize: 12,
+            lineHeight: '18px',
+            color: token.colorTextQuaternary,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
           }}
         >
-          <BulbOutlined style={{ color: token.colorPrimary, fontSize: 13 }} />
-          <Text type="secondary" style={{ fontSize: 12, fontWeight: 500 }}>
-            {t('workbench.thinkingProcess')}
-          </Text>
-          {isStreaming && (
-            <span className="cursor-blink" style={{ color: token.colorPrimary }}>▊</span>
-          )}
-          {durationText && (
-            <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-              {durationText}
-            </Text>
-          )}
-          {!isStreaming && (
-            <Text style={{ fontSize: 11, color: token.colorPrimary, marginLeft: 'auto' }}>
-              {seg.collapsed ? t('workbench.expand') : t('workbench.collapse')}
-            </Text>
-          )}
+          {content}
         </div>
-        {!seg.collapsed && (
+      )}
+      {durationText && (
+        <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
+          {durationText}
+        </Text>
+      )}
+    </div>
+  )
+
+  if (isExpanded) {
+    return (
+      <div style={{ marginBottom: 2 }}>
+        {header}
+        <div style={{ position: 'relative' }}>
+          {/* 竖线与展开 icon 同列，从 icon 正下方延伸贯穿内容区 */}
+          <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
+          <div style={{ position: 'relative', padding: '0 10px 10px 24px' }}>
           <div
+            ref={stepsWrapperRef}
+            onScroll={stepsOnScroll}
             style={{
-              padding: '0 14px 10px 14px',
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
+              background: token.colorBgLayout,
+              borderRadius: 8,
+              padding: '10px 12px',
+              maxHeight: stepsExpanded ? 'none' : 220,
+              overflowY: stepsExpanded ? 'visible' : 'auto',
             }}
           >
+            {steps.map((step, i) => (
+              <StepBlock
+                key={`${i}-${step.slice(0, 12)}`}
+                stepIndex={i}
+                content={step}
+                token={token}
+              />
+            ))}
+          </div>
+          {stepsOverflow && !isStreaming && (
             <div
-              ref={stepsWrapperRef}
-              onScroll={stepsOnScroll}
+              onClick={() => setStepsExpanded(v => !v)}
               style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                maxHeight: stepsExpanded ? 'none' : 300,
-                overflowY: stepsExpanded ? 'visible' : 'auto',
-                paddingRight: 4,
+                textAlign: 'center',
+                padding: '4px 0',
+                cursor: 'pointer',
+                color: token.colorPrimary,
+                fontSize: 11,
+                userSelect: 'none',
               }}
             >
-              {steps.map((step, i) => (
-                <StepBlock
-                  key={`${i}-${step.slice(0, 12)}`}
-                  stepIndex={i}
-                  content={step}
-                  token={token}
-                />
-              ))}
+              {stepsExpanded ? t('workbench.showLess') : t('workbench.showMore')}
             </div>
-            {stepsOverflow && !isStreaming && (
-              <div
-                onClick={() => setStepsExpanded(v => !v)}
-                style={{
-                  textAlign: 'center',
-                  padding: '4px 0',
-                  cursor: 'pointer',
-                  color: token.colorPrimary,
-                  fontSize: 11,
-                  userSelect: 'none',
-                }}
-              >
-                {stepsExpanded ? t('workbench.showLess') : t('workbench.showMore')}
-              </div>
-            )}
+          )}
           </div>
-        )}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div style={{ marginBottom: 2 }}>
+      {header}
     </div>
   )
 }

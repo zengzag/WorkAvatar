@@ -327,3 +327,11 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
     display: none !important;
   }
 }
+
+/* 折叠态最新输出预览行：单行横向滚动跟随最新内容，隐藏滚动条 */
+.dm-preview-line {
+  scrollbar-width: none;
+}
+.dm-preview-line::-webkit-scrollbar {
+  display: none;
+}
