@@ -1,19 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { Checkbox, Typography, Space, Tag, theme } from 'antd'
 import { resolveToolLabel } from '../../utils/tool-display'
-import {
-  FileOutlined,
-  DatabaseOutlined,
-  CalendarOutlined,
-  RobotOutlined,
-  GlobalOutlined,
-  MessageOutlined,
-  BulbOutlined,
-  ToolOutlined,
-  CodeOutlined,
-  AppstoreOutlined,
-  TeamOutlined,
-} from '@ant-design/icons'
+import { ToolOutlined } from '@ant-design/icons'
+import { getCategoryIcon } from '../../components/common/tool-category-icons'
 
 const { Text } = Typography
 
@@ -39,19 +28,6 @@ interface ToolCheckboxesProps {
   categories: ToolCategoryDef[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
-}
-
-const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
-  file: <FileOutlined />,
-  database: <DatabaseOutlined />,
-  calendar: <CalendarOutlined />,
-  robot: <RobotOutlined />,
-  global: <GlobalOutlined />,
-  message: <MessageOutlined />,
-  tool: <BulbOutlined />,
-  code: <CodeOutlined />,
-  plugin: <AppstoreOutlined />,
-  team: <TeamOutlined />,
 }
 
 /** 工具多选列表（按分类分组，分类来自后端含插件分类） */
@@ -121,7 +97,7 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, categories, sele
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                  <span style={{ color: token.colorPrimary }}>{CATEGORY_ICON_MAP[cat.icon] || <AppstoreOutlined />}</span>
+                  <span style={{ color: token.colorPrimary }}>{getCategoryIcon(cat.icon)}</span>
                   <Text strong ellipsis style={{ fontSize: 13 }}>
                     {cat.is_plugin
                       ? t(cat.title, { ns: cat.plugin_id, defaultValue: cat.title })

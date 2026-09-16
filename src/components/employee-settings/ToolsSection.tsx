@@ -11,22 +11,9 @@ import {
   theme,
   Collapse,
 } from 'antd'
-import {
-  ToolOutlined,
-  FileOutlined,
-  DatabaseOutlined,
-  CalendarOutlined,
-  RobotOutlined,
-  GlobalOutlined,
-  SettingOutlined,
-  FileTextOutlined,
-  MessageOutlined,
-  BulbOutlined,
-  AppstoreOutlined,
-  CodeOutlined,
-  TeamOutlined,
-} from '@ant-design/icons'
+import { ToolOutlined } from '@ant-design/icons'
 import { resolveToolLabel, resolveToolDescription } from '../../utils/tool-display'
+import { getCategoryIcon } from '../common/tool-category-icons'
 
 const { Text } = Typography
 
@@ -55,21 +42,6 @@ export interface ToolCategoryInfo {
   mode: ToolMode
   enabled_count: number
   total_count: number
-}
-
-const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
-  file: <FileOutlined />,
-  database: <DatabaseOutlined />,
-  calendar: <CalendarOutlined />,
-  robot: <RobotOutlined />,
-  global: <GlobalOutlined />,
-  setting: <SettingOutlined />,
-  'file-document': <FileTextOutlined />,
-  message: <MessageOutlined />,
-  tool: <BulbOutlined />,
-  code: <CodeOutlined />,
-  plugin: <AppstoreOutlined />,
-  team: <TeamOutlined />,
 }
 
 interface ToolsSectionProps {
@@ -140,7 +112,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
         ) : (
           <div>
             {categories.map((cat) => {
-              const catIcon = CATEGORY_ICON_MAP[cat.icon] || <ToolOutlined />
+              const catIcon = getCategoryIcon(cat.icon)
               // 分类内工具模式不一致时提示"混合"（分类 Segmented 仍按最高状态显示）
               const isMixed = new Set(cat.tools.map(t => t.mode)).size > 1
 

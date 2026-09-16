@@ -10,8 +10,8 @@ import enUS from '../../../src/i18n/locales/en-US'
  * 工具分类前后端契约（项目规则：分类 ID 与 toolIds 必须前后端严格一致）。
  *
  * 后端单源真相：electron/main/ipc/tool.handlers.ts 的 TOOL_CATEGORY_DEFS
- * 前端：src/components/employee-settings/ToolsSection.tsx、src/pages/creation-wizard/ToolCheckboxes.tsx
- *      的 CATEGORY_ICON_MAP（按后端 icon 字段取值；分类 id/toolIds 由后端 IPC 下发）
+ * 前端：src/components/common/tool-category-icons.tsx 的 CATEGORY_ICON_MAP
+ *      （按后端 icon 字段取值，员工设置 / 创建向导 / 对话消息共用同一份；分类 id/toolIds 由后端 IPC 下发）
  * i18n：employeeSettings.toolCategory_<id> / toolCategoryDesc_<id>
  *
  * 采用 TypeScript AST 静态解析，不 import 生产代码（避免拉起 Electron 运行时）。
@@ -22,6 +22,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const TOOL_HANDLERS = path.join(ROOT, 'electron', 'main', 'ipc', 'tool.handlers.ts')
 const TOOLS_SECTION = path.join(ROOT, 'src', 'components', 'employee-settings', 'ToolsSection.tsx')
 const TOOL_CHECKBOXES = path.join(ROOT, 'src', 'pages', 'creation-wizard', 'ToolCheckboxes.tsx')
+const TOOL_CATEGORY_ICONS = path.join(ROOT, 'src', 'components', 'common', 'tool-category-icons.tsx')
 const AGENT_TOOLS_DIR = path.join(ROOT, 'electron', 'main', 'services', 'agent', 'tools')
 const GENERIC_AGENT = path.join(ROOT, 'electron', 'main', 'services', 'agent', 'business', 'generic-agent.ts')
 
@@ -121,8 +122,7 @@ function builtinToolIds(): Set<string> {
 }
 
 const defs = backendCategoryDefs()
-const toolsSectionIcons = frontendIconMapKeys(TOOLS_SECTION)
-const toolCheckboxesIcons = frontendIconMapKeys(TOOL_CHECKBOXES)
+const categoryIconKeys = frontendIconMapKeys(TOOL_CATEGORY_ICONS)
 const builtinIds = builtinToolIds()
 
 describe('工具分类：后端定义自身合法', () => {
@@ -148,14 +148,11 @@ describe('工具分类：后端定义自身合法', () => {
 })
 
 describe('工具分类：前后端一致性', () => {
-  it('每个后端分类的 icon 在两个前端 CATEGORY_ICON_MAP 中都有映射', () => {
+  it('每个后端分类的 icon 在共享 CATEGORY_ICON_MAP 中都有映射', () => {
     const violations: string[] = []
     for (const def of defs) {
-      if (!toolsSectionIcons.includes(def.icon)) {
-        violations.push(`ToolsSection.tsx CATEGORY_ICON_MAP 缺少 icon "${def.icon}"（分类 ${def.id}）`)
-      }
-      if (!toolCheckboxesIcons.includes(def.icon)) {
-        violations.push(`ToolCheckboxes.tsx CATEGORY_ICON_MAP 缺少 icon "${def.icon}"（分类 ${def.id}）`)
+      if (!categoryIconKeys.includes(def.icon)) {
+        violations.push(`tool-category-icons.tsx CATEGORY_ICON_MAP 缺少 icon "${def.icon}"（分类 ${def.id}）`)
       }
     }
     expect(violations, violations.join('\n')).toEqual([])
@@ -163,7 +160,7 @@ describe('工具分类：前后端一致性', () => {
 
   it('前端不硬编码内置分类 id（分类定义只能有后端一个真相源）', () => {
     const violations: string[] = []
-    for (const file of [TOOLS_SECTION, TOOL_CHECKBOXES]) {
+    for (const file of [TOOLS_SECTION, TOOL_CHECKBOXES, TOOL_CATEGORY_ICONS]) {
       const src = fs.readFileSync(file, 'utf-8')
       for (const id of defs.map((d) => d.id)) {
         if (new RegExp(`['"\`]${id}['"\`]`).test(src)) {

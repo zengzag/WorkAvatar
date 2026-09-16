@@ -2,17 +2,17 @@ import { Typography, Tooltip, App, theme } from 'antd'
 import {
   DownOutlined,
   RightOutlined,
-  CodeOutlined,
   LoadingOutlined,
-  CheckCircleOutlined,
   CloseCircleOutlined,
   CopyOutlined,
-  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react'
 import type { MessageSegment } from './types'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
+import { formatDuration } from '../../utils/format'
+import { getToolIconKey } from '../../utils/tool-display'
+import { getCategoryIcon } from '../common/tool-category-icons'
 
 const { Text } = Typography
 
@@ -121,7 +121,7 @@ function useElapsedTime(startTime: number | undefined, isComplete: boolean, comp
   }, [startTime, isComplete, completedAt])
 
   if (elapsed === null) return null
-  return elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed).toString()
+  return formatDuration(elapsed)
 }
 
 const ToolCallSegmentInner: React.FC<{
@@ -224,7 +224,7 @@ const ToolCallSegmentInner: React.FC<{
     result: '✓',
   }
 
-  // 状态指示：弱化为图标+弱色文本，仅错误保留醒目色
+  // 状态指示：仅失败保留醒目提示，其余状态不额外显示图标
   const statusEl = isToolError ? (
     <Tooltip title={seg.toolError} placement="topRight">
       <span style={{
@@ -254,22 +254,7 @@ const ToolCallSegmentInner: React.FC<{
       <LoadingOutlined spin />
       {isArgsStreaming ? t('workbench.generatingArgs') : t('workbench.executing')}
     </span>
-  ) : (
-    <span style={{
-      marginLeft: 'auto',
-      flexShrink: 0,
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-    }}>
-      {resultStr && (
-        <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 10 }}>
-          {t('workbench.outputChars')}: {resultStr.length}
-        </Text>
-      )}
-      <CheckCircleOutlined style={{ fontSize: 11, color: token.colorTextQuaternary }} />
-    </span>
-  )
+  ) : null
 
   const header = (
     <div
@@ -288,7 +273,10 @@ const ToolCallSegmentInner: React.FC<{
       ) : (
         <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
       )}
-      <CodeOutlined style={{ fontSize: 12, color: isToolError ? token.colorError : token.colorTextTertiary }} />
+      {/* 有分组时用该分组的图标（与员工设置一致），未分组回退小扳手 */}
+      <span style={{ display: 'inline-flex', flexShrink: 0, fontSize: 12, color: isToolError ? token.colorError : token.colorTextTertiary }}>
+        {getCategoryIcon(seg.toolName ? getToolIconKey(seg.toolName) : undefined)}
+      </span>
       <Text style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
       </Text>
@@ -309,9 +297,9 @@ const ToolCallSegmentInner: React.FC<{
         </div>
       )}
       {duration !== null && (
-        <Text className="dm-toolcall-extra" style={{ fontSize: 11, color: token.colorTextQuaternary, display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-          <ClockCircleOutlined style={{ fontSize: 10 }} />
+        <Text className="dm-toolcall-extra" style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>
           {t('workbench.executionTime', { time: duration })}
+          {resultStr && ` · ${t('workbench.chars', { chars: resultStr.length })}`}
         </Text>
       )}
       {statusEl}
