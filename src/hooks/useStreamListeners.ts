@@ -250,7 +250,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               delegationStatus: 'streaming',
               subSegments: [],
               isToolComplete: false,
-              collapsed: true,
+              // 委托段执行阶段默认展开，收尾时自动折叠（见下方各终态写入点）
+              collapsed: false,
               timestamp: Date.now(),
             })
             return { ...m, segments: filteredSegs }
@@ -349,7 +350,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                     delegationStatus: 'queued',
                     subSegments: [],
                     isToolComplete: false,
-                    collapsed: true,
+                    // 委托段执行阶段默认展开，收尾时自动折叠
+                    collapsed: false,
                     timestamp: Date.now(),
                   })
                 }
@@ -384,6 +386,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: isSuccess ? undefined : (rawResult?.error || (typeof result === 'string' ? result : undefined)),
               delegationTokenUsage: rawResult?.tokenUsage || segs[delIdx].delegationTokenUsage,
               completedAt: Date.now(),
+              collapsed: true,
             }
             return { ...m, segments: segs }
           }
@@ -723,7 +726,8 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                 delegationStatus: 'queued',
                 subSegments: [],
                 isToolComplete: false,
-                collapsed: true,
+                // 委托段执行阶段默认展开，收尾时自动折叠
+                collapsed: false,
                 timestamp: Date.now(),
               })
               idx = segs.length - 1
@@ -775,6 +779,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: finalStatus === 'failed' ? (eventData?.error || cur.toolError) : cur.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
+              collapsed: true,
             }
             return { ...m, segments: segs }
           }
@@ -787,6 +792,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               toolError: eventData?.error || cur.toolError,
               isToolComplete: true,
               completedAt: Date.now(),
+              collapsed: true,
             }
             return { ...m, segments: segs }
           }
@@ -855,6 +861,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
               isToolComplete: true,
               toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolCancelled'),
               completedAt,
+              collapsed: true,
               subSegments: (s.subSegments || []).map(ss => ({
                 ...ss,
                 isStreaming: false,
@@ -959,6 +966,7 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
                       isToolComplete: true,
                       toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolFailed'),
                       completedAt: s.completedAt || Date.now(),
+                      collapsed: true,
                       subSegments: (s.subSegments || []).map(ss => ({
                         ...ss,
                         isStreaming: false,

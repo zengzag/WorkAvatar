@@ -323,6 +323,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           const segs: MessageSegment[] = runs.map((run: any, i: number) => {
             const log: Array<{ eventType: string; data: any }> = run.eventLog || []
             const startEv = log.find(e => e.eventType === 'start')
+            const isActiveRun = run.status === 'running' || run.status === 'queued'
             return {
               type: 'delegation',
               id: `${assistantMessageId}_run_rec_${i}_${run.runId}`,
@@ -332,10 +333,11 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
               targetEmployeeName: startEv?.data?.targetEmployeeName || run.employeeName || t('workbench.delegationUnknown'),
               targetAvatarType: startEv?.data?.targetAvatarType || run.employeeAvatarType,
               instruction: startEv?.data?.instruction || run.instruction,
-              delegationStatus: (run.status === 'running' || run.status === 'queued') ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
+              delegationStatus: isActiveRun ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
               subSegments: recoverSubSegmentsFromLog(log, run.runId),
               isToolComplete: false,
-              collapsed: true,
+              // 恢复时仅仍执行中的委托默认展开，已收尾的保持折叠
+              collapsed: !isActiveRun,
               timestamp: Date.now(),
             }
           })

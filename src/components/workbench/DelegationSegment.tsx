@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { useState, useRef, useEffect } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import { SegmentList } from './message-shared'
+import { formatDuration } from '../../utils/format'
 
 const { Text } = Typography
 
@@ -44,7 +45,7 @@ function useElapsedTime(startTime: number | undefined, isComplete: boolean, comp
   }, [startTime, isComplete, completedAt])
 
   if (elapsed === null) return null
-  return elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed).toString()
+  return formatDuration(elapsed)
 }
 
 const DelegationSegmentInner: React.FC<{

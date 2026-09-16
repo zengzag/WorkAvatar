@@ -4,31 +4,17 @@ import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
+import { formatDuration } from '../../utils/format'
 
 const { Text } = Typography
 
 const HIGHLIGHT_PATTERNS = /^(→|•|※|结论:|Result:|Therefore|So\s)/i
 
-function parseSteps(content: string): string[] {
-  const numberedSplit = content.split(/\n\n+/)
-  const steps: string[] = []
-  for (const block of numberedSplit) {
-    const trimmed = block.trim()
-    if (!trimmed) continue
-    steps.push(trimmed)
-  }
-  return steps.length > 0 ? steps : [content]
-}
-
 function isHighlightLine(line: string): boolean {
   return HIGHLIGHT_PATTERNS.test(line.trim())
 }
 
-function stripStepPrefix(text: string): string {
-  return text.replace(/^(?:Step\s*\d+[:.]\s*|\d+[.)]\s*)/i, '')
-}
-
-const StepLine: React.FC<{
+const ThoughtLine: React.FC<{
   line: string
   token: any
 }> = ({ line, token }) => {
@@ -46,42 +32,6 @@ const StepLine: React.FC<{
   return <span>{line}</span>
 }
 
-const StepBlock: React.FC<{
-  stepIndex: number
-  content: string
-  token: any
-}> = ({ stepIndex, content, token }) => {
-  const displayContent = stripStepPrefix(content)
-  const lines = displayContent.split('\n')
-
-  return (
-    <div style={{ display: 'flex', gap: 8 }}>
-      <div style={{
-        flexShrink: 0,
-        width: 22,
-        height: 22,
-        borderRadius: 6,
-        background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryHover || token.colorPrimary})`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 1,
-      }}>
-        <Text style={{ fontSize: 10, color: '#fff', fontWeight: 600, lineHeight: '22px' }}>
-          {stepIndex + 1}
-        </Text>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {lines.map((line, i) => (
-          <div key={`${i}-${line.slice(0, 12)}`} style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            <StepLine line={line} token={token} />
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 const ThinkingSegmentInner: React.FC<{
   seg: MessageSegment
   isStreaming: boolean
@@ -90,16 +40,13 @@ const ThinkingSegmentInner: React.FC<{
   const { token } = theme.useToken()
   const { t } = useTranslation()
   const [elapsed, setElapsed] = useState(0)
-  const { containerRef: stepsWrapperRef, onScroll: stepsOnScroll } = useAutoFollowScroll<HTMLDivElement>()
+  const { containerRef: contentRef, onScroll: contentOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const fallbackRef = useRef<number | undefined>(undefined)
   const previewRef = useRef<HTMLDivElement>(null)
-  const [stepsExpanded, setStepsExpanded] = useState(false)
-  const [stepsOverflow, setStepsOverflow] = useState(false)
+  const [contentExpanded, setContentExpanded] = useState(false)
+  const [contentOverflow, setContentOverflow] = useState(false)
 
-  const steps = useMemo(() => {
-    if (!seg.content) return []
-    return parseSteps(seg.content)
-  }, [seg.content])
+  const lines = useMemo(() => (seg.content ? seg.content.split('\n') : []), [seg.content])
 
   useEffect(() => {
     if (!seg.timestamp) return
@@ -121,10 +68,10 @@ const ThinkingSegmentInner: React.FC<{
   }, [isStreaming, seg.timestamp, seg.completedAt])
 
   useEffect(() => {
-    if (stepsWrapperRef.current) {
-      setStepsOverflow(stepsWrapperRef.current.scrollHeight > 240)
+    if (contentRef.current) {
+      setContentOverflow(contentRef.current.scrollHeight > 240)
     }
-  }, [steps, stepsExpanded])
+  }, [lines, contentExpanded])
 
   // 折叠态预览：单行横向滚动跟随最新思考内容
   useEffect(() => {
@@ -134,7 +81,7 @@ const ThinkingSegmentInner: React.FC<{
 
   const isExpanded = !seg.collapsed
   const duration = seg.timestamp ? elapsed : 0
-  const durationText = duration > 0 ? t('workbench.thoughtFor', { time: duration.toFixed(1) }) : ''
+  const durationText = duration > 0 ? t('workbench.executionTime', { time: formatDuration(duration) }) : ''
   const content = seg.content || ''
 
   const header = (
@@ -195,31 +142,25 @@ const ThinkingSegmentInner: React.FC<{
           <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
           <div style={{ position: 'relative', padding: '0 10px 10px 24px' }}>
           <div
-            ref={stepsWrapperRef}
-            onScroll={stepsOnScroll}
+            ref={contentRef}
+            onScroll={contentOnScroll}
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
               background: token.colorBgLayout,
               borderRadius: 8,
               padding: '10px 12px',
-              maxHeight: stepsExpanded ? 'none' : 220,
-              overflowY: stepsExpanded ? 'visible' : 'auto',
+              maxHeight: contentExpanded ? 'none' : 220,
+              overflowY: contentExpanded ? 'visible' : 'auto',
             }}
           >
-            {steps.map((step, i) => (
-              <StepBlock
-                key={`${i}-${step.slice(0, 12)}`}
-                stepIndex={i}
-                content={step}
-                token={token}
-              />
+            {lines.map((line, i) => (
+              <div key={`${i}-${line.slice(0, 12)}`} style={{ fontSize: 12, lineHeight: '20px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                <ThoughtLine line={line} token={token} />
+              </div>
             ))}
           </div>
-          {stepsOverflow && !isStreaming && (
+          {contentOverflow && !isStreaming && (
             <div
-              onClick={() => setStepsExpanded(v => !v)}
+              onClick={() => setContentExpanded(v => !v)}
               style={{
                 textAlign: 'center',
                 padding: '4px 0',
@@ -229,7 +170,7 @@ const ThinkingSegmentInner: React.FC<{
                 userSelect: 'none',
               }}
             >
-              {stepsExpanded ? t('workbench.showLess') : t('workbench.showMore')}
+              {contentExpanded ? t('workbench.showLess') : t('workbench.showMore')}
             </div>
           )}
           </div>
