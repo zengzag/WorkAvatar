@@ -28,9 +28,9 @@ const MAX_SCRIPT_SCAN_BYTES = 256 * 1024
 /** 删除被拒绝时返回给模型的引导文案（工具名与 file_delete 保持一致） */
 export const DELETION_FORBIDDEN_HINT =
   '删除操作已被安全策略禁止通过命令/脚本执行：请改用 file_delete 工具删除文件或目录' +
-  '（path 传绝对路径，删除非空目录加 recursive=true；删除会移入回收站，可恢复）。' +
+  '（path 或 paths 传路径，支持一次传多个路径与 * ? ** 通配符批量删除；删除非空目录加 recursive=true；删除会移入回收站，可恢复）。' +
   '若脚本内含删除逻辑（rm/del/Remove-Item/os.remove/shutil.rmtree/fs.unlink 等），请从脚本中移除该逻辑，' +
-  '临时文件改用 file_delete 逐个删除。'
+  '临时文件改用 file_delete 批量删除。'
 
 /**
  * 命令文本本身不含删除原语时，继续检查"被解释器执行的脚本文件"内容。

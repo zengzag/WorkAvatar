@@ -15,7 +15,7 @@ const SCRIPT_LANGUAGE = 'javascript'
  */
 const DELETION_FORBIDDEN_IN_CODE =
   '删除操作已被安全策略禁止通过脚本执行（含 file.delete 与 fs.unlink/rm/rmdir 等删除原语）：' +
-  '请改用 file_delete 工具删除文件或目录（path 传绝对路径，删除非空目录加 recursive=true；删除会移入回收站，可恢复）。' +
+  '请改用 file_delete 工具删除文件或目录（path 或 paths 传路径，支持一次传多个路径与 * ? ** 通配符批量删除；删除非空目录加 recursive=true；删除会移入回收站，可恢复）。' +
   '请从代码中移除删除逻辑，临时文件在脚本结束后用 file_delete 删除。'
 
 /** 删除类代码检测：复用命令分类器，并补充沙箱独有的 file.delete / file["delete"] */

@@ -151,25 +151,31 @@ export const fileEditTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
-// ====== file_delete：删除文件/目录（移入回收站） ======
+// ====== file_delete：删除文件/目录（移入回收站，支持批量与通配符） ======
 
 export const fileDeleteTool: ToolDefinition = {
   id: 'file_delete',
   name: 'file_delete',
   title: '删除文件/文件夹',
-  summary: '删除文件或文件夹（移入回收站，可恢复）。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
+  summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
   description: `删除文件或目录（移入系统回收站，可恢复，非永久删除）。
 - 删除文件/目录一律使用 file_delete：不要用 shell_exec（rm/del/Remove-Item 等）或 javascript_exec 等脚本删除，这些方式会被安全策略拒绝。
+- paths 支持传多个路径；每个路径可含通配符（* 匹配单段内任意字符，? 匹配单字符，** 跨目录段匹配），匹配到的所有真实路径都会被删除。
 - 目录需显式传 recursive=true 才会删除其内容；非空目录未传时返回错误而非静默删除。
 - 盘根（C:\\、/）与工作区根目录及其上级目录禁止删除。
-- 工作区外删除需用户确认。`,
+- 工作区外删除需用户确认（对展开后的真实路径统一判定，一次弹窗批量授权）。`,
   parameters: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: '目标文件或目录路径（绝对路径；相对路径按当前工作区解析）' },
+      path: { type: 'string', description: '目标文件或目录路径（绝对路径；相对路径按当前工作区解析）。与 paths 二选一' },
+      paths: {
+        type: 'array',
+        description: '批量删除的目标路径列表（可混合普通路径与含 * ? ** 通配符的路径），相对路径按当前工作区解析',
+        items: { type: 'string' },
+      },
       recursive: { type: 'boolean', description: '删除目录时是否递归删除其内容（默认false）' },
     },
-    required: ['path'],
+    required: [],
   },
   handler: async (args: any) => {
     try {
@@ -392,44 +398,189 @@ async function writeFile(args: any) {
 
 // ====== file_delete 实现 ======
 
-async function deleteFile(args: any) {
-  const raw = String(args.path || '').trim()
-  if (!raw) return { success: false, error: '文件路径不能为空' }
+const IS_WINDOWS = process.platform === 'win32'
 
-  const recursive = args.recursive === true
-  const resolved = resolveToolPath(raw)
-  const norm = normalizePath(resolved)
-  if (!norm) return { success: false, error: `路径无效: ${raw}` }
+/** 通配展开的结果数与扫描目录数上限，防止失控扫描 */
+const GLOB_RESULT_LIMIT = 1000
+const GLOB_SCAN_LIMIT = 20000
 
-  // 盘根等于整盘，工作区根（及其上级）会摧毁任务工作区，二者都属于"绝不允许"的删除目标
-  if (isFsRoot(norm)) return { success: false, error: `不允许删除盘根/文件系统根目录: ${resolved}` }
-  const workspaceNorm = normalizePath(getWorkspacePath() || process.cwd())
-  if (workspaceNorm && isWithinPath(workspaceNorm, norm)) {
-    return { success: false, error: `不允许删除工作区根目录或其上级目录: ${resolved}` }
+/** 是否含 glob 通配符（* ? [..]） */
+function isGlobPattern(p: string): boolean {
+  return /[*?[]/.test(p)
+}
+
+/** 扫描超限信号 */
+class GlobScanOverflow extends Error {}
+
+/** 将单个路径段通配转为正则源（* ? [abc] [!abc]），不跨目录分隔符 */
+function segmentToRegexSource(seg: string): string {
+  let re = ''
+  for (let i = 0; i < seg.length; i++) {
+    const ch = seg[i]
+    if (ch === '*') { re += '[^\\\\/]*'; continue }
+    if (ch === '?') { re += '[^\\\\/]'; continue }
+    if (ch === '[') {
+      const close = seg.indexOf(']', i + 1)
+      if (close === -1) { re += '\\['; continue }
+      let body = seg.slice(i + 1, close)
+      const negated = body.startsWith('!') || body.startsWith('^')
+      if (negated) body = body.slice(1)
+      re += `[${negated ? '^' : ''}${body.replace(/\\/g, '\\\\')}]`
+      i = close
+      continue
+    }
+    re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  return re
+}
+
+/** 递归通配匹配：segs 为按 / 拆分的模式段，idx 从首个通配段开始 */
+function walkMatch(dir: string, segs: string[], idx: number, out: string[], tick: () => void): void {
+  if (out.length >= GLOB_RESULT_LIMIT) return
+  tick()
+  if (idx >= segs.length) { out.push(dir); return }
+  const seg = segs[idx]
+  const isLast = idx === segs.length - 1
+
+  if (seg === '**') {
+    // ** 可匹配零段或多段目录
+    if (!isLast) walkMatch(dir, segs, idx + 1, out, tick)
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (isLast) {
+        out.push(full)
+        if (e.isDirectory()) walkMatch(full, segs, idx, out, tick)
+      } else if (e.isDirectory()) {
+        walkMatch(full, segs, idx, out, tick)
+      }
+      if (out.length >= GLOB_RESULT_LIMIT) return
+    }
+    return
   }
 
-  if (!fs.existsSync(resolved)) return { success: false, error: `路径不存在: ${resolved}` }
-  const stat = fs.lstatSync(resolved)
-  if (stat.isDirectory() && !recursive) {
-    const count = fs.readdirSync(resolved).length
-    return {
-      success: false,
-      error: count > 0
-        ? `目录非空（${count} 项），确认要连同内容一起删除时传 recursive=true: ${resolved}`
-        : `目录删除需显式传 recursive=true: ${resolved}`,
+  const re = new RegExp(`^${segmentToRegexSource(seg)}$`, IS_WINDOWS ? 'i' : '')
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+  for (const e of entries) {
+    if (!re.test(e.name)) continue
+    const full = path.join(dir, e.name)
+    if (isLast) out.push(full)
+    else if (e.isDirectory()) walkMatch(full, segs, idx + 1, out, tick)
+    if (out.length >= GLOB_RESULT_LIMIT) return
+  }
+}
+
+/** 展开通配路径为匹配到的真实绝对路径（相对路径先按工作区解析） */
+function expandGlob(raw: string): string[] {
+  const resolvedPattern = resolveToolPath(raw)
+  // 从首个通配字符前的静态前缀确定扫描起点
+  const firstGlobChar = resolvedPattern.search(/[*?[]/)
+  const staticPart = firstGlobChar === -1 ? resolvedPattern : resolvedPattern.slice(0, firstGlobChar)
+  const base = /[\\/]$/.test(staticPart)
+    ? path.resolve(staticPart)
+    : path.dirname(path.resolve(staticPart))
+  const segs = resolvedPattern.replace(/\\/g, '/').split('/').filter(s => s !== '' && s !== '.')
+  const firstGlobSeg = segs.findIndex(isGlobPattern)
+
+  const out: string[] = []
+  let scanned = 0
+  try {
+    walkMatch(base, segs, firstGlobSeg, out, () => {
+      if (++scanned > GLOB_SCAN_LIMIT) throw new GlobScanOverflow()
+    })
+  } catch (e) {
+    if (!(e instanceof GlobScanOverflow)) throw e
+  }
+  return out
+}
+
+async function deleteFile(args: any) {
+  // 兼容单个 path 与批量 paths 两种入参
+  const inputs: string[] = []
+  if (typeof args.path === 'string' && args.path.trim()) inputs.push(args.path.trim())
+  if (Array.isArray(args.paths)) {
+    for (const p of args.paths) {
+      if (typeof p === 'string' && p.trim()) inputs.push(p.trim())
+    }
+  }
+  if (inputs.length === 0) return { success: false, error: '文件路径不能为空（path 或 paths 至少提供一个）' }
+
+  const recursive = args.recursive === true
+
+  // 展开为待删目标集合：字面路径直接解析；通配路径按匹配到的真实路径展开
+  const targetSet = new Set<string>()
+  const unmatched: string[] = []
+  for (const raw of inputs) {
+    if (isGlobPattern(raw)) {
+      const matched = expandGlob(raw)
+      if (matched.length === 0) unmatched.push(raw)
+      else for (const m of matched) targetSet.add(path.resolve(m))
+    } else {
+      targetSet.add(resolveToolPath(raw))
     }
   }
 
-  const confirm = await filePermission.authorizeFileOperation('删除', [resolved])
+  // 逐目标安全校验，被拒目标记录原因、不删除
+  const rejected: string[] = []
+  const deletable: Array<{ resolved: string; isDir: boolean }> = []
+  const workspaceNorm = normalizePath(getWorkspacePath() || process.cwd())
+  for (const resolved of targetSet) {
+    const norm = normalizePath(resolved)
+    if (!norm) { rejected.push(`${resolved}（路径无效）`); continue }
+    // 盘根等于整盘，工作区根（及其上级）会摧毁任务工作区，二者都属于"绝不允许"的删除目标
+    if (isFsRoot(norm)) { rejected.push(`${resolved}（盘根/文件系统根目录禁止删除）`); continue }
+    if (workspaceNorm && isWithinPath(workspaceNorm, norm)) {
+      rejected.push(`${resolved}（工作区根目录或其上级目录禁止删除）`); continue
+    }
+    if (!fs.existsSync(resolved)) { rejected.push(`${resolved}（路径不存在）`); continue }
+    const stat = fs.lstatSync(resolved)
+    if (stat.isDirectory() && !recursive) {
+      const count = fs.readdirSync(resolved).length
+      rejected.push(count > 0
+        ? `${resolved}（目录非空（${count} 项），需传 recursive=true）`
+        : `${resolved}（目录删除需显式传 recursive=true）`)
+      continue
+    }
+    deletable.push({ resolved, isDir: stat.isDirectory() })
+  }
+
+  if (deletable.length === 0) {
+    const reasons = [
+      unmatched.length > 0 ? `通配路径未匹配到任何文件: ${unmatched.join(', ')}` : '',
+      ...rejected,
+    ].filter(Boolean)
+    return { success: false, error: reasons.length > 0 ? `没有可删除的目标:\n${reasons.join('\n')}` : '没有可删除的目标' }
+  }
+
+  // 权限判定使用展开后的全部真实绝对路径，一次确认批量授权
+  const confirm = await filePermission.authorizeFileOperation('删除', deletable.map(t => t.resolved))
   if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
 
-  const via = await moveToTrash(resolved)
-  const kind = stat.isDirectory() ? '目录' : '文件'
+  const results: string[] = []
+  const failures: string[] = []
+  for (const t of deletable) {
+    try {
+      const via = await moveToTrash(t.resolved)
+      const kind = t.isDir ? '目录' : '文件'
+      results.push(via === 'trash'
+        ? `✓ 已删除${kind}（移入回收站，可恢复）: ${t.resolved}`
+        : `✓ 已删除${kind}（系统回收站不可用，已永久删除，不可恢复）: ${t.resolved}`)
+    } catch (e: any) {
+      failures.push(`✗ ${t.resolved}: ${e.message || e}`)
+    }
+  }
+
+  const parts: string[] = [`共 ${deletable.length} 个目标，已删除 ${results.length} 个`]
+  parts.push(...results)
+  if (failures.length > 0) parts.push(...failures)
+  if (unmatched.length > 0) parts.push(`未匹配到文件的通配路径: ${unmatched.join(', ')}`)
+  if (rejected.length > 0) parts.push(`已跳过 ${rejected.length} 个:\n${rejected.map(r => `  ${r}`).join('\n')}`)
+
   return {
-    success: true,
-    output: via === 'trash'
-      ? `✓ 已删除${kind}（移入回收站，可恢复）: ${resolved}`
-      : `✓ 已删除${kind}（系统回收站不可用，已永久删除，不可恢复）: ${resolved}`,
+    success: results.length > 0,
+    output: parts.join('\n'),
   }
 }
 
