@@ -13,6 +13,7 @@ import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 import { formatDuration } from '../../utils/format'
 import { getToolIconKey } from '../../utils/tool-display'
 import { getCategoryIcon } from '../common/tool-category-icons'
+import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
 
@@ -133,7 +134,6 @@ const ToolCallSegmentInner: React.FC<{
   const { message } = App.useApp()
   const { t } = useTranslation()
   const [resultExpanded, setResultExpanded] = useState(false)
-  const previewRef = useRef<HTMLDivElement>(null)
   const { containerRef: argsScrollRef, onScroll: argsOnScroll } = useAutoFollowScroll<HTMLPreElement>()
   const { containerRef: progressScrollRef, onScroll: progressOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const isArgsStreaming = !!seg.isToolArgsStreaming
@@ -168,12 +168,6 @@ const ToolCallSegmentInner: React.FC<{
     : (isToolError || seg.isToolComplete)
       ? ''
       : [lastProgress?.action, lastProgress?.detail].filter(Boolean).join(' — ')
-
-  // 折叠态预览横向滚动跟随最新内容
-  useEffect(() => {
-    const el = previewRef.current
-    if (el) el.scrollLeft = el.scrollWidth
-  }, [previewText])
 
   const jsonColors = {
     key: token.colorPrimary,
@@ -281,20 +275,12 @@ const ToolCallSegmentInner: React.FC<{
         {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
       </Text>
       {!isExpanded && previewText && (
-        <div
-          ref={previewRef}
-          className="dm-preview-line"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 11,
-            color: token.colorTextQuaternary,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-          }}
-        >
-          {previewText}
-        </div>
+        <PreviewLine
+          text={previewText}
+          fontSize={11}
+          lineHeight={16}
+          color={token.colorTextQuaternary}
+        />
       )}
       {duration !== null && (
         <Text className="dm-toolcall-extra" style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>

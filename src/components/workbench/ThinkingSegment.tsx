@@ -1,10 +1,11 @@
 import { Typography, theme } from 'antd'
-import { BulbOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
+import { BulbOutlined, DownOutlined, LoadingOutlined, RightOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useRef, useMemo, memo } from 'react'
 import type { MessageSegment } from './types'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
 import { formatDuration } from '../../utils/format'
+import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
 
@@ -42,7 +43,6 @@ const ThinkingSegmentInner: React.FC<{
   const [elapsed, setElapsed] = useState(0)
   const { containerRef: contentRef, onScroll: contentOnScroll } = useAutoFollowScroll<HTMLDivElement>()
   const fallbackRef = useRef<number | undefined>(undefined)
-  const previewRef = useRef<HTMLDivElement>(null)
   const [contentExpanded, setContentExpanded] = useState(false)
   const [contentOverflow, setContentOverflow] = useState(false)
 
@@ -73,12 +73,6 @@ const ThinkingSegmentInner: React.FC<{
     }
   }, [lines, contentExpanded])
 
-  // 折叠态预览：单行横向滚动跟随最新思考内容
-  useEffect(() => {
-    const el = previewRef.current
-    if (el) el.scrollLeft = el.scrollWidth
-  }, [seg.content])
-
   const isExpanded = !seg.collapsed
   const duration = seg.timestamp ? elapsed : 0
   const durationText = duration > 0 ? t('workbench.executionTime', { time: formatDuration(duration) }) : ''
@@ -105,30 +99,21 @@ const ThinkingSegmentInner: React.FC<{
       <Text style={{ fontSize: 12, color: token.colorTextSecondary }}>
         {t('workbench.thinkingProcess')}
       </Text>
-      {isStreaming && (
-        <span className="cursor-blink" style={{ color: token.colorTextQuaternary }}>▊</span>
-      )}
       {!isExpanded && isStreaming && content && (
-        <div
-          ref={previewRef}
-          className="dm-preview-line"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            fontSize: 12,
-            lineHeight: '18px',
-            color: token.colorTextQuaternary,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-          }}
-        >
-          {content}
-        </div>
+        <PreviewLine
+          text={content}
+          fontSize={12}
+          lineHeight={18}
+          color={token.colorTextQuaternary}
+        />
       )}
       {durationText && (
         <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
           {durationText}
         </Text>
+      )}
+      {isStreaming && (
+        <LoadingOutlined spin style={{ fontSize: 11, color: token.colorTextTertiary, flexShrink: 0 }} />
       )}
     </div>
   )

@@ -328,8 +328,11 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   }
 }
 
-/* 折叠态最新输出预览行：单行横向滚动跟随最新内容，隐藏滚动条 */
+/* 折叠态最新输出预览行：按容器宽度折行，容器仅一行高、滚动到底部，
+   因此只暴露最后一行——写满一行后整行清空跳到下一行（而非横向滚动） */
 .dm-preview-line {
+  white-space: normal;
+  word-break: break-all;
   scrollbar-width: none;
 }
 .dm-preview-line::-webkit-scrollbar {

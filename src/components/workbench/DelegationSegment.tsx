@@ -13,6 +13,7 @@ import { useState, useRef, useEffect } from 'react'
 import type { MessageSegment, TokenUsage } from './types'
 import { SegmentList } from './message-shared'
 import { formatDuration } from '../../utils/format'
+import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
 
@@ -97,16 +98,11 @@ const DelegationSegmentInner: React.FC<{
   const summary = seg.resultSummary || seg.runResult?.summary || ''
   const hasSubContent = subSegments.length > 0
 
-  // 折叠态预览：单行横向滚动跟随子员工最新输出
-  const previewRef = useRef<HTMLDivElement>(null)
+  // 折叠态预览：子员工最新输出（写满一行后整行跳到下一行）
   const lastContentful = [...subSegments].reverse().find(
     s => (s.type === 'thinking' || s.type === 'answer') && s.content
   )
   const preview = isRunning ? (lastContentful?.content || '') : ''
-  useEffect(() => {
-    const el = previewRef.current
-    if (el) el.scrollLeft = el.scrollWidth
-  }, [preview])
 
   const header = (
     <div
@@ -157,20 +153,12 @@ const DelegationSegmentInner: React.FC<{
         </Tooltip>
       )}
           {!isExpanded && isRunning && preview && (
-            <div
-              ref={previewRef}
-              className="dm-preview-line"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 11,
-                color: token.colorTextQuaternary,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-              }}
-            >
-              {preview}
-            </div>
+            <PreviewLine
+              text={preview}
+              fontSize={11}
+              lineHeight={16}
+              color={token.colorTextQuaternary}
+            />
           )}
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {seg.runGroupIndex === 0 && seg.parallelTotal && seg.parallelTotal > 1 && (
