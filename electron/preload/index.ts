@@ -13,6 +13,7 @@ import type {
   ConversationListWithEmployeeParams,
   ConversationCreateParams,
   ConversationSearchParams,
+  AttachmentSaveResult,
   AppShowOpenDialogParams,
   AppShowSaveDialogParams,
   LLMProviderCreateParams,
@@ -144,6 +145,12 @@ const electronAPI = {
     delete: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE, id),
     deleteAll: (employeeId: string) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_DELETE_ALL, employeeId),
     searchGlobal: (params: ConversationSearchParams) => ipcRenderer.invoke(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, params),
+  },
+
+  attachment: {
+    /** 批量把 base64 data URL 落盘为附件，返回 wa-attachment:// 引用（失败项为 null） */
+    saveDataUrls: (dataUrls: string[]): Promise<AttachmentSaveResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATTACHMENT_SAVE_DATA_URLS, dataUrls),
   },
 
   llm: {

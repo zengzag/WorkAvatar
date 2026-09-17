@@ -38,6 +38,7 @@ import type {
 import { createLogger } from '../../logger'
 import { getProviderCompat } from '../llm/provider-compat'
 import { buildPiStreamOptions } from '../llm/pi-stream-options'
+import AttachmentService, { ATTACHMENT_REF_PATTERN } from '../../attachment.service'
 import LLMLoggerService from '../../llm-logger.service'
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
@@ -82,11 +83,22 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
   }
 }
 
-/** 从 data URL 解析 base64 数据与 mimeType；非 data URL 原样返回（让 provider 自行处理 HTTP 图） */
-function parseImageDataUrl(url: string): { data: string; mimeType: string } | { url: string } {
+/** 图片引用解析结果：
+ * - data URL → { data, mimeType }
+ * - wa-attachment:// 引用 → 读盘转 base64；文件丢失 → { missing: true }（对话继续，附丢失提示）
+ * - 其他（HTTP）→ { url } 原样返回（让 provider 自行处理）
+ */
+function parseImageDataUrl(url: string): { data: string; mimeType: string } | { url: string } | { missing: true } {
   const match = /^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/.exec(url)
   if (match) {
     return { data: match[2], mimeType: match[1] }
+  }
+  if (ATTACHMENT_REF_PATTERN.test(url)) {
+    const resolved = AttachmentService.getInstance().resolve(url)
+    if (resolved) {
+      return { data: resolved.base64, mimeType: resolved.mimeType }
+    }
+    return { missing: true }
   }
   return { url }
 }
@@ -407,10 +419,13 @@ function toPiMessages(
       // 避免模型误以为图片已发送。
       const httpImageUrls: string[] = []
       const imageParts: ImageContent[] = []
+      let missingImageCount = 0
       for (const url of m.images || []) {
         const parsed = parseImageDataUrl(url)
         if ('data' in parsed) {
           imageParts.push({ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingImageCount++
         } else {
           httpImageUrls.push(parsed.url)
         }
@@ -418,12 +433,16 @@ function toPiMessages(
       const skipNote = httpImageUrls.length > 0
         ? `\n\n[注意：${httpImageUrls.length} 张图片（HTTP 链接）未能随消息发送，仅支持内嵌 data URL 图片。链接如下：${httpImageUrls.join('、')}]`
         : ''
+      const missingNote = missingImageCount > 0
+        ? `\n\n[注意：${missingImageCount} 张图片附件文件已丢失，未能随消息发送，可能影响对相关内容的理解]`
+        : ''
+      const userNote = skipNote + missingNote
       const content: string | (TextContent | ImageContent)[] = imageParts.length > 0
         ? [
-            ...(((m.content || '') || httpImageUrls.length > 0) ? [{ type: 'text' as const, text: (m.content || '') + skipNote }] : []),
+            ...(((m.content || '') || userNote) ? [{ type: 'text' as const, text: (m.content || '') + userNote }] : []),
             ...imageParts,
           ]
-        : (m.content || '') + skipNote
+        : (m.content || '') + userNote
       const userMsg: UserMessage = { role: 'user', content, timestamp: ts }
       piMessages.push(userMsg)
       continue
@@ -465,9 +484,17 @@ function toPiMessages(
       // 工具结果图片回放：与实时链路一致放入 toolResult content，
       // 最终由 convertToLlm 在请求前改写为 user 消息注入
       const imageParts: (TextContent | ImageContent)[] = []
+      let missingImageCount = 0
       for (const url of m.images || []) {
         const parsed = parseImageDataUrl(url)
-        if ('data' in parsed) imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingImageCount++
+        }
+      }
+      if (missingImageCount > 0) {
+        imageParts.push({ type: 'text', text: `[注意] ${missingImageCount} 张图片附件文件已丢失，无法提供图片内容` })
       }
       piMessages.push({
         role: 'toolResult',
@@ -549,9 +576,17 @@ function toAgentTool(
       // 图片以 ImageContent 形式放入 toolResult 消息（pi 层存储），
       // 由 convertToLlm 在每次 LLM 请求前改写为紧随 tool result 的 user 消息注入
       const imageParts: (TextContent | ImageContent)[] = []
+      let missingToolImages = 0
       for (const url of result.images || []) {
         const parsed = parseImageDataUrl(url)
-        if ('data' in parsed) imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingToolImages++
+        }
+      }
+      if (missingToolImages > 0) {
+        imageParts.push({ type: 'text', text: `[注意] ${missingToolImages} 张图片附件文件已丢失，无法提供图片内容` })
       }
       return {
         content: [{ type: 'text', text }, ...imageParts],

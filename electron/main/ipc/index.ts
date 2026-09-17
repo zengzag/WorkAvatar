@@ -8,6 +8,8 @@ import { registerKMSHandlers } from './kms.handlers'
 import { registerRuntimeEnvHandlers } from './runtime-env.handlers'
 import { registerMcpHandlers } from './mcp.handlers'
 import { registerPluginHandlers } from './plugin.handlers'
+import { registerAttachmentHandlers } from './attachment.handlers'
+import AttachmentService from '../services/attachment.service'
 import KMSService from '../services/kms/kms.service'
 import WorkspaceManagerService from '../services/workspace-manager.service'
 import LLMClientService from '../services/llm-client.service'
@@ -40,6 +42,10 @@ export function registerIpcHandlers() {
   registerRuntimeEnvHandlers()
   registerMcpHandlers()
   registerPluginHandlers()
+  registerAttachmentHandlers()
+
+  // 附件后台维护（存量 base64 迁移为附件引用 + 孤儿文件 GC，异步不阻塞启动）
+  AttachmentService.getInstance().startupMaintenance()
 
   // 应用启动时初始化 KMS 自动索引（如果已启用）
   KMSService.getInstance().initAutoIndex()

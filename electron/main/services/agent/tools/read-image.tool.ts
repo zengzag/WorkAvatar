@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolHandlerContext } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
+import AttachmentService from '../../attachment.service'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp', 'gif'])
 const MAX_FILE_SIZE = 6 * 1024 * 1024
@@ -45,13 +46,16 @@ export const readImageTool: ToolDefinition = {
 
       const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
       const buf = await fs.promises.readFile(resolved)
+      // 图片以附件引用返回（落盘 hash 去重，前端/历史回放经协议或读盘拿到内容）；落盘失败回退 data URL
+      const dataUrl = `data:${mime};base64,${buf.toString('base64')}`
+      const ref = AttachmentService.getInstance().saveDataUrl(dataUrl)
       // 模型不支持视觉时输出与实际一致的降级文案，避免"已提供给你"与"看不到图"的矛盾
       const output = context?.imageSupport === false
         ? `已读取图片文件: ${resolved}\n但当前模型不支持图片输入，图片未随请求发送。请改用 ocr_image 提取图中文字。`
         : `已读取图片文件: ${resolved}\n图片内容已随消息提供给模型查看。如需提取图中文字，可继续调用 ocr_image。`
       return {
         success: true,
-        images: [`data:${mime};base64,${buf.toString('base64')}`],
+        images: [ref || dataUrl],
         output,
       }
     } catch (error: any) {

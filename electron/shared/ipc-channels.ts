@@ -110,3 +110,6 @@ export type {
 export type {
   NotifyPayload,
 } from './channels/notification'
+export type {
+  AttachmentSaveResult,
+} from './channels/attachment'

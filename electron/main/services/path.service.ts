@@ -114,6 +114,13 @@ class PathService {
     return dir
   }
 
+  /** 对话图片附件目录（随 dataDir 迁移） */
+  getAttachmentsDir(): string {
+    const dir = path.join(this.dataDir, 'attachments')
+    this.ensureDir(dir)
+    return dir
+  }
+
   /**
    * 应用只读资源目录。
    *

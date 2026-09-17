@@ -281,6 +281,16 @@ protocol.registerSchemesAsPrivileged([
       corsEnabled: true,
     },
   },
+  {
+    scheme: 'wa-attachment',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
 ])
 
 const MIME_MAP: Record<string, string> = {
@@ -388,6 +398,39 @@ function registerAppFileProtocol() {
       'Accept-Ranges': 'bytes',
     }
     return new Response(Readable.toWeb(fileStream) as ReadableStream, { headers })
+  })
+}
+
+/** wa-attachment:// 协议：渲染端查看对话图片附件（引用指向 dataDir/attachments 落盘文件）。
+ *  文件丢失时返回占位 SVG（图片缺失不崩 UI，消息其余内容可正常显示）
+ */
+function registerAttachmentProtocol() {
+  const AttachmentService = require('./services/attachment.service').default
+  const attachment = AttachmentService.getInstance()
+  // 语言无关的占位图（山形+太阳图标），明暗主题均可见
+  const MISSING_SVG = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90">',
+    '<rect width="120" height="90" rx="6" fill="#8f8f8f"/>',
+    '<circle cx="88" cy="26" r="7" fill="#f5f5f5"/>',
+    '<path d="M14 74 L44 44 L64 64 L80 48 L106 74 Z" fill="#f5f5f5"/>',
+    '</svg>',
+  ].join('')
+  protocol.handle('wa-attachment', (request) => {
+    const url = new URL(request.url)
+    const name = decodeURIComponent(url.pathname).replace(/^\//, '')
+    const filePath = attachment.getFilePathFromRef(request.url)
+    if (!filePath || url.hostname !== 'local') {
+      return new Response('Bad request', { status: 400 })
+    }
+    if (!fs.existsSync(filePath)) {
+      return new Response(MISSING_SVG, { headers: { 'Content-Type': 'image/svg+xml' } })
+    }
+    const ext = name.slice(name.lastIndexOf('.') + 1)
+    const contentType = MIME_MAP[ext] || 'application/octet-stream'
+    const fileStream = fs.createReadStream(filePath)
+    return new Response(Readable.toWeb(fileStream) as ReadableStream, {
+      headers: { 'Content-Type': contentType },
+    })
   })
 }
 
@@ -610,6 +653,7 @@ app.whenReady().then(() => {
   EmployeeRegistryService.getInstance().ensureDbRecords()
 
   registerAppFileProtocol()
+  registerAttachmentProtocol()
   registerIpcHandlers()
 
   // 配置 getDisplayMedia 请求处理器，用于系统音频录制（Windows loopback）

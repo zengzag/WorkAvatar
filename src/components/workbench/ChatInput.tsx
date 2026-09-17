@@ -42,6 +42,21 @@ const FILE_TOKEN_CLASS = 'chat-input-file-token'
 /** 从 File 对象生成唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
+/** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
+ *  落盘失败（如主进程异常）时保留原 data URL，功能降级不中断。 */
+const buildAttachedImage = async (dataUrl: string, name: string): Promise<AttachedImage> => {
+  let stored = dataUrl
+  try {
+    const result = await window.electronAPI?.attachment?.saveDataUrls([dataUrl])
+    stored = result?.refs?.[0] || dataUrl
+  } catch { /* 降级：保留 dataUrl */ }
+  return {
+    id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    dataUrl: stored,
+    name,
+  }
+}
+
 /** XML 转义，避免路径本身含 &、<、> 时破坏 <path> 标签闭合 */
 const xmlEscape = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -547,13 +562,9 @@ const ChatInput: React.FC<{
       let loadedCount = 0
       for (const file of imgFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          loadedImages.push({
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name || 'pasted-image.png',
-          })
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name || 'pasted-image.png'))
           loadedCount++
           if (loadedCount === imgFiles.length) {
             onImagesChange([...attachedImagesRef.current, ...loadedImages])
@@ -610,13 +621,9 @@ const ChatInput: React.FC<{
       let loadedCount = 0
       for (const file of imageFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          loadedImages.push({
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name || 'pasted-image.png',
-          })
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name || 'pasted-image.png'))
           loadedCount++
           if (loadedCount === imageFiles.length) {
             onImagesChange([...attachedImagesRef.current, ...loadedImages])
@@ -677,13 +684,9 @@ const ChatInput: React.FC<{
       }
       for (const file of imageFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          loadedImages.push({
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name,
-          })
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name))
           maybeFlush()
         }
         reader.onerror = maybeFlush
