@@ -1,7 +1,7 @@
 /**
  * 插件存储与数据迁移契约。
  * - 插件数据完全自包含：sqlite 分库 + KV 均在 userData/plugin-data/<id>/ 下
- * - 内置插件迁出内核数据走一次性 migrations（原子事务 + 版本记录）
+ * - 分库 schema/数据变更走一次性 migrations（原子事务 + 版本记录）
  */
 import type { PluginLogger } from './services'
 
@@ -41,28 +41,8 @@ export interface PluginStorage {
   keys(): Promise<string[]>
 }
 
-/** 内核主库只读访问（需 legacyMigration 权限；非 SELECT 语句直接抛错） */
-export interface PluginLegacyDatabase {
-  listTables(): string[]
-  all(sql: string, ...params: unknown[]): unknown[]
-  get(sql: string, ...params: unknown[]): unknown
-  /** 读内核 settings 表 KV（供插件搬走自有配置项） */
-  getSetting(key: string): unknown
-  /** 只读访问 KMS 向量库（kms_voice_tasks 等历史遗留表；无权限/库不存在时为 null） */
-  kms?: PluginLegacySql | null
-}
-
-/** 只读 SQL 访问子集（用于 legacy.kms） */
-export interface PluginLegacySql {
-  listTables(): string[]
-  all(sql: string, ...params: unknown[]): unknown[]
-  get(sql: string, ...params: unknown[]): unknown
-}
-
 export interface PluginMigrationContext {
   storage: PluginStorage
-  /** 未声明 legacyMigration 权限时为 null */
-  legacy: PluginLegacyDatabase | null
   logger: PluginLogger
 }
 
@@ -71,7 +51,7 @@ export interface PluginMigrationContext {
  * 每个迁移在插件库的独立事务中运行，成功后写入 plugin_migrations 版本记录。
  */
 export interface PluginMigration {
-  /** 迁移版本号（插件内唯一，建议递增，如 '1-legacy-tables'） */
+  /** 迁移版本号（插件内唯一，建议递增，如 '1-init'） */
   version: string
   description?: string
   run(ctx: PluginMigrationContext): Promise<void> | void

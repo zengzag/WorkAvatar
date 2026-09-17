@@ -51,7 +51,12 @@ export interface KnowledgeCard {
 export interface SearchTraceStep {
   phase: string
   action: string
+  /** 界面展示用文案键与参数（按当前语言解析，缺失回退 action/detail） */
+  actionKey?: string
+  actionParams?: Record<string, string | number>
   detail?: string
+  detailKey?: string
+  detailParams?: Record<string, string | number>
   durationMs?: number
   type: 'info' | 'llm' | 'search' | 'read' | 'plan' | 'result'
 }
@@ -268,6 +273,13 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
     return null
   }
 
+  // 轨迹文案：后端给出文案键时按当前语言解析，缺失回退后端原文
+  const stepText = (
+    textKey?: string,
+    textParams?: Record<string, string | number>,
+    fallback?: string,
+  ): string => (textKey ? String(t(textKey, { ...textParams, defaultValue: fallback ?? '' })) : (fallback ?? ''))
+
   const renderStepRows = (steps: SearchTraceStep[]) => steps.map((step, i) => (
     <div key={`step-${i}`} style={{
       display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0',
@@ -277,12 +289,14 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
         {STEP_ICONS[step.type] || '•'}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ fontSize: 12, fontWeight: 500 }}>{step.action}</Text>
+        <Text style={{ fontSize: 12, fontWeight: 500 }}>{stepText(step.actionKey, step.actionParams, step.action)}</Text>
         {step.durationMs !== undefined && (
           <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>{step.durationMs}ms</Text>
         )}
         {step.detail && (
-          <Text type="secondary" style={{ fontSize: 11, display: 'block', wordBreak: 'break-all' }}>{step.detail}</Text>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block', wordBreak: 'break-all' }}>
+            {stepText(step.detailKey, step.detailParams, step.detail)}
+          </Text>
         )}
       </div>
     </div>
@@ -312,8 +326,8 @@ const KnowledgeCardDetail: React.FC<KnowledgeCardDetailProps> = ({
   const renderTraceSection = () => {
     const trace = localCard?.trace || []
     if (processing || trace.length === 0) return null
-    const searchSteps = trace.filter(s => s.type === 'search' || s.action?.startsWith('调用 kms_search'))
-    const fileSteps = trace.filter(s => s.type === 'read' || s.action?.startsWith('调用 kms_get_content'))
+    const searchSteps = trace.filter(s => s.type === 'search')
+    const fileSteps = trace.filter(s => s.type === 'read')
     const header = (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Text strong>{t('kms.knowledgeCards.generateTraceLabel')}</Text>

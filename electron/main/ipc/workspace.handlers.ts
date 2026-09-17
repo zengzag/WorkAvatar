@@ -14,8 +14,8 @@ export function registerWorkspaceHandlers() {
   })
 
   // 删除任务工作区目录（移至回收站，含安全校验，路径必须位于数据目录 employees/ 下）
-  safeHandle(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, (path: string) => {
-    const ok = WorkspaceManagerService.getInstance().deleteTaskWorkspace(path)
+  safeHandle(IPC_CHANNELS.WORKSPACE_DELETE_TASK_DIR, async (path: string) => {
+    const ok = await WorkspaceManagerService.getInstance().deleteTaskWorkspace(path)
     return { success: ok, error: ok ? undefined : '目录删除失败或不在合法工作区范围内' }
   })
 }

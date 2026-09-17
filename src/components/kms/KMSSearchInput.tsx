@@ -41,6 +41,7 @@ interface KMSSearchInputProps {
   onSearchModeChange: (mode: SearchMode) => void
   isSearching: boolean
   onSearch: () => void
+  onClearSearch?: () => void
   searchHistory?: SearchHistoryItem[]
   onLoadSearchHistory?: (params?: { limit?: number }) => void
   onDeleteSearchHistory?: (id: string) => void
@@ -66,6 +67,7 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
   onSearchModeChange,
   isSearching,
   onSearch,
+  onClearSearch,
   searchHistory,
   onLoadSearchHistory,
   onDeleteSearchHistory,
@@ -147,9 +149,10 @@ const KMSSearchInput: React.FC<KMSSearchInputProps> = ({
 
   const handleClearQuery = useCallback(() => {
     onSearchQueryChange('')
+    onClearSearch?.()
     hasOpenedHistoryRef.current = false
     inputRef.current?.focus()
-  }, [onSearchQueryChange])
+  }, [onSearchQueryChange, onClearSearch])
 
   const activeFilterCount = filterDirIds.length + filterCollectionIds.length + filterExtensions.length +
     (filterTimeRange ? 1 : 0)

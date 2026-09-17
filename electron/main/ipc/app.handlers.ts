@@ -14,6 +14,8 @@ import { LoggerBackend } from '../services/logger'
 import TabWindowService from '../services/tab-window.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import PowerSaveService from '../services/power-save.service'
+import mainUiI18n from '../services/ui-i18n.service'
+import { WINDOW_STATE_SETTING_KEY } from '../services/window-state.service'
 import { safeHandle } from './_shared'
 
 // 清除数据时保留的 settings 键（应用级配置，不属于"用户数据"）
@@ -21,11 +23,12 @@ const PRESERVED_SETTINGS_KEYS = new Set([
   'kms_auto_index',
   'web_search_engine',
   'web_search_result_count',
-  'calendar_settings',
   'prevent_sleep_when_foreground',
+  WINDOW_STATE_SETTING_KEY,
 ])
 
-// 需要清空的用户数据表（按依赖顺序，受外键约束）
+// 需要清空的用户数据表（按依赖顺序，受外键约束）。
+// calendar_* 仅存在于早期版本的库中，新库不再建表，清空前按实际存在的表过滤。
 const USER_DATA_TABLES = [
   'calendar_reminders',
   'calendar_todos',
@@ -93,12 +96,20 @@ export function registerAppHandlers(
   })
 
   safeHandle(IPC_CHANNELS.SETTINGS_GET, (params: SettingsGetParams) => {
+    // API Key 由 SecureKeyStorage 专管（加密存储 + 后端解密），不开放给渲染层直读
+    if (params.key.startsWith('llm_api_key_')) {
+      return null
+    }
     const row = settingsGetStmt.get(params.key) as any
     return row?.value || null
   })
 
   safeHandle(IPC_CHANNELS.SETTINGS_SET, (params: SettingsSetParams) => {
     settingsSetStmt.run(params.key, params.value)
+    // 语言变更需同步刷新主进程 UI（托盘菜单等）
+    if (params.key === 'appearance_locale' && (params.value === 'zh-CN' || params.value === 'en-US')) {
+      mainUiI18n.setLocale(params.value)
+    }
     return { success: true }
   })
 
@@ -138,10 +149,18 @@ export function registerAppHandlers(
   // 清除所有用户数据（保留应用级 settings 配置），需重启应用生效
   safeHandle(IPC_CHANNELS.APP_CLEAR_ALL_DATA, () => {
     const tx = db.transaction(() => {
-      // 按外键依赖顺序清空用户数据表
+      // 按外键依赖顺序清空用户数据表（遗留日历表仅存在于升级库，按实际存在的表过滤）
+      const existingTables = new Set(
+        (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(r => r.name)
+      )
       for (const table of USER_DATA_TABLES) {
+        if (!existingTables.has(table)) continue
         db.exec(`DELETE FROM ${table}`)
       }
+      // FTS 虚拟表为独立内容存储（非 external-content），须一并清空，
+      // 否则已删除对话/记忆的全文残留其中（隐私残留 + 搜索幽灵结果）
+      db.exec('DELETE FROM conversations_fts')
+      db.exec('DELETE FROM employee_memories_fts')
       // 清理 settings 表，但保留应用级配置键
       const preserved = Array.from(PRESERVED_SETTINGS_KEYS)
       const placeholders = preserved.map(() => '?').join(',')
@@ -190,16 +209,31 @@ export function registerAppHandlers(
   })
 
   // 推送最大化状态变化事件给渲染进程
+  // 按窗口去重注册系统监听器（渲染端组件多次挂载/HMR 会重复 send 订阅消息）；
+  // 同窗口多个 webContents（如 devtools/webview）各自订阅、各自接收推送
+  const maximizedWatchers = new Map<BrowserWindow, Set<Electron.WebContents>>()
   ipcMain.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return
-    const sendState = () => {
-      if (!win.isDestroyed()) {
-        event.sender.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+    let senders = maximizedWatchers.get(win)
+    if (!senders) {
+      senders = new Set()
+      maximizedWatchers.set(win, senders)
+      const sendState = () => {
+        if (win.isDestroyed()) return
+        for (const wc of senders!) {
+          if (!wc.isDestroyed()) wc.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+        }
       }
+      win.on('maximize', sendState)
+      win.on('unmaximize', sendState)
+      win.once('closed', () => maximizedWatchers.delete(win))
     }
-    win.on('maximize', sendState)
-    win.on('unmaximize', sendState)
+    // 新订阅者：登记并回发当前状态完成初始同步
+    if (!senders.has(event.sender)) {
+      senders.add(event.sender)
+      event.sender.send(IPC_CHANNELS.WINDOW_ON_MAXIMIZED_CHANGE, win.isMaximized())
+    }
   })
 
   // === Tab 独立窗口 ===

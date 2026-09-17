@@ -9,6 +9,7 @@ export type {
   PluginKmsQueryType,
   PluginSystemFeature,
   PluginViewPoint,
+  PluginWebviewOrigin,
 } from './manifest'
 export type {
   PluginToolContext,
@@ -20,7 +21,6 @@ export type {
   PluginDatabase,
   PluginSqlStatement,
   PluginStorage,
-  PluginLegacyDatabase,
   PluginMigration,
   PluginMigrationContext,
 } from './storage'

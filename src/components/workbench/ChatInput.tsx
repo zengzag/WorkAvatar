@@ -5,6 +5,7 @@ import { useMemo, useRef, useCallback, useState, useEffect, memo } from 'react'
 import { getProviderModels, DOMESTIC_PROVIDERS, LOCAL_PROVIDERS, supportsReasoningEffort, supportsThinking } from '../../utils/llm'
 import { isColorDark } from '../../utils/format'
 import { PluginViewSlot } from '../../plugins/view-slot'
+import { useTaskPermissionStore } from '../../stores/task-permission.store'
 import type { Employee, ThinkingLevel } from '../../types'
 
 const { Text } = Typography
@@ -41,6 +42,25 @@ const FILE_TOKEN_CLASS = 'chat-input-file-token'
 /** 从 File 对象生成唯一 id */
 const genFileId = () => `file_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
+/** 生成图片附件项：data URL 先落盘为主进程附件，消息里以 wa-attachment:// 引用流转（避免 base64 进 DB/localStorage）。
+ *  落盘失败（如主进程异常）时保留原 data URL，功能降级不中断。 */
+const buildAttachedImage = async (dataUrl: string, name: string): Promise<AttachedImage> => {
+  let stored = dataUrl
+  try {
+    const result = await window.electronAPI?.attachment?.saveDataUrls([dataUrl])
+    stored = result?.refs?.[0] || dataUrl
+  } catch { /* 降级：保留 dataUrl */ }
+  return {
+    id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    dataUrl: stored,
+    name,
+  }
+}
+
+/** XML 转义，避免路径本身含 &、<、> 时破坏 <path> 标签闭合 */
+const xmlEscape = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
 /**
  * 将包含文件令牌的编辑器内容，转换为最终发送给 LLM 的纯文本（文件令牌替换为绝对路径）
  *
@@ -61,7 +81,7 @@ const extractContentFromEditor = (editor: HTMLElement): string => {
         const el = node as HTMLElement
         if (el.classList?.contains(FILE_TOKEN_CLASS)) {
           const path = el.getAttribute('data-path') || ''
-          if (path) result += path
+          if (path) result += `<path>${xmlEscape(path)}</path>`
           // 跳过子节点（图标、文件名、×按钮等内容不参与 prompt 拼接）
           continue
         }
@@ -301,6 +321,9 @@ const ChatInput: React.FC<{
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
   const [highPermission, setHighPermission] = useState(false)
+  /** 本轮任务高权限模式（确认弹窗中选择"本轮任务不再提醒"后开启，跨消息持续到任务结束或手动关闭） */
+  const taskHighPermission = useTaskPermissionStore((s) => (conversationId ? !!s.enabledKeys[conversationId] : false))
+  const disableTaskHighPermission = useTaskPermissionStore((s) => s.disable)
   const editorRef = useRef<HTMLDivElement>(null)
   /** 编辑器内容是否为空（控制 placeholder） */
   const [editorEmpty, setEditorEmpty] = useState(true)
@@ -447,9 +470,9 @@ const ChatInput: React.FC<{
     const validSkillNames = new Set(invocableSkills.map(s => s.name))
     return raw.replace(/(^|\s)\/([a-z0-9-]+)/g, (m, pre, name) => {
       if (!validSkillNames.has(name)) return m
-      return `${pre}使用 ${name} 技能`
+      return `${pre}${t('workbench.skillCommand', { name })}`
     })
-  }, [invocableSkills])
+  }, [invocableSkills, t])
 
   // 斜杠菜单 / 下拉按钮选中处理：插入 `/<name> `，保留已有内容与 undo 历史
   const handleSlashSelect = useCallback((cmd: { key: string }) => {
@@ -487,14 +510,14 @@ const ChatInput: React.FC<{
     // 此时 content.trim() 非空（因为文件令牌的 path 被写入了），但如果某种异常导致 content 为空但编辑器有令牌，
     // 这里仍然允许发送（因为有图片），但对"只有令牌没图片"的场景，若 extract 得到的 content 是空，说明令牌提取失败——
     // 目前递归 DFS 已正确处理第一层子节点中的文件令牌，这里不再兜底。
-    const sendHighPermission = highPermission
+    const sendHighPermission = highPermission || taskHighPermission
     onSend(content, imageUrls, selectedModels, { highPermission: sendHighPermission })
     // 清空编辑器
     if (editorRef.current) editorRef.current.innerHTML = ''
     emitDraftChange()
     onDraftChange?.('')
     setHighPermission(false)
-  }, [hasEditorContent, attachedImages, selectedModels, highPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
+  }, [hasEditorContent, attachedImages, selectedModels, highPermission, taskHighPermission, onSend, onDraftChange, invocableSkills, convertSkillCommand, emitDraftChange])
 
   // 每次渲染都同步最新 handleSend 到 ref，供 handleKeyDown 的 Enter 键调用：
   //  - 避免 TS2448/TS2454 前向声明报错
@@ -539,13 +562,9 @@ const ChatInput: React.FC<{
       let loadedCount = 0
       for (const file of imgFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          loadedImages.push({
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name || 'pasted-image.png',
-          })
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name || 'pasted-image.png'))
           loadedCount++
           if (loadedCount === imgFiles.length) {
             onImagesChange([...attachedImagesRef.current, ...loadedImages])
@@ -587,24 +606,32 @@ const ChatInput: React.FC<{
     const items = e.clipboardData?.items
     if (!items) return
 
+    // 收集剪贴板中的全部图片项，支持多图同时粘贴
+    const imageFiles: File[] = []
     for (const item of items) {
       if (item.type.startsWith('image/')) {
-        e.preventDefault()
         const file = item.getAsFile()
-        if (!file) continue
+        if (file) imageFiles.push(file)
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      const loadedImages: AttachedImage[] = []
+      let loadedCount = 0
+      for (const file of imageFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
-          onImagesChange([...attachedImagesRef.current, {
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name || 'pasted-image.png',
-          }])
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name || 'pasted-image.png'))
+          loadedCount++
+          if (loadedCount === imageFiles.length) {
+            onImagesChange([...attachedImagesRef.current, ...loadedImages])
+          }
         }
         reader.readAsDataURL(file)
-        return
       }
+      return
     }
 
     const files = e.clipboardData?.files
@@ -657,13 +684,9 @@ const ChatInput: React.FC<{
       }
       for (const file of imageFiles) {
         const reader = new FileReader()
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           const dataUrl = ev.target?.result as string
-          loadedImages.push({
-            id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            dataUrl,
-            name: file.name,
-          })
+          loadedImages.push(await buildAttachedImage(dataUrl, file.name))
           maybeFlush()
         }
         reader.onerror = maybeFlush
@@ -1376,13 +1399,25 @@ const ChatInput: React.FC<{
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 0 2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {!hideToolbar && (
-                <Tooltip title={highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff')}>
+                <Tooltip title={
+                  taskHighPermission
+                    ? t('workbench.highPermissionTaskOn')
+                    : (highPermission ? t('workbench.highPermissionOn') : t('workbench.highPermissionOff'))
+                }>
                   <Button type="text" size="small" icon={<UnlockOutlined style={{ fontSize: 12 }} />}
-                    onClick={() => setHighPermission(!highPermission)}
+                    onClick={() => {
+                      // 任务级高权限：点击关闭（同步撤销主进程登记），避免界面显示关闭但后端继续放行
+                      if (taskHighPermission) {
+                        disableTaskHighPermission(conversationId)
+                        setHighPermission(false)
+                        return
+                      }
+                      setHighPermission(!highPermission)
+                    }}
                     style={{
-                      color: highPermission ? token.colorWarning : token.colorTextQuaternary,
+                      color: highPermission || taskHighPermission ? token.colorWarning : token.colorTextQuaternary,
                       padding: '0 2px', height: 20, minWidth: 20,
-                      background: highPermission ? token.colorWarningBg : 'transparent',
+                      background: highPermission || taskHighPermission ? token.colorWarningBg : 'transparent',
                     }} />
                 </Tooltip>
               )}

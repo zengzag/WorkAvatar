@@ -94,7 +94,7 @@ const ComparisonColumn: React.FC<ComparisonColumnProps> = ({
           )}
         </div>
         {!msg.isStreaming && msg.content && (
-          <Tooltip title={t('common.copied')}>
+          <Tooltip title={t('common.copy')}>
             <Button
               type="text"
               size="small"

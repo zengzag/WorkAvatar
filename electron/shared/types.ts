@@ -95,13 +95,15 @@ export interface Conversation {
   context_stats_json?: string
   /** 对话绑定的默认模型（输入框模型按钮）：各任务独立，JSON 形如 {"providerId":"","modelId":""} */
   default_model_json?: string
+  /** 对话绑定的资料库合集 ID 列表：各任务独立，JSON 形如 ["id1","id2"]，空数组表示不限范围 */
+  collection_ids_json?: string
   /** 任务独立工作区目录（空字符串表示未分配，回退到员工工作区） */
   workspace_path?: string
   /** 父会话 ID：委托产生的子会话记录其主管会话 ID，空字符串表示顶层会话 */
   parent_conversation_id?: string
 }
 
-export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai'
+export type LLMProviderType = 'openai' | 'openai-compatible' | 'lmstudio' | 'deepseek' | 'qwen' | 'zhipu' | 'volcengine' | 'xiaomi' | 'moonshot' | 'yi' | 'groq' | 'mistral' | 'azure' | 'vertex' | 'bedrock' | 'xai' | 'opencode-go'
 
 /** 思考级别：false=关闭，'low'/'medium'/'high'=开启并指定强度 */
 export type ThinkingLevel = false | 'low' | 'medium' | 'high'
@@ -122,6 +124,8 @@ export interface LLMModelConfig {
   thinking_budget?: number
   max_retry?: number
   context_window?: number
+  /** 图片（视觉）输入能力：未设置=自动（按供应商预设）；'on'/'off' 显式覆盖 */
+  supports_image_input?: 'on' | 'off'
   is_default?: boolean
 }
 
@@ -148,6 +152,19 @@ export interface GeneratedFileInfo {
   ext: string
   size: number
   mtime: number
+}
+
+/**
+ * 脚本触发权限确认时下发给渲染端的原始脚本内容。
+ * 单独成字段而不拼进 message：长脚本会撑爆弹窗与系统通知文案，渲染端改用可滚动代码块展示。
+ */
+export interface ScriptDisclosure {
+  /** 脚本语言标识（powershell / bash / javascript），仅用于代码块标注 */
+  language: string
+  /** 原始脚本内容 */
+  content: string
+  /** 内容是否已按上限截断（渲染端据此提示查看完整内容） */
+  truncated: boolean
 }
 
 export interface ParseResult {

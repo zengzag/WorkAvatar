@@ -308,6 +308,8 @@ class FileParserService {
 
     const sections: ParseResult['sections'] = []
     let currentSection: ParseResult['sections'][0] | null = null
+    // 首个标题之前的正文（前言）：不丢弃，作为独立分节保留
+    let preamble = ''
 
     for (const line of lines) {
       const trimmedLine = line.trim()
@@ -318,7 +320,10 @@ class FileParserService {
       if (isHeading && trimmedLine.length < 100) {
         if (currentSection) {
           sections.push(currentSection)
+        } else if (preamble.trim()) {
+          sections.push({ title: '前言', content: preamble, level: 1 })
         }
+        preamble = ''
 
         let level = 2
         const mdMatch = trimmedLine.match(/^(#{1,6})\s/)
@@ -335,6 +340,8 @@ class FileParserService {
         }
       } else if (currentSection) {
         currentSection.content += line + '\n'
+      } else {
+        preamble += line + '\n'
       }
     }
 

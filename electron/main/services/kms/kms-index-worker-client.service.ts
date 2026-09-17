@@ -80,6 +80,9 @@ class KMSIndexWorkerClientService {
   private worker: Worker | null = null
   private workerReady: boolean = false
   private workerFailed: boolean = false
+  /** Worker 失败计数（5 分钟窗口内连续失败 ≥2 次才长期降级） */
+  private workerFailCount: number = 0
+  private lastWorkerFailAt: number = 0
   private pendingTasks: Map<string, PendingTask> = new Map()
   private taskIdCounter = 0
   private progressCallback: ProgressCallback | null = null
@@ -250,6 +253,10 @@ class KMSIndexWorkerClientService {
       }
       this.worker = null
       this.workerReady = false
+      // 主动销毁（应用退出/切数据目录）后允许下次全新创建，不保留降级标记与失败计数
+      this.workerFailed = false
+      this.workerFailCount = 0
+      this.workerInitPromise = null
     }
   }
 
@@ -285,11 +292,31 @@ class KMSIndexWorkerClientService {
     return apiKeys
   }
 
+  /** 进行中的 Worker 初始化 Promise：并发调用复用同一份，防止重复 new Worker 导致先启动者被孤立 */
+  private workerInitPromise: Promise<Worker> | null = null
+
   /**
    * 确保 Worker 已启动并就绪。返回 Worker 实例。
    * 如果启动失败（如原生模块加载失败），抛出异常，调用方降级。
    */
   private async ensureWorker(): Promise<Worker> {
+    if (this.worker && this.workerReady) return this.worker
+    if (this.workerFailed) throw new Error('Worker marked as failed')
+    // 并发去重：auto-index 定时触发与用户手动索引可能同时进入，
+    // 不去重时两路各自 new Worker，先启动者被孤立且持有 DB 连接永不 terminate
+    if (this.workerInitPromise) return this.workerInitPromise
+
+    this.workerInitPromise = this.doEnsureWorker()
+    try {
+      return await this.workerInitPromise
+    } catch (err) {
+      // 失败后允许下次重试
+      this.workerInitPromise = null
+      throw err
+    }
+  }
+
+  private async doEnsureWorker(): Promise<Worker> {
     if (this.worker && this.workerReady) return this.worker
     if (this.workerFailed) throw new Error('Worker marked as failed')
 
@@ -352,7 +379,12 @@ class KMSIndexWorkerClientService {
   }
 
   private markWorkerFailed(): void {
-    this.workerFailed = true
+    // 失败次数计数：短时间连续失败 ≥2 次才长期降级（原生模块缺失等永久性问题）；
+    // 单次失败（瞬态）允许下次 ensureWorker 重试，避免 Worker 永久降级直到重启应用
+    const now = Date.now()
+    this.workerFailCount = (now - this.lastWorkerFailAt < 5 * 60_000) ? this.workerFailCount + 1 : 1
+    this.lastWorkerFailAt = now
+    this.workerFailed = this.workerFailCount >= 2
     // 拒绝所有待处理任务
     for (const pending of this.pendingTasks.values()) {
       pending.reject(new Error('Worker unavailable'))
@@ -363,6 +395,7 @@ class KMSIndexWorkerClientService {
       this.worker.terminate().catch(() => {})
       this.worker = null
       this.workerReady = false
+      this.workerInitPromise = null
     }
   }
 

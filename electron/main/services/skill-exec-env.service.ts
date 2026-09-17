@@ -15,6 +15,27 @@ export interface ScriptExecutionResult {
 
 const MAX_OUTPUT = 100 * 1024 // 100KB
 
+/** 输出超限时的截断标记：明确告知调用方输出不完整，而不是静默丢弃 */
+function truncationMark(limit: number): string {
+  return `\n...[输出已截断，仅保留前 ${limit} 字符]`
+}
+
+interface OutputBuffer {
+  text: string
+  /** 已截断：后续数据直接丢弃，避免反复拼接巨型字符串 */
+  truncated: boolean
+}
+
+/** 累积子进程输出，超过上限时截断并追加截断标记 */
+function appendOutput(buffer: OutputBuffer, chunk: string): void {
+  if (buffer.truncated) return
+  buffer.text += chunk
+  if (buffer.text.length > MAX_OUTPUT) {
+    buffer.text = buffer.text.substring(0, MAX_OUTPUT) + truncationMark(MAX_OUTPUT)
+    buffer.truncated = true
+  }
+}
+
 class SkillExecEnvService {
   private static instance: SkillExecEnvService
   private skillRegistry: SkillRegistryService
@@ -34,8 +55,10 @@ class SkillExecEnvService {
   resolveScriptPath(skillId: string, scriptName: string): string | null {
     const skill = this.skillRegistry.getSkillById(skillId)
     if (!skill) return null
-    // scriptName 仅允许文件名，不能含路径分隔符或 ..
-    if (/[\/\\]|\.\./.test(scriptName)) return null
+    // scriptName 仅允许纯文件名：含路径分隔符（跨目录）或 .. 路径段（目录穿越）一律拒绝。
+    // 按路径段判定而非裸匹配 ".."，避免误杀 a..b.js 这类合法文件名
+    const segments = scriptName.split(/[\\/]/)
+    if (segments.length > 1 || segments.includes('..')) return null
     const script = skill.scripts.find((s) => s.name === scriptName)
     return script ? script.path : null
   }
@@ -98,23 +121,17 @@ class SkillExecEnvService {
         env: { ...process.env },
       })
 
-      let stdout = ''
-      let stderr = ''
+      const stdoutBuffer: OutputBuffer = { text: '', truncated: false }
+      const stderrBuffer: OutputBuffer = { text: '', truncated: false }
 
-      child.stdout?.on('data', (data) => {
-        stdout += data.toString()
-        if (stdout.length > MAX_OUTPUT) stdout = stdout.substring(0, MAX_OUTPUT)
-      })
-      child.stderr?.on('data', (data) => {
-        stderr += data.toString()
-        if (stderr.length > MAX_OUTPUT) stderr = stderr.substring(0, MAX_OUTPUT)
-      })
+      child.stdout?.on('data', (data) => appendOutput(stdoutBuffer, data.toString()))
+      child.stderr?.on('data', (data) => appendOutput(stderrBuffer, data.toString()))
 
       child.on('error', (err) => {
         resolve({
           success: false,
-          stdout,
-          stderr: stderr + `\n[spawn error: ${err.message}]`,
+          stdout: stdoutBuffer.text,
+          stderr: stderrBuffer.text + `\n[spawn error: ${err.message}]`,
           exitCode: null,
           durationMs: Date.now() - startTime,
         })
@@ -123,8 +140,8 @@ class SkillExecEnvService {
       child.on('close', (code) => {
         resolve({
           success: code === 0,
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
+          stdout: stdoutBuffer.text.trim(),
+          stderr: stderrBuffer.text.trim(),
           exitCode: code,
           durationMs: Date.now() - startTime,
         })

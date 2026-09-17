@@ -51,7 +51,7 @@ const KMSKnowledgeCardsView: React.FC<KMSKnowledgeCardsViewProps> = ({ onOpenFil
         setCards(result.cards || [])
       }
     } catch (err: any) {
-      message.error(err?.message || 'Failed to load cards')
+      message.error(err?.message || t('kms.knowledgeCards.loadFailed'))
     } finally {
       setLoading(false)
     }

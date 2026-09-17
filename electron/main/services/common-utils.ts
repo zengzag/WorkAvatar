@@ -3,17 +3,20 @@ import * as fs from 'fs'
 
 /**
  * 将文件/文件夹移至操作系统回收站（可找回），回收站不可用时回退到永久删除。
+ * 返回实际采用的方式，供调用方如实告知用户是否可恢复。
  * 仅在主进程可用（内部 lazy require electron.shell）。
  */
-export async function moveToTrash(filePath: string): Promise<void> {
+export async function moveToTrash(filePath: string): Promise<'trash' | 'permanent'> {
   const { shell } = require('electron')
   try {
     await shell.trashItem(filePath)
+    return 'trash'
   } catch {
     // 回收站不可用（如某些 Linux 环境）时回退到永久删除
     if (fs.existsSync(filePath)) {
       fs.rmSync(filePath, { recursive: true, force: true })
     }
+    return 'permanent'
   }
 }
 
@@ -58,12 +61,12 @@ export function safeCalculate(expression: string): number {
 export function formatDate(date: Date, format: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return format
-    .replace('YYYY', String(date.getFullYear()))
-    .replace('MM', pad(date.getMonth() + 1))
-    .replace('DD', pad(date.getDate()))
-    .replace('HH', pad(date.getHours()))
-    .replace('mm', pad(date.getMinutes()))
-    .replace('ss', pad(date.getSeconds()))
+    .replace(/YYYY/g, String(date.getFullYear()))
+    .replace(/MM/g, pad(date.getMonth() + 1))
+    .replace(/DD/g, pad(date.getDate()))
+    .replace(/HH/g, pad(date.getHours()))
+    .replace(/mm/g, pad(date.getMinutes()))
+    .replace(/ss/g, pad(date.getSeconds()))
 }
 
 export function getDefaultProviderId(db: { getDb(): any }): string | null {
@@ -78,7 +81,7 @@ export function extractMessagePreview(messagesJson: string): string {
     const parts: string[] = []
     for (const m of messages) {
       if (m.role === 'user' && typeof m.content === 'string') {
-        parts.push(m.content)
+        if (m.content.trim()) parts.push(m.content)
       } else if (m.role === 'assistant') {
         // assistant content 可能是纯文本，也可能拆分到 segments
         if (typeof m.content === 'string' && m.content.trim()) {

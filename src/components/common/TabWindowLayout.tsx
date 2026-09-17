@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useLocation, Outlet } from 'react-router-dom'
-import { useAppearanceStore } from '../../stores/appearance.store'
+import { useAppearanceStore, getEffectiveTheme } from '../../stores/appearance.store'
 import { useNavConfigStore } from '../../stores/nav.store'
 import { hasDirtyCloseGuard } from '../../plugins/loader'
 
@@ -30,7 +30,7 @@ const TabWindowLayout: React.FC = () => {
 
   const themeMode = useAppearanceStore((s) => s.themeMode)
   const setThemeMode = useAppearanceStore((s) => s.setThemeMode)
-  const isDark = themeMode === 'dark'
+  const isDark = getEffectiveTheme(themeMode) === 'dark'
 
   const [isMaximized, setIsMaximized] = useState(false)
   // 当前窗口所属 tabKey（从主进程查询；主窗口渲染进程不会渲染此组件）

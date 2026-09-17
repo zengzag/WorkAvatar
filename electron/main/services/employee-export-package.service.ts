@@ -137,11 +137,6 @@ export class EmployeeExportPackageService {
         return { success: false, error: 'Invalid package: not a WorkAvatar employee package' }
       }
 
-      const versionCheck = this.configService.checkVersionCompatibility(manifest.version, EXPORT_PACKAGE_VERSION)
-      if (!versionCheck.compatible) {
-        return { success: false, error: versionCheck.message }
-      }
-
       const savedChecksum = manifest.checksum
       const entriesWithoutManifest = zip.getEntries().filter(e => e.entryName !== 'manifest.json')
       const allFileContents = entriesWithoutManifest.map(e => e.getData().toString('hex')).join('')

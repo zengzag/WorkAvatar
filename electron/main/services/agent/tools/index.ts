@@ -5,6 +5,7 @@ import { webSearchTool } from './web-search.tool'
 import { webFetchTool } from './web-fetch.tool'
 import { askUserTool } from './ask-user.tool'
 import { ocrImageTool } from './ocr.tool'
+import { readImageTool } from './read-image.tool'
 import { sendMessageTool, readMessagesTool } from './collab-messages.tool'
 import { listEmployeesTool, listProvidersTool } from './collaboration.tool'
 import type { ToolDefinition } from './types'
@@ -19,6 +20,7 @@ export const allBuiltinTools: ToolDefinition[] = [
   webFetchTool,
   askUserTool,
   ocrImageTool,
+  readImageTool,
   sendMessageTool,
   readMessagesTool,
   listEmployeesTool,

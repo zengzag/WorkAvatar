@@ -45,16 +45,16 @@ export function registerMcpHandlers(): void {
     return result
   })
 
-  // 删除 MCP server
+  // 删除 MCP server（校验归属，防止跨员工删除）
   safeHandle(IPC_CHANNELS.MCP_DELETE, (params: { id: string; employee_id: string }) => {
-    registry.delete(params.id)
+    registry.delete(params.id, params.employee_id)
     agentService.clearAgentCache(params.employee_id)
     return { success: true }
   })
 
-  // 启用 / 禁用 MCP server
+  // 启用 / 禁用 MCP server（校验归属，防止跨员工操作）
   safeHandle(IPC_CHANNELS.MCP_TOGGLE, (params: { id: string; enabled: boolean; employee_id: string }) => {
-    const result = registry.toggle(params.id, params.enabled)
+    const result = registry.toggle(params.id, params.enabled, params.employee_id)
     agentService.clearAgentCache(params.employee_id)
     return result
   })

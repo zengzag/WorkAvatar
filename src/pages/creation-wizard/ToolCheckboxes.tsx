@@ -1,18 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { Checkbox, Typography, Space, Tag, theme } from 'antd'
-import {
-  FileOutlined,
-  DatabaseOutlined,
-  CalendarOutlined,
-  RobotOutlined,
-  GlobalOutlined,
-  MessageOutlined,
-  BulbOutlined,
-  ToolOutlined,
-  CodeOutlined,
-  AppstoreOutlined,
-  TeamOutlined,
-} from '@ant-design/icons'
+import { resolveToolLabel } from '../../utils/tool-display'
+import { ToolOutlined } from '@ant-design/icons'
+import { getCategoryIcon } from '../../components/common/tool-category-icons'
 
 const { Text } = Typography
 
@@ -38,27 +28,6 @@ interface ToolCheckboxesProps {
   categories: ToolCategoryDef[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
-}
-
-const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
-  file: <FileOutlined />,
-  database: <DatabaseOutlined />,
-  calendar: <CalendarOutlined />,
-  robot: <RobotOutlined />,
-  global: <GlobalOutlined />,
-  message: <MessageOutlined />,
-  tool: <BulbOutlined />,
-  code: <CodeOutlined />,
-  plugin: <AppstoreOutlined />,
-  team: <TeamOutlined />,
-}
-
-/** 将工具名/标题映射为更简短的中文标签 */
-function toolShortLabel(tool: ToolItem, t: any): string {
-  const i18nKey = `workbench.toolNames.${tool.name}` as any
-  const translated = t(i18nKey, { defaultValue: '' })
-  if (translated) return translated
-  return tool.title || tool.name
 }
 
 /** 工具多选列表（按分类分组，分类来自后端含插件分类） */
@@ -128,7 +97,7 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, categories, sele
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                  <span style={{ color: token.colorPrimary }}>{CATEGORY_ICON_MAP[cat.icon] || <AppstoreOutlined />}</span>
+                  <span style={{ color: token.colorPrimary }}>{getCategoryIcon(cat.icon)}</span>
                   <Text strong ellipsis style={{ fontSize: 13 }}>
                     {cat.is_plugin
                       ? t(cat.title, { ns: cat.plugin_id, defaultValue: cat.title })
@@ -174,7 +143,7 @@ const ToolCheckboxes: React.FC<ToolCheckboxesProps> = ({ tools, categories, sele
                     style={{ marginInlineEnd: 0 }}
                   >
                     <span style={{ fontSize: 13 }}>
-                      {toolShortLabel(tool, t)}
+                      {resolveToolLabel(tool.name, tool.title, cat.is_plugin ? cat.plugin_id : undefined)}
                     </span>
                   </Checkbox>
                 ))}

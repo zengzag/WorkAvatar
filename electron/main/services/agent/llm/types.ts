@@ -12,6 +12,18 @@ export interface LLMCallOptions {
   sessionId?: string
   /** 取消信号（chat 非流式调用同样支持取消） */
   signal?: AbortSignal
+  /** 频率惩罚（映射到 pi-ai samplingParams.frequency_penalty） */
+  frequencyPenalty?: number
+  /** 存在惩罚（映射到 pi-ai samplingParams.presence_penalty） */
+  presencePenalty?: number
+  /** 思考 token 预算（映射到 pi-ai thinkingBudgets，按强度档位统一设置） */
+  thinkingBudget?: number
+  /** 单次请求超时（毫秒，映射到 pi-ai timeoutMs） */
+  timeoutMs?: number
+  /** 供应商级附加请求头（映射到 pi-ai options.headers，优先级高于内置会话路由头） */
+  extraHeaders?: Record<string, string>
+  /** 供应商级附加请求体字段（映射到 pi-ai options.onPayload，浅合并进请求体） */
+  extraBody?: Record<string, any>
 }
 
 export interface LLMResponse {

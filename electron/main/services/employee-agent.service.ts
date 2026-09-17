@@ -1,6 +1,7 @@
 import os from 'os'
 import DatabaseService from './database.service'
 import LLMClientService from './llm-client.service'
+import { parseJsonRecord } from './llm-request-builder'
 import SkillRegistryService from './skill-registry.service'
 import EmployeeMemoryService from './employee-memory.service'
 import McpRegistryService from './mcp-registry.service'
@@ -11,6 +12,7 @@ import type { BaseAgentOptions } from './agent/core/base-agent'
 import { allBuiltinTools, createKMSCollectionTools, javascriptExecTool, createKMSTools, createListAvailableToolsTool, createInvokeToolTool, runSkillScriptTool, delegateTool, followupTool, launchAgentsTool, awaitAgentsTool, type SearchScopeRef } from './agent/tools'
 import { createConversationSearchTool } from './agent/tools/conversation-search.tool'
 import { createConversationListTool } from './agent/tools/conversation-list.tool'
+import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { Message } from './agent/core/types'
 import { parseEmployeeDelegation } from '../../shared/types'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
@@ -39,6 +41,7 @@ interface EmployeeChatStreamParams {
       name: string
       args: any
       result?: any
+      images?: string[]
       isComplete?: boolean
     }>
     toolCallId?: string
@@ -62,7 +65,7 @@ interface EmployeeChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -84,6 +87,8 @@ class EmployeeAgentService {
   private memoryService: EmployeeMemoryService
   private mcpRegistry: McpRegistryService
   private agentEntries: Map<string, CachedAgentEntry> = new Map()
+  /** 进行中的 agent 构建（按 cacheKey 去重），防止并发重复创建与 MCP 连接泄漏 */
+  private agentCreationInFlight: Map<string, Promise<CachedAgentEntry>> = new Map()
   /** 插件工具/员工/技能集合版本号：插件增删升级时递增，使存量 agent 缓存按工具集失效 */
   private toolEpoch = 0
   private static instance: EmployeeAgentService
@@ -110,11 +115,17 @@ class EmployeeAgentService {
     enableThinking?: ThinkingLevel,
     conversationId?: string,
     employee?: DBEmployee,
-    minimalMode?: boolean
+    minimalMode?: boolean,
+    /** 单次调用级采样覆盖（前端 options.temperature / max_tokens），优先于模型与供应商配置 */
+    streamOverrides?: { temperature?: number; maxTokens?: number }
   ): Promise<CachedAgentEntry> {
     // 缓存 key 必须包含 conversationId：不同任务（对话）各自持有独立 agent 实例，
     // 避免并发多任务时共享同一 agent（_running/_currentSignal/MCP 引用）导致互相中断。
-    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}:${conversationId || 'no-conv'}`
+    // 采样覆盖同样计入 key：不同采样参数需要各自的 provider 配置快照。
+    const overrideKey = streamOverrides
+      ? `${streamOverrides.temperature ?? 'd'}/${streamOverrides.maxTokens ?? 'd'}`
+      : 'd/d'
+    const cacheKey = `${employeeId}:${providerId}:${modelId || 'default'}:${enableThinking || 'no-thinking'}:${conversationId || 'no-conv'}:${overrideKey}`
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) {
@@ -134,6 +145,34 @@ class EmployeeAgentService {
       }
     }
 
+    // 并发去重：同一 cacheKey 的创建请求复用进行中的构建，
+    // 避免重复建 agent + 先建者的 mcpRelease 永不释放（MCP 连接泄漏）
+    const inFlight = this.agentCreationInFlight.get(cacheKey)
+    if (inFlight) return inFlight
+
+    const creation = this.doCreateAgent(
+      cacheKey, employeeId, providerId, modelId, enableThinking,
+      conversationId, employee, minimalMode, streamOverrides
+    )
+    this.agentCreationInFlight.set(cacheKey, creation)
+    try {
+      return await creation
+    } finally {
+      this.agentCreationInFlight.delete(cacheKey)
+    }
+  }
+
+  private async doCreateAgent(
+    cacheKey: string,
+    employeeId: string,
+    providerId: string,
+    modelId?: string,
+    enableThinking?: ThinkingLevel,
+    conversationId?: string,
+    employee?: DBEmployee,
+    minimalMode?: boolean,
+    streamOverrides?: { temperature?: number; maxTokens?: number }
+  ): Promise<CachedAgentEntry> {
     const emp = employee
       ?? this.db.getDb().prepare('SELECT * FROM employees WHERE id = ?').get(employeeId) as DBEmployee | undefined
       // 注册员工（内置/插件）无 DB 记录：回退注册表解析
@@ -155,20 +194,13 @@ class EmployeeAgentService {
         if (profile.roleName) {
           role = profile.roleName
         }
-        // 旧数据兼容：无 rules 时回退到画像中的 roleDescription
-        if (!emp.rules?.trim() && profile.roleDescription) {
-          instructions = profile.roleDescription
-        }
       } catch (error) {
         logger.warn('Failed to parse employee profile_json, using default instructions', error)
       }
     }
+    // 规则（系统提示词）：唯一权威来源
     if (emp.rules?.trim()) {
-      // 规则（系统提示词）：唯一权威来源
       instructions = emp.rules
-    } else if (!emp.profile_json && emp.description) {
-      // 兼容未迁移的旧数据（description 曾兼作系统提示词）
-      instructions = emp.description
     }
 
     const employeeSkills = this.skillRegistry.getEmployeeSkills(employeeId)
@@ -203,8 +235,21 @@ class EmployeeAgentService {
       apiKey: config.api_key,
       baseUrl: config.base_url || this.llmClient.getBaseURL(config),
       providerType: config.provider_type,
+      supportsImageInput: resolveImageSupport(config.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: conversationId,
+      // 采样 / 传输设置：单次调用覆盖 > 模型配置 > 供应商配置
+      stream: {
+        temperature: streamOverrides?.temperature ?? modelConfig?.temperature ?? config.temperature,
+        maxTokens: streamOverrides?.maxTokens ?? modelConfig?.max_tokens ?? config.max_tokens,
+        topP: modelConfig?.top_p,
+        frequencyPenalty: modelConfig?.frequency_penalty,
+        presencePenalty: modelConfig?.presence_penalty,
+        thinkingBudget: modelConfig?.thinking_budget,
+        timeoutMs: config.timeout_ms,
+        extraHeaders: parseJsonRecord(config.extra_headers_json),
+        extraBody: parseJsonRecord(config.extra_body_json),
+      },
       allowedSkillPaths: enabledSkillPaths,
       autoDiscoverSkills: true,
       delegationTargets,
@@ -302,7 +347,7 @@ class EmployeeAgentService {
 
     // 注册元工具（常驻 LLM tools 数组）：list_available_tools + invoke_tool
     agent.registerTools([
-      createListAvailableToolsTool(agent.getToolRegistry(), emp.workspace_path || ''),
+      createListAvailableToolsTool(agent.getToolRegistry()),
       createInvokeToolTool(agent.getToolDispatcher(), agent.getToolRegistry()),
     ])
 
@@ -365,7 +410,7 @@ class EmployeeAgentService {
   /**
    * 工具三态（on/on_demand/off）映射：
    * - 无配置行 → 按工具定义默认模式（onDemand 标志：常驻=on，否则 on_demand）
-   * - 有配置行 → 使用 tool_mode 列值（旧数据 tool_mode 缺失时回退默认）
+   * - 有配置行 → 使用 tool_mode 列值
    */
   private getEmployeeToolModes(employeeId: string): Map<string, ToolMode> {
     const modeMap = new Map<string, ToolMode>()
@@ -399,17 +444,9 @@ class EmployeeAgentService {
       }
     }
 
-    let rows = this.db.getDb().prepare(
+    const rows = this.db.getDb().prepare(
       'SELECT tool_id, tool_mode FROM employee_tools WHERE employee_id = ?'
     ).all(employeeId) as DBEmployeeTool[]
-
-    rows = rows.map(row => ({
-      ...row,
-      tool_id: row.tool_id === 'office_exec' ? 'javascript_exec'
-        : row.tool_id === 'automation_list_employees' ? 'list_employees'
-        : row.tool_id === 'automation_list_providers' ? 'list_providers'
-        : row.tool_id,
-    }))
 
     for (const row of rows) {
       if (modeMap.has(row.tool_id) && (row.tool_mode === 'on' || row.tool_mode === 'on_demand' || row.tool_mode === 'off')) {
@@ -506,7 +543,10 @@ class EmployeeAgentService {
     }
 
     await LLMLoggerService.getInstance().runWithContext(logCtx, async () => {
-      const entry = await this.getOrCreateAgent(employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode)
+      const entry = await this.getOrCreateAgent(
+        employee_id, provider_id, model_id, enable_thinking, conversation_id, employee, minimal_mode,
+        params.options ? { temperature: params.options.temperature, maxTokens: params.options.max_tokens } : undefined
+      )
       const agent = entry.agent
       entry.collectionIdsRef.current.collectionIds = collection_ids || []
 
@@ -673,13 +713,20 @@ class EmployeeAgentService {
     provider_id: string
     model_id?: string
     enable_thinking?: ThinkingLevel
+    conversation_id?: string
   }): any {
-    const { employee_id, provider_id, model_id, enable_thinking } = params
-    // 与 getOrCreateAgent 的缓存 key 保持一致（无 conversationId 时用 no-conv 兜底）
-    const cacheKey = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}:no-conv`
-    const entry = this.agentEntries.get(cacheKey)
-    if (!entry) return null
-    return entry.agent.getContextStats()
+    const { employee_id, provider_id, model_id, enable_thinking, conversation_id } = params
+    // getOrCreateAgent 的 key 含 conversationId 与采样覆盖段（overrideKey）。
+    // 本查询无法预知 overrideKey，故按前缀匹配：优先返回无采样覆盖（override='d/d'）的条目。
+    const base = `${employee_id}:${provider_id}:${model_id || 'default'}:${enable_thinking || 'no-thinking'}:${conversation_id || 'no-conv'}:`
+    let fallbackEntry: CachedAgentEntry | null = null
+    for (const [key, entry] of this.agentEntries) {
+      if (!key.startsWith(base)) continue
+      if (key.endsWith(':d/d')) return entry.agent.getContextStats()
+      fallbackEntry = entry
+    }
+    if (!fallbackEntry) return null
+    return fallbackEntry.agent.getContextStats()
   }
 
   /** 插件/工具集合变更后调用：递增 epoch 使存量 agent 缓存按工具集失效（运行中的保留至本轮结束） */
@@ -746,6 +793,7 @@ class EmployeeAgentService {
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            images: tc.images,
           })
         }
       } else {

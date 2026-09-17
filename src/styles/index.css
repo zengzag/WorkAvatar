@@ -61,6 +61,16 @@ body {
   background-color: var(--bg-primary);
 }
 
+/* 应用是固定视口壳层：只给 #root 设 overflow:hidden 是不够的 ——
+   antd 的 Tooltip / Dropdown 等浮层是 portal 到 body 上的，
+   一旦浮层探出视口，被撑大的就是文档本身，于是凭空冒出滚动条
+   （#root 用的是 100vw，还会连带把横向滚动条也带出来）。
+   在 body 这层同样收口即可（浮层本身由 rc-trigger 自动贴边，不会被裁）。 */
+html,
+body {
+  overflow: hidden;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -281,6 +291,12 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   height: 100%;
 }
 
+/* 「更多」弹出菜单：最大高度限制（视口 60%，不超过 480px），超出内部滚动 */
+.nav-more-popup .ant-menu {
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+
 /* 导航栏后台录音指示器：图标变色 + 红点脉冲 */
 @keyframes nav-rec-pulse {
   0% { opacity: 1; transform: scale(1); }
@@ -310,4 +326,15 @@ html.dark .ant-modal-body::-webkit-scrollbar-thumb:hover {
   .dm-toolcall-extra {
     display: none !important;
   }
+}
+
+/* 折叠态最新输出预览行：按容器宽度折行，容器仅一行高、滚动到底部，
+   因此只暴露最后一行——写满一行后整行清空跳到下一行（而非横向滚动） */
+.dm-preview-line {
+  white-space: normal;
+  word-break: break-all;
+  scrollbar-width: none;
+}
+.dm-preview-line::-webkit-scrollbar {
+  display: none;
 }

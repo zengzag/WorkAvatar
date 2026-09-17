@@ -207,9 +207,6 @@ export default defineConfig({
         // KMS 批量索引 Worker：把 better-sqlite3 同步阻塞操作移出主线程，
         // 避免解析 3000+ 文件时卡死 UI
         entry: 'electron/main/workers/kms-index-worker.ts',
-        onstart() {
-          // Worker 不需要 startup，主进程运行时按需 spawn
-        },
         vite: {
           build: {
             outDir: 'dist-electron/main',
@@ -232,9 +229,6 @@ export default defineConfig({
         // OCR Worker：将 PaddleOCR / onnxruntime-native 运行在独立 Worker 线程中，
         // onnxruntime 原生崩溃不会杀死主进程
         entry: 'electron/main/workers/ocr-worker.ts',
-        onstart() {
-          // Worker 不需要 startup，主进程运行时按需 spawn
-        },
         vite: {
           build: {
             outDir: 'dist-electron/main',

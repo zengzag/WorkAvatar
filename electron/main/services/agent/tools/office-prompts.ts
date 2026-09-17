@@ -62,7 +62,7 @@ export function buildOfficeGuide(workspacePath?: string, formats?: string[]): st
   parts.push('### 代码传入方式')
   parts.push('- **短代码（<800字）**：直接传 `code` 参数')
   parts.push('- **长代码（≥800字）**：先用 `file_write` 写入 `.js` 文件，再传 `code_file` 参数（避免 JSON 转义导致引号 SyntaxError）')
-  parts.push('- **任务完成清理**：临时代码文件（如 `gen-doc.js`）在文档生成成功后及时删除')
+  parts.push('- **任务完成清理**：临时代码文件（如 `gen-doc.js`）在文档生成成功后用 `file_delete` 删除（不要用 shell 命令删除，会被安全策略拒绝）')
   parts.push('')
 
   // ===== 沙箱环境 =====

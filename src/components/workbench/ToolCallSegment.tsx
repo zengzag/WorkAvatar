@@ -1,18 +1,19 @@
-import { Typography, Tag, theme, Tooltip, App } from 'antd'
+import { Typography, Tooltip, App, Image, theme } from 'antd'
 import {
   DownOutlined,
   RightOutlined,
-  CodeOutlined,
   LoadingOutlined,
-  CheckCircleOutlined,
   CloseCircleOutlined,
   CopyOutlined,
-  ClockCircleOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback, useRef, memo, type ReactNode } from 'react'
 import type { MessageSegment } from './types'
 import { useAutoFollowScroll } from '../../hooks/useAutoFollowScroll'
+import { formatDuration } from '../../utils/format'
+import { getToolIconKey } from '../../utils/tool-display'
+import { getCategoryIcon } from '../common/tool-category-icons'
+import PreviewLine from './PreviewLine'
 
 const { Text } = Typography
 
@@ -121,7 +122,7 @@ function useElapsedTime(startTime: number | undefined, isComplete: boolean, comp
   }, [startTime, isComplete, completedAt])
 
   if (elapsed === null) return null
-  return elapsed < 10 ? elapsed.toFixed(1) : Math.round(elapsed).toString()
+  return formatDuration(elapsed)
 }
 
 const ToolCallSegmentInner: React.FC<{
@@ -141,29 +142,6 @@ const ToolCallSegmentInner: React.FC<{
   const isToolPending = !seg.isToolComplete && !isToolError
   const isExpanded = !seg.collapsed
 
-  // 统一计算边框/背景/图标色，避免多层三元嵌套（cancelled > argsStreaming > pending > success）
-  const accentColor = isToolError
-    ? token.colorError
-    : isArgsStreaming
-      ? token.colorInfo
-      : isToolPending
-        ? token.colorPrimary
-        : token.colorSuccess
-  const accentBorder = isToolError
-    ? token.colorErrorBorder
-    : isArgsStreaming
-      ? token.colorInfoBorder
-      : isToolPending
-        ? token.colorPrimaryBorder
-        : token.colorSuccessBorder
-  const headerBg = isToolError
-    ? token.colorErrorBg
-    : isArgsStreaming
-      ? token.colorInfoBg
-      : isToolPending
-        ? token.colorPrimaryBg
-        : token.colorSuccessBg
-
   const duration = useElapsedTime(seg.timestamp, !!seg.isToolComplete, seg.completedAt)
 
   const resultStr = seg.toolResult !== undefined
@@ -180,6 +158,16 @@ const ToolCallSegmentInner: React.FC<{
   const displayResult = isResultLong && !resultExpanded
     ? resultStr.slice(0, TRUNCATE_THRESHOLD)
     : resultStr
+
+  // 折叠态预览：仅输出进行中（参数流式/执行中）显示，完成后不显示
+  const lastProgress = seg.toolProgress && seg.toolProgress.length > 0
+    ? seg.toolProgress[seg.toolProgress.length - 1]
+    : null
+  const previewText = isArgsStreaming
+    ? (seg.toolArgsRaw || '')
+    : (isToolError || seg.isToolComplete)
+      ? ''
+      : [lastProgress?.action, lastProgress?.detail].filter(Boolean).join(' — ')
 
   const jsonColors = {
     key: token.colorPrimary,
@@ -230,77 +218,88 @@ const ToolCallSegmentInner: React.FC<{
     result: '✓',
   }
 
-  return (
-    <div style={{ marginBottom: 4, containerType: 'inline-size' }}>
-      <div
-        style={{
-          borderRadius: 8,
-          border: `1px solid ${accentBorder}`,
-          borderLeft: `3px solid ${accentColor}`,
-          background: token.colorBgLayout,
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          onClick={onToggle}
-          style={{
-            padding: '6px 12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            cursor: 'pointer',
-            userSelect: 'none',
-            background: `linear-gradient(90deg, ${headerBg} 0%, transparent 100%)`,
-          }}
-        >
-          {isExpanded ? (
-            <DownOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
-          ) : (
-            <RightOutlined style={{ fontSize: 10, color: token.colorTextSecondary }} />
-          )}
-          <CodeOutlined style={{ fontSize: 13, color: accentColor }} />
-          <Text strong style={{ fontSize: 13, color: token.colorText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
-          </Text>
-          <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 11 }}>({seg.toolName})</Text>
-          {duration !== null && (
-            <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
-              <ClockCircleOutlined style={{ fontSize: 10 }} />
-              {t('workbench.executionTime', { time: duration })}
-            </Text>
-          )}
-          {isToolError ? (
-            <Tag color="error" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
-              <CloseCircleOutlined /> {seg.toolError}
-            </Tag>
-          ) : isArgsStreaming ? (
-            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
-              <LoadingOutlined spin /> {t('workbench.generatingArgs')}
-            </Tag>
-          ) : isToolPending ? (
-            <Tag color="processing" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', marginLeft: 'auto', flexShrink: 0 }}>
-              <LoadingOutlined spin /> {t('workbench.executing')}
-            </Tag>
-          ) : (
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              {resultStr && (
-                <Text type="secondary" className="dm-toolcall-extra" style={{ fontSize: 10 }}>
-                  {t('workbench.outputChars')}: {resultStr.length}
-                </Text>
-              )}
-              <Tag color="success" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px' }}>
-                <CheckCircleOutlined /> {t('workbench.completed')}
-              </Tag>
-            </div>
-          )}
-        </div>
-        {isExpanded && (
-          <div
-            style={{
-              borderTop: `1px solid ${token.colorBorderSecondary}`,
-              padding: '8px 12px',
-            }}
-          >
+  // 状态指示：仅失败保留醒目提示，其余状态不额外显示图标
+  const statusEl = isToolError ? (
+    <Tooltip title={seg.toolError} placement="topRight">
+      <span style={{
+        marginLeft: 'auto',
+        flexShrink: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        fontSize: 11,
+        color: token.colorError,
+        maxWidth: 240,
+      }}>
+        <CloseCircleOutlined style={{ flexShrink: 0 }} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{seg.toolError}</span>
+      </span>
+    </Tooltip>
+  ) : isArgsStreaming || isToolPending ? (
+    <span style={{
+      marginLeft: 'auto',
+      flexShrink: 0,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      fontSize: 11,
+      color: token.colorTextTertiary,
+    }}>
+      <LoadingOutlined spin />
+      {isArgsStreaming ? t('workbench.generatingArgs') : t('workbench.executing')}
+    </span>
+  ) : null
+
+  const header = (
+    <div
+      onClick={onToggle}
+      style={{
+        padding: '5px 0',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        cursor: 'pointer',
+        userSelect: 'none',
+      }}
+    >
+      {isExpanded ? (
+        <DownOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+      ) : (
+        <RightOutlined style={{ fontSize: 10, color: token.colorTextQuaternary }} />
+      )}
+      {/* 有分组时用该分组的图标（与员工设置一致），未分组回退小扳手 */}
+      <span style={{ display: 'inline-flex', flexShrink: 0, fontSize: 12, color: isToolError ? token.colorError : token.colorTextTertiary }}>
+        {getCategoryIcon(seg.toolName ? getToolIconKey(seg.toolName) : undefined)}
+      </span>
+      <Text style={{ fontSize: 12, color: token.colorTextSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {seg.toolName ? getToolDisplayName(seg.toolName) : t('workbench.toolCall')}
+      </Text>
+      {!isExpanded && previewText && (
+        <PreviewLine
+          text={previewText}
+          fontSize={11}
+          lineHeight={16}
+          color={token.colorTextQuaternary}
+        />
+      )}
+      {duration !== null && (
+        <Text className="dm-toolcall-extra" style={{ fontSize: 11, color: token.colorTextQuaternary, flexShrink: 0 }}>
+          {t('workbench.executionTime', { time: duration })}
+          {resultStr && ` · ${t('workbench.chars', { chars: resultStr.length })}`}
+        </Text>
+      )}
+      {statusEl}
+    </div>
+  )
+
+  if (isExpanded) {
+    return (
+      <div style={{ marginBottom: 2, containerType: 'inline-size' }}>
+        {header}
+        <div style={{ position: 'relative' }}>
+          {/* 竖线与展开 icon 同列，从 icon 正下方延伸贯穿内容区 */}
+          <div style={{ position: 'absolute', left: 4, top: 0, bottom: 0, width: 2, background: token.colorBorder, borderRadius: 1 }} />
+          <div style={{ position: 'relative', padding: '0 10px 8px 24px' }}>
             {argsStr && (
               <div style={{ marginBottom: seg.toolResult !== undefined ? 10 : 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -310,7 +309,7 @@ const ToolCallSegmentInner: React.FC<{
                       : t('workbench.inputParams')}
                   </Text>
                   {!isArgsStreaming && (
-                    <Tooltip title={t('common.copied')}>
+                    <Tooltip title={t('common.copy')}>
                       <CopyOutlined
                         onClick={(e) => { e.stopPropagation(); handleCopy(argsStr) }}
                         style={{ fontSize: 11, color: token.colorTextQuaternary, cursor: 'pointer' }}
@@ -326,15 +325,15 @@ const ToolCallSegmentInner: React.FC<{
                 <pre ref={argsScrollRef} onScroll={argsOnScroll} style={{
                   margin: 0,
                   padding: '8px 10px',
-                  background: isArgsStreaming ? token.colorInfoBg : token.colorBgContainer,
+                  background: token.colorBgLayout,
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  maxHeight: 200,
+                  maxHeight: 150,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  border: `1px solid ${isArgsStreaming ? token.colorInfoBorder : token.colorBorderSecondary}`,
+                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
                   {isArgsStreaming ? argsStr : renderHighlighted(argsStr)}
                 </pre>
@@ -347,13 +346,13 @@ const ToolCallSegmentInner: React.FC<{
                 </Text>
                 <div ref={progressScrollRef} onScroll={progressOnScroll} style={{
                   padding: '6px 10px',
-                  background: token.colorPrimaryBg,
+                  background: token.colorBgLayout,
                   borderRadius: 6,
                   fontSize: 11,
                   lineHeight: 1.6,
-                  maxHeight: 200,
+                  maxHeight: 150,
                   overflow: 'auto',
-                  border: `1px solid ${token.colorPrimaryBorder}`,
+                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
                   {seg.toolProgress.map((step: any, i: number) => {
                     return (
@@ -394,9 +393,25 @@ const ToolCallSegmentInner: React.FC<{
             )}
             {seg.toolResult !== undefined && (
               <div>
+                {seg.toolResultImages && seg.toolResultImages.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <Image.PreviewGroup>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {seg.toolResultImages.map((url, i) => (
+                          <Image
+                            key={i}
+                            src={url}
+                            height={90}
+                            style={{ borderRadius: 6, border: `1px solid ${token.colorBorderSecondary}` }}
+                          />
+                        ))}
+                      </div>
+                    </Image.PreviewGroup>
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <Text type="secondary" style={{ fontSize: 11 }}>{t('workbench.outputResult')}</Text>
-                  <Tooltip title={t('common.copied')}>
+                  <Tooltip title={t('common.copy')}>
                     <CopyOutlined
                       onClick={(e) => { e.stopPropagation(); handleCopy(resultStr) }}
                       style={{ fontSize: 11, color: token.colorTextQuaternary, cursor: 'pointer' }}
@@ -406,15 +421,15 @@ const ToolCallSegmentInner: React.FC<{
                 <pre style={{
                   margin: 0,
                   padding: '8px 10px',
-                  background: token.colorSuccessBg,
+                  background: token.colorBgLayout,
                   borderRadius: 6,
                   fontSize: 12,
                   lineHeight: 1.6,
-                  maxHeight: resultExpanded ? 600 : 300,
+                  maxHeight: resultExpanded ? 600 : 220,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  border: `1px solid ${token.colorSuccessBorder}`,
+                  border: `1px solid ${token.colorBorderSecondary}`,
                 }}>
                   {renderHighlighted(displayResult)}
                 </pre>
@@ -436,8 +451,14 @@ const ToolCallSegmentInner: React.FC<{
               </div>
             )}
           </div>
-        )}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div style={{ marginBottom: 2, containerType: 'inline-size' }}>
+      {header}
     </div>
   )
 }

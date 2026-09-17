@@ -280,16 +280,32 @@ class KMSKnowledgeCardService {
     `).run(cardId, normalized, dispKeyword, result.summary, '[]', JSON.stringify(citations), JSON.stringify(relatedFileIds), options?.requirement || '', searchCount, now, now, now)
 
     // === 生成向量嵌入 ===
-    addStep({ phase: 'card', action: '生成向量嵌入', type: 'info' })
+    addStep({ phase: 'card', action: '生成向量嵌入', actionKey: 'kms.knowledgeCards.trace.embedding', type: 'info' })
     const embStart = Date.now()
     try {
       await this.generateCardEmbedding(cardId, signal)
-      addStep({ phase: 'card', action: '生成向量嵌入', type: 'info', detail: '完成', durationMs: Date.now() - embStart })
+      addStep({
+        phase: 'card',
+        action: '生成向量嵌入',
+        actionKey: 'kms.knowledgeCards.trace.embedding',
+        type: 'info',
+        detail: '完成',
+        detailKey: 'kms.knowledgeCards.trace.embeddingDone',
+        durationMs: Date.now() - embStart,
+      })
     } catch (err: any) {
       logger.warn(`Card embedding generation failed for "${keyword}":`, err?.message || err)
     }
 
-    addStep({ phase: 'card', action: '卡片生成完成', type: 'result', detail: `${result.summary.length} 字摘要, ${citations.length} 条引用, ${result.iterations} 轮迭代, 总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s` })
+    addStep({
+      phase: 'card',
+      action: '卡片生成完成',
+      actionKey: 'kms.knowledgeCards.trace.cardCompleted',
+      type: 'result',
+      detail: `${result.summary.length} 字摘要, ${citations.length} 条引用, ${result.iterations} 轮迭代, 总耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+      detailKey: 'kms.knowledgeCards.trace.cardCompletedDetail',
+      detailParams: { summary: result.summary.length, citations: citations.length, iterations: result.iterations, seconds: ((Date.now() - t0) / 1000).toFixed(1) },
+    })
     // 持久化执行轨迹（保留最近流程尾部，避免过大），供详情查看定位问题
     const savedTrace = trace.slice(-300)
     this.db.prepare('UPDATE kms_knowledge_cards SET last_trace_json = ? WHERE id = ?').run(JSON.stringify(savedTrace), cardId)
@@ -325,25 +341,54 @@ class KMSKnowledgeCardService {
     }
   }
 
+  /** 刷新中的临时 keyword 前缀：keyword 有 UNIQUE 约束，刷新期间用前缀腾出原 keyword */
+  private static readonly REFRESH_MARKER = '__refreshing__:'
+
+  /** 清理历史崩溃残留：上次刷新中断的卡片恢复原 keyword（新卡已存在时删除残留旧卡） */
+  private recoverInterruptedRefresh(): void {
+    try {
+      const marker = KMSKnowledgeCardService.REFRESH_MARKER
+      // marker 含 `_`（LIKE 通配符），必须转义并用 ESCAPE，否则可能误匹配形如
+      // `X-refreshing-X:...` 的合法 keyword
+      const escaped = marker.replace(/[_%]/g, (m) => '\\' + m)
+      const rows = this.db.prepare(
+        "SELECT id, keyword FROM kms_knowledge_cards WHERE keyword LIKE ? ESCAPE '\\'"
+      ).all(escaped + '%') as any[]
+      for (const row of rows) {
+        const origKeyword = row.keyword.slice(marker.length)
+        const exists = this.db.prepare('SELECT id FROM kms_knowledge_cards WHERE keyword = ?').get(origKeyword)
+        if (exists) {
+          this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(row.id)
+        } else {
+          this.db.prepare('UPDATE kms_knowledge_cards SET keyword = ? WHERE id = ?').run(origKeyword, row.id)
+        }
+      }
+    } catch (err: any) {
+      logger.warn('recoverInterruptedRefresh failed:', err?.message || err)
+    }
+  }
+
   async refreshCard(cardId: string, signal?: AbortSignal, options?: { onProgress?: (step: SearchTraceStep) => void }): Promise<{ success: boolean; card?: KnowledgeCard; error?: string }> {
     const card = this.getCard(cardId)
     if (!card) return { success: false, error: 'CARD_NOT_FOUND' }
 
-    this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(cardId)
+    this.recoverInterruptedRefresh()
+
+    // 原子替换：keyword 有 UNIQUE 约束，先加临时前缀腾出原 keyword，
+    // 新卡生成成功后才删旧卡——LLM 生成期间崩溃时旧卡仍可经 recoverInterruptedRefresh 恢复，
+    // 不会出现"旧卡已删、新卡未建"的永久丢失窗口
+    this.db.prepare('UPDATE kms_knowledge_cards SET keyword = ? WHERE id = ?')
+      .run(`${KMSKnowledgeCardService.REFRESH_MARKER}${card.keyword}`, cardId)
+
     const result = await this.generateCard(card.keyword, card.displayKeyword, { ...options, signal, requirement: card.requirement })
 
     if (!result.success) {
-      // 恢复旧卡片（INSERT OR IGNORE 防止并发冲突）
-      const now = Math.floor(Date.now() / 1000)
-      try {
-        this.db.prepare(`
-          INSERT OR IGNORE INTO kms_knowledge_cards
-            (id, keyword, display_keyword, summary, key_points_json, citations_json, related_file_ids_json, requirement, last_trace_json, status, pinned, search_count, created_at, updated_at, last_refreshed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stale', ?, ?, ?, ?, ?)
-        `).run(cardId, card.keyword, card.displayKeyword, card.summary, JSON.stringify(card.keyPoints), JSON.stringify(card.citations), JSON.stringify(card.relatedFileIds), card.requirement, JSON.stringify(card.trace), card.pinned ? 1 : 0, card.searchCount, card.createdAt, now, card.lastRefreshedAt)
-      } catch {}
+      // 失败：恢复旧卡原 keyword（旧卡数据从未删除）
+      this.db.prepare('UPDATE kms_knowledge_cards SET keyword = ? WHERE id = ?').run(card.keyword, cardId)
       return { success: false, error: result.error }
     }
+
+    this.db.prepare('DELETE FROM kms_knowledge_cards WHERE id = ?').run(cardId)
 
     if (card.pinned && result.card) {
       this.db.prepare('UPDATE kms_knowledge_cards SET pinned = 1 WHERE id = ?').run(result.card.id)

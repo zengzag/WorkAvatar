@@ -4,6 +4,7 @@ import type { GenericAgentConfig } from './agent/business/generic-agent'
 import type { BaseAgentOptions } from './agent/core/base-agent'
 import type { Message } from './agent/core/types'
 import type { ToolDefinition } from './agent/tools/types'
+import { resolveImageSupport } from './agent/llm/provider-compat'
 import type { LLMModelConfig, ThinkingLevel } from '../../shared/types'
 import { createLogger } from './logger'
 import LLMLoggerService from './llm-logger.service'
@@ -50,7 +51,7 @@ export interface GenericChatCallbacks {
   onThought: (thought: string) => void
   onToolCall: (toolCall: { id: string; name: string; args: any }) => void
   onToolCallDelta?: (delta: { index: number; id?: string; name?: string; arguments: string }) => void
-  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; success?: boolean }) => void
+  onToolResult: (toolResult: { name: string; result: any; rawResult?: any; generatedFiles?: any; images?: string[]; success?: boolean }) => void
   onToolProgress?: (progress: { toolCallId: string; name: string; progress: any }) => void
   onDone: (metadata?: any) => void
   onError: (error: string) => void
@@ -93,12 +94,45 @@ class GenericChatService {
     }
   }
 
+  /** 进行中的 agent 构建（按 cacheKey 去重） */
+  private agentCreationInFlight = new Map<string, Promise<CachedAgentEntry>>()
+
+  /** 配置指纹：systemPrompt/tools/minimalMode/skills 等创建期参数变化时必须重建 agent，
+   * 否则同会话配置更新后仍复用旧 agent（创建时冻结的行为与配置脱节） */
+  private buildCacheKey(config: GenericChatConfig): string {
+    const cfgFingerprint = [
+      config.systemPrompt?.length ?? 0,
+      config.systemPrompt || '',
+      config.tools?.length ?? 0,
+      config.minimalMode ? 1 : 0,
+      config.allowedSkillPaths?.length ?? 0,
+      config.memoryPrompt?.length ?? 0,
+      config.workspaceContextPrompt?.length ?? 0,
+      config.kbContextPrompt?.length ?? 0,
+    ].join('|')
+    return `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}:${cfgFingerprint}`
+  }
+
   private async getOrCreateAgent(config: GenericChatConfig): Promise<CachedAgentEntry> {
-    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}`
+    const cacheKey = this.buildCacheKey(config)
 
     const existing = this.agentEntries.get(cacheKey)
     if (existing) return existing
 
+    // 并发去重：避免同一配置并发请求重复建 agent（先建者被孤立覆盖）
+    const inFlight = this.agentCreationInFlight.get(cacheKey)
+    if (inFlight) return inFlight
+
+    const creation = this.doCreateAgent(cacheKey, config)
+    this.agentCreationInFlight.set(cacheKey, creation)
+    try {
+      return await creation
+    } finally {
+      this.agentCreationInFlight.delete(cacheKey)
+    }
+  }
+
+  private async doCreateAgent(cacheKey: string, config: GenericChatConfig): Promise<CachedAgentEntry> {
     const providerConfig = await this.llmClient.getProviderConfig(config.providerId)
     if (!providerConfig) {
       throw new Error(`Provider ${config.providerId} not found`)
@@ -115,6 +149,7 @@ class GenericChatService {
       apiKey: providerConfig.api_key,
       baseUrl: providerConfig.base_url || this.llmClient.getBaseURL(providerConfig),
       providerType: providerConfig.provider_type,
+      supportsImageInput: resolveImageSupport(providerConfig.provider_type, resolvedModelName, modelConfig?.supports_image_input),
       enableThinking: config.enableThinking ?? modelConfig?.enable_thinking ?? false,
       sessionId: config.conversationId,
       allowedSkillPaths: config.allowedSkillPaths,
@@ -166,7 +201,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>
   ): Message[] {
@@ -200,6 +235,7 @@ class GenericChatService {
             role: 'tool',
             toolCallId: tc.id,
             content: toolContent || '工具执行完成，无返回值',
+            images: tc.images,
           })
         }
       } else {
@@ -222,7 +258,7 @@ class GenericChatService {
       content: string
       images?: string[]
       reasoning_content?: string
-      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; isComplete?: boolean }>
+      toolCalls?: Array<{ id: string; name: string; args: any; result?: any; images?: string[]; isComplete?: boolean }>
       toolCallId?: string
     }>,
     callbacks: GenericChatCallbacks,
@@ -283,8 +319,7 @@ class GenericChatService {
   }
 
   getContextStats(config: GenericChatConfig): any {
-    const cacheKey = `${config.providerId}:${config.modelId || 'default'}:${config.enableThinking || 'no-thinking'}:${config.conversationId || 'no-conv'}`
-    const entry = this.agentEntries.get(cacheKey)
+    const entry = this.agentEntries.get(this.buildCacheKey(config))
     if (!entry) return null
     return entry.agent.getContextStats()
   }

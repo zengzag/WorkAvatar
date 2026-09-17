@@ -8,6 +8,7 @@ import {
   BulbOutlined, GlobalOutlined, MessageOutlined,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import { resolveToolDescription } from '../../utils/tool-display'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -480,7 +481,10 @@ const KMSMCPSettings: React.FC = () => {
               ) : (
                 <Space wrap size={[4, 4]}>
                   {exposedTools.map((tool) => (
-                    <Tooltip key={tool.toolId || tool.name} title={tool.description || tool.name}>
+                    <Tooltip
+                      key={tool.toolId || tool.name}
+                      title={resolveToolDescription(tool.toolId || tool.name, tool.description) || tool.name}
+                    >
                       <Tag>{tool.name}</Tag>
                     </Tooltip>
                   ))}

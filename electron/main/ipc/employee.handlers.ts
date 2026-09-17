@@ -34,9 +34,11 @@ import type EmployeeExportService from '../services/employee-export.service'
 import type EmployeeMemoryService from '../services/employee-memory.service'
 import EmployeeRegistryService from '../services/employee-registry.service'
 import UnifiedInteractionService from '../services/unified-interaction.service'
+import FilePermissionService from '../services/file-permission.service'
 import MemoryRefinementService from '../services/memory-refinement.service'
 import PluginHostService from '../services/plugin/plugin-host.service'
 import EmployeeAgentService from '../services/employee-agent.service'
+import AttachmentService from '../services/attachment.service'
 import { safeHandle } from './_shared'
 
 /** 删除某员工所有顶层会话及其子会话，并清理授权缓存和插件关联记录（与 CONVERSATION_DELETE 一致） */
@@ -46,6 +48,7 @@ function deleteAllConversationsOfEmployee(workspaceManager: WorkspaceManagerServ
     const allConvIds = workspaceManager.getChildConversationIds(conv.id)
     for (const cid of allConvIds) {
       UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+      FilePermissionService.getInstance().clearAuthorizations(cid)
     }
     try { PluginHostService.getInstance().notifyConversationDeleted(conv.id) } catch { /* ignore */ }
   }
@@ -65,7 +68,7 @@ export function registerEmployeeHandlers(
     const dbList = workspaceManager.getEmployeeList()
       .filter(e => !e.is_registered)
       .map(e => ({ ...e, is_enabled: registry.isEnabled(e.id) }))
-    // 注册员工展示其独立工作区根目录（dataDir/registry-workspaces/<id 摘要>），供打开工作区按钮使用
+    // 注册员工展示其独立工作区根目录（dataDir/employees/<sha1 前 8 位>，getRegistryWorkspaceRoot），供打开工作区按钮使用
     const registered = registry.listRegistered().map(e => ({
       ...e,
       workspace_path: workspaceManager.getRegistryWorkspaceRoot(e.id),
@@ -111,6 +114,8 @@ export function registerEmployeeHandlers(
     } else if (action === 'delete') {
       // 删除对话历史（清理授权缓存 + 插件关联记录，与 CONVERSATION_DELETE_ALL 一致）
       deleteAllConversationsOfEmployee(workspaceManager, params.id)
+      // 对话删除后清理由该员工独占引用的附件文件
+      try { AttachmentService.getInstance().scheduleOrphanPrune() } catch { /* ignore */ }
     }
     const ok = workspaceManager.deleteEmployee(params.id, params.delete_workspace || false)
     if (ok) {
@@ -151,7 +156,7 @@ export function registerEmployeeHandlers(
     return workspaceManager.createConversation(params.employee_id, params.skill_id, params.title, params.minimal_mode, undefined, params.workspace_path)
   })
 
-  safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string }) => {
+  safeHandle(IPC_CHANNELS.CONVERSATION_UPDATE, (params: { id: string; title?: string; messages_json?: string; message_count?: number; status?: string; minimal_mode?: boolean; last_message_at?: number; employee_id?: string; context_stats_json?: string; default_model_json?: string; collection_ids_json?: string }) => {
     const { id, ...data } = params
     return workspaceManager.updateConversation(id, data)
   })
@@ -159,12 +164,16 @@ export function registerEmployeeHandlers(
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE, (id: string) => {
     // 删除前先收集所有子会话 ID（含自身），用于清理授权缓存
     const allConvIds = workspaceManager.getChildConversationIds(id)
+    // 删除前收集该批会话引用的附件（候选），删除后清理无引用的附件文件
+    const attachmentCandidates = AttachmentService.getInstance().collectRefsForConversations(allConvIds)
     const result = workspaceManager.deleteConversation(id)
     if (result.ok) {
       // 清理该会话及其所有子会话的 allowAlways 授权缓存，避免授权残留
       for (const cid of allConvIds) {
         UnifiedInteractionService.getInstance().clearAllowedSources(cid)
+        FilePermissionService.getInstance().clearAuthorizations(cid)
       }
+      try { AttachmentService.getInstance().pruneRefs(attachmentCandidates) } catch { /* ignore */ }
       // 同步通知插件清理关联数据（如自动化执行历史：conversation 删除 → run 记录删除）
       try { PluginHostService.getInstance().notifyConversationDeleted(id) } catch { /* ignore */ }
     }
@@ -174,7 +183,9 @@ export function registerEmployeeHandlers(
   safeHandle(IPC_CHANNELS.CONVERSATION_DELETE_ALL, (employeeId: string) => {
     // 收集该员工下所有顶层会话及其子会话，清理授权缓存和自动化历史关联记录
     deleteAllConversationsOfEmployee(workspaceManager, employeeId)
-    return workspaceManager.deleteAllConversations(employeeId)
+    const result = workspaceManager.deleteAllConversations(employeeId)
+    try { AttachmentService.getInstance().scheduleOrphanPrune() } catch { /* ignore */ }
+    return result
   })
 
   safeHandle(IPC_CHANNELS.CONVERSATION_SEARCH_GLOBAL, (params: ConversationSearchParams) => {

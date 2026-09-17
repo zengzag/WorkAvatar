@@ -121,21 +121,14 @@ function wrapPowerShellCommand(command: string, stdinMode: boolean): { shell: st
   if (stdinMode || command.length > PS_LONG_COMMAND_THRESHOLD) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-shell-'))
     const psFile = path.join(tempDir, 'script.ps1')
+    // stdin 模式不做 `$input | & { ... }` 包装：实测该写法会让 PowerShell 吞掉 stdin，
+    // 块内原生命令（python -/node x.js）读到空输入（探针 LEN=0）。
+    // 直接执行命令即可 —— 子进程继承父进程 stdin 管道，写入的 stdinContent 直达命令。
     const fullScript = POWERSHELL_PREFIX + `
 ${command}
 exit $LASTEXITCODE
 `
     fs.writeFileSync(psFile, fullScript, 'utf-8')
-    if (stdinMode) {
-      // stdin 模式：脚本从 stdin 读取内容
-      const stdinScript = POWERSHELL_PREFIX + `
-$input | & {
-${command}
-}
-exit $LASTEXITCODE
-`
-      fs.writeFileSync(psFile, stdinScript, 'utf-8')
-    }
     return {
       shell,
       shellArgs: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile],
@@ -225,13 +218,17 @@ export function runCommandPlatform(
     try {
       child = spawn(shell, shellArgs, {
         cwd: opts.cwd,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        // Unix 下 detached:true 使 shell 成为独立进程组长，超时才能用 kill(-pid) 杀整棵进程树；
+        // 不影响正常等待 close 事件。Windows 的进程树杀灭走 taskkill /T（见超时分支）。
+        detached: !IS_WINDOWS,
+        // 无 stdin 内容时用 'ignore'（NUL/dev/null 设备）：读到 stdin 的命令立即收到 EOF，
+        // 不会对着一根永不关闭的管道挂起等输入直到超时被杀。
+        stdio: [actualStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
         shell: false,
         env: {
           ...process.env,
           ...(IS_WINDOWS ? {
-            CHCP: '65001',
             PYTHONIOENCODING: 'utf-8',
             PYTHONUTF8: '1',
           } : {
@@ -263,10 +260,13 @@ export function runCommandPlatform(
     const stdoutBufs: Buffer[] = []
     const stderrBufs: Buffer[] = []
     let settled = false
+    let killTimer: NodeJS.Timeout | undefined
 
     const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return
       settled = true
+      // 及时清掉超时定时器，避免事件循环被无谓挂到 timeoutMs+500
+      if (killTimer) clearTimeout(killTimer)
       const stdout = decodeBuffer(Buffer.concat(stdoutBufs))
       const stderr = decodeBuffer(Buffer.concat(stderrBufs))
       // 清理临时文件
@@ -279,6 +279,7 @@ export function runCommandPlatform(
     child.on('error', (err) => {
       if (!settled) {
         settled = true
+        if (killTimer) clearTimeout(killTimer)
         cleanupTempFile(tempFile)
         resolve({ stdout: '', stderr: err.message, code: -1, signal: null })
       }
@@ -286,7 +287,7 @@ export function runCommandPlatform(
     child.on('close', (code, signal) => finish(code, signal))
 
     if (opts.timeoutMs) {
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         if (!settled) {
           const pid = child.pid
           try {
@@ -306,6 +307,7 @@ export function runCommandPlatform(
           finish(-2, 'SIGKILL')
         }
       }, opts.timeoutMs + 500)
+      killTimer.unref?.()
     }
   })
 }
@@ -323,18 +325,10 @@ function cleanupTempFile(tempFile?: string): void {
 export function truncateOutput(text: string, maxChars: number): string {
   if (!text || text.length <= maxChars) return text || ''
   const half = Math.floor(maxChars / 2)
-  return text.substring(0, half)
+  const head = text.substring(0, half)
+  // 按码元切分可能把 emoji 等代理对切成两半（末尾孤立高代理），再退 1 个码元保证前缀是完整字符
+  const safeHead = /[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head
+  return safeHead
     + `\n\n... (中间 ${text.length - maxChars} 字符已截断) ...\n\n`
     + text.substring(text.length - half)
-}
-
-/** 从脚本代码中提取绝对路径（通用） */
-export function extractAbsolutePaths(text: string): string[] {
-  const paths: string[] = []
-  let m: RegExpExecArray | null
-  const quotedRe = /["']([A-Za-z]:[\\/][^"'\n]*|\/[^"'\n]+)["']/g
-  while ((m = quotedRe.exec(text)) !== null) paths.push(m[1])
-  const unquotedRe = /\b([A-Za-z]:[\\/][^\s|&;,\n]+|\/(?:home|tmp|usr|var|etc|root|opt|mnt|srv|Users|ProgramData|Windows)[^\s|&;,\n]*)/g
-  while ((m = unquotedRe.exec(text)) !== null) paths.push(m[1])
-  return [...new Set(paths)]
 }

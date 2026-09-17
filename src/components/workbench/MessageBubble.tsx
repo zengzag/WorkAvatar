@@ -25,6 +25,7 @@ import { useState, useCallback, useMemo, memo, useRef, useEffect } from 'react'
 import type { MessageWithThought } from './types'
 import { ensureSegments } from './types'
 import { markdownComponents } from './markdown-components'
+import { sanitizePluginIconHtml } from '../../utils/sanitize-icon'
 import { resolveModelLabel, TokenUsageDisplay, SegmentList } from './message-shared'
 import GeneratedFilesBar from './GeneratedFilesBar'
 import SubTaskDrawer from './SubTaskDrawer'
@@ -405,45 +406,42 @@ const MessageBubble: React.FC<{
 
         {msg.role === 'assistant' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
+            {((displayMsg.segments && displayMsg.segments.length > 0) ||
+              (displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0)) ||
+              (displayContent && !displayIsStreaming)) && (
               <div style={{
-                padding: '8px 12px',
-                borderRadius: 8,
                 background: token.colorBgContainer,
-                lineHeight: 1.6,
-              }}>
-                <Text style={{ color: token.colorTextQuaternary, fontSize: 15 }}>{t('workbench.thinking')}</Text>
-              </div>
-            )}
-
-            {displayMsg.segments && displayMsg.segments.length > 0 && (
-              <SegmentList
-                segments={displayMsg.segments}
-                msgId={msg.id}
-                isError={!!displayIsError}
-                onToggleSegment={onToggleSegment}
-                getToolDisplayName={getToolDisplayName}
-              />
-            )}
-
-            {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
-              <div style={{
-                padding: '8px 12px',
                 borderRadius: 8,
-                background: token.colorBgContainer,
-                lineHeight: 1.6,
-                wordBreak: 'break-word',
-                border: displayIsError ? `1px solid ${token.colorError}` : 'none',
+                padding: '8px 12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
               }}>
-                <div className="markdown-content" style={{ fontSize: 15, color: token.colorText }}>
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
-                    components={markdownComponents}
-                  >
-                    {displayContent}
-                  </ReactMarkdown>
-                </div>
+                {displayMsg.isStreaming && (!displayMsg.segments || displayMsg.segments.length === 0) && (
+                  <Text style={{ color: token.colorTextQuaternary, fontSize: 15, lineHeight: 1.6 }}>{t('workbench.thinking')}</Text>
+                )}
+
+                {displayMsg.segments && displayMsg.segments.length > 0 && (
+                  <SegmentList
+                    segments={displayMsg.segments}
+                    msgId={msg.id}
+                    isError={!!displayIsError}
+                    onToggleSegment={onToggleSegment}
+                    getToolDisplayName={getToolDisplayName}
+                  />
+                )}
+
+                {(!displayMsg.segments || displayMsg.segments.length === 0) && displayContent && !displayIsStreaming && (
+                  <div className="markdown-content" style={{ fontSize: 15, color: displayIsError ? token.colorError : token.colorText, lineHeight: 1.6, wordBreak: 'break-word' }}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkMath]}
+                      rehypePlugins={[rehypeKatex]}
+                      components={markdownComponents}
+                    >
+                      {displayContent}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
             )}
 
@@ -505,7 +503,7 @@ const MessageBubble: React.FC<{
                       key={`${action.pluginId}:${action.id}`}
                       type="text"
                       size="small"
-                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: action.icon }} style={{ display: 'inline-flex' }} /> : undefined}
+                      icon={action.icon ? <span dangerouslySetInnerHTML={{ __html: sanitizePluginIconHtml(action.icon) }} style={{ display: 'inline-flex' }} /> : undefined}
                       title={t(action.title, { ns: action.pluginId, defaultValue: action.title })}
                       onClick={() => runMessageAction(action)}
                     />

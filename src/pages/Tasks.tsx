@@ -153,6 +153,14 @@ const Tasks: React.FC = () => {
     loadAllCollections()
   }, [loadEmployees, loadGlobalTasks, loadAllCollections])
 
+  // 资料库合集增删改通知：实时刷新合集列表，避免新合集需重启才出现在输入框
+  useEffect(() => {
+    const unsub = window.electronAPI.kms.onCollectionsChanged(() => {
+      loadAllCollections()
+    })
+    return () => { unsub?.() }
+  }, [loadAllCollections])
+
   // 员工列表变更通知（增删改）：刷新列表 & 清理无效选中
   useEffect(() => {
     const unsub = window.electronAPI.employee.onChanged(async () => {
@@ -231,6 +239,7 @@ const Tasks: React.FC = () => {
     setEnableThinking,
     selectedCollectionIds,
     setSelectedCollectionIds,
+    setPersistentCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     isComparisonMode,
@@ -928,7 +937,7 @@ const Tasks: React.FC = () => {
                 selectedModels={selectedModels}
                 onModelsChange={handleChatModelsChange}
                 selectedCollectionIds={selectedCollectionIds}
-                onSelectedCollectionIdsChange={setSelectedCollectionIds}
+                onSelectedCollectionIdsChange={setPersistentCollectionIds}
                 allCollections={allCollections}
                 minimalMode={minimalMode}
                 onMinimalModeChange={handleToggleMinimalMode}

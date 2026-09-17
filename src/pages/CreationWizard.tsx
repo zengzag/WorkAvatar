@@ -299,12 +299,13 @@ const CreationWizard: React.FC = () => {
       profile_json: profileJson,
     })
 
+    const onDemandMap = new Map(builtinTools.map((t: any) => [t.id, !!t.onDemand]))
     for (const toolId of selectedToolIds) {
       try {
         await window.electronAPI.tool.assignToEmployee({
           employee_id: employee.id,
           tool_id: toolId,
-          is_enabled: true,
+          mode: onDemandMap.get(toolId) ? 'on_demand' : 'on',
         })
       } catch {}
     }

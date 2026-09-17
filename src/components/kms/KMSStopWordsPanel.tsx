@@ -38,7 +38,7 @@ const KMSStopWordsPanel: React.FC = () => {
         setTotal(result.total || 0)
       }
     } catch (err: any) {
-      message.error(err?.message || 'Failed to load stop words')
+      message.error(err?.message || t('kms.stopWords.loadFailed'))
     } finally {
       setLoading(false)
     }

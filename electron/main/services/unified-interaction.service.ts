@@ -2,7 +2,8 @@ import { AsyncLocalStorage } from 'async_hooks'
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipc-channels'
 import { generateId } from './common-utils'
-import type { ThinkingLevel } from '../../shared/types'
+import mainUiI18n from './ui-i18n.service'
+import type { ThinkingLevel, ScriptDisclosure } from '../../shared/types'
 
 /** 用户交互默认超时（5 分钟），工具层 timeoutMs 需大于此值以保证内层先触发 */
 export const INTERACTION_TIMEOUT_MS = 300000
@@ -26,8 +27,12 @@ export interface InteractionRequest {
   danger?: boolean
   timeout?: number
   source?: string
-  /** 路径级去重：同一会话内该路径被确认后，后续相同路径自动通过 */
-  pathScope?: string
+  /** 目录级授权范围：前端据此展示"始终允许此文件夹"按钮，授权结果由 FilePermissionService 缓存 */
+  dirScope?: string
+  /** 脚本执行确认：渲染端以可滚动代码块展示原始脚本内容（脚本触发的确认才有） */
+  script?: ScriptDisclosure
+  /** 发起请求的会话 id：前端据此把"本轮任务不再提醒"的高权限状态标记到对应会话 */
+  conversationId?: string
 }
 
 export interface InteractionResponse {
@@ -37,8 +42,22 @@ export interface InteractionResponse {
   inputValue?: string
   cancelled: boolean
   allowAlways?: boolean
+  /** 用户选择"始终允许此文件夹"：授权 dirScope 目录子树，缓存由 FilePermissionService 管理 */
+  allowAlwaysDir?: boolean
+  /**
+   * 用户选择"本轮任务不再提醒"：为当前会话开启高权限模式（等同 high_permission，但按会话持久），
+   * 本轮任务后续所有文件读写/删除（含 shell、javascript 沙箱）不再弹窗确认。
+   */
+  taskHighPermission?: boolean
   /** 超时触发（非用户主动取消） */
   timedOut?: boolean
+}
+
+/** 渲染端开关本轮任务高权限模式的入参（conversationId 优先，无 DB 会话时降级 sessionId） */
+export interface SetTaskHighPermissionParams {
+  conversationId?: string
+  sessionId?: string
+  enabled: boolean
 }
 
 interface PendingRequest {
@@ -47,8 +66,6 @@ interface PendingRequest {
   source?: string
   /** allowAlways 授权的缓存 key，优先为 conversationId，降级为 sessionId */
   allowKey?: string
-  /** 路径级去重缓存 key */
-  pathScope?: string
 }
 
 interface SessionInfo {
@@ -88,8 +105,13 @@ class UnifiedInteractionService {
    * 作用：使"本次任务始终允许"覆盖整个会话的后续消息，而非仅当前一条消息。
    */
   private allowedSourcesByKey: Map<string, Set<string>> = new Map()
-  /** 路径级去重缓存，key 为 conversationId（优先）或 sessionId（降级）。用户确认某路径后，同会话内该路径自动通过 */
-  private allowedPathsByKey: Map<string, Set<string>> = new Map()
+  /**
+   * "本轮任务不再提醒"高权限模式登记，key 与 allowedSourcesByKey 一致（conversationId 优先，降级 sessionId）。
+   * 生命周期同样与 conversation 一致，clearAllowedSources 时一并清理。
+   * 作用：用户在区外文件确认弹窗中选择该选项后，本轮任务后续文件操作（含 shell 删除/写入、
+   * javascript 沙箱）不再弹窗，等价于把 high_permission 从"单条消息"提升为"整个任务"。
+   */
+  private taskHighPermissionKeys: Set<string> = new Set()
   private ipcRegistered = false
 
   private constructor() {}
@@ -140,17 +162,9 @@ class UnifiedInteractionService {
       }
     }
 
-    // 路径级去重：同会话内已确认的路径自动通过
-    if (request.pathScope && this.isPathAllowed(allowKey, request.pathScope)) {
-      return {
-        id: '',
-        confirmed: true,
-        cancelled: false,
-      }
-    }
-
     const id = generateId()
-    const fullRequest: InteractionRequest = { ...request, id }
+    // conversationId 随请求下发渲染端：用于把"本轮任务不再提醒"状态标记到对应会话（高权限开关同步显示）
+    const fullRequest: InteractionRequest = { ...request, id, conversationId: ctx.conversationId || request.conversationId }
     const timeout = request.timeout || INTERACTION_TIMEOUT_MS
 
     // 主窗口未激活时，通过系统通知告知用户有数字员工询问
@@ -163,7 +177,7 @@ class UnifiedInteractionService {
         resolve({ id, cancelled: true, timedOut: true })
       }, timeout)
 
-      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey, pathScope: request.pathScope })
+      session.pendingRequests.set(id, { resolve, timer, source: request.source, allowKey })
 
       try {
         session.webContents.send(IPC_CHANNELS.INTERACTION_REQUEST, fullRequest)
@@ -184,7 +198,7 @@ class UnifiedInteractionService {
     try {
       const notificationService = require('./notification.service').default.getInstance()
       if (!notificationService.isMainWindowInactive()) return
-      const title = request.title || '数字员工需要您的确认'
+      const title = request.title || mainUiI18n.t('askUserNotifyTitle')
       const body = (request.message || '').slice(0, 200)
       notificationService.notify({
         title,
@@ -196,12 +210,39 @@ class UnifiedInteractionService {
   }
 
   /**
-   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存和路径去重缓存。
-   * 应在 conversation 删除时调用，避免内存泄漏与授权残留。
+   * 清理指定 conversation（或 sessionId）的 allowAlways 授权缓存与"本轮任务不再提醒"高权限登记。
+   * 应在 conversation 删除时调用；文件授权缓存由 FilePermissionService.clearAuthorizations 同步清理。
    */
   clearAllowedSources(allowKey: string): void {
     this.allowedSourcesByKey.delete(allowKey)
-    this.allowedPathsByKey.delete(allowKey)
+    this.taskHighPermissionKeys.delete(allowKey)
+  }
+
+  /** 当前会话是否已开启"本轮任务不再提醒"高权限模式（不传 allowKey 时取当前交互上下文） */
+  isTaskHighPermission(allowKey?: string): boolean {
+    const key = allowKey || this.currentAllowKey()
+    if (!key) return false
+    return this.taskHighPermissionKeys.has(key)
+  }
+
+  /**
+   * 开启/关闭指定会话的任务级高权限模式。
+   * 开启来源：用户在安全确认弹窗选择"本轮任务不再提醒"（IPC 响应携带 taskHighPermission）；
+   * 关闭来源：渲染端高权限开关（ChatInput）点击关闭。
+   */
+  setTaskHighPermission(allowKey: string, enabled: boolean): void {
+    if (!allowKey) return
+    if (enabled) {
+      this.taskHighPermissionKeys.add(allowKey)
+    } else {
+      this.taskHighPermissionKeys.delete(allowKey)
+    }
+  }
+
+  private currentAllowKey(): string | null {
+    const ctx = interactionContext.getStore()
+    if (!ctx) return null
+    return ctx.conversationId || ctx.sessionId || null
   }
 
   private isSourceAllowed(allowKey: string, source: string): boolean {
@@ -215,19 +256,6 @@ class UnifiedInteractionService {
       this.allowedSourcesByKey.set(allowKey, set)
     }
     set.add(source)
-  }
-
-  private isPathAllowed(allowKey: string, pathScope: string): boolean {
-    return this.allowedPathsByKey.get(allowKey)?.has(pathScope) || false
-  }
-
-  private allowPath(allowKey: string, pathScope: string): void {
-    let set = this.allowedPathsByKey.get(allowKey)
-    if (!set) {
-      set = new Set()
-      this.allowedPathsByKey.set(allowKey, set)
-    }
-    set.add(pathScope)
   }
 
   private createDeniedResponse(request: Omit<InteractionRequest, 'id'>, _reason: string): InteractionResponse {
@@ -252,15 +280,23 @@ class UnifiedInteractionService {
           if (response.allowAlways && pending.source && pending.allowKey) {
             this.allowSource(pending.allowKey, pending.source)
           }
-          // 用户确认后，缓存路径级去重（同会话内该路径后续操作自动通过）
-          if (response.confirmed && pending.pathScope && pending.allowKey) {
-            this.allowPath(pending.allowKey, pending.pathScope)
+          // 用户点击"本轮任务不再提醒"：开启任务级高权限模式，本轮任务后续文件操作不再弹窗
+          if (response.taskHighPermission && pending.allowKey) {
+            this.setTaskHighPermission(pending.allowKey, true)
           }
           pending.resolve(response)
           return { success: true }
         }
       }
       return { success: false, error: 'Request not found' }
+    })
+
+    // 渲染端开关任务级高权限模式：ChatInput 高权限按钮关闭该模式时调用（开启走确认弹窗响应）
+    ipcMain.handle(IPC_CHANNELS.INTERACTION_SET_TASK_PERMISSION, (_event, params: SetTaskHighPermissionParams) => {
+      const key = params?.conversationId || params?.sessionId
+      if (!key) return { success: false, error: '缺少会话标识' }
+      this.setTaskHighPermission(key, params.enabled === true)
+      return { success: true }
     })
   }
 

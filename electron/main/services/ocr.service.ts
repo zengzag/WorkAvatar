@@ -4,6 +4,7 @@ import path from 'path'
 import { Worker } from 'worker_threads'
 import { createLogger } from './logger'
 import PathService from './path.service'
+import mainUiI18n from './ui-i18n.service'
 
 const logger = createLogger('OCR')
 
@@ -131,9 +132,9 @@ class OCRService {
     const dictPath = path.join(modelDir, 'ppocrv5_dict.txt')
 
     if (!fs.existsSync(detPath) || !fs.existsSync(recPath) || !fs.existsSync(dictPath)) {
-      const msg = 'PaddleOCR 模型文件缺失，OCR 功能不可用'
+      const msg = mainUiI18n.t('ocrModelMissing')
       logger.error(msg, { detPath, recPath, dictPath })
-      this.showError('OCR 初始化失败', `${msg}\n路径: ${modelDir}`)
+      this.showError(mainUiI18n.t('ocrInitFailedTitle'), `${msg}\n${mainUiI18n.t('ocrPathLabel')}: ${modelDir}`)
       throw new Error(msg)
     }
 
@@ -141,9 +142,9 @@ class OCRService {
       await this.spawnAndInitWorker()
       logger.info('PaddleOCR v5 mobile engine initialized (Worker)')
     } catch (err) {
-      const msg = 'PaddleOCR Worker 初始化失败'
+      const msg = mainUiI18n.t('ocrWorkerInitFailed')
       logger.error(msg, err)
-      this.showError('OCR 初始化失败', `${msg}\n${err instanceof Error ? err.message : String(err)}`)
+      this.showError(mainUiI18n.t('ocrInitFailedTitle'), `${msg}\n${err instanceof Error ? err.message : String(err)}`)
       throw err instanceof Error ? err : new Error(String(err))
     }
   }
@@ -249,9 +250,9 @@ class OCRService {
     // 重置 initPromise 允许下次调用重新初始化
     this.initPromise = null
 
-    const msg = 'OCR Worker 崩溃退出，图片识别不可用'
+    const msg = mainUiI18n.t('ocrWorkerCrashed')
     logger.error(msg, err)
-    this.showError('OCR 运行异常', `${msg}\n${err?.message || ''}`)
+    this.showError(mainUiI18n.t('ocrRuntimeErrorTitle'), `${msg}\n${err?.message || ''}`)
   }
 
   private nextId(): string {
@@ -315,9 +316,9 @@ class OCRService {
     try {
       return await this.runPaddleOcrViaWorker(imagePath)
     } catch (err) {
-      const msg = 'PaddleOCR 识别失败'
+      const msg = mainUiI18n.t('ocrRecognizeFailed')
       logger.error(msg, { imagePath, error: err })
-      this.showError('OCR 识别失败', `${msg}\n图片: ${path.basename(imagePath)}\n${err instanceof Error ? err.message : String(err)}`)
+      this.showError(mainUiI18n.t('ocrRecognizeFailedTitle'), `${msg}\n${mainUiI18n.t('ocrImageLabel')}: ${path.basename(imagePath)}\n${err instanceof Error ? err.message : String(err)}`)
       throw err instanceof Error ? err : new Error(String(err))
     }
   }

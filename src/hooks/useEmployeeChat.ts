@@ -7,6 +7,7 @@ import type { MessageSegment } from '../components/workbench/types'
 import { ensureSegments, patchMissingCompletedAt } from '../components/workbench'
 import { generateId } from '../utils/format'
 import { LRUCache } from '../utils/lru-cache'
+import { getToolDisplayName } from '../utils/tool-display'
 import { useChatScroll } from './useChatScroll'
 import { useLlmSettings } from './useLlmSettings'
 import { getSceneDefaultModel } from '../utils/default-model'
@@ -73,6 +74,9 @@ const _persistentModels = new Map<string, ModelSelection[]>()
 // 按 conversationId 绑定输入框默认模型（模型按钮）：各任务独立，切换对话时恢复各自绑定的模型
 const _persistentDefaultModels = new Map<string, { providerId: string; modelId: string }>()
 
+// 按 conversationId 缓存输入框选中的资料库合集：各任务独立，切换对话时恢复各自选择，避免跨任务串扰
+const _persistentCollectionIds = new Map<string, string[]>()
+
 // 解析对话绑定的默认模型（default_model_json，DB 持久化），无效/空返回 null
 const parseConvDefaultModel = (conv: any): { providerId: string; modelId: string } | null => {
   const raw = conv?.default_model_json
@@ -84,6 +88,18 @@ const parseConvDefaultModel = (conv: any): { providerId: string; modelId: string
     // JSON 解析失败忽略
   }
   return null
+}
+
+// 解析对话绑定的资料库合集（collection_ids_json，DB 持久化），无效/空返回空数组
+const parseConvCollectionIds = (conv: any): string[] => {
+  const raw = conv?.collection_ids_json
+  if (!raw) return []
+  try {
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr.filter((x: any) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 // 按 conversationId 缓存上下文用量：切换窗口/员工后真空期 onDone 更新不会丢失，
@@ -102,27 +118,6 @@ const getOrCreateEmployeeMessagesCache = (employeeId: string): LRUCache<string, 
 
 const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) => {
   const { t } = useTranslation()
-
-  const TOOL_DISPLAY_NAMES: Record<string, string> = useMemo(() => ({
-    date_time: t('workbench.toolNames.date_time'),
-    shell_exec: t('workbench.toolNames.shell_exec'),
-    file: t('workbench.toolNames.file'),
-    web_search: t('workbench.toolNames.web_search'),
-    web_fetch: t('workbench.toolNames.web_fetch'),
-    activate_skill: t('workbench.toolNames.activate_skill'),
-    read_reference: t('workbench.toolNames.read_reference'),
-    ask_user: t('workbench.toolNames.ask_user'),
-    calendar_event_list: t('workbench.toolNames.calendar_event_list'),
-    calendar_event_create: t('workbench.toolNames.calendar_event_create'),
-    calendar_event_update: t('workbench.toolNames.calendar_event_update'),
-    calendar_event_delete: t('workbench.toolNames.calendar_event_delete'),
-    calendar_todo_list: t('workbench.toolNames.calendar_todo_list'),
-    calendar_todo_create: t('workbench.toolNames.calendar_todo_create'),
-    calendar_todo_update: t('workbench.toolNames.calendar_todo_update'),
-    calendar_todo_delete: t('workbench.toolNames.calendar_todo_delete'),
-    calendar_todo_complete: t('workbench.toolNames.calendar_todo_complete'),
-    calendar_todo_stats: t('workbench.toolNames.calendar_todo_stats'),
-  }), [t])
 
   const [employee, setEmployee] = useState<any | null>(null)
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
@@ -328,6 +323,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           const segs: MessageSegment[] = runs.map((run: any, i: number) => {
             const log: Array<{ eventType: string; data: any }> = run.eventLog || []
             const startEv = log.find(e => e.eventType === 'start')
+            const isActiveRun = run.status === 'running' || run.status === 'queued'
             return {
               type: 'delegation',
               id: `${assistantMessageId}_run_rec_${i}_${run.runId}`,
@@ -337,10 +333,11 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
               targetEmployeeName: startEv?.data?.targetEmployeeName || run.employeeName || t('workbench.delegationUnknown'),
               targetAvatarType: startEv?.data?.targetAvatarType || run.employeeAvatarType,
               instruction: startEv?.data?.instruction || run.instruction,
-              delegationStatus: (run.status === 'running' || run.status === 'queued') ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
+              delegationStatus: isActiveRun ? 'streaming' as const : ((run.status || 'streaming') as MessageSegment['delegationStatus']),
               subSegments: recoverSubSegmentsFromLog(log, run.runId),
               isToolComplete: false,
-              collapsed: false,
+              // 恢复时仅仍执行中的委托默认展开，已收尾的保持折叠
+              collapsed: !isActiveRun,
               timestamp: Date.now(),
             }
           })
@@ -460,6 +457,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         const convData = cachedConvList.find((c: Conversation) => c.id === cachedActiveConvId)
         inputDefaultModelRef.current = _persistentDefaultModels.get(cachedActiveConvId) || (convData ? parseConvDefaultModel(convData) : null) || null
         setInputDefaultModelState(inputDefaultModelRef.current)
+        // 恢复该对话绑定的资料库合集（优先内存缓存，其次 DB 持久化），避免上一个任务的合集选择串扰
+        const kbIds = _persistentCollectionIds.get(cachedActiveConvId) || (convData ? parseConvCollectionIds(convData) : [])
+        setSelectedCollectionIds(kbIds)
         if (convData) {
           setMinimalMode(!!(convData as any).minimal_mode)
         }
@@ -516,6 +516,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           inputDefaultModelRef.current = dbModel
           setInputDefaultModelState(dbModel)
         }
+      }
+
+      // 从 convList 恢复各对话绑定的资料库合集（仅本会话未显式设置过的）
+      for (const conv of convList) {
+        if (_persistentCollectionIds.has(conv.id)) continue
+        const dbIds = parseConvCollectionIds(conv)
+        if (dbIds.length > 0) _persistentCollectionIds.set(conv.id, dbIds)
+      }
+      // 当前激活对话若尚未恢复合集（selectConversation 早于 convList 加载），从缓存补齐
+      if (activeConversationIdRef.current) {
+        const cachedIds = _persistentCollectionIds.get(activeConversationIdRef.current)
+        if (cachedIds) setSelectedCollectionIds(cachedIds)
       }
 
       // 从 convList 恢复所有对话的 contextStats
@@ -695,6 +707,14 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         inputDefaultModelRef.current = null
         setInputDefaultModelState(null)
       }
+      // 新对话绑定资料库合集持久化到 DB（新任务模式选中的合集作为该任务的知识检索范围）
+      if (selectedCollectionIds.length > 0) {
+        _persistentCollectionIds.set(convId, selectedCollectionIds)
+        window.electronAPI.conversation.update({
+          id: convId,
+          collection_ids_json: JSON.stringify(selectedCollectionIds),
+        }).catch(() => {})
+      }
       forceScrollToBottom()
 
       refreshConversationList()
@@ -749,6 +769,16 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     const defaultModelConvData = allConversations.find(c => c.id === convId)
     inputDefaultModelRef.current = cachedDefaultModel || parseConvDefaultModel(defaultModelConvData) || null
     setInputDefaultModelState(inputDefaultModelRef.current)
+    // 切换对话时恢复该对话绑定的资料库合集（优先内存缓存，其次 DB 持久化），避免上一个任务的合集选择串扰
+    const cachedKbIds = _persistentCollectionIds.get(convId)
+    const collectionConvData = allConversations.find(c => c.id === convId)
+    if (cachedKbIds) {
+      setSelectedCollectionIds(cachedKbIds)
+    } else {
+      const dbIds = collectionConvData ? parseConvCollectionIds(collectionConvData) : []
+      setSelectedCollectionIds(dbIds)
+      if (dbIds.length > 0) _persistentCollectionIds.set(convId, dbIds)
+    }
 
     const cachedMsgs = conversationMessagesRef.current.get(convId)
     if (cachedMsgs !== undefined) {
@@ -897,6 +927,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
       _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
 
       await window.electronAPI.conversation.delete(convId)
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -924,6 +955,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         _persistentDrafts.delete(convId)
         _persistentModels.delete(convId)
         _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
         await window.electronAPI.conversation.delete(convId)
       }
       setAllConversations((prev) => prev.filter((c) => !convIds.includes(c.id)))
@@ -945,20 +977,28 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
   const deleteAllConversations = async () => {
     if (!id) return
     try {
-      // 中止所有活跃流式会话
+      // 仅中止并清理属于当前员工对话的流式会话：
+      // streamStatesRef 是模块级共享（按 sessionId 索引），无差别 abort/clear
+      // 会误伤其他员工后台自动续跑的会话（其占位消息将永久卡在 isStreaming）
+      const currentConvIds = new Set(allConversations.map(c => c.id))
       for (const [sessionId, ss] of streamStatesRef.current) {
-        if (ss.isStreaming) {
+        if (currentConvIds.has(ss.conversationId) && ss.isStreaming) {
           ss.isStreaming = false
           try { await window.electronAPI.llm.abortChat(sessionId) } catch { /* ignore */ }
         }
       }
-      streamStatesRef.current.clear()
+      for (const [sessionId, ss] of streamStatesRef.current) {
+        if (currentConvIds.has(ss.conversationId)) {
+          streamStatesRef.current.delete(sessionId)
+        }
+      }
       conversationMessagesRef.current.clear()
       // 清理当前员工所有对话的草稿
       for (const conv of allConversations) {
         _persistentDrafts.delete(conv.id)
         _persistentModels.delete(conv.id)
         _persistentDefaultModels.delete(conv.id)
+        _persistentCollectionIds.delete(conv.id)
       }
 
       await window.electronAPI.conversation.deleteAll(id)
@@ -991,6 +1031,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       _persistentDrafts.delete(convId)
       _persistentModels.delete(convId)
       _persistentDefaultModels.delete(convId)
+      _persistentCollectionIds.delete(convId)
 
       await window.electronAPI.conversation.update({ id: convId, employee_id: targetEmployeeId })
       setAllConversations((prev) => prev.filter((c) => c.id !== convId))
@@ -1116,10 +1157,21 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       return
     }
 
+    // 防重发：既查流式状态，也查 isStreamingRef——IPC 返回 sessionId 前的窗口期
+    // streamState 尚未注册，仅查 streamStatesRef 时 Enter 可重复触发并发两条流。
+    // 置位后由 sendMessage 内部（成功流结束/失败 catch）复位
     const hasActiveStream = Array.from(streamStatesRef.current.values()).some(s => s.conversationId === currentConvId && s.isStreaming)
-    if (hasActiveStream) return
+    if (hasActiveStream || isStreamingRef.current) return
 
-    sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
+    isStreamingRef.current = true
+    await sendMessage(currentConvId, trimmedContent, images, models, { highPermission: !!options?.highPermission })
+    // sendMessage 发起失败（未进入流）的路径在其 catch 中复位；此处同步兜底
+    // （按当前对话过滤：其他员工后台续跑流不应阻止本对话复位）
+    const stillStreaming = Array.from(streamStatesRef.current.values())
+      .some(s => s.conversationId === currentConvId && s.isStreaming)
+    if (!stillStreaming) {
+      isStreamingRef.current = false
+    }
   }
 
   // 实际执行模型：优先当前对话绑定的默认模型（输入框模型按钮），其次员工级默认/第一个 provider
@@ -1189,7 +1241,16 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           comparisonModelId: sel.modelId,
         }
         updateConvMessages(targetConvId, (prev) => [...prev, assistantMessage])
+      }
 
+      if (targetConvId === activeConversationIdRef.current) {
+        setIsStreaming(true)
+        isStreamingRef.current = true
+      }
+
+      // 单个模型的发起（IPC 返回 sessionId 后注册 streamState，
+      // 发起窗口期由 handleSend 的 isStreamingRef 守卫兜底防重发）
+      const startOne = async (sel: { providerId: string; modelId: string }, assistantMessageId: string) => {
         const streamState: ConversationStreamState = {
           isStreaming: true,
           conversationId: targetConvId,
@@ -1199,12 +1260,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           runCounter: 0,
           groupSeq: 0,
         }
-
-        if (targetConvId === activeConversationIdRef.current) {
-          setIsStreaming(true)
-          isStreamingRef.current = true
-        }
-
         try {
           const messageHistory = buildEnrichedHistory(
             updatedMessagesRef
@@ -1215,7 +1270,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
             provider_id: sel.providerId,
             model_id: sel.modelId,
             messages: messageHistory,
-            options: { temperature: DEFAULT_TEMPERATURE },
             use_skills: true,
             collection_ids: selectedCollectionIds,
             enable_thinking: enableThinking,
@@ -1236,6 +1290,9 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           }
         }
       }
+
+      // 多模型对比并行发起：原 for 内 await 串行启动 N 个模型，对比耗时 N 倍
+      await Promise.all(targetModels.map((sel, idx) => startOne(sel, assistantIds[idx])))
 
       if (targetConvId === activeConversationIdRef.current && assistantIds.length > 0) {
         setIsComparisonMode(true)
@@ -1284,7 +1341,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
           provider_id: providerId,
           model_id: modelId,
           messages: messageHistory,
-          options: { temperature: DEFAULT_TEMPERATURE },
           use_skills: true,
           collection_ids: selectedCollectionIds,
           enable_thinking: enableThinking,
@@ -1381,7 +1437,6 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
         provider_id: providerId,
         model_id: modelId || undefined,
         messages: messageHistory,
-        options: { temperature: DEFAULT_TEMPERATURE },
         use_skills: true,
         collection_ids: selectedCollectionIds,
         enable_thinking: enableThinking,
@@ -1637,6 +1692,20 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setInputDefaultModelState(value)
   }, [])
 
+  // 对话模式下资料库合集选择更新：绑定到当前对话，各任务独立存储，切换对话/重启后恢复各自选择
+  const setPersistentCollectionIds = useCallback((ids: string[]) => {
+    setSelectedCollectionIds(ids)
+    const convId = activeConversationIdRef.current
+    if (convId) {
+      _persistentCollectionIds.set(convId, ids)
+      // 持久化到 DB，保证重启/切换任务后仍按对话恢复各自的合集选择
+      window.electronAPI.conversation.update({
+        id: convId,
+        collection_ids_json: JSON.stringify(ids),
+      }).catch(() => {})
+    }
+  }, [setSelectedCollectionIds])
+
   // 清除当前激活对话（用于新建任务时重置状态，避免新消息发到旧对话）
   const clearActiveConversation = useCallback(() => {
     setActiveConversationId(null)
@@ -1724,11 +1793,18 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
       if (defaultModelJson) {
         _persistentDefaultModels.set(newConvId, JSON.parse(defaultModelJson))
       }
+      // 继承原任务的资料库合集绑定（collection_ids_json），保证分支任务检索范围一致
+      const collectionIdsJson = origConv.collection_ids_json
+        || (selectedCollectionIds.length > 0 ? JSON.stringify(selectedCollectionIds) : undefined)
+      if (collectionIdsJson) {
+        _persistentCollectionIds.set(newConvId, JSON.parse(collectionIdsJson))
+      }
       await window.electronAPI.conversation.update({
         id: newConvId,
         messages_json: JSON.stringify(prefix),
         message_count: prefix.length,
         default_model_json: defaultModelJson,
+        collection_ids_json: collectionIdsJson,
         minimal_mode: !!origConv.minimal_mode,
       }).catch(() => {})
 
@@ -2093,7 +2169,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     }
   }
 
-  const getToolDisplayName = useCallback((name: string) => TOOL_DISPLAY_NAMES[name] || name, [TOOL_DISPLAY_NAMES])
+  // 工具文案与数字员工设置一致（后端工具目录 title），见 utils/tool-display
 
   const handleToggleSegment = useCallback((msgId: string, segId: string) => {
     const convId = activeConversationIdRef.current
@@ -2272,6 +2348,7 @@ const useEmployeeChat = ({ id, message, skipAutoInit }: UseEmployeeChatParams) =
     setEnableThinking,
     selectedCollectionIds,
     setSelectedCollectionIds,
+    setPersistentCollectionIds,
     minimalMode,
     handleToggleMinimalMode,
     showSidePanel,

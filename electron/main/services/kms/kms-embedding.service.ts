@@ -50,17 +50,21 @@ class KMSEmbeddingService {
   }
 
   async generateEmbeddings(
-    providerId?: string,
+    providerIdParam?: string,
     onProgress?: ProgressCallback,
     signal?: AbortSignal,
     forceRegenerate: boolean = false,
   ): Promise<void> {
+    let providerId = providerIdParam
+    // 记录真实模型名（写入 kms_embeddings.model 供排查维度/模型问题，勿存 providerId）
+    let modelLabel: string = providerIdParam || ''
     if (!providerId) {
       const KMSService = (await import('./kms.service')).default
       const kmsService = KMSService.getInstance()
       const embConfig = kmsService.getKmsEmbeddingConfigPublic()
       if (embConfig) {
         providerId = embConfig.providerId
+        modelLabel = embConfig.modelName || providerId
       } else {
         const defaultConfig = LLMClientService.getInstance().getDefaultEmbeddingConfig()
         if (!defaultConfig) {
@@ -74,6 +78,7 @@ class KMSEmbeddingService {
           return
         }
         providerId = defaultConfig.providerId
+        modelLabel = (defaultConfig as any).model || providerId
       }
     }
 
@@ -175,7 +180,7 @@ class KMSEmbeddingService {
               sourceId: batch[j].source_id,
               fileId: batch[j].file_id,
               embedding: embeddings[j],
-              model: providerId,
+              model: modelLabel,
             })
           }
           if (batchEntries.length > 0) {
@@ -218,6 +223,7 @@ class KMSEmbeddingService {
       const kmsService = KMSService.getInstance()
       const embConfig = kmsService.getKmsEmbeddingConfigPublic()
       const providerId = embConfig?.providerId || chatProviderId
+      const modelLabel = embConfig?.modelName || providerId
 
       const llmClient = LLMClientService.getInstance()
       const searchEngine = KMSSearchEngineService.getInstance()
@@ -267,7 +273,7 @@ class KMSEmbeddingService {
               sourceId: batch[j].source_id,
               fileId: batch[j].file_id,
               embedding: embeddings[j],
-              model: providerId,
+              model: modelLabel,
             })
           }
           if (batchEntries.length > 0) {

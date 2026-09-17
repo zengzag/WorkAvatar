@@ -50,7 +50,7 @@ interface NavConfigState {
   pluginItems: PluginNavItem[]
   initialized: boolean
   setConfig: (config: NavItemConfig[]) => void
-  setPlugins: (items: PluginNavItem[]) => void
+  setPlugins: (items: PluginNavItem[], installedIds?: string[]) => void
   toggleVisible: (key: string) => void
   moveUp: (key: string) => void
   moveDown: (key: string) => void
@@ -60,7 +60,9 @@ interface NavConfigState {
 
 function persist(config: NavItemConfig[]): void {
   try {
-    window.electronAPI.settings.set({ key: SETTINGS_KEY, value: JSON.stringify(config) })
+    const result = window.electronAPI.settings.set({ key: SETTINGS_KEY, value: JSON.stringify(config) })
+    // IPC 返回 rejected promise 时避免未处理的 Promise 拒绝（写盘失败不影响界面状态）
+    void Promise.resolve(result).catch(() => { /* ignore */ })
   } catch { /* ignore */ }
 }
 
@@ -77,15 +79,25 @@ function reindex(config: NavItemConfig[]): NavItemConfig[] {
     .map((item, idx) => ({ ...item, order: idx }))
 }
 
-/** 合并插件项到 config：保留已保存的排序/显隐，新增插件按 manifest order 插入 */
-function mergePluginsIntoConfig(config: NavItemConfig[], plugins: PluginNavItem[]): NavItemConfig[] {
-  const pluginKeys = new Set(plugins.map((p) => p.key))
-  // 保留已持久化的 config（含插件项），移除已卸载的插件项
-  const merged = config.filter((c) => !pluginKeys.has(c.key) || plugins.some((p) => p.key === c.key))
+/**
+ * 合并插件项到 config：
+ * - 内置项与"已安装插件"（installedIds，含已停用/加载失败的插件）的排序/显隐保留；
+ * - 仅移除真正卸载（不在 installedIds）的插件项；
+ * - 当前已加载插件缺条目时按 manifest order 追加。
+ * installedIds 缺省（调用方拿不到安装清单）时退回旧行为：只保留内置项与当前插件项。
+ */
+function mergePluginsIntoConfig(
+  config: NavItemConfig[],
+  plugins: PluginNavItem[],
+  installedIds?: string[],
+): NavItemConfig[] {
+  const builtinKeys = new Set(DEFAULT_NAV_CONFIG.map((c) => c.key))
+  const installed = installedIds ? new Set(installedIds) : null
+  const merged = config.filter((c) => builtinKeys.has(c.key) || (installed ? installed.has(c.key) : false))
   for (const p of plugins) {
-    if (!merged.some((c) => c.key === p.key)) {
-      merged.push({ key: p.key, visible: true, order: p.order })
-    }
+    if (merged.some((c) => c.key === p.key)) continue
+    const saved = config.find((c) => c.key === p.key)
+    merged.push(saved ? { ...saved } : { key: p.key, visible: true, order: p.order })
   }
   return reindex(merged)
 }
@@ -102,22 +114,27 @@ export const useNavConfigStore = create<NavConfigState>()(
       persist(reindexed)
     },
 
-    setPlugins: (items) => {
+    setPlugins: (items, installedIds) => {
       set((state) => {
         state.pluginItems = items.slice().sort((a, b) => a.order - b.order)
         // 合并插件项到 config 持久化列表
-        state.config = mergePluginsIntoConfig(state.config, items)
+        state.config = mergePluginsIntoConfig(state.config, items, installedIds)
       })
-      persist(get().config)
+      // 初始化（读取持久化）完成前 config 还是默认顺序，此时写盘会用 manifest 顺序覆盖用户已保存的排序/显隐
+      if (get().initialized) persist(get().config)
     },
 
     toggleVisible: (key) => {
       if (LOCKED_KEYS.includes(key as NavItemKey)) return
+      let changed = false
       set((state) => {
         const item = state.config.find((c) => c.key === key)
-        if (item) item.visible = !item.visible
+        if (item) {
+          item.visible = !item.visible
+          changed = true
+        }
       })
-      persist(get().config)
+      if (changed) persist(get().config)
     },
 
     moveUp: (key) => {
@@ -129,7 +146,8 @@ export const useNavConfigStore = create<NavConfigState>()(
         const tmp = sorted[idx].order
         sorted[idx].order = sorted[idx - 1].order
         sorted[idx - 1].order = tmp
-        state.config = sorted
+        // reindex：锁定项始终排最后（与锁定项换位时归一化，避免设置项跑到上方）
+        state.config = reindex(sorted)
       })
       persist(get().config)
     },
@@ -143,7 +161,7 @@ export const useNavConfigStore = create<NavConfigState>()(
         const tmp = sorted[idx].order
         sorted[idx].order = sorted[idx + 1].order
         sorted[idx + 1].order = tmp
-        state.config = sorted
+        state.config = reindex(sorted)
       })
       persist(get().config)
     },
@@ -160,42 +178,40 @@ export const useNavConfigStore = create<NavConfigState>()(
 
     initialize: async () => {
       if (get().initialized) return
+      let parsed: NavItemConfig[] | null = null
       try {
         const saved = await window.electronAPI.settings.get({ key: SETTINGS_KEY })
-        let parsed: NavItemConfig[] | null = null
         if (Array.isArray(saved)) {
           parsed = saved as NavItemConfig[]
         } else if (typeof saved === 'string' && saved.trim()) {
-          try { parsed = JSON.parse(saved) } catch { /* ignore */ }
+          try {
+            const decoded = JSON.parse(saved)
+            // 持久化内容被外部改写为非数组（对象/数字等）时按无持久化处理，避免 find 抛错中断启动流程
+            if (Array.isArray(decoded)) parsed = decoded as NavItemConfig[]
+          } catch { /* ignore */ }
         }
-        if (Array.isArray(parsed)) {
-          // 合并已保存（含插件项）、补充新增内置项
-          const merged: NavItemConfig[] = DEFAULT_NAV_CONFIG.map((d) => {
-            const s = parsed!.find((c) => c.key === d.key)
-            return s ? { ...s } : { ...d }
-          })
-          // 补充已保存的插件项（插件加载后 setPlugins 会再次合并，但过早读取时已有）
-          for (const s of parsed) {
-            if (!merged.some((c) => c.key === s.key)) {
-              merged.push({ ...s })
-            }
-          }
-          set((state) => {
-            state.config = reindex(merged)
-            state.initialized = true
-          })
-        } else {
-          set((state) => {
-            state.config = DEFAULT_NAV_CONFIG.map((c, i) => ({ ...c, order: i }))
-            state.initialized = true
-          })
-        }
-      } catch {
-        set((state) => {
-          state.config = DEFAULT_NAV_CONFIG.map((c, i) => ({ ...c, order: i }))
-          state.initialized = true
+      } catch { /* 读取失败按无持久化处理 */ }
+      set((state) => {
+        // 内置项：优先取持久化中的排序/显隐，缺失（新增内置项）则用默认值
+        const merged: NavItemConfig[] = DEFAULT_NAV_CONFIG.map((d) => {
+          const s = parsed?.find((c) => c.key === d.key)
+          return s ? { ...s } : { ...d }
         })
-      }
+        // 补充持久化中的插件项（含已卸载插件的历史条目，待 setPlugins 合并时清理）
+        if (Array.isArray(parsed)) {
+          for (const s of parsed) {
+            if (!merged.some((c) => c.key === s.key)) merged.push({ ...s })
+          }
+        }
+        // 启动期插件可能先于本方法注入（loadPlugins 早于 UI 挂载）：保留其条目，避免被持久化合并覆盖丢失
+        for (const p of state.pluginItems) {
+          if (!merged.some((c) => c.key === p.key)) {
+            merged.push({ key: p.key, visible: true, order: p.order })
+          }
+        }
+        state.config = reindex(merged)
+        state.initialized = true
+      })
     },
   }))
 )

@@ -1020,9 +1020,14 @@ class SubAgentRuntime {
       }
     }
 
+    // 子会话中途出错但已产出部分文本：按 completed 结算并保留错误信息，
+    // 让主管 LLM 与前端能看到失败原因，而非静默当成功交付
     const summary = finalAnswer.trim() || '(子员工未产出文本)'
     this.settle(runId, 'completed', {
-      summary,
+      summary: subError
+        ? `${summary}\n\n[执行异常] ${subError}`
+        : summary,
+      error: subError ?? undefined,
       generatedFiles: reportedFiles,
       autoDetectedFiles: autoDetected,
       tokenUsage,

@@ -27,6 +27,7 @@ import {
 } from './types'
 import LLMLoggerService from '../../llm-logger.service'
 import { getProviderCompat } from './provider-compat'
+import { buildPiStreamOptions } from './pi-stream-options'
 import type { ThinkingLevel } from '../../../../shared/types'
 
 const now = () => Date.now()
@@ -42,12 +43,13 @@ function buildPiModel(
   providerType?: string,
   enableThinking?: ThinkingLevel,
 ): Model<'openai-completions'> {
-  const compat = getProviderCompat(providerType)
-  // 关键：对有 thinkingFormat 的 provider，reasoning 必须始终为 true
+  const compat = getProviderCompat(providerType, modelId)
+  // 关键：对有 thinkingFormat / alwaysReasoning 的 provider，reasoning 必须始终为 true
   // pi-ai 的 thinkingFormat 分支只在 model.reasoning=true 时执行
   // 若为 false，分支不执行 → 不发 thinking 参数 → 豆包等用默认行为（开思考），开关失效
   // 开关由 reasoningEffort 控制：有值→enabled，无值→disabled
-  const reasoning = !!enableThinking || !!compat.thinkingFormat
+  // alwaysReasoning（如 OpenCode Go）则连 reasoning 参数都不允许缺省，见 resolveReasoningEffort
+  const reasoning = !!enableThinking || !!compat.thinkingFormat || !!compat.alwaysReasoning
   return {
     id: modelId,
     name: modelId,
@@ -72,6 +74,7 @@ function buildPiModel(
         sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
       } : {}),
       ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
+      ...(compat.zaiToolStream ? { zaiToolStream: true } : {}),
       ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   }
@@ -251,22 +254,7 @@ export class PiAIProvider implements ILLMProvider {
       ...(tools && tools.length > 0 ? { tools: this.toPiTools(tools) } : {}),
     }
 
-    const streamOptions: any = {
-      apiKey: this.resolveApiKey(),
-      ...(options?.signal ? { signal: options.signal } : {}),
-      ...((options?.temperature ?? this.config.defaultOptions?.temperature) !== undefined
-        ? { temperature: options?.temperature ?? this.config.defaultOptions?.temperature }
-        : {}),
-      ...((options?.maxTokens ?? this.config.defaultOptions?.maxTokens) !== undefined
-        ? { maxTokens: options?.maxTokens ?? this.config.defaultOptions?.maxTokens }
-        : {}),
-      ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
-      // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
-      // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
-      ...(enableThinking ? { reasoningEffort: enableThinking } : {}),
-      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
-      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
-    }
+    const streamOptions = this.buildStreamOptions(options, options?.signal, false)
 
     try {
       const eventStream = openaiCompletionsStream(piModel, context, streamOptions)
@@ -336,22 +324,7 @@ export class PiAIProvider implements ILLMProvider {
       ...(tools && tools.length > 0 ? { tools: this.toPiTools(tools) } : {}),
     }
 
-    const streamOptions: any = {
-      apiKey: this.resolveApiKey(),
-      ...(signal ? { signal } : {}),
-      ...((options?.temperature ?? this.config.defaultOptions?.temperature) !== undefined
-        ? { temperature: options?.temperature ?? this.config.defaultOptions?.temperature }
-        : {}),
-      ...((options?.maxTokens ?? this.config.defaultOptions?.maxTokens) !== undefined
-        ? { maxTokens: options?.maxTokens ?? this.config.defaultOptions?.maxTokens }
-        : {}),
-      ...(options?.topP !== undefined ? { samplingParams: { top_p: options.topP } } : {}),
-      // pi-ai deepseek/qwen thinkingFormat 依赖 reasoningEffort 决定 thinking 开关
-      // enableThinking 为 false 时关闭，为 'low'/'medium'/'high' 时按级别开启
-      ...(enableThinking ? { reasoningEffort: enableThinking } : {}),
-      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
-      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
-    }
+    const streamOptions = this.buildStreamOptions(options, signal, true)
 
     // 累积 toolCall 增量，按 contentIndex 聚合
     const accumulated: Record<number, { id: string; name: string; arguments: string }> = {}
@@ -449,6 +422,30 @@ export class PiAIProvider implements ILLMProvider {
       }
     }
     return Math.ceil(totalChars / 3.5)
+  }
+
+  /** 统一构造 pi-ai stream options（采样/思考/附加头/超时等，单一入口见 pi-stream-options.ts） */
+  private buildStreamOptions(options: LLMCallOptions | undefined, signal: AbortSignal | undefined, streaming: boolean): Record<string, any> {
+    const defaults = this.config.defaultOptions || {}
+    return buildPiStreamOptions({
+      providerType: this.config.providerType,
+      modelId: this.config.model,
+      apiKey: this.resolveApiKey(),
+      sessionId: options?.sessionId,
+      signal,
+      streaming,
+      enableThinking: options?.enableThinking ?? defaults.enableThinking,
+      temperature: options?.temperature ?? defaults.temperature,
+      maxTokens: options?.maxTokens ?? defaults.maxTokens,
+      topP: options?.topP ?? defaults.topP,
+      frequencyPenalty: options?.frequencyPenalty ?? defaults.frequencyPenalty,
+      presencePenalty: options?.presencePenalty ?? defaults.presencePenalty,
+      thinkingBudget: options?.thinkingBudget ?? defaults.thinkingBudget,
+      timeoutMs: options?.timeoutMs ?? defaults.timeoutMs,
+      // 供应商级附加头优先于内置会话路由头
+      extraHeaders: { ...(defaults.extraHeaders || {}), ...(options?.extraHeaders || {}) },
+      extraBody: options?.extraBody ?? defaults.extraBody,
+    })
   }
 
   private handleStreamEvent(

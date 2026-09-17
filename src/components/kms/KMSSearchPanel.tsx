@@ -47,6 +47,7 @@ interface KMSSearchPanelProps {
   searchResults: SearchResult[]
   isSearching: boolean
   onSearch: (query: string, mode?: SearchMode, filters?: SearchFilters) => void
+  onClearSearch?: () => void
   dirs: IndexDir[]
   onOpenFile: (filePath: string) => void
   onOpenFileDir: (filePath: string) => void
@@ -67,6 +68,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
   searchResults,
   isSearching,
   onSearch,
+  onClearSearch,
   dirs,
   onOpenFile,
   onOpenFileDir,
@@ -148,6 +150,7 @@ const KMSSearchPanel: React.FC<KMSSearchPanelProps> = ({
         onSearchModeChange={handleSearchModeChange}
         isSearching={isSearching}
         onSearch={handleSearch}
+        onClearSearch={onClearSearch}
         searchHistory={searchHistory}
         onLoadSearchHistory={onLoadSearchHistory}
         onDeleteSearchHistory={onDeleteSearchHistory}

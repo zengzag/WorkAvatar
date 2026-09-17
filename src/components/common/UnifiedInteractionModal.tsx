@@ -1,14 +1,68 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag } from 'antd'
+import { Modal, Input, Button, Space, Typography, Alert, Radio, Tag, Popconfirm, App, theme } from 'antd'
 import { ExclamationCircleOutlined, WarningOutlined, QuestionCircleOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
-import { useInteractionStore, type InteractionRequest } from '../../stores/interaction.store'
+import { useInteractionStore, type InteractionRequest, type ScriptDisclosure } from '../../stores/interaction.store'
+import { useTaskPermissionStore } from '../../stores/task-permission.store'
 
 const { TextArea } = Input
 const { Text, Paragraph } = Typography
+const { useToken } = theme
+
+/** 脚本原文展示：等宽字体 + 独立滚动区，长脚本不撑破弹窗（脚本触发的确认才有） */
+const ScriptPreview: React.FC<{ script: ScriptDisclosure }> = ({ script }) => {
+  const { t } = useTranslation()
+  const { token } = useToken()
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div
+        style={{
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: token.borderRadius,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            padding: '2px 12px',
+            background: token.colorFillQuaternary,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            color: token.colorTextTertiary,
+            fontSize: 12,
+            lineHeight: '20px',
+          }}
+        >
+          {script.language}
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: 12,
+            maxHeight: 220,
+            overflow: 'auto',
+            background: token.colorFillQuaternary,
+            fontFamily: token.fontFamilyCode,
+            fontSize: 12,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+          }}
+        >
+          {script.content}
+        </pre>
+      </div>
+      {script.truncated && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+          {t('interaction.scriptTruncatedHint')}
+        </Text>
+      )}
+    </div>
+  )
+}
 
 const UnifiedInteractionModal: React.FC = () => {
   const { t } = useTranslation()
+  const { message } = App.useApp()
   const currentRequest = useInteractionStore((s) => s.currentRequest)
   const respond = useInteractionStore((s) => s.respond)
   const enqueue = useInteractionStore((s) => s.enqueue)
@@ -54,6 +108,22 @@ const UnifiedInteractionModal: React.FC = () => {
     respond({ confirmed: true, cancelled: false, allowAlways: true })
   }, [currentRequest, respond])
 
+  const handleAllowAlwaysDir = useCallback(() => {
+    if (!currentRequest) return
+    respond({ confirmed: true, cancelled: false, allowAlwaysDir: true })
+  }, [currentRequest, respond])
+
+  /**
+   * "本轮任务不再提醒"：开启任务级高权限模式（Popconfirm 已做高危二次确认）。
+   * 主进程登记随确认响应（taskHighPermission）完成；本地仅同步界面状态，供 ChatInput 高权限按钮显示并支持关闭。
+   */
+  const handleTaskHighPermission = useCallback(() => {
+    if (!currentRequest) return
+    useTaskPermissionStore.getState().enable(currentRequest.conversationId)
+    respond({ confirmed: true, cancelled: false, taskHighPermission: true })
+    message.warning(t('interaction.taskHighPermissionEnabled'), 5)
+  }, [currentRequest, respond, message, t])
+
   const handleCancel = useCallback(() => {
     respond({ cancelled: true })
   }, [respond])
@@ -77,6 +147,7 @@ const UnifiedInteractionModal: React.FC = () => {
             <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
               {currentRequest.message}
             </Paragraph>
+            {currentRequest.script && <ScriptPreview script={currentRequest.script} />}
           </div>
         )
 
@@ -147,16 +218,48 @@ const UnifiedInteractionModal: React.FC = () => {
       }
       closable={false}
       mask={{ closable: false }}
-      width={currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480}
+      width={
+        currentRequest.script ? 560
+          : currentRequest.type === 'select' && (currentRequest.options?.length || 0) > 3 ? 560 : 480
+      }
+      // 正文超高时整体滚动：长路径列表 + 脚本代码块都可能超出视口
+      styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
       footer={
         <Space style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <Button onClick={handleCancel}>
             {currentRequest.type === 'confirm' ? t('interaction.reject') : t('common.cancel')}
           </Button>
-          {currentRequest.type === 'confirm' && isSecurityConfirm && (
+          {currentRequest.type === 'confirm' && isSecurityConfirm && !currentRequest.dirScope && (
             <Button onClick={handleAllowAlways}>
               {t('interaction.allowAlways')}
             </Button>
+          )}
+          {currentRequest.type === 'confirm' && isSecurityConfirm && currentRequest.dirScope && (
+            <Button onClick={handleAllowAlwaysDir}>
+              {t('interaction.allowAlwaysDir')}
+            </Button>
+          )}
+          {currentRequest.type === 'confirm' && isSecurityConfirm && (
+            <Popconfirm
+              title={t('interaction.taskHighPermissionTitle')}
+              description={
+                <div style={{ maxWidth: 300 }}>
+                  <Text type="danger" style={{ display: 'block', marginBottom: 8 }}>
+                    {t('interaction.taskHighPermissionDesc')}
+                  </Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('interaction.taskHighPermissionCloseHint')}
+                  </Text>
+                </div>
+              }
+              icon={<WarningOutlined style={{ color: '#ff4d4f' }} />}
+              okText={t('interaction.taskHighPermissionOk')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ danger: true }}
+              onConfirm={handleTaskHighPermission}
+            >
+              <Button danger>{t('interaction.taskHighPermission')}</Button>
+            </Popconfirm>
           )}
           <Button
             type="primary"

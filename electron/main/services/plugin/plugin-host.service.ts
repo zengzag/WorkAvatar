@@ -6,6 +6,7 @@ import fs from 'fs'
 import Database from 'better-sqlite3'
 import { createLogger } from '../logger'
 import DatabaseService from '../database.service'
+import mainUiI18n from '../ui-i18n.service'
 import { IPC_CHANNELS } from '../../../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../../../shared/channels/plugin'
 import type {
@@ -43,6 +44,8 @@ import {
   getSharedCapability,
   canCallPlugin,
   validateCapabilities,
+  getWebviewOrigins,
+  matchWebviewOrigin,
 } from './plugin-capability'
 import { createDataAccessService } from './plugin-data-access'
 import { createExecuteService } from './plugin-execute'
@@ -116,6 +119,8 @@ interface PluginRecord {
   rootDir: string
   enabled: boolean
   engineOk: boolean
+  /** 内容指纹（入口文件 size-mtime[#导入序号]）：同版本覆盖重装/换包时识别变化并刷新渲染端 */
+  rev: string
   /** active: activate 成功；error: 激活抛错；invalid: manifest/engine 校验失败；pending: 已安装未重启激活 */
   status: 'active' | 'disabled' | 'invalid' | 'error' | 'pending'
   statusMessage?: string
@@ -176,6 +181,8 @@ class PluginHostService {
   private commands = new Map<string, PluginCommand>()
   private dataDir = ''
   private initialized = false
+  /** 导入序号：保证用户每次手动导入都产生新的 rev（同一包重复导入也刷新渲染端） */
+  private importSeq = 0
 
   private constructor() {}
 
@@ -236,43 +243,6 @@ class PluginHostService {
     this.dataDir = path.join(dataDir, 'plugin-data')
     fs.mkdirSync(this.dataDir, { recursive: true })
     fs.mkdirSync(this.getUserDir(), { recursive: true })
-
-    // 一次性迁移：旧 userData/plugin-data → 新 dataDir/plugin-data
-    const oldDataDir = path.join(app.getPath('userData'), 'plugin-data')
-    if (fs.existsSync(oldDataDir) && oldDataDir !== this.dataDir) {
-      try {
-        for (const id of fs.readdirSync(oldDataDir)) {
-          const src = path.join(oldDataDir, id)
-          if (!fs.statSync(src).isDirectory()) continue
-          const dst = path.join(this.dataDir, id)
-          if (!fs.existsSync(dst)) {
-            fs.mkdirSync(dst, { recursive: true })
-            for (const f of fs.readdirSync(src)) {
-              try { fs.copyFileSync(path.join(src, f), path.join(dst, f)) } catch { /* ignore */ }
-            }
-          }
-        }
-        logger.info(`插件数据已从旧目录迁移: ${oldDataDir} → ${this.dataDir}`)
-      } catch (err: any) {
-        logger.warn('插件数据迁移失败（忽略，新位置会重建）:', err?.message || err)
-      }
-    }
-
-    // 一次性迁移：旧 userData/plugins（用户插件）→ 新 dataDir/plugins
-    const oldUserPlugins = path.join(app.getPath('userData'), 'plugins')
-    const newUserPlugins = this.getUserDir()
-    if (fs.existsSync(oldUserPlugins) && oldUserPlugins !== newUserPlugins) {
-      try {
-        for (const name of fs.readdirSync(oldUserPlugins)) {
-          const src = path.join(oldUserPlugins, name)
-          const dst = path.join(newUserPlugins, name)
-          if (!fs.existsSync(dst)) fs.cpSync(src, dst, { recursive: true })
-        }
-        logger.info(`用户插件已从旧目录迁移: ${oldUserPlugins} → ${newUserPlugins}`)
-      } catch (err: any) {
-        logger.warn('用户插件迁移失败（忽略）:', err?.message || err)
-      }
-    }
 
     const disabled = this.readDisabledList()
     this.scanAndActivate(disabled)
@@ -392,6 +362,10 @@ class PluginHostService {
    */
   private deactivateRecord(record: PluginRecord): void {
     const id = record.manifest.id
+    // 插件下线后其 locale 可能被覆盖升级：清掉缓存，下次激活重新读取
+    for (const key of [...this.pluginLocaleCache.keys()]) {
+      if (key.startsWith(`${id}:`)) this.pluginLocaleCache.delete(key)
+    }
     this.unregisterPluginSkills(id)
     try {
       const { default: EmployeeRegistryService } = require('../employee-registry.service') as typeof import('../employee-registry.service')
@@ -473,11 +447,12 @@ class PluginHostService {
         changed.add(id)
       }
     }
-    // 2. 新增/变更（版本/启停/engine 变化）→ 下线旧贡献后纳入新记录
+    // 2. 新增/变更（版本/内容指纹/启停/engine 变化）→ 下线旧贡献后纳入新记录
     for (const [id, nextRecord] of next) {
       const current = this.records.get(id)
       const replaced = !current
         || current.manifest.version !== nextRecord.manifest.version
+        || current.rev !== nextRecord.rev
         || current.enabled !== nextRecord.enabled
         || current.engineOk !== nextRecord.engineOk
         || (current.status === 'invalid' && nextRecord.status !== 'invalid')
@@ -587,7 +562,7 @@ class PluginHostService {
     const fail = (id: string, message: string) => {
       records.set(id, {
         manifest: { id, name: id, version: '0.0.0', engine: '*', main: '' },
-        source: 'user', rootDir, enabled: false, engineOk: false, status: 'invalid', statusMessage: message,
+        source: 'user', rootDir, enabled: false, engineOk: false, rev: '', status: 'invalid', statusMessage: message,
       })
     }
     const manifestPath = path.join(rootDir, 'manifest.json')
@@ -613,10 +588,26 @@ class PluginHostService {
     }
     const enabled = !disabled.has(manifest.id)
     records.set(manifest.id, {
-      manifest, source: 'user', rootDir, enabled, engineOk,
+      manifest, source: 'user', rootDir, enabled, engineOk, rev: this.computePluginRev(rootDir, manifest),
       status: enabled ? 'error' : 'disabled',
       statusMessage: enabled ? '尚未激活' : undefined,
     })
+  }
+
+  /**
+   * 插件内容指纹：入口文件（优先渲染端）size + mtime。
+   * 插件版本号不变但文件被替换（覆盖重装/直接从磁盘换包）时指纹变化，
+   * 用于主进程增量重建与渲染端 cache-bust，避免加载内存/ESM 缓存的旧模块。
+   */
+  private computePluginRev(rootDir: string, manifest: PluginManifest): string {
+    const entry = manifest.renderer || manifest.main
+    if (!entry) return ''
+    try {
+      const stat = fs.statSync(path.join(rootDir, entry))
+      return `${stat.size}-${Math.floor(stat.mtimeMs)}`
+    } catch {
+      return ''
+    }
   }
 
   private activateRecord(record: PluginRecord): void {
@@ -664,7 +655,6 @@ class PluginHostService {
       const run = db.transaction(() => {
         migration.run({
           storage: ctx.storage,
-          legacy: this.hasPermission(record, 'legacyMigration') ? this.buildLegacyReader() : null,
           logger: ctx.services.logger,
         })
         db.prepare('INSERT INTO plugin_migrations (version, applied_at) VALUES (?, ?)')
@@ -675,11 +665,6 @@ class PluginHostService {
   }
 
   // ====== ctx 组装 ======
-
-  /** 校验 legacyMigration 权限（v2 保留在 permissions 数组，仅迁移专用） */
-  private hasPermission(record: PluginRecord, permission: string): boolean {
-    return (record.manifest.permissions ?? []).includes(permission as never)
-  }
 
   /** 将插件 manifest.employees 声明注册进员工注册表（激活成功后调用） */
   private registerManifestEmployees(record: PluginRecord): void {
@@ -800,6 +785,51 @@ class PluginHostService {
     }
   }
 
+  /** 插件 locale 缓存（key = 插件 id:版本号，升级后自动失效） */
+  private pluginLocaleCache = new Map<string, Record<string, Record<string, unknown>>>()
+
+  /** 读取插件 locale 目录下的语言包（缺失或解析失败返回空对象） */
+  private loadPluginLocales(record: PluginRecord): Record<string, Record<string, unknown>> {
+    const cacheKey = `${record.manifest.id}:${record.rev}`
+    const cached = this.pluginLocaleCache.get(cacheKey)
+    if (cached) return cached
+    const locales: Record<string, Record<string, unknown>> = {}
+    const localeDir = path.join(record.rootDir, record.manifest.locale ?? 'locale')
+    try {
+      for (const file of fs.readdirSync(localeDir)) {
+        const m = /^([\w-]+)\.json$/.exec(file)
+        if (!m) continue
+        try { locales[m[1]] = JSON.parse(fs.readFileSync(path.join(localeDir, file), 'utf-8')) } catch { /* 忽略坏文件 */ }
+      }
+    } catch { /* 无 locale 目录 */ }
+    this.pluginLocaleCache.set(cacheKey, locales)
+    return locales
+  }
+
+  /**
+   * 主进程侧插件文案解析（ctx.services.i18n.t）：
+   * 用当前应用语言查插件 locale，缺失回退 zh-CN，再回退 key 本身。
+   */
+  private translatePluginText(record: PluginRecord, key: string, params?: Record<string, string | number>): string {
+    const locales = this.loadPluginLocales(record)
+    const lookup = (lng: string): unknown => {
+      const bundle = locales[lng]
+      if (!bundle) return undefined
+      return key.split('.').reduce<unknown>(
+        (acc, part) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined),
+        bundle,
+      )
+    }
+    const resolved = lookup(mainUiI18n.getLocale()) ?? lookup('zh-CN')
+    let text = typeof resolved === 'string' ? resolved : key
+    if (params) {
+      for (const [name, value] of Object.entries(params)) {
+        text = text.split(`{{${name}}}`).join(String(value))
+      }
+    }
+    return text
+  }
+
   private buildContext(record: PluginRecord): PluginContext {
     const { manifest } = record
     const pluginLogger = createLogger(`Plugin:${manifest.id}`)
@@ -812,6 +842,9 @@ class PluginHostService {
           return PathService.getInstance().getDataDir()
         },
         listNativeModules: () => ({ ...HOST_NATIVE_DEPENDENCIES }),
+      },
+      i18n: {
+        t: (key, params) => this.translatePluginText(record, key, params),
       },
     }
 
@@ -1206,16 +1239,26 @@ class PluginHostService {
     if (this.hasSystemFeature(record, 'notification')) {
       const { default: NotificationService } = require('../notification.service')
       services.notification = {
-        notify: (payload: PluginNotificationPayload) => NotificationService.getInstance().notify({
-          title: payload.title,
-          body: payload.body,
-          clickTarget: payload.clickTarget as any,
-          clickId: payload.clickId,
-          source: `plugin:${manifest.id}`,
-          silent: payload.silent,
-          i18nKey: payload.i18nKey,
-          i18nParams: payload.i18nParams,
-        } as any),
+        // 系统通知由主进程直接展示，需在此按当前语言解析插件文案（渲染端通知会再次用 i18nKey 本地化）；
+        // 文案键在插件 locale 中缺失时保留插件传入的兜底文案
+        notify: (payload: PluginNotificationPayload) => {
+          const resolve = (key?: string, fallback?: string): string => {
+            if (!key) return fallback || ''
+            const text = this.translatePluginText(record, key, payload.i18nParams)
+            return text === key ? (fallback || '') : text
+          }
+          return NotificationService.getInstance().notify({
+            title: resolve(payload.i18nTitleKey, payload.title),
+            body: resolve(payload.i18nKey, payload.body),
+            clickTarget: payload.clickTarget as any,
+            clickId: payload.clickId,
+            source: `plugin:${manifest.id}`,
+            silent: payload.silent,
+            i18nKey: payload.i18nKey,
+            i18nTitleKey: payload.i18nTitleKey,
+            i18nParams: payload.i18nParams,
+          } as any)
+        },
       }
     }
 
@@ -1491,37 +1534,6 @@ class PluginHostService {
     return undefined
   }
 
-  private buildLegacyReader() {
-    const db = DatabaseService.getInstance().getDb()
-    const isSelect = (sql: string) => /^\s*select/i.test(sql)
-    const makeReader = (sourceDb: any) => ({
-      listTables: () =>
-        (sourceDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name),
-      all: (sql: string, ...params: unknown[]) => {
-        if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return sourceDb.prepare(sql).all(...params)
-      },
-      get: (sql: string, ...params: unknown[]) => {
-        if (!isSelect(sql)) throw new Error('legacy 只读：仅允许 SELECT')
-        return sourceDb.prepare(sql).get(...params)
-      },
-    })
-    let kmsReader: ReturnType<typeof makeReader> | null = null
-    try {
-      // KMS 向量库（kms_voice_tasks 等历史遗留表所在）；库未初始化时惰性访问失败置 null
-      const { default: KMSDatabaseService } = require('../kms/kms-database.service')
-      kmsReader = makeReader(KMSDatabaseService.getInstance().getDb())
-    } catch {
-      kmsReader = null
-    }
-    return {
-      ...makeReader(db),
-      getSetting: (key: string) =>
-        (db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined)?.value,
-      kms: kmsReader,
-    }
-  }
-
   // ====== IPC 通用桥 ======
 
   /** preload 通用调用桥入口：按 plugin:<id>:<channel> 路由到插件 handler */
@@ -1593,6 +1605,7 @@ class PluginHostService {
         id: r.manifest.id,
         name: r.manifest.name,
         version: r.manifest.version,
+        rev: r.rev,
         entry: r.manifest.renderer,
         nav: r.manifest.nav ? {
           label: r.manifest.nav.label,
@@ -1866,6 +1879,8 @@ class PluginHostService {
     const disabled = this.readDisabledList()
     this.scanPluginInto(this.records, destDir, disabled)
     const installed = this.records.get(manifest.id)
+    // 用户手动导入一律视为一次新安装：rev 追加导入序号，保证同版本重装也刷新渲染端（ESM 按 URL 缓存）
+    if (installed) installed.rev = `${installed.rev}#${++this.importSeq}`
     if (installed && installed.enabled) {
       const depsReason = this.checkDependencies(installed)
       if (!depsReason) {
@@ -1916,6 +1931,31 @@ class PluginHostService {
   /** tab 分离窗口用：内核 tab 或插件的 detachable 均可分离 */
   isDetachable(tabKey: string): boolean {
     return this.getPluginNavItem(tabKey)?.detachable === true
+  }
+
+  /**
+   * 汇总所有「已启用」插件声明的内嵌网页站点白名单。
+   * 主窗口 `<webview>` 守卫（will-attach-webview）据此判定 src 是否放行。
+   */
+  getAllowedWebviewOrigins(): string[] {
+    const out = new Set<string>()
+    for (const record of this.records.values()) {
+      if (!record.enabled || record.status === 'invalid') continue
+      for (const origin of getWebviewOrigins(record.manifest.capabilities)) out.add(origin)
+    }
+    return Array.from(out)
+  }
+
+  /** 判断某个 `<webview>` 的 src 是否被许可（仅 https，且命中已启用插件的白名单） */
+  isWebviewUrlAllowed(rawUrl: string): boolean {
+    let parsed: URL
+    try {
+      parsed = new URL(rawUrl)
+    } catch {
+      return false
+    }
+    if (parsed.protocol !== 'https:') return false
+    return this.getAllowedWebviewOrigins().some(o => matchWebviewOrigin(o, parsed.hostname))
   }
 
   getAgentTools(): unknown[] {

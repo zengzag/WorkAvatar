@@ -1,82 +1,38 @@
 import type { ToolDefinition } from './types'
 import * as fs from 'fs'
 import * as path from 'path'
-import UnifiedInteractionService, { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
-import { interactionContext } from '../../unified-interaction.service'
-import DatabaseService from '../../database.service'
+import { INTERACTION_TIMEOUT_MS } from '../../unified-interaction.service'
+import FilePermissionService from '../../file-permission.service'
+import { moveToTrash } from '../../common-utils'
+import { isFsRoot, isWithinPath, normalizePath } from '../../path-normalize'
 
 /**
- * 文件操作工具（已简化，仅保留核心读写编辑与成品声明）：
+ * 文件操作工具（仅保留核心读写编辑与成品声明/删除）：
  *
  * 常驻工具（加入 LLM tools 数组，对话全程不变）：
- *   file_read   读取文件内容
- *   file_write  写入文件（覆盖/追加）
- *   file_edit   编辑文件部分内容（replace/insert/delete 三种模式）
+ *   file_read    读取文件内容
+ *   file_write   写入文件（覆盖/追加）
+ *   file_edit    编辑文件部分内容（replace/insert/delete 三种模式）
+ *   file_delete  删除文件/目录（移入回收站）
  *   report_generated_files  声明需要展示给用户的成品文件
  *
- * 说明：创建/删除/移动/复制/重命名/列目录/搜索/查看信息等文件操作
- * 已移除，统一由 shell_exec 覆盖。
+ * 说明：创建/移动/复制/重命名/列目录/搜索/查看信息等文件操作已移除，统一由 shell_exec 覆盖；
+ * 删除是唯一例外——shell_exec / javascript_exec 中的删除一律被拒绝，必须走 file_delete
+ * （路径可静态判定、移入回收站可恢复、操作可审计）。
+ *
+ * 工作区边界判定、授权缓存与区外确认统一由 FilePermissionService 负责。
  */
+
+const filePermission = FilePermissionService.getInstance()
 
 /** 当前任务的有效工作区目录：优先任务独立目录，旧对话（无任务目录）回退到员工工作区 */
 export function getWorkspacePath(): string | null {
-  try {
-    const ctx = interactionContext.getStore()
-    if (!ctx || !ctx.employeeId) return null
-    const db = DatabaseService.getInstance().getDb()
-    // 优先使用当前对话的任务工作区（沙箱边界）
-    if (ctx.conversationId) {
-      const conv = db.prepare('SELECT workspace_path FROM conversations WHERE id = ?').get(ctx.conversationId) as { workspace_path?: string } | undefined
-      if (conv?.workspace_path) return conv.workspace_path
-    }
-    // 通用对话（无 DB 会话记录）直接使用注入的任务工作区
-    if (ctx.workspacePath) return ctx.workspacePath
-    const employee = db.prepare('SELECT workspace_path FROM employees WHERE id = ?').get(ctx.employeeId) as { workspace_path: string | null } | undefined
-    return employee?.workspace_path || null
-  } catch {
-    return null
-  }
+  return filePermission.getWorkspacePath()
 }
 
-export function isPathInWorkspace(filePath: string): boolean {
-  const workspacePath = getWorkspacePath()
-  if (!workspacePath) return false
-  const resolved = path.resolve(filePath)
-  const workspaceRoot = path.resolve(workspacePath)
-  return resolved.startsWith(workspaceRoot + path.sep) || resolved === workspaceRoot
-}
-
-/** 工作区外写/删除操作需用户确认，高权限模式下跳过 */
-export async function confirmOutsideWorkspace(operation: string, targetPath: string): Promise<{ ok: boolean; error?: string }> {
-  if (isPathInWorkspace(targetPath)) return { ok: true }
-
-  const ctx = interactionContext.getStore()
-  // 无交互上下文时默认拒绝，防止自动化任务等后台场景绕过工作区边界
-  if (!ctx) return { ok: false, error: `${operation}工作区外文件需要交互确认，但当前无交互上下文（可能是后台任务），已拒绝` }
-
-  if (ctx.highPermission) return { ok: true }
-
-  try {
-    const interactionService = UnifiedInteractionService.getInstance()
-    const response = await interactionService.request({
-      type: 'confirm',
-      title: `确认${operation}工作区外文件`,
-      message: `即将${operation}工作区外的路径：\n\n${targetPath}\n\n此操作可能影响工作区外的文件，是否确认？`,
-      danger: true,
-      source: `security:fs_${operation}_outside_workspace`,
-      pathScope: targetPath,
-    })
-
-    if (response.cancelled || response.confirmed !== true) {
-      const reason = response.timedOut
-        ? `用户在5分钟内未响应${operation}确认，可能不在电脑旁，操作已取消`
-        : `用户取消了${operation}工作区外文件的操作`
-      return { ok: false, error: reason }
-    }
-    return { ok: true }
-  } catch {
-    return { ok: false, error: `${operation}确认失败，操作已取消` }
-  }
+/** 解析工具入参路径：绝对路径原样；相对路径按工作区解析（无工作区时回退主进程 cwd），不落到应用目录 */
+function resolveToolPath(raw: string): string {
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(getWorkspacePath() || process.cwd(), raw)
 }
 
 const PARSABLE_EXTENSIONS = new Set([
@@ -195,6 +151,44 @@ export const fileEditTool: ToolDefinition = {
   timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
 }
 
+// ====== file_delete：删除文件/目录（移入回收站，支持批量与通配符） ======
+
+export const fileDeleteTool: ToolDefinition = {
+  id: 'file_delete',
+  name: 'file_delete',
+  title: '删除文件/文件夹',
+  summary: '删除文件或文件夹（移入回收站，可恢复），支持一次传多个路径与 * ? ** 通配符批量删除。删除一律使用本工具，禁止用 shell 命令或脚本删除。',
+  description: `删除文件或目录（移入系统回收站，可恢复，非永久删除）。
+- 删除文件/目录一律使用 file_delete：不要用 shell_exec（rm/del/Remove-Item 等）或 javascript_exec 等脚本删除，这些方式会被安全策略拒绝。
+- paths 支持传多个路径；每个路径可含通配符（* 匹配单段内任意字符，? 匹配单字符，** 跨目录段匹配），匹配到的所有真实路径都会被删除。
+- 目录需显式传 recursive=true 才会删除其内容；非空目录未传时返回错误而非静默删除。
+- 盘根（C:\\、/）与工作区根目录及其上级目录禁止删除。
+- 工作区外删除需用户确认（对展开后的真实路径统一判定，一次弹窗批量授权）。`,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '目标文件或目录路径（绝对路径；相对路径按当前工作区解析）。与 paths 二选一' },
+      paths: {
+        type: 'array',
+        description: '批量删除的目标路径列表（可混合普通路径与含 * ? ** 通配符的路径），相对路径按当前工作区解析',
+        items: { type: 'string' },
+      },
+      recursive: { type: 'boolean', description: '删除目录时是否递归删除其内容（默认false）' },
+    },
+    required: [],
+  },
+  handler: async (args: any) => {
+    try {
+      return await deleteFile(args)
+    } catch (error: any) {
+      return { success: false, error: `删除失败: ${error.message || error}` }
+    }
+  },
+  source: 'builtin',
+  noRetry: true,
+  timeoutMs: INTERACTION_TIMEOUT_MS + 5000,
+}
+
 // ====== report_generated_files：声明需要展示给用户的成品文件 ======
 
 /** 可预览文件扩展名白名单（与前端 GeneratedFilesBar 展示范围一致） */
@@ -232,14 +226,13 @@ export const reportGeneratedFilesTool: ToolDefinition = {
     if (input.length === 0) {
       return { success: false, error: '参数 files 不能为空' }
     }
-    const workspacePath = getWorkspacePath() || process.cwd()
     const generatedFiles: Array<{ path: string; name: string; ext: string; size: number; mtime: number }> = []
     const skipped: string[] = []
     for (const raw of input) {
       if (typeof raw !== 'string' || !raw.trim()) continue
       let resolved: string
       try {
-        resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw)
+        resolved = resolveToolPath(raw)
       } catch {
         skipped.push(raw)
         continue
@@ -278,11 +271,12 @@ export const reportGeneratedFilesTool: ToolDefinition = {
   noRetry: true,
 }
 
-/** 常驻文件工具：读/写/编辑/成品声明，对话全程加入 LLM tools 数组 */
+/** 常驻文件工具：读/写/编辑/删除/成品声明，对话全程加入 LLM tools 数组 */
 export const residentFileTools: ToolDefinition[] = [
   fileReadTool,
   fileWriteTool,
   fileEditTool,
+  fileDeleteTool,
   reportGeneratedFilesTool,
 ]
 
@@ -292,7 +286,7 @@ async function readFile(args: any) {
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   let stat: fs.Stats
   try {
     stat = await fs.promises.stat(resolved)
@@ -318,6 +312,11 @@ async function readFile(args: any) {
     const fullText = result.fullText
     const totalChars = fullText.length
 
+    // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
+    if (totalChars === 0) {
+      return { success: true, output: '(文件为空 — 0 字符)' }
+    }
+
     if (offset >= totalChars) {
       return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
     }
@@ -337,6 +336,11 @@ async function readFile(args: any) {
 
   const content = (await fs.promises.readFile(resolved, 'utf-8')).replace(/\r\n/g, '\n')
   const totalChars = content.length
+
+  // 空文件直接返回，避免「偏移量 0 超出文件总字符数 0」的误导性报错
+  if (totalChars === 0) {
+    return { success: true, output: '(文件为空 — 0 字符)' }
+  }
 
   if (offset >= totalChars) {
     return { success: false, error: `偏移量 ${offset} 超出文件总字符数 ${totalChars}` }
@@ -371,11 +375,11 @@ async function writeFile(args: any) {
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   const append = args.append === true
 
-  const confirm = await confirmOutsideWorkspace(append ? '追加' : '写入', resolved)
-  if (!confirm.ok) return { success: false, error: confirm.error }
+  const confirm = await filePermission.authorizeFileOperation(append ? '追加' : '写入', [resolved])
+  if (!confirm.allowed) return { success: false, error: confirm.error }
 
   const dir = path.dirname(resolved)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -392,6 +396,194 @@ async function writeFile(args: any) {
   return { success: true, output: `成功${mode} ${resolved}，共 ${content.length} 字符` }
 }
 
+// ====== file_delete 实现 ======
+
+const IS_WINDOWS = process.platform === 'win32'
+
+/** 通配展开的结果数与扫描目录数上限，防止失控扫描 */
+const GLOB_RESULT_LIMIT = 1000
+const GLOB_SCAN_LIMIT = 20000
+
+/** 是否含 glob 通配符（* ? [..]） */
+function isGlobPattern(p: string): boolean {
+  return /[*?[]/.test(p)
+}
+
+/** 扫描超限信号 */
+class GlobScanOverflow extends Error {}
+
+/** 将单个路径段通配转为正则源（* ? [abc] [!abc]），不跨目录分隔符 */
+function segmentToRegexSource(seg: string): string {
+  let re = ''
+  for (let i = 0; i < seg.length; i++) {
+    const ch = seg[i]
+    if (ch === '*') { re += '[^\\\\/]*'; continue }
+    if (ch === '?') { re += '[^\\\\/]'; continue }
+    if (ch === '[') {
+      const close = seg.indexOf(']', i + 1)
+      if (close === -1) { re += '\\['; continue }
+      let body = seg.slice(i + 1, close)
+      const negated = body.startsWith('!') || body.startsWith('^')
+      if (negated) body = body.slice(1)
+      re += `[${negated ? '^' : ''}${body.replace(/\\/g, '\\\\')}]`
+      i = close
+      continue
+    }
+    re += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  return re
+}
+
+/** 递归通配匹配：segs 为按 / 拆分的模式段，idx 从首个通配段开始 */
+function walkMatch(dir: string, segs: string[], idx: number, out: string[], tick: () => void): void {
+  if (out.length >= GLOB_RESULT_LIMIT) return
+  tick()
+  if (idx >= segs.length) { out.push(dir); return }
+  const seg = segs[idx]
+  const isLast = idx === segs.length - 1
+
+  if (seg === '**') {
+    // ** 可匹配零段或多段目录
+    if (!isLast) walkMatch(dir, segs, idx + 1, out, tick)
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      const full = path.join(dir, e.name)
+      if (isLast) {
+        out.push(full)
+        if (e.isDirectory()) walkMatch(full, segs, idx, out, tick)
+      } else if (e.isDirectory()) {
+        walkMatch(full, segs, idx, out, tick)
+      }
+      if (out.length >= GLOB_RESULT_LIMIT) return
+    }
+    return
+  }
+
+  const re = new RegExp(`^${segmentToRegexSource(seg)}$`, IS_WINDOWS ? 'i' : '')
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+  for (const e of entries) {
+    if (!re.test(e.name)) continue
+    const full = path.join(dir, e.name)
+    if (isLast) out.push(full)
+    else if (e.isDirectory()) walkMatch(full, segs, idx + 1, out, tick)
+    if (out.length >= GLOB_RESULT_LIMIT) return
+  }
+}
+
+/** 展开通配路径为匹配到的真实绝对路径（相对路径先按工作区解析） */
+function expandGlob(raw: string): string[] {
+  const resolvedPattern = resolveToolPath(raw)
+  // 从首个通配字符前的静态前缀确定扫描起点
+  const firstGlobChar = resolvedPattern.search(/[*?[]/)
+  const staticPart = firstGlobChar === -1 ? resolvedPattern : resolvedPattern.slice(0, firstGlobChar)
+  const base = /[\\/]$/.test(staticPart)
+    ? path.resolve(staticPart)
+    : path.dirname(path.resolve(staticPart))
+  const segs = resolvedPattern.replace(/\\/g, '/').split('/').filter(s => s !== '' && s !== '.')
+  const firstGlobSeg = segs.findIndex(isGlobPattern)
+
+  const out: string[] = []
+  let scanned = 0
+  try {
+    walkMatch(base, segs, firstGlobSeg, out, () => {
+      if (++scanned > GLOB_SCAN_LIMIT) throw new GlobScanOverflow()
+    })
+  } catch (e) {
+    if (!(e instanceof GlobScanOverflow)) throw e
+  }
+  return out
+}
+
+async function deleteFile(args: any) {
+  // 兼容单个 path 与批量 paths 两种入参
+  const inputs: string[] = []
+  if (typeof args.path === 'string' && args.path.trim()) inputs.push(args.path.trim())
+  if (Array.isArray(args.paths)) {
+    for (const p of args.paths) {
+      if (typeof p === 'string' && p.trim()) inputs.push(p.trim())
+    }
+  }
+  if (inputs.length === 0) return { success: false, error: '文件路径不能为空（path 或 paths 至少提供一个）' }
+
+  const recursive = args.recursive === true
+
+  // 展开为待删目标集合：字面路径直接解析；通配路径按匹配到的真实路径展开
+  const targetSet = new Set<string>()
+  const unmatched: string[] = []
+  for (const raw of inputs) {
+    if (isGlobPattern(raw)) {
+      const matched = expandGlob(raw)
+      if (matched.length === 0) unmatched.push(raw)
+      else for (const m of matched) targetSet.add(path.resolve(m))
+    } else {
+      targetSet.add(resolveToolPath(raw))
+    }
+  }
+
+  // 逐目标安全校验，被拒目标记录原因、不删除
+  const rejected: string[] = []
+  const deletable: Array<{ resolved: string; isDir: boolean }> = []
+  const workspaceNorm = normalizePath(getWorkspacePath() || process.cwd())
+  for (const resolved of targetSet) {
+    const norm = normalizePath(resolved)
+    if (!norm) { rejected.push(`${resolved}（路径无效）`); continue }
+    // 盘根等于整盘，工作区根（及其上级）会摧毁任务工作区，二者都属于"绝不允许"的删除目标
+    if (isFsRoot(norm)) { rejected.push(`${resolved}（盘根/文件系统根目录禁止删除）`); continue }
+    if (workspaceNorm && isWithinPath(workspaceNorm, norm)) {
+      rejected.push(`${resolved}（工作区根目录或其上级目录禁止删除）`); continue
+    }
+    if (!fs.existsSync(resolved)) { rejected.push(`${resolved}（路径不存在）`); continue }
+    const stat = fs.lstatSync(resolved)
+    if (stat.isDirectory() && !recursive) {
+      const count = fs.readdirSync(resolved).length
+      rejected.push(count > 0
+        ? `${resolved}（目录非空（${count} 项），需传 recursive=true）`
+        : `${resolved}（目录删除需显式传 recursive=true）`)
+      continue
+    }
+    deletable.push({ resolved, isDir: stat.isDirectory() })
+  }
+
+  if (deletable.length === 0) {
+    const reasons = [
+      unmatched.length > 0 ? `通配路径未匹配到任何文件: ${unmatched.join(', ')}` : '',
+      ...rejected,
+    ].filter(Boolean)
+    return { success: false, error: reasons.length > 0 ? `没有可删除的目标:\n${reasons.join('\n')}` : '没有可删除的目标' }
+  }
+
+  // 权限判定使用展开后的全部真实绝对路径，一次确认批量授权
+  const confirm = await filePermission.authorizeFileOperation('删除', deletable.map(t => t.resolved))
+  if (!confirm.allowed) return { success: false, error: confirm.error || '删除操作已取消' }
+
+  const results: string[] = []
+  const failures: string[] = []
+  for (const t of deletable) {
+    try {
+      const via = await moveToTrash(t.resolved)
+      const kind = t.isDir ? '目录' : '文件'
+      results.push(via === 'trash'
+        ? `✓ 已删除${kind}（移入回收站，可恢复）: ${t.resolved}`
+        : `✓ 已删除${kind}（系统回收站不可用，已永久删除，不可恢复）: ${t.resolved}`)
+    } catch (e: any) {
+      failures.push(`✗ ${t.resolved}: ${e.message || e}`)
+    }
+  }
+
+  const parts: string[] = [`共 ${deletable.length} 个目标，已删除 ${results.length} 个`]
+  parts.push(...results)
+  if (failures.length > 0) parts.push(...failures)
+  if (unmatched.length > 0) parts.push(`未匹配到文件的通配路径: ${unmatched.join(', ')}`)
+  if (rejected.length > 0) parts.push(`已跳过 ${rejected.length} 个:\n${rejected.map(r => `  ${r}`).join('\n')}`)
+
+  return {
+    success: results.length > 0,
+    output: parts.join('\n'),
+  }
+}
+
 // ====== file_edit 各操作实现 ======
 
 /** 读取目标文件内容并校验，返回 { content, resolved } 或错误对象 */
@@ -399,12 +591,12 @@ async function readEditTarget(args: any): Promise<{ content: string; resolved: s
   const filePath = String(args.path || '').trim()
   if (!filePath) return { success: false, error: '文件路径不能为空' }
 
-  const resolved = path.resolve(filePath)
+  const resolved = resolveToolPath(filePath)
   if (!fs.existsSync(resolved)) return { success: false, error: `文件不存在: ${filePath}（file_edit 不会创建文件，请用 file_write 创建）` }
   if (!fs.statSync(resolved).isFile()) return { success: false, error: `路径不是文件: ${filePath}` }
 
-  const confirm = await confirmOutsideWorkspace('编辑', resolved)
-  if (!confirm.ok) return { success: false, error: confirm.error || '编辑操作已取消' }
+  const confirm = await filePermission.authorizeFileOperation('编辑', [resolved])
+  if (!confirm.allowed) return { success: false, error: confirm.error || '编辑操作已取消' }
 
   const content = fs.readFileSync(resolved, 'utf-8').replace(/\r\n/g, '\n')
   return { content, resolved }

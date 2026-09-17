@@ -12,6 +12,7 @@
 | `execute` | `services.execute.execute` | 统一执行入口 | 执行类型 kind |
 | `events` | `services.events.subscribe/publish` | 事件总线 | 订阅白名单 + 发布开关 |
 | `ui` | 渲染端 `views` + `contributions.registerView` | UI 注入 | 注入点 |
+| `webview` | 渲染端 `<webview>` + 宿主 `will-attach-webview` 守卫 | 主窗口内嵌第三方网页 | 站点域名 |
 | `system` | `services.notification/scheduler/windows/native` | 系统能力 | 特性 feature |
 | `collaboration` | `services.shared` + `services.bus` | 插件协作（共享 KV + 跨插件 RPC） | shared.{read,write} + call 白名单 |
 
@@ -68,6 +69,13 @@
 | `content` | 读取文件/段落文本 | query 白名单 |
 | `collections` | 列出资料库合集 | query 白名单 |
 
+## 内嵌网页层（capabilities.webview）
+| 能力 | 说明 | 授权粒度 |
+|---|---|---|
+| 声明 `origins` | 允许内嵌的站点域名（hostname 或 `*.suffix`），恒 https | 域名条目 |
+
+宿主在每个 `<webview>` attach 时统一收口：剥离 `preload`/`preloadURL`，强制 `nodeIntegration=false` / `contextIsolation=true` / `sandbox=true` / `webSecurity=true`，并校验 `src` 是否命中所有**已启用**插件声明的域名并集；未命中直接 `preventDefault`（guest 不创建、无任何事件）。首次 attach 后的站内导航与登录重定向不再拦截。
+
 ## 插件协作层（services.shared / bus）
 
 | 能力 | 说明 | 授权粒度 |
@@ -116,7 +124,7 @@
 | 插件路径 | `ctx.paths` | root/data/resources |
 | IPC | `ctx.ipc.handle/broadcast` | 插件私有通道 |
 | 存储 | `ctx.storage` | 独立分库 + KV |
-| 迁移 | `migrations` + `ctx.legacy` | 数据迁出（需 legacyMigration） |
+| 迁移 | `migrations` | 插件分库自身的 schema/数据变更（原子事务 + 版本记录） |
 
 ---
 
@@ -124,8 +132,9 @@
 
 | 插件 | 使用的能力域 |
 |---|---|
-| notes | ui（message.menu）、storage、ipc、legacyMigration |
+| notes | ui（message.menu）、storage、ipc |
 | calendar | system（notification/scheduler/windows）、registerAgentTools、storage、ipc |
 | voice | execute（llm-stream）、system（windows/native）、storage、ipc |
 | automation | data（conversations write）、execute（agent-chat）、events（subscribe）、system（notification/scheduler）、registerAgentTools |
 | data-model | data（employees/llmProviders/messages read）、execute（agent-chat）、registerAgentTools |
+| ai-assistants | webview（内嵌豆包 / DeepSeek 等网页版）、storage、ipc |

@@ -1,26 +1,5 @@
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
-export interface ToolParameter {
-  name: string
-  description: string
-  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
-  required?: boolean
-  items?: any
-  properties?: any
-  enum?: string[]
-  minimum?: number
-  maximum?: number
-  minLength?: number
-  maxLength?: number
-}
-
-export interface ToolInfo {
-  tool_name: string
-  tool_title: string
-  tool_description: string
-  tool_params: ToolParameter[]
-}
-
 export type ToolPermission = 'safe' | 'requires_confirmation' | 'dangerous'
 
 /**
@@ -29,6 +8,8 @@ export type ToolPermission = 'safe' | 'requires_confirmation' | 'dangerous'
 export interface ToolHandlerContext {
   /** 工具执行的中间进度回调（用于UI展示，不进入LLM上下文） */
   onProgress?: (progress: any) => void
+  /** 当前模型是否支持图片（视觉）输入；未设置视为支持（保守输出中性文案） */
+  imageSupport?: boolean
 }
 
 export interface ToolDefinition {
@@ -79,4 +60,6 @@ export interface ToolCallResult {
   rawOutput?: any
   latencyMs?: number
   generatedFiles?: GeneratedFileInfo[]
+  /** 工具产出的图片（data URL），仅用于视觉注入与 UI 展示，不作为文本进 LLM 上下文 */
+  images?: string[]
 }

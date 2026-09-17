@@ -174,7 +174,15 @@ export async function runUnifiedAgentLoop(
   ]
 
   const maxIters = Math.min(options.maxIterations || MAX_ITERATIONS, MAX_ITERATIONS)
-  addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: '启动 Agent 循环', type: 'plan', detail: `关键词: ${query}, 最大 ${maxIters} 轮` })
+  addStep({
+    phase: options.mode === 'card' ? 'card' : 'search',
+    action: '启动 Agent 循环',
+    actionKey: 'kms.knowledgeCards.trace.startLoop',
+    type: 'plan',
+    detail: `关键词: ${query}, 最大 ${maxIters} 轮`,
+    detailKey: 'kms.knowledgeCards.trace.startLoopDetail',
+    detailParams: { query, rounds: maxIters },
+  })
 
   let iterations = 0
   let finalContent = ''
@@ -201,7 +209,15 @@ export async function runUnifiedAgentLoop(
         providerType: providerConfig.provider_type,
       })
     } catch (err: any) {
-      addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: `LLM 调用失败 (第${i + 1}轮)`, type: 'llm', detail: err?.message || String(err), durationMs: Date.now() - t0 })
+      addStep({
+        phase: options.mode === 'card' ? 'card' : 'search',
+        action: `LLM 调用失败 (第${i + 1}轮)`,
+        actionKey: 'kms.knowledgeCards.trace.llmFailed',
+        actionParams: { round: i + 1 },
+        type: 'llm',
+        detail: err?.message || String(err),
+        durationMs: Date.now() - t0,
+      })
       return { success: false, error: `LLM_CALL_FAILED: ${err?.message || err}` }
     }
 
@@ -213,7 +229,13 @@ export async function runUnifiedAgentLoop(
 
     // 展示本次 LLM 的思考内容，便于排查其检索/调用意图
     if (response.reasoningContent) {
-      addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: 'LLM 思考', type: 'info', detail: truncateText(response.reasoningContent, 400) })
+      addStep({
+        phase: options.mode === 'card' ? 'card' : 'search',
+        action: 'LLM 思考',
+        actionKey: 'kms.knowledgeCards.trace.llmThinking',
+        type: 'info',
+        detail: truncateText(response.reasoningContent, 400),
+      })
     }
 
     // 兜底：思考模型不原生支持函数调用时，会以 XML 文本输出工具调用，解析后作为真实调用执行。
@@ -235,11 +257,30 @@ export async function runUnifiedAgentLoop(
 
     if (!roundCalls || roundCalls.length === 0) {
       finalContent = response.content || ''
-      addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: 'LLM 生成完成', type: 'result', detail: `${finalContent.length} 字符`, durationMs: Date.now() - t0 })
+      addStep({
+        phase: options.mode === 'card' ? 'card' : 'search',
+        action: 'LLM 生成完成',
+        actionKey: 'kms.knowledgeCards.trace.llmGenerated',
+        type: 'result',
+        detail: `${finalContent.length} 字符`,
+        detailKey: 'kms.knowledgeCards.trace.chars',
+        detailParams: { count: finalContent.length },
+        durationMs: Date.now() - t0,
+      })
       break
     }
 
-    addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: `LLM 第 ${i + 1} 轮`, type: 'llm', detail: `${roundCalls.length} 个工具调用${callsFromXml ? '（XML文本形式）' : ''}`, durationMs: Date.now() - t0 })
+    addStep({
+      phase: options.mode === 'card' ? 'card' : 'search',
+      action: `LLM 第 ${i + 1} 轮`,
+      actionKey: 'kms.knowledgeCards.trace.llmRound',
+      actionParams: { round: i + 1 },
+      type: 'llm',
+      detail: `${roundCalls.length} 个工具调用${callsFromXml ? '（XML文本形式）' : ''}`,
+      detailKey: callsFromXml ? 'kms.knowledgeCards.trace.toolCallsXml' : 'kms.knowledgeCards.trace.toolCalls',
+      detailParams: { count: roundCalls.length },
+      durationMs: Date.now() - t0,
+    })
 
     for (const tc of roundCalls) {
       if (options.signal?.aborted) return { success: false, error: 'ABORTED' }
@@ -250,7 +291,14 @@ export async function runUnifiedAgentLoop(
 
       const toolType: SearchTraceStep['type'] = toolName === 'kms_search' ? 'search' : toolName === 'kms_get_content' ? 'read' : 'info'
       const argsDesc = toolName === 'kms_search' ? `keyword="${(args.keyword ?? args.query) || ''}"` : toolName === 'kms_get_content' ? `file_id=${args.file_id || ''}` : `query="${args.query || ''}"`
-      addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: `调用 ${toolName}`, type: toolType, detail: argsDesc })
+      addStep({
+        phase: options.mode === 'card' ? 'card' : 'search',
+        action: `调用 ${toolName}`,
+        actionKey: 'kms.knowledgeCards.trace.toolCall',
+        actionParams: { name: toolName },
+        type: toolType,
+        detail: argsDesc,
+      })
 
       const toolStart = Date.now()
       const result = await dispatcher.dispatch(toolName, args)
@@ -258,8 +306,12 @@ export async function runUnifiedAgentLoop(
       addStep({
         phase: options.mode === 'card' ? 'card' : 'search',
         action: `${toolName} 结果`,
+        actionKey: 'kms.knowledgeCards.trace.toolResult',
+        actionParams: { name: toolName },
         type: toolType,
         detail: result.success ? truncateText(result.output, 400) : `失败: ${result.error}`,
+        detailKey: result.success ? undefined : 'kms.knowledgeCards.trace.toolFailed',
+        detailParams: result.success ? undefined : { error: result.error || '' },
         durationMs: Date.now() - toolStart,
       })
 
@@ -280,13 +332,37 @@ export async function runUnifiedAgentLoop(
     const rawContent = lastAssistant?.content
     finalContent = typeof rawContent === 'string' ? rawContent : ''
     if (!finalContent) {
-      addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: 'Agent 循环结束', type: 'info', detail: `达到最大轮次 ${maxIters} 且无最终输出` })
+      addStep({
+        phase: options.mode === 'card' ? 'card' : 'search',
+        action: 'Agent 循环结束',
+        actionKey: 'kms.knowledgeCards.trace.loopEnded',
+        type: 'info',
+        detail: `达到最大轮次 ${maxIters} 且无最终输出`,
+        detailKey: 'kms.knowledgeCards.trace.maxRoundsReached',
+        detailParams: { rounds: maxIters },
+      })
       return { success: false, error: 'MAX_ITERATIONS_REACHED' }
     }
-    addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: '从历史消息中提取内容', type: 'info', detail: `${finalContent.length} 字符` })
+    addStep({
+      phase: options.mode === 'card' ? 'card' : 'search',
+      action: '从历史消息中提取内容',
+      actionKey: 'kms.knowledgeCards.trace.extractFromHistory',
+      type: 'info',
+      detail: `${finalContent.length} 字符`,
+      detailKey: 'kms.knowledgeCards.trace.chars',
+      detailParams: { count: finalContent.length },
+    })
   }
 
-  addStep({ phase: options.mode === 'card' ? 'card' : 'search', action: '解析完成', type: 'result', detail: `${finalContent.length} 字符, ${accessedFiles.length} 个引用文件, ${iterations} 轮迭代` })
+  addStep({
+    phase: options.mode === 'card' ? 'card' : 'search',
+    action: '解析完成',
+    actionKey: 'kms.knowledgeCards.trace.completed',
+    type: 'result',
+    detail: `${finalContent.length} 字符, ${accessedFiles.length} 个引用文件, ${iterations} 轮迭代`,
+    detailKey: 'kms.knowledgeCards.trace.completedDetail',
+    detailParams: { chars: finalContent.length, files: accessedFiles.length, iterations },
+  })
 
   logger.info(`Unified agent loop completed for "${query}" (mode=${options.mode}): ${iterations} iterations, ${accessedFiles.length} files accessed, ${finalContent.length} chars`)
 

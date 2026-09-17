@@ -64,6 +64,7 @@ const KMSPage: React.FC = () => {
     updateSearchDir,
     deleteSearchDir,
     search,
+    clearSearch,
     buildIndex,
     incrementalIndex,
     rebuildDirIndex,
@@ -191,6 +192,7 @@ const KMSPage: React.FC = () => {
             searchResults={searchResults}
             isSearching={isSearching}
             onSearch={search}
+            onClearSearch={clearSearch}
             dirs={dirs}
             onOpenFile={openFile}
             onOpenFileDir={openFileDir}

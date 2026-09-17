@@ -8,7 +8,8 @@ import NotificationService from './services/notification.service'
 import TabWindowService from './services/tab-window.service'
 import PluginHostService from './services/plugin/plugin-host.service'
 import EmployeeRegistryService from './services/employee-registry.service'
-import WorkspaceManagerService from './services/workspace-manager.service'
+import WindowStateService from './services/window-state.service'
+import mainUiI18n from './services/ui-i18n.service'
 import { registerIpcHandlers } from './ipc'
 import { IPC_CHANNELS } from '../shared/ipc-channels'
 import { PLUGIN_PACKAGE_EXT } from '../shared/channels/plugin'
@@ -39,7 +40,10 @@ process.on('uncaughtException', (error) => {
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
-  app.quit()
+  // 第二实例：argv 已在 requestSingleInstanceLock 时转发给首实例（second-instance）。
+  // ready 前调用 app.quit() 在初始化较重时不能保证终止（第二实例仍会走到 ready，
+  // 导致 .wap 双击时弹两次加载确认框、创建第二个窗口），必须用 app.exit 立即退出。
+  app.exit(0)
 }
 
 // ====== 外部文件打开（系统右键"打开方式" / 拖到应用图标） ======
@@ -104,10 +108,10 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
   }
   const { response } = await dialog.showMessageBox({
     type: 'question',
-    title: '加载插件',
-    message: '是否加载这个插件？',
-    detail: `${path.basename(filePath)}\n确认后将安装并加载该插件。`,
-    buttons: ['加载', '取消'],
+    title: mainUiI18n.t('pluginLoadTitle'),
+    message: mainUiI18n.t('pluginLoadMessage'),
+    detail: mainUiI18n.t('pluginLoadDetail', { name: path.basename(filePath) }),
+    buttons: [mainUiI18n.t('pluginLoadConfirm'), mainUiI18n.t('pluginCancel')],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
@@ -121,10 +125,10 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
     const { existingVersion, newVersion } = result.needsUpgradeConfirm
     const { response: upgradeResponse } = await dialog.showMessageBox({
       type: 'warning',
-      title: '插件已存在',
-      message: '已安装相同插件，是否覆盖升级？',
+      title: mainUiI18n.t('pluginExistsTitle'),
+      message: mainUiI18n.t('pluginExistsMessage'),
       detail: `${existingVersion ?? '?'} → ${newVersion ?? '?'}`,
-      buttons: ['覆盖升级', '取消'],
+      buttons: [mainUiI18n.t('pluginUpgradeConfirm'), mainUiI18n.t('pluginCancel')],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -137,37 +141,120 @@ async function handleOpenPluginFile(filePath: string): Promise<void> {
     // 导入即增量加载（importPluginFromPath 内部完成激活与 PLUGIN_CHANGED 广播，无需整页 reload）
     dialog.showMessageBox({
       type: 'info',
-      title: '插件已加载',
-      message: `插件 ${result.id} v${result.version} 已加载`,
-      buttons: ['确定'],
+      title: mainUiI18n.t('pluginLoadedTitle'),
+      message: mainUiI18n.t('pluginLoadedMessage', { id: result.id ?? '', version: result.version ?? '' }),
+      buttons: [mainUiI18n.t('pluginOk')],
     })
   } else if (result.message && result.message !== 'cancelled') {
     dialog.showMessageBox({
       type: 'error',
-      title: '加载失败',
+      title: mainUiI18n.t('pluginLoadFailedTitle'),
       message: result.message,
-      buttons: ['确定'],
+      buttons: [mainUiI18n.t('pluginOk')],
     })
   }
 }
 
 // macOS: 通过 open-file 事件接收文件（Finder 拖到 Dock 图标 / Spotlight 打开）
-app.on('open-file', (event, filePath) => {
-  const lower = filePath.toLowerCase()
-  if (lower.endsWith(`.${PLUGIN_PACKAGE_EXT}`) && fs.existsSync(filePath)) {
-    event.preventDefault()
-    handleOpenPluginFile(path.resolve(filePath))
-    return
-  }
-  if (lower.endsWith('.md') && fs.existsSync(filePath)) {
-    event.preventDefault()
-    sendOpenExternalFile(path.resolve(filePath))
-  }
-})
+// 仅锁持有实例注册，避免第二实例重复响应（第二实例应直接退出）
+if (gotTheLock) {
+  app.on('open-file', (event, filePath) => {
+    const lower = filePath.toLowerCase()
+    if (lower.endsWith(`.${PLUGIN_PACKAGE_EXT}`) && fs.existsSync(filePath)) {
+      event.preventDefault()
+      handleOpenPluginFile(path.resolve(filePath))
+      return
+    }
+    if (lower.endsWith('.md') && fs.existsSync(filePath)) {
+      event.preventDefault()
+      sendOpenExternalFile(path.resolve(filePath))
+    }
+  })
+}
 
 // 设置应用名称，用于系统通知中标识程序名（macOS/Linux 直接生效，Windows 配合 AUMID 生效）
 app.setName('WorkAvatar')
 app.setAppUserModelId('com.workavatar.desktop')
+
+/**
+ * 内嵌网页权限策略：默认授权。
+ *
+ * Electron 在未配置 handler 时本就自动批准全部权限请求；这里显式写出来，是为了留一个
+ * 明确的收口点，而不是依赖「恰好没配」这一隐式行为。
+ *
+ * 唯一例外是 `display-capture`（录屏 / 屏幕共享）——内嵌的第三方网页没有理由抓取你的屏幕。
+ * 若要连这条也放开，把 `DENIED_WEBVIEW_PERMISSIONS` 清空即可。
+ *
+ * 只作用于 webview 所在的命名分区会话（partition: persist:xxx）；
+ * 第一方 UI 与系统音频录制（getDisplayMedia）走 defaultSession，不受影响。
+ */
+const DENIED_WEBVIEW_PERMISSIONS = new Set<string>(['display-capture'])
+
+const guardedSessions = new WeakSet<Electron.Session>()
+
+/** 给 webview 所用会话挂上权限策略（幂等，同一会话只挂一次） */
+function attachWebviewPermissionPolicy(ses: Electron.Session): void {
+  if (guardedSessions.has(ses)) return
+  guardedSessions.add(ses)
+
+  // 检查阶段直接放行，避免部分 Web API 因 check 被拒而降级或反复发起 request
+  ses.setPermissionCheckHandler(() => true)
+
+  ses.setPermissionRequestHandler((_contents, permission, callback) => {
+    callback(!DENIED_WEBVIEW_PERMISSIONS.has(permission))
+  })
+}
+
+/**
+ * 内嵌网页视图（<webview>）安全守卫。
+ *
+ * 主窗口已开启 webviewTag，任何渲染端都可创建 <webview>，因此必须在这里统一收口：
+ *  1. 剥离 guest 的 preload / preloadURL —— 否则被嵌入的第三方页面可经恶意 preload 拿到 Node 能力；
+ *  2. 强制 nodeIntegration=false / contextIsolation=true / sandbox=true / webSecurity=true；
+ *  3. src 必须命中「已启用插件 webview 能力域」声明的 https 域名白名单，未声明一律拒绝；
+ *  4. guest 的 window.open 收敛为受加固的应用内子窗口（保留站点登录弹窗流程，如微信/短信验证）；
+ *  5. 权限策略：默认授权（与 Electron 默认一致），仅拒绝内嵌网页录屏。
+ */
+function registerWebviewGuard(): void {
+  app.on('web-contents-created', (_event, contents) => {
+    // 4) guest 的弹窗：加固 webPreferences，放行站点自身的登录弹窗流程
+    if (contents.getType() === 'webview') {
+      // 5) 权限策略：默认授权（仅拒绝 display-capture）
+      attachWebviewPermissionPolicy(contents.session)
+      contents.setWindowOpenHandler(() => ({
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+          },
+        },
+      }))
+      return
+    }
+
+    // 1)~3) 嵌入方（主窗口 / 独立窗口）创建 <webview> 时校验
+    contents.on('will-attach-webview', (event, webPreferences, params) => {
+      delete webPreferences.preload
+      delete (webPreferences as { preloadURL?: string }).preloadURL
+      webPreferences.nodeIntegration = false
+      ;(webPreferences as { nodeIntegrationInSubFrames?: boolean }).nodeIntegrationInSubFrames = false
+      webPreferences.contextIsolation = true
+      webPreferences.sandbox = true
+      webPreferences.webSecurity = true
+
+      if (!PluginHostService.getInstance().isWebviewUrlAllowed(params.src)) {
+        event.preventDefault()
+        logger.warn(`拒绝内嵌网页: ${params.src}（未命中已启用插件的 webview 白名单）`)
+      }
+    })
+  })
+}
+
+registerWebviewGuard()
 
 const isDev = !app.isPackaged
 
@@ -186,6 +273,16 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: 'plugin',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+  {
+    scheme: 'wa-attachment',
     privileges: {
       standard: true,
       secure: true,
@@ -304,6 +401,39 @@ function registerAppFileProtocol() {
   })
 }
 
+/** wa-attachment:// 协议：渲染端查看对话图片附件（引用指向 dataDir/attachments 落盘文件）。
+ *  文件丢失时返回占位 SVG（图片缺失不崩 UI，消息其余内容可正常显示）
+ */
+function registerAttachmentProtocol() {
+  const AttachmentService = require('./services/attachment.service').default
+  const attachment = AttachmentService.getInstance()
+  // 语言无关的占位图（山形+太阳图标），明暗主题均可见
+  const MISSING_SVG = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90">',
+    '<rect width="120" height="90" rx="6" fill="#8f8f8f"/>',
+    '<circle cx="88" cy="26" r="7" fill="#f5f5f5"/>',
+    '<path d="M14 74 L44 44 L64 64 L80 48 L106 74 Z" fill="#f5f5f5"/>',
+    '</svg>',
+  ].join('')
+  protocol.handle('wa-attachment', (request) => {
+    const url = new URL(request.url)
+    const name = decodeURIComponent(url.pathname).replace(/^\//, '')
+    const filePath = attachment.getFilePathFromRef(request.url)
+    if (!filePath || url.hostname !== 'local') {
+      return new Response('Bad request', { status: 400 })
+    }
+    if (!fs.existsSync(filePath)) {
+      return new Response(MISSING_SVG, { headers: { 'Content-Type': 'image/svg+xml' } })
+    }
+    const ext = name.slice(name.lastIndexOf('.') + 1)
+    const contentType = MIME_MAP[ext] || 'application/octet-stream'
+    const fileStream = fs.createReadStream(filePath)
+    return new Response(Readable.toWeb(fileStream) as ReadableStream, {
+      headers: { 'Content-Type': contentType },
+    })
+  })
+}
+
 // 读取构建元信息（prebuild 由 scripts/generate-build-info.mjs 生成），缺失时降级到 app.getVersion()
 // 打包模式下文件位于 app.getAppPath()（electron-builder files 列表已包含 build-info.json）
 function readBuildInfo(): { version: string; commit: string; buildTime: string } {
@@ -376,26 +506,46 @@ function getAppIconPath(): string {
   return getResourcePath('resources', 'icons', 'icon.png')
 }
 
+/** 主窗口默认尺寸（首次启动 / 无法还原历史状态时使用） */
+const MAIN_WINDOW_DEFAULTS = { width: 1160, height: 720, minWidth: 1024, minHeight: 640 }
+
 async function createWindow() {
+  // 还原上次退出时的窗口尺寸/位置/最大化状态（首次启动或显示器变更时用默认值）
+  const windowState = WindowStateService.getInstance().restore(MAIN_WINDOW_DEFAULTS)
+
   mainWindow = new BrowserWindow({
     title: 'WorkAvatar 数字员工',
-    width: 1160,
-    height: 720,
-    minWidth: 1024,
-    minHeight: 640,
+    ...(windowState.x !== undefined && windowState.y !== undefined
+      ? { x: windowState.x, y: windowState.y }
+      : {}),
+    width: windowState.width,
+    height: windowState.height,
+    minWidth: MAIN_WINDOW_DEFAULTS.minWidth,
+    minHeight: MAIN_WINDOW_DEFAULTS.minHeight,
     icon: getAppIconPath(),
     webPreferences: {
       preload: getPreloadPath(),
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: true
+      webSecurity: true,
+      // 内嵌第三方网页（如豆包 / DeepSeek 网页版）依赖 <webview>。
+      // 全局放开创建能力，但 guest 侧由 registerWebviewGuard 统一收口：
+      // 强制剥离 preload、关闭 nodeIntegration、开启 contextIsolation/sandbox，
+      // 且 src 必须命中「已启用插件 webview 能力域」声明的 https 白名单。
+      webviewTag: true
     },
     autoHideMenuBar: true,
     frame: false,
     show: false
   })
 
+  WindowStateService.getInstance().track(mainWindow)
+
   mainWindow.on('ready-to-show', () => {
+    // 先最大化再显示，避免窗口以正常尺寸闪现后再跳变
+    if (windowState.maximized) {
+      mainWindow?.maximize()
+    }
     mainWindow?.show()
     if (isDev) {
       mainWindow?.webContents.openDevTools()
@@ -438,15 +588,13 @@ async function createWindow() {
   DatabaseService.getInstance()
 }
 
-function createTray() {
-  const iconPath = getResourcePath('resources', 'icons', 'icon.png')
-  const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
-  tray = new Tray(trayIcon)
-  tray.setToolTip('WorkAvatar 数字员工')
-
-  const contextMenu = Menu.buildFromTemplate([
+/** 按当前语言重建托盘菜单（语言切换时刷新） */
+function updateTrayMenu(): void {
+  if (!tray) return
+  tray.setToolTip(mainUiI18n.t('trayTooltip'))
+  tray.setContextMenu(Menu.buildFromTemplate([
     {
-      label: '显示窗口',
+      label: mainUiI18n.t('trayShowWindow'),
       click: () => {
         if (mainWindow) {
           mainWindow.show()
@@ -456,15 +604,21 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: '退出程序',
+      label: mainUiI18n.t('trayQuit'),
       click: () => {
         isQuitting = true
         app.quit()
       },
     },
-  ])
+  ]))
+}
 
-  tray.setContextMenu(contextMenu)
+function createTray() {
+  const iconPath = getResourcePath('resources', 'icons', 'icon.png')
+  const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
+  tray = new Tray(trayIcon)
+  updateTrayMenu()
+  mainUiI18n.onLocaleChange(() => updateTrayMenu())
 
   tray.on('double-click', () => {
     if (mainWindow) {
@@ -475,6 +629,11 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+  // 双保险：未拿到锁的第二实例必须立即退出，不得执行任何初始化（app.exit 之外的兜底）
+  if (!gotTheLock) {
+    app.exit(0)
+    return
+  }
   logger.info('App ready, registering IPC handlers and creating window')
 
   // 插件协议：plugin://<id>/<相对路径> → 插件目录内文件（宿主校验启停与路径越权）
@@ -492,10 +651,9 @@ app.whenReady().then(() => {
 
   // 注册员工（内置/插件）影子记录落库：保证 conversations 等外键引用有效（幂等，id 跨版本不变）
   EmployeeRegistryService.getInstance().ensureDbRecords()
-  // 注册员工工作区根目录与普通员工统一（employees/ 内），启动时迁移旧 registry-workspaces 目录
-  WorkspaceManagerService.getInstance().migrateLegacyRegistryWorkspaces()
 
   registerAppFileProtocol()
+  registerAttachmentProtocol()
   registerIpcHandlers()
 
   // 配置 getDisplayMedia 请求处理器，用于系统音频录制（Windows loopback）
@@ -589,20 +747,22 @@ app.on('activate', () => {
   }
 })
 
-app.on('second-instance', (_event, argv) => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  }
-  // Windows/Linux: 第二实例启动时从 argv 提取 .md 文件（系统右键"打开方式"）
-  const mdFiles = extractMdFilesFromArgv(argv)
-  for (const file of mdFiles) {
-    sendOpenExternalFile(file)
-  }
-  // 第二实例传入的 .wap 插件包 → 弹确认框加载
-  const pluginFiles = extractPluginFilesFromArgv(argv)
-  for (const file of pluginFiles) {
-    handleOpenPluginFile(file)
-  }
-})
+if (gotTheLock) {
+  app.on('second-instance', (_event, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
+    // Windows/Linux: 第二实例启动时从 argv 提取 .md 文件（系统右键"打开方式"）
+    const mdFiles = extractMdFilesFromArgv(argv)
+    for (const file of mdFiles) {
+      sendOpenExternalFile(file)
+    }
+    // 第二实例传入的 .wap 插件包 → 弹确认框加载
+    const pluginFiles = extractPluginFilesFromArgv(argv)
+    for (const file of pluginFiles) {
+      handleOpenPluginFile(file)
+    }
+  })
+}

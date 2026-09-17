@@ -975,13 +975,16 @@ class KMSService {
     const startTime = Date.now()
     const results: SearchResult[] = []
 
+    // LIKE 通配符转义：用户输入含 %/_ 时按字面匹配（配合 ESCAPE '\'）
+    const likeEscaped = query.replace(/[\\%_]/g, (m) => '\\' + m)
+
     // 1. 索引目录中的文件（kms_files）
     let indexSql = `
       SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
       FROM kms_files f
-      WHERE f.file_name LIKE ?
+      WHERE f.file_name LIKE ? ESCAPE '\\'
     `
-    const indexParams: any[] = [`%${query}%`]
+    const indexParams: any[] = [`%${likeEscaped}%`]
 
     if (options?.dirIds && options.dirIds.length > 0) {
       const placeholders = options.dirIds.map(() => '?').join(',')
@@ -1020,9 +1023,9 @@ class KMSService {
       SELECT f.id as file_id, f.file_name, f.file_path, f.file_name as text, 'file_name' as match_type, f.modified_time as modified_time
       FROM kms_search_dir_files f
       JOIN kms_search_dirs d ON d.id = f.dir_id
-      WHERE d.enabled = 1 AND f.file_name LIKE ?
+      WHERE d.enabled = 1 AND f.file_name LIKE ? ESCAPE '\\'
     `
-    const searchParams: any[] = [`%${query}%`]
+    const searchParams: any[] = [`%${likeEscaped}%`]
 
     if (options?.fileExtensions && options.fileExtensions.length > 0) {
       const placeholders = options.fileExtensions.map(() => '?').join(',')

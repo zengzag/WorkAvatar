@@ -24,6 +24,7 @@ import type {
   StreamFn,
 } from '@earendil-works/pi-agent-core'
 import type { ToolDefinition, OpenAIToolDefinition, ToolCallResult } from '../tools/types'
+import { TextLoopDetector, type LoopHit } from './loop-detector'
 import { ToolDispatcher } from '../tools/tool-dispatcher'
 import { ToolRegistry } from '../tools/tool-registry'
 import { AgentEventEmitter } from './agent-events'
@@ -36,6 +37,8 @@ import type {
 } from './types'
 import { createLogger } from '../../logger'
 import { getProviderCompat } from '../llm/provider-compat'
+import { buildPiStreamOptions } from '../llm/pi-stream-options'
+import AttachmentService, { ATTACHMENT_REF_PATTERN } from '../../attachment.service'
 import LLMLoggerService from '../../llm-logger.service'
 import type { GeneratedFileInfo } from '../../../../shared/types'
 
@@ -44,8 +47,10 @@ const logger = createLogger('PiAgentAdapter')
 /** 构造 pi-ai 合成 Model<"openai-completions">，compat 配置由 provider-compat.ts 统一管理 */
 function createPiModel(config: AgentConfig): Model<'openai-completions'> {
   const providerType = config.providerType
-  const compat = getProviderCompat(providerType)
-  const reasoning = !!config.enableThinking || !!compat.thinkingFormat
+  const compat = getProviderCompat(providerType, config.model)
+  // thinkingFormat / alwaysReasoning provider 的 reasoning 必须始终为 true，
+  // 否则 pi-ai 的 thinking 分支不执行、思考开关失效（alwaysReasoning 更不允许缺省 reasoning 参数）
+  const reasoning = !!config.enableThinking || !!compat.thinkingFormat || !!compat.alwaysReasoning
 
   return {
     id: config.model,
@@ -54,7 +59,8 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
     provider: providerType || 'openai',
     baseUrl: config.baseUrl || 'https://api.openai.com/v1',
     reasoning,
-    input: ['text', 'image'],
+    // 视觉能力：用于 pi-ai 序列化校验与上下文注入判断（不支持图片时不注入工具返回的图片）
+    input: config.supportsImageInput ? ['text', 'image'] : ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128000,
     maxTokens: 8192,
@@ -71,16 +77,28 @@ function createPiModel(config: AgentConfig): Model<'openai-completions'> {
         sessionAffinityFormat: compat.sessionAffinityFormat || 'openai',
       } : {}),
       ...(compat.thinkingFormat ? { thinkingFormat: compat.thinkingFormat } : {}),
+      ...(compat.zaiToolStream ? { zaiToolStream: true } : {}),
       ...(compat.requiresReasoningContentOnAssistantMessages ? { requiresReasoningContentOnAssistantMessages: true } : {}),
     },
   }
 }
 
-/** 从 data URL 解析 base64 数据与 mimeType；非 data URL 原样返回（让 provider 自行处理 HTTP 图） */
-function parseImageDataUrl(url: string): { data: string; mimeType: string } | { url: string } {
+/** 图片引用解析结果：
+ * - data URL → { data, mimeType }
+ * - wa-attachment:// 引用 → 读盘转 base64；文件丢失 → { missing: true }（对话继续，附丢失提示）
+ * - 其他（HTTP）→ { url } 原样返回（让 provider 自行处理）
+ */
+function parseImageDataUrl(url: string): { data: string; mimeType: string } | { url: string } | { missing: true } {
   const match = /^data:(image\/[a-zA-Z+.-]+);base64,(.*)$/.exec(url)
   if (match) {
     return { data: match[2], mimeType: match[1] }
+  }
+  if (ATTACHMENT_REF_PATTERN.test(url)) {
+    const resolved = AttachmentService.getInstance().resolve(url)
+    if (resolved) {
+      return { data: resolved.base64, mimeType: resolved.mimeType }
+    }
+    return { missing: true }
   }
   return { url }
 }
@@ -102,24 +120,34 @@ function createStreamFn(config: AgentConfig): StreamFn {
       messages: [...context.messages],
       ...(context.tools ? { tools: context.tools } : {}),
     }
-    const innerStream = openaiCompletionsStream(piModel, context, {
+    // 采样 / 传输设置：AgentConfig.stream（模型/供应商配置派生）优先，其次尊重 pi-agent-core 透传的 options
+    const stream = config.stream || {}
+    // 循环检测中断控制器：与外部 signal 级联（外部中止 → 一并中止），
+    // 检测触发时仅中止本次 LLM 调用，不影响外层 agent 循环的中断语义
+    const loopAbort = new AbortController()
+    if (options?.signal) {
+      if (options.signal.aborted) loopAbort.abort()
+      else options.signal.addEventListener('abort', () => loopAbort.abort(), { once: true })
+    }
+    const innerStream = openaiCompletionsStream(piModel, context, buildPiStreamOptions({
+      providerType: config.providerType,
+      modelId: config.model,
       apiKey,
-      ...(options?.signal ? { signal: options.signal } : {}),
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options?.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-      // pi-ai stream 函数通过 reasoningEffort 决定 deepseek/qwen thinkingFormat 的开关
-      // pi-agent-core 传的 options.reasoning 是 ThinkingLevel 类型，直接复用
-      ...(options?.reasoning ? { reasoningEffort: options.reasoning } : {}),
-      // 传递 sessionId 以启用 prompt cache（openai/deepseek/xiaomi 等支持）
-      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
-    } as any)
+      sessionId: options?.sessionId ?? config.sessionId,
+      signal: loopAbort.signal,
+      streaming: true,
+      enableThinking: config.enableThinking,
+      ...stream,
+      temperature: stream.temperature ?? options?.temperature,
+      maxTokens: stream.maxTokens ?? options?.maxTokens,
+    }) as any)
     return wrapStreamWithLogging(innerStream, {
       model: config.model,
       providerType: config.providerType,
       context: contextSnapshot,
       options,
       startTime,
-    })
+    }, loopAbort)
   }
 }
 
@@ -187,6 +215,9 @@ function piUsageToLogUsage(usage: PiUsage | undefined): any | undefined {
 /**
  * 包装 AssistantMessageEventStream，窃听事件累积响应信息，
  * 在流结束（done/error/消费者退出）后写入 LLM 日志。
+ * 同时对流式输出做循环检测（正文/思考/工具参数各自独立），
+ * 检测命中后中止底层请求并停止转发，result() 返回合成的错误消息，
+ * 走 pi-agent-core turn_end stopReason=error → handleAgentEvent 抛错的既有链路。
  * 保留 [Symbol.asyncIterator] 与 result() 契约，对 pi-agent-core 透明。
  */
 function wrapStreamWithLogging(
@@ -198,6 +229,7 @@ function wrapStreamWithLogging(
     options?: any
     startTime: number
   },
+  loopAbort?: AbortController,
 ): AssistantMessageEventStream {
   let content = ''
   let reasoningContent = ''
@@ -205,6 +237,34 @@ function wrapStreamWithLogging(
   let usage: PiUsage | undefined
   let errorMessage: string | undefined
   let logged = false
+  // 循环检测：正文 / 思考 / 每个工具参数流独立检测（跨流重复属合法引用，不算循环）
+  const textDetector = new TextLoopDetector()
+  const thinkingDetector = new TextLoopDetector()
+  const toolArgDetectors = new Map<number, TextLoopDetector>()
+  let loopError: string | undefined
+
+  const formatLoopError = (stream: string, hit: LoopHit): string => {
+    const unit = hit.unit.replace(/\s+/g, ' ').slice(0, 60)
+    return `检测到循环输出（${stream}）：内容 "${unit}"（周期 ${hit.period} 字符）持续重复，已自动中断`
+  }
+
+  /** 循环中断时合成的错误 AssistantMessage（含已产出的部分内容，与 pi-ai 错误事件行为一致） */
+  const buildLoopErrorResult = (): PiAssistantMessage => {
+    const contentParts: (TextContent | ThinkingContent)[] = []
+    if (content) contentParts.push({ type: 'text', text: content })
+    if (reasoningContent) contentParts.push({ type: 'thinking', thinking: reasoningContent })
+    return {
+      role: 'assistant',
+      content: contentParts,
+      api: 'openai-completions',
+      provider: logMeta.providerType || 'openai',
+      model: logMeta.model,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'error',
+      errorMessage: loopError,
+      timestamp: Date.now(),
+    }
+  }
 
   const writeLog = () => {
     if (logged) return
@@ -217,14 +277,15 @@ function wrapStreamWithLogging(
       max_tokens: logMeta.options?.maxTokens,
       stream: true as const,
     }
-    if (errorMessage) {
+    const error = loopError || errorMessage
+    if (error) {
       LLMLoggerService.getInstance().logCall({
         type: 'chatStream',
         source: 'agent',
         model: logMeta.model,
         providerType: logMeta.providerType,
         request,
-        error: errorMessage,
+        error,
       })
     } else {
       LLMLoggerService.getInstance().logCall({
@@ -248,52 +309,76 @@ function wrapStreamWithLogging(
     async *[Symbol.asyncIterator]() {
       try {
         for await (const event of innerStream) {
-          switch (event.type) {
-            case 'text_delta':
-              content += event.delta
-              break
-            case 'thinking_delta':
-              reasoningContent += event.delta
-              break
-            case 'toolcall_end':
-              toolCalls.push({
-                id: event.toolCall.id,
-                type: 'function',
-                function: {
-                  name: event.toolCall.name,
-                  arguments: JSON.stringify(event.toolCall.arguments),
-                },
-              })
-              break
-            case 'done': {
-              // done 携带 finalMessage，从中提取完整 content/usage，比 delta 累积更准确
-              const msg = event.message
-              usage = msg.usage
-              let text = ''
-              let reasoning = ''
-              const tcs: any[] = []
-              for (const c of msg.content) {
-                if (c.type === 'text') text += c.text
-                else if (c.type === 'thinking') reasoning += c.thinking
-                else if (c.type === 'toolCall') {
-                  tcs.push({
-                    id: c.id,
-                    type: 'function',
-                    function: { name: c.name, arguments: JSON.stringify(c.arguments) },
-                  })
+          if (!loopError) {
+            switch (event.type) {
+              case 'text_delta': {
+                content += event.delta
+                const hit = textDetector.push(event.delta)
+                if (hit) loopError = formatLoopError('正文', hit)
+                break
+              }
+              case 'thinking_delta': {
+                reasoningContent += event.delta
+                const hit = thinkingDetector.push(event.delta)
+                if (hit) loopError = formatLoopError('思考', hit)
+                break
+              }
+              case 'toolcall_delta': {
+                let det = toolArgDetectors.get(event.contentIndex)
+                if (!det) {
+                  det = new TextLoopDetector()
+                  toolArgDetectors.set(event.contentIndex, det)
                 }
+                const hit = det.push(event.delta)
+                if (hit) loopError = formatLoopError('工具参数', hit)
+                break
               }
-              content = text
-              reasoningContent = reasoning
-              if (tcs.length > 0) {
-                toolCalls.length = 0
-                toolCalls.push(...tcs)
+              case 'toolcall_end':
+                toolCalls.push({
+                  id: event.toolCall.id,
+                  type: 'function',
+                  function: {
+                    name: event.toolCall.name,
+                    arguments: JSON.stringify(event.toolCall.arguments),
+                  },
+                })
+                break
+              case 'done': {
+                // done 携带 finalMessage，从中提取完整 content/usage，比 delta 累积更准确
+                const msg = event.message
+                usage = msg.usage
+                let text = ''
+                let reasoning = ''
+                const tcs: any[] = []
+                for (const c of msg.content) {
+                  if (c.type === 'text') text += c.text
+                  else if (c.type === 'thinking') reasoning += c.thinking
+                  else if (c.type === 'toolCall') {
+                    tcs.push({
+                      id: c.id,
+                      type: 'function',
+                      function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+                    })
+                  }
+                }
+                content = text
+                reasoningContent = reasoning
+                if (tcs.length > 0) {
+                  toolCalls.length = 0
+                  toolCalls.push(...tcs)
+                }
+                break
               }
+              case 'error':
+                errorMessage = (event.error as PiAssistantMessage)?.errorMessage || 'LLM 流式请求失败'
+                break
+            }
+            if (loopError) {
+              // 命中循环：中止底层请求并停止转发；result() 返回合成错误消息
+              logger.warn(`Agent stream loop detected, aborting: ${loopError} (model=${logMeta.model}, latencyMs=${Date.now() - logMeta.startTime})`)
+              loopAbort?.abort()
               break
             }
-            case 'error':
-              errorMessage = (event.error as PiAssistantMessage)?.errorMessage || 'LLM 流式请求失败'
-              break
           }
           yield event
         }
@@ -302,6 +387,7 @@ function wrapStreamWithLogging(
       }
     },
     result() {
+      if (loopError) return Promise.resolve(buildLoopErrorResult())
       return innerStream.result()
     },
   }
@@ -328,20 +414,35 @@ function toPiMessages(
     }
 
     if (m.role === 'user') {
-      const content: string | (TextContent | ImageContent)[] = m.images && m.images.length > 0
+      // HTTP 图片 URL 无法作为 base64 data 直接发送（伪造 data 字段是损坏数据，会静默丢失）。
+      // toPiMessages 为同步函数无法下载转码，改为丢弃并在文本中显式告知模型，
+      // 避免模型误以为图片已发送。
+      const httpImageUrls: string[] = []
+      const imageParts: ImageContent[] = []
+      let missingImageCount = 0
+      for (const url of m.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingImageCount++
+        } else {
+          httpImageUrls.push(parsed.url)
+        }
+      }
+      const skipNote = httpImageUrls.length > 0
+        ? `\n\n[注意：${httpImageUrls.length} 张图片（HTTP 链接）未能随消息发送，仅支持内嵌 data URL 图片。链接如下：${httpImageUrls.join('、')}]`
+        : ''
+      const missingNote = missingImageCount > 0
+        ? `\n\n[注意：${missingImageCount} 张图片附件文件已丢失，未能随消息发送，可能影响对相关内容的理解]`
+        : ''
+      const userNote = skipNote + missingNote
+      const content: string | (TextContent | ImageContent)[] = imageParts.length > 0
         ? [
-            ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
-            ...m.images.map(url => {
-              const parsed = parseImageDataUrl(url)
-              if ('data' in parsed) {
-                return { type: 'image' as const, data: parsed.data, mimeType: parsed.mimeType }
-              }
-              // HTTP URL：pi-ai 仅支持 base64 data，HTTP 图需下载后转 base64
-              // 此处保留 url 形式，provider 不识别时会忽略
-              return { type: 'image' as const, data: parsed.url, mimeType: 'image/png' }
-            }),
+            ...(((m.content || '') || userNote) ? [{ type: 'text' as const, text: (m.content || '') + userNote }] : []),
+            ...imageParts,
           ]
-        : m.content
+        : (m.content || '') + userNote
       const userMsg: UserMessage = { role: 'user', content, timestamp: ts }
       piMessages.push(userMsg)
       continue
@@ -380,11 +481,26 @@ function toPiMessages(
 
     if (m.role === 'tool') {
       const text = m.content || ''
+      // 工具结果图片回放：与实时链路一致放入 toolResult content，
+      // 最终由 convertToLlm 在请求前改写为 user 消息注入
+      const imageParts: (TextContent | ImageContent)[] = []
+      let missingImageCount = 0
+      for (const url of m.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingImageCount++
+        }
+      }
+      if (missingImageCount > 0) {
+        imageParts.push({ type: 'text', text: `[注意] ${missingImageCount} 张图片附件文件已丢失，无法提供图片内容` })
+      }
       piMessages.push({
         role: 'toolResult',
         toolCallId: m.toolCallId || '',
         toolName: '',
-        content: text ? [{ type: 'text', text }] : [],
+        content: text ? [{ type: 'text', text }, ...imageParts] : imageParts,
         isError: false,
         timestamp: ts,
       })
@@ -417,6 +533,7 @@ function toTokenUsage(usage: PiUsage | undefined): TokenUsage | undefined {
 function toAgentTool(
   tool: ToolDefinition,
   dispatcher: ToolDispatcher,
+  imageSupport: boolean,
 ): AgentTool {
   return {
     name: tool.name,
@@ -433,8 +550,11 @@ function toAgentTool(
         }
       }
 
-      const toolContext = onUpdate
-        ? { onProgress: (progress: any) => onUpdate({ content: [{ type: 'text', text: '' }], details: { progress } }) }
+      const toolContext = imageSupport || onUpdate
+        ? {
+            ...(onUpdate ? { onProgress: (progress: any) => onUpdate({ content: [{ type: 'text', text: '' }], details: { progress } }) } : {}),
+            ...(imageSupport ? { imageSupport: true } : {}),
+          }
         : undefined
 
       const startMs = Date.now()
@@ -453,13 +573,29 @@ function toAgentTool(
       }
 
       const text = formatToolMessageContent(result)
+      // 图片以 ImageContent 形式放入 toolResult 消息（pi 层存储），
+      // 由 convertToLlm 在每次 LLM 请求前改写为紧随 tool result 的 user 消息注入
+      const imageParts: (TextContent | ImageContent)[] = []
+      let missingToolImages = 0
+      for (const url of result.images || []) {
+        const parsed = parseImageDataUrl(url)
+        if ('data' in parsed) {
+          imageParts.push({ type: 'image', data: parsed.data, mimeType: parsed.mimeType })
+        } else if ('missing' in parsed) {
+          missingToolImages++
+        }
+      }
+      if (missingToolImages > 0) {
+        imageParts.push({ type: 'text', text: `[注意] ${missingToolImages} 张图片附件文件已丢失，无法提供图片内容` })
+      }
       return {
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text }, ...imageParts],
         details: {
           output: result.output,
           error: result.error,
           rawOutput: result.rawOutput,
           generatedFiles: result.generatedFiles,
+          images: result.images,
           success: result.success,
           latencyMs: result.latencyMs ?? (Date.now() - startMs),
         },
@@ -536,6 +672,8 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
     const msg = result[idx] as ToolResultMessage
     const newContent: (TextContent | ImageContent)[] = []
     for (const c of msg.content) {
+      // 已截断的旧图片块直接丢弃，避免被截断历史持续占用视觉上下文
+      if (c.type === 'image') continue
       if (c.type === 'text' && c.text.length > 500 && !c.text.startsWith(SUMMARY_PREFIX)) {
         newContent.push({
           type: 'text',
@@ -549,6 +687,65 @@ function trimPiToolResults(messages: AgentMessage[]): AgentMessage[] {
   }
 
   return result
+}
+
+/**
+ * AgentMessage[] → LLM 可见的 PiMessage[]（每次 LLM 请求前的临时转换，不回写上下文）。
+ * OpenAI 兼容协议的 tool 消息不允许携带图片内容：
+ * 先把 toolResult 中的 ImageContent 抽出，包裹进紧随整个 tool result 批次之后的
+ * synthetic user 消息注入，模型即可在同轮看到图片。
+ * 单次请求最多注入 MAX_INJECTED_IMAGES 张，更早的图片块直接丢弃以控制上下文。
+ */
+const MAX_INJECTED_IMAGES = 4
+
+/** 模型不支持图片输入时的降级提示（附在被抽掉图片的 toolResult 文本之后） */
+const IMAGE_UNSUPPORTED_NOTE = '\n\n[注意] 当前模型不支持图片输入，图片未随请求发送；如需读取图中文字，请改用 ocr_image 工具。'
+
+function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean): PiMessage[] {
+  const out: PiMessage[] = []
+  let pendingImages: ImageContent[] = []
+  const flushImages = () => {
+    if (pendingImages.length === 0) return
+    // 超出上限时保留最新的图片，较早的丢弃
+    const injected = pendingImages.length > MAX_INJECTED_IMAGES
+      ? pendingImages.slice(-MAX_INJECTED_IMAGES)
+      : pendingImages
+    pendingImages = []
+    out.push({
+      role: 'user',
+      timestamp: Date.now(),
+      content: [
+        { type: 'text', text: '[附图] 上述工具返回了以下图片，请结合图片内容继续分析：' },
+        ...injected,
+      ],
+    })
+  }
+
+  for (const m of messages) {
+    const pm = m as PiMessage
+    if (pm.role === 'toolResult') {
+      const rest: TextContent[] = []
+      for (const c of pm.content) {
+        if (c.type === 'image') {
+          // 支持视觉：暂存待注入；不支持：丢弃并补降级提示
+          if (imageSupport) pendingImages.push(c)
+        } else {
+          rest.push(c as TextContent)
+        }
+      }
+      if (!imageSupport && pm.content.some(c => c.type === 'image')
+        && !pm.content.some(c => c.type === 'text' && c.text.includes('当前模型不支持图片输入'))) {
+        rest.push({ type: 'text', text: IMAGE_UNSUPPORTED_NOTE })
+      }
+      if (rest.length === 0) rest.push({ type: 'text', text: '（无文本输出）' })
+      out.push({ ...pm, content: rest })
+      continue
+    }
+    flushImages()
+    out.push(pm as PiMessage)
+  }
+  flushImages()
+  return out
 }
 
 export interface RunPiAgentLoopParams {
@@ -618,12 +815,13 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   }
 
   // 包装工具为 AgentTool
+  const imageSupport = config.supportsImageInput === true
   const agentTools: AgentTool[] = []
   for (const def of toolDefinitions) {
     const name = def.function.name
     const tool = toolRegistry.getTool(name)
     if (tool) {
-      agentTools.push(toAgentTool(tool, toolDispatcher))
+      agentTools.push(toAgentTool(tool, toolDispatcher, imageSupport))
     }
   }
 
@@ -642,7 +840,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
 
   const loopConfig: AgentLoopConfig = {
     model: createPiModel(config),
-    convertToLlm: (msgs: AgentMessage[]) => msgs as PiMessage[],
+    convertToLlm: (msgs: AgentMessage[]) => convertMessagesForLlm(msgs, config.supportsImageInput === true),
     transformContext: async (msgs: AgentMessage[]) => trimPiToolResults(msgs),
     shouldStopAfterTurn: () => {
       turnCount++
@@ -676,7 +874,7 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
         abortReason = '用户主动停止（signal 已中止）'
         break
       }
-      handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
+      await handleAgentEvent(event, callbacks, eventEmitter, agentContext, onToolCallExecuted, onPromptTokens, toolArgsCache, toolStartTime, (usage) => {
         totalTokenUsage = {
           promptTokens: (totalTokenUsage.promptTokens || 0) + (usage.promptTokens || 0),
           completionTokens: (totalTokenUsage.completionTokens || 0) + (usage.completionTokens || 0),
@@ -714,7 +912,23 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   return { tokenUsage: hasUsage ? totalTokenUsage : undefined, aborted, abortReason }
 }
 
-function handleAgentEvent(
+/**
+ * 从 partial content 中按 contentIndex 定位工具调用块。
+ * contentIndex 指示参数增量所属的工具调用块（text/thinking 也占 content 下标）。
+ * 不能用 find 取「第一个 toolCall」：同一 assistant 消息含多个工具调用时，
+ * 后续工具的参数增量会被错误归到第一张卡片，前端流式参数展示错位。
+ * 越界/类型不符时回退 find（对异常事件保持旧行为的兜底）。
+ */
+export function findToolCallByContentIndex(
+  content: any[],
+  contentIndex: number | undefined,
+): PiToolCall | undefined {
+  const indexed = contentIndex === undefined ? undefined : content[contentIndex]
+  if (indexed && indexed.type === 'toolCall') return indexed as PiToolCall
+  return content.find((c): c is PiToolCall => c.type === 'toolCall')
+}
+
+async function handleAgentEvent(
   event: AgentEvent,
   callbacks: AgentRunStreamCallbacks,
   eventEmitter: AgentEventEmitter,
@@ -724,7 +938,7 @@ function handleAgentEvent(
   toolArgsCache: Map<string, any>,
   toolStartTime: Map<string, number>,
   onUsage: (usage: TokenUsage) => void,
-): void {
+): Promise<void> {
   switch (event.type) {
     case 'agent_start':
       // 不在此处 emit run:start，base-agent.runStream 已统一 emit，避免重复
@@ -771,7 +985,7 @@ function handleAgentEvent(
           break
         case 'toolcall_delta': {
           const partial = asstEvent.partial
-          const tc = partial.content.find((c): c is PiToolCall => c.type === 'toolCall')
+          const tc = findToolCallByContentIndex(partial.content, asstEvent.contentIndex)
           callbacks.onToolCallDelta?.({
             index: asstEvent.contentIndex,
             id: tc?.id,
@@ -821,6 +1035,7 @@ function handleAgentEvent(
         toolName: event.toolName,
         rawOutput: details?.rawOutput,
         generatedFiles: details?.generatedFiles as GeneratedFileInfo[] | undefined,
+        images: details?.images as string[] | undefined,
         latencyMs: details?.latencyMs ?? (startMs ? Date.now() - startMs : undefined),
       }
       // 清理 startTime 缓存（args 在 onToolCallExecuted 后清理）
@@ -833,6 +1048,7 @@ function handleAgentEvent(
         result: success ? result.output : result.error,
         rawResult: result.rawOutput,
         generatedFiles: result.generatedFiles,
+        images: result.images,
         // success 字段表示"工具调用是否成功"（基于 isError），非业务层成功
         success,
       })
@@ -841,7 +1057,7 @@ function handleAgentEvent(
         try {
           // tool_execution_end 不含 args，从 tool_execution_start 缓存中取
           const args = toolArgsCache.get(event.toolCallId) ?? {}
-          onToolCallExecuted(event.toolName, args, result)
+          await onToolCallExecuted(event.toolName, args, result)
         } catch (err: any) {
           logger.error(`onToolCallExecuted hook error for "${event.toolName}": ${err?.message || err}`)
         } finally {

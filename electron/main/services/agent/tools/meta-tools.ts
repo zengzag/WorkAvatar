@@ -47,7 +47,7 @@ function formatToolsSummary(tools: ToolDefinition[]): string {
 }
 
 /** 详情模式：返回指定工具的完整参数说明 */
-function formatToolDetail(tool: ToolDefinition, _workspacePath?: string): string {
+function formatToolDetail(tool: ToolDefinition): string {
   const parts: string[] = []
   parts.push(`## ${tool.name} — ${tool.title}`)
   parts.push('')
@@ -68,8 +68,7 @@ function formatToolDetail(tool: ToolDefinition, _workspacePath?: string): string
  * - 传入 tool_name（字符串或字符串数组）：返回指定工具的完整参数说明（详情模式），支持一次获取多个工具详情
  */
 export function createListAvailableToolsTool(
-  registry: ToolRegistry,
-  workspacePath?: string
+  registry: ToolRegistry
 ): ToolDefinition {
   return {
     id: 'list_available_tools',
@@ -94,9 +93,10 @@ export function createListAvailableToolsTool(
       // 详情模式：tool_name 支持单个字符串或字符串数组
       const rawName = args?.tool_name
       if (rawName !== undefined && rawName !== null) {
-        const requestedNames: string[] = Array.isArray(rawName)
-          ? rawName.map(n => String(n).trim()).filter(Boolean)
-          : [String(rawName).trim()]
+        // 统一走 trim + 过滤空串：空字符串/纯空白不能落到「未找到工具」分支，否则提示误导
+        const requestedNames: string[] = (Array.isArray(rawName) ? rawName : [rawName])
+          .map(n => String(n).trim())
+          .filter(Boolean)
 
         if (requestedNames.length === 0) {
           return { success: false, error: 'tool_name 不能为空。' }
@@ -115,7 +115,7 @@ export function createListAvailableToolsTool(
 
         const sections: string[] = []
         if (found.length > 0) {
-          sections.push(found.map(t => formatToolDetail(t, workspacePath)).join('\n\n---\n\n'))
+          sections.push(found.map(t => formatToolDetail(t)).join('\n\n---\n\n'))
         }
         if (missing.length > 0) {
           const available = onDemandTools.map(t => t.name).join(', ')
@@ -263,7 +263,18 @@ export function createInvokeToolTool(
         }
       }
 
-      const toolArgs = (args?.args && typeof args.args === 'object') ? args.args : {}
+      // args 必须是对象：数组/字符串等非对象经 dispatcher 透传会让目标工具解析出错误参数，
+      // 提前拦截并给出明确错误（null/undefined 视为未传，回退空对象，兼容无参工具）
+      const rawArgs = args?.args
+      if (rawArgs !== undefined && rawArgs !== null && (typeof rawArgs !== 'object' || Array.isArray(rawArgs))) {
+        const error = 'args 必须是对象'
+        return {
+          success: false,
+          error,
+          output: buildFailureContext('invoke_tool', args || {}, { error }),
+        }
+      }
+      const toolArgs = rawArgs ?? {}
       const tool = registry.getTool(toolName)
 
       if (!tool) {
@@ -303,5 +314,10 @@ export function createInvokeToolTool(
     },
     source: 'builtin',
     permission: 'safe',
+    // 外层超时必须大于所有可按需调用的工具自身超时（shell_exec 310s 为最大），
+    // 否则 base-agent 的默认 30s 会先触发并截断内层长任务。
+    timeoutMs: 610_000,
+    // 内层 dispatcher.dispatch 已套用目标工具自身的 timeout/retry 链，外层不再重试，避免双重重试
+    noRetry: true,
   }
 }

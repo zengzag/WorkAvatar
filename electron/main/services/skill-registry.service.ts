@@ -2,7 +2,6 @@ import path from 'path'
 import fs from 'fs'
 import AdmZip from 'adm-zip'
 import YAML from 'yaml'
-import { execSync } from 'child_process'
 import DatabaseService from './database.service'
 import PathService from './path.service'
 import EmployeeRegistryService from './employee-registry.service'
@@ -285,19 +284,44 @@ class SkillRegistryService {
     return skill
   }
 
+  /** 技能包解压上限：防 zip bomb（条目数 / 解压后总大小） */
+  private static readonly ZIP_MAX_ENTRIES = 500
+  private static readonly ZIP_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024 // 100MB
+
   async installFromZip(zipPath: string): Promise<InstallSkillResult> {
     try {
+      const zip = new AdmZip(zipPath)
+      // 解压前校验：条目数/总解压体积上限 + entryName 路径穿越二次校验
+      //（zip-slip 不依赖 adm-zip 内部清洗，自身再做一层；基准目录用 skillsDir，
+      // 实际解压目录是其子目录，穿越判定等价）
+      const zipEntries = zip.getEntries()
+      if (zipEntries.length > SkillRegistryService.ZIP_MAX_ENTRIES) {
+        return { success: false, error: `技能包含 ${zipEntries.length} 个条目，超过上限 ${SkillRegistryService.ZIP_MAX_ENTRIES}` }
+      }
+      let totalUncompressed = 0
+      for (const entry of zipEntries) {
+        const entryName = entry.entryName
+        const resolved = path.resolve(this.skillsDir, entryName)
+        const rel = path.relative(this.skillsDir, resolved)
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          return { success: false, error: `技能包含非法路径条目: ${entryName}` }
+        }
+        totalUncompressed += entry.header.size
+      }
+      if (totalUncompressed > SkillRegistryService.ZIP_MAX_UNCOMPRESSED_BYTES) {
+        return { success: false, error: `技能包解压后超过 ${Math.floor(SkillRegistryService.ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024)}MB 上限` }
+      }
+
       const extractDir = path.join(this.skillsDir, '_temp_' + Date.now())
       fs.mkdirSync(extractDir, { recursive: true })
 
-      const zip = new AdmZip(zipPath)
       zip.extractAllTo(extractDir, true)
 
-      const entries = fs.readdirSync(extractDir)
+      const topLevel = fs.readdirSync(extractDir)
       let skillDir = extractDir
 
-      if (entries.length === 1 && fs.statSync(path.join(extractDir, entries[0])).isDirectory()) {
-        skillDir = path.join(extractDir, entries[0])
+      if (topLevel.length === 1 && fs.statSync(path.join(extractDir, topLevel[0])).isDirectory()) {
+        skillDir = path.join(extractDir, topLevel[0])
       }
 
       const result = await this.installFromDirectory(skillDir)
@@ -654,23 +678,16 @@ class SkillRegistryService {
       body = body.replace(/\$ARGUMENTS/g, '').replace(/\$\d+/g, '')
     }
 
-    // !`cmd` 动态注入：仅当 allowedTools 显式包含 shell_exec / Bash 时启用
+    // !`cmd` 动态注入：仅当 allowedTools 显式包含 shell_exec / Bash 时启用。
+    // 安全：不在主进程直接 execSync（SKILL.md 可来自 ZIP 导入的第三方技能，
+    // 直接执行等于以用户权限运行任意命令、无沙箱无确认），改为注入执行指令，
+    // 由 agent 经 shell_exec 工具执行（走既有权限链与用户确认）
     const allowShell = (skill.allowedTools || []).some((t) =>
       /^(shell_exec|Bash|bash|sh)$/i.test(t.trim())
     )
     if (allowShell) {
       body = body.replace(/!`([^`]+)`/g, (_, cmd) => {
-        try {
-          const output = execSync(cmd, {
-            encoding: 'utf-8',
-            timeout: 5000,
-            maxBuffer: 100 * 1024,
-            cwd: path.dirname(skill.installPath),
-          })
-          return output.trim().substring(0, 2000)
-        } catch (err: any) {
-          return `[cmd error: ${err?.message || err}]`
-        }
+        return `[动态上下文指令：请立即用 shell_exec 执行以下命令，并把输出作为本节上下文（超时 5s，输出超长时取前 2000 字符）：\n${cmd}\n]`
       })
     }
 

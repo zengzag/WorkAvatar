@@ -36,6 +36,8 @@ export const PROVIDER_DEFAULTS: Record<string, { baseURL: string; defaultModel: 
   vertex: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
   bedrock: { baseURL: '', defaultModel: 'gpt-4o-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
   xai: { baseURL: 'https://api.x.ai/v1', defaultModel: 'grok-3-mini', defaultEmbeddingModel: 'text-embedding-3-small' },
+  // OpenCode Go（opencode.ai/zen/go）：OpenAI 兼容网关，不支持 embedding（官方明确 embeddings 返回 invalid_request_error）
+  'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1', defaultModel: 'glm-5.2', defaultEmbeddingModel: '' },
 }
 
 export type { LLMModelConfig }

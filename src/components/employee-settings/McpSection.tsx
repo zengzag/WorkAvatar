@@ -101,33 +101,33 @@ function serverToJson(server: McpServerInfo): string {
  *   - "streamableHttp" 或 "http"            → streamableHttp
  *   - "sse"                                 → sse
  */
-function parseMcpJson(text: string): ParsedMcpJson {
+function parseMcpJson(text: string, t: (key: string, options?: any) => string): ParsedMcpJson {
   let parsed: any
   try {
     parsed = JSON.parse(text)
   } catch (err: any) {
-    return { servers: [], error: `JSON 解析失败: ${err.message}` }
+    return { servers: [], error: t('employeeSettings.mcpParseFailed', { error: err.message }) }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { servers: [], error: '配置必须是 JSON 对象' }
+    return { servers: [], error: t('employeeSettings.mcpConfigNotObject') }
   }
   // 兼容 { mcpServers: {...} } 和直接 {...} 两种格式
   const serversObj = parsed.mcpServers || parsed
   if (!serversObj || typeof serversObj !== 'object' || Array.isArray(serversObj)) {
-    return { servers: [], error: '缺少 mcpServers 字段或格式不正确' }
+    return { servers: [], error: t('employeeSettings.mcpMissingServers') }
   }
   const serverNames = Object.keys(serversObj)
   if (serverNames.length === 0) {
-    return { servers: [], error: 'mcpServers 不能为空' }
+    return { servers: [], error: t('employeeSettings.mcpServersEmpty') }
   }
   const servers: McpServerConfig[] = []
   for (const name of serverNames) {
     if (!name.trim()) {
-      return { servers: [], error: '服务器名称不能为空' }
+      return { servers: [], error: t('employeeSettings.mcpServerNameRequired') }
     }
     const raw = serversObj[name]
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return { servers: [], error: `服务器 "${name}" 的配置必须是对象` }
+      return { servers: [], error: t('employeeSettings.mcpServerConfigNotObject', { name }) }
     }
     // 标准化 type 字段
     let transportType: McpTransportType
@@ -141,7 +141,7 @@ function parseMcpJson(text: string): ParsedMcpJson {
     } else {
       return {
         servers: [],
-        error: `服务器 "${name}" 的 type 字段无效（应为 stdio / streamableHttp / sse）`,
+        error: t('employeeSettings.mcpServerTypeInvalid', { name }),
       }
     }
     const config: McpServerConfig = {
@@ -151,7 +151,7 @@ function parseMcpJson(text: string): ParsedMcpJson {
     }
     if (transportType === 'stdio') {
       if (!raw.command || typeof raw.command !== 'string') {
-        return { servers: [], error: `服务器 "${name}" 缺少 command 字段` }
+        return { servers: [], error: t('employeeSettings.mcpServerCommandRequired', { name }) }
       }
       config.command = raw.command
       config.args = Array.isArray(raw.args)
@@ -162,7 +162,7 @@ function parseMcpJson(text: string): ParsedMcpJson {
         : {}
     } else {
       if (!raw.url || typeof raw.url !== 'string') {
-        return { servers: [], error: `服务器 "${name}" 缺少 url 字段` }
+        return { servers: [], error: t('employeeSettings.mcpServerUrlRequired', { name }) }
       }
       config.url = raw.url
       config.headers = (raw.headers && typeof raw.headers === 'object' && !Array.isArray(raw.headers))
@@ -226,7 +226,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId, readonly }) => {
   }, [])
 
   const handleSave = useCallback(async () => {
-    const { servers: parsed, error } = parseMcpJson(jsonText)
+    const { servers: parsed, error } = parseMcpJson(jsonText, t)
     if (error || parsed.length === 0) {
       message.error(error || t('employeeSettings.mcpJsonEmpty'))
       return
@@ -288,7 +288,7 @@ const McpSection: React.FC<McpSectionProps> = ({ employeeId, readonly }) => {
   // ============================================================
 
   const handleTestForm = useCallback(async () => {
-    const { servers: parsed, error } = parseMcpJson(jsonText)
+    const { servers: parsed, error } = parseMcpJson(jsonText, t)
     if (error || parsed.length === 0) {
       message.error(error || t('employeeSettings.mcpJsonEmpty'))
       return

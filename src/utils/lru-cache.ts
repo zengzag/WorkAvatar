@@ -7,7 +7,9 @@ export class LRUCache<K, V> {
   private readonly cache = new Map<K, V>()
 
   constructor(private readonly maxSize: number) {
-    if (maxSize <= 0) {
+    // 非有限值一并拒绝：NaN 参与比较恒为 false（size >= maxSize 永不成立）会导致缓存无上限，
+    // Infinity 则与"必须显式设置上限"的初衷相悖，故与 <= 0 统一按非法容量处理
+    if (!Number.isFinite(maxSize) || maxSize <= 0) {
       throw new Error('LRUCache maxSize must be greater than 0')
     }
   }

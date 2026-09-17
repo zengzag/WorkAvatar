@@ -11,35 +11,13 @@ import {
   theme,
   Collapse,
 } from 'antd'
-import {
-  ToolOutlined,
-  FileOutlined,
-  DatabaseOutlined,
-  CalendarOutlined,
-  RobotOutlined,
-  GlobalOutlined,
-  SettingOutlined,
-  FileTextOutlined,
-  MessageOutlined,
-  BulbOutlined,
-  AppstoreOutlined,
-  TeamOutlined,
-} from '@ant-design/icons'
+import { ToolOutlined } from '@ant-design/icons'
+import { resolveToolLabel, resolveToolDescription } from '../../utils/tool-display'
+import { getCategoryIcon } from '../common/tool-category-icons'
 
 const { Text } = Typography
 
 export type ToolMode = 'on' | 'on_demand' | 'off'
-
-interface ToolInfo {
-  id: string
-  name: string
-  title: string
-  description: string
-  category: string
-  mode?: ToolMode
-  is_enabled: boolean
-  is_assigned: boolean
-}
 
 interface CategoryTool {
   id: string
@@ -62,29 +40,12 @@ export interface ToolCategoryInfo {
   tool_ids: string[]
   tools: CategoryTool[]
   mode: ToolMode
-  is_enabled: boolean
   enabled_count: number
   total_count: number
 }
 
-const CATEGORY_ICON_MAP: Record<string, React.ReactNode> = {
-  file: <FileOutlined />,
-  database: <DatabaseOutlined />,
-  calendar: <CalendarOutlined />,
-  robot: <RobotOutlined />,
-  global: <GlobalOutlined />,
-  setting: <SettingOutlined />,
-  'file-document': <FileTextOutlined />,
-  message: <MessageOutlined />,
-  tool: <BulbOutlined />,
-  plugin: <AppstoreOutlined />,
-  team: <TeamOutlined />,
-}
-
 interface ToolsSectionProps {
-  /** 向后兼容：单工具列表（旧数据，留着但不再渲染） */
-  employeeTools?: ToolInfo[]
-  /** 新的分类聚合工具列表 */
+  /** 按分类聚合的工具列表 */
   toolCategories?: ToolCategoryInfo[]
   /** 切换单个工具的模式（on / on_demand / off） */
   onChangeToolMode?: (toolId: string, mode: ToolMode) => void
@@ -95,7 +56,6 @@ interface ToolsSectionProps {
 }
 
 const ToolsSection: React.FC<ToolsSectionProps> = ({
-  employeeTools,
   toolCategories,
   onChangeToolMode,
   onChangeCategoryMode,
@@ -124,8 +84,7 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
     [onChangeToolMode],
   )
 
-  const hasCategories = toolCategories && toolCategories.length > 0
-  const hasLegacyTools = employeeTools && employeeTools.length > 0
+  const categories = toolCategories ?? []
 
   return (
     <Space orientation="vertical" style={{ width: '100%' }} size={16}>
@@ -135,25 +94,25 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
             <ToolOutlined />
             <span>
               {t('employeeSettings.builtinTools', {
-                count: hasCategories ? toolCategories!.length : employeeTools?.length || 0,
+                count: categories.length,
               })}
             </span>
           </Space>
         }
         extra={
-          hasCategories && (
+          categories.length > 0 && (
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('employeeSettings.categoryHint')}
             </Text>
           )
         }
       >
-        {!hasCategories && !hasLegacyTools ? (
+        {categories.length === 0 ? (
           <Empty description={t('employeeSettings.noBuiltinTools')} />
-        ) : hasCategories ? (
+        ) : (
           <div>
-            {toolCategories!.map((cat) => {
-              const catIcon = CATEGORY_ICON_MAP[cat.icon] || <ToolOutlined />
+            {categories.map((cat) => {
+              const catIcon = getCategoryIcon(cat.icon)
               // 分类内工具模式不一致时提示"混合"（分类 Segmented 仍按最高状态显示）
               const isMixed = new Set(cat.tools.map(t => t.mode)).size > 1
 
@@ -306,11 +265,15 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                                   }}
                                 >
                                   <Text
-                                    style={{ fontSize: 13 }}
-                                    ellipsis
-                                  >
-                                    {tool.title || tool.name}
-                                  </Text>
+                                  style={{ fontSize: 13 }}
+                                  ellipsis
+                                >
+                                  {resolveToolLabel(
+                                    tool.name,
+                                    tool.title,
+                                    cat.is_plugin ? cat.plugin_id : undefined,
+                                  )}
+                                </Text>
                                   <Text
                                     type="secondary"
                                     style={{
@@ -319,8 +282,11 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                                     }}
                                     ellipsis
                                   >
-                                    {tool.description ||
-                                      t('employeeSettings.noDesc')}
+                                    {resolveToolDescription(
+                                      tool.name,
+                                      tool.description,
+                                      cat.is_plugin ? cat.plugin_id : undefined,
+                                    ) || t('employeeSettings.noDesc')}
                                   </Text>
                                 </div>
                                 {onChangeToolMode && (
@@ -347,80 +313,6 @@ const ToolsSection: React.FC<ToolsSectionProps> = ({
                 </div>
               )
             })}
-          </div>
-        ) : (
-          // 向后兼容：未提供 categories 时，使用旧的平铺视图
-          <div>
-            {employeeTools!.map((tool) => (
-              <div
-                key={tool.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '12px 0',
-                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  <Avatar
-                    style={{
-                      backgroundColor: tool.is_enabled
-                        ? token.colorPrimary
-                        : token.colorBgContainer,
-                      flexShrink: 0,
-                    }}
-                    icon={<ToolOutlined />}
-                  />
-                  <div
-                    style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}
-                  >
-                    <div
-                      style={{
-                        marginBottom: 4,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                    >
-                      <Text
-                        strong
-                        ellipsis
-                        style={{ display: 'inline-block' }}
-                      >
-                        {tool.title || tool.name}
-                      </Text>
-                      <Tag color="blue" style={{ flexShrink: 0 }}>
-                        {t('employeeSettings.builtin')}
-                      </Tag>
-                    </div>
-                    <Text
-                      type="secondary"
-                      ellipsis
-                      style={{ display: 'block' }}
-                    >
-                      {tool.description || t('employeeSettings.noDesc')}
-                    </Text>
-                  </div>
-                </div>
-                <Segmented
-                  size="small"
-                  options={modeOptions}
-                  value={tool.mode || (tool.is_enabled ? 'on' : 'off')}
-                  onChange={(value) =>
-                    handleChangeToolMode(tool.id, value as ToolMode)
-                  }
-                />
-              </div>
-            ))}
           </div>
         )}
       </Card>

@@ -30,6 +30,8 @@ export const LLM_CHANNELS = {
   EMPLOYEE_GET_CONTEXT_STATS: 'employee:get-context-stats',
   INTERACTION_REQUEST: 'interaction:request',
   INTERACTION_RESPONSE: 'interaction:response',
+  /** 渲染端开关"本轮任务不再提醒"高权限模式（开启由确认弹窗响应携带，此处用于关闭） */
+  INTERACTION_SET_TASK_PERMISSION: 'interaction:set-task-permission',
 } as const
 
 export interface LLMProviderCreateParams {

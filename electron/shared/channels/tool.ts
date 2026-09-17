@@ -3,7 +3,6 @@ export type ToolMode = 'on' | 'on_demand' | 'off'
 
 export const TOOL_CHANNELS = {
   TOOL_LIST_BUILTIN: 'tool:list-builtin',
-  TOOL_GET_EMPLOYEE_TOOLS: 'tool:get-employee-tools',
   TOOL_ASSIGN_TO_EMPLOYEE: 'tool:assign-to-employee',
   TOOL_GET_EMPLOYEE_TOOL_CATEGORIES: 'tool:get-employee-tool-categories',
   TOOL_ASSIGN_CATEGORY_TO_EMPLOYEE: 'tool:assign-category-to-employee',
@@ -26,19 +25,14 @@ export const TOOL_CHANNELS = {
 export interface ToolAssignParams {
   employee_id: string
   tool_id: string
-  /** 工具模式；缺省时按 is_enabled 兼容推断（is_enabled=false → off，否则按工具默认模式） */
-  mode?: ToolMode
-  /** 向后兼容：旧接口的布尔开关 */
-  is_enabled?: boolean
+  mode: ToolMode
 }
 
 export interface ToolCategoryAssignParams {
   employee_id: string
   category_id: string
-  /** 分类下所有工具的模式；缺省时按 is_enabled 兼容推断 */
-  mode?: ToolMode
-  /** 向后兼容：旧接口的布尔开关 */
-  is_enabled?: boolean
+  /** 分类下所有工具的模式 */
+  mode: ToolMode
 }
 
 export interface ToolCategoryInfo {
@@ -58,7 +52,6 @@ export interface ToolCategoryInfo {
   }>
   /** 分类聚合模式：按分类内所有工具的最高状态（on > on_demand > off） */
   mode: ToolMode
-  is_enabled: boolean
   enabled_count: number
   total_count: number
 }

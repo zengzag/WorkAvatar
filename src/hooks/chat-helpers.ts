@@ -1,4 +1,4 @@
-import type { MessageWithThought } from '../components/workbench'
+import type { MessageSegment, MessageWithThought } from '../components/workbench'
 import { LRUCache } from '../utils/lru-cache'
 
 export const MESSAGES_CACHE_MAX_SIZE = 60
@@ -26,7 +26,8 @@ export const getActiveBranchData = (m: MessageWithThought): {
 } => {
   if (m.role === 'assistant' && m.branches && m.branches.length > 0) {
     const branchIndex = m.activeBranchIndex ?? m.branches.length
-    if (branchIndex < m.branches.length) {
+    // 下限保护：负数索引虽小于 length，但 branches[-1] 为 undefined，读取其 content 会抛 TypeError
+    if (branchIndex >= 0 && branchIndex < m.branches.length) {
       const branch = m.branches[branchIndex]
       return {
         content: branch.content,
@@ -42,11 +43,24 @@ export const getActiveBranchData = (m: MessageWithThought): {
   }
 }
 
+/**
+ * delegation 段的 tool_result 文本：结果摘要 + 生成文件清单（摘要缺失时用兜底文案）。
+ * 扁平分支与段循环分支共用，避免同一次委托因消息里有无 tool_call 段而给出不同结果（文件清单丢失）。
+ */
+const buildDelegationResultText = (seg: MessageSegment): string => {
+  const runFiles = (seg.runResult?.generatedFiles || []).concat(seg.runResult?.autoDetectedFiles || [])
+  const fileLines = runFiles.length > 0
+    ? `\n生成的成果文件：\n${runFiles.map(f => `- ${f.path}`).join('\n')}`
+    : ''
+  return `${seg.resultSummary || '(子员工已完成)'}${fileLines}`
+}
+
 export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
   id: string
   name: string
   args: any
   result?: any
+  images?: string[]
   isComplete?: boolean
 }> | undefined => {
   if (m.role !== 'assistant' || !m.segments) return undefined
@@ -58,7 +72,7 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
         id: s.delegationId || s.id,
         name: 'delegate_to_employee',
         args: { target_employee_id: s.targetEmployeeId, instruction: s.instruction || '' },
-        result: s.resultSummary,
+        result: buildDelegationResultText(s),
         isComplete: s.delegationStatus === 'completed' || s.delegationStatus === 'failed' || s.delegationStatus === 'timed_out' || s.delegationStatus === 'cancelled',
       }
     }
@@ -67,6 +81,7 @@ export const extractToolCallsFromSegments = (m: MessageWithThought): Array<{
       name: s.toolName!,
       args: s.toolArgs,
       result: s.toolResult,
+      images: s.toolResultImages,
       isComplete: s.isToolComplete,
     }
   })
@@ -82,6 +97,7 @@ export interface EnrichedHistoryMessage {
     name: string
     args: any
     result?: any
+    images?: string[]
     isComplete?: boolean
   }>
   toolCallId?: string
@@ -172,17 +188,14 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
           name: seg.toolName,
           args: seg.toolArgs,
           result: seg.toolResult,
+          images: seg.toolResultImages,
           isComplete: seg.isToolComplete,
         })
         hasToolCalls = true
       } else if (seg.type === 'delegation') {
         // delegation 段等价于一次 delegate_to_employee 调用 + 结果摘要
-        // 子员工完整过程不进主管 LLM 上下文，仅 resultSummary（含产物文件清单）作为 tool_result
+        // 子员工完整过程不进主管 LLM 上下文，仅摘要（含产物文件清单）作为 tool_result
         if (hasToolCalls) flushTurn()
-        const runFiles = (seg.runResult?.generatedFiles || []).concat(seg.runResult?.autoDetectedFiles || [])
-        const fileLines = runFiles.length > 0
-          ? `\n生成的成果文件：\n${runFiles.map(f => `- ${f.path}`).join('\n')}`
-          : ''
         currentToolCalls.push({
           id: seg.delegationId || seg.runId || seg.id,
           name: 'delegate_to_employee',
@@ -190,7 +203,7 @@ export const buildEnrichedHistory = (msgs: MessageWithThought[]): EnrichedHistor
             target_employee_id: seg.targetEmployeeId,
             instruction: seg.instruction || '',
           },
-          result: `${seg.resultSummary || '(子员工已完成)'}${fileLines}`,
+          result: buildDelegationResultText(seg),
           isComplete: seg.delegationStatus === 'completed' || seg.delegationStatus === 'failed' || seg.delegationStatus === 'timed_out' || seg.delegationStatus === 'cancelled',
         })
         hasToolCalls = true

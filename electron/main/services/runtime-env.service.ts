@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { BrowserWindow } from 'electron'
 import { IPC_CHANNELS, type RuntimeEnvTool, type RuntimeEnvToolId, type RuntimeEnvInstallProgress } from '../../shared/ipc-channels'
+import mainUiI18n from './ui-i18n.service'
 import { createLogger } from './logger'
 
 const logger = createLogger('RuntimeEnv')
@@ -259,36 +260,36 @@ async function detectTool(toolId: RuntimeEnvToolId): Promise<{ installed: boolea
 
 /**
  * 工具元信息（展示文案与可安装性）。
- * 文案以中文为主，由前端 i18n 进一步本地化展示。
+ * 文案按当前应用语言本地化（主进程 UI 文案表），经 IPC 直接展示给用户。
  */
 function getToolMeta(toolId: RuntimeEnvToolId): { name: string; description: string; installable: boolean; installHint?: string } {
   switch (toolId) {
     case 'uv':
       return {
         name: 'uv',
-        description: 'Python 包管理器，可一键安装并管理 Python 解释器，是脚本运行 Python 的首选依赖',
+        description: mainUiI18n.t('runtimeUvDesc'),
         installable: true,
       }
     case 'python':
       return {
         name: 'Python',
-        description: '运行 Python 脚本（.py 文件）',
+        description: mainUiI18n.t('runtimePythonDesc'),
         installable: true,
-        installHint: '请先安装 uv，再通过 uv 一键安装 Python',
+        installHint: mainUiI18n.t('runtimePythonHint'),
       }
     case 'node':
       return {
         name: 'Node.js',
-        description: '运行 JavaScript / TypeScript 脚本，并提供 npm 包管理',
+        description: mainUiI18n.t('runtimeNodeDesc'),
         installable: IS_WINDOWS,
-        installHint: IS_WINDOWS ? undefined : '请前往 https://nodejs.org 下载安装',
+        installHint: IS_WINDOWS ? undefined : mainUiI18n.t('runtimeNodeHint'),
       }
     case 'pip':
       return {
         name: 'pip',
-        description: 'Python 包管理工具，随 Python 一同安装，用于安装脚本所需的 Python 依赖包',
+        description: mainUiI18n.t('runtimePipDesc'),
         installable: true,
-        installHint: 'pip 随 Python 一同安装，请先安装 Python',
+        installHint: mainUiI18n.t('runtimePipHint'),
       }
   }
 }
@@ -348,8 +349,13 @@ class RuntimeEnvService {
     this.cancelled = true
     if (this.currentChild) {
       try {
-        // 杀掉整个进程树（Windows 下需 /T 才能杀子进程）
-        this.currentChild.kill(IS_WINDOWS ? 'SIGKILL' : 'SIGTERM')
+        if (IS_WINDOWS) {
+          // Windows 必须用 taskkill /T 杀整个进程树，child.kill 只杀顶层，
+          // powershell/winget 派生的 msiexec 等会继续以孤儿进程跑完安装
+          require('child_process').execSync(`taskkill /PID ${this.currentChild.pid} /T /F`, { stdio: 'ignore' })
+        } else {
+          this.currentChild.kill('SIGTERM')
+        }
       } catch {
         // noop
       }

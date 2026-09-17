@@ -53,12 +53,13 @@ export function buildLikeWhereClause(options?: SearchOptions): { whereClause: st
     params.push(...options.sourceTypes)
   }
 
-  if (options?.timeRangeStart || options?.timeRangeEnd) {
-    if (options.timeRangeStart) {
+  // 用 !== undefined 判定：0（epoch 起点）也是合法的时间边界
+  if (options?.timeRangeStart !== undefined || options?.timeRangeEnd !== undefined) {
+    if (options.timeRangeStart !== undefined) {
       whereClause += ' AND f.modified_time >= ?'
       params.push(options.timeRangeStart)
     }
-    if (options.timeRangeEnd) {
+    if (options.timeRangeEnd !== undefined) {
       whereClause += ' AND f.modified_time <= ?'
       params.push(options.timeRangeEnd)
     }
@@ -101,13 +102,14 @@ export function buildFtsWhereClause(options?: SearchOptions): { whereClause: str
     params.push(...options.sourceTypes)
   }
 
-  if (options?.timeRangeStart || options?.timeRangeEnd) {
+  // 用 !== undefined 判定：0（epoch 起点）也是合法的时间边界
+  if (options?.timeRangeStart !== undefined || options?.timeRangeEnd !== undefined) {
     whereClause += ' AND f.id = kms_fts.file_id'
-    if (options.timeRangeStart) {
+    if (options.timeRangeStart !== undefined) {
       whereClause += ' AND f.modified_time >= ?'
       params.push(options.timeRangeStart)
     }
-    if (options.timeRangeEnd) {
+    if (options.timeRangeEnd !== undefined) {
       whereClause += ' AND f.modified_time <= ?'
       params.push(options.timeRangeEnd)
     }
@@ -138,13 +140,14 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array, normA?: numbe
   // 防御性检查：a 或 b 为 null/undefined/空数组时直接返回 0，
   // 避免下游 norm() 或 Math.min() 抛出 "Cannot read properties of null (reading 'length')"
   if (!a || !b || a.length === 0 || b.length === 0) return 0
+  // 维度不匹配（模型切换导致新旧向量混存）：截断会产生无意义分数污染排序，直接返回 0
+  if (a.length !== b.length) return 0
   const na = normA ?? norm(a)
   const nb = norm(b)
   if (na === 0 || nb === 0) return 0
 
   let dot = 0
-  const len = Math.min(a.length, b.length)
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i]
   }
   return dot / (na * nb)
@@ -160,7 +163,12 @@ export function norm(vec: Float32Array): number {
 }
 
 export function getResultKey(result: SearchResult): string {
-  if (result.paragraph_id) return `paragraph-${result.paragraph_id}`
+  // 带 paragraph_id 的段落类结果（paragraph / content_paragraph）：
+  // 键格式必须与向量侧 `${sourceType}-${sourceId}`（即 content_paragraph-<段落id>）一致，
+  // 否则 hybridSearch 的 RRF 无法把同一段落的 FTS 命中与向量命中融合为一条
+  if (result.paragraph_id) {
+    return `${result.match_type || 'paragraph'}-${result.paragraph_id}`
+  }
   if (result.match_type === 'content_paragraph' && result.start_offset !== undefined) {
     return `content-${result.file_id}-${result.start_offset}`
   }

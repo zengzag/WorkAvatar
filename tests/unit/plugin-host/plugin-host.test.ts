@@ -621,6 +621,27 @@ describe('importPluginFromPath（单包导入与覆盖升级）', () => {
     await expect(host.dispatch('up', 'ping', {})).resolves.toEqual({ pong: true })
   })
 
+  it('同版本覆盖导入（版本号不变）→ 内容指纹 rev 变化，保证渲染端强制刷新', async () => {
+    const z1 = buildZip('revp', '1.0.0', { registerIpcs: true }, path.join(root, 'rev1.wap'))
+    const host = makeHost()
+    host.init()
+    await host.importPluginFromPath(z1, false)
+    const rev1 = (host as any).records.get('revp').rev as string
+    expect(rev1).toBeTruthy()
+
+    const z2 = buildZip('revp', '1.0.0', { registerIpcs: true }, path.join(root, 'rev2.wap'))
+    await host.importPluginFromPath(z2, true)
+    // 版本号相同也必须有新 rev（渲染端据此换 URL 重新 import，不被 ESM 缓存挡住旧 bundle）
+    expect((host as any).records.get('revp').rev).not.toBe(rev1)
+  })
+
+  it('有渲染端的插件 → getRendererPlugins 下发 rev 供渲染端 diff', () => {
+    writePlugin('revr', { renderer: 'renderer.js' })
+    const host = makeHost()
+    host.init()
+    expect(host.getRendererPlugins().find(p => p.id === 'revr')!.rev).toBeTruthy()
+  })
+
   it('无效包（缺 manifest / 缺 main 字段）明确失败且不产生记录', async () => {
     const bad1 = path.join(root, 'bad1.wap')
     new AdmZip().writeZip(bad1) // 空 zip

@@ -42,6 +42,7 @@ const PROVIDER_TYPES: { value: LLMProviderType; label: string; labelKey?: string
   { value: 'azure', label: 'Azure OpenAI', group: 'international' },
   { value: 'vertex', label: 'Google Vertex AI', group: 'international' },
   { value: 'bedrock', label: 'AWS Bedrock', group: 'international' },
+  { value: 'opencode-go', label: 'OpenCode Go', group: 'international' },
   { value: 'deepseek', label: 'DeepSeek (深度求索)', labelKey: 'settings.providerDeepseek', group: 'domestic' },
   { value: 'qwen', label: '通义千问 (Qwen)', labelKey: 'settings.providerQwen', group: 'domestic' },
   { value: 'zhipu', label: '智谱 AI (GLM)', labelKey: 'settings.providerZhipu', group: 'domestic' },
@@ -70,6 +71,7 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string }> = {
   vertex: { baseURL: '' },
   bedrock: { baseURL: '' },
   xai: { baseURL: 'https://api.x.ai/v1' },
+  'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1' },
 }
 
 // 解析 provider 的 models_json 字符串，统一处理异常与 category 默认值
@@ -205,7 +207,8 @@ const LLMSettings: React.FC = () => {
         delete (providerData as any).api_key
       }
       if (editingProvider) {
-        await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
+        const res: any = await window.electronAPI.llm.updateProvider({ id: editingProvider.id, ...providerData })
+        if (res?.error) throw new Error(res.error)
         // 模型ID变更后同步 localStorage 中的引用（主进程已级联更新 settings/automation 表）
         syncModelRenamesInStorage(
           editingProvider.id,
@@ -213,7 +216,8 @@ const LLMSettings: React.FC = () => {
         )
         message.success(t('settings.updated'))
       } else {
-        await window.electronAPI.llm.createProvider(providerData)
+        const res: any = await window.electronAPI.llm.createProvider(providerData)
+        if (res?.error) throw new Error(res.error)
         message.success(t('settings.added'))
       }
       setModalVisible(false)
@@ -269,6 +273,8 @@ const LLMSettings: React.FC = () => {
       presence_penalty: model.presence_penalty,
       max_retry: model.max_retry ?? 100,
       context_window: model.context_window,
+      thinking_budget: model.thinking_budget,
+      supports_image_input: model.supports_image_input,
     })
     setModelModalVisible(true)
   }, [modelForm])
@@ -290,6 +296,10 @@ const LLMSettings: React.FC = () => {
           presence_penalty: values.presence_penalty,
           max_retry: values.max_retry,
           context_window: values.context_window,
+          thinking_budget: values.thinking_budget,
+          supports_image_input: values.supports_image_input === 'on' || values.supports_image_input === 'off'
+            ? values.supports_image_input
+            : undefined,
         } : {}),
       }
 
@@ -566,7 +576,7 @@ const LLMSettings: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 12px' }}>
                 <Form.Item name="temperature" label={
-                  <span>Temperature <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                  <span>{t('settings.temperatureParam')} <Tooltip title={t('settings.temperatureParamTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
                 </Form.Item>
@@ -597,6 +607,19 @@ const LLMSettings: React.FC = () => {
                   <span>{t('settings.contextWindow')} <Tooltip title={t('settings.contextWindowTooltip')}><QuestionCircleOutlined /></Tooltip></span>
                 }>
                   <InputNumber min={1024} max={2000000} step={1024} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item name="thinking_budget" label={
+                  <span>{t('settings.thinkingBudget')} <Tooltip title={t('settings.thinkingBudgetTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <InputNumber min={0} max={128000} step={1024} style={{ width: '100%' }} placeholder={t('settings.thinkingBudgetPlaceholder')} />
+                </Form.Item>
+                <Form.Item name="supports_image_input" label={
+                  <span>{t('settings.imageInput')} <Tooltip title={t('settings.imageInputTooltip')}><QuestionCircleOutlined /></Tooltip></span>
+                }>
+                  <Select allowClear placeholder={t('settings.imageInputAuto')}>
+                    <Select.Option value="on">{t('settings.imageInputOn')}</Select.Option>
+                    <Select.Option value="off">{t('settings.imageInputOff')}</Select.Option>
+                  </Select>
                 </Form.Item>
               </div>
             </>

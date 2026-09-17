@@ -8,6 +8,7 @@ import { RUNTIME_ENV_CHANNELS } from './runtime-env'
 import { MCP_CHANNELS } from './mcp'
 import { PLUGIN_CHANNELS } from './plugin'
 import { NOTIFY_CHANNELS } from './notification'
+import { ATTACHMENT_CHANNELS } from './attachment'
 
 export const IPC_CHANNELS = {
   ...WORKSPACE_CHANNELS,
@@ -20,6 +21,7 @@ export const IPC_CHANNELS = {
   ...MCP_CHANNELS,
   ...PLUGIN_CHANNELS,
   ...NOTIFY_CHANNELS,
+  ...ATTACHMENT_CHANNELS,
 } as const
 
 export * from './workspace'
@@ -32,3 +34,4 @@ export * from './runtime-env'
 export * from './mcp'
 export * from './plugin'
 export * from './notification'
+export * from './attachment'

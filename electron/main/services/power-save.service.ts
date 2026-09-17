@@ -16,6 +16,7 @@ class PowerSaveService {
   private static instance: PowerSaveService
   private blockerId: number | null = null
   private enabled = false
+  private initialized = false
 
   static getInstance(): PowerSaveService {
     if (!PowerSaveService.instance) {
@@ -25,6 +26,9 @@ class PowerSaveService {
   }
 
   init(): void {
+    // 幂等：重复调用会累积 browser-window-created 监听，导致每个窗口事件被重复 refresh
+    if (this.initialized) return
+    this.initialized = true
     this.enabled = this.readEnabled()
     // 窗口创建后监听显隐/关闭变化，重新评估是否需要保持唤醒（窗口焦点与否不再影响）
     app.on('browser-window-created', (_event, win) => {

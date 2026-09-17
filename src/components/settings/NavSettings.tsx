@@ -6,7 +6,7 @@ import {
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import {
-  useNavConfigStore, LOCKED_KEYS, type NavItemKey,
+  useNavConfigStore, LOCKED_KEYS, DEFAULT_NAV_CONFIG, type NavItemKey,
 } from '../../stores/nav.store'
 
 const ICON_MAP: Record<string, React.ReactNode> = {
@@ -34,8 +34,12 @@ const NavSettings: React.FC = () => {
   const reset = useNavConfigStore((s) => s.reset)
 
   const sortedConfig = useMemo(
-    () => config.slice().sort((a, b) => a.order - b.order),
-    [config],
+    () => config
+      // 停用插件保留的排序条目（不在当前插件列表中）不展示，避免出现无文案的空行
+      .filter((c) => DEFAULT_NAV_CONFIG.some((d) => d.key === c.key) || pluginItems.some((p) => p.key === c.key))
+      .slice()
+      .sort((a, b) => a.order - b.order),
+    [config, pluginItems],
   )
 
   const isPluginKey = (key: string) => pluginItems.some((p) => p.key === key)

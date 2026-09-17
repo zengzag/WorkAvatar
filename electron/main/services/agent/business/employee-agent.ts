@@ -55,6 +55,7 @@ export class EmployeeAgent extends GenericAgent {
       workspaceGuidance: this.employeeConfig.workspaceGuidance,
       minimalMode: this.getMinimalMode(),
       hasReportGeneratedFiles: !!this.getToolRegistry().getTool('report_generated_files'),
+      hasFileDelete: !!this.getToolRegistry().getTool('file_delete'),
     })
 
     this.setCachedSystemPrompt(prompt)

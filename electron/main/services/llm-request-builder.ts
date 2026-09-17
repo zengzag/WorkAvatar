@@ -48,3 +48,22 @@ export function buildHeaders(config: LLMProviderConfig): Record<string, string> 
   }
   return headers
 }
+
+/**
+ * 解析 JSON 对象字符串（extra_headers_json / extra_body_json 等）。
+ * 非法 JSON 或非对象（数组/标量）返回 undefined，供 pi-ai 的 headers / onPayload 使用。
+ */
+export function parseJsonRecord(json?: string | null): Record<string, any> | undefined {
+  if (!json) return undefined
+  try {
+    const parsed = JSON.parse(json)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, any>
+    }
+    logger.warn('parseJsonRecord: value is not a JSON object, ignored')
+    return undefined
+  } catch (err: any) {
+    logger.warn('Failed to parse JSON record:', err?.message || err)
+    return undefined
+  }
+}

@@ -51,6 +51,8 @@ export const KMS_CHANNELS = {
   // KMS 合集深度处理（段落切分/TOC/段落摘要/文件摘要/合集摘要向量化）
   // 进度事件复用 KMS_INDEX_PROGRESS 通道，含 collectionId 字段供前端按合集过滤
   KMS_PROCESS_COLLECTION_DEEP: 'kms:process-collection-deep',
+  // 合集增删改通知（主进程 → 渲染进程，供任务输入框等实时刷新合集列表）
+  KMS_COLLECTIONS_CHANGED: 'kms:collections-changed',
   KMS_CANCEL_COLLECTION_DEEP: 'kms:cancel-collection-deep',
   // KMS 单文件深度处理（合集文件列表中单个文件的深度处理）
   KMS_PROCESS_FILE_DEEP: 'kms:process-file-deep',

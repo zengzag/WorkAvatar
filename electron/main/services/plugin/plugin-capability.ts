@@ -130,6 +130,58 @@ export function canQueryKms(
   return { ok: true }
 }
 
+/** 读取 webview 能力域声明的站点白名单（未声明返回空数组） */
+export function getWebviewOrigins(
+  capabilities: PluginCapability[] | undefined
+): string[] {
+  const cap = getCapability(capabilities, 'webview')
+  if (!cap || cap.domain !== 'webview') return []
+  return cap.origins ?? []
+}
+
+/**
+ * 判断主机名是否命中单条白名单条目。
+ * 支持精确匹配（`chat.deepseek.com`）与 `*.` 前缀通配（`*.doubao.com` 命中该域及其子域）。
+ */
+export function matchWebviewOrigin(entry: string, hostname: string): boolean {
+  const e = entry.trim().toLowerCase()
+  const h = hostname.trim().toLowerCase()
+  if (!e || !h) return false
+  if (e.startsWith('*.')) {
+    const suffix = e.slice(2)
+    if (!suffix) return false
+    return h === suffix || h.endsWith(`.${suffix}`)
+  }
+  return h === e
+}
+
+/**
+ * 校验内嵌网页视图：URL 是否命中白名单。
+ * 恒要求 https；非 https（http/data/file/about 等）一律拒绝，避免插件借内嵌视图读本地或明文内容。
+ */
+export function canEmbedUrl(
+  capabilities: PluginCapability[] | undefined,
+  url: string
+): CapabilityCheck {
+  const origins = getWebviewOrigins(capabilities)
+  if (origins.length === 0) {
+    return { ok: false, reason: '未声明 webview 能力域' }
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return { ok: false, reason: `无法解析的内嵌 URL: ${url}` }
+  }
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, reason: `内嵌网页仅允许 https，拒绝: ${parsed.protocol}` }
+  }
+  if (!origins.some(o => matchWebviewOrigin(o, parsed.hostname))) {
+    return { ok: false, reason: `站点 "${parsed.hostname}" 未在 webview 能力域 origins 白名单内` }
+  }
+  return { ok: true }
+}
+
 /** 是否声明 collaboration 协作能力域 */
 export function hasCollaboration(
   capabilities: PluginCapability[] | undefined
@@ -206,6 +258,25 @@ export function validateCapabilities(
         }
         if (c.publish !== undefined && typeof c.publish !== 'boolean') {
           return { ok: false, reason: 'events 能力域 publish 必须是布尔值' }
+        }
+        break
+      }
+      case 'webview': {
+        const c = cap as { origins?: unknown }
+        if (!Array.isArray(c.origins) || c.origins.length === 0) {
+          return { ok: false, reason: 'webview 能力域必须声明非空 origins 数组' }
+        }
+        for (const raw of c.origins) {
+          if (typeof raw !== 'string' || !raw.trim()) {
+            return { ok: false, reason: 'webview 能力域 origins 元素必须是非空字符串' }
+          }
+          const host = raw.trim().toLowerCase().startsWith('*.')
+            ? raw.trim().toLowerCase().slice(2)
+            : raw.trim().toLowerCase()
+          // 仅允许主机名（不含协议 / 端口 / 路径），防止把整条 URL 塞进白名单
+          if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
+            return { ok: false, reason: `webview 能力域 origins 含非法主机名（仅允许主机名，不含协议/端口/路径）: ${raw}` }
+          }
         }
         break
       }

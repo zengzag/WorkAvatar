@@ -58,17 +58,22 @@ class KMSDataTierService {
     const crawler = KMSCrawlerService.getInstance()
     const now = Math.floor(Date.now() / 1000)
 
-    const hotFiles = this.db.prepare("SELECT id FROM kms_files WHERE data_tier = 'hot'").all() as any[]
-    const hotFileIds = hotFiles.map(f => f.id)
+    const hotFiles = this.db.prepare("SELECT id, updated_at FROM kms_files WHERE data_tier = 'hot'").all() as any[]
 
     const demoteIds: string[] = []
     const coldThreshold = now - COLD_DEMOTE_DAYS * 86400
-    if (hotFileIds.length > 0) {
+    if (hotFiles.length > 0) {
+      const hotFileIds = hotFiles.map(f => f.id)
       const statsMap = crawler.getFileAccessStatsBatch(hotFileIds, COLD_DEMOTE_DAYS)
-      for (const fileId of hotFileIds) {
-        const stats = statsMap.get(fileId)!
-        if (stats.lastAccessed && stats.lastAccessed < coldThreshold) {
-          demoteIds.push(fileId)
+      for (const file of hotFiles) {
+        const stats = statsMap.get(file.id)!
+        // 访问日志保留窗口＝降级阈值天数，lastAccessed 为空即"窗口内无任何访问"
+        const noRecentAccess = !stats.lastAccessed || stats.lastAccessed < coldThreshold
+        // updated_at 在层级变更/索引完成时刷新：刚做过深度处理（合集深度索引等）的文件
+        // 尚无访问记录，不能仅凭此判定为冷数据，须自身也超过阈值未再处理才降级
+        const notRecentlyProcessed = !file.updated_at || file.updated_at < coldThreshold
+        if (noRecentAccess && notRecentlyProcessed) {
+          demoteIds.push(file.id)
         }
       }
     }
@@ -90,10 +95,14 @@ class KMSDataTierService {
     const updateTierBatch = (ids: string[], tier: 'cold' | 'hot') => {
       if (ids.length === 0) return
       const tx = this.db.transaction((fileIds: string[], targetTier: string) => {
-        const placeholders = fileIds.map(() => '?').join(',')
-        this.db.prepare(
-          `UPDATE kms_files SET data_tier = ?, updated_at = unixepoch() WHERE id IN (${placeholders})`
-        ).run(targetTier, ...fileIds)
+        // 分批防超 SQLITE 参数上限（999）
+        for (let i = 0; i < fileIds.length; i += 500) {
+          const batch = fileIds.slice(i, i + 500)
+          const placeholders = batch.map(() => '?').join(',')
+          this.db.prepare(
+            `UPDATE kms_files SET data_tier = ?, updated_at = unixepoch() WHERE id IN (${placeholders})`
+          ).run(targetTier, ...batch)
+        }
       })
       tx(ids, tier)
     }

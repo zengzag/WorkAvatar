@@ -12,6 +12,7 @@ import type { MessageWithThought } from './types'
 import type { AttachedImage } from './ChatInput'
 import { ensureSegments } from './types'
 import { useChatScroll } from '../../hooks/useChatScroll'
+import { getToolDisplayName } from '../../utils/tool-display'
 
 const GenericChatView: React.FC<GenericChatViewProps> = ({
   messages,
@@ -64,7 +65,6 @@ const GenericChatView: React.FC<GenericChatViewProps> = ({
 
   // 通用对话不提供重生成/对比/分支等高级能力，保持受控组件的零负担
   const noop = useCallback(() => {}, [])
-  const getToolDisplayName = useCallback((name: string) => name, [])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, ...style }}>
