@@ -933,57 +933,76 @@ export const useStreamListeners = (deps: StreamListenerDeps) => {
       const streamState = streamStatesRef.current.get(sessionId)
       if (!streamState) return
 
-      updateConvMessages(streamState.conversationId, (prev) =>
-        prev.map((m) =>
-          m.id === streamState.assistantMessageId
-            ? {
-                ...m,
-                content: tt('workbench.errorMsg', { error }),
-                isStreaming: false,
-                isError: true,
-                segments: (m.segments || []).map(s => {
-                  // 工具调用未完成时标记为失败，避免 UI 永远停留在"生成参数中"/"执行中"
-                  if (s.type === 'tool_call' && !s.isToolComplete) {
-                    let parsedArgs = s.toolArgs
-                    if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
-                      try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整 */ }
-                    }
-                    return {
-                      ...s,
-                      isStreaming: false,
-                      isToolArgsStreaming: false,
-                      isToolComplete: true,
-                      toolArgs: parsedArgs,
-                      toolError: tt('workbench.toolFailed'),
-                      completedAt: s.completedAt || Date.now(),
-                      collapsed: true,
-                    }
-                  }
-                  // delegation 段兜底：主管出错时若委托仍在进行中，标记为失败（排队中则标记取消）
-                  if (s.type === 'delegation' && (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued')) {
-                    const cancelled = s.delegationStatus === 'queued'
-                    return {
-                      ...s,
-                      delegationStatus: cancelled ? 'cancelled' as const : 'failed' as const,
-                      isToolComplete: true,
-                      toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolFailed'),
-                      completedAt: s.completedAt || Date.now(),
-                      collapsed: true,
-                      subSegments: (s.subSegments || []).map(ss => ({
-                        ...ss,
-                        isStreaming: false,
-                        isToolArgsStreaming: false,
-                        isToolComplete: ss.isToolComplete ?? true,
-                        completedAt: ss.completedAt || Date.now(),
-                      })),
-                    }
-                  }
-                  return { ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() }
-                }),
+      const errorText = tt('workbench.errorMsg', { error })
+      updateConvMessages(streamState.conversationId, (prev) => {
+        const errorMsgs = prev.map((m) => {
+          if (m.id !== streamState.assistantMessageId) return m
+          // 错误提示必须以独立 segment 追加：气泡在 segments 非空时只渲染 segments，
+          // 仅写 content 用户看不到（表现为流式输出静默中断无提示）
+          const errorSegment: MessageSegment = {
+            id: `${m.id}_err_${Date.now()}`,
+            type: 'answer' as const,
+            content: errorText,
+            isStreaming: false,
+            timestamp: Date.now(),
+            completedAt: Date.now(),
+          }
+          return {
+            ...m,
+            isStreaming: false,
+            isError: true,
+            segments: (m.segments || []).map((s): MessageSegment => {
+              // 工具调用未完成时标记为失败，避免 UI 永远停留在"生成参数中"/"执行中"
+              if (s.type === 'tool_call' && !s.isToolComplete) {
+                let parsedArgs = s.toolArgs
+                if (s.isToolArgsStreaming && !parsedArgs && s.toolArgsRaw) {
+                  try { parsedArgs = JSON.parse(s.toolArgsRaw) } catch { /* JSON 不完整 */ }
+                }
+                return {
+                  ...s,
+                  isStreaming: false,
+                  isToolArgsStreaming: false,
+                  isToolComplete: true,
+                  toolArgs: parsedArgs,
+                  toolError: tt('workbench.toolFailed'),
+                  completedAt: s.completedAt || Date.now(),
+                  collapsed: true,
+                }
               }
-            : m
-        )
-      )
+              // delegation 段兜底：主管出错时若委托仍在进行中，标记为失败（排队中则标记取消）
+              if (s.type === 'delegation' && (s.delegationStatus === 'streaming' || s.delegationStatus === 'queued')) {
+                const cancelled = s.delegationStatus === 'queued'
+                return {
+                  ...s,
+                  delegationStatus: cancelled ? 'cancelled' as const : 'failed' as const,
+                  isToolComplete: true,
+                  toolError: s.toolError || tt(cancelled ? 'workbench.runCancelled' : 'workbench.toolFailed'),
+                  completedAt: s.completedAt || Date.now(),
+                  collapsed: true,
+                  subSegments: (s.subSegments || []).map(ss => ({
+                    ...ss,
+                    isStreaming: false,
+                    isToolArgsStreaming: false,
+                    isToolComplete: ss.isToolComplete ?? true,
+                    completedAt: ss.completedAt || Date.now(),
+                  })),
+                }
+              }
+              return { ...s, isStreaming: false, isToolArgsStreaming: false, completedAt: s.completedAt || Date.now() }
+            }).concat(errorSegment),
+          }
+        })
+
+        // 持久化错误态消息（中断提醒在重载后仍可见）
+        window.electronAPI.conversation.update({
+          id: streamState.conversationId,
+          messages_json: JSON.stringify(errorMsgs),
+          message_count: errorMsgs.length,
+          last_message_at: Math.floor(Date.now() / 1000),
+        }).catch(() => {})
+
+        return errorMsgs
+      })
 
       streamState.isStreaming = false
       streamStatesRef.current.delete(sessionId)

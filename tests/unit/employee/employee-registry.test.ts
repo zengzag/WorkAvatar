@@ -6,7 +6,7 @@
  * - 默认工具/技能模式、DBEmployee 形状、影子记录同步
  * - 另存副本命名规则
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'events'
 import Module from 'module'
 
