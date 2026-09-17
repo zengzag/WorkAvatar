@@ -53,6 +53,7 @@ export class ToolDispatcher {
           toolName,
           rawOutput: result,
           generatedFiles: result?.generatedFiles,
+          images: result?.images,
         }
       })
 

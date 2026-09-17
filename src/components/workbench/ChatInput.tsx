@@ -595,24 +595,36 @@ const ChatInput: React.FC<{
     const items = e.clipboardData?.items
     if (!items) return
 
+    // 收集剪贴板中的全部图片项，支持多图同时粘贴
+    const imageFiles: File[] = []
     for (const item of items) {
       if (item.type.startsWith('image/')) {
-        e.preventDefault()
         const file = item.getAsFile()
-        if (!file) continue
+        if (file) imageFiles.push(file)
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      const loadedImages: AttachedImage[] = []
+      let loadedCount = 0
+      for (const file of imageFiles) {
         const reader = new FileReader()
         reader.onload = (ev) => {
           const dataUrl = ev.target?.result as string
-          // 通过 ref 读取最新 attachedImages，避免闭包捕获旧快照导致图片覆盖
-          onImagesChange([...attachedImagesRef.current, {
+          loadedImages.push({
             id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             dataUrl,
             name: file.name || 'pasted-image.png',
-          }])
+          })
+          loadedCount++
+          if (loadedCount === imageFiles.length) {
+            onImagesChange([...attachedImagesRef.current, ...loadedImages])
+          }
         }
         reader.readAsDataURL(file)
-        return
       }
+      return
     }
 
     const files = e.clipboardData?.files

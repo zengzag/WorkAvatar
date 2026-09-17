@@ -506,6 +506,7 @@ function toTokenUsage(usage: PiUsage | undefined): TokenUsage | undefined {
 function toAgentTool(
   tool: ToolDefinition,
   dispatcher: ToolDispatcher,
+  imageSupport: boolean,
 ): AgentTool {
   return {
     name: tool.name,
@@ -522,8 +523,11 @@ function toAgentTool(
         }
       }
 
-      const toolContext = onUpdate
-        ? { onProgress: (progress: any) => onUpdate({ content: [{ type: 'text', text: '' }], details: { progress } }) }
+      const toolContext = imageSupport || onUpdate
+        ? {
+            ...(onUpdate ? { onProgress: (progress: any) => onUpdate({ content: [{ type: 'text', text: '' }], details: { progress } }) } : {}),
+            ...(imageSupport ? { imageSupport: true } : {}),
+          }
         : undefined
 
       const startMs = Date.now()
@@ -694,7 +698,8 @@ function convertMessagesForLlm(messages: AgentMessage[], imageSupport: boolean):
           rest.push(c as TextContent)
         }
       }
-      if (!imageSupport && pm.content.some(c => c.type === 'image')) {
+      if (!imageSupport && pm.content.some(c => c.type === 'image')
+        && !pm.content.some(c => c.type === 'text' && c.text.includes('当前模型不支持图片输入'))) {
         rest.push({ type: 'text', text: IMAGE_UNSUPPORTED_NOTE })
       }
       if (rest.length === 0) rest.push({ type: 'text', text: '（无文本输出）' })
@@ -775,12 +780,13 @@ export async function runPiAgentLoop(params: RunPiAgentLoopParams): Promise<RunP
   }
 
   // 包装工具为 AgentTool
+  const imageSupport = config.supportsImageInput === true
   const agentTools: AgentTool[] = []
   for (const def of toolDefinitions) {
     const name = def.function.name
     const tool = toolRegistry.getTool(name)
     if (tool) {
-      agentTools.push(toAgentTool(tool, toolDispatcher))
+      agentTools.push(toAgentTool(tool, toolDispatcher, imageSupport))
     }
   }
 

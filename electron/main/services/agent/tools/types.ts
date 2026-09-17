@@ -8,6 +8,8 @@ export type ToolPermission = 'safe' | 'requires_confirmation' | 'dangerous'
 export interface ToolHandlerContext {
   /** 工具执行的中间进度回调（用于UI展示，不进入LLM上下文） */
   onProgress?: (progress: any) => void
+  /** 当前模型是否支持图片（视觉）输入；未设置视为支持（保守输出中性文案） */
+  imageSupport?: boolean
 }
 
 export interface ToolDefinition {

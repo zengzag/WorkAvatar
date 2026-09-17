@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { ToolDispatcher } from '../../../electron/main/services/agent/tools/tool-dispatcher'
 import { ToolRegistry } from '../../../electron/main/services/agent/tools/tool-registry'
 import { createTimeoutMiddleware } from '../../../electron/main/services/agent/tools/tool-middleware'
@@ -40,6 +40,15 @@ describe('agent/tools/tool-dispatcher / 工具查找', () => {
 })
 
 describe('agent/tools/tool-dispatcher / 结果归一化', () => {
+  it('handler 返回 images（data URL 数组）时透传到结果，供视觉注入使用', async () => {
+    const { dispatcher } = setup(makeTool({
+      handler: () => ({ success: true as const, output: '已读取图片文件', images: ['data:image/png;base64,AAAA'] }),
+    }))
+    const res = await dispatcher.dispatch('x', {})
+    expect(res.success).toBe(true)
+    expect(res.images).toEqual(['data:image/png;base64,AAAA'])
+  })
+
   it('handler 返回 undefined → 视为成功并给出占位 output', async () => {
     const { dispatcher } = setup(makeTool({ handler: () => undefined }))
     const res = await dispatcher.dispatch('x', {})
